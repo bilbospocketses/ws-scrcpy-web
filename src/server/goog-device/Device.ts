@@ -1,7 +1,4 @@
-import { AdbExtended } from './adb';
-import AdbKitClient from '@dead50f7/adbkit/lib/adb/client';
-import PushTransfer from '@dead50f7/adbkit/lib/adb/sync/pushtransfer';
-import { spawn } from 'child_process';
+import { AdbClient } from '../AdbClient';
 import { NetInterface } from '../../types/NetInterface';
 import { TypedEmitter } from '../../common/TypedEmitter';
 import GoogDeviceDescriptor from '../../types/GoogDeviceDescriptor';
@@ -26,7 +23,7 @@ export class Device extends TypedEmitter<DeviceEvents> {
     private static readonly MAX_UPDATES_COUNT = 7;
     private connected = true;
     private pidDetectionVariant: PID_DETECTION = PID_DETECTION.UNKNOWN;
-    private client: AdbKitClient;
+    private adbClient: AdbClient;
     private properties?: Record<string, string>;
     private spawnServer = true;
     private updateTimeoutId?: Timeout;
@@ -53,7 +50,7 @@ export class Device extends TypedEmitter<DeviceEvents> {
             'ro.product.cpu.abi': '',
             'last.update.timestamp': 0,
         };
-        this.client = AdbExtended.createClient();
+        this.adbClient = new AdbClient();
         this.setState(state);
     }
 
@@ -94,46 +91,20 @@ export class Device extends TypedEmitter<DeviceEvents> {
 
     public killProcess(pid: number): Promise<string> {
         const command = `kill ${pid}`;
-        return this.runShellCommandAdbKit(command);
+        return this.runShellCommand(command);
     }
 
-    public async runShellCommandAdb(command: string): Promise<string> {
-        return new Promise<string>((resolve, reject) => {
-            const cmd = 'adb';
-            const args = ['-s', `${this.udid}`, 'shell', command];
-            const adb = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-            let output = '';
-
-            adb.stdout.on('data', (data) => {
-                output += data.toString();
-                console.log(this.TAG, `stdout: ${data.toString().replace(/\n$/, '')}`);
-            });
-
-            adb.stderr.on('data', (data) => {
-                console.error(this.TAG, `stderr: ${data}`);
-            });
-
-            adb.on('error', (error: Error) => {
-                console.error(this.TAG, `failed to spawn adb process.\n${error.stack}`);
-                reject(error);
-            });
-
-            adb.on('close', (code) => {
-                console.log(this.TAG, `adb process (${args.join(' ')}) exited with code ${code}`);
-                resolve(output);
-            });
-        });
+    public async runShellCommand(command: string): Promise<string> {
+        return this.adbClient.shell(this.udid, command);
     }
 
-    public async runShellCommandAdbKit(command: string): Promise<string> {
-        return this.client
-            .shell(this.udid, command)
-            .then(AdbExtended.util.readAll)
-            .then((output: Buffer) => output.toString().trim());
+    /** Long-running shell command via spawn (for processes that shouldn't block). */
+    public runShellCommandSpawn(command: string): import('child_process').ChildProcess {
+        return this.adbClient.shellSpawn(this.udid, command);
     }
 
-    public async push(contents: string, path: string): Promise<PushTransfer> {
-        return this.client.push(this.udid, contents, path);
+    public async push(local: string, remote: string): Promise<void> {
+        return this.adbClient.push(this.udid, local, remote);
     }
 
     public async getProperties(): Promise<Record<string, string> | undefined> {
@@ -143,7 +114,7 @@ export class Device extends TypedEmitter<DeviceEvents> {
         if (!this.connected) {
             return;
         }
-        this.properties = await this.client.getProperties(this.udid);
+        this.properties = await this.adbClient.getProperties(this.udid);
         return this.properties;
     }
 
@@ -162,7 +133,7 @@ export class Device extends TypedEmitter<DeviceEvents> {
             return [];
         }
         const list: NetInterface[] = [];
-        const output = await this.runShellCommandAdbKit(`ip -4 -f inet -o a | grep 'scope global'`);
+        const output = await this.runShellCommand(`ip -4 -f inet -o a | grep 'scope global'`);
         const lines = output.split('\n').filter((i: string) => !!i);
         lines.forEach((value: string) => {
             const temp = value.split(' ').filter((i: string) => !!i);
@@ -175,7 +146,7 @@ export class Device extends TypedEmitter<DeviceEvents> {
     }
 
     private async pidOf(processName: string): Promise<number[]> {
-        return this.runShellCommandAdbKit(`pidof ${processName}`)
+        return this.runShellCommand(`pidof ${processName}`)
             .then((output) => {
                 return output
                     .split(' ')
@@ -206,7 +177,7 @@ export class Device extends TypedEmitter<DeviceEvents> {
     }
 
     private async grepPs_A(processName: string): Promise<number[]> {
-        return this.runShellCommandAdbKit(`ps -A | grep ${processName}`)
+        return this.runShellCommand(`ps -A | grep ${processName}`)
             .then((output) => {
                 return this.filterPsOutput(processName, output);
             })
@@ -216,7 +187,7 @@ export class Device extends TypedEmitter<DeviceEvents> {
     }
 
     private async grepPs(processName: string): Promise<number[]> {
-        return this.runShellCommandAdbKit(`ps | grep ${processName}`)
+        return this.runShellCommand(`ps | grep ${processName}`)
             .then((output) => {
                 return this.filterPsOutput(processName, output);
             })
@@ -227,7 +198,7 @@ export class Device extends TypedEmitter<DeviceEvents> {
 
     private async listProc(processName: string): Promise<number[]> {
         const find = `find /proc -maxdepth 2 -name cmdline  2>/dev/null`;
-        const lines = await this.runShellCommandAdbKit(
+        const lines = await this.runShellCommand(
             `for L in \`${find}\`; do grep -sae '^${processName}' $L 2>&1 >/dev/null && echo $L; done`,
         );
         const re = /\/proc\/([0-9]+)\/cmdline/;
@@ -243,7 +214,7 @@ export class Device extends TypedEmitter<DeviceEvents> {
     }
 
     private async executedWithoutError(command: string): Promise<boolean> {
-        return this.runShellCommandAdbKit(command)
+        return this.runShellCommand(command)
             .then((output) => {
                 const err = parseInt(output, 10);
                 return err === 0;
@@ -266,7 +237,7 @@ export class Device extends TypedEmitter<DeviceEvents> {
         if (!ok) {
             return false;
         }
-        return this.runShellCommandAdbKit('echo $PPID; pidof init')
+        return this.runShellCommand('echo $PPID; pidof init')
             .then((output) => {
                 const pids = output.split('\n').filter((a) => a.length);
                 if (pids.length < 2) {

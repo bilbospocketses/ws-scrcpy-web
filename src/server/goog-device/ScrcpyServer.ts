@@ -2,7 +2,6 @@
 import { Device } from './Device';
 import { ARGS_STRING, SERVER_PACKAGE, SERVER_PROCESS_NAME, SERVER_VERSION } from '../../common/Constants';
 import path from 'path';
-import PushTransfer from '@dead50f7/adbkit/lib/adb/sync/pushtransfer';
 import { ServerVersion } from './ServerVersion';
 
 const TEMP_PATH = '/data/local/tmp/';
@@ -14,7 +13,7 @@ type WaitForPidParams = { tryCounter: number; processExited: boolean; lookPidFil
 
 export class ScrcpyServer {
     private static PID_FILE_PATH = '/data/local/tmp/ws_scrcpy.pid';
-    private static async copyServer(device: Device): Promise<PushTransfer> {
+    private static async copyServer(device: Device): Promise<void> {
         const src = path.join(FILE_DIR, FILE_NAME);
         const dst = TEMP_PATH + FILE_NAME; // don't use path.join(): will not work on win host
         return device.push(src, dst);
@@ -31,7 +30,7 @@ export class ScrcpyServer {
         const timeout = 500 + 100 * tryCounter;
         if (lookPidFile) {
             const fileName = ScrcpyServer.PID_FILE_PATH;
-            const content = await device.runShellCommandAdbKit(`test -f ${fileName} && cat ${fileName}`);
+            const content = await device.runShellCommand(`test -f ${fileName} && cat ${fileName}`);
             if (content.trim()) {
                 const pid = parseInt(content, 10);
                 if (pid && !isNaN(pid)) {
@@ -69,7 +68,7 @@ export class ScrcpyServer {
         }
         const serverPid: number[] = [];
         const promises = list.map((pid) => {
-            return device.runShellCommandAdbKit(`cat /proc/${pid}/cmdline`).then((output) => {
+            return device.runShellCommand(`cat /proc/${pid}/cmdline`).then((output) => {
                 const args = output.split('\0');
                 if (!args.length || args[0] !== SERVER_PROCESS_NAME) {
                     return;
@@ -117,7 +116,7 @@ export class ScrcpyServer {
         await this.copyServer(device);
 
         const params: WaitForPidParams = { tryCounter: 0, processExited: false, lookPidFile: true };
-        const runPromise = device.runShellCommandAdb(RUN_COMMAND);
+        const runPromise = device.runShellCommand(RUN_COMMAND);
         runPromise
             .then((out) => {
                 if (device.isConnected()) {

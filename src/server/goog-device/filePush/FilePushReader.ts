@@ -1,9 +1,9 @@
-import { ReadableOptions } from 'stream';
 import { CommandControlMessage, FilePushState } from '../../../app/controlMessage/CommandControlMessage';
 import { FilePushResponseStatus } from '../../../app/googDevice/filePush/FilePushResponseStatus';
-import PushTransfer from '@dead50f7/adbkit/lib/adb/sync/pushtransfer';
-import { ReadStream } from './ReadStream';
-import { AdbExtended } from '../adb';
+import { AdbClient } from '../../AdbClient';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 
 enum State {
     INITIAL,
@@ -38,13 +38,12 @@ export class FilePushReader {
         return buffer;
     }
 
-    public readStream?: ReadStream;
-    private pushTransfer?: PushTransfer;
+    private adbClient = new AdbClient();
     private fileName = '';
-    private fileSize = 0;
     private pushId = -1;
     private state: State = State.INITIAL;
-    private createStreamPromiseMap: Map<number, Promise<void>> = new Map();
+    private tempFilePath = '';
+    private writeStream?: fs.WriteStream;
     private disposed = false;
 
     constructor(private readonly serial: string, private readonly channel: WebSocket) {
@@ -106,8 +105,10 @@ export class FilePushReader {
                     return;
                 }
                 this.fileName = fileName;
-                this.fileSize = fileSize;
                 this.state = State.START;
+                // Create a temp file to accumulate chunks
+                this.tempFilePath = path.join(os.tmpdir(), `adb_push_${this.pushId}_${Date.now()}`);
+                this.writeStream = fs.createWriteStream(this.tempFilePath);
                 this.sendResponse(FilePushResponseStatus.NO_ERROR);
                 break;
             case FilePushState.APPEND:
@@ -120,50 +121,56 @@ export class FilePushReader {
                     return;
                 }
                 if (this.state === State.START) {
-                    const promise = this.createStream(chunk);
-                    this.createStreamPromiseMap.set(id, promise);
-                    await promise;
-                    this.createStreamPromiseMap.delete(id);
                     this.state = State.APPEND;
-                    return;
                 } else if (this.state !== State.APPEND) {
                     this.closeWithError(FilePushResponseStatus.ERROR_INVALID_STATE);
                     return;
                 }
-                this.readStream?.push(chunk);
+                if (this.writeStream) {
+                    this.writeStream.write(chunk);
+                }
+                this.sendResponse(FilePushResponseStatus.NO_ERROR);
                 break;
             case FilePushState.FINISH:
                 if (!this.verifyId(id)) {
                     return;
-                }
-                const promise = this.createStreamPromiseMap.get(id);
-                if (promise) {
-                    await promise;
                 }
                 if (this.state !== State.APPEND) {
                     this.closeWithError(FilePushResponseStatus.ERROR_INVALID_STATE);
                     return;
                 }
                 this.state = State.FINISH;
-                if (this.readStream) {
-                    this.readStream.push(null);
-                    this.readStream.close();
-                    this.readStream = undefined;
+                if (this.writeStream) {
+                    await new Promise<void>((resolve) => {
+                        this.writeStream!.end(() => resolve());
+                    });
+                    this.writeStream = undefined;
                 }
+                // Push temp file to device
+                try {
+                    await this.adbClient.push(this.serial, this.tempFilePath, this.fileName);
+                    this.sendResponse(FilePushResponseStatus.NO_ERROR);
+                } catch (error: any) {
+                    console.error(`Push error (${this.serial} | ${this.fileName}):`, error.message);
+                    this.closeWithError(FilePushResponseStatus.ERROR_OTHER, error.message);
+                    return;
+                } finally {
+                    this.cleanupTempFile();
+                }
+                this.release();
                 break;
             case FilePushState.CANCEL:
                 if (!this.verifyId(id)) {
                     return;
                 }
                 this.state = State.CANCEL;
-                if (this.readStream) {
-                    this.readStream.push(null);
-                    this.readStream.close();
-                    this.readStream = undefined;
+                if (this.writeStream) {
+                    this.writeStream.end();
+                    this.writeStream = undefined;
                 }
-                if (this.pushTransfer) {
-                    this.pushTransfer.cancel();
-                }
+                this.cleanupTempFile();
+                this.sendResponse(FilePushResponseStatus.NO_ERROR);
+                this.release();
                 break;
             default:
                 if (!this.verifyId(id)) {
@@ -173,58 +180,19 @@ export class FilePushReader {
         }
     };
 
-    private async createStream(chunk: Buffer): Promise<void> {
-        const opts = {
-            construct: (callback: (error?: Error | null) => void) => {
-                callback(null);
-            },
-            read: () => {
-                if (!this.readStream) {
-                    return;
-                }
-                if (this.readStream.bytesRead > this.fileSize) {
-                    console.error(`bytesRead (${this.readStream.bytesRead}) > fileSize (${this.fileSize})`);
-                }
-                this.sendResponse(FilePushResponseStatus.NO_ERROR);
-            },
-        } as ReadableOptions; // FIXME: incorrect type in @type/node@12. fixed in @type/node@16
-        this.readStream = new ReadStream(this.fileName, opts);
-        this.readStream.push(chunk);
-        const client = AdbExtended.createClient();
-        this.pushTransfer = await client.push(this.serial, this.readStream, this.fileName);
-        client.on('error', (error: Error) => {
-            console.error(`Client error (${this.serial} | ${this.fileName}):`, error.message);
-            this.closeWithError(FilePushResponseStatus.ERROR_OTHER, error.message);
-        });
-        this.pushTransfer.on('error', this.onPushError);
-        this.pushTransfer.on('end', this.onPushEnd);
-        this.pushTransfer.on('cancel', this.onPushCancel);
+    private cleanupTempFile(): void {
+        if (this.tempFilePath) {
+            try {
+                fs.unlinkSync(this.tempFilePath);
+            } catch {
+                // ignore
+            }
+            this.tempFilePath = '';
+        }
     }
 
     private onClose = (): void => {
         this.release();
-    };
-
-    private onPushError = (error: Error) => {
-        this.closeWithError(FilePushResponseStatus.ERROR_OTHER, error.message);
-    };
-
-    private onPushEnd = () => {
-        if (this.state === State.FINISH) {
-            this.sendResponse(FilePushResponseStatus.NO_ERROR);
-            this.release();
-        } else {
-            this.closeWithError(FilePushResponseStatus.ERROR_INVALID_STATE);
-        }
-    };
-
-    private onPushCancel = () => {
-        if (this.state === State.CANCEL) {
-            this.sendResponse(FilePushResponseStatus.NO_ERROR);
-            this.release();
-        } else {
-            this.closeWithError(FilePushResponseStatus.ERROR_INVALID_STATE);
-        }
     };
 
     public release(): void {
@@ -232,17 +200,11 @@ export class FilePushReader {
             return;
         }
         this.disposed = true;
-        this.createStreamPromiseMap.clear();
-        if (this.readStream) {
-            this.readStream.close();
-            this.readStream = undefined;
+        if (this.writeStream) {
+            this.writeStream.end();
+            this.writeStream = undefined;
         }
-        if (this.pushTransfer) {
-            this.pushTransfer.off('error', this.onPushError);
-            this.pushTransfer.off('end', this.onPushEnd);
-            this.pushTransfer.off('cancel', this.onPushCancel);
-            this.pushTransfer = undefined;
-        }
+        this.cleanupTempFile();
         this.channel.removeEventListener('message', this.onMessage);
         this.channel.removeEventListener('close', this.onClose);
         const { readyState, CLOSED, CLOSING } = this.channel;

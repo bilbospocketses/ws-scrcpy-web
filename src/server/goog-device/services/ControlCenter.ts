@@ -1,10 +1,7 @@
-import { TrackerChangeSet } from '@dead50f7/adbkit/lib/TrackerChangeSet';
 import { Device } from '../Device';
 import { Service } from '../../services/Service';
-import AdbKitClient from '@dead50f7/adbkit/lib/adb/client';
-import { AdbExtended } from '../adb';
+import { AdbClient } from '../../AdbClient';
 import GoogDeviceDescriptor from '../../../types/GoogDeviceDescriptor';
-import Tracker from '@dead50f7/adbkit/lib/adb/tracker';
 import Timeout = NodeJS.Timeout;
 import { BaseControlCenter } from '../../services/BaseControlCenter';
 import { ControlCenterCommand } from '../../../common/ControlCenterCommand';
@@ -13,14 +10,13 @@ import * as crypto from 'crypto';
 import { DeviceState } from '../../../common/DeviceState';
 
 export class ControlCenter extends BaseControlCenter<GoogDeviceDescriptor> implements Service {
-    private static readonly defaultWaitAfterError = 1000;
+    private static readonly POLL_INTERVAL = 2000;
     private static instance?: ControlCenter;
 
     private initialized = false;
-    private client: AdbKitClient = AdbExtended.createClient();
-    private tracker?: Tracker;
-    private waitAfterError = 1000;
-    private restartTimeoutId?: Timeout;
+    private adbClient = new AdbClient();
+    private knownDevices = new Map<string, string>(); // serial -> state
+    private pollIntervalId?: Timeout;
     private deviceMap: Map<string, Device> = new Map();
     private descriptors: Map<string, GoogDeviceDescriptor> = new Map();
     private readonly id: string;
@@ -42,37 +38,29 @@ export class ControlCenter extends BaseControlCenter<GoogDeviceDescriptor> imple
         return !!ControlCenter.instance;
     }
 
-    private restartTracker = (): void => {
-        if (this.restartTimeoutId) {
-            return;
-        }
-        console.log(`Device tracker is down. Will try to restart in ${this.waitAfterError}ms`);
-        this.restartTimeoutId = setTimeout(() => {
-            this.stopTracker();
-            this.waitAfterError *= 1.2;
-            this.init();
-        }, this.waitAfterError);
-    };
+    private pollDevices = async (): Promise<void> => {
+        try {
+            const devices = await this.adbClient.devices();
+            const currentSerials = new Set(devices.map((d) => d.serial));
 
-    private onChangeSet = (changes: TrackerChangeSet): void => {
-        this.waitAfterError = ControlCenter.defaultWaitAfterError;
-        if (changes.added.length) {
-            for (const item of changes.added) {
-                const { id, type } = item;
-                this.handleConnected(id, type);
+            // Detect new or changed devices
+            for (const device of devices) {
+                const prevState = this.knownDevices.get(device.serial);
+                if (prevState !== device.state) {
+                    this.knownDevices.set(device.serial, device.state);
+                    this.handleConnected(device.serial, device.state);
+                }
             }
-        }
-        if (changes.removed.length) {
-            for (const item of changes.removed) {
-                const { id } = item;
-                this.handleConnected(id, DeviceState.DISCONNECTED);
+
+            // Detect removed devices
+            for (const [serial] of this.knownDevices) {
+                if (!currentSerials.has(serial)) {
+                    this.knownDevices.delete(serial);
+                    this.handleConnected(serial, DeviceState.DISCONNECTED);
+                }
             }
-        }
-        if (changes.changed.length) {
-            for (const item of changes.changed) {
-                const { id, type } = item;
-                this.handleConnected(id, type);
-            }
+        } catch (_e) {
+            // ADB not running or error — retry on next poll
         }
     };
 
@@ -97,35 +85,27 @@ export class ControlCenter extends BaseControlCenter<GoogDeviceDescriptor> imple
         if (this.initialized) {
             return;
         }
-        this.tracker = await this.startTracker();
-        const list = await this.client.listDevices();
-        list.forEach((device) => {
-            const { id, type } = device;
-            this.handleConnected(id, type);
-        });
+        // Initial device enumeration
+        try {
+            const list = await this.adbClient.devices();
+            for (const device of list) {
+                this.knownDevices.set(device.serial, device.state);
+                this.handleConnected(device.serial, device.state);
+            }
+        } catch (e: any) {
+            console.error('Failed to list initial devices:', e.message);
+        }
+        // Start polling for changes
+        this.pollIntervalId = setInterval(this.pollDevices, ControlCenter.POLL_INTERVAL);
         this.initialized = true;
     }
 
-    private async startTracker(): Promise<Tracker> {
-        if (this.tracker) {
-            return this.tracker;
+    private stopTracking(): void {
+        if (this.pollIntervalId) {
+            clearInterval(this.pollIntervalId);
+            this.pollIntervalId = undefined;
         }
-        const tracker = await this.client.trackDevices();
-        tracker.on('changeSet', this.onChangeSet);
-        tracker.on('end', this.restartTracker);
-        tracker.on('error', this.restartTracker);
-        return tracker;
-    }
-
-    private stopTracker(): void {
-        if (this.tracker) {
-            this.tracker.off('changeSet', this.onChangeSet);
-            this.tracker.off('end', this.restartTracker);
-            this.tracker.off('error', this.restartTracker);
-            this.tracker.end();
-            this.tracker = undefined;
-        }
-        this.tracker = undefined;
+        this.knownDevices.clear();
         this.initialized = false;
     }
 
@@ -152,7 +132,7 @@ export class ControlCenter extends BaseControlCenter<GoogDeviceDescriptor> imple
     }
 
     public release(): void {
-        this.stopTracker();
+        this.stopTracking();
     }
 
     public async runCommand(command: ControlCenterCommand): Promise<void> {
