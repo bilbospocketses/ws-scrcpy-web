@@ -1,5 +1,9 @@
 # ws-scrcpy-web
 
+<p align="center">
+  <img src="assets/banner.png" alt="ws-scrcpy-web" width="600">
+</p>
+
 Browser-based Android screen mirroring and control, powered by [scrcpy](https://github.com/Genymobile/scrcpy).
 
 A modernized spiritual successor to [ws-scrcpy](https://github.com/NetrisTV/ws-scrcpy), rebuilt with a focus on maintainability, modern tooling, and staying current with scrcpy releases.
