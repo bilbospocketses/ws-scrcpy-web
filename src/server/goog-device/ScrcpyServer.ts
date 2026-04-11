@@ -1,11 +1,11 @@
 import path from 'path';
 import { ARGS_STRING, SERVER_PACKAGE, SERVER_PROCESS_NAME, SERVER_VERSION } from '../../common/Constants';
-// TODO: scrcpy-server.jar relocation (Task 9) — vendor directory removed
+import '../../../assets/scrcpy-server.jar';
 import type { Device } from './Device';
 import { ServerVersion } from './ServerVersion';
 
 const TEMP_PATH = '/data/local/tmp/';
-const FILE_DIR = path.join(__dirname, 'vendor/Genymobile/scrcpy');
+const FILE_DIR = path.join(__dirname, 'assets');
 const FILE_NAME = 'scrcpy-server.jar';
 const RUN_COMMAND = `CLASSPATH=${TEMP_PATH}${FILE_NAME} nohup app_process ${ARGS_STRING}`;
 

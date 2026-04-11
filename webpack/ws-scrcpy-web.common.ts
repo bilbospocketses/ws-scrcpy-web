@@ -79,7 +79,7 @@ export const common = () => {
                     test: /\.jar$/,
                     type: 'asset/resource',
                     generator: {
-                        filename: '[path][name][ext]',
+                        filename: 'assets/[name][ext]',
                     },
                 },
             ],
