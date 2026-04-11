@@ -3,7 +3,7 @@ import { Config } from './Config';
 import { HostTracker } from './mw/HostTracker';
 import type { MwFactory } from './mw/Mw';
 import { WebsocketMultiplexer } from './mw/WebsocketMultiplexer';
-import { WebsocketProxy } from './mw/WebsocketProxy';
+import { ScrcpyConnection } from './ScrcpyConnection';
 import { HttpServer } from './services/HttpServer';
 import type { Service, ServiceClass } from './services/Service';
 import { WebSocketServer } from './services/WebSocketServer';
@@ -11,7 +11,7 @@ import { WebSocketServer } from './services/WebSocketServer';
 const servicesToStart: ServiceClass[] = [HttpServer, WebSocketServer];
 
 // MWs that accept WebSocket
-const mwList: MwFactory[] = [WebsocketProxy, WebsocketMultiplexer];
+const mwList: MwFactory[] = [ScrcpyConnection, WebsocketMultiplexer];
 
 // MWs that accept Multiplexer
 const mw2List: MwFactory[] = [HostTracker];
@@ -23,7 +23,6 @@ const config = Config.getInstance();
 async function loadGoogModules() {
     const { ControlCenter } = await import('./goog-device/services/ControlCenter');
     const { DeviceTracker } = await import('./goog-device/mw/DeviceTracker');
-    const { WebsocketProxyOverAdb } = await import('./goog-device/mw/WebsocketProxyOverAdb');
 
     if (config.runLocalGoogTracker) {
         mw2List.push(DeviceTracker);
@@ -40,8 +39,6 @@ async function loadGoogModules() {
 
     const { FileListing } = await import('./goog-device/mw/FileListing');
     mw2List.push(FileListing);
-
-    mwList.push(WebsocketProxyOverAdb);
 }
 
 loadGoogModules()

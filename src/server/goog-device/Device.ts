@@ -3,7 +3,6 @@ import type GoogDeviceDescriptor from '../../types/GoogDeviceDescriptor';
 import type { NetInterface } from '../../types/NetInterface';
 import { AdbClient } from '../AdbClient';
 import { Properties } from './Properties';
-import { ScrcpyServer } from './ScrcpyServer';
 import Timeout = NodeJS.Timeout;
 
 enum PID_DETECTION {
@@ -25,7 +24,6 @@ export class Device extends TypedEmitter<DeviceEvents> {
     private pidDetectionVariant: PID_DETECTION = PID_DETECTION.UNKNOWN;
     private adbClient: AdbClient;
     private properties?: Record<string, string>;
-    private spawnServer = true;
     private updateTimeoutId?: Timeout;
     private updateTimeout = Device.INITIAL_UPDATE_TIMEOUT;
     private updateCount = 0;
@@ -61,8 +59,10 @@ export class Device extends TypedEmitter<DeviceEvents> {
         if (state === 'device') {
             this.connected = true;
             this.properties = undefined;
+            this.descriptor.pid = 0; // No persistent server — stream buttons always shown
         } else {
             this.connected = false;
+            this.descriptor.pid = -1;
         }
         this.descriptor.state = state;
         this.emitUpdate();
@@ -286,9 +286,7 @@ export class Device extends TypedEmitter<DeviceEvents> {
     private fetchDeviceInfo = (): void => {
         if (this.connected) {
             const propsPromise = this.getProperties().then((props) => {
-                if (!props) {
-                    return false;
-                }
+                if (!props) return false;
                 let changed = false;
                 Properties.forEach((propName: keyof GoogDeviceDescriptor) => {
                     if (props[propName] !== this.descriptor[propName]) {
@@ -296,24 +294,13 @@ export class Device extends TypedEmitter<DeviceEvents> {
                         (this.descriptor[propName] as any) = props[propName];
                     }
                 });
-                if (changed) {
-                    this.emitUpdate();
-                }
+                if (changed) this.emitUpdate();
                 return true;
             });
             const netIntPromise = this.updateInterfaces().then((interfaces) => {
                 return !!interfaces.length;
             });
-            let pidPromise: Promise<number | undefined>;
-            if (this.spawnServer) {
-                pidPromise = this.startServer();
-            } else {
-                pidPromise = this.getServerPid();
-            }
-            const serverPromise = pidPromise.then(() => {
-                return !(this.descriptor.pid === -1 && this.spawnServer);
-            });
-            Promise.all([propsPromise, netIntPromise, serverPromise])
+            Promise.all([propsPromise, netIntPromise])
                 .then((results) => {
                     this.updateTimeoutId = undefined;
                     const failedCount = results.filter((result) => !result).length;
@@ -334,7 +321,6 @@ export class Device extends TypedEmitter<DeviceEvents> {
             this.updateTimeoutId = undefined;
             this.emitUpdate();
         }
-        return;
     };
 
     private emitUpdate(setUpdateTime = true): void {
@@ -354,25 +340,6 @@ export class Device extends TypedEmitter<DeviceEvents> {
                 delete this.throttleTimeoutId;
                 this.emitUpdate(false);
             }, THROTTLE - time);
-        }
-    }
-
-    private async getServerPid(): Promise<undefined | number> {
-        const pids = await ScrcpyServer.getServerPid(this);
-        let pid;
-        if (!Array.isArray(pids) || !pids.length) {
-            pid = -1;
-        } else {
-            pid = pids[0];
-        }
-        if (this.descriptor.pid !== pid) {
-            this.descriptor.pid = pid;
-            this.emitUpdate();
-        }
-        if (pid !== -1) {
-            return pid;
-        } else {
-            return;
         }
     }
 
@@ -397,43 +364,4 @@ export class Device extends TypedEmitter<DeviceEvents> {
         });
     }
 
-    public async killServer(pid: number): Promise<void> {
-        this.spawnServer = false;
-        const realPid = await this.getServerPid();
-        if (typeof realPid !== 'number') {
-            return;
-        }
-        if (realPid !== pid) {
-            console.error(this.TAG, `Requested to kill server with PID ${pid}. Real server PID is ${realPid}.`);
-        }
-        try {
-            const output = await this.killProcess(realPid);
-            if (output) {
-                console.log(this.TAG, `kill server: "${output}"`);
-            }
-            this.descriptor.pid = -1;
-            this.emitUpdate();
-        } catch (error: any) {
-            console.error(this.TAG, `Error: ${error.message}`);
-            throw error;
-        }
-    }
-
-    public async startServer(): Promise<number | undefined> {
-        this.spawnServer = true;
-        const pid = await this.getServerPid();
-        if (typeof pid === 'number') {
-            return pid;
-        }
-        try {
-            const output = await ScrcpyServer.run(this);
-            if (output) {
-                console.log(this.TAG, `start server: "${output}"`);
-            }
-            return this.getServerPid();
-        } catch (error: any) {
-            console.error(this.TAG, `Error: ${error.message}`);
-            throw error;
-        }
-    }
 }

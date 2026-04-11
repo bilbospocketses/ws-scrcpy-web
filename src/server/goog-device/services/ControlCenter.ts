@@ -145,10 +145,10 @@ export class ControlCenter extends BaseControlCenter<GoogDeviceDescriptor> imple
         const type = command.getType();
         switch (type) {
             case ControlCenterCommand.KILL_SERVER:
-                await device.killServer(command.getPid());
+                // Server lifecycle is now managed by ScrcpyConnection — no-op
                 return;
             case ControlCenterCommand.START_SERVER:
-                await device.startServer();
+                // Server lifecycle is now managed by ScrcpyConnection — no-op
                 return;
             case ControlCenterCommand.UPDATE_INTERFACES:
                 await device.updateInterfaces();

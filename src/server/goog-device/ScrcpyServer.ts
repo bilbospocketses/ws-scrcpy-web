@@ -1,137 +1,29 @@
 import path from 'path';
-import { ARGS_STRING, SERVER_PACKAGE, SERVER_PROCESS_NAME, SERVER_VERSION } from '../../common/Constants';
-import '../../../assets/scrcpy-server.jar';
+import { DEVICE_SERVER_PATH, SERVER_PACKAGE, SERVER_PROCESS_NAME, SERVER_VERSION } from '../../common/Constants';
 import type { Device } from './Device';
-import { ServerVersion } from './ServerVersion';
 
-const TEMP_PATH = '/data/local/tmp/';
 const FILE_DIR = path.join(__dirname, 'assets');
-const FILE_NAME = 'scrcpy-server.jar';
-const RUN_COMMAND = `CLASSPATH=${TEMP_PATH}${FILE_NAME} nohup app_process ${ARGS_STRING}`;
-
-type WaitForPidParams = { tryCounter: number; processExited: boolean; lookPidFile: boolean };
+const FILE_NAME = 'scrcpy-server';
 
 export class ScrcpyServer {
-    private static PID_FILE_PATH = '/data/local/tmp/ws_scrcpy.pid';
-    private static async copyServer(device: Device): Promise<void> {
+    /** Push the scrcpy-server binary to the device. */
+    public static async pushServer(device: Device): Promise<void> {
         const src = path.join(FILE_DIR, FILE_NAME);
-        const dst = TEMP_PATH + FILE_NAME; // don't use path.join(): will not work on win host
-        return device.push(src, dst);
+        return device.push(src, DEVICE_SERVER_PATH);
     }
 
-    // Important to notice that we first try to read PID from file.
-    // Checking with `.getServerPid()` will return process id, but process may stop.
-    // PID file only created after WebSocket server has been successfully started.
-    private static async waitForServerPid(device: Device, params: WaitForPidParams): Promise<number[] | undefined> {
-        const { tryCounter, processExited, lookPidFile } = params;
-        if (processExited) {
-            return;
-        }
-        const timeout = 500 + 100 * tryCounter;
-        if (lookPidFile) {
-            const fileName = ScrcpyServer.PID_FILE_PATH;
-            const content = await device.runShellCommand(`test -f ${fileName} && cat ${fileName}`);
-            if (content.trim()) {
-                const pid = Number.parseInt(content, 10);
-                if (pid && !isNaN(pid)) {
-                    const realPid = await this.getServerPid(device);
-                    if (realPid?.includes(pid)) {
-                        return realPid;
-                    } else {
-                        params.lookPidFile = false;
-                    }
-                }
-            }
-        } else {
-            const list = await this.getServerPid(device);
-            if (Array.isArray(list) && list.length) {
-                return list;
-            }
-        }
-        if (++params.tryCounter > 5) {
-            throw new Error('Failed to start server');
-        }
-        return new Promise<number[] | undefined>((resolve) => {
-            setTimeout(() => {
-                resolve(this.waitForServerPid(device, params));
-            }, timeout);
-        });
-    }
-
-    public static async getServerPid(device: Device): Promise<number[] | undefined> {
-        if (!device.isConnected()) {
-            return;
-        }
+    /** Check if scrcpy-server (app_process) is running on the device. */
+    public static async getServerPid(device: Device): Promise<number | undefined> {
+        if (!device.isConnected()) return;
         const list = await device.getPidOf(SERVER_PROCESS_NAME);
-        if (!Array.isArray(list) || !list.length) {
-            return;
-        }
-        const serverPid: number[] = [];
-        const promises = list.map((pid) => {
-            return device.runShellCommand(`cat /proc/${pid}/cmdline`).then((output) => {
-                const args = output.split('\0');
-                if (!args.length || args[0] !== SERVER_PROCESS_NAME) {
-                    return;
-                }
-                let first = args[0];
-                while (args.length && first !== SERVER_PACKAGE) {
-                    args.shift();
-                    first = args[0];
-                }
-                if (args.length < 3) {
-                    return;
-                }
-                const versionString = args[1];
-                if (versionString === SERVER_VERSION) {
-                    serverPid.push(pid);
-                } else {
-                    const currentVersion = new ServerVersion(versionString);
-                    if (currentVersion.isCompatible()) {
-                        const desired = new ServerVersion(SERVER_VERSION);
-                        if (desired.gt(currentVersion)) {
-                            console.log(
-                                device.TAG,
-                                `Found old server version running (PID: ${pid}, Version: ${versionString})`,
-                            );
-                            console.log(device.TAG, 'Perform kill now');
-                            device.killProcess(pid);
-                        }
-                    }
-                }
-                return;
-            });
-        });
-        await Promise.all(promises);
-        return serverPid;
-    }
+        if (!Array.isArray(list) || !list.length) return;
 
-    public static async run(device: Device): Promise<number[] | undefined> {
-        if (!device.isConnected()) {
-            return;
-        }
-        let list: number[] | string | undefined = await this.getServerPid(device);
-        if (Array.isArray(list) && list.length) {
-            return list;
-        }
-        await this.copyServer(device);
-
-        const params: WaitForPidParams = { tryCounter: 0, processExited: false, lookPidFile: true };
-        const runPromise = device.runShellCommand(RUN_COMMAND);
-        runPromise
-            .then((out) => {
-                if (device.isConnected()) {
-                    console.log(device.TAG, 'Server exited:', out);
-                }
-            })
-            .catch((e) => {
-                console.log(device.TAG, 'Error:', e.message);
-            })
-            .finally(() => {
-                params.processExited = true;
-            });
-        list = await Promise.race([runPromise, this.waitForServerPid(device, params)]);
-        if (Array.isArray(list) && list.length) {
-            return list;
+        for (const pid of list) {
+            const output = await device.runShellCommand(`cat /proc/${pid}/cmdline`);
+            const args = output.split('\0');
+            if (args.includes(SERVER_PACKAGE)) {
+                return pid;
+            }
         }
         return;
     }
