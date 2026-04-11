@@ -144,6 +144,12 @@ export class StreamClientScrcpy
             if (vs.displayId) url.searchParams.set('displayId', vs.displayId.toString());
         }
 
+        // Pass codec selections from ConfigureScrcpy
+        const videoCodec = this.params.videoCodec;
+        if (videoCodec && videoCodec !== 'h264') {
+            url.searchParams.set('videoCodec', videoCodec);
+        }
+
         return url.toString();
     }
 

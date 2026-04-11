@@ -82,6 +82,11 @@ export class ScrcpyConnection extends Mw {
         const displayId = this.queryParams.get('displayId');
         if (displayId) options.displayId = Number.parseInt(displayId, 10);
 
+        const videoCodec = this.queryParams.get('videoCodec');
+        if (videoCodec === 'h265' || videoCodec === 'av1') {
+            options.videoCodec = videoCodec;
+        }
+
         return options;
     }
 

@@ -1,7 +1,7 @@
 // src/server/ScrcpyOptions.ts
 export interface ScrcpyOptions {
     scid: string;
-    videoCodec?: 'h264';
+    videoCodec?: 'h264' | 'h265' | 'av1';
     audioCodec?: 'opus';
     maxSize?: number;
     videoBitRate?: number;
