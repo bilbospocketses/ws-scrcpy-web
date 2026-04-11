@@ -23,8 +23,7 @@
     "node-pty": "^0.10.1",
     "portfinder": "^1.0.28",
     "tslib": "^2.3.1",
-    "ws": "^8.18.0",
-    "yaml": "^2.2.2"
+    "ws": "^8.18.0"
   },
   "devDependencies": {
     "@dead50f7/generate-package-json-webpack-plugin": "^2.6.1",
