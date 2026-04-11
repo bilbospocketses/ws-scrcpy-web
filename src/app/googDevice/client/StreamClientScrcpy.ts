@@ -190,7 +190,8 @@ export class StreamClientScrcpy
             (this.player as any).setMetadataSize(meta.screenWidth, meta.screenHeight);
         }
 
-        if (meta.audioCodec === 'opus' && this.audioPlayer) {
+        if (meta.audioCodec !== 'disabled' && meta.audioCodec !== 'error') {
+            this.audioPlayer = new AudioPlayer(meta.audioCodec);
             this.audioPlayer.start().catch((err) => {
                 console.error(TAG, 'Failed to start audio:', err.message);
             });
@@ -271,7 +272,6 @@ export class StreamClientScrcpy
         player.setVideoSettings(videoSettings, !!fitToScreen, false);
 
         // Resume audio on first user interaction (autoplay policy)
-        this.audioPlayer = new AudioPlayer('opus');
         const resumeAudio = () => {
             this.audioPlayer?.resume();
             document.removeEventListener('click', resumeAudio);
