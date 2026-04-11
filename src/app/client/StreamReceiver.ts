@@ -81,7 +81,7 @@ export class StreamReceiver<P extends ParamsStream> extends ManagerClient<Params
             const videoSettingsBytesCount = rest.readInt32BE(0);
             rest = rest.slice(4);
             if (videoSettingsBytesCount) {
-                this.videoSettingsMap.set(displayId, VideoSettings.fromBuffer(rest.slice(0, videoSettingsBytesCount)));
+                this.videoSettingsMap.set(displayId, VideoSettings.fromUint8Array(rest.slice(0, videoSettingsBytesCount)));
                 rest = rest.slice(videoSettingsBytesCount);
             }
         }
@@ -160,7 +160,7 @@ export class StreamReceiver<P extends ParamsStream> extends ManagerClient<Params
 
     public sendEvent(event: ControlMessage): void {
         if (this.ws && this.ws.readyState === this.ws.OPEN) {
-            this.ws.send(event.toBuffer());
+            this.ws.send(event.toUint8Array());
         } else {
             this.events.push(event);
         }

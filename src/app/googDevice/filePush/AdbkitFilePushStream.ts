@@ -42,7 +42,7 @@ export class AdbkitFilePushStream extends FilePushStream {
         if (!channel) {
             return;
         }
-        channel.send(CommandControlMessage.createPushFileCommand(appendParams).toBuffer());
+        channel.send(CommandControlMessage.createPushFileCommand(appendParams).toUint8Array());
     }
 
     public sendEventFinish({ id }: { id: number }): void {
@@ -51,7 +51,7 @@ export class AdbkitFilePushStream extends FilePushStream {
         if (!channel) {
             return;
         }
-        channel.send(CommandControlMessage.createPushFileCommand(finishParams).toBuffer());
+        channel.send(CommandControlMessage.createPushFileCommand(finishParams).toUint8Array());
     }
 
     public sendEventNew({ id }: { id: number }): void {
@@ -84,7 +84,7 @@ export class AdbkitFilePushStream extends FilePushStream {
         };
         channel.addEventListener('message', onMessage);
         channel.addEventListener('close', onClose);
-        channel.send(CommandControlMessage.createPushFileCommand(newParams).toBuffer());
+        channel.send(CommandControlMessage.createPushFileCommand(newParams).toUint8Array());
     }
 
     public sendEventStart({ id, fileName, fileSize }: { id: number; fileName: string; fileSize: number }): void {
@@ -94,7 +94,7 @@ export class AdbkitFilePushStream extends FilePushStream {
         if (!channel) {
             return;
         }
-        channel.send(CommandControlMessage.createPushFileCommand(startParams).toBuffer());
+        channel.send(CommandControlMessage.createPushFileCommand(startParams).toUint8Array());
     }
 
     public release(): void {

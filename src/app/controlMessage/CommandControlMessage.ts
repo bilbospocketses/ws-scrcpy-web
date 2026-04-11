@@ -1,3 +1,5 @@
+import { BinaryReader } from '../BinaryReader';
+import { BinaryWriter } from '../BinaryWriter';
 import Util from '../Util';
 import type VideoSettings from '../VideoSettings';
 import { ControlMessage } from './ControlMessage';
@@ -32,15 +34,13 @@ export class CommandControlMessage extends ControlMessage {
     ]);
 
     public static createSetVideoSettingsCommand(videoSettings: VideoSettings): CommandControlMessage {
-        const temp = videoSettings.toBuffer();
+        const temp = videoSettings.toUint8Array();
         const event = new CommandControlMessage(ControlMessage.TYPE_CHANGE_STREAM_PARAMETERS);
-        const offset = CommandControlMessage.PAYLOAD_LENGTH + 1;
-        const buffer = Buffer.alloc(offset + temp.length);
-        buffer.writeUInt8(event.type, 0);
-        temp.forEach((byte, index) => {
-            buffer.writeUInt8(byte, index + offset);
-        });
-        event.buffer = buffer;
+        const size = CommandControlMessage.PAYLOAD_LENGTH + 1 + temp.length;
+        event.buffer = new BinaryWriter(size)
+            .writeUInt8(event.type)
+            .writeBytes(temp)
+            .toUint8Array();
         return event;
     }
 
@@ -48,30 +48,25 @@ export class CommandControlMessage extends ControlMessage {
         const event = new CommandControlMessage(ControlMessage.TYPE_SET_CLIPBOARD);
         const textBytes: Uint8Array | null = text ? Util.stringToUtf8ByteArray(text) : null;
         const textLength = textBytes ? textBytes.length : 0;
-        let offset = 0;
         // type(1) + sequence(8) + paste(1) + textLength(4) + text
-        const buffer = Buffer.alloc(1 + 8 + 1 + 4 + textLength);
-        offset = buffer.writeInt8(event.type, offset);
-        buffer.writeBigUInt64BE(BigInt(sequence), offset);
-        offset += 8;
-        offset = buffer.writeUInt8(paste ? 1 : 0, offset);
-        offset = buffer.writeInt32BE(textLength, offset);
+        const writer = new BinaryWriter(1 + 8 + 1 + 4 + textLength)
+            .writeInt8(event.type)
+            .writeBigUInt64BE(BigInt(sequence))
+            .writeUInt8(paste ? 1 : 0)
+            .writeInt32BE(textLength);
         if (textBytes) {
-            textBytes.forEach((byte: number, index: number) => {
-                buffer.writeUInt8(byte, index + offset);
-            });
+            writer.writeBytes(textBytes);
         }
-        event.buffer = buffer;
+        event.buffer = writer.toUint8Array();
         return event;
     }
 
     public static createSetScreenPowerModeCommand(mode: boolean): CommandControlMessage {
         const event = new CommandControlMessage(ControlMessage.TYPE_SET_SCREEN_POWER_MODE);
-        let offset = 0;
-        const buffer = Buffer.alloc(1 + 1);
-        offset = buffer.writeInt8(event.type, offset);
-        buffer.writeUInt8(mode ? 1 : 0, offset);
-        event.buffer = buffer;
+        event.buffer = new BinaryWriter(1 + 1)
+            .writeInt8(event.type)
+            .writeUInt8(mode ? 1 : 0)
+            .toUint8Array();
         return event;
     }
 
@@ -103,25 +98,15 @@ export class CommandControlMessage extends ControlMessage {
         const sizeField = 4;
         const textLengthField = 2;
         const textLength = text.length;
-        let offset = CommandControlMessage.PAYLOAD_LENGTH;
-
-        const buffer = Buffer.alloc(
-            offset + typeField + idField + stateField + sizeField + textLengthField + textLength,
-        );
-        buffer.writeUInt8(event.type, offset);
-        offset += typeField;
-        buffer.writeInt16BE(id, offset);
-        offset += idField;
-        buffer.writeInt8(FilePushState.START, offset);
-        offset += stateField;
-        buffer.writeUInt32BE(fileSize, offset);
-        offset += sizeField;
-        buffer.writeUInt16BE(textLength, offset);
-        offset += textLengthField;
-        text.forEach((byte, index) => {
-            buffer.writeUInt8(byte, index + offset);
-        });
-        event.buffer = buffer;
+        const totalSize = CommandControlMessage.PAYLOAD_LENGTH + typeField + idField + stateField + sizeField + textLengthField + textLength;
+        event.buffer = new BinaryWriter(totalSize)
+            .writeUInt8(event.type)
+            .writeInt16BE(id)
+            .writeInt8(FilePushState.START)
+            .writeUInt32BE(fileSize)
+            .writeUInt16BE(textLength)
+            .writeBytes(text)
+            .toUint8Array();
         return event;
     }
 
@@ -132,21 +117,14 @@ export class CommandControlMessage extends ControlMessage {
         const stateField = 1;
         const chunkLengthField = 4;
         const chunkLength = chunk.byteLength;
-        let offset = CommandControlMessage.PAYLOAD_LENGTH;
-
-        const buffer = Buffer.alloc(offset + typeField + idField + stateField + chunkLengthField + chunkLength);
-        buffer.writeUInt8(event.type, offset);
-        offset += typeField;
-        buffer.writeInt16BE(id, offset);
-        offset += idField;
-        buffer.writeInt8(FilePushState.APPEND, offset);
-        offset += stateField;
-        buffer.writeUInt32BE(chunkLength, offset);
-        offset += chunkLengthField;
-        Array.from(chunk).forEach((byte, index) => {
-            buffer.writeUInt8(byte, index + offset);
-        });
-        event.buffer = buffer;
+        const totalSize = CommandControlMessage.PAYLOAD_LENGTH + typeField + idField + stateField + chunkLengthField + chunkLength;
+        event.buffer = new BinaryWriter(totalSize)
+            .writeUInt8(event.type)
+            .writeInt16BE(id)
+            .writeInt8(FilePushState.APPEND)
+            .writeUInt32BE(chunkLength)
+            .writeBytes(chunk)
+            .toUint8Array();
         return event;
     }
 
@@ -155,52 +133,44 @@ export class CommandControlMessage extends ControlMessage {
         const typeField = 1;
         const idField = 2;
         const stateField = 1;
-        let offset = CommandControlMessage.PAYLOAD_LENGTH;
-        const buffer = Buffer.alloc(offset + typeField + idField + stateField);
-        buffer.writeUInt8(event.type, offset);
-        offset += typeField;
-        buffer.writeInt16BE(id, offset);
-        offset += idField;
-        buffer.writeInt8(state, offset);
-        event.buffer = buffer;
+        const totalSize = CommandControlMessage.PAYLOAD_LENGTH + typeField + idField + stateField;
+        event.buffer = new BinaryWriter(totalSize)
+            .writeUInt8(event.type)
+            .writeInt16BE(id)
+            .writeInt8(state)
+            .toUint8Array();
         return event;
     }
 
-    public static pushFileCommandFromBuffer(buffer: Buffer): {
+    public static pushFileCommandFromData(data: Uint8Array): {
         id: number;
         state: FilePushState;
-        chunk?: Buffer;
+        chunk?: Uint8Array;
         fileSize?: number;
         fileName?: string;
     } {
-        let offset = 0;
-        const type = buffer.readUInt8(offset);
-        offset += 1;
+        const reader = new BinaryReader(data);
+        const type = reader.readUInt8();
         if (type !== CommandControlMessage.TYPE_PUSH_FILE) {
             throw TypeError(`Incorrect type: "${type}"`);
         }
-        const id = buffer.readInt16BE(offset);
-        offset += 2;
-        const state = buffer.readInt8(offset);
-        offset += 1;
-        let chunk: Buffer | undefined;
+        const id = reader.readInt16BE();
+        const state = reader.readInt8();
+        let chunk: Uint8Array | undefined;
         let fileSize: number | undefined;
         let fileName: string | undefined;
         if (state === FilePushState.APPEND) {
-            const chunkLength = buffer.readUInt32BE(offset);
-            offset += 4;
-            chunk = buffer.slice(offset, offset + chunkLength);
+            const chunkLength = reader.readUInt32BE();
+            chunk = reader.readBytes(chunkLength);
         } else if (state === FilePushState.START) {
-            fileSize = buffer.readUInt32BE(offset);
-            offset += 4;
-            const textLength = buffer.readUInt16BE(offset);
-            offset += 2;
-            fileName = Util.utf8ByteArrayToString(buffer.slice(offset, offset + textLength));
+            fileSize = reader.readUInt32BE();
+            const textLength = reader.readUInt16BE();
+            fileName = Util.utf8ByteArrayToString(reader.readBytes(textLength));
         }
         return { id, state, chunk, fileName, fileSize };
     }
 
-    private buffer?: Buffer;
+    private buffer?: Uint8Array;
 
     constructor(readonly type: number) {
         super(type);
@@ -209,17 +179,17 @@ export class CommandControlMessage extends ControlMessage {
     /**
      * @override
      */
-    public toBuffer(): Buffer {
+    public toUint8Array(): Uint8Array {
         if (!this.buffer) {
-            const buffer = Buffer.alloc(CommandControlMessage.PAYLOAD_LENGTH + 1);
-            buffer.writeUInt8(this.type, 0);
-            this.buffer = buffer;
+            this.buffer = new BinaryWriter(CommandControlMessage.PAYLOAD_LENGTH + 1)
+                .writeUInt8(this.type)
+                .toUint8Array();
         }
         return this.buffer;
     }
 
     public toString(): string {
-        const buffer = this.buffer ? `, buffer=[${this.buffer.join(',')}]` : '';
+        const buffer = this.buffer ? `, buffer=[${Array.from(this.buffer).join(',')}]` : '';
         return `CommandControlMessage{action=${this.type}${buffer}}`;
     }
 }

@@ -77,7 +77,7 @@ export class FilePushReader {
     }
 
     private onMessage = async (event: MessageEvent): Promise<void> => {
-        const command = CommandControlMessage.pushFileCommandFromBuffer(Buffer.from(event.data));
+        const command = CommandControlMessage.pushFileCommandFromData(new Uint8Array(event.data as ArrayBuffer));
 
         const { id, state } = command;
         switch (state) {

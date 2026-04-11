@@ -1,3 +1,5 @@
+import { BinaryReader } from './BinaryReader';
+import { BinaryWriter } from './BinaryWriter';
 import Rect from './Rect';
 import Size from './Size';
 import Util from './Util';
@@ -52,32 +54,20 @@ export default class VideoSettings {
         }
     }
 
-    public static fromBuffer(buffer: Buffer): VideoSettings {
-        let offset = 0;
-        const bitrate = buffer.readInt32BE(offset);
-        offset += 4;
-        const maxFps = buffer.readInt32BE(offset);
-        offset += 4;
-        const iFrameInterval = buffer.readInt8(offset);
-        offset += 1;
-        const width = buffer.readInt16BE(offset);
-        offset += 2;
-        const height = buffer.readInt16BE(offset);
-        offset += 2;
-        const left = buffer.readInt16BE(offset);
-        offset += 2;
-        const top = buffer.readInt16BE(offset);
-        offset += 2;
-        const right = buffer.readInt16BE(offset);
-        offset += 2;
-        const bottom = buffer.readInt16BE(offset);
-        offset += 2;
-        const sendFrameMeta = !!buffer.readInt8(offset);
-        offset += 1;
-        const lockedVideoOrientation = buffer.readInt8(offset);
-        offset += 1;
-        const displayId = buffer.readInt32BE(offset);
-        offset += 4;
+    public static fromUint8Array(data: Uint8Array): VideoSettings {
+        const reader = new BinaryReader(data);
+        const bitrate = reader.readInt32BE();
+        const maxFps = reader.readInt32BE();
+        const iFrameInterval = reader.readInt8();
+        const width = reader.readInt16BE();
+        const height = reader.readInt16BE();
+        const left = reader.readInt16BE();
+        const top = reader.readInt16BE();
+        const right = reader.readInt16BE();
+        const bottom = reader.readInt16BE();
+        const sendFrameMeta = !!reader.readInt8();
+        const lockedVideoOrientation = reader.readInt8();
+        const displayId = reader.readInt32BE();
         let bounds: Size | null = null;
         let crop: Rect | null = null;
         if (width !== 0 && height !== 0) {
@@ -88,18 +78,14 @@ export default class VideoSettings {
         }
         let codecOptions;
         let encoderName;
-        const codecOptionsLength = buffer.readInt32BE(offset);
-        offset += 4;
+        const codecOptionsLength = reader.readInt32BE();
         if (codecOptionsLength) {
-            const codecOptionsBytes = buffer.slice(offset, offset + codecOptionsLength);
-            offset += codecOptionsLength;
+            const codecOptionsBytes = reader.readBytes(codecOptionsLength);
             codecOptions = Util.utf8ByteArrayToString(codecOptionsBytes);
         }
-        const encoderNameLength = buffer.readInt32BE(offset);
-        offset += 4;
+        const encoderNameLength = reader.readInt32BE();
         if (encoderNameLength) {
-            const encoderNameBytes = buffer.slice(offset, offset + encoderNameLength);
-            offset += encoderNameLength;
+            const encoderNameBytes = reader.readBytes(encoderNameLength);
             encoderName = Util.utf8ByteArrayToString(encoderNameBytes);
         }
         return new VideoSettings(
@@ -115,7 +101,7 @@ export default class VideoSettings {
                 codecOptions,
                 encoderName,
             },
-            offset,
+            reader.offset,
         );
     }
 
@@ -154,7 +140,7 @@ export default class VideoSettings {
         );
     }
 
-    public toBuffer(): Buffer {
+    public toUint8Array(): Uint8Array {
         let additionalLength = 0;
         let codecOptionsBytes;
         let encoderNameBytes;
@@ -166,37 +152,33 @@ export default class VideoSettings {
             encoderNameBytes = Util.stringToUtf8ByteArray(this.encoderName);
             additionalLength += encoderNameBytes.length;
         }
-        const buffer = Buffer.alloc(VideoSettings.BASE_BUFFER_LENGTH + additionalLength);
+        const writer = new BinaryWriter(VideoSettings.BASE_BUFFER_LENGTH + additionalLength);
         const { width = 0, height = 0 } = this.bounds || {};
         const { left = 0, top = 0, right = 0, bottom = 0 } = this.crop || {};
-        let offset = 0;
-        offset = buffer.writeInt32BE(this.bitrate, offset);
-        offset = buffer.writeInt32BE(this.maxFps, offset);
-        offset = buffer.writeInt8(this.iFrameInterval, offset);
-        offset = buffer.writeInt16BE(width, offset);
-        offset = buffer.writeInt16BE(height, offset);
-        offset = buffer.writeInt16BE(left, offset);
-        offset = buffer.writeInt16BE(top, offset);
-        offset = buffer.writeInt16BE(right, offset);
-        offset = buffer.writeInt16BE(bottom, offset);
-        offset = buffer.writeInt8(this.sendFrameMeta ? 1 : 0, offset);
-        offset = buffer.writeInt8(this.lockedVideoOrientation, offset);
-        offset = buffer.writeInt32BE(this.displayId, offset);
+        writer
+            .writeInt32BE(this.bitrate)
+            .writeInt32BE(this.maxFps)
+            .writeInt8(this.iFrameInterval)
+            .writeInt16BE(width)
+            .writeInt16BE(height)
+            .writeInt16BE(left)
+            .writeInt16BE(top)
+            .writeInt16BE(right)
+            .writeInt16BE(bottom)
+            .writeInt8(this.sendFrameMeta ? 1 : 0)
+            .writeInt8(this.lockedVideoOrientation)
+            .writeInt32BE(this.displayId);
         if (codecOptionsBytes) {
-            offset = buffer.writeInt32BE(codecOptionsBytes.length, offset);
-            buffer.fill(codecOptionsBytes, offset);
-            offset += codecOptionsBytes.length;
+            writer.writeInt32BE(codecOptionsBytes.length).writeBytes(codecOptionsBytes);
         } else {
-            offset = buffer.writeInt32BE(0, offset);
+            writer.writeInt32BE(0);
         }
         if (encoderNameBytes) {
-            offset = buffer.writeInt32BE(encoderNameBytes.length, offset);
-            buffer.fill(encoderNameBytes, offset);
-            offset += encoderNameBytes.length;
+            writer.writeInt32BE(encoderNameBytes.length).writeBytes(encoderNameBytes);
         } else {
-            buffer.writeInt32BE(0, offset);
+            writer.writeInt32BE(0);
         }
-        return buffer;
+        return writer.toUint8Array();
     }
 
     public toString(): string {
