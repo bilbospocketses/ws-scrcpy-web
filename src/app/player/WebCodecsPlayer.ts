@@ -6,6 +6,8 @@ import VideoSettings from '../VideoSettings';
 import { BaseCanvasBasedPlayer } from './BaseCanvasBasedPlayer';
 import { BasePlayer } from './BasePlayer';
 import { parseSPS } from './h264-utils';
+import { hevcNalType, HEVC_NAL_TYPE, parseHevcSPS } from './h265-utils';
+import { obuType, OBU_TYPE, parseAv1SequenceHeader } from './av1-utils';
 
 function toHex(value: number) {
     return value.toString(16).padStart(2, '0').toUpperCase();
@@ -59,6 +61,7 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
     private context: CanvasRenderingContext2D;
     private decoder: VideoDecoder;
     private configData?: Uint8Array;
+    private detectedCodec: 'h264' | 'h265' | 'av1' | null = null;
 
     constructor(udid: string, displayInfo?: DisplayInfo, name = WebCodecsPlayer.playerFullName) {
         super(udid, displayInfo, name, WebCodecsPlayer.storageKeyPrefix);
@@ -91,17 +94,14 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
         BasePlayer.prototype.pushFrame.call(this, data);
 
         if (isConfig) {
-            // Config packet contains SPS + PPS NAL units
-            // Find SPS NAL (type 7) to extract codec string and dimensions
-            const spsOffset = this.findNaluOffset(data, 7);
-            if (spsOffset >= 0) {
-                const { codec, width, height } = WebCodecsPlayer.parseSPSCodecString(data.subarray(spsOffset));
-                this.scaleCanvas(width, height);
+            const result = this.parseConfig(data);
+            if (result) {
+                this.scaleCanvas(result.width, result.height);
                 if (this.decoder.state === 'configured') {
                     this.decoder.flush().catch(() => {});
                 }
                 this.decoder.configure({
-                    codec,
+                    codec: result.codec,
                     optimizeForLatency: true,
                 } as VideoDecoderConfig);
             }
@@ -112,22 +112,32 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
         if (this.decoder.state !== 'configured') return;
 
         if (isKeyframe && this.configData) {
-            // Prepend SPS/PPS config to keyframe for decoder
-            const fullData = new Uint8Array(this.configData.length + data.length);
-            fullData.set(this.configData);
-            fullData.set(data, this.configData.length);
-
             if (!this.receivedFirstFrame) {
                 this.receivedFirstFrame = true;
             }
 
-            this.decoder.decode(
-                new EncodedVideoChunk({
-                    type: 'key',
-                    timestamp: Number(pts),
-                    data: fullData,
-                }),
-            );
+            if (this.detectedCodec === 'av1') {
+                // AV1: no config prepending needed
+                this.decoder.decode(
+                    new EncodedVideoChunk({
+                        type: 'key',
+                        timestamp: Number(pts),
+                        data,
+                    }),
+                );
+            } else {
+                // H.264/H.265: prepend config (SPS/PPS or VPS/SPS/PPS)
+                const fullData = new Uint8Array(this.configData.length + data.length);
+                fullData.set(this.configData);
+                fullData.set(data, this.configData.length);
+                this.decoder.decode(
+                    new EncodedVideoChunk({
+                        type: 'key',
+                        timestamp: Number(pts),
+                        data: fullData,
+                    }),
+                );
+            }
             return;
         }
 
@@ -156,6 +166,71 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
                     continue;
                 }
                 if (offset < data.length && (data[offset] & 0x1f) === naluType) {
+                    return offset;
+                }
+            }
+        }
+        return -1;
+    }
+
+    private parseConfig(data: Uint8Array): { codec: string; width: number; height: number } | null {
+        // Try Annex B start code detection (H.264/H.265)
+        const naluOffset = this.findStartCode(data);
+        if (naluOffset >= 0) {
+            const firstByte = data[naluOffset];
+            const h265Type = hevcNalType(firstByte);
+
+            if (h265Type === HEVC_NAL_TYPE.VPS || h265Type === HEVC_NAL_TYPE.SPS) {
+                this.detectedCodec = 'h265';
+                const spsOffset = this.findHevcNalu(data, HEVC_NAL_TYPE.SPS);
+                if (spsOffset >= 0) {
+                    return parseHevcSPS(data.subarray(spsOffset));
+                }
+            } else {
+                // H.264: check for SPS (type 7)
+                const h264Type = firstByte & 0x1f;
+                if (h264Type === 7) {
+                    this.detectedCodec = 'h264';
+                    const spsOffset = this.findNaluOffset(data, 7);
+                    if (spsOffset >= 0) {
+                        return WebCodecsPlayer.parseSPSCodecString(data.subarray(spsOffset));
+                    }
+                }
+            }
+            return null;
+        }
+
+        // No Annex B start code — try AV1 OBU
+        if (data.length > 0 && obuType(data[0]) === OBU_TYPE.SEQUENCE_HEADER) {
+            this.detectedCodec = 'av1';
+            return parseAv1SequenceHeader(data);
+        }
+
+        return null;
+    }
+
+    private findStartCode(data: Uint8Array): number {
+        for (let i = 0; i < data.length - 4; i++) {
+            if (data[i] === 0 && data[i + 1] === 0) {
+                if (data[i + 2] === 1) return i + 3;
+                if (data[i + 2] === 0 && data[i + 3] === 1) return i + 4;
+            }
+        }
+        return -1;
+    }
+
+    private findHevcNalu(data: Uint8Array, nalType: number): number {
+        for (let i = 0; i < data.length - 4; i++) {
+            if (data[i] === 0 && data[i + 1] === 0) {
+                let offset: number;
+                if (data[i + 2] === 1) {
+                    offset = i + 3;
+                } else if (data[i + 2] === 0 && data[i + 3] === 1) {
+                    offset = i + 4;
+                } else {
+                    continue;
+                }
+                if (offset < data.length && hevcNalType(data[offset]) === nalType) {
                     return offset;
                 }
             }
@@ -231,5 +306,6 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
         }
         this.decoder = this.createDecoder();
         this.configData = undefined;
+        this.detectedCodec = null;
     }
 }
