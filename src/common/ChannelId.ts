@@ -1,5 +1,5 @@
 // src/common/ChannelId.ts
-export const enum ChannelId {
+export enum ChannelId {
     VIDEO = 0,
     AUDIO = 1,
     CONTROL = 2,

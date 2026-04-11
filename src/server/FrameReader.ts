@@ -1,4 +1,5 @@
 // src/server/FrameReader.ts
+// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import type net from 'net';
 
 const PTS_FLAG_CONFIG = 0x8000000000000000n;

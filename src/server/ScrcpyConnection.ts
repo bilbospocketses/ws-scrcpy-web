@@ -1,5 +1,8 @@
+// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import crypto from 'crypto';
+// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import net from 'net';
+// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import path from 'path';
 import type WS from 'ws';
 import { ACTION } from '../common/Action';

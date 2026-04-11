@@ -9,7 +9,7 @@ export class AudioPlayer {
     private started = false;
     private workletReady = false;
 
-    constructor(private readonly codec: 'opus' = 'opus') {}
+    constructor(private readonly codec = 'opus') {}
 
     async start(): Promise<void> {
         if (this.started) return;

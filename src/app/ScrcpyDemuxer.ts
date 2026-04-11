@@ -15,18 +15,9 @@ export interface SessionMetadata {
     audioCodec: string;
 }
 
-export type VideoFrameCallback = (
-    data: Uint8Array,
-    pts: bigint,
-    isConfig: boolean,
-    isKeyframe: boolean,
-) => void;
+export type VideoFrameCallback = (data: Uint8Array, pts: bigint, isConfig: boolean, isKeyframe: boolean) => void;
 
-export type AudioFrameCallback = (
-    data: Uint8Array,
-    pts: bigint,
-    isConfig: boolean,
-) => void;
+export type AudioFrameCallback = (data: Uint8Array, pts: bigint, isConfig: boolean) => void;
 
 export type DeviceMessageCallback = (data: Uint8Array) => void;
 export type MetadataCallback = (meta: SessionMetadata) => void;
