@@ -119,7 +119,7 @@ export class StreamClientScrcpy
             action,
             player: Util.parseString(params, 'player', true),
             udid: Util.parseString(params, 'udid', true),
-            ws: Util.parseString(params, 'ws', true),
+            ws: Util.parseString(params, 'ws') || '',
         };
     }
 
@@ -127,7 +127,7 @@ export class StreamClientScrcpy
         const { hostname, port, secure } = this.params;
         const protocol = secure ? 'wss' : 'ws';
         const host = hostname || window.location.hostname;
-        const p = port || (secure ? 443 : 80);
+        const p = port || Number.parseInt(window.location.port, 10) || (secure ? 443 : 80);
         const url = new URL(`${protocol}://${host}:${p}/`);
         url.searchParams.set('action', ACTION.STREAM_SCRCPY);
         url.searchParams.set('udid', this.params.udid);

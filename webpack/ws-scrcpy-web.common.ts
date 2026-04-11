@@ -122,6 +122,7 @@ export const frontend = () => {
 const back: webpack.Configuration = {
     entry: path.join(PROJECT_ROOT, './src/server/index.ts'),
     externals: [/^[a-z@]/],
+    externalsType: 'commonjs',
     plugins: [
         new GenerateDistPackageJsonPlugin(),
         buildConfigDefinePlugin,

@@ -213,21 +213,19 @@ export class ScrcpyConnection extends Mw {
         });
     }
 
+    private static readonly PTS_FLAG_CONFIG = 0x8000000000000000n;
+    private static readonly PTS_FLAG_KEYFRAME = 0x4000000000000000n;
+
     private startForwarding(): void {
         // Video: TCP → channel 0 → WS
         this.videoReader = new FrameReader(this.videoSocket!);
         this.videoReader.onFrame((frame) => {
+            let pts = frame.pts;
+            if (frame.type === 'config') pts |= ScrcpyConnection.PTS_FLAG_CONFIG;
+            else if (frame.type === 'keyframe') pts |= ScrcpyConnection.PTS_FLAG_KEYFRAME;
             const header = Buffer.alloc(12);
-            header.writeBigUInt64BE(frame.pts, 0);
+            header.writeBigUInt64BE(pts, 0);
             header.writeUInt32BE(frame.data.length, 8);
-            // Restore flags in PTS for browser-side parsing
-            if (frame.type === 'config') {
-                const hi = header.readUInt32BE(0);
-                header.writeUInt32BE(hi | 0x80000000, 0);
-            } else if (frame.type === 'keyframe') {
-                const hi = header.readUInt32BE(0);
-                header.writeUInt32BE(hi | 0x40000000, 0);
-            }
             this.sendChannel(ChannelId.VIDEO, Buffer.concat([header, frame.data]));
         });
         this.videoReader.onEnd(() => this.release());
@@ -235,13 +233,11 @@ export class ScrcpyConnection extends Mw {
         // Audio: TCP → channel 1 → WS
         this.audioReader = new FrameReader(this.audioSocket!);
         this.audioReader.onFrame((frame) => {
+            let pts = frame.pts;
+            if (frame.type === 'config') pts |= ScrcpyConnection.PTS_FLAG_CONFIG;
             const header = Buffer.alloc(12);
-            header.writeBigUInt64BE(frame.pts, 0);
+            header.writeBigUInt64BE(pts, 0);
             header.writeUInt32BE(frame.data.length, 8);
-            if (frame.type === 'config') {
-                const hi = header.readUInt32BE(0);
-                header.writeUInt32BE(hi | 0x80000000, 0);
-            }
             this.sendChannel(ChannelId.AUDIO, Buffer.concat([header, frame.data]));
         });
 

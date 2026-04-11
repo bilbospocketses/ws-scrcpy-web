@@ -1,6 +1,6 @@
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import * as portfinder from 'portfinder';
+
 import AdbProtocol from '../../common/AdbProtocol';
 import type { Multiplexer } from '../../packages/multiplexer/Multiplexer';
 import type { FileStats } from '../../types/FileStats';
@@ -172,21 +172,6 @@ export class AdbUtils {
         msgBuf.copy(buf, offset);
         stream.send(buf);
         stream.close();
-    }
-
-    public static async forward(serial: string, remote: string): Promise<number> {
-        const forwards = await adbClient.listForwards(serial);
-        const forward = forwards.find((item) => {
-            return item.remote === remote && item.local.startsWith('tcp:') && item.serial === serial;
-        });
-        if (forward) {
-            const { local } = forward;
-            return Number.parseInt(local.split('tcp:')[1], 10);
-        }
-        const port = await portfinder.getPortPromise();
-        const local = `tcp:${port}`;
-        await adbClient.forward(serial, local, remote);
-        return port;
     }
 
     public static async getDeviceName(serial: string): Promise<string> {
