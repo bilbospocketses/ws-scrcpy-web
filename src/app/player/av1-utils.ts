@@ -17,6 +17,38 @@ export interface Av1CodecInfo {
     height: number;
 }
 
+/**
+ * Parse a 4-byte AV1CodecConfigurationRecord (ISO 14496-15).
+ * scrcpy sends this format as the config packet for AV1 streams.
+ * Format: marker(1)|version(7) | seq_profile(3)|seq_level_idx(5) | seq_tier(1)|high_bitdepth(1)|twelve_bit(1)|... | reserved
+ * Returns codec string but no dimensions (they come from stream metadata).
+ */
+export function parseAv1ConfigRecord(data: Uint8Array): { codec: string } | null {
+    if (data.length < 4) return null;
+    const marker = (data[0] >> 7) & 1;
+    if (marker !== 1) return null; // Not a valid AV1 config record
+
+    const seqProfile = (data[1] >> 5) & 0x7;
+    const seqLevelIdx = data[1] & 0x1f;
+    const seqTier = (data[2] >> 7) & 1;
+    const highBitDepth = (data[2] >> 6) & 1;
+    const twelveBit = (data[2] >> 5) & 1;
+
+    let bitDepth = 8;
+    if (seqProfile === 2 && highBitDepth) {
+        bitDepth = twelveBit ? 12 : 10;
+    } else if (highBitDepth) {
+        bitDepth = 10;
+    }
+
+    const tierChar = seqTier ? 'H' : 'M';
+    const levelStr = seqLevelIdx.toString().padStart(2, '0');
+    const bdStr = bitDepth.toString().padStart(2, '0');
+    const codec = `av01.${seqProfile}.${levelStr}${tierChar}.${bdStr}`;
+
+    return { codec };
+}
+
 export function parseAv1SequenceHeader(data: Uint8Array): Av1CodecInfo {
     let pos = 0;
 

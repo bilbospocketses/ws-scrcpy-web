@@ -7,7 +7,7 @@ import { BaseCanvasBasedPlayer } from './BaseCanvasBasedPlayer';
 import { BasePlayer } from './BasePlayer';
 import { parseSPS } from './h264-utils';
 import { hevcNalType, HEVC_NAL_TYPE, parseHevcSPS } from './h265-utils';
-import { obuType, OBU_TYPE, parseAv1SequenceHeader } from './av1-utils';
+import { obuType, OBU_TYPE, parseAv1SequenceHeader, parseAv1ConfigRecord } from './av1-utils';
 
 function toHex(value: number) {
     return value.toString(16).padStart(2, '0').toUpperCase();
@@ -62,6 +62,8 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
     private decoder: VideoDecoder;
     private configData?: Uint8Array;
     private detectedCodec: 'h264' | 'h265' | 'av1' | null = null;
+    private metadataWidth = 0;
+    private metadataHeight = 0;
 
     constructor(udid: string, displayInfo?: DisplayInfo, name = WebCodecsPlayer.playerFullName) {
         super(udid, displayInfo, name, WebCodecsPlayer.storageKeyPrefix);
@@ -94,9 +96,18 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
         BasePlayer.prototype.pushFrame.call(this, data);
 
         if (isConfig) {
-            const result = this.parseConfig(data);
+            let result: { codec: string; width?: number; height?: number } | null = null;
+            try {
+                result = this.parseConfig(data);
+            } catch (e) {
+                console.error('[WebCodecsPlayer] parseConfig error:', e);
+            }
             if (result) {
-                this.scaleCanvas(result.width, result.height);
+                const w = result.width || this.metadataWidth;
+                const h = result.height || this.metadataHeight;
+                if (w > 0 && h > 0) {
+                    this.scaleCanvas(w, h);
+                }
                 if (this.decoder.state === 'configured') {
                     this.decoder.flush().catch(() => {});
                 }
@@ -173,7 +184,7 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
         return -1;
     }
 
-    private parseConfig(data: Uint8Array): { codec: string; width: number; height: number } | null {
+    private parseConfig(data: Uint8Array): { codec: string; width?: number; height?: number } | null {
         // Try Annex B start code detection (H.264/H.265)
         const naluOffset = this.findStartCode(data);
         if (naluOffset >= 0) {
@@ -187,7 +198,6 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
                     return parseHevcSPS(data.subarray(spsOffset));
                 }
             } else {
-                // H.264: check for SPS (type 7)
                 const h264Type = firstByte & 0x1f;
                 if (h264Type === 7) {
                     this.detectedCodec = 'h264';
@@ -200,10 +210,19 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
             return null;
         }
 
-        // No Annex B start code — try AV1 OBU
-        if (data.length > 0 && obuType(data[0]) === OBU_TYPE.SEQUENCE_HEADER) {
-            this.detectedCodec = 'av1';
-            return parseAv1SequenceHeader(data);
+        // No Annex B start code — try AV1
+        if (data.length >= 4) {
+            // Try AV1CodecConfigurationRecord first (4 bytes, marker=1)
+            const configRecord = parseAv1ConfigRecord(data);
+            if (configRecord) {
+                this.detectedCodec = 'av1';
+                return { ...configRecord, width: 0, height: 0 };
+            }
+            // Try raw OBU Sequence Header
+            if (obuType(data[0]) === OBU_TYPE.SEQUENCE_HEADER) {
+                this.detectedCodec = 'av1';
+                return parseAv1SequenceHeader(data);
+            }
         }
 
         return null;
@@ -236,6 +255,12 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
             }
         }
         return -1;
+    }
+
+    /** Set fallback dimensions from stream metadata (used by AV1 which doesn't include dimensions in config). */
+    public setMetadataSize(width: number, height: number): void {
+        this.metadataWidth = width;
+        this.metadataHeight = height;
     }
 
     protected scaleCanvas(width: number, height: number): void {

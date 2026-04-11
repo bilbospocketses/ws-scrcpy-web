@@ -180,6 +180,11 @@ export class StreamClientScrcpy
         this.setTitle(`Stream ${this.deviceName}`);
         console.log(TAG, `Connected: ${meta.deviceName} ${meta.screenWidth}x${meta.screenHeight} video=${meta.videoCodec} audio=${meta.audioCodec}`);
 
+        // Pass metadata dimensions to player as fallback (AV1 config doesn't include dimensions)
+        if (this.player && 'setMetadataSize' in this.player) {
+            (this.player as any).setMetadataSize(meta.screenWidth, meta.screenHeight);
+        }
+
         if (meta.audioCodec === 'opus' && this.audioPlayer) {
             this.audioPlayer.start().catch((err) => {
                 console.error(TAG, 'Failed to start audio:', err.message);
