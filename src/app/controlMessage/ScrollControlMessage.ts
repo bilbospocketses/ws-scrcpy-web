@@ -6,15 +6,17 @@ export interface ScrollControlMessageInterface extends ControlMessageInterface {
     position: PositionInterface;
     hScroll: number;
     vScroll: number;
+    buttons: number;
 }
 
 export class ScrollControlMessage extends ControlMessage {
-    public static PAYLOAD_LENGTH = 20;
+    public static PAYLOAD_LENGTH = 25;
 
     constructor(
         readonly position: Position,
         readonly hScroll: number,
         readonly vScroll: number,
+        readonly buttons: number,
     ) {
         super(ControlMessage.TYPE_SCROLL);
     }
@@ -30,13 +32,14 @@ export class ScrollControlMessage extends ControlMessage {
         offset = buffer.writeUInt32BE(this.position.point.y, offset);
         offset = buffer.writeUInt16BE(this.position.screenSize.width, offset);
         offset = buffer.writeUInt16BE(this.position.screenSize.height, offset);
-        offset = buffer.writeInt32BE(this.hScroll, offset);
-        buffer.writeInt32BE(this.vScroll, offset);
+        offset = buffer.writeInt32BE(Math.round(this.hScroll * 65535), offset);
+        offset = buffer.writeInt32BE(Math.round(this.vScroll * 65535), offset);
+        buffer.writeUInt32BE(this.buttons, offset);
         return buffer;
     }
 
     public toString(): string {
-        return `ScrollControlMessage{hScroll=${this.hScroll}, vScroll=${this.vScroll}, position=${this.position}}`;
+        return `ScrollControlMessage{hScroll=${this.hScroll}, vScroll=${this.vScroll}, buttons=${this.buttons}, position=${this.position}}`;
     }
 
     public toJSON(): ScrollControlMessageInterface {
@@ -45,6 +48,7 @@ export class ScrollControlMessage extends ControlMessage {
             position: this.position.toJSON(),
             hScroll: this.hScroll,
             vScroll: this.vScroll,
+            buttons: this.buttons,
         };
     }
 }

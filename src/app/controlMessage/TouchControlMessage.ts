@@ -8,11 +8,12 @@ export interface TouchControlMessageInterface extends ControlMessageInterface {
     pointerId: number;
     position: PositionInterface;
     pressure: number;
+    actionButton: number;
     buttons: number;
 }
 
 export class TouchControlMessage extends ControlMessage {
-    public static PAYLOAD_LENGTH = 28;
+    public static PAYLOAD_LENGTH = 32;
     /**
      * - For a touch screen or touch pad, reports the approximate pressure
      * applied to the surface by a finger or other tool.  The value is
@@ -35,6 +36,7 @@ export class TouchControlMessage extends ControlMessage {
         readonly pointerId: number,
         readonly position: Position,
         readonly pressure: number,
+        readonly actionButton: number,
         readonly buttons: number,
     ) {
         super(ControlMessage.TYPE_TOUCH);
@@ -48,19 +50,20 @@ export class TouchControlMessage extends ControlMessage {
         let offset = 0;
         offset = buffer.writeUInt8(this.type, offset);
         offset = buffer.writeUInt8(this.action, offset);
-        offset = buffer.writeUInt32BE(0, offset); // pointerId is `long` (8 bytes) on java side
+        offset = buffer.writeUInt32BE(0, offset); // pointerId high 32 bits
         offset = buffer.writeUInt32BE(this.pointerId, offset);
         offset = buffer.writeUInt32BE(this.position.point.x, offset);
         offset = buffer.writeUInt32BE(this.position.point.y, offset);
         offset = buffer.writeUInt16BE(this.position.screenSize.width, offset);
         offset = buffer.writeUInt16BE(this.position.screenSize.height, offset);
         offset = buffer.writeUInt16BE(this.pressure * TouchControlMessage.MAX_PRESSURE_VALUE, offset);
+        offset = buffer.writeUInt32BE(this.actionButton, offset);
         buffer.writeUInt32BE(this.buttons, offset);
         return buffer;
     }
 
     public toString(): string {
-        return `TouchControlMessage{action=${this.action}, pointerId=${this.pointerId}, position=${this.position}, pressure=${this.pressure}, buttons=${this.buttons}}`;
+        return `TouchControlMessage{action=${this.action}, pointerId=${this.pointerId}, position=${this.position}, pressure=${this.pressure}, actionButton=${this.actionButton}, buttons=${this.buttons}}`;
     }
 
     public toJSON(): TouchControlMessageInterface {
@@ -70,6 +73,7 @@ export class TouchControlMessage extends ControlMessage {
             pointerId: this.pointerId,
             position: this.position.toJSON(),
             pressure: this.pressure,
+            actionButton: this.actionButton,
             buttons: this.buttons,
         };
     }

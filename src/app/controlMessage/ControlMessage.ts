@@ -15,6 +15,12 @@ export class ControlMessage {
     public static TYPE_SET_CLIPBOARD = 9;
     public static TYPE_SET_SCREEN_POWER_MODE = 10;
     public static TYPE_ROTATE_DEVICE = 11;
+    public static TYPE_UHID_CREATE = 12;
+    public static TYPE_UHID_INPUT = 13;
+    public static TYPE_UHID_DESTROY = 14;
+    public static TYPE_OPEN_HARD_KEYBOARD_SETTINGS = 15;
+    public static TYPE_START_APP = 16;
+    public static TYPE_RESET_VIDEO = 17;
     public static TYPE_CHANGE_STREAM_PARAMETERS = 101;
     public static TYPE_PUSH_FILE = 102;
 

@@ -44,14 +44,17 @@ export class CommandControlMessage extends ControlMessage {
         return event;
     }
 
-    public static createSetClipboardCommand(text: string, paste = false): CommandControlMessage {
+    public static createSetClipboardCommand(text: string, paste = false, sequence = 0n): CommandControlMessage {
         const event = new CommandControlMessage(ControlMessage.TYPE_SET_CLIPBOARD);
         const textBytes: Uint8Array | null = text ? Util.stringToUtf8ByteArray(text) : null;
         const textLength = textBytes ? textBytes.length : 0;
         let offset = 0;
-        const buffer = Buffer.alloc(1 + 1 + 4 + textLength);
+        // type(1) + sequence(8) + paste(1) + textLength(4) + text
+        const buffer = Buffer.alloc(1 + 8 + 1 + 4 + textLength);
         offset = buffer.writeInt8(event.type, offset);
-        offset = buffer.writeInt8(paste ? 1 : 0, offset);
+        buffer.writeBigUInt64BE(BigInt(sequence), offset);
+        offset += 8;
+        offset = buffer.writeUInt8(paste ? 1 : 0, offset);
         offset = buffer.writeInt32BE(textLength, offset);
         if (textBytes) {
             textBytes.forEach((byte: number, index: number) => {

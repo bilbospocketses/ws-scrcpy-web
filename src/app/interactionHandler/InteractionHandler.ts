@@ -304,12 +304,12 @@ export abstract class InteractionHandler {
     }
 
     protected static createEmulatedMessage(action: number, event: TouchControlMessage): TouchControlMessage {
-        const { pointerId, position, buttons } = event;
+        const { pointerId, position, actionButton, buttons } = event;
         let pressure = event.pressure;
         if (action === MotionEvent.ACTION_UP) {
             pressure = 0;
         }
-        return new TouchControlMessage(action, pointerId, position, pressure, buttons);
+        return new TouchControlMessage(action, pointerId, position, pressure, actionButton, buttons);
     }
 
     public static mapTypeToAction(type: string): number {
@@ -485,7 +485,7 @@ export abstract class InteractionHandler {
                         pressure = touch.force;
                     }
                     if (!invalid) {
-                        const message = new TouchControlMessage(action, pointerId, position, pressure, buttons);
+                        const message = new TouchControlMessage(action, pointerId, position, pressure, 0, buttons);
                         messages.push(
                             ...InteractionHandler.validateMessage(e, message, storage, `${logPrefix}[validate]`),
                         );
@@ -526,7 +526,7 @@ export abstract class InteractionHandler {
                 if (action === MotionEvent.ACTION_UP) {
                     pressure = 0;
                 }
-                const message = new TouchControlMessage(action, pointerId, position, pressure, buttons);
+                const message = new TouchControlMessage(action, pointerId, position, pressure, 0, buttons);
                 messages.push(...InteractionHandler.validateMessage(e, message, storage, `${logPrefix}[validate]`));
                 points.push(touch.position.point);
             } else {
