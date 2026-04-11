@@ -1,6 +1,7 @@
 import type Position from '../Position';
 import type { PositionInterface } from '../Position';
 import { ControlMessage, type ControlMessageInterface } from './ControlMessage';
+import { BinaryWriter } from '../BinaryWriter';
 
 export interface TouchControlMessageInterface extends ControlMessageInterface {
     type: number;
@@ -45,21 +46,20 @@ export class TouchControlMessage extends ControlMessage {
     /**
      * @override
      */
-    public toBuffer(): Buffer {
-        const buffer: Buffer = Buffer.alloc(TouchControlMessage.PAYLOAD_LENGTH + 1);
-        let offset = 0;
-        offset = buffer.writeUInt8(this.type, offset);
-        offset = buffer.writeUInt8(this.action, offset);
-        offset = buffer.writeUInt32BE(0, offset); // pointerId high 32 bits
-        offset = buffer.writeUInt32BE(this.pointerId, offset);
-        offset = buffer.writeUInt32BE(this.position.point.x, offset);
-        offset = buffer.writeUInt32BE(this.position.point.y, offset);
-        offset = buffer.writeUInt16BE(this.position.screenSize.width, offset);
-        offset = buffer.writeUInt16BE(this.position.screenSize.height, offset);
-        offset = buffer.writeUInt16BE(this.pressure * TouchControlMessage.MAX_PRESSURE_VALUE, offset);
-        offset = buffer.writeUInt32BE(this.actionButton, offset);
-        buffer.writeUInt32BE(this.buttons, offset);
-        return buffer;
+    public toUint8Array(): Uint8Array {
+        return new BinaryWriter(TouchControlMessage.PAYLOAD_LENGTH + 1)
+            .writeUInt8(this.type)
+            .writeUInt8(this.action)
+            .writeUInt32BE(0) // pointerId high 32 bits
+            .writeUInt32BE(this.pointerId)
+            .writeUInt32BE(this.position.point.x)
+            .writeUInt32BE(this.position.point.y)
+            .writeUInt16BE(this.position.screenSize.width)
+            .writeUInt16BE(this.position.screenSize.height)
+            .writeUInt16BE(this.pressure * TouchControlMessage.MAX_PRESSURE_VALUE)
+            .writeUInt32BE(this.actionButton)
+            .writeUInt32BE(this.buttons)
+            .toUint8Array();
     }
 
     public toString(): string {

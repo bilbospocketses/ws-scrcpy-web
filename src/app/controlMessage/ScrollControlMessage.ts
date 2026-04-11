@@ -1,6 +1,7 @@
 import type Position from '../Position';
 import type { PositionInterface } from '../Position';
 import { ControlMessage, type ControlMessageInterface } from './ControlMessage';
+import { BinaryWriter } from '../BinaryWriter';
 
 export interface ScrollControlMessageInterface extends ControlMessageInterface {
     position: PositionInterface;
@@ -24,18 +25,17 @@ export class ScrollControlMessage extends ControlMessage {
     /**
      * @override
      */
-    public toBuffer(): Buffer {
-        const buffer = Buffer.alloc(ScrollControlMessage.PAYLOAD_LENGTH + 1);
-        let offset = 0;
-        offset = buffer.writeUInt8(this.type, offset);
-        offset = buffer.writeUInt32BE(this.position.point.x, offset);
-        offset = buffer.writeUInt32BE(this.position.point.y, offset);
-        offset = buffer.writeUInt16BE(this.position.screenSize.width, offset);
-        offset = buffer.writeUInt16BE(this.position.screenSize.height, offset);
-        offset = buffer.writeInt32BE(Math.round(this.hScroll * 65535), offset);
-        offset = buffer.writeInt32BE(Math.round(this.vScroll * 65535), offset);
-        buffer.writeUInt32BE(this.buttons, offset);
-        return buffer;
+    public toUint8Array(): Uint8Array {
+        return new BinaryWriter(ScrollControlMessage.PAYLOAD_LENGTH + 1)
+            .writeUInt8(this.type)
+            .writeUInt32BE(this.position.point.x)
+            .writeUInt32BE(this.position.point.y)
+            .writeUInt16BE(this.position.screenSize.width)
+            .writeUInt16BE(this.position.screenSize.height)
+            .writeInt32BE(Math.round(this.hScroll * 65535))
+            .writeInt32BE(Math.round(this.vScroll * 65535))
+            .writeUInt32BE(this.buttons)
+            .toUint8Array();
     }
 
     public toString(): string {
