@@ -1,5 +1,6 @@
 import '../../../style/filelisting.css';
-import * as path from 'path';
+import { basename, dirname, join, resolve } from '../../pathUtils';
+import { BinaryWriter } from '../../BinaryWriter';
 import { ACTION } from '../../../common/Action';
 import Protocol from '../../../common/AdbProtocol';
 import { ChannelCode } from '../../../common/ChannelCode';
@@ -146,7 +147,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                 }
                 e.preventDefault();
                 e.cancelBubble = true;
-                const newPath = path.resolve(this.path, name);
+                const newPath = resolve(this.path, name);
                 if (newPath !== this.path) {
                     const entryIdString = e.target.getAttribute(FileListingClient.PROPERTY_ENTRY_ID);
                     let entry: Entry | undefined;
@@ -312,11 +313,13 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         } else {
             cmd = Protocol.LIST;
         }
-        const len = Buffer.byteLength(path, 'utf-8');
-        const payload = Buffer.alloc(cmd.length + 4 + len);
-        let pos = payload.write(cmd, 0);
-        pos = payload.writeUInt32LE(len, pos);
-        payload.write(path, pos);
+        const pathBytes = new TextEncoder().encode(path);
+        const cmdBytes = new TextEncoder().encode(cmd);
+        const payload = new BinaryWriter(cmdBytes.length + 4 + pathBytes.length)
+            .writeBytes(cmdBytes)
+            .writeUInt32LE(pathBytes.length)
+            .writeBytes(pathBytes)
+            .toUint8Array();
         const channel = this.ws.createChannel(payload);
         this.channels.add(channel);
         const download: Download = {
@@ -381,18 +384,20 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     }
 
     protected handleReply(channel: Multiplexer, e: MessageEvent): void {
-        const data = Buffer.from(e.data);
-        const reply = data.slice(0, 4).toString('ascii');
+        const data = new Uint8Array(e.data);
+        const reply = new TextDecoder('ascii').decode(data.subarray(0, 4));
         switch (reply) {
-            case Protocol.DENT:
-                const stat = data.slice(4);
-                const mode = stat.readUInt32LE(0);
-                const size = stat.readUInt32LE(4);
-                const mtime = stat.readUInt32LE(8);
-                const namelen = stat.readUInt32LE(12);
-                const name = Util.utf8ByteArrayToString(stat.slice(16, 16 + namelen));
+            case Protocol.DENT: {
+                const stat = data.subarray(4);
+                const statView = new DataView(stat.buffer, stat.byteOffset);
+                const mode = statView.getUint32(0, true);
+                const size = statView.getUint32(4, true);
+                const mtime = statView.getUint32(8, true);
+                const namelen = statView.getUint32(12, true);
+                const name = Util.utf8ByteArrayToString(stat.subarray(16, 16 + namelen));
                 this.addEntry(new Entry(name, mode, size, mtime));
                 return;
+            }
             case Protocol.DONE:
                 this.finishDownload(channel);
                 return;
@@ -401,11 +406,12 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                 if (!download) {
                     return;
                 }
-                const stat = data.slice(4);
-                const mode = stat.readUInt32LE(0);
-                const size = stat.readUInt32LE(4);
-                const mtime = stat.readUInt32LE(8);
-                const nameString = path.basename(download.path);
+                const stat = data.subarray(4);
+                const statView = new DataView(stat.buffer, stat.byteOffset);
+                const mode = statView.getUint32(0, true);
+                const size = statView.getUint32(4, true);
+                const mtime = statView.getUint32(8, true);
+                const nameString = basename(download.path);
                 if (mode === 0) {
                     console.error('FIXME: show error in UI');
                     console.error(`Error: no entity "${download.path}"`);
@@ -417,24 +423,26 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                 let anchor: HTMLElement | undefined;
                 let nextPath = '';
                 if (!entry.isDirectory()) {
-                    nextPath = this.requestedPath = path.dirname(download.path);
+                    nextPath = this.requestedPath = dirname(download.path);
                     const row = this.addEntry(entry);
                     anchor = row ? row.getElementsByTagName('a')[0] : undefined;
                 }
                 this.loadContent(download.path, entry, anchor, nextPath);
                 break;
             }
-            case Protocol.FAIL:
-                const length = data.readUInt32LE(4);
-                const message = Util.utf8ByteArrayToString(data.slice(8, 8 + length));
+            case Protocol.FAIL: {
+                const dataView = new DataView(data.buffer, data.byteOffset);
+                const length = dataView.getUint32(4, true);
+                const message = Util.utf8ByteArrayToString(data.subarray(8, 8 + length));
                 console.error(TAG, `FAIL: ${message}`);
                 return;
-            case Protocol.DATA:
+            }
+            case Protocol.DATA: {
                 const download = this.downloads.get(channel);
                 if (!download) {
                     return;
                 }
-                download.chunks.push(data.slice(4));
+                download.chunks.push(data.subarray(4));
                 download.receivedBytes += data.length - 4;
                 if (download.anchor) {
                     let progressElement = download.progressEl;
@@ -449,6 +457,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                     }
                 }
                 return;
+            }
             default:
                 console.error(`Unexpected "${reply}"`);
         }
@@ -513,7 +522,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         } else {
             const href = new URL(location.href);
             const hash = new URLSearchParams(href.hash.replace(/^#!/, ''));
-            hash.set('path', path.join(this.path, name));
+            hash.set('path', join(this.path, name));
             href.hash = `#!${hash.toString()}`;
             link.href = href.toString();
             const sizeTd = document.createElement('td');
@@ -548,7 +557,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             name = download.entry.name;
         } else {
             // we always should have `download.entry` and never be here
-            name = path.basename(this.path);
+            name = basename(this.path);
         }
         if (download.pathToLoadAfter) {
             this.channels.delete(channel);
@@ -585,10 +594,10 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
 
     protected getChannelInitData(): Uint8Array {
         const serial = Util.stringToUtf8ByteArray(this.serial);
-        const buffer = Buffer.alloc(4 + 4 + serial.byteLength);
-        buffer.write(ChannelCode.FSLS, 'ascii');
-        buffer.writeUInt32LE(serial.length, 4);
-        buffer.set(serial, 8);
-        return buffer;
+        return new BinaryWriter(4 + 4 + serial.byteLength)
+            .writeString(ChannelCode.FSLS)
+            .writeUInt32LE(serial.length)
+            .writeBytes(serial)
+            .toUint8Array();
     }
 }
