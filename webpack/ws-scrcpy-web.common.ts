@@ -76,10 +76,10 @@ export const common = () => {
                     type: 'asset/resource',
                 },
                 {
-                    test: /\.jar$/,
+                    test: /[\\/]assets[\\/]scrcpy-server/,
                     type: 'asset/resource',
                     generator: {
-                        filename: 'assets/[name][ext]',
+                        filename: 'assets/scrcpy-server',
                     },
                 },
             ],

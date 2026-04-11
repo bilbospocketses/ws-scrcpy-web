@@ -10,6 +10,7 @@ import { AdbClient } from './AdbClient';
 import { FrameReader } from './FrameReader';
 import { type ScrcpyOptions, serializeOptions } from './ScrcpyOptions';
 import { Mw, type RequestParameters } from './mw/Mw';
+import '../../assets/scrcpy-server';
 
 const TAG = '[ScrcpyConnection]';
 const SERVER_FILE = path.join(__dirname, 'assets', 'scrcpy-server');
