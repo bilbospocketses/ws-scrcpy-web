@@ -26,6 +26,9 @@ import DeviceMessage from '../DeviceMessage';
 import { type KeyEventListener, KeyInputHandler } from '../KeyInputHandler';
 import { GoogMoreBox } from '../toolbox/GoogMoreBox';
 import { GoogToolBox } from '../toolbox/GoogToolBox';
+import { UhidManager } from '../UhidManager';
+import { UhidKeyboardHandler } from '../UhidKeyboardHandler';
+import { UhidMouseHandler } from '../UhidMouseHandler';
 import { ConfigureScrcpy } from './ConfigureScrcpy';
 import { DeviceTracker } from './DeviceTracker';
 
@@ -49,6 +52,9 @@ export class StreamClientScrcpy
     private controlButtons?: HTMLElement;
     private deviceName = '';
     private touchHandler?: FeaturedInteractionHandler;
+    private uhidManager?: UhidManager;
+    private uhidKeyboard?: UhidKeyboardHandler;
+    private uhidMouse?: UhidMouseHandler;
     private moreBox?: GoogMoreBox;
     private player?: BasePlayer;
     private fitToScreen?: boolean;
@@ -200,6 +206,9 @@ export class StreamClientScrcpy
 
     public onDisconnected = (): void => {
         this.audioPlayer?.stop();
+        this.uhidKeyboard?.detach();
+        this.uhidMouse?.detach();
+        this.uhidManager?.stop();
         this.touchHandler?.release();
         this.touchHandler = undefined;
     };
@@ -305,6 +314,41 @@ export class StreamClientScrcpy
             KeyInputHandler.addEventListener(this);
         } else {
             KeyInputHandler.removeEventListener(this);
+        }
+    }
+
+    public toggleUhid(enabled: boolean): void {
+        if (enabled) {
+            if (this.uhidManager) return;
+            this.uhidManager = new UhidManager((msg) => this.sendMessage(msg));
+            this.uhidManager.start();
+
+            this.uhidKeyboard = new UhidKeyboardHandler(this.uhidManager);
+            this.uhidKeyboard.attach();
+
+            if (this.player) {
+                this.uhidMouse = new UhidMouseHandler(this.uhidManager, this.player.getTouchableElement());
+                this.uhidMouse.attach();
+            }
+
+            // Disable existing touch handler
+            this.touchHandler?.release();
+            this.touchHandler = undefined;
+
+            // Disable existing keyboard handler
+            KeyInputHandler.removeEventListener(this);
+        } else {
+            this.uhidKeyboard?.detach();
+            this.uhidMouse?.detach();
+            this.uhidManager?.stop();
+            this.uhidKeyboard = undefined;
+            this.uhidMouse = undefined;
+            this.uhidManager = undefined;
+
+            // Re-enable touch handler
+            if (this.player) {
+                this.setTouchListeners(this.player);
+            }
         }
     }
 

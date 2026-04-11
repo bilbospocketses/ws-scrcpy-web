@@ -93,6 +93,17 @@ export class GoogToolBox extends ToolBox {
         });
         elements.push(keyboard);
 
+        const uhid = new ToolBoxCheckbox(
+            'UHID Input (keyboard + mouse)',
+            SvgImage.Icon.KEYBOARD,
+            `uhid_input_${udid}_${playerName}`,
+        );
+        uhid.addEventListener('click', (_, el) => {
+            const element = el.getElement();
+            client.toggleUhid(element.checked);
+        });
+        elements.push(uhid);
+
         if (moreBox) {
             const displayId = player.getVideoSettings().displayId;
             const id = `show_more_${udid}_${playerName}_${displayId}`;
