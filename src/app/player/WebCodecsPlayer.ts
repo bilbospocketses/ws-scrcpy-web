@@ -275,6 +275,11 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
         this.emit('input-video-resize', screenInfo);
         this.setScreenInfo(screenInfo);
         this.initCanvas(width, height);
+        // Re-obtain context after initCanvas replaces the canvas element
+        const newContext = this.tag.getContext('2d');
+        if (newContext) {
+            this.context = newContext;
+        }
         if (scale !== 1) {
             this.tag.style.transform = `scale(${scale.toFixed(4)})`;
         } else {

@@ -133,8 +133,9 @@ body.stream {
 }
 
 .control-button {
-    margin: .357rem 0;
+    margin: .357rem auto;
     padding: 0;
+    display: block;
     width: 2.143rem;
     height: 2.143rem;
     border: none;
