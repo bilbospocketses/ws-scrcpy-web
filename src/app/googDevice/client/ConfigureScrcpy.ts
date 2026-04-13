@@ -207,6 +207,12 @@ export class ConfigureScrcpy extends BaseClient<ParamsStreamScrcpy, ConfigureScr
         };
         const supported: string[] = [];
         for (const codec of codecs) {
+            // H.264 is universally supported — skip the check (Firefox isConfigSupported
+            // returns false for some H.264 profile strings despite decoding fine)
+            if (codec === 'h264') {
+                supported.push(codec);
+                continue;
+            }
             const webCodecStr = codecMap[codec];
             if (!webCodecStr) {
                 supported.push(codec);

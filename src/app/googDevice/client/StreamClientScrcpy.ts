@@ -59,8 +59,11 @@ const CODEC_ENCODER_PATTERN: Record<string, string> = {
 const HW_ENCODER_RE = /\.mtk\.|\.qcom\.|\.exynos\.|\.intel\.|\.nvidia\./i;
 
 async function browserSupportsCodec(codec: string): Promise<boolean> {
+    // H.264 is universally supported — skip the check (Firefox isConfigSupported
+    // returns false for some H.264 profile strings despite decoding fine)
+    if (codec === 'h264') return true;
     if (typeof VideoDecoder === 'undefined' || typeof VideoDecoder.isConfigSupported !== 'function') {
-        return codec === 'h264';
+        return false;
     }
     const webCodecStr = CODEC_WEBCODEC_MAP[codec];
     if (!webCodecStr) return false;
