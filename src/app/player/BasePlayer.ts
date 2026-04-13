@@ -495,15 +495,13 @@ export abstract class BasePlayer extends TypedEmitter<PlayerEvents> {
             return;
         }
 
-        const y = this.touchableCanvas.height;
         const height = BasePlayer.STATS_HEIGHT;
         const lines = this.statLines.length;
-        const spaces = lines + 1;
         const p = height / 2;
         const d = p * 2;
-        const totalHeight = height * lines + p * spaces;
+        const totalHeight = height * lines + p * (lines + 1);
 
-        ctx.clearRect(0, y - totalHeight, this.dirtyStatsWidth + d, totalHeight);
+        ctx.clearRect(0, 0, this.dirtyStatsWidth + d, totalHeight);
         this.dirtyStatsWidth = 0;
 
         if (onlyClear) {
@@ -517,10 +515,10 @@ export abstract class BasePlayer extends TypedEmitter<PlayerEvents> {
             this.dirtyStatsWidth = Math.max(dirty, this.dirtyStatsWidth);
         });
         ctx.fillStyle = BasePlayer.STAT_BACKGROUND;
-        ctx.fillRect(0, y - totalHeight, this.dirtyStatsWidth + d, totalHeight);
+        ctx.fillRect(0, 0, this.dirtyStatsWidth + d, totalHeight);
         ctx.fillStyle = BasePlayer.STAT_TEXT_COLOR;
         this.statLines.forEach((text, line) => {
-            ctx.fillText(text, p, y - p - line * (height + p));
+            ctx.fillText(text, p, p + height + line * (height + p));
         });
         ctx.restore();
     }
