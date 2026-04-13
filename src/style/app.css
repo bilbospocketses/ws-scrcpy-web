@@ -186,7 +186,6 @@ body.stream {
 }
 
 /* Embed mode — minimal UI for iframe embedding */
-body.embed .control-buttons-list,
 body.embed .more-box {
     display: none !important;
 }
