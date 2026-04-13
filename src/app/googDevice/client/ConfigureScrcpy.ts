@@ -99,6 +99,11 @@ export class ConfigureScrcpy extends BaseClient<ParamsStreamScrcpy, ConfigureScr
             optionElement.innerText = value;
             encoderSelect.appendChild(optionElement);
         });
+        // Default to hardware HEVC encoder if available, matching codec preference
+        const hevcHwIndex = allEncoders.findIndex((e) => /\.mtk\.hevc\.|\.qcom\.hevc\.|\.exynos\.hevc\./i.test(e));
+        if (hevcHwIndex !== -1) {
+            encoderSelect.selectedIndex = hevcHwIndex;
+        }
         this.encoderSelectElement = encoderSelect;
 
         // Populate video codec dropdown, preferring H.265 (hardware) then AV1
