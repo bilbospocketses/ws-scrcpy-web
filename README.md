@@ -19,13 +19,15 @@ A modernized spiritual successor to [ws-scrcpy](https://github.com/NetrisTV/ws-s
 ## Features
 
 - Real-time screen mirroring in the browser via WebSocket
-- **Multi-codec video** -- H.264, H.265 (HEVC), AV1 with automatic detection
+- **Multi-codec video** -- H.264, H.265 (HEVC), AV1 with automatic detection and smart encoder selection
 - **Multi-codec audio** -- Opus, AAC, FLAC, raw PCM via WebCodecs AudioDecoder
 - **UHID keyboard/mouse** -- hardware-level input via USB HID reports (pointer lock for mouse)
 - Touch and keyboard input forwarding (classic scrcpy keycode mode)
 - Configure stream dialog with codec/encoder selection and device probe
+- **Quality stats overlay** -- real-time FPS, bitrate, resolution, codec, and encoder info
 - Remote ADB shell terminal
 - File manager (browse, upload, download)
+- **Embed mode** -- streamlined iframe integration for embedding in other apps (hides toolbar, auto-scales video, used by [Control Menu](https://github.com/bilbospocketses/control-menu))
 - Docker support (Dockerfile included)
 
 ## Requirements
