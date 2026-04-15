@@ -474,10 +474,14 @@ export class StreamClientScrcpy
         this.baselineFrameSize = 0;
         this.degradationCount = 0;
 
-        // Prevent onDisconnected from destroying touch handler during refresh
-        this.isRefreshing = true;
-
-        // Close existing demuxer
+        // Detach disconnect callback from old demuxer BEFORE closing it.
+        // The old WebSocket's onclose fires asynchronously — if we just use
+        // isRefreshing as a guard, it races: refreshStream() sets isRefreshing=false
+        // synchronously, then the async onclose fires onDisconnected which sees
+        // isRefreshing=false and destroys the touch handler.
+        if (this.demuxer) {
+            this.demuxer.onDisconnect(() => {});
+        }
         this.demuxer?.close();
         this.audioPlayer?.stop();
         this.audioPlayer = undefined;
@@ -496,8 +500,6 @@ export class StreamClientScrcpy
         this.demuxer.onDeviceMessage(this.OnDeviceMessage);
         this.demuxer.onMetadata(this.onMetadata);
         this.demuxer.onDisconnect(this.onDisconnected);
-
-        this.isRefreshing = false;
     }
 
     public getDeviceName(): string {

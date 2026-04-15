@@ -667,31 +667,44 @@ if (frame.displayWidth !== frame.codedWidth || frame.displayHeight !== frame.cod
 }
 ```
 
-### 11.3 Touch Handler Destroyed During Stream Refresh
+### 11.3 Touch Handler Destroyed During Stream Refresh (Race Condition)
 
-**Problem:** When `refreshStream()` closed the demuxer, the WebSocket `onclose` event triggered `onDisconnected()`, which destroyed the `FeaturedInteractionHandler`. After the refresh completed and a new demuxer was connected, touch input no longer worked because the handler had been released.
+**Problem:** When `refreshStream()` closed the old demuxer, the WebSocket `onclose` event fires **asynchronously** — after `refreshStream()` has already finished and created the new demuxer. The original fix used an `isRefreshing` flag, but this flag was set back to `false` synchronously within `refreshStream()`. The async `onclose` event from the old demuxer would then see `isRefreshing === false` and destroy the touch handler. Since `FeaturedInteractionHandler` was the only handler in the set, `unbindListeners` would also remove the `document.body` event listener entirely, making all subsequent mouse events invisible.
 
-**Fix:** An `isRefreshing` flag prevents `onDisconnected()` from releasing the touch handler during a refresh cycle:
+**Fix:** Detach the disconnect callback from the old demuxer before closing it, so its async `onclose` event cannot trigger `onDisconnected()`:
 
 ```typescript
-public onDisconnected = (): void => {
-    this.audioPlayer?.stop();
-    // Don't destroy touch handler during refresh
-    if (!this.isRefreshing) {
-        this.touchHandler?.release();
-        this.touchHandler = undefined;
-    }
-};
-
 public refreshStream(): void {
-    this.isRefreshing = true;
+    // Detach old demuxer's disconnect callback before closing
+    if (this.demuxer) {
+        this.demuxer.onDisconnect(() => {});
+    }
     this.demuxer?.close();
-    // ... reconnect ...
-    this.isRefreshing = false;
+    // ... reconnect with new demuxer ...
+    this.demuxer = new ScrcpyDemuxer(streamUrl);
+    this.demuxer.onDisconnect(this.onDisconnected);
 }
 ```
 
-### 11.4 Firefox H.264 isConfigSupported False Rejection
+### 11.4 WebSocket Close Reason Exceeding 123-Byte Limit
+
+**Problem:** When a device is offline, ADB error messages (e.g., `Command failed: adb -s 192.168.86.169:5555 push ...`) can exceed the 123-byte WebSocket close frame reason limit defined by RFC 6455. The `ws` library throws an unhandled `RangeError` that crashes the entire Node.js process. With Control Menu's auto-restart, this created a crash loop (3 crashes in 30 seconds, then give-up).
+
+**Fix:** Truncate error messages to 123 bytes before passing to `ws.close()`, and wrap the close call in try/catch for defense in depth:
+
+```typescript
+try {
+    if (ws.readyState === ws.OPEN) {
+        ws.close(4005, err.message.slice(0, 123));
+    }
+} catch (closeErr) {
+    console.error(TAG, `Failed to close WebSocket:`, closeErr);
+}
+```
+
+Applied in both `ScrcpyConnection.ts` and `DeviceProbe.ts`.
+
+### 11.5 Firefox H.264 isConfigSupported False Rejection
 
 **Problem:** Firefox's `VideoDecoder.isConfigSupported()` returns `{ supported: false }` for the H.264 profile string `avc1.42E01E`, despite being fully capable of decoding H.264 content. This caused the auto-detection algorithm to skip H.264 and fall back to worse options on Firefox.
 
