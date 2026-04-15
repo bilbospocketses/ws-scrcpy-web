@@ -71,10 +71,14 @@ export class AudioPlayer {
 
     private webCodecsCodecString(): string {
         switch (this.codec) {
-            case 'opus': return 'opus';
-            case 'aac': return 'mp4a.40.2';
-            case 'flac': return 'flac';
-            default: return this.codec;
+            case 'opus':
+                return 'opus';
+            case 'aac':
+                return 'mp4a.40.2';
+            case 'flac':
+                return 'flac';
+            default:
+                return this.codec;
         }
     }
 

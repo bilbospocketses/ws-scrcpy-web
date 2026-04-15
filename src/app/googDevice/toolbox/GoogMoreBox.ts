@@ -1,12 +1,12 @@
 import '../../../style/morebox.css';
-import Size from '../../Size';
-import VideoSettings from '../../VideoSettings';
 import { CommandControlMessage } from '../../controlMessage/CommandControlMessage';
 import { ControlMessage } from '../../controlMessage/ControlMessage';
 import { TextControlMessage } from '../../controlMessage/TextControlMessage';
 import { BasePlayer } from '../../player/BasePlayer';
-import DeviceMessage from '../DeviceMessage';
+import Size from '../../Size';
+import VideoSettings from '../../VideoSettings';
 import type { StreamClientScrcpy } from '../client/StreamClientScrcpy';
+import DeviceMessage from '../DeviceMessage';
 
 const TAG = '[GoogMoreBox]';
 
@@ -235,7 +235,7 @@ export class GoogMoreBox {
         };
 
         const stopBtn = document.createElement('button') as HTMLButtonElement;
-        stopBtn.innerText = `Disconnect`;
+        stopBtn.innerText = 'Disconnect';
         stopBtn.onclick = stop;
 
         GoogMoreBox.wrap('p', [stopBtn], moreBox);

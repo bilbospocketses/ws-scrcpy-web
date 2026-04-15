@@ -23,7 +23,10 @@ export class DeviceProbe extends Mw {
         return new DeviceProbe(ws, udid);
     }
 
-    private constructor(ws: WS, private readonly serial: string) {
+    private constructor(
+        ws: WS,
+        private readonly serial: string,
+    ) {
         super(ws);
         this.probe().catch((err) => {
             console.error(TAG, `Probe failed for ${this.serial}:`, err.message);

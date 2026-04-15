@@ -26,7 +26,7 @@ export abstract class Mw {
     }
 
     protected constructor(protected readonly ws: WS | Multiplexer) {
-        // @ts-ignore
+        // @ts-expect-error
         this.ws.addEventListener('message', this.onSocketMessage.bind(this));
         this.ws.addEventListener('close', this.onSocketClose.bind(this));
     }

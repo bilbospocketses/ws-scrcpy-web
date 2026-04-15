@@ -1,10 +1,10 @@
-import MotionEvent from '../MotionEvent';
-import type ScreenInfo from '../ScreenInfo';
 import type { ControlMessage } from '../controlMessage/ControlMessage';
 import { KeyCodeControlMessage } from '../controlMessage/KeyCodeControlMessage';
 import { ScrollControlMessage } from '../controlMessage/ScrollControlMessage';
 import type { TouchControlMessage } from '../controlMessage/TouchControlMessage';
+import MotionEvent from '../MotionEvent';
 import type { BasePlayer } from '../player/BasePlayer';
+import type ScreenInfo from '../ScreenInfo';
 import { type InteractionEvents, InteractionHandler, type KeyEventNames } from './InteractionHandler';
 
 const TAG = '[FeaturedTouchHandler]';
@@ -61,8 +61,8 @@ export class FeaturedInteractionHandler extends InteractionHandler {
 
     // Mouse button → Android keycode mapping (matches scrcpy desktop client defaults)
     private static readonly BUTTON_KEYCODE_MAP: Record<number, number> = {
-        2: 4,   // right-click → AKEYCODE_BACK
-        1: 3,   // middle-click → AKEYCODE_HOME
+        2: 4, // right-click → AKEYCODE_BACK
+        1: 3, // middle-click → AKEYCODE_HOME
     };
 
     protected onInteraction(event: MouseEvent | TouchEvent): void {

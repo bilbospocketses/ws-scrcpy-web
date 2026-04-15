@@ -8,9 +8,9 @@ import type GoogDeviceDescriptor from '../../../types/GoogDeviceDescriptor';
 import type { MessageXtermClient } from '../../../types/MessageXtermClient';
 import type { ParamsDeviceTracker } from '../../../types/ParamsDeviceTracker';
 import type { ParamsShell } from '../../../types/ParamsShell';
-import Util from '../../Util';
 import { BaseDeviceTracker } from '../../client/BaseDeviceTracker';
 import { ManagerClient } from '../../client/ManagerClient';
+import Util from '../../Util';
 
 const TAG = '[ShellClient]';
 

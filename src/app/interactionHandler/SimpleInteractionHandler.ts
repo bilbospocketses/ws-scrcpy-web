@@ -1,6 +1,6 @@
 import type Position from '../Position';
-import type ScreenInfo from '../ScreenInfo';
 import type { BasePlayer } from '../player/BasePlayer';
+import type ScreenInfo from '../ScreenInfo';
 import { type InteractionEvents, InteractionHandler } from './InteractionHandler';
 
 export interface TouchHandlerListener {

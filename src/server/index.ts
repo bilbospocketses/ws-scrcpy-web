@@ -1,9 +1,9 @@
 import * as readline from 'readline';
 import { Config } from './Config';
+import { DeviceProbe } from './DeviceProbe';
 import { HostTracker } from './mw/HostTracker';
 import type { MwFactory } from './mw/Mw';
 import { WebsocketMultiplexer } from './mw/WebsocketMultiplexer';
-import { DeviceProbe } from './DeviceProbe';
 import { ScrcpyConnection } from './ScrcpyConnection';
 import { HttpServer } from './services/HttpServer';
 import type { Service, ServiceClass } from './services/Service';

@@ -1,6 +1,4 @@
 import '../../../style/filelisting.css';
-import { basename, dirname, join, resolve } from '../../pathUtils';
-import { BinaryWriter } from '../../BinaryWriter';
 import { ACTION } from '../../../common/Action';
 import Protocol from '../../../common/AdbProtocol';
 import { ChannelCode } from '../../../common/ChannelCode';
@@ -8,9 +6,11 @@ import { Multiplexer } from '../../../packages/multiplexer/Multiplexer';
 import type GoogDeviceDescriptor from '../../../types/GoogDeviceDescriptor';
 import type { ParamsDeviceTracker } from '../../../types/ParamsDeviceTracker';
 import type { ParamsFileListing } from '../../../types/ParamsFileListing';
-import Util from '../../Util';
+import { BinaryWriter } from '../../BinaryWriter';
 import { BaseDeviceTracker } from '../../client/BaseDeviceTracker';
 import { ManagerClient } from '../../client/ManagerClient';
+import { basename, dirname, join, resolve } from '../../pathUtils';
+import Util from '../../Util';
 import { html } from '../../ui/HtmlTag';
 import { Entry } from '../Entry';
 import { AdbkitFilePushStream } from '../filePush/AdbkitFilePushStream';
@@ -220,7 +220,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         const { row, progressEl, anchor } = upload;
         if (error) {
             this.uploads.delete(fileName);
-            progressEl.style.width = `100%`;
+            progressEl.style.width = '100%';
             progressEl.classList.add('error');
             if (!anchor.classList.contains('error')) {
                 anchor.classList.add('error');

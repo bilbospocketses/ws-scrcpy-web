@@ -3,11 +3,11 @@ import Rect from '../Rect';
 import ScreenInfo from '../ScreenInfo';
 import Size from '../Size';
 import VideoSettings from '../VideoSettings';
+import { OBU_TYPE, obuType, parseAv1ConfigRecord, parseAv1SequenceHeader } from './av1-utils';
 import { BaseCanvasBasedPlayer } from './BaseCanvasBasedPlayer';
 import { BasePlayer } from './BasePlayer';
 import { parseSPS } from './h264-utils';
-import { hevcNalType, HEVC_NAL_TYPE, parseHevcSPS } from './h265-utils';
-import { obuType, OBU_TYPE, parseAv1SequenceHeader, parseAv1ConfigRecord } from './av1-utils';
+import { HEVC_NAL_TYPE, hevcNalType, parseHevcSPS } from './h265-utils';
 
 function toHex(value: number) {
     return value.toString(16).padStart(2, '0').toUpperCase();
@@ -80,7 +80,9 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
         return new VideoDecoder({
             output: (frame) => {
                 if (!this.loggedFrameSize) {
-                    console.log(`[WebCodecsPlayer] First decoded frame: display=${frame.displayWidth}x${frame.displayHeight} coded=${frame.codedWidth}x${frame.codedHeight} canvas=${this.tag.width}x${this.tag.height}`);
+                    console.log(
+                        `[WebCodecsPlayer] First decoded frame: display=${frame.displayWidth}x${frame.displayHeight} coded=${frame.codedWidth}x${frame.codedHeight} canvas=${this.tag.width}x${this.tag.height}`,
+                    );
                     this.loggedFrameSize = true;
                 }
                 this.onFrameDecoded(frame.displayWidth, frame.displayHeight, frame);

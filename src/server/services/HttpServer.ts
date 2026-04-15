@@ -1,5 +1,5 @@
-import * as http from 'http';
 import type { IncomingMessage, ServerResponse } from 'http';
+import * as http from 'http';
 import * as https from 'https';
 import path from 'path';
 import * as process from 'process';
@@ -72,7 +72,7 @@ export class HttpServer extends TypedEmitter<HttpServerEvents> implements Servic
     }
 
     public getName(): string {
-        return `HTTP(s) Server Service`;
+        return 'HTTP(s) Server Service';
     }
 
     public async start(): Promise<void> {

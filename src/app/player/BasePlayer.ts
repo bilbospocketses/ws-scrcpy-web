@@ -491,7 +491,7 @@ export abstract class BasePlayer extends TypedEmitter<PlayerEvents> {
             newStats.push(`Dropped FPS: ${padDropped} (avg: ${padAvgDropped})`);
             newStats.push(`Decoded FPS: ${padDecoded} (avg: ${padAvgDecoded})`);
         } else {
-            newStats.push(`Not supported`);
+            newStats.push('Not supported');
         }
         let changed = this.statLines.length !== newStats.length;
         let i = 0;

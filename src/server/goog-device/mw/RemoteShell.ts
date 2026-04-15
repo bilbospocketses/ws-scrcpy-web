@@ -1,6 +1,6 @@
-import * as os from 'os';
-import * as pty from 'node-pty';
 import type { IPty } from 'node-pty';
+import * as pty from 'node-pty';
+import * as os from 'os';
 import type WS from 'ws';
 import { ACTION } from '../../../common/Action';
 import { ChannelCode } from '../../../common/ChannelCode';
@@ -56,7 +56,7 @@ export class RemoteShell extends Mw {
             encoding: null,
         });
         const send = USE_BINARY ? this.bufferUtf8(5) : this.buffer(5);
-        // @ts-ignore Documentation is incorrect for `encoding: null`
+        // @ts-expect-error Documentation is incorrect for `encoding: null`
         term.on('data', send);
         term.on('exit', (code: number) => {
             if (code === 0) {

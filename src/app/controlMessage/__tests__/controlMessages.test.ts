@@ -3,13 +3,13 @@
 
 import { describe, expect, it } from 'vitest';
 import { BinaryWriter } from '../../BinaryWriter';
+import Point from '../../Point';
+import Position from '../../Position';
+import Size from '../../Size';
 import { ControlMessage } from '../ControlMessage';
 import { KeyCodeControlMessage } from '../KeyCodeControlMessage';
 import { ScrollControlMessage } from '../ScrollControlMessage';
 import { TouchControlMessage } from '../TouchControlMessage';
-import Point from '../../Point';
-import Position from '../../Position';
-import Size from '../../Size';
 
 // Helper to build a Position for tests
 function pos(x: number, y: number, w: number, h: number): Position {

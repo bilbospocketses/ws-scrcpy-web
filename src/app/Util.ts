@@ -199,9 +199,9 @@ export default class Util {
                 },
             });
 
-            // @ts-ignore
+            // @ts-expect-error
             window.addEventListener('testPassive', null, opts);
-            // @ts-ignore
+            // @ts-expect-error
             window.removeEventListener('testPassive', null, opts);
         } catch (error: any) {}
 

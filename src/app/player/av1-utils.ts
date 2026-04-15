@@ -192,7 +192,7 @@ class Av1BitReader {
     f(n: number): number {
         let value = 0;
         for (let i = 0; i < n; i++) {
-            const byteIdx = (this.bitPos >> 3);
+            const byteIdx = this.bitPos >> 3;
             const bitIdx = 7 - (this.bitPos & 7);
             value = (value << 1) | ((this.data[byteIdx] >> bitIdx) & 1);
             this.bitPos++;

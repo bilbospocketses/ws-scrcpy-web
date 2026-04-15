@@ -8,13 +8,13 @@
     position: absolute;
     background-color: var(--controls-bg-color);
     z-index: 2;
-    padding: 0 .714rem .714rem .714rem;
+    padding: 0 0.714rem 0.714rem 0.714rem;
 }
 
 .text-with-shadow,
 .more-box label {
     color: var(--text-color);
-    text-shadow: var(--text-shadow-color) 0 0 .357rem;
+    text-shadow: var(--text-shadow-color) 0 0 0.357rem;
 }
 
 .spoiler > input ~ .box {

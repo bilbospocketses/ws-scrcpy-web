@@ -4,30 +4,30 @@ import type GoogDeviceDescriptor from '../../../types/GoogDeviceDescriptor';
 import type { ParamsDeviceTracker } from '../../../types/ParamsDeviceTracker';
 import type { ParamsStreamScrcpy } from '../../../types/ParamsStreamScrcpy';
 import { Attribute } from '../../Attribute';
-import type { DisplayInfo } from '../../DisplayInfo';
-import { ScrcpyDemuxer, type SessionMetadata } from '../../ScrcpyDemuxer';
-import Size from '../../Size';
-import Util from '../../Util';
-import VideoSettings from '../../VideoSettings';
 import { AudioPlayer } from '../../audio/AudioPlayer';
 import { BaseClient } from '../../client/BaseClient';
 import { HostTracker } from '../../client/HostTracker';
 import { CommandControlMessage } from '../../controlMessage/CommandControlMessage';
 import type { ControlMessage } from '../../controlMessage/ControlMessage';
 import type { KeyCodeControlMessage } from '../../controlMessage/KeyCodeControlMessage';
+import type { DisplayInfo } from '../../DisplayInfo';
 import {
     FeaturedInteractionHandler,
     type InteractionHandlerListener,
 } from '../../interactionHandler/FeaturedInteractionHandler';
 import { BasePlayer, type PlayerClass } from '../../player/BasePlayer';
 import type { WebCodecsPlayer } from '../../player/WebCodecsPlayer';
+import { ScrcpyDemuxer, type SessionMetadata } from '../../ScrcpyDemuxer';
+import Size from '../../Size';
+import Util from '../../Util';
 import { html } from '../../ui/HtmlTag';
+import VideoSettings from '../../VideoSettings';
 import DeviceMessage from '../DeviceMessage';
 import { type KeyEventListener, KeyInputHandler } from '../KeyInputHandler';
 import { GoogMoreBox } from '../toolbox/GoogMoreBox';
 import { GoogToolBox } from '../toolbox/GoogToolBox';
-import { UhidManager } from '../UhidManager';
 import { UhidKeyboardHandler } from '../UhidKeyboardHandler';
+import { UhidManager } from '../UhidManager';
 import { UhidMouseHandler } from '../UhidMouseHandler';
 import { ConfigureScrcpy } from './ConfigureScrcpy';
 import { DeviceTracker } from './DeviceTracker';
@@ -91,7 +91,7 @@ async function detectBestCodecAndEncoder(
         videoEncoders = probe.videoEncoders;
         console.log(TAG, `Probe returned encoders: ${videoEncoders.join(', ')}`);
     } catch (err) {
-        console.warn(TAG, `Device probe failed, falling back to browser-only detection:`, (err as Error).message);
+        console.warn(TAG, 'Device probe failed, falling back to browser-only detection:', (err as Error).message);
         // Fall back to browser-only detection without device info
         for (const codec of ['h265', 'h264', 'av1']) {
             if (await browserSupportsCodec(codec)) {
@@ -295,7 +295,10 @@ export class StreamClientScrcpy
     public onMetadata = (meta: SessionMetadata): void => {
         this.deviceName = meta.deviceName;
         this.setTitle(`Stream ${this.deviceName}`);
-        console.log(TAG, `Connected: ${meta.deviceName} ${meta.screenWidth}x${meta.screenHeight} video=${meta.videoCodec} audio=${meta.audioCodec}`);
+        console.log(
+            TAG,
+            `Connected: ${meta.deviceName} ${meta.screenWidth}x${meta.screenHeight} video=${meta.videoCodec} audio=${meta.audioCodec}`,
+        );
 
         // Pass metadata dimensions to player as fallback (AV1 config doesn't include dimensions)
         if (this.player && 'setMetadataSize' in this.player) {
@@ -453,10 +456,13 @@ export class StreamClientScrcpy
         const avg = this.frameSizes.reduce((a, b) => a + b, 0) / this.frameSizes.length;
         // If average frame size drops below 10% of baseline for sustained period
         // (was 25% — too sensitive for static content like screensavers)
-        if (avg < this.baselineFrameSize * 0.10) {
+        if (avg < this.baselineFrameSize * 0.1) {
             this.degradationCount++;
             if (this.degradationCount >= 5) {
-                console.log(TAG, `Quality degradation detected (avg=${Math.round(avg)} vs baseline=${Math.round(this.baselineFrameSize)}), refreshing stream`);
+                console.log(
+                    TAG,
+                    `Quality degradation detected (avg=${Math.round(avg)} vs baseline=${Math.round(this.baselineFrameSize)}), refreshing stream`,
+                );
                 this.degradationCount = 0;
                 this.frameSizes = [];
                 this.baselineFrameSize = 0;

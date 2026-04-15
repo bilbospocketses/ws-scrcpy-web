@@ -1,7 +1,7 @@
+import { BinaryWriter } from '../BinaryWriter';
 import type Position from '../Position';
 import type { PositionInterface } from '../Position';
 import { ControlMessage, type ControlMessageInterface } from './ControlMessage';
-import { BinaryWriter } from '../BinaryWriter';
 
 export interface TouchControlMessageInterface extends ControlMessageInterface {
     type: number;

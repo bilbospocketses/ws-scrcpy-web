@@ -1,5 +1,5 @@
-import { Server as WSServer } from 'ws';
 import type WS from 'ws';
+import { Server as WSServer } from 'ws';
 import type { MwFactory } from '../mw/Mw';
 import { HttpServer, type ServerAndPort } from './HttpServer';
 import type { Service } from './Service';
@@ -63,7 +63,7 @@ export class WebSocketServer implements Service {
     }
 
     public getName(): string {
-        return `WebSocket Server Service`;
+        return 'WebSocket Server Service';
     }
 
     public async start(): Promise<void> {

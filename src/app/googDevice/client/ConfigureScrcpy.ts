@@ -1,18 +1,18 @@
 import '../../../style/dialog.css';
+import type { ProbeResult } from '../../../common/ProbeResult';
 import type GoogDeviceDescriptor from '../../../types/GoogDeviceDescriptor';
 import type { ParamsStreamScrcpy } from '../../../types/ParamsStreamScrcpy';
 import { Attribute } from '../../Attribute';
-import { DisplayInfo } from '../../DisplayInfo';
-import Size from '../../Size';
-import Util from '../../Util';
-import VideoSettings from '../../VideoSettings';
 import { BaseClient } from '../../client/BaseClient';
 import { DeviceProbeClient } from '../../client/DeviceProbeClient';
-import type { ProbeResult } from '../../../common/ProbeResult';
+import { DisplayInfo } from '../../DisplayInfo';
 import type { PlayerClass } from '../../player/BasePlayer';
+import Size from '../../Size';
 import { ToolBoxButton } from '../../toolbox/ToolBoxButton';
 import { ToolBoxCheckbox } from '../../toolbox/ToolBoxCheckbox';
+import Util from '../../Util';
 import SvgImage from '../../ui/SvgImage';
+import VideoSettings from '../../VideoSettings';
 import type { DeviceTracker } from './DeviceTracker';
 import { StreamClientScrcpy } from './StreamClientScrcpy';
 
@@ -139,13 +139,7 @@ export class ConfigureScrcpy extends BaseClient<ParamsStreamScrcpy, ConfigureScr
             optionElement.setAttribute('value', displayId.toString());
             optionElement.innerText = `ID: ${displayId}; ${result.width}x${result.height}`;
             this.displayIdSelectElement.appendChild(optionElement);
-            this.displayInfo = new DisplayInfo(
-                displayId,
-                new Size(result.width, result.height),
-                0,
-                0,
-                0,
-            );
+            this.displayInfo = new DisplayInfo(displayId, new Size(result.width, result.height), 0, 0, 0);
         }
 
         // Apply player video settings (may reset dropdowns from stored prefs)
@@ -201,9 +195,9 @@ export class ConfigureScrcpy extends BaseClient<ParamsStreamScrcpy, ConfigureScr
             return codecs;
         }
         const codecMap: Record<string, string> = {
-            'h264': 'avc1.42E01E',
-            'h265': 'hev1.1.6.L93.B0',
-            'av1': 'av01.0.04M.08',
+            h264: 'avc1.42E01E',
+            h265: 'hev1.1.6.L93.B0',
+            av1: 'av01.0.04M.08',
         };
         const supported: string[] = [];
         for (const codec of codecs) {
@@ -452,9 +446,8 @@ export class ConfigureScrcpy extends BaseClient<ParamsStreamScrcpy, ConfigureScr
         const result = window.localStorage.getItem(this.playerStorageKey);
         if (result) {
             return result;
-        } else {
-            return '';
         }
+        return '';
     }
 
     private setPreviouslyUsedPlayer(playerName: string): void {

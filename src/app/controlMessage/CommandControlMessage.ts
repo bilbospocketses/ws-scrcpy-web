@@ -37,10 +37,7 @@ export class CommandControlMessage extends ControlMessage {
         const temp = videoSettings.toUint8Array();
         const event = new CommandControlMessage(ControlMessage.TYPE_CHANGE_STREAM_PARAMETERS);
         const size = CommandControlMessage.PAYLOAD_LENGTH + 1 + temp.length;
-        event.buffer = new BinaryWriter(size)
-            .writeUInt8(event.type)
-            .writeBytes(temp)
-            .toUint8Array();
+        event.buffer = new BinaryWriter(size).writeUInt8(event.type).writeBytes(temp).toUint8Array();
         return event;
     }
 
@@ -98,7 +95,14 @@ export class CommandControlMessage extends ControlMessage {
         const sizeField = 4;
         const textLengthField = 2;
         const textLength = text.length;
-        const totalSize = CommandControlMessage.PAYLOAD_LENGTH + typeField + idField + stateField + sizeField + textLengthField + textLength;
+        const totalSize =
+            CommandControlMessage.PAYLOAD_LENGTH +
+            typeField +
+            idField +
+            stateField +
+            sizeField +
+            textLengthField +
+            textLength;
         event.buffer = new BinaryWriter(totalSize)
             .writeUInt8(event.type)
             .writeInt16BE(id)
@@ -117,7 +121,8 @@ export class CommandControlMessage extends ControlMessage {
         const stateField = 1;
         const chunkLengthField = 4;
         const chunkLength = chunk.byteLength;
-        const totalSize = CommandControlMessage.PAYLOAD_LENGTH + typeField + idField + stateField + chunkLengthField + chunkLength;
+        const totalSize =
+            CommandControlMessage.PAYLOAD_LENGTH + typeField + idField + stateField + chunkLengthField + chunkLength;
         event.buffer = new BinaryWriter(totalSize)
             .writeUInt8(event.type)
             .writeInt16BE(id)

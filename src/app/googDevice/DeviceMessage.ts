@@ -1,5 +1,5 @@
-import Util from '../Util';
 import { BinaryReader } from '../BinaryReader';
+import Util from '../Util';
 
 export default class DeviceMessage {
     public static TYPE_CLIPBOARD = 0;

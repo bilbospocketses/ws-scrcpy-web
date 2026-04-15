@@ -11,8 +11,8 @@ import { DEVICE_SERVER_PATH, SERVER_PACKAGE, SERVER_VERSION } from '../common/Co
 import { AUDIO_DISABLED, AUDIO_ERROR, codecName } from '../common/ScrcpyCodec';
 import { AdbClient } from './AdbClient';
 import { FrameReader } from './FrameReader';
-import { type ScrcpyOptions, serializeOptions } from './ScrcpyOptions';
 import { Mw, type RequestParameters } from './mw/Mw';
+import { type ScrcpyOptions, serializeOptions } from './ScrcpyOptions';
 import '../../assets/scrcpy-server';
 
 const TAG = '[ScrcpyConnection]';

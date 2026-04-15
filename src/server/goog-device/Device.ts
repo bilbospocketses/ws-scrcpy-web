@@ -3,6 +3,7 @@ import type GoogDeviceDescriptor from '../../types/GoogDeviceDescriptor';
 import type { NetInterface } from '../../types/NetInterface';
 import { AdbClient } from '../AdbClient';
 import { Properties } from './Properties';
+
 import Timeout = NodeJS.Timeout;
 
 enum PID_DETECTION {
@@ -200,7 +201,7 @@ export class Device extends TypedEmitter<DeviceEvents> {
     }
 
     private async listProc(processName: string): Promise<number[]> {
-        const find = `find /proc -maxdepth 2 -name cmdline  2>/dev/null`;
+        const find = 'find /proc -maxdepth 2 -name cmdline  2>/dev/null';
         const lines = await this.runShellCommand(
             `for L in \`${find}\`; do grep -sae '^${processName}' $L 2>&1 >/dev/null && echo $L; done`,
         );
@@ -363,5 +364,4 @@ export class Device extends TypedEmitter<DeviceEvents> {
             return this.descriptor.interfaces;
         });
     }
-
 }

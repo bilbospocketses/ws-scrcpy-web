@@ -9,9 +9,9 @@ import type GoogDeviceDescriptor from '../../../types/GoogDeviceDescriptor';
 import type { Message } from '../../../types/Message';
 import type { ParamsDeviceTracker } from '../../../types/ParamsDeviceTracker';
 import { Attribute } from '../../Attribute';
-import Util from '../../Util';
 import { BaseDeviceTracker } from '../../client/BaseDeviceTracker';
 import type { Tool } from '../../client/Tool';
+import Util from '../../Util';
 import { html } from '../../ui/HtmlTag';
 import SvgImage from '../../ui/SvgImage';
 import { StreamClientScrcpy } from './StreamClientScrcpy';
@@ -68,7 +68,7 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
                 console.warn(
                     `Tracker with url: "${this.url}" has the same id(${this.id}) as tracker with url "${value.url}"`,
                 );
-                console.warn(`This tracker will shut down`);
+                console.warn('This tracker will shut down');
                 this.destroy();
             }
         }
@@ -162,7 +162,7 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
         const optionElement = document.createElement('option');
         optionElement.setAttribute(Attribute.URL, url);
         optionElement.setAttribute(Attribute.NAME, name);
-        optionElement.innerText = `proxy over adb`;
+        optionElement.innerText = 'proxy over adb';
         return optionElement;
     }
 
@@ -249,7 +249,7 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
                         const date = new Date(timestamp);
                         actionButton.title = `Last update on ${date.toLocaleDateString()} at ${date.toLocaleTimeString()}`;
                     } else {
-                        actionButton.title = `Not active`;
+                        actionButton.title = 'Not active';
                     }
                     actionButton.appendChild(SvgImage.create(SvgImage.Icon.OFFLINE));
                 }
@@ -300,7 +300,7 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
                     selectElement.appendChild(adbProxyOption);
                     const actionButton = document.createElement('button');
                     actionButton.className = 'action-button update-interfaces-button active';
-                    actionButton.title = `Update information`;
+                    actionButton.title = 'Update information';
                     actionButton.appendChild(SvgImage.create(SvgImage.Icon.REFRESH));
                     actionButton.setAttribute(Attribute.UDID, device.udid);
                     actionButton.setAttribute(Attribute.COMMAND, ControlCenterCommand.UPDATE_INTERFACES);

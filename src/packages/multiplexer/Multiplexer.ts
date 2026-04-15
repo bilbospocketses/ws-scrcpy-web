@@ -159,9 +159,10 @@ export class Multiplexer extends TypedEmitter<MultiplexerEvents> implements WebS
                     }
                     break;
                 }
-                default:
+                default: {
                     const error = new Error(`Unsupported message type: ${message.type}`);
                     this.dispatchEvent(new ErrorEventClass('error', { error }));
+                }
             }
         };
 
@@ -268,7 +269,11 @@ export class Multiplexer extends TypedEmitter<MultiplexerEvents> implements WebS
 
     public sendData(data: string | ArrayBufferLike | Blob | ArrayBufferView): void {
         if (this.ws instanceof Multiplexer) {
-            data = Message.createBuffer(MessageType.Data, this._id, typeof data === 'string' ? new TextEncoder().encode(data) : data as ArrayBuffer);
+            data = Message.createBuffer(
+                MessageType.Data,
+                this._id,
+                typeof data === 'string' ? new TextEncoder().encode(data) : (data as ArrayBuffer),
+            );
         }
         this._send(data);
     }
@@ -284,7 +289,7 @@ export class Multiplexer extends TypedEmitter<MultiplexerEvents> implements WebS
         } else if (readyState === this.ws.CONNECTING) {
             this.storage.push(data);
         } else {
-            throw Error(`Socket is already in CLOSING or CLOSED state.`);
+            throw Error('Socket is already in CLOSING or CLOSED state.');
         }
     }
 

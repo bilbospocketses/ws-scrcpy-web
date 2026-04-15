@@ -2,7 +2,9 @@ import type GoogDeviceDescriptor from '../../../types/GoogDeviceDescriptor';
 import { AdbClient } from '../../AdbClient';
 import type { Service } from '../../services/Service';
 import { Device } from '../Device';
+
 import Timeout = NodeJS.Timeout;
+
 import * as crypto from 'crypto';
 import * as os from 'os';
 import { ControlCenterCommand } from '../../../common/ControlCenterCommand';

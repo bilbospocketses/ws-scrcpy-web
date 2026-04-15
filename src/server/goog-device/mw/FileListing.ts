@@ -53,7 +53,7 @@ export class FileListing extends Mw {
         switch (cmd) {
             case Protocol.LIST:
             case Protocol.STAT:
-            case Protocol.RECV:
+            case Protocol.RECV: {
                 const length = data.readUInt32LE(offset);
                 offset += 4;
                 const pathBuffer = data.slice(offset, offset + length);
@@ -62,6 +62,7 @@ export class FileListing extends Mw {
                     console.error(`[${FileListing.TAG}]`, error.message);
                 });
                 break;
+            }
             case Protocol.SEND:
                 FilePushReader.handle(serial, channel);
                 break;

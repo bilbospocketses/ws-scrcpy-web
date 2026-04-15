@@ -134,7 +134,7 @@ body.stream {
 }
 
 .control-button {
-    margin: .571rem auto;
+    margin: 0.571rem auto;
     padding: 0;
     display: block;
     width: 2.143rem;
@@ -155,7 +155,7 @@ body.stream {
 
 .control-wrapper > label.control-button {
     display: block;
-    margin: .571rem auto;
+    margin: 0.571rem auto;
 }
 
 .control-button > svg {

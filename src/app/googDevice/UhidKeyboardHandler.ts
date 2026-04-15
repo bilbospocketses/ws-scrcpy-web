@@ -1,6 +1,7 @@
 // src/app/googDevice/UhidKeyboardHandler.ts
-import type { UhidManager } from './UhidManager';
+
 import { CODE_TO_HID, MODIFIER_CODES } from './hid-usage-tables';
+import type { UhidManager } from './UhidManager';
 
 export class UhidKeyboardHandler {
     private pressedKeys = new Set<number>();

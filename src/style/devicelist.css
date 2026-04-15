@@ -142,7 +142,7 @@ body.list #device_list_menu {
 }
 
 #devices .device-list div.desc-block {
-    margin: .3em;
+    margin: 0.3em;
     display: inline-flex;
 }
 
@@ -154,7 +154,7 @@ body.list #device_list_menu {
 #devices .device-list div.desc-block.server_pid,
 #devices .device-list div.desc-block.net_interface {
     border: 1px solid var(--device-border-color);
-    border-radius: .3em;
+    border-radius: 0.3em;
     overflow: hidden;
     white-space: nowrap;
 }
@@ -168,7 +168,7 @@ body.list #device_list_menu {
 }
 
 #devices .device-list div.desc-block button > span {
-    padding: 0 .5em;
+    padding: 0 0.5em;
 }
 
 #devices .device-list div.desc-block button > span,

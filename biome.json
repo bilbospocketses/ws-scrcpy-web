@@ -1,8 +1,6 @@
 {
-    "$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
-    "organizeImports": {
-        "enabled": true
-    },
+    "$schema": "https://biomejs.dev/schemas/2.4.12/schema.json",
+    "assist": { "actions": { "source": { "organizeImports": "on" } } },
     "formatter": {
         "enabled": true,
         "indentStyle": "space",
@@ -21,7 +19,8 @@
                 "noDoubleEquals": "warn",
                 "noRedeclare": "warn",
                 "noConfusingVoidType": "warn",
-                "noEmptyBlock": "warn"
+                "noEmptyBlock": "warn",
+                "noVar": "warn"
             },
             "complexity": {
                 "noForEach": "off",
@@ -29,7 +28,8 @@
                 "noThisInStatic": "off",
                 "useOptionalChain": "warn",
                 "useLiteralKeys": "warn",
-                "noUselessConstructor": "warn"
+                "noUselessConstructor": "warn",
+                "noArguments": "warn"
             },
             "style": {
                 "noNonNullAssertion": "off",
@@ -38,10 +38,8 @@
                 "useNodejsImportProtocol": "warn",
                 "useTemplate": "warn",
                 "noUnusedTemplateLiteral": "warn",
-                "noVar": "warn",
                 "noUselessElse": "warn",
-                "useSingleVarDeclarator": "warn",
-                "noArguments": "warn"
+                "useSingleVarDeclarator": "warn"
             },
             "correctness": {
                 "noSwitchDeclarations": "warn",
@@ -62,6 +60,6 @@
         }
     },
     "files": {
-        "ignore": ["dist/", "build/", "node_modules/", "public/"]
+        "includes": ["src/**", "webpack/**"]
     }
 }

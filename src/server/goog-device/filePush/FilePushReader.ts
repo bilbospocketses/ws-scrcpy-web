@@ -90,7 +90,7 @@ export class FilePushReader {
                 this.pushId = FilePushReader.getNextId();
                 this.sendResponse(FilePushResponseStatus.NEW_PUSH_ID);
                 break;
-            case FilePushState.START:
+            case FilePushState.START: {
                 if (!this.verifyId(id)) {
                     return;
                 }
@@ -114,7 +114,8 @@ export class FilePushReader {
                 this.writeStream = fs.createWriteStream(this.tempFilePath);
                 this.sendResponse(FilePushResponseStatus.NO_ERROR);
                 break;
-            case FilePushState.APPEND:
+            }
+            case FilePushState.APPEND: {
                 if (!this.verifyId(id)) {
                     return;
                 }
@@ -134,6 +135,7 @@ export class FilePushReader {
                 }
                 this.sendResponse(FilePushResponseStatus.NO_ERROR);
                 break;
+            }
             case FilePushState.FINISH:
                 if (!this.verifyId(id)) {
                     return;

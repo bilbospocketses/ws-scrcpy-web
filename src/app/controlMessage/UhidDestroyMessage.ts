@@ -8,9 +8,6 @@ export class UhidDestroyMessage extends ControlMessage {
     }
 
     public toUint8Array(): Uint8Array {
-        return new BinaryWriter(3)
-            .writeUInt8(this.type)
-            .writeUInt16BE(this.id)
-            .toUint8Array();
+        return new BinaryWriter(3).writeUInt8(this.type).writeUInt16BE(this.id).toUint8Array();
     }
 }
