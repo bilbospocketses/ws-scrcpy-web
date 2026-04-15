@@ -4,7 +4,7 @@
   "description": "Browser-based Android screen mirroring and control, powered by scrcpy",
   "license": "GPL-3.0-only",
   "engines": {
-    "node": ">=18"
+    "node": ">=24"
   },
   "scripts": {
     "clean": "rm -rf dist",
