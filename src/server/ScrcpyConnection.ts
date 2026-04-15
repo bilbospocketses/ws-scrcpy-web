@@ -61,8 +61,12 @@ export class ScrcpyConnection extends Mw {
         super(ws);
         this.start().catch((err) => {
             console.error(TAG, `Failed to start session for ${serial}:`, err.message);
-            if (ws.readyState === ws.OPEN) {
-                ws.close(4005, err.message);
+            try {
+                if (ws.readyState === ws.OPEN) {
+                    ws.close(4005, err.message.slice(0, 123));
+                }
+            } catch (closeErr) {
+                console.error(TAG, `Failed to close WebSocket for ${serial}:`, closeErr);
             }
         });
     }

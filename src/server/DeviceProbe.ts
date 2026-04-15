@@ -27,8 +27,12 @@ export class DeviceProbe extends Mw {
         super(ws);
         this.probe().catch((err) => {
             console.error(TAG, `Probe failed for ${this.serial}:`, err.message);
-            if (ws.readyState === ws.OPEN) {
-                ws.close(4005, err.message);
+            try {
+                if (ws.readyState === ws.OPEN) {
+                    ws.close(4005, err.message.slice(0, 123));
+                }
+            } catch (closeErr) {
+                console.error(TAG, `Failed to close WebSocket for ${this.serial}:`, closeErr);
             }
         });
     }
