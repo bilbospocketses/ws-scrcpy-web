@@ -5,6 +5,7 @@ import AdbProtocol from '../../common/AdbProtocol';
 import type { Multiplexer } from '../../packages/multiplexer/Multiplexer';
 import type { FileStats } from '../../types/FileStats';
 import { AdbClient } from '../AdbClient';
+import { Config } from '../Config';
 
 const execFileAsync = promisify(execFile);
 
@@ -145,7 +146,7 @@ export class AdbUtils {
     public static async pipePullFileToStream(serial: string, pathString: string, stream: Multiplexer): Promise<void> {
         try {
             // Use adb exec-out to stream binary file content
-            const { stdout } = await execFileAsync('adb', ['-s', serial, 'exec-out', `cat "${pathString}"`], {
+            const { stdout } = await execFileAsync(Config.getInstance().adbPath, ['-s', serial, 'exec-out', `cat "${pathString}"`], {
                 maxBuffer: 50 * 1024 * 1024,
                 encoding: 'buffer',
             });

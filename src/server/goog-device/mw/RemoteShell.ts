@@ -45,7 +45,7 @@ export class RemoteShell extends Mw {
         const env = Object.assign({}, process.env) as any;
         env['COLORTERM'] = 'truecolor';
         const { cols = 80, rows = 24 } = params;
-        const cwd = env.PWD || '/';
+        const cwd = process.cwd();
         const file = OS_WINDOWS ? 'adb.exe' : 'adb';
         const term = pty.spawn(file, ['-s', params.udid, 'shell'], {
             name: 'xterm-256color',
