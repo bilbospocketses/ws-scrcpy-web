@@ -24,6 +24,7 @@ This document covers the internal architecture of ws-scrcpy-web -- a browser-bas
 12. [Release Checklist](#12-release-checklist)
 13. [Dependency Updater](#13-dependency-updater)
 14. [Home Page Architecture](#14-home-page-architecture)
+15. [Logging](#15-logging)
 
 ---
 
@@ -908,3 +909,68 @@ Connecting calls `POST /api/devices/connect` with the device address. On success
 ### 14.3 Dependencies
 
 The dependency updater panel (section 13) shows installed vs. latest versions for Node.js + node-pty, ADB, and scrcpy-server with update controls. See section 13 for full details.
+
+---
+
+## 15. Logging
+
+All server-side logging goes through `src/server/Logger.ts`, a lightweight utility that tees output to both the console and a persistent log file.
+
+### 15.1 Usage
+
+```typescript
+import { Logger } from './Logger';
+const log = Logger.for('MyModule');
+
+log.info('Server started on port', port);   // stdout + file
+log.error('Connection failed:', err.message); // stderr + file
+```
+
+`Logger.for(tag)` returns a tagged logger instance. The tag is automatically wrapped in brackets for consistent formatting.
+
+### 15.2 Log File
+
+| Property | Value |
+|----------|-------|
+| **Location** | `ws-scrcpy-web.log` in the project root (next to `start.cmd`) |
+| **Format** | `{ISO 8601 timestamp} [{tag}] {message}` for info, `{ISO 8601 timestamp} [{tag}] ERROR {message}` for errors |
+| **Writes** | Synchronous (`fs.appendFileSync`) so crash output is never lost in a buffer |
+| **Rotation** | On startup, if the log file exceeds 5MB it is renamed to `ws-scrcpy-web.log.1` (one backup kept) |
+
+Example output:
+
+```
+2026-04-16T05:53:28.179Z [Server] Listening on:
+	http://htpc:8000/ http://localhost:8000/
+2026-04-16T05:53:28.181Z [Server] 	http://192.168.86.3:8000/ http://127.0.0.1:8000/
+2026-04-16T06:01:12.445Z [ScrcpyConnection] Starting session for 192.168.86.43:5555 (scid=1a2b3c4d)
+2026-04-16T06:01:14.102Z [ScrcpyConnection] Session ready: Google TV Streamer 1920x1080
+```
+
+### 15.3 Modules Using Logger
+
+All 12 server-side files use the Logger. No raw `console.log` or `console.error` calls exist outside of `Logger.ts` itself.
+
+| Module | Tag | Typical messages |
+|--------|-----|-----------------|
+| `index.ts` | `Server` | Startup, shutdown, signal handling |
+| `ScrcpyConnection.ts` | `ScrcpyConnection` | Session lifecycle (start, ready, release, exit) |
+| `DeviceProbe.ts` | `DeviceProbe` | Encoder/display probing |
+| `Utils.ts` | `Server` | Network interface listing |
+| `WebSocketServer.ts` | `WebSocket Server {tcp:PORT}` | WS server stop |
+| `WebsocketMultiplexer.ts` | `WebsocketMultiplexer` | Service init failures |
+| `ControlCenter.ts` | `ControlCenter` | Device list errors, init failures |
+| `Device.ts` | Per-device tag | Max update attempts reached |
+| `DeviceTracker.ts` | `DeviceTracker` | Command parse errors |
+| `RemoteShell.ts` | `RemoteShell` | Shell message parse errors |
+| `FileListing.ts` | `FileListing` | Invalid messages, wrong commands |
+| `FilePushReader.ts` | `FilePushReader` | Push errors |
+
+### 15.4 Adding Logging to New Code
+
+When adding a new server-side module:
+
+1. Import the Logger: `import { Logger } from './Logger';` (adjust relative path)
+2. Create a module-level logger: `const log = Logger.for('ModuleName');`
+3. Use `log.info()` for normal flow and `log.error()` for failures
+4. For classes with instance-specific tags (like `Device.ts`), call `Logger.for(this.TAG)` where needed

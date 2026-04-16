@@ -35,6 +35,7 @@ A modernized spiritual successor to [ws-scrcpy](https://github.com/NetrisTV/ws-s
 - **Dark/light theme** -- toggle between dark (default) and light modes, preference saved to localStorage
 - **Responsive layout** -- centered page container scales from mobile to 4K (up to 5 device cards)
 - **In-app dependency updater** -- check and update Node.js, ADB, and scrcpy-server from the home page
+- **Server logging** -- all server output logged to `ws-scrcpy-web.log` with timestamps, tag prefixes, and 5MB rotation
 - Docker support (Dockerfile included)
 
 ## Requirements
@@ -126,6 +127,12 @@ The server can be configured via environment variables or a `config.json` file:
 | `PORT` | `8000` | HTTP server port |
 | `ADB_PATH` | `adb` | Path to ADB executable |
 | `CONFIG_PATH` | `config.json` | Path to config file |
+
+## Logging
+
+The server logs all output to `ws-scrcpy-web.log` in the project root. Every line includes an ISO 8601 timestamp and a module tag (e.g., `[ScrcpyConnection]`, `[Server]`). The log file rotates on startup when it exceeds 5MB, keeping one backup (`.log.1`). Console output is preserved alongside the file -- you still see everything in the terminal.
+
+See `docs/TECHNICAL_GUIDE.md` section 15 for details on the Logger utility and adding logging to new modules.
 
 ## Docker
 
