@@ -114,7 +114,7 @@ body.list #device_list_menu {
 
 /* Disconnect button */
 #devices .disconnect-cell {
-    vertical-align: middle;
+    vertical-align: bottom;
     text-align: center;
     padding-left: 12px;
 }
