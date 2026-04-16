@@ -88,6 +88,7 @@ body.list #device_list_menu {
     margin-bottom: 0;
     border-collapse: collapse;
     font-size: 13px;
+    width: 100%;
 }
 
 #devices .device-info td {
