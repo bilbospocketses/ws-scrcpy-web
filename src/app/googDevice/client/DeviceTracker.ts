@@ -120,6 +120,7 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
         const isNetworkDevice = device.udid.includes(':');
         const row = html`<div class="device ${isActive ? 'active' : 'not-active'}">
             <table class="device-info">
+                <tr class="device-name-row"><td class="device-label">Device Name:</td><td colspan="2"></td></tr>
                 <tr><td class="device-label">Model:</td><td colspan="2">${deviceName}</td></tr>
                 <tr><td class="device-label">Device ID:</td><td colspan="2" class="device-serial">${device.udid}</td></tr>
                 <tr class="android-row"><td class="device-label">Android:</td><td>${device['ro.build.version.release']}</td></tr>
@@ -134,6 +135,17 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
         </div>`.content;
         const overlaySection = row.getElementById(overlayId);
         const newtabSection = row.getElementById(newtabId);
+
+        // Build Device Name cell via DOM (interactive elements can't use html`` template)
+        const nameRow = row.querySelector('.device-name-row');
+        if (nameRow) {
+            const nameCell = nameRow.querySelector('td:last-child') as HTMLTableCellElement;
+            if (nameCell) {
+                const serial = device['ro.serialno'] || '';
+                DeviceTracker.buildLabelCell(nameCell, serial);
+            }
+        }
+
         if (!overlaySection || !newtabSection) {
             return;
         }
@@ -248,5 +260,78 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
                 holder.parentElement.removeChild(holder);
             }
         }
+    }
+
+    private static buildLabelCell(cell: HTMLTableCellElement, serial: string): void {
+        const renderDisplay = async () => {
+            let label = '';
+            if (serial) {
+                try {
+                    const res = await fetch('/api/devices/labels');
+                    const labels: Record<string, string> = await res.json();
+                    label = labels[serial] || '';
+                } catch {
+                    // Couldn't fetch labels — show unnamed
+                }
+            }
+
+            cell.innerHTML = '';
+            cell.className = 'device-name-cell';
+
+            const span = document.createElement('span');
+            span.className = label ? 'device-name-text' : 'device-name-text unnamed';
+            span.textContent = label || 'Unnamed Device';
+            cell.appendChild(span);
+
+            const pencilBtn = document.createElement('button');
+            pencilBtn.className = 'device-name-edit-btn';
+            pencilBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 3a2.85 2.85 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>';
+            pencilBtn.title = 'Edit device name';
+            pencilBtn.addEventListener('click', () => renderEdit(label));
+            cell.appendChild(pencilBtn);
+        };
+
+        const renderEdit = (currentLabel: string) => {
+            cell.innerHTML = '';
+
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.className = 'device-name-input';
+            input.value = currentLabel;
+            input.placeholder = 'Name this device...';
+            cell.appendChild(input);
+
+            const saveBtn = document.createElement('button');
+            saveBtn.className = 'device-name-edit-btn';
+            saveBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>';
+            saveBtn.title = 'Save';
+            const save = async () => {
+                const newLabel = input.value.trim();
+                if (serial) {
+                    try {
+                        await fetch('/api/devices/labels', {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ serial, label: newLabel }),
+                        });
+                    } catch {
+                        // Save failed — will show old label
+                    }
+                }
+                renderDisplay();
+            };
+            saveBtn.addEventListener('click', save);
+            cell.appendChild(saveBtn);
+
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') save();
+                if (e.key === 'Escape') renderDisplay();
+            });
+
+            input.focus();
+            input.select();
+        };
+
+        renderDisplay();
     }
 }
