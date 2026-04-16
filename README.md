@@ -35,8 +35,10 @@ A modernized spiritual successor to [ws-scrcpy](https://github.com/NetrisTV/ws-s
 
 ## Requirements
 
+Required for building from source. See [Self-Contained Deployment](#self-contained-deployment) for standalone installations that bundle everything.
+
 - **Node.js** 24 LTS or later
-- **ADB** installed and in PATH (or use self-contained mode)
+- **ADB** installed and in PATH
 - **Android device** with USB debugging or wireless debugging enabled
 
 ## Quick Start (Developer Mode)
