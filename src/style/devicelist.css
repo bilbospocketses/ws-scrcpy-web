@@ -84,7 +84,8 @@ body.list #device_list_menu {
 
 /* Device info table */
 #devices table.device-info {
-    margin-bottom: 12px;
+    margin-bottom: 0;
+    padding-bottom: 12px;
     border-collapse: collapse;
     font-size: 13px;
 }
@@ -117,8 +118,12 @@ body.list #device_list_menu {
     gap: 6px;
     align-items: center;
     border-top: 1px dashed color-mix(in srgb, var(--device-border-color) 50%, transparent);
-    padding-top: 10px;
-    padding-bottom: 8px;
+    padding-top: 12px;
+    padding-bottom: 12px;
+}
+
+#devices .device-list div.device .services:last-child {
+    padding-bottom: 0;
 }
 
 #devices .services-label {
