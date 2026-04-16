@@ -2,3 +2,8 @@ node_modules/
 dist/
 build/
 *.tgz
+
+# Dependencies folder (managed at runtime, not committed)
+dependencies/node/
+dependencies/adb/
+.restart
