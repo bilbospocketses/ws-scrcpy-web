@@ -31,7 +31,7 @@ A modernized spiritual successor to [ws-scrcpy](https://github.com/NetrisTV/ws-s
 - **Stream modal** -- native `<dialog>` overlay for the full mirroring experience (video, toolbar, audio, UHID input). Home page stays visible behind the backdrop — close the stream and you're right back at the device list
 - **Viewport scaling** -- video scales to fill available space with correct aspect ratio
 - **Remote ADB shell** -- native `<dialog>` terminal modal with xterm.js, close confirmation for active sessions, Escape/backdrop blocked (terminal needs both)
-- File manager (browse, upload, download)
+- **File browser** -- native `<dialog>` modal with breadcrumb navigation, sortable columns, SVG file type icons (6 types), configurable icon sizes, selection with bulk operations, drag-and-drop upload, download with progress, delete with confirmation, client-side filter
 - **Embed mode** -- streamlined iframe integration for embedding in other apps (hides toolbar, auto-scales video, used by [Control Menu](https://github.com/bilbospocketses/control-menu))
 - **Device labels** -- name your devices for easy identification, persisted across sessions in `device-labels.json`, inline edit from device cards or during network scan
 - **Network device discovery** -- scan local network for ADB devices via mDNS and connect with one click, optionally name devices during discovery
