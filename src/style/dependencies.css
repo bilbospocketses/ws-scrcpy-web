@@ -1,0 +1,187 @@
+#dependency-panel {
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid var(--button-border-color);
+    color: var(--text-color);
+    background-color: var(--main-bg-color);
+}
+
+.dep-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.75rem;
+}
+
+.dep-header h2 {
+    margin: 0;
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--text-color);
+}
+
+.dep-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+}
+
+.dep-table th {
+    text-align: left;
+    padding: 0.4rem 0.6rem;
+    border-bottom: 1px solid var(--button-border-color);
+    color: var(--text-color-light);
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.dep-table td {
+    padding: 0.45rem 0.6rem;
+    border-bottom: 1px solid var(--button-border-color);
+    vertical-align: middle;
+}
+
+.dep-table tr:last-child td {
+    border-bottom: none;
+}
+
+.dep-version {
+    font-family: monospace;
+    font-size: 0.85rem;
+    white-space: nowrap;
+}
+
+.dep-description {
+    font-size: 0.8rem;
+    color: var(--text-color-light);
+    margin-top: 0.15rem;
+}
+
+.dep-paired {
+    font-size: 0.78rem;
+    color: var(--text-color-light);
+    margin-left: 0.35rem;
+}
+
+/* Buttons */
+.dep-btn {
+    padding: 0.3rem 0.75rem;
+    border: 1px solid var(--button-border-color);
+    border-radius: 4px;
+    background: transparent;
+    color: var(--button-text-color);
+    font-size: 0.85rem;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: opacity 0.15s;
+}
+
+.dep-btn:hover:not(:disabled) {
+    opacity: 0.8;
+}
+
+.dep-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.dep-update {
+    border-color: #2a6a2a;
+    color: #4ade80;
+    background-color: #1a3a1a;
+}
+
+.dep-update:hover:not(:disabled) {
+    background-color: #1f451f;
+    opacity: 1;
+}
+
+/* Status badges */
+.dep-badge {
+    display: inline-block;
+    padding: 0.2rem 0.55rem;
+    border-radius: 999px;
+    font-size: 0.78rem;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.dep-ok {
+    background: #1a3a1a;
+    color: #4ade80;
+}
+
+.dep-warn {
+    background: #3a3a1a;
+    color: #fbbf24;
+}
+
+.dep-info {
+    background: #1a2a3a;
+    color: #60a5fa;
+}
+
+.dep-error {
+    background: #3a1a1a;
+    color: #f87171;
+    cursor: help;
+}
+
+.dep-unknown {
+    background: #2a2a2a;
+    color: #888;
+}
+
+/* Restart prompt bar */
+.dep-restart-prompt {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.6rem 0.75rem;
+    margin-bottom: 0.75rem;
+    background: #3a3a1a;
+    border: 1px solid #5a5a1a;
+    border-radius: 4px;
+    color: #fbbf24;
+    font-size: 0.9rem;
+}
+
+.dep-restart-prompt p {
+    margin: 0;
+    flex: 1;
+}
+
+.dep-restart-btn {
+    border-color: #7a5a00;
+    color: #fbbf24;
+    background-color: #4a3a00;
+}
+
+.dep-restart-btn:hover:not(:disabled) {
+    background-color: #5a4800;
+    opacity: 1;
+}
+
+/* Restarting overlay */
+.dep-restarting {
+    padding: 2rem;
+    text-align: center;
+    color: var(--text-color-light);
+}
+
+.dep-restarting h2 {
+    margin: 0 0 0.5rem;
+    color: var(--text-color);
+}
+
+.dep-restarting p {
+    margin: 0;
+    font-size: 0.9rem;
+}
+
+/* Error message row */
+.dep-error-msg {
+    text-align: center;
+    color: #f87171;
+    padding: 1rem;
+    font-size: 0.9rem;
+}

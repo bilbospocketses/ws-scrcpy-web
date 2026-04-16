@@ -1,5 +1,7 @@
 import '../style/app.css';
+import '../style/dependencies.css';
 import { HostTracker } from './client/HostTracker';
+import { DependencyPanel } from './client/DependencyPanel';
 import type { Tool } from './client/Tool';
 import { StreamClientScrcpy } from './googDevice/client/StreamClientScrcpy';
 
@@ -43,4 +45,13 @@ window.onload = async (): Promise<void> => {
         });
     }
     HostTracker.start();
+
+    DependencyPanel.create().then((panel) => {
+        const devices = document.getElementById('devices');
+        if (devices) {
+            devices.parentElement!.insertBefore(panel.getElement(), devices);
+        } else {
+            document.body.prepend(panel.getElement());
+        }
+    });
 };
