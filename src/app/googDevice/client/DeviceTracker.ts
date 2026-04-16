@@ -180,7 +180,7 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
         const servicesId = `device_services_${fullName}`;
         const row = html`<div class="device ${isActive ? 'active' : 'not-active'}">
             <div class="device-header">
-                <div class="device-name">${device['ro.product.manufacturer']} ${device['ro.product.model']}</div>
+                <div class="device-name">${device['ro.product.model']?.startsWith(device['ro.product.manufacturer']) ? device['ro.product.model'] : `${device['ro.product.manufacturer']} ${device['ro.product.model']}`}</div>
                 <div class="device-serial">${device.udid}</div>
                 <div class="device-version">
                     <div class="release-version">${device['ro.build.version.release']}</div>
