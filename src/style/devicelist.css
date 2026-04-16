@@ -84,8 +84,7 @@ body.list #device_list_menu {
 
 /* Device info table */
 #devices table.device-info {
-    margin-bottom: 0;
-    padding-bottom: 12px;
+    margin-bottom: 12px;
     border-collapse: collapse;
     font-size: 13px;
 }
@@ -137,7 +136,7 @@ body.list #device_list_menu {
     margin: 0;
     display: inline-flex;
     align-items: center;
-    border: 1px solid var(--device-border-color);
+    border: 1px solid #fff;
     border-radius: 6px;
     overflow: hidden;
     white-space: nowrap;
