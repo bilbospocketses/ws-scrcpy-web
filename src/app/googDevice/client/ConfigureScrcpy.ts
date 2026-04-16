@@ -742,6 +742,15 @@ export class ConfigureScrcpy extends BaseClient<ParamsStreamScrcpy, ConfigureScr
             const fitToScreen = this.getFitToScreenValue();
             player.saveVideoSettings(this.udid, videoSettings, fitToScreen, this.displayInfo);
         }
+        if (this.saveSettingsButton) {
+            const original = this.saveSettingsButton.textContent;
+            this.saveSettingsButton.textContent = 'saved';
+            setTimeout(() => {
+                if (this.saveSettingsButton) {
+                    this.saveSettingsButton.textContent = original;
+                }
+            }, 1500);
+        }
     };
 
     private openStream = (): void => {
