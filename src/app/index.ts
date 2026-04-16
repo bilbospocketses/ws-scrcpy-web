@@ -46,18 +46,20 @@ window.onload = async (): Promise<void> => {
             DeviceTracker.registerTool(tool);
         });
     }
-    HostTracker.start();
+    // Create page structure in fixed order BEFORE anything renders
+    // BaseDeviceTracker will find #devices and use it instead of creating its own
+    const devicesDiv = document.createElement('div');
+    devicesDiv.id = 'devices';
+    devicesDiv.className = 'table-wrapper';
+    document.body.appendChild(devicesDiv);
 
     const discoveryPanel = new NetworkDiscoveryPanel();
+    document.body.appendChild(discoveryPanel.getElement());
 
     DependencyPanel.create().then((depPanel) => {
-        const devices = document.getElementById('devices');
-        if (devices) {
-            devices.after(discoveryPanel.getElement());
-            discoveryPanel.getElement().after(depPanel.getElement());
-        } else {
-            document.body.append(discoveryPanel.getElement());
-            document.body.append(depPanel.getElement());
-        }
+        document.body.appendChild(depPanel.getElement());
     });
+
+    // Start device tracking — it will populate the #devices div we created above
+    HostTracker.start();
 };

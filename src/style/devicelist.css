@@ -48,11 +48,8 @@ body.list #device_list_menu {
     z-index: 4;
 }
 
-/* Device list grid */
+/* Device list container */
 #devices .device-list {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-    gap: 12px;
     font-family: monospace;
     font-size: var(--font-size);
 }
