@@ -82,59 +82,28 @@ body.list #device_list_menu {
     opacity: 0.7;
 }
 
-/* Device header */
-#devices .device-header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 0;
-    margin-bottom: 10px;
-    flex-wrap: wrap;
+/* Device info lines */
+#devices .device-info {
+    margin-bottom: 12px;
 }
 
-#devices .device-header div {
-    display: inline-flex;
+#devices .device-info-row {
+    padding: 2px 0;
+    font-size: 13px;
 }
 
-#devices .device-name {
+#devices .device-info-row:first-child {
     font-size: 15px;
     font-weight: 600;
 }
 
-#devices .device-model {
-    font-size: 14px;
+#devices .device-label {
+    color: var(--text-color-light, #888);
 }
 
 #devices .device-serial {
-    color: var(--url-color);
+    font-family: monospace;
     font-size: 12px;
-    margin-left: 4px;
-}
-
-#devices .device-version {
-    font-size: 13px;
-    margin-left: 4px;
-    align-items: baseline;
-}
-
-#devices .device-version .sdk-version {
-    font-size: 11px;
-    color: var(--url-color);
-    margin-left: 0.2em;
-}
-
-/* State indicator dot */
-#devices .device-state {
-    border-radius: 50%;
-    background-color: #f87171;
-    width: 10px;
-    height: 10px;
-    margin-left: auto;
-    flex-shrink: 0;
-}
-
-#devices .device.active .device-state {
-    background-color: #4ade80;
 }
 
 /* Services / action buttons */
@@ -142,6 +111,16 @@ body.list #device_list_menu {
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
+    align-items: center;
+    border-top: 1px solid var(--device-border-color);
+    padding-top: 10px;
+}
+
+#devices .services-label {
+    width: 100%;
+    font-size: 11px;
+    color: var(--text-color-light, #888);
+    margin-bottom: 2px;
 }
 
 #devices .device-list div.desc-block {
@@ -210,11 +189,16 @@ body.list #device_list_menu {
     color: var(--link-color_visited-light);
 }
 
-/* Action buttons */
-#devices .device-list div.device div.desc-block .action-button {
+/* Action buttons and links styled as buttons */
+#devices .device-list div.device div.desc-block .action-button,
+#devices .device-list div.device div.desc-block a {
     border: none;
     background-color: rgba(0, 0, 0, 0);
-    color: inherit;
+    color: var(--button-text-color);
+    text-decoration: none;
+    padding: 4px 10px;
+    font-size: var(--font-size);
+    cursor: pointer;
 }
 
 #devices .device-list div.device div.desc-block .action-button.update-interfaces-button {
@@ -233,17 +217,6 @@ body.list #device_list_menu {
     fill: var(--kill-button-hover-color);
 }
 
-/* Select dropdowns in cards */
-#devices .device-list div.device select {
-    color: var(--text-color);
-    background-color: var(--main-bg-color);
-    margin-left: 0;
-    border: none;
-}
-
-#devices .device-list div.device:hover select {
-    background-color: var(--device-list-hover-color);
-}
 
 /* Tracker block — inherits grid layout so device cards flow correctly */
 #devices .device-list > div {
