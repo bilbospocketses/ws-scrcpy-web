@@ -11,6 +11,7 @@ import type { Tool } from '../../client/Tool';
 import Util from '../../Util';
 import { html } from '../../ui/HtmlTag';
 import { ConnectModal } from './ConnectModal';
+import { ListFilesModal } from './ListFilesModal';
 import { ShellModal } from './ShellModal';
 import { StreamClientScrcpy } from './StreamClientScrcpy';
 
@@ -278,6 +279,18 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
                 new ShellModal(device.udid, label, this.params);
             });
         }
+
+        // Intercept list files links — open ListFilesModal instead of navigating to new tab
+        const listFilesLinks = overlaySection.querySelectorAll('a.link-list-files') as NodeListOf<HTMLAnchorElement>;
+        listFilesLinks.forEach((link) => {
+            link.removeAttribute('target');
+            link.addEventListener('click', (e) => {
+                e.preventDefault();
+                const nameEl = link.closest('.device')?.querySelector('.device-name-text');
+                const label = nameEl?.textContent || device['ro.product.model'] || device.udid;
+                new ListFilesModal(device.udid, label, this.params);
+            });
+        });
 
         // Connect button (last)
         if (isActive && DeviceTracker.CREATE_DIRECT_LINKS) {
