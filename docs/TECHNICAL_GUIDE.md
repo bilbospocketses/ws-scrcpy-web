@@ -845,7 +845,13 @@ To add a new dependency to the updater:
 
 The home page (`http://localhost:8000`) is a single-page view with three sections on one scrollable page. No navigation system -- everything is visible at a glance.
 
-Page structure is created in `src/app/index.ts` in fixed order before `HostTracker.start()` to prevent race conditions across browsers.
+**Page layout:** All content is wrapped in a centered `.page-container` with `max-width: 1800px` (fits up to 5 device cards on 4K monitors). Page structure is created in `src/app/index.ts` in fixed order before `HostTracker.start()` to prevent race conditions across browsers.
+
+**Theme toggle:** A sun/moon button in the top-right corner switches between dark (default) and light themes. Preference is saved to localStorage (`ws-scrcpy-web-theme`). Themes use `data-theme` attribute on `<html>` with CSS custom properties. Colors match the Control Menu project palette.
+
+**Components:**
+- `src/app/client/ThemeToggle.ts` -- theme initialization and toggle button
+- `src/style/app.css` -- theme color variables (`[data-theme="dark"]` and `[data-theme="light"]`)
 
 ### 14.1 Connected Devices
 
@@ -855,10 +861,10 @@ Rendered by `DeviceTracker` via WebSocket updates from `ControlCenter`. The serv
 
 **Card structure:** Each device card contains three sections separated by subtle divider lines:
 
-1. **Info table** -- two-column layout with aligned labels:
+1. **Info table** -- full-width table with aligned label column:
    - Model (smart dedup: skips manufacturer if model already starts with it)
    - Device ID (the ADB serial/IP:port)
-   - Android version
+   - Android version + disconnect button (network devices only, right-aligned via rowspan)
    - SDK version
 
 2. **"opens in overlay" section** -- buttons that open UI overlays on the current page:
@@ -868,6 +874,8 @@ Rendered by `DeviceTracker` via WebSocket updates from `ControlCenter`. The serv
    - `connect` -- opens a mirroring session using WebCodecs
    - `shell` -- opens an ADB shell terminal (xterm.js + node-pty)
    - `list files` -- opens the file manager
+
+**Disconnect button:** Shown only for network-connected devices (serial contains `:`). Calls `POST /api/devices/disconnect`, then the device disappears naturally via ControlCenter polling. Built via DOM manipulation (not the `html` template tag) because the template's XSS protection escapes raw HTML strings.
 
 **Interface auto-selection:** The interface dropdown was removed. The best connection path is selected automatically: WiFi interface (direct IP) is preferred, falls back to the first available interface, then to ADB proxy as a last resort.
 
@@ -884,6 +892,7 @@ Rendered by `DeviceTracker` via WebSocket updates from `ControlCenter`. The serv
 |--------|------|---------|
 | POST | `/api/devices/scan` | Discover ADB devices on local network via mDNS |
 | POST | `/api/devices/connect` | Connect to a discovered device by address (JSON body: `{ "address": "ip:port" }`) |
+| POST | `/api/devices/disconnect` | Disconnect a network device by address (JSON body: `{ "address": "ip:port" }`) |
 
 The "Scan Network" button calls `POST /api/devices/scan` which runs `adb mdns services` to discover ADB-enabled devices advertising via mDNS on the local network. Results are filtered to only `_adb-tls-connect` services and exclude already-connected devices. Discovered devices are displayed as cards with "Connect" buttons.
 
@@ -892,7 +901,7 @@ Connecting calls `POST /api/devices/connect` with the device address. On success
 **Requirement:** Devices must have wireless debugging enabled and be on the same local network. mDNS discovery works on standard home networks.
 
 **Components:**
-- `src/server/api/DeviceDiscoveryApi.ts` -- HTTP endpoint handler
+- `src/server/api/DeviceDiscoveryApi.ts` -- HTTP endpoint handler (scan, connect, disconnect)
 - `src/server/AdbClient.ts` -- `mdnsServices()`, `connect()`, `disconnect()` methods + `parseMdnsOutput()` parser
 - `src/app/client/NetworkDiscoveryPanel.ts` -- browser-side scan UI
 

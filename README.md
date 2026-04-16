@@ -31,6 +31,10 @@ A modernized spiritual successor to [ws-scrcpy](https://github.com/NetrisTV/ws-s
 - File manager (browse, upload, download)
 - **Embed mode** -- streamlined iframe integration for embedding in other apps (hides toolbar, auto-scales video, used by [Control Menu](https://github.com/bilbospocketses/control-menu))
 - **Network device discovery** -- scan local network for ADB devices via mDNS and connect with one click
+- **Device disconnect** -- disconnect network devices directly from the device card
+- **Dark/light theme** -- toggle between dark (default) and light modes, preference saved to localStorage
+- **Responsive layout** -- centered page container scales from mobile to 4K (up to 5 device cards)
+- **In-app dependency updater** -- check and update Node.js, ADB, and scrcpy-server from the home page
 - Docker support (Dockerfile included)
 
 ## Requirements
