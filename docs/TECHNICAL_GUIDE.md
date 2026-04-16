@@ -25,6 +25,7 @@ This document covers the internal architecture of ws-scrcpy-web -- a browser-bas
 13. [Dependency Updater](#13-dependency-updater)
 14. [Home Page Architecture](#14-home-page-architecture)
 15. [Logging](#15-logging)
+16. [Device Labels](#16-device-labels)
 
 ---
 
@@ -891,20 +892,23 @@ Rendered by `DeviceTracker` via WebSocket updates from `ControlCenter`. The serv
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| POST | `/api/devices/scan` | Discover ADB devices on local network via mDNS |
-| POST | `/api/devices/connect` | Connect to a discovered device by address (JSON body: `{ "address": "ip:port" }`) |
+| POST | `/api/devices/scan` | Discover ADB devices on local network via mDNS. Returns serial + existing label for each device. |
+| POST | `/api/devices/connect` | Connect to a discovered device (JSON body: `{ "address": "ip:port", "serial": "...", "label": "..." }`). Serial and label are optional -- if both provided, label is saved. |
 | POST | `/api/devices/disconnect` | Disconnect a network device by address (JSON body: `{ "address": "ip:port" }`) |
+| GET | `/api/devices/labels` | Return all device labels as `{ serial: label }` |
+| PUT | `/api/devices/labels` | Set or delete a device label (JSON body: `{ "serial": "...", "label": "..." }`). Empty label deletes. |
 
-The "Scan Network" button calls `POST /api/devices/scan` which runs `adb mdns services` to discover ADB-enabled devices advertising via mDNS on the local network. Results are filtered to only `_adb-tls-connect` services and exclude already-connected devices. Discovered devices are displayed as cards with "Connect" buttons.
+The "Scan Network" button calls `POST /api/devices/scan` which runs `adb mdns services` to discover ADB-enabled devices advertising via mDNS on the local network. Results are filtered to any `_adb` service except `_adb-tls-pairing`, and exclude already-connected devices. Each result includes a `serial` field (parsed from the mDNS name via `parseSerialFromMdnsName`) and a `label` field (from `DeviceLabelStore`, or empty). Discovered devices are displayed as cards with an optional name input and "Connect" button.
 
-Connecting calls `POST /api/devices/connect` with the device address. On success, the card shows "Connected" briefly and then disappears. The device appears in the Connected Devices section via the normal WebSocket update flow from `ControlCenter`.
+Connecting calls `POST /api/devices/connect` with the device address plus optional serial and label. If a name was entered, it is saved to `device-labels.json` before connecting. On success, the card shows "Connected" briefly and then disappears. The device appears in the Connected Devices section via the normal WebSocket update flow from `ControlCenter`.
 
 **Requirement:** Devices must have wireless debugging enabled and be on the same local network. mDNS discovery works on standard home networks.
 
 **Components:**
-- `src/server/api/DeviceDiscoveryApi.ts` -- HTTP endpoint handler (scan, connect, disconnect)
-- `src/server/AdbClient.ts` -- `mdnsServices()`, `connect()`, `disconnect()` methods + `parseMdnsOutput()` parser
-- `src/app/client/NetworkDiscoveryPanel.ts` -- browser-side scan UI
+- `src/server/api/DeviceDiscoveryApi.ts` -- HTTP endpoint handler (scan, connect, disconnect, labels)
+- `src/server/AdbClient.ts` -- `mdnsServices()`, `connect()`, `disconnect()` methods + `parseMdnsOutput()` + `parseSerialFromMdnsName()` parsers
+- `src/server/DeviceLabelStore.ts` -- label persistence (JSON file, in-memory cache)
+- `src/app/client/NetworkDiscoveryPanel.ts` -- browser-side scan UI with optional name input
 
 ### 14.3 Dependencies
 
@@ -974,3 +978,71 @@ When adding a new server-side module:
 2. Create a module-level logger: `const log = Logger.for('ModuleName');`
 3. Use `log.info()` for normal flow and `log.error()` for failures
 4. For classes with instance-specific tags (like `Device.ts`), call `Logger.for(this.TAG)` where needed
+
+### 15.5 Crash Handlers
+
+`src/server/index.ts` registers `uncaughtException` and `unhandledRejection` handlers that log to file before the process exits. These catch errors that bypass the Logger (e.g., unguarded `ws.send()` on a closed socket). Look for `Uncaught exception:` or `Unhandled rejection:` in the log file.
+
+---
+
+## 16. Device Labels
+
+User-assigned names for devices that persist across sessions, disconnects, and restarts.
+
+### 16.1 Data Storage
+
+Labels are stored in `device-labels.json` in the project root, keyed by hardware serial number (`ro.serialno`):
+
+```json
+{
+  "49241HFAG07SUG": "Living Room TV",
+  "47121FDAQ000WC": "Jamie's Pixel 9"
+}
+```
+
+**`DeviceLabelStore`** (`src/server/DeviceLabelStore.ts`):
+- Singleton with `getInstance()` / `resetInstance()`
+- `get(serial)`, `set(serial, label)`, `delete(serial)`, `getAll()`
+- Reads file on first access, caches in memory, sync writes on every change
+- File path resolves from `__dirname` (dist/) + `..` to project root (same pattern as Logger)
+
+### 16.2 Device Identification
+
+**Hardware serial** (`ro.serialno`) is the stable identifier. It never changes across reboots, IP changes, or reconnects.
+
+**Connected devices:** `ro.serialno` is fetched via `getprop` as part of the normal property polling cycle. Added to the `Properties` array in `src/server/goog-device/Properties.ts` and the `GoogDeviceDescriptor` type. Flows to the browser automatically via the WebSocket device update pipeline.
+
+**Scan results (mDNS):** Serial is parsed from the mDNS service name using `parseSerialFromMdnsName()` in `src/server/AdbClient.ts`:
+- `adb-49241HFAG07SUG` (plain `_adb._tcp`) -> `49241HFAG07SUG`
+- `adb-47121FDAQ000WC-7vmR8a` (`_adb-tls-connect._tcp`) -> `47121FDAQ000WC` (TLS instance suffix stripped)
+
+### 16.3 Connected Device Cards
+
+Each device card has a "Device Name:" row as the first table row:
+
+| Device Name: | Living Room TV &emsp;&emsp; [pencil icon] |
+|---|---|
+| Model: | Google TV Streamer |
+
+- **Labeled devices:** Name shown in bold (15px, weight 600)
+- **Unlabeled devices:** "Unnamed Device" shown in italic, dimmed (opacity 0.5)
+- **Pencil icon:** Always visible, right-aligned in the cell. Clicking it enters edit mode.
+- **Edit mode:** Text input replaces the label span, pencil becomes a checkmark. Enter or checkmark saves (PUT `/api/devices/labels`). Escape cancels. The label lookup uses `ro.serialno` from the device descriptor.
+
+Built via DOM manipulation in `DeviceTracker.buildLabelCell()` because the `html` template tag XSS-escapes values and cannot host interactive elements.
+
+### 16.4 Network Scan Cards
+
+Each scan result card includes an optional "Name this device..." text input. If a name is entered before clicking Connect, it is sent with the connect request and saved server-side. If the device was previously named, the input is pre-filled.
+
+### 16.5 Components
+
+| File | Purpose |
+|------|---------|
+| `src/server/DeviceLabelStore.ts` | Label persistence (JSON file, singleton) |
+| `src/server/AdbClient.ts` | `parseSerialFromMdnsName()` helper |
+| `src/server/api/DeviceDiscoveryApi.ts` | REST endpoints for labels |
+| `src/app/googDevice/client/DeviceTracker.ts` | `buildLabelCell()` -- inline edit UI |
+| `src/app/client/NetworkDiscoveryPanel.ts` | Optional name input on scan cards |
+| `src/style/devicelist.css` | Label row, pencil icon, edit input styles |
+| `src/style/home.css` | Discovery card actions layout |

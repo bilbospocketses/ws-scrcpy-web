@@ -30,7 +30,8 @@ A modernized spiritual successor to [ws-scrcpy](https://github.com/NetrisTV/ws-s
 - Remote ADB shell terminal
 - File manager (browse, upload, download)
 - **Embed mode** -- streamlined iframe integration for embedding in other apps (hides toolbar, auto-scales video, used by [Control Menu](https://github.com/bilbospocketses/control-menu))
-- **Network device discovery** -- scan local network for ADB devices via mDNS and connect with one click
+- **Device labels** -- name your devices for easy identification, persisted across sessions in `device-labels.json`, inline edit from device cards or during network scan
+- **Network device discovery** -- scan local network for ADB devices via mDNS and connect with one click, optionally name devices during discovery
 - **Device disconnect** -- disconnect network devices directly from the device card
 - **Dark/light theme** -- toggle between dark (default) and light modes, preference saved to localStorage
 - **Responsive layout** -- centered page container scales from mobile to 4K (up to 5 device cards)
