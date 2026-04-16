@@ -893,7 +893,7 @@ Rendered by `DeviceTracker` via WebSocket updates from `ControlCenter`. The serv
 - Server PID button (was a no-op -- server lifecycle is managed by `ScrcpyConnection`)
 - "WebCodecs" link label (renamed to "connect")
 
-### 14.2 Network Discovery
+### 14.2 Available Network Devices
 
 **API Endpoints:**
 
@@ -908,6 +908,8 @@ Rendered by `DeviceTracker` via WebSocket updates from `ControlCenter`. The serv
 The "Scan Network" button calls `POST /api/devices/scan` which runs `adb mdns services` to discover ADB-enabled devices advertising via mDNS on the local network. Results are filtered to any `_adb` service except `_adb-tls-pairing`, and exclude already-connected devices. Each result includes a `serial` field (parsed from the mDNS name via `parseSerialFromMdnsName`) and a `label` field (from `DeviceLabelStore`, or empty). Discovered devices are displayed as cards with an optional name input and "Connect" button.
 
 Connecting calls `POST /api/devices/connect` with the device address plus optional serial and label. If a name was entered, it is saved to `device-labels.json` before connecting. On success, the card shows "Connected" briefly and then disappears. The device appears in the Connected Devices section via the normal WebSocket update flow from `ControlCenter`.
+
+**Info box:** A persistent help message sits below the discovered device cards. It updates contextually (scanning status, no devices found, help text) but always remains visible so first-time users can see instructions regardless of scan state.
 
 **Requirement:** Devices must have wireless debugging enabled and be on the same local network. mDNS discovery works on standard home networks.
 
