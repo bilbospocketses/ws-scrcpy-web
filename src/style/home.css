@@ -23,6 +23,13 @@
     background: var(--device-list-hover-color);
 }
 
+/* Page container — centers content, caps at 4 device cards */
+.page-container {
+    max-width: 1440px;
+    margin: 0 auto;
+    padding: 0;
+}
+
 /* Page sections */
 .home-section {
     padding: 20px;

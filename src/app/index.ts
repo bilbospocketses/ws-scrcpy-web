@@ -50,21 +50,26 @@ window.onload = async (): Promise<void> => {
             DeviceTracker.registerTool(tool);
         });
     }
-    // Theme toggle button
+    // Theme toggle button (outside container, fixed position)
     document.body.appendChild(createThemeToggle());
+
+    // Page container — centers content and caps width at 4 device cards
+    const pageContainer = document.createElement('div');
+    pageContainer.className = 'page-container';
+    document.body.appendChild(pageContainer);
 
     // Create page structure in fixed order BEFORE anything renders
     // BaseDeviceTracker will find #devices and use it instead of creating its own
     const devicesDiv = document.createElement('div');
     devicesDiv.id = 'devices';
     devicesDiv.className = 'table-wrapper';
-    document.body.appendChild(devicesDiv);
+    pageContainer.appendChild(devicesDiv);
 
     const discoveryPanel = new NetworkDiscoveryPanel();
-    document.body.appendChild(discoveryPanel.getElement());
+    pageContainer.appendChild(discoveryPanel.getElement());
 
     DependencyPanel.create().then((depPanel) => {
-        document.body.appendChild(depPanel.getElement());
+        pageContainer.appendChild(depPanel.getElement());
     });
 
     // Start device tracking — it will populate the #devices div we created above
