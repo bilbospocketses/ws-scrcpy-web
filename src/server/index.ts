@@ -1,10 +1,12 @@
 import * as readline from 'readline';
 import { Config } from './Config';
+import { DependencyManager } from './DependencyManager';
 import { DeviceProbe } from './DeviceProbe';
 import { HostTracker } from './mw/HostTracker';
 import type { MwFactory } from './mw/Mw';
 import { WebsocketMultiplexer } from './mw/WebsocketMultiplexer';
 import { ScrcpyConnection } from './ScrcpyConnection';
+import { DependencyApi } from './api/DependencyApi';
 import { HttpServer } from './services/HttpServer';
 import type { Service, ServiceClass } from './services/Service';
 import { WebSocketServer } from './services/WebSocketServer';
@@ -20,6 +22,10 @@ const mw2List: MwFactory[] = [HostTracker];
 const runningServices: Service[] = [];
 
 const config = Config.getInstance();
+
+const depManager = new DependencyManager(config.dependenciesPath);
+const depApi = new DependencyApi(depManager);
+HttpServer.setApiHandler(depApi);
 
 async function loadGoogModules() {
     const { ControlCenter } = await import('./goog-device/services/ControlCenter');
@@ -71,6 +77,9 @@ loadGoogModules()
 
         process.on('SIGINT', exit);
         process.on('SIGTERM', exit);
+
+        // Kick off initial dependency check in background (don't block startup)
+        depManager.checkAll().catch((err: Error) => console.error('[DependencyManager] Initial check failed:', err.message));
     })
     .catch((error) => {
         console.error(error.message);

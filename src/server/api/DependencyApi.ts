@@ -1,0 +1,60 @@
+// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
+import type { IncomingMessage, ServerResponse } from 'http';
+import type { DependencyManager } from '../DependencyManager';
+
+export class DependencyApi {
+    constructor(private readonly manager: DependencyManager) {}
+
+    /** Returns true if this request was handled as an API call */
+    async handle(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+        const url = req.url || '';
+        if (!url.startsWith('/api/dependencies')) return false;
+
+        res.setHeader('Content-Type', 'application/json');
+
+        try {
+            // GET /api/dependencies — list all
+            if (req.method === 'GET' && url === '/api/dependencies') {
+                const deps = this.manager.getAll();
+                res.writeHead(200);
+                res.end(JSON.stringify(deps));
+                return true;
+            }
+
+            // POST /api/dependencies/check — check all for updates
+            if (req.method === 'POST' && url === '/api/dependencies/check') {
+                await this.manager.checkAll();
+                const deps = this.manager.getAll();
+                res.writeHead(200);
+                res.end(JSON.stringify(deps));
+                return true;
+            }
+
+            // POST /api/dependencies/:name/update — update specific dependency
+            const updateMatch = url.match(/^\/api\/dependencies\/([a-z-]+)\/update$/);
+            if (req.method === 'POST' && updateMatch) {
+                const name = updateMatch[1];
+                const result = await this.manager.update(name);
+                res.writeHead(result.success ? 200 : 500);
+                res.end(JSON.stringify(result));
+                return true;
+            }
+
+            // POST /api/dependencies/restart — restart the server
+            if (req.method === 'POST' && url === '/api/dependencies/restart') {
+                res.writeHead(200);
+                res.end(JSON.stringify({ message: 'Restarting...' }));
+                this.manager.requestRestart();
+                return true;
+            }
+
+            res.writeHead(404);
+            res.end(JSON.stringify({ error: 'Not found' }));
+            return true;
+        } catch (err: any) {
+            res.writeHead(500);
+            res.end(JSON.stringify({ error: err.message }));
+            return true;
+        }
+    }
+}

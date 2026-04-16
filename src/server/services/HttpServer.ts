@@ -8,6 +8,7 @@ import { Config } from '../Config';
 import { EnvName } from '../EnvName';
 import { createStaticHandler } from '../StaticFileServer';
 import { Utils } from '../Utils';
+import type { DependencyApi } from '../api/DependencyApi';
 import type { Service } from './Service';
 
 const DEFAULT_STATIC_DIR = path.join(__dirname, './public');
@@ -27,6 +28,7 @@ export class HttpServer extends TypedEmitter<HttpServerEvents> implements Servic
     private static instance: HttpServer;
     private static PUBLIC_DIR = DEFAULT_STATIC_DIR;
     private static SERVE_STATIC = true;
+    private static apiHandler: DependencyApi | null = null;
     private servers: ServerAndPort[] = [];
     private mainHandler?: (req: IncomingMessage, res: ServerResponse) => void;
     private started = false;
@@ -60,6 +62,10 @@ export class HttpServer extends TypedEmitter<HttpServerEvents> implements Servic
         HttpServer.SERVE_STATIC = enabled;
     }
 
+    public static setApiHandler(handler: DependencyApi): void {
+        HttpServer.apiHandler = handler;
+    }
+
     public async getServers(): Promise<ServerAndPort[]> {
         if (this.started) {
             return [...this.servers];
@@ -88,12 +94,12 @@ export class HttpServer extends TypedEmitter<HttpServerEvents> implements Servic
                 if (!serverItem.options) {
                     throw Error('Must provide option for secure server configuration');
                 }
-                server = https.createServer(serverItem.options, this.mainHandler);
+                const requestHandler = this.createRequestHandler(this.mainHandler);
+                server = https.createServer(serverItem.options, requestHandler);
                 proto = 'https';
             } else {
                 const options = serverItem.options ? { ...serverItem.options } : {};
                 proto = 'http';
-                let handler: ((req: IncomingMessage, res: ServerResponse) => void) | undefined = this.mainHandler;
                 let redirectHost = '';
                 let redirectPort = 443;
                 let doRedirect = false;
@@ -108,7 +114,9 @@ export class HttpServer extends TypedEmitter<HttpServerEvents> implements Servic
                         redirectHost = redirectToSecure.host;
                     }
                 }
+                let handler: ((req: IncomingMessage, res: ServerResponse) => void) | undefined;
                 if (doRedirect) {
+                    // Redirect handler is passed through as-is — no API interception
                     handler = (req: IncomingMessage, res: ServerResponse) => {
                         const url = new URL(`https://${redirectHost ? redirectHost : req.headers.host}${req.url}`);
                         if (redirectPort && redirectPort !== 443) {
@@ -117,6 +125,8 @@ export class HttpServer extends TypedEmitter<HttpServerEvents> implements Servic
                         res.writeHead(301, { Location: url.toString() });
                         res.end();
                     };
+                } else {
+                    handler = this.createRequestHandler(this.mainHandler);
                 }
                 server = http.createServer(options, handler);
             }
@@ -127,6 +137,28 @@ export class HttpServer extends TypedEmitter<HttpServerEvents> implements Servic
         });
         this.started = true;
         this.emit('started', true);
+    }
+
+    private createRequestHandler(
+        fallback?: (req: IncomingMessage, res: ServerResponse) => void,
+    ): (req: IncomingMessage, res: ServerResponse) => void {
+        return (req, res) => {
+            if (HttpServer.apiHandler) {
+                HttpServer.apiHandler
+                    .handle(req, res)
+                    .then((handled) => {
+                        if (!handled && fallback) {
+                            fallback(req, res);
+                        }
+                    })
+                    .catch((err) => {
+                        res.writeHead(500);
+                        res.end(JSON.stringify({ error: err.message }));
+                    });
+            } else if (fallback) {
+                fallback(req, res);
+            }
+        };
     }
 
     public release(): void {
