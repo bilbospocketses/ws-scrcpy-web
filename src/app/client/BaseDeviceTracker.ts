@@ -1,4 +1,5 @@
 import type { EventMap } from '../../common/TypedEmitter';
+import { DeviceState } from '../../common/DeviceState';
 import type { BaseDeviceDescriptor } from '../../types/BaseDeviceDescriptor';
 import type { HostItem } from '../../types/Configuration';
 import type { DeviceTrackerEvent } from '../../types/DeviceTrackerEvent';
@@ -214,6 +215,12 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
         const idx = this.descriptors.findIndex((item: DD) => {
             return item.udid === descriptor.udid;
         });
+        if (descriptor.state === DeviceState.DISCONNECTED) {
+            if (idx !== -1) {
+                this.descriptors.splice(idx, 1);
+            }
+            return;
+        }
         if (idx !== -1) {
             this.descriptors[idx] = descriptor;
         } else {

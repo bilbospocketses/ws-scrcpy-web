@@ -77,8 +77,8 @@ export class ControlCenter extends BaseControlCenter<GoogDeviceDescriptor> imple
         if (state === DeviceState.DISCONNECTED) {
             const device = this.deviceMap.get(udid);
             if (device) {
-                device.off('update', this.onDeviceUpdate);
                 device.setState(state);
+                device.off('update', this.onDeviceUpdate);
                 this.deviceMap.delete(udid);
                 this.descriptors.delete(udid);
             }
