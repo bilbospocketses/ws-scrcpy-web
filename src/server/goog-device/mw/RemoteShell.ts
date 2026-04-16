@@ -105,6 +105,11 @@ export class RemoteShell extends Mw {
             this.term = this.createTerminal(data);
             this.initialized = true;
         }
+        if (type === 'resize') {
+            if (this.term && data.cols && data.rows) {
+                this.term.resize(data.cols, data.rows);
+            }
+        }
         if (type === 'stop') {
             this.release();
         }

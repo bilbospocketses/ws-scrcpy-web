@@ -16,7 +16,8 @@ export class ShellModal {
     private term?: Terminal;
     private fitAddon?: FitAddon;
     private ws?: Multiplexer;
-    private readonly resizeHandler: () => void;
+    private resizeObserver?: ResizeObserver;
+    private shellStarted = false;
 
     constructor(
         private readonly udid: string,
@@ -63,13 +64,6 @@ export class ShellModal {
         container.appendChild(body);
         this.background.appendChild(container);
 
-        // Store resize handler reference so we can remove it later
-        this.resizeHandler = () => {
-            if (this.fitAddon) {
-                this.fitAddon.fit();
-            }
-        };
-
         document.body.appendChild(this.background);
 
         // Start connection
@@ -115,7 +109,6 @@ export class ShellModal {
 
         this.ws.addEventListener('open', () => {
             this.initTerminal(terminalContainer);
-            // startShell is called after fit() inside initTerminal's rAF callback
         });
 
         this.ws.addEventListener('close', (event: CloseEvent) => {
@@ -137,16 +130,22 @@ export class ShellModal {
         this.term.loadAddon(this.fitAddon);
         this.term.open(container);
 
-        // Delay fit until browser completes layout pass — without this,
-        // FitAddon calculates wrong column count (wider than visible),
-        // causing text not to wrap and a cosmetic scrollbar to appear
-        requestAnimationFrame(() => {
-            this.fitAddon?.fit();
-            this.term?.focus();
-            this.startShell();
+        // FitAddon requires the container to have real pixel dimensions.
+        // In a dynamically created modal, the container may not be laid out
+        // yet when open() is called. ResizeObserver fires when the container
+        // actually gets dimensions, and on every subsequent resize.
+        this.resizeObserver = new ResizeObserver(() => {
+            if (!this.fitAddon || !container.clientWidth || !container.clientHeight) return;
+            this.fitAddon.fit();
+            if (!this.shellStarted) {
+                this.shellStarted = true;
+                this.term?.focus();
+                this.startShell();
+            } else {
+                this.sendResize();
+            }
         });
-
-        window.addEventListener('resize', this.resizeHandler);
+        this.resizeObserver.observe(container);
     }
 
     private startShell(): void {
@@ -163,6 +162,23 @@ export class ShellModal {
                 type: 'start',
                 rows,
                 cols,
+                udid: this.udid,
+            },
+        };
+        this.ws.send(JSON.stringify(message));
+    }
+
+    private sendResize(): void {
+        if (!this.ws || this.ws.readyState !== this.ws.OPEN || !this.fitAddon) return;
+        const dims = this.fitAddon.proposeDimensions();
+        if (!dims) return;
+        const message: MessageXtermClient = {
+            id: 1,
+            type: 'resize',
+            data: {
+                type: 'resize',
+                rows: dims.rows,
+                cols: dims.cols,
                 udid: this.udid,
             },
         };
@@ -192,8 +208,9 @@ export class ShellModal {
         }
         this.fitAddon = undefined;
 
-        // Remove resize listener
-        window.removeEventListener('resize', this.resizeHandler);
+        // Stop observing resize
+        this.resizeObserver?.disconnect();
+        this.resizeObserver = undefined;
 
         // Remove modal from DOM
         if (this.background.parentElement) {
