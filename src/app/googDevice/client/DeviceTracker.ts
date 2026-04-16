@@ -117,11 +117,16 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
 
         const overlayId = `device_overlay_${fullName}`;
         const newtabId = `device_newtab_${fullName}`;
+        const disconnectId = `disconnect_${Util.escapeUdid(device.udid)}`;
+        const isNetworkDevice = device.udid.includes(':');
+        const disconnectCell = isNetworkDevice
+            ? `<td rowspan="2" class="disconnect-cell"><button id="${disconnectId}" class="disconnect-btn">disconnect</button></td>`
+            : '';
         const row = html`<div class="device ${isActive ? 'active' : 'not-active'}">
             <table class="device-info">
-                <tr><td class="device-label">Model:</td><td>${deviceName}</td></tr>
-                <tr><td class="device-label">Device ID:</td><td class="device-serial">${device.udid}</td></tr>
-                <tr><td class="device-label">Android:</td><td>${device['ro.build.version.release']}</td></tr>
+                <tr><td class="device-label">Model:</td><td colspan="2">${deviceName}</td></tr>
+                <tr><td class="device-label">Device ID:</td><td colspan="2" class="device-serial">${device.udid}</td></tr>
+                <tr><td class="device-label">Android:</td><td>${device['ro.build.version.release']}</td>${disconnectCell}</tr>
                 <tr><td class="device-label">SDK:</td><td>${device['ro.build.version.sdk']}</td></tr>
             </table>
             <div id="${overlayId}" class="services">
@@ -135,6 +140,25 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
         const newtabSection = row.getElementById(newtabId);
         if (!overlaySection || !newtabSection) {
             return;
+        }
+
+        // Wire disconnect button for network devices
+        const disconnectBtn = row.getElementById(disconnectId);
+        if (disconnectBtn) {
+            disconnectBtn.addEventListener('click', async () => {
+                disconnectBtn.textContent = 'disconnecting...';
+                (disconnectBtn as HTMLButtonElement).disabled = true;
+                try {
+                    await fetch('/api/devices/disconnect', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ address: device.udid }),
+                    });
+                } catch {
+                    disconnectBtn.textContent = 'disconnect';
+                    (disconnectBtn as HTMLButtonElement).disabled = false;
+                }
+            });
         }
 
         // Auto-select best interface: prefer wifi/direct IP, fallback to proxy

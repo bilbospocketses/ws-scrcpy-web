@@ -46,6 +46,21 @@ export class DeviceDiscoveryApi {
                 return true;
             }
 
+            if (req.method === 'POST' && url === '/api/devices/disconnect') {
+                const body = await readBody(req);
+                const { address } = JSON.parse(body);
+                if (!address) {
+                    res.writeHead(400);
+                    res.end(JSON.stringify({ error: 'address is required' }));
+                    return true;
+                }
+                const result = await this.adbClient.disconnect(address);
+                const success = result.includes('disconnected');
+                res.writeHead(success ? 200 : 500);
+                res.end(JSON.stringify({ success, message: result.trim() }));
+                return true;
+            }
+
             res.writeHead(404);
             res.end(JSON.stringify({ error: 'Not found' }));
             return true;

@@ -111,6 +111,32 @@ body.list #device_list_menu {
     font-size: 12px;
 }
 
+/* Disconnect button */
+#devices .disconnect-cell {
+    vertical-align: middle;
+    padding-left: 12px;
+}
+
+#devices .disconnect-btn {
+    border: 0.5px solid #f06c75;
+    border-radius: 6px;
+    background: transparent;
+    color: #f06c75;
+    padding: 4px 10px;
+    font-size: 12px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+#devices .disconnect-btn:hover:not(:disabled) {
+    background: rgba(240, 108, 117, 0.1);
+}
+
+#devices .disconnect-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
 /* Services / action buttons */
 #devices .device-list div.device .services {
     display: flex;
