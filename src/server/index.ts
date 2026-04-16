@@ -7,6 +7,7 @@ import type { MwFactory } from './mw/Mw';
 import { WebsocketMultiplexer } from './mw/WebsocketMultiplexer';
 import { ScrcpyConnection } from './ScrcpyConnection';
 import { DependencyApi } from './api/DependencyApi';
+import { DeviceDiscoveryApi } from './api/DeviceDiscoveryApi';
 import { HttpServer } from './services/HttpServer';
 import type { Service, ServiceClass } from './services/Service';
 import { WebSocketServer } from './services/WebSocketServer';
@@ -25,7 +26,10 @@ const config = Config.getInstance();
 
 const depManager = new DependencyManager(config.dependenciesPath);
 const depApi = new DependencyApi(depManager);
-HttpServer.setApiHandler(depApi);
+HttpServer.addApiHandler(depApi);
+
+const discoveryApi = new DeviceDiscoveryApi();
+HttpServer.addApiHandler(discoveryApi);
 
 async function loadGoogModules() {
     const { ControlCenter } = await import('./goog-device/services/ControlCenter');

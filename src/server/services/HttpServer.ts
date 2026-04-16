@@ -8,8 +8,11 @@ import { Config } from '../Config';
 import { EnvName } from '../EnvName';
 import { createStaticHandler } from '../StaticFileServer';
 import { Utils } from '../Utils';
-import type { DependencyApi } from '../api/DependencyApi';
 import type { Service } from './Service';
+
+interface ApiHandler {
+    handle(req: IncomingMessage, res: ServerResponse): Promise<boolean>;
+}
 
 const DEFAULT_STATIC_DIR = path.join(__dirname, './public');
 
@@ -28,7 +31,7 @@ export class HttpServer extends TypedEmitter<HttpServerEvents> implements Servic
     private static instance: HttpServer;
     private static PUBLIC_DIR = DEFAULT_STATIC_DIR;
     private static SERVE_STATIC = true;
-    private static apiHandler: DependencyApi | null = null;
+    private static apiHandlers: ApiHandler[] = [];
     private servers: ServerAndPort[] = [];
     private mainHandler?: (req: IncomingMessage, res: ServerResponse) => void;
     private started = false;
@@ -62,8 +65,8 @@ export class HttpServer extends TypedEmitter<HttpServerEvents> implements Servic
         HttpServer.SERVE_STATIC = enabled;
     }
 
-    public static setApiHandler(handler: DependencyApi): void {
-        HttpServer.apiHandler = handler;
+    public static addApiHandler(handler: ApiHandler): void {
+        HttpServer.apiHandlers.push(handler);
     }
 
     public async getServers(): Promise<ServerAndPort[]> {
@@ -143,21 +146,17 @@ export class HttpServer extends TypedEmitter<HttpServerEvents> implements Servic
         fallback?: (req: IncomingMessage, res: ServerResponse) => void,
     ): (req: IncomingMessage, res: ServerResponse) => void {
         return (req, res) => {
-            if (HttpServer.apiHandler) {
-                HttpServer.apiHandler
-                    .handle(req, res)
-                    .then((handled) => {
-                        if (!handled && fallback) {
-                            fallback(req, res);
-                        }
-                    })
-                    .catch((err) => {
-                        res.writeHead(500);
-                        res.end(JSON.stringify({ error: err.message }));
-                    });
-            } else if (fallback) {
-                fallback(req, res);
-            }
+            const tryHandlers = async () => {
+                for (const handler of HttpServer.apiHandlers) {
+                    const handled = await handler.handle(req, res);
+                    if (handled) return;
+                }
+                if (fallback) fallback(req, res);
+            };
+            tryHandlers().catch((err) => {
+                res.writeHead(500);
+                res.end(JSON.stringify({ error: err.message }));
+            });
         };
     }
 
