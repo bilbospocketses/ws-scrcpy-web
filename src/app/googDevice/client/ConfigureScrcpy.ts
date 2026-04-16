@@ -28,7 +28,6 @@ export class ConfigureScrcpy extends BaseClient<ParamsStreamScrcpy, ConfigureScr
     private readonly TAG: string;
     private readonly udid: string;
     private readonly escapedUdid: string;
-    private readonly playerStorageKey: string;
     private deviceName: string;
     private playerName?: string;
     private videoCodecSelect?: HTMLSelectElement;
@@ -40,7 +39,6 @@ export class ConfigureScrcpy extends BaseClient<ParamsStreamScrcpy, ConfigureScr
     private resetSettingsButton?: HTMLButtonElement;
     private loadSettingsButton?: HTMLButtonElement;
     private saveSettingsButton?: HTMLButtonElement;
-    private playerSelectElement?: HTMLSelectElement;
     private displayIdSelectElement?: HTMLSelectElement;
     private encoderSelectElement?: HTMLSelectElement;
     private statusElement?: HTMLElement;
@@ -57,7 +55,6 @@ export class ConfigureScrcpy extends BaseClient<ParamsStreamScrcpy, ConfigureScr
         super(params);
         this.udid = descriptor.udid;
         this.escapedUdid = Util.escapeUdid(this.udid);
-        this.playerStorageKey = `configure_stream::${this.escapedUdid}::player`;
         this.deviceName = descriptor['ro.product.model'];
         this.TAG = `ConfigureScrcpy[${this.udid}]`;
         this.setTitle(`${this.deviceName}. Configure stream`);
@@ -249,23 +246,13 @@ export class ConfigureScrcpy extends BaseClient<ParamsStreamScrcpy, ConfigureScr
         }
     }
 
-    private onPlayerChange = (): void => {
-        this.updateVideoSettingsForPlayer();
-    };
-
     private onDisplayIdChange = (): void => {
         // Display info is set during probe; just refresh player settings
         this.updateVideoSettingsForPlayer();
     };
 
     private getPlayer(): PlayerClass | undefined {
-        if (!this.playerSelectElement) {
-            return;
-        }
-        const playerName = this.playerSelectElement.options[this.playerSelectElement.selectedIndex].value;
-        return StreamClientScrcpy.getPlayers().find((playerClass) => {
-            return playerClass.playerFullName === playerName;
-        });
+        return StreamClientScrcpy.getPlayers()[0];
     }
 
     private updateVideoSettingsForPlayer(): void {
@@ -440,24 +427,6 @@ export class ConfigureScrcpy extends BaseClient<ParamsStreamScrcpy, ConfigureScr
         return this.fitToScreenCheckbox.checked;
     }
 
-    private getPreviouslyUsedPlayer(): string {
-        if (!window.localStorage) {
-            return '';
-        }
-        const result = window.localStorage.getItem(this.playerStorageKey);
-        if (result) {
-            return result;
-        }
-        return '';
-    }
-
-    private setPreviouslyUsedPlayer(playerName: string): void {
-        if (!window.localStorage) {
-            return;
-        }
-        window.localStorage.setItem(this.playerStorageKey, playerName);
-    }
-
     private createUI(): HTMLElement {
         // Backdrop
         const background = document.createElement('div');
@@ -490,27 +459,7 @@ export class ConfigureScrcpy extends BaseClient<ParamsStreamScrcpy, ConfigureScr
         const controls = document.createElement('div');
         controls.classList.add('dialog-controls');
 
-        // Player dropdown
-        const playerLabel = document.createElement('label');
-        playerLabel.classList.add('label');
-        playerLabel.innerText = 'player:';
-        controls.appendChild(playerLabel);
-        const playerSelect = (this.playerSelectElement = document.createElement('select'));
-        playerSelect.classList.add('input');
-        playerSelect.id = playerLabel.htmlFor = `player_${this.escapedUdid}`;
-        controls.appendChild(playerSelect);
-        const previouslyUsedPlayer = this.getPreviouslyUsedPlayer();
-        StreamClientScrcpy.getPlayers().forEach((playerClass, index) => {
-            const { playerFullName } = playerClass;
-            const optionElement = document.createElement('option');
-            optionElement.setAttribute('value', playerFullName);
-            optionElement.innerText = playerFullName;
-            playerSelect.appendChild(optionElement);
-            if (playerFullName === previouslyUsedPlayer) {
-                playerSelect.selectedIndex = index;
-            }
-        });
-        playerSelect.onchange = this.onPlayerChange;
+        // Initialize player settings (single WebCodecs player, no dropdown needed)
         this.updateVideoSettingsForPlayer();
 
         // Display dropdown
@@ -747,7 +696,6 @@ export class ConfigureScrcpy extends BaseClient<ParamsStreamScrcpy, ConfigureScr
         if (!player) {
             return;
         }
-        this.setPreviouslyUsedPlayer(this.playerName);
         player.setVideoSettings(videoSettings, fitToScreen, false);
         const videoCodec = this.videoCodecSelect?.value;
         const audioCodec = this.audioCodecSelect?.value;

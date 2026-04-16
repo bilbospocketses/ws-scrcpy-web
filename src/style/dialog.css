@@ -3,8 +3,6 @@
     position: fixed;
     inset: 0;
     background: rgba(0, 0, 0, 0.45);
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
     z-index: 10;
     display: flex;
     align-items: center;
@@ -24,7 +22,7 @@
     max-height: 80vh;
     display: flex;
     flex-direction: column;
-    background: rgba(30, 35, 45, 0.85);
+    background: rgba(30, 35, 45, 0.75);
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 12px;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
@@ -38,7 +36,7 @@
 }
 
 [data-theme="light"] .dialog-container {
-    background: rgba(245, 248, 252, 0.92);
+    background: rgba(245, 248, 252, 0.82);
     border: 1px solid rgba(0, 0, 0, 0.1);
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
 }
