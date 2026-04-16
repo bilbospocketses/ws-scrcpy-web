@@ -116,7 +116,7 @@ body.list #device_list_menu {
     flex-wrap: wrap;
     gap: 6px;
     align-items: center;
-    border-top: 1px dashed color-mix(in srgb, var(--device-border-color) 50%, transparent);
+    border-top: 1px solid color-mix(in srgb, var(--device-border-color) 50%, transparent);
     padding-top: 12px;
     padding-bottom: 12px;
 }
