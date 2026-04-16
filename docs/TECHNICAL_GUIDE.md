@@ -877,13 +877,11 @@ Rendered by `DeviceTracker` via WebSocket updates from `ControlCenter`. The serv
    - Android version + action buttons (disconnect + sleep/wake, right-aligned via rowspan)
    - SDK version
 
-2. **"opens in overlay" section** -- buttons that open UI overlays on the current page:
-   - `configure stream` -- codec/encoder selection dialog
-
-3. **"opens in new tab" section** -- buttons that open in a new browser tab:
-   - `connect` -- opens a mirroring session using WebCodecs
+2. **"opens in overlay" section** -- all action buttons in a single section:
+   - `configure stream` -- codec/encoder selection dialog (own line)
    - `shell` -- opens an ADB shell terminal (xterm.js + node-pty)
    - `list files` -- opens the file manager
+   - `connect` -- opens a mirroring session using WebCodecs
 
 **Action buttons:** The Android/SDK rows share a rowspan cell containing a flexbox wrapper with up to two buttons:
 
@@ -898,6 +896,7 @@ Both buttons are built via DOM manipulation (not the `html` template tag) becaus
 - Interface dropdown (replaced by auto-selection)
 - Server PID button (was a no-op -- server lifecycle is managed by `ScrcpyConnection`)
 - "WebCodecs" link label (renamed to "connect")
+- "opens in new tab" section (all buttons unified into single "opens in overlay" section)
 
 ### 14.2 Available Network Devices
 

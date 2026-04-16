@@ -26,10 +26,10 @@ export class NetworkDiscoveryPanel {
         this.container.innerHTML = `
             <div class="discovery-header">
                 <h2>Available Network Devices</h2>
-                <button class="dep-btn discovery-scan-btn">Scan Network</button>
+                <button class="dep-btn discovery-scan-btn">scan network</button>
             </div>
             <div class="discovery-results"></div>
-            <div class="empty-state-card discovery-info">Click Scan Network to find devices. Make sure wireless debugging is enabled on the devices you wish to connect with.</div>
+            <div class="empty-state-card discovery-info">Click scan network to find devices. Make sure wireless debugging is enabled on the devices you wish to connect with.</div>
         `;
         this.infoBox = this.container.querySelector('.discovery-info')!;
         this.resultsContainer = this.container.querySelector('.discovery-results')!;
@@ -60,7 +60,7 @@ export class NetworkDiscoveryPanel {
             this.setInfoText('Scan failed. Is ADB available?', true);
         } finally {
             btn.disabled = false;
-            btn.textContent = 'Scan Network';
+            btn.textContent = 'scan network';
         }
     }
 
@@ -70,7 +70,7 @@ export class NetworkDiscoveryPanel {
             return;
         }
 
-        this.setInfoText('Click Scan Network to find devices. Make sure wireless debugging is enabled on the devices you wish to connect with.');
+        this.setInfoText('Click scan network to find devices. Make sure wireless debugging is enabled on the devices you wish to connect with.');
         this.resultsContainer.innerHTML = '';
         const grid = document.createElement('div');
         grid.className = 'discovery-grid';

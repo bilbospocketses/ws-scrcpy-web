@@ -110,13 +110,11 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
     protected buildDeviceRow(tbody: Element, device: GoogDeviceDescriptor): void {
         const fullName = `${this.id}_${Util.escapeUdid(device.udid)}`;
         const isActive = device.state === DeviceState.DEVICE;
-        const servicesId = `device_services_${fullName}`;
         const deviceName = device['ro.product.model']?.startsWith(device['ro.product.manufacturer'])
             ? device['ro.product.model']
             : `${device['ro.product.manufacturer']} ${device['ro.product.model']}`;
 
         const overlayId = `device_overlay_${fullName}`;
-        const newtabId = `device_newtab_${fullName}`;
         const isNetworkDevice = device.udid.includes(':');
         const row = html`<div class="device ${isActive ? 'active' : 'not-active'}">
             <table class="device-info">
@@ -129,12 +127,8 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
             <div id="${overlayId}" class="services">
                 <div class="services-label">opens in overlay</div>
             </div>
-            <div id="${newtabId}" class="services">
-                <div class="services-label">opens in new tab</div>
-            </div>
         </div>`.content;
         const overlaySection = row.getElementById(overlayId);
-        const newtabSection = row.getElementById(newtabId);
 
         // Build Device Name cell via DOM (interactive elements can't use html`` template)
         const nameRow = row.querySelector('.device-name-row');
@@ -146,7 +140,7 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
             }
         }
 
-        if (!overlaySection || !newtabSection) {
+        if (!overlaySection) {
             return;
         }
 
@@ -248,11 +242,30 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
             }
         }
 
-        // Overlay section: configure stream
+        // Overlay section: configure stream (own line), then shell, list files, connect
         const streamEntry = StreamClientScrcpy.createEntryForDeviceList(device, 'desc-block', fullName, this.params);
         streamEntry && overlaySection.appendChild(streamEntry);
 
-        // New tab section: connect, shell, files
+        // Force new line after configure stream
+        const lineBreak = document.createElement('div');
+        lineBreak.className = 'services-break';
+        overlaySection.appendChild(lineBreak);
+
+        // Shell and list files (from registered tools)
+        DeviceTracker.tools.forEach((tool) => {
+            const entry = tool.createEntryForDeviceList(device, 'desc-block', this.params);
+            if (entry) {
+                if (Array.isArray(entry)) {
+                    entry.forEach((item) => {
+                        item && overlaySection.appendChild(item);
+                    });
+                } else {
+                    overlaySection.appendChild(entry);
+                }
+            }
+        });
+
+        // Connect button (last)
         if (isActive && DeviceTracker.CREATE_DIRECT_LINKS) {
             const name = `${DeviceTracker.AttributePrefixPlayerFor}${fullName}`;
             StreamClientScrcpy.getPlayers().forEach((playerClass) => {
@@ -262,22 +275,9 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
                 connectBtn.setAttribute('name', encodeURIComponent(name));
                 connectBtn.setAttribute(DeviceTracker.AttributePlayerFullName, encodeURIComponent(playerFullName));
                 connectBtn.setAttribute(DeviceTracker.AttributePlayerCodeName, encodeURIComponent(playerCodeName));
-                newtabSection.appendChild(connectBtn);
+                overlaySection.appendChild(connectBtn);
             });
         }
-
-        DeviceTracker.tools.forEach((tool) => {
-            const entry = tool.createEntryForDeviceList(device, 'desc-block', this.params);
-            if (entry) {
-                if (Array.isArray(entry)) {
-                    entry.forEach((item) => {
-                        item && newtabSection.appendChild(item);
-                    });
-                } else {
-                    newtabSection.appendChild(entry);
-                }
-            }
-        });
 
         tbody.appendChild(row);
 

@@ -11,7 +11,7 @@ export class DependencyPanel {
         this.container.innerHTML = `
             <div class="dep-header">
                 <h2>Dependencies</h2>
-                <button class="dep-btn dep-check-all">Check for Updates</button>
+                <button class="dep-btn dep-check-all">check for updates</button>
             </div>
             <div class="section-card">
                 <table class="dep-table">
@@ -64,7 +64,7 @@ export class DependencyPanel {
             this.renderError('Check failed');
         } finally {
             btn.disabled = false;
-            btn.textContent = 'Check for Updates';
+            btn.textContent = 'check for updates';
         }
     }
 
