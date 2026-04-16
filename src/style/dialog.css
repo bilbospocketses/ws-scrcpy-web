@@ -339,7 +339,7 @@
 
 /* ── Shell modal overrides ── */
 .dialog-container.shell-modal {
-    width: clamp(500px, 75vw, 1000px);
+    width: clamp(500px, 90vw, 1600px);
     max-height: 90vh;
 }
 
