@@ -116,12 +116,12 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
             : `${device['ro.product.manufacturer']} ${device['ro.product.model']}`;
 
         const row = html`<div class="device ${isActive ? 'active' : 'not-active'}">
-            <div class="device-info">
-                <div class="device-info-row"><span class="device-label">Model:</span> ${deviceName}</div>
-                <div class="device-info-row"><span class="device-label">Device ID:</span> <span class="device-serial">${device.udid}</span></div>
-                <div class="device-info-row"><span class="device-label">Android:</span> ${device['ro.build.version.release']}</div>
-                <div class="device-info-row"><span class="device-label">SDK:</span> ${device['ro.build.version.sdk']}</div>
-            </div>
+            <table class="device-info">
+                <tr><td class="device-label">Model</td><td>${deviceName}</td></tr>
+                <tr><td class="device-label">Device ID</td><td class="device-serial">${device.udid}</td></tr>
+                <tr><td class="device-label">Android</td><td>${device['ro.build.version.release']}</td></tr>
+                <tr><td class="device-label">SDK</td><td>${device['ro.build.version.sdk']}</td></tr>
+            </table>
             <div id="${servicesId}" class="services">
                 <div class="services-label">Opens in new tab</div>
             </div>

@@ -82,23 +82,27 @@ body.list #device_list_menu {
     opacity: 0.7;
 }
 
-/* Device info lines */
-#devices .device-info {
+/* Device info table */
+#devices table.device-info {
     margin-bottom: 12px;
-}
-
-#devices .device-info-row {
-    padding: 2px 0;
+    border-collapse: collapse;
     font-size: 13px;
 }
 
-#devices .device-info-row:first-child {
-    font-size: 15px;
-    font-weight: 600;
+#devices .device-info td {
+    padding: 2px 0;
+    vertical-align: top;
 }
 
-#devices .device-label {
+#devices .device-info td.device-label {
     color: var(--text-color-light, #888);
+    padding-right: 12px;
+    white-space: nowrap;
+}
+
+#devices .device-info tr:first-child td:last-child {
+    font-size: 15px;
+    font-weight: 600;
 }
 
 #devices .device-serial {
