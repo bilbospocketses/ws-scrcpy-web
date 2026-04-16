@@ -22,6 +22,7 @@ This document covers the internal architecture of ws-scrcpy-web -- a browser-bas
 10. [Build and Development](#10-build-and-development)
 11. [Known Issues and Fixes](#11-known-issues-and-fixes)
 12. [Release Checklist](#12-release-checklist)
+13. [Dependency Updater](#13-dependency-updater)
 
 ---
 
@@ -771,3 +772,68 @@ npm outdated
 ```
 
 Shows all npm packages (1-15) with available updates. For runtime dependencies (16-19), check their respective release pages.
+
+---
+
+## 13. Dependency Updater
+
+### 13.1 Architecture
+
+The dependency updater manages runtime dependencies (Node.js + node-pty, ADB, scrcpy-server) through a browser UI on the home page. It allows users to check for updates and install them without leaving the browser.
+
+**Components:**
+
+| File | Responsibility |
+|------|----------------|
+| `src/common/DependencyTypes.ts` | Shared types (`DependencyInfo`, `DependencyStatus`, `UpdateResult`) and `compareVersions()` |
+| `src/server/DependencyDefinitions.ts` | Declarative config for each dependency (version sources, download URLs, platform detection) |
+| `src/server/DependencyManager.ts` | Core logic: version detection, remote checking, download, extract, install |
+| `src/server/api/DependencyApi.ts` | HTTP REST endpoints under `/api/dependencies/` |
+| `src/app/client/DependencyPanel.ts` | Browser-side table UI with status badges and update buttons |
+| `start.cmd` / `start.sh` | Launcher scripts that handle restart after Node.js updates |
+
+### 13.2 API Endpoints
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/api/dependencies` | List all dependencies with current status |
+| POST | `/api/dependencies/check` | Check all dependencies for updates |
+| POST | `/api/dependencies/:name/update` | Download and install update for named dependency |
+| POST | `/api/dependencies/restart` | Restart the server (via launcher script) |
+
+### 13.3 Restart Flow
+
+Node.js cannot replace its own running binary on Windows. The solution uses an external launcher script:
+
+1. User clicks "Update" for Node.js in the browser
+2. Server downloads new Node.js, renames running `node.exe` to `node.exe.old`, copies new binary
+3. Server writes `.restart` marker file and exits with code 0
+4. Launcher script (`start.cmd` / `start.sh`) detects marker, deletes old binary, relaunches
+5. Browser polls `/api/dependencies` until server responds, then reloads the page
+
+On Linux, file locking is not an issue -- the binary can be overwritten directly. The launcher script still handles the restart loop for consistency.
+
+### 13.4 Dependencies Folder Structure
+
+```
+ws-scrcpy-web/
+  dependencies/
+    node/       -- node.exe (Windows) or node (Linux) + node-pty native files
+    adb/        -- ADB platform-tools (adb, fastboot, etc.)
+  dist/
+    assets/
+      scrcpy-server   -- managed by webpack build, updatable via the UI
+  start.cmd           -- Windows launcher
+  start.sh            -- Linux launcher
+```
+
+### 13.5 Adding a New Managed Dependency
+
+To add a new dependency to the updater:
+
+1. Add a new `DependencyDefinition` entry in `src/server/DependencyDefinitions.ts` with:
+   - `checkInstalled()` -- how to detect the installed version
+   - `checkLatest()` -- how to check for the latest version online
+   - `getDownloadUrl()` -- platform-aware download URL
+2. Add an install handler in `DependencyManager.ts` for the new dependency
+3. The UI and API automatically pick up new definitions -- no frontend changes needed

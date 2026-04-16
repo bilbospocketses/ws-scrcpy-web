@@ -47,6 +47,29 @@ npm start
 
 Open `http://localhost:8000` in your browser.
 
+## Self-Contained Mode
+
+For deployment without system-wide Node.js or ADB installations:
+
+**Windows:**
+```batch
+start.cmd
+```
+
+**Linux:**
+```bash
+./start.sh
+```
+
+The launcher uses Node.js from `dependencies/node/` and ADB from `dependencies/adb/`. Use the Dependencies panel on the home page to check for updates and install them.
+
+### Initial Setup
+
+1. Download Node.js LTS from [nodejs.org](https://nodejs.org) and extract the binary to `dependencies/node/`
+2. Download ADB platform-tools from [Google](https://developer.android.com/tools/releases/platform-tools) and extract to `dependencies/adb/`
+3. Run `start.cmd` (Windows) or `./start.sh` (Linux)
+4. Open `http://localhost:8000` -- use the Dependencies panel to verify and update
+
 ## Configuration
 
 The server can be configured via environment variables or a `config.json` file:
