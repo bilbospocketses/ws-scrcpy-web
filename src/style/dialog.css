@@ -339,7 +339,7 @@
 
 /* ── Shell modal overrides ── */
 .dialog-container.shell-modal {
-    width: clamp(500px, 70vw, 900px);
+    width: clamp(500px, 75vw, 1000px);
     max-height: 90vh;
 }
 
@@ -347,7 +347,6 @@
     padding: 0;
     background: #000;
     min-height: 300px;
-    overflow: hidden;
 }
 
 .dialog-container.shell-modal .terminal-container {
