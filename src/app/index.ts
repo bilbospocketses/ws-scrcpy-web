@@ -1,4 +1,5 @@
 import '../style/app.css';
+import '../style/home.css';
 import '../style/dependencies.css';
 import { HostTracker } from './client/HostTracker';
 import { DependencyPanel } from './client/DependencyPanel';

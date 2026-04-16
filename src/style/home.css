@@ -1,0 +1,20 @@
+/* src/style/home.css */
+
+/* Page sections */
+.home-section {
+    padding: 20px;
+    margin-bottom: 8px;
+}
+
+.home-section h2 {
+    margin: 0 0 16px 0;
+    font-size: 18px;
+    color: var(--text-color, #eee);
+    font-weight: 600;
+}
+
+.section-divider {
+    border: none;
+    border-top: 1px solid var(--device-border-color, #444);
+    margin: 0;
+}
