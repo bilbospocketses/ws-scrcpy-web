@@ -2,6 +2,7 @@ import type { ControlMessage } from '../controlMessage/ControlMessage';
 import { KeyCodeControlMessage } from '../controlMessage/KeyCodeControlMessage';
 import { ScrollControlMessage } from '../controlMessage/ScrollControlMessage';
 import type { TouchControlMessage } from '../controlMessage/TouchControlMessage';
+import KeyEvent from '../googDevice/android/KeyEvent';
 import MotionEvent from '../MotionEvent';
 import type { BasePlayer } from '../player/BasePlayer';
 import type ScreenInfo from '../ScreenInfo';
@@ -25,10 +26,14 @@ export class FeaturedInteractionHandler extends InteractionHandler {
         'wheel',
     ];
     private static readonly keyEventsNames: KeyEventNames[] = ['keydown', 'keyup'];
-    public static SCROLL_EVENT_THROTTLING_TIME = 30; // one event per 50ms
+    public static SCROLL_EVENT_THROTTLING_TIME = 30;
+    public static DPAD_SCROLL_DEBOUNCE_TIME = 400; // cooldown after first fire, absorbs hardware burst
     private readonly storedFromMouseEvent = new Map<number, TouchControlMessage>();
     private readonly storedFromTouchEvent = new Map<number, TouchControlMessage>();
     private lastScrollEvent?: { time: number; hScroll: number; vScroll: number };
+    private dpadScrollCooldown = false;
+    private dpadScrollTimer?: ReturnType<typeof setTimeout>;
+    private _dpadMode = true;
 
     constructor(
         player: BasePlayer,
@@ -37,6 +42,57 @@ export class FeaturedInteractionHandler extends InteractionHandler {
         super(player, FeaturedInteractionHandler.touchEventsNames, FeaturedInteractionHandler.keyEventsNames);
         this.tag.addEventListener('mouseleave', this.onMouseLeave);
         this.tag.addEventListener('mouseenter', this.onMouseEnter);
+    }
+
+    public setDpadMode(enabled: boolean): void {
+        this._dpadMode = enabled;
+    }
+
+    public buildDpadScrollEvent(event: WheelEvent): ControlMessage[] {
+        // Fire-then-debounce: fire immediately on first event, ignore the rest
+        // of the hardware burst, reset after events stop for DPAD_SCROLL_DEBOUNCE_TIME
+        if (this.dpadScrollCooldown) {
+            // Still in cooldown — reset the timer (debounce) but don't fire
+            clearTimeout(this.dpadScrollTimer);
+            this.dpadScrollTimer = setTimeout(() => {
+                this.dpadScrollCooldown = false;
+            }, FeaturedInteractionHandler.DPAD_SCROLL_DEBOUNCE_TIME);
+            return [];
+        }
+
+        // First event in burst — fire immediately, enter cooldown
+        this.dpadScrollCooldown = true;
+        this.dpadScrollTimer = setTimeout(() => {
+            this.dpadScrollCooldown = false;
+        }, FeaturedInteractionHandler.DPAD_SCROLL_DEBOUNCE_TIME);
+
+        const messages: ControlMessage[] = [];
+        // Shift+scroll → horizontal (DPAD_LEFT/RIGHT), normal scroll → vertical (DPAD_UP/DOWN)
+        let vDir = 0;
+        let hDir = 0;
+        if (event.shiftKey) {
+            hDir = event.deltaY > 0 ? -1 : event.deltaY < 0 ? 1 : 0;
+        } else {
+            vDir = event.deltaY > 0 ? -1 : event.deltaY < 0 ? 1 : 0;
+        }
+        if (event.deltaX !== 0 && !event.shiftKey) {
+            hDir = event.deltaX > 0 ? -1 : event.deltaX < 0 ? 1 : 0;
+        }
+        if (vDir === -1) {
+            messages.push(new KeyCodeControlMessage(MotionEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_DOWN, 0, 0));
+            messages.push(new KeyCodeControlMessage(MotionEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_DOWN, 0, 0));
+        } else if (vDir === 1) {
+            messages.push(new KeyCodeControlMessage(MotionEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_UP, 0, 0));
+            messages.push(new KeyCodeControlMessage(MotionEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_UP, 0, 0));
+        }
+        if (hDir === -1) {
+            messages.push(new KeyCodeControlMessage(MotionEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT, 0, 0));
+            messages.push(new KeyCodeControlMessage(MotionEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_RIGHT, 0, 0));
+        } else if (hDir === 1) {
+            messages.push(new KeyCodeControlMessage(MotionEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_LEFT, 0, 0));
+            messages.push(new KeyCodeControlMessage(MotionEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_LEFT, 0, 0));
+        }
+        return messages;
     }
 
     public buildScrollEvent(event: WheelEvent, screenInfo: ScreenInfo): ScrollControlMessage[] {
@@ -61,8 +117,8 @@ export class FeaturedInteractionHandler extends InteractionHandler {
 
     // Mouse button → Android keycode mapping (matches scrcpy desktop client defaults)
     private static readonly BUTTON_KEYCODE_MAP: Record<number, number> = {
-        2: 4, // right-click → AKEYCODE_BACK
-        1: 3, // middle-click → AKEYCODE_HOME
+        2: KeyEvent.KEYCODE_BACK, // right-click → BACK
+        1: KeyEvent.KEYCODE_HOME, // middle-click → HOME
     };
 
     protected onInteraction(event: MouseEvent | TouchEvent): void {
@@ -76,7 +132,7 @@ export class FeaturedInteractionHandler extends InteractionHandler {
             if (event.target !== this.tag) {
                 return;
             }
-            // Right-click → back, middle-click → home (like scrcpy desktop client)
+            // Right-click → back, middle-click → home (always, both modes)
             const keycode = FeaturedInteractionHandler.BUTTON_KEYCODE_MAP[event.button];
             if (keycode !== undefined && (event.type === 'mousedown' || event.type === 'mouseup')) {
                 const action = event.type === 'mousedown' ? MotionEvent.ACTION_DOWN : MotionEvent.ACTION_UP;
@@ -86,7 +142,18 @@ export class FeaturedInteractionHandler extends InteractionHandler {
                 return;
             }
             if (window['WheelEvent'] && event instanceof WheelEvent) {
-                messages = this.buildScrollEvent(event, screenInfo);
+                if (this._dpadMode) {
+                    messages = this.buildDpadScrollEvent(event);
+                } else {
+                    messages = this.buildScrollEvent(event, screenInfo);
+                }
+            } else if (this._dpadMode && event.button === 0 && (event.type === 'mousedown' || event.type === 'mouseup')) {
+                // D-pad mode: left-click → DPAD_CENTER
+                const action = event.type === 'mousedown' ? MotionEvent.ACTION_DOWN : MotionEvent.ACTION_UP;
+                this.listener.sendMessage(new KeyCodeControlMessage(action, KeyEvent.KEYCODE_DPAD_CENTER, 0, 0));
+                event.preventDefault();
+                event.stopPropagation();
+                return;
             } else {
                 storage = this.storedFromMouseEvent;
                 messages = this.buildTouchEvent(event, screenInfo, storage);

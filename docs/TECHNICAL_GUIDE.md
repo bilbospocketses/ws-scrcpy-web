@@ -338,12 +338,19 @@ Browsers block audio playback until a user gesture. `StreamClientScrcpy` registe
 
 **InteractionHandler** (base class) registers static `document.body` event listeners shared across all handler instances. Events are filtered by checking `event.target === this.tag` (the touchable canvas element). This design means only one set of body-level listeners exists regardless of how many device streams are active.
 
-**FeaturedInteractionHandler** extends the base with:
+**FeaturedInteractionHandler** extends the base with two input modes, toggled via a toolbar button:
 
-- **Mouse-to-touch mapping:** Left-click mouse events are converted to `TouchControlMessage` with screen coordinate translation
-- **Right-click -> BACK:** `event.button === 2` sends `KeyCodeControlMessage` with Android keycode 4 (AKEYCODE_BACK)
-- **Middle-click -> HOME:** `event.button === 1` sends Android keycode 3 (AKEYCODE_HOME)
-- **Scroll:** `WheelEvent` -> `ScrollControlMessage` with 30ms throttling. Scroll values use scrcpy's i16 fixed-point encoding (`sc_float_to_i16fp`): raw tick divided by 128 (tuned for latent streams; scrcpy desktop uses /16), clamped to [-1, 1], mapped to int16 range [-32768, 32767]
+**D-pad mode** (default — d-pad icon in toolbar):
+- **Left-click → DPAD_CENTER:** Sends `KeyCodeControlMessage` with keycode 23 — works in all Android TV / Leanback apps (Peacock, Netflix, etc.) that ignore touch events
+- **Scroll up/down → DPAD_UP/DOWN:** One keypress per physical scroll click via fire-then-debounce (400ms cooldown absorbs hardware burst)
+- **Shift+scroll → DPAD_LEFT/RIGHT:** Horizontal d-pad navigation via mouse wheel
+- **Right-click → BACK:** `event.button === 2` sends keycode 4 (AKEYCODE_BACK)
+- **Middle-click → HOME:** `event.button === 1` sends keycode 3 (AKEYCODE_HOME)
+
+**Touch mode** (finger icon in toolbar):
+- **Left-click → TouchControlMessage:** Tap at screen coordinates, works in touch-aware apps and games
+- **Scroll → ScrollControlMessage:** 30ms throttling, i16 fixed-point encoding (`sc_float_to_i16fp`): raw tick divided by 128 (tuned for latent streams; scrcpy desktop uses /16), clamped to [-1, 1], mapped to int16 range [-32768, 32767]
+- **Right-click → BACK, Middle-click → HOME:** Same as D-pad mode
 - **Multi-touch simulation:** Ctrl+click creates a second mirrored touch point (Ctrl+Shift allows custom center)
 
 **Coordinate translation** in `buildTouchOnClient()`:

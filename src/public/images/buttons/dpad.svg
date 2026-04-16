@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48px" height="48px" viewBox="0 0 48 48" fill="var(--svg-button-fill)">
+    <defs>
+        <radialGradient id="concave" cx="42%" cy="38%" r="50%">
+            <stop offset="0%" stop-color="black" stop-opacity="0.4"/>
+            <stop offset="65%" stop-color="black" stop-opacity="0.1"/>
+            <stop offset="90%" stop-color="white" stop-opacity="0.15"/>
+            <stop offset="100%" stop-color="white" stop-opacity="0.25"/>
+        </radialGradient>
+    </defs>
+    <!-- Outer ring (d-pad body) -->
+    <circle cx="24" cy="24" r="20" opacity="0.25"/>
+    <!-- Direction triangles -->
+    <polygon points="24,5 20,13 28,13"/>
+    <polygon points="24,43 20,35 28,35"/>
+    <polygon points="5,24 13,20 13,28"/>
+    <polygon points="43,24 35,20 35,28"/>
+    <!-- Center button -->
+    <circle cx="24" cy="24" r="9"/>
+    <!-- Concave overlay -->
+    <circle cx="24" cy="24" r="9" fill="url(#concave)"/>
+</svg>

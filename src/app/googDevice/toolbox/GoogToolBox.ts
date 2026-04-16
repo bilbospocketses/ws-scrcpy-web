@@ -115,6 +115,22 @@ export class GoogToolBox extends ToolBox {
         });
         elements.push(stats);
 
+        // D-pad mode (default/unchecked) vs Touch mode (checked)
+        const DPAD_TITLE = 'D-pad mode (click for Touch mode)';
+        const TOUCH_TITLE = 'Touch mode (click for D-pad mode)';
+        const inputMode = new ToolBoxCheckbox(
+            DPAD_TITLE,
+            { off: SvgImage.Icon.DPAD, on: SvgImage.Icon.TOUCH_HAND },
+            `input_mode_${udid}_${playerName}`,
+        );
+        const inputModeLabel = inputMode.getAllElements()[1];
+        inputMode.addEventListener('click', (_, el) => {
+            const touchMode = el.getElement().checked;
+            client.setDpadMode(!touchMode);
+            inputModeLabel.title = touchMode ? TOUCH_TITLE : DPAD_TITLE;
+        });
+        elements.push(inputMode);
+
         const refresh = new ToolBoxButton('Refresh stream', SvgImage.Icon.REFRESH);
         refresh.addEventListener('click', () => {
             client.refreshStream();

@@ -513,6 +513,10 @@ export class StreamClientScrcpy
         return this.deviceName;
     }
 
+    public setDpadMode(enabled: boolean): void {
+        this.touchHandler?.setDpadMode(enabled);
+    }
+
     public setHandleKeyboardEvents(enabled: boolean): void {
         if (enabled) {
             KeyInputHandler.addEventListener(this);

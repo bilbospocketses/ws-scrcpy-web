@@ -1,5 +1,7 @@
 import ArrowBackSVG from '../../public/images/buttons/arrow_back.svg';
 import BarChartSVG from '../../public/images/buttons/bar_chart.svg';
+import DpadSVG from '../../public/images/buttons/dpad.svg';
+import TouchSVG from '../../public/images/buttons/touch.svg';
 import CancelSVG from '../../public/images/buttons/cancel.svg';
 import MenuSVG from '../../public/images/buttons/menu.svg';
 import OfflineSVG from '../../public/images/buttons/offline.svg';
@@ -36,6 +38,8 @@ export enum Icon {
     TOGGLE_ON = 15,
     TOGGLE_OFF = 16,
     BAR_CHART = 17,
+    DPAD = 18,
+    TOUCH_HAND = 19,
 }
 
 export default class SvgImage {
@@ -78,6 +82,10 @@ export default class SvgImage {
                 return ToggleOffSVG;
             case Icon.BAR_CHART:
                 return BarChartSVG;
+            case Icon.DPAD:
+                return DpadSVG;
+            case Icon.TOUCH_HAND:
+                return TouchSVG;
             default:
                 return '';
         }
