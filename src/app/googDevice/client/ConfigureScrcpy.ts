@@ -8,7 +8,6 @@ import { DeviceProbeClient } from '../../client/DeviceProbeClient';
 import { DisplayInfo } from '../../DisplayInfo';
 import type { PlayerClass } from '../../player/BasePlayer';
 import Size from '../../Size';
-import { ToolBoxButton } from '../../toolbox/ToolBoxButton';
 import { ToolBoxCheckbox } from '../../toolbox/ToolBoxCheckbox';
 import Util from '../../Util';
 import SvgImage from '../../ui/SvgImage';
@@ -39,7 +38,7 @@ export class ConfigureScrcpy extends BaseClient<ParamsStreamScrcpy, ConfigureScr
     private displayInfo?: DisplayInfo;
     private background: HTMLElement;
     private dialogBody?: HTMLElement;
-    private okButton?: HTMLButtonElement;
+    private connectButton?: HTMLButtonElement;
     private fitToScreenCheckbox?: HTMLInputElement;
     private resetSettingsButton?: HTMLButtonElement;
     private loadSettingsButton?: HTMLButtonElement;
@@ -47,8 +46,10 @@ export class ConfigureScrcpy extends BaseClient<ParamsStreamScrcpy, ConfigureScr
     private playerSelectElement?: HTMLSelectElement;
     private displayIdSelectElement?: HTMLSelectElement;
     private encoderSelectElement?: HTMLSelectElement;
-    private connectionStatusElement?: HTMLElement;
+    private statusElement?: HTMLElement;
     private dialogContainer?: HTMLElement;
+    private advancedSection?: HTMLElement;
+    private advancedChevron?: HTMLElement;
     private statusText = '';
 
     constructor(
@@ -170,13 +171,8 @@ export class ConfigureScrcpy extends BaseClient<ParamsStreamScrcpy, ConfigureScr
 
         // Mark ready
         this.setStatus('Ready');
-        this.dialogContainer?.classList.add('ready');
-        if (this.okButton) {
-            this.okButton.disabled = false;
-        }
-        if (this.dialogBody) {
-            this.dialogBody.classList.remove('hidden');
-            this.dialogBody.classList.add('visible');
+        if (this.connectButton) {
+            this.connectButton.disabled = false;
         }
     }
 
@@ -237,15 +233,23 @@ export class ConfigureScrcpy extends BaseClient<ParamsStreamScrcpy, ConfigureScr
     }
 
     private setStatus(text: string): void {
-        this.statusText = text;
+        this.statusText = text.toLowerCase();
         this.updateStatus();
     }
 
     private updateStatus(): void {
-        if (!this.connectionStatusElement) {
+        if (!this.statusElement) {
             return;
         }
-        this.connectionStatusElement.innerText = this.statusText;
+        this.statusElement.textContent = this.statusText;
+        this.statusElement.className = 'status-text';
+        if (this.statusText.toLowerCase().startsWith('probing')) {
+            this.statusElement.classList.add('status-probing');
+        } else if (this.statusText.toLowerCase() === 'ready') {
+            this.statusElement.classList.add('status-ready');
+        } else if (this.statusText.toLowerCase().startsWith('probe failed')) {
+            this.statusElement.classList.add('status-error');
+        }
     }
 
     private onPlayerChange = (): void => {
@@ -458,40 +462,46 @@ export class ConfigureScrcpy extends BaseClient<ParamsStreamScrcpy, ConfigureScr
     }
 
     private createUI(): HTMLElement {
-        const dialogName = 'configureDialog';
-        const blockClass = 'dialog-block';
+        // Backdrop
         const background = document.createElement('div');
-        background.classList.add('dialog-background', dialogName);
+        background.classList.add('dialog-background');
+
+        // Container
         const dialogContainer = (this.dialogContainer = document.createElement('div'));
-        dialogContainer.classList.add('dialog-container', dialogName);
+        dialogContainer.classList.add('dialog-container');
+
+        // Header: device name + close button
         const dialogHeader = document.createElement('div');
-        dialogHeader.classList.add('dialog-header', dialogName, 'control-wrapper');
-        const backButton = new ToolBoxButton('Back', SvgImage.Icon.ARROW_BACK);
-
-        backButton.addEventListener('click', () => {
-            this.cancel();
-        });
-        backButton.getAllElements().forEach((el) => {
-            dialogHeader.appendChild(el);
-        });
-
+        dialogHeader.classList.add('dialog-header');
         const deviceName = document.createElement('span');
-        deviceName.classList.add('dialog-title', 'main-title');
+        deviceName.classList.add('dialog-title');
         deviceName.innerText = this.deviceName;
         dialogHeader.appendChild(deviceName);
+        const closeButton = document.createElement('button');
+        closeButton.classList.add('close-btn');
+        closeButton.innerHTML = '\u00d7';
+        closeButton.addEventListener('click', () => {
+            this.cancel();
+        });
+        dialogHeader.appendChild(closeButton);
+
+        // Body (scrollable)
         const dialogBody = (this.dialogBody = document.createElement('div'));
-        dialogBody.classList.add('dialog-body', blockClass, dialogName, 'hidden');
-        const playerWrapper = document.createElement('div');
-        playerWrapper.classList.add('controls');
+        dialogBody.classList.add('dialog-body');
+
+        // Stream settings grid
+        const controls = document.createElement('div');
+        controls.classList.add('dialog-controls');
+
+        // Player dropdown
         const playerLabel = document.createElement('label');
         playerLabel.classList.add('label');
-        playerLabel.innerText = 'Player:';
-        playerWrapper.appendChild(playerLabel);
+        playerLabel.innerText = 'player:';
+        controls.appendChild(playerLabel);
         const playerSelect = (this.playerSelectElement = document.createElement('select'));
         playerSelect.classList.add('input');
         playerSelect.id = playerLabel.htmlFor = `player_${this.escapedUdid}`;
-        playerWrapper.appendChild(playerSelect);
-        dialogBody.appendChild(playerWrapper);
+        controls.appendChild(playerSelect);
         const previouslyUsedPlayer = this.getPreviouslyUsedPlayer();
         StreamClientScrcpy.getPlayers().forEach((playerClass, index) => {
             const { playerFullName } = playerClass;
@@ -506,11 +516,10 @@ export class ConfigureScrcpy extends BaseClient<ParamsStreamScrcpy, ConfigureScr
         playerSelect.onchange = this.onPlayerChange;
         this.updateVideoSettingsForPlayer();
 
-        const controls = document.createElement('div');
-        controls.classList.add('controls', 'control-wrapper');
+        // Display dropdown
         const displayIdLabel = document.createElement('label');
         displayIdLabel.classList.add('label');
-        displayIdLabel.innerText = 'Display:';
+        displayIdLabel.innerText = 'display:';
         controls.appendChild(displayIdLabel);
         if (!this.displayIdSelectElement) {
             this.displayIdSelectElement = document.createElement('select');
@@ -520,28 +529,93 @@ export class ConfigureScrcpy extends BaseClient<ParamsStreamScrcpy, ConfigureScr
         this.displayIdSelectElement.id = displayIdLabel.htmlFor = `displayId_${this.escapedUdid}`;
         this.displayIdSelectElement.onchange = this.onDisplayIdChange;
 
+        // Video codec dropdown
+        const videoCodecLabel = document.createElement('label');
+        videoCodecLabel.classList.add('label');
+        videoCodecLabel.innerText = 'video codec:';
+        controls.appendChild(videoCodecLabel);
+        const videoCodecSelect = (this.videoCodecSelect = document.createElement('select'));
+        videoCodecSelect.classList.add('input');
+        videoCodecSelect.id = videoCodecLabel.htmlFor = `videoCodec_${this.escapedUdid}`;
+        controls.appendChild(videoCodecSelect);
+
+        // Audio codec dropdown
+        const audioCodecLabel = document.createElement('label');
+        audioCodecLabel.classList.add('label');
+        audioCodecLabel.innerText = 'audio codec:';
+        controls.appendChild(audioCodecLabel);
+        const audioCodecSelect = (this.audioCodecSelect = document.createElement('select'));
+        audioCodecSelect.classList.add('input');
+        audioCodecSelect.id = audioCodecLabel.htmlFor = `audioCodec_${this.escapedUdid}`;
+        controls.appendChild(audioCodecSelect);
+
+        // Encoder dropdown
+        const encoderLabel = document.createElement('label');
+        encoderLabel.classList.add('label');
+        encoderLabel.innerText = 'encoder:';
+        controls.appendChild(encoderLabel);
+        if (!this.encoderSelectElement) {
+            this.encoderSelectElement = document.createElement('select');
+        }
+        controls.appendChild(this.encoderSelectElement);
+        this.encoderSelectElement.classList.add('input');
+        this.encoderSelectElement.id = encoderLabel.htmlFor = `encoderName_${this.escapedUdid}`;
+
+        // Bitrate slider
         this.appendBasicInput(controls, {
-            label: 'Bitrate',
+            label: 'bitrate',
             id: 'bitrate',
             range: { min: 524288, max: 8388608, step: 524288, formatter: Util.prettyBytes },
         });
+
+        // Max FPS slider
         this.appendBasicInput(controls, {
-            label: 'Max FPS',
+            label: 'max fps',
             id: 'maxFps',
             range: { min: 1, max: 60, step: 1 },
         });
-        this.appendBasicInput(controls, { label: 'I-Frame interval', id: 'iFrameInterval' });
+
+        dialogBody.appendChild(controls);
+
+        // Advanced separator + toggle
+        const advancedSeparator = document.createElement('div');
+        advancedSeparator.classList.add('advanced-separator');
+        dialogBody.appendChild(advancedSeparator);
+
+        const advancedToggle = document.createElement('button');
+        advancedToggle.classList.add('advanced-toggle');
+        advancedToggle.type = 'button';
+        const advancedText = document.createTextNode('advanced ');
+        advancedToggle.appendChild(advancedText);
+        const advancedChevron = (this.advancedChevron = document.createElement('span'));
+        advancedChevron.classList.add('advanced-chevron');
+        advancedChevron.innerHTML = '\u25bc';
+        advancedToggle.appendChild(advancedChevron);
+        advancedToggle.addEventListener('click', this.toggleAdvanced);
+        dialogBody.appendChild(advancedToggle);
+
+        // Advanced section (collapsed by default)
+        const advancedSection = (this.advancedSection = document.createElement('div'));
+        advancedSection.classList.add('advanced-section');
+
+        const advancedControls = document.createElement('div');
+        advancedControls.classList.add('dialog-controls');
+
+        // I-Frame interval
+        this.appendBasicInput(advancedControls, { label: 'i-frame interval', id: 'iFrameInterval' });
+
+        // Fit to screen toggle
         const fitLabel = document.createElement('label');
-        fitLabel.innerText = 'Fit to screen';
+        fitLabel.innerText = 'fit to screen';
         fitLabel.classList.add('label');
-        controls.appendChild(fitLabel);
+        advancedControls.appendChild(fitLabel);
         const fitToggle = new ToolBoxCheckbox(
             'Fit to screen',
             { off: SvgImage.Icon.TOGGLE_OFF, on: SvgImage.Icon.TOGGLE_ON },
             'fit_to_screen',
         );
         fitToggle.getAllElements().forEach((el) => {
-            controls.appendChild(el);
+            advancedControls.appendChild(el);
             if (el instanceof HTMLLabelElement) {
                 fitLabel.htmlFor = el.htmlFor;
                 el.classList.add('input');
@@ -554,100 +628,77 @@ export class ConfigureScrcpy extends BaseClient<ParamsStreamScrcpy, ConfigureScr
             const element = el.getElement();
             this.onFitToScreenChanged(element.checked);
         });
-        this.appendBasicInput(controls, { label: 'Max width', id: 'maxWidth' });
-        this.appendBasicInput(controls, { label: 'Max height', id: 'maxHeight' });
-        this.appendBasicInput(controls, { label: 'Codec options', id: 'codecOptions' });
 
-        const videoCodecLabel = document.createElement('label');
-        videoCodecLabel.classList.add('label');
-        videoCodecLabel.innerText = 'Video codec:';
-        controls.appendChild(videoCodecLabel);
-        const videoCodecSelect = (this.videoCodecSelect = document.createElement('select'));
-        videoCodecSelect.classList.add('input');
-        videoCodecSelect.id = videoCodecLabel.htmlFor = `videoCodec_${this.escapedUdid}`;
-        controls.appendChild(videoCodecSelect);
+        // Max width / Max height
+        this.appendBasicInput(advancedControls, { label: 'max width', id: 'maxWidth' });
+        this.appendBasicInput(advancedControls, { label: 'max height', id: 'maxHeight' });
 
-        const audioCodecLabel = document.createElement('label');
-        audioCodecLabel.classList.add('label');
-        audioCodecLabel.innerText = 'Audio codec:';
-        controls.appendChild(audioCodecLabel);
-        const audioCodecSelect = (this.audioCodecSelect = document.createElement('select'));
-        audioCodecSelect.classList.add('input');
-        audioCodecSelect.id = audioCodecLabel.htmlFor = `audioCodec_${this.escapedUdid}`;
-        controls.appendChild(audioCodecSelect);
+        // Codec options
+        this.appendBasicInput(advancedControls, { label: 'codec options', id: 'codecOptions' });
 
-        const encoderLabel = document.createElement('label');
-        encoderLabel.classList.add('label');
-        encoderLabel.innerText = 'Encoder:';
-        controls.appendChild(encoderLabel);
-        if (!this.encoderSelectElement) {
-            this.encoderSelectElement = document.createElement('select');
-        }
-        controls.appendChild(this.encoderSelectElement);
-        this.encoderSelectElement.classList.add('input');
-        this.encoderSelectElement.id = encoderLabel.htmlFor = `encoderName_${this.escapedUdid}`;
+        advancedSection.appendChild(advancedControls);
+        dialogBody.appendChild(advancedSection);
 
-        dialogBody.appendChild(controls);
-
-        const buttonsWrapper = document.createElement('div');
-        buttonsWrapper.classList.add('controls');
+        // Settings row
+        const settingsRow = document.createElement('div');
+        settingsRow.classList.add('dialog-settings');
 
         const resetSettingsButton = (this.resetSettingsButton = document.createElement('button'));
         resetSettingsButton.classList.add('button');
-        resetSettingsButton.innerText = 'Reset settings';
+        resetSettingsButton.innerText = 'reset';
         resetSettingsButton.addEventListener('click', this.resetSettings);
-        buttonsWrapper.appendChild(resetSettingsButton);
+        settingsRow.appendChild(resetSettingsButton);
 
         const loadSettingsButton = (this.loadSettingsButton = document.createElement('button'));
         loadSettingsButton.classList.add('button');
-        loadSettingsButton.innerText = 'Load settings';
+        loadSettingsButton.innerText = 'load';
         loadSettingsButton.addEventListener('click', this.loadSettings);
-        buttonsWrapper.appendChild(loadSettingsButton);
+        settingsRow.appendChild(loadSettingsButton);
 
         const saveSettingsButton = (this.saveSettingsButton = document.createElement('button'));
         saveSettingsButton.classList.add('button');
-        saveSettingsButton.innerText = 'Save settings';
+        saveSettingsButton.innerText = 'save';
         saveSettingsButton.addEventListener('click', this.saveSettings);
-        buttonsWrapper.appendChild(saveSettingsButton);
+        settingsRow.appendChild(saveSettingsButton);
 
-        dialogBody.appendChild(buttonsWrapper);
+        dialogBody.appendChild(settingsRow);
 
+        // Footer: status + connect button
         const dialogFooter = document.createElement('div');
-        dialogFooter.classList.add('dialog-footer', blockClass, dialogName);
+        dialogFooter.classList.add('dialog-footer');
         const statusElement = document.createElement('span');
-        statusElement.classList.add('subtitle');
-        this.connectionStatusElement = statusElement;
+        statusElement.classList.add('status-text');
+        this.statusElement = statusElement;
         dialogFooter.appendChild(statusElement);
-        this.statusText = 'Probing...';
+        this.statusText = 'probing...';
         this.updateStatus();
 
-        // const cancelButton = (this.cancelButton = document.createElement('button'));
-        // cancelButton.innerText = 'Cancel';
-        // cancelButton.addEventListener('click', this.cancel);
-        const okButton = (this.okButton = document.createElement('button'));
-        okButton.innerText = 'Open';
-        okButton.disabled = true;
-        okButton.addEventListener('click', this.openStream);
-        dialogFooter.appendChild(okButton);
-        // dialogFooter.appendChild(cancelButton);
-        dialogBody.appendChild(dialogFooter);
+        const connectButton = (this.connectButton = document.createElement('button'));
+        connectButton.classList.add('connect-btn');
+        connectButton.innerText = 'connect';
+        connectButton.disabled = true;
+        connectButton.addEventListener('click', this.openStream);
+        dialogFooter.appendChild(connectButton);
+
+        // Assemble
         dialogContainer.appendChild(dialogHeader);
         dialogContainer.appendChild(dialogBody);
         dialogContainer.appendChild(dialogFooter);
         background.appendChild(dialogContainer);
         background.addEventListener('click', this.onBackgroundClick);
+        document.addEventListener('keydown', this.onEscapeKey);
         document.body.appendChild(background);
         return background;
     }
 
     private removeUI(): void {
         document.body.removeChild(this.background);
-        this.okButton?.removeEventListener('click', this.openStream);
-        // this.cancelButton?.removeEventListener('click', this.cancel);
+        this.connectButton?.removeEventListener('click', this.openStream);
         this.resetSettingsButton?.removeEventListener('click', this.resetSettings);
         this.loadSettingsButton?.removeEventListener('click', this.loadSettings);
         this.saveSettingsButton?.removeEventListener('click', this.saveSettings);
         this.background.removeEventListener('click', this.onBackgroundClick);
+        document.removeEventListener('keydown', this.onEscapeKey);
     }
 
     private onBackgroundClick = (event: MouseEvent): void => {
@@ -655,6 +706,18 @@ export class ConfigureScrcpy extends BaseClient<ParamsStreamScrcpy, ConfigureScr
             return;
         }
         this.cancel();
+    };
+
+    private toggleAdvanced = (): void => {
+        if (!this.advancedSection || !this.advancedChevron) return;
+        const isExpanded = this.advancedSection.classList.toggle('expanded');
+        this.advancedChevron.classList.toggle('expanded', isExpanded);
+    };
+
+    private onEscapeKey = (event: KeyboardEvent): void => {
+        if (event.key === 'Escape') {
+            this.cancel();
+        }
     };
 
     private cancel = (): void => {
