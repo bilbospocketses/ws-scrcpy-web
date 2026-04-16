@@ -12,4 +12,5 @@ export default interface GoogDeviceDescriptor extends BaseDeviceDescriptor {
     interfaces: NetInterface[];
     pid: number;
     'last.update.timestamp': number;
+    'screen.state': 'awake' | 'asleep' | 'unknown';
 }

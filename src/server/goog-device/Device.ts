@@ -53,6 +53,7 @@ export class Device extends TypedEmitter<DeviceEvents> {
             'ro.product.cpu.abi': '',
             'ro.serialno': '',
             'last.update.timestamp': 0,
+            'screen.state': 'unknown',
         };
         this.adbClient = new AdbClient();
         this.setState(state);
@@ -343,6 +344,20 @@ export class Device extends TypedEmitter<DeviceEvents> {
                 delete this.throttleTimeoutId;
                 this.emitUpdate(false);
             }, THROTTLE - time);
+        }
+    }
+
+    public async checkScreenState(): Promise<void> {
+        if (!this.connected) return;
+        try {
+            const output = await this.runShellCommand('dumpsys power 2>/dev/null | grep mWakefulness');
+            const newState: 'awake' | 'asleep' = output.includes('Awake') ? 'awake' : 'asleep';
+            if (this.descriptor['screen.state'] !== newState) {
+                this.descriptor['screen.state'] = newState;
+                this.emitUpdate();
+            }
+        } catch {
+            // Device not responding — leave state unchanged
         }
     }
 

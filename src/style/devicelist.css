@@ -98,8 +98,9 @@ body.list #device_list_menu {
 
 #devices .device-info td.device-label {
     color: var(--text-color-light, #888);
-    padding-right: 27px;
+    padding-right: 8px;
     white-space: nowrap;
+    width: 1%;
 }
 
 #devices .device-info tr:first-child td:last-child {
@@ -112,11 +113,20 @@ body.list #device_list_menu {
     font-size: 12px;
 }
 
-/* Disconnect button */
-#devices .device-info td.disconnect-cell {
-    vertical-align: bottom;
-    text-align: center;
+/* Device action buttons (disconnect + sleep/wake) */
+#devices .device-info td.device-actions-cell {
+    vertical-align: middle;
     padding-left: 12px;
+    padding-top: 10px;
+}
+
+#devices .device-actions-wrapper {
+    display: flex;
+    flex-direction: row;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 8px;
+    padding-right: 20px;
 }
 
 #devices .disconnect-btn {
@@ -128,6 +138,8 @@ body.list #device_list_menu {
     font-size: 12px;
     cursor: pointer;
     white-space: nowrap;
+    min-width: 95px;
+    text-align: center;
 }
 
 #devices .disconnect-btn:hover:not(:disabled) {
@@ -135,6 +147,46 @@ body.list #device_list_menu {
 }
 
 #devices .disconnect-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Sleep/wake button */
+#devices .sleep-wake-btn {
+    border-radius: 6px;
+    background: transparent;
+    padding: 4px 10px;
+    font-size: 12px;
+    cursor: pointer;
+    white-space: nowrap;
+    min-width: 70px;
+    text-align: center;
+}
+
+#devices .sleep-wake-btn.state-off {
+    border: 0.5px solid #4ade80;
+    color: #4ade80;
+}
+
+#devices .sleep-wake-btn.state-on {
+    border: 0.5px solid #f06c75;
+    color: #f06c75;
+}
+
+#devices .sleep-wake-btn.state-unknown {
+    border: 0.5px solid var(--text-color-light, #888);
+    color: var(--text-color-light, #888);
+}
+
+#devices .sleep-wake-btn.state-off:hover:not(:disabled) {
+    background: rgba(74, 222, 128, 0.1);
+}
+
+#devices .sleep-wake-btn.state-on:hover:not(:disabled) {
+    background: rgba(240, 108, 117, 0.1);
+}
+
+#devices .sleep-wake-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
 }

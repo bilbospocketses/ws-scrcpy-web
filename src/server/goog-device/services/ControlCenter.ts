@@ -62,6 +62,12 @@ export class ControlCenter extends BaseControlCenter<GoogDeviceDescriptor> imple
                     this.handleConnected(serial, DeviceState.DISCONNECTED);
                 }
             }
+
+            // Poll screen state for all connected devices (concurrent)
+            const screenChecks = Array.from(this.deviceMap.values())
+                .filter((d) => d.isConnected())
+                .map((d) => d.checkScreenState());
+            await Promise.all(screenChecks);
         } catch (_e) {
             // ADB not running or error — retry on next poll
         }

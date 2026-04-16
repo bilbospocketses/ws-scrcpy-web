@@ -35,6 +35,7 @@ A modernized spiritual successor to [ws-scrcpy](https://github.com/NetrisTV/ws-s
 - **Device labels** -- name your devices for easy identification, persisted across sessions in `device-labels.json`, inline edit from device cards or during network scan
 - **Network device discovery** -- scan local network for ADB devices via mDNS and connect with one click, optionally name devices during discovery
 - **Device disconnect** -- disconnect network devices directly from the device card
+- **Sleep/wake toggle** -- turn devices on or off from the device card; state polled server-side and pushed via WebSocket so buttons stay in sync even when the device sleeps on a timer or via the physical remote
 - **Dark/light theme** -- toggle between dark (default) and light modes, preference saved to localStorage
 - **Responsive layout** -- centered page container scales from mobile to 4K (up to 5 device cards)
 - **In-app dependency updater** -- check and update Node.js, ADB, and scrcpy-server from the home page

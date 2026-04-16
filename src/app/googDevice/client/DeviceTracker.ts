@@ -150,19 +150,23 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
             return;
         }
 
-        // Add disconnect button for network devices via DOM (can't use html`` for raw HTML injection)
-        if (isNetworkDevice) {
-            const androidRow = row.querySelector('.android-row');
-            if (androidRow) {
-                const td = document.createElement('td');
-                td.rowSpan = 2;
-                td.className = 'disconnect-cell';
-                const btn = document.createElement('button');
-                btn.className = 'disconnect-btn';
-                btn.textContent = 'disconnect';
-                btn.addEventListener('click', async () => {
-                    btn.textContent = 'disconnecting...';
-                    btn.disabled = true;
+        // Add action buttons cell (disconnect + sleep/wake) via DOM
+        const androidRow = row.querySelector('.android-row');
+        if (androidRow) {
+            const td = document.createElement('td');
+            td.rowSpan = 2;
+            td.className = 'device-actions-cell';
+            const wrapper = document.createElement('div');
+            wrapper.className = 'device-actions-wrapper';
+
+            // Disconnect button (network devices only) — left side
+            if (isNetworkDevice) {
+                const disconnectBtn = document.createElement('button');
+                disconnectBtn.className = 'disconnect-btn';
+                disconnectBtn.textContent = 'disconnect';
+                disconnectBtn.addEventListener('click', async () => {
+                    disconnectBtn.textContent = 'disconnecting...';
+                    disconnectBtn.disabled = true;
                     try {
                         await fetch('/api/devices/disconnect', {
                             method: 'POST',
@@ -170,13 +174,55 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
                             body: JSON.stringify({ address: device.udid }),
                         });
                     } catch {
-                        btn.textContent = 'disconnect';
-                        btn.disabled = false;
+                        disconnectBtn.textContent = 'disconnect';
+                        disconnectBtn.disabled = false;
                     }
                 });
-                td.appendChild(btn);
-                androidRow.appendChild(td);
+                wrapper.appendChild(disconnectBtn);
             }
+
+            // Sleep/wake button (all devices) — right side
+            // State comes from server via WebSocket (descriptor['screen.state'])
+            const screenState = device['screen.state'] || 'unknown';
+            const sleepBtn = document.createElement('button');
+
+            if (screenState === 'unknown') {
+                sleepBtn.className = 'sleep-wake-btn state-unknown';
+                sleepBtn.textContent = 'checking...';
+                sleepBtn.disabled = true;
+            } else {
+                const isAwake = screenState === 'awake';
+                sleepBtn.className = `sleep-wake-btn ${isAwake ? 'state-on' : 'state-off'}`;
+                sleepBtn.textContent = isAwake ? 'turn off' : 'turn on';
+                sleepBtn.dataset.awake = String(isAwake);
+            }
+
+            sleepBtn.addEventListener('click', async () => {
+                const isAwake = sleepBtn.dataset.awake === 'true';
+                sleepBtn.disabled = true;
+                sleepBtn.textContent = isAwake ? 'turning off...' : 'turning on...';
+                try {
+                    const res = await fetch('/api/devices/sleep-wake', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ udid: device.udid, action: isAwake ? 'sleep' : 'wake' }),
+                    });
+                    const result = await res.json();
+                    sleepBtn.dataset.awake = String(result.awake);
+                    sleepBtn.textContent = result.awake ? 'turn off' : 'turn on';
+                    sleepBtn.className = `sleep-wake-btn ${result.awake ? 'state-on' : 'state-off'}`;
+                } catch {
+                    sleepBtn.dataset.awake = String(isAwake);
+                    sleepBtn.textContent = isAwake ? 'turn off' : 'turn on';
+                    sleepBtn.className = `sleep-wake-btn ${isAwake ? 'state-on' : 'state-off'}`;
+                } finally {
+                    sleepBtn.disabled = false;
+                }
+            });
+            wrapper.appendChild(sleepBtn);
+
+            td.appendChild(wrapper);
+            androidRow.appendChild(td);
         }
 
         // Auto-select best interface: prefer wifi/direct IP, fallback to proxy

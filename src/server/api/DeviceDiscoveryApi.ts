@@ -75,6 +75,40 @@ export class DeviceDiscoveryApi {
                 return true;
             }
 
+            if (req.method === 'GET' && url.startsWith('/api/devices/screen-state')) {
+                const parsedUrl = new URL(url, `http://${req.headers.host}`);
+                const udid = parsedUrl.searchParams.get('udid');
+                if (!udid) {
+                    res.writeHead(400);
+                    res.end(JSON.stringify({ error: 'udid is required' }));
+                    return true;
+                }
+                const output = await this.adbClient.shell(udid, 'dumpsys power 2>/dev/null | grep mWakefulness');
+                const awake = output.includes('Awake');
+                res.writeHead(200);
+                res.end(JSON.stringify({ awake }));
+                return true;
+            }
+
+            if (req.method === 'POST' && url === '/api/devices/sleep-wake') {
+                const body = await readBody(req);
+                const { udid, action } = JSON.parse(body);
+                if (!udid || !action) {
+                    res.writeHead(400);
+                    res.end(JSON.stringify({ error: 'udid and action are required' }));
+                    return true;
+                }
+                const keyevent = action === 'sleep' ? 223 : 224;
+                await this.adbClient.shell(udid, `input keyevent ${keyevent}`);
+                // Re-check state after a brief delay for the device to respond
+                await new Promise((r) => setTimeout(r, 500));
+                const output = await this.adbClient.shell(udid, 'dumpsys power 2>/dev/null | grep mWakefulness');
+                const awake = output.includes('Awake');
+                res.writeHead(200);
+                res.end(JSON.stringify({ awake }));
+                return true;
+            }
+
             if (req.method === 'GET' && url === '/api/devices/labels') {
                 const labels = DeviceLabelStore.getInstance().getAll();
                 res.writeHead(200);

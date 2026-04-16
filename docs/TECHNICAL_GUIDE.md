@@ -26,6 +26,7 @@ This document covers the internal architecture of ws-scrcpy-web -- a browser-bas
 14. [Home Page Architecture](#14-home-page-architecture)
 15. [Logging](#15-logging)
 16. [Device Labels](#16-device-labels)
+17. [Sleep/Wake Toggle](#17-sleepwake-toggle)
 
 ---
 
@@ -873,7 +874,7 @@ Rendered by `DeviceTracker` via WebSocket updates from `ControlCenter`. The serv
 1. **Info table** -- full-width table with aligned label column:
    - Model (smart dedup: skips manufacturer if model already starts with it)
    - Device ID (the ADB serial/IP:port)
-   - Android version + disconnect button (network devices only, right-aligned via rowspan)
+   - Android version + action buttons (disconnect + sleep/wake, right-aligned via rowspan)
    - SDK version
 
 2. **"opens in overlay" section** -- buttons that open UI overlays on the current page:
@@ -884,7 +885,12 @@ Rendered by `DeviceTracker` via WebSocket updates from `ControlCenter`. The serv
    - `shell` -- opens an ADB shell terminal (xterm.js + node-pty)
    - `list files` -- opens the file manager
 
-**Disconnect button:** Shown only for network-connected devices (serial contains `:`). Calls `POST /api/devices/disconnect`. On the next poll cycle (5s), `ControlCenter` detects the device is gone, broadcasts a disconnect state update via WebSocket, and removes the device from its maps. The client-side `BaseDeviceTracker.updateDescriptor()` splices disconnected devices from the descriptors array, and `buildDeviceTable()` re-renders without them -- the card disappears. Built via DOM manipulation (not the `html` template tag) because the template's XSS protection escapes raw HTML strings.
+**Action buttons:** The Android/SDK rows share a rowspan cell containing a flexbox wrapper with up to two buttons:
+
+- **Disconnect** -- shown only for network-connected devices (serial contains `:`). Calls `POST /api/devices/disconnect`. On the next poll cycle (5s), `ControlCenter` detects the device is gone, broadcasts a disconnect state update via WebSocket, and removes the device from its maps. The client-side `BaseDeviceTracker.updateDescriptor()` splices disconnected devices from the descriptors array, and `buildDeviceTable()` re-renders without them -- the card disappears.
+- **Sleep/Wake** -- shown for all devices. Displays "turn off" (red) when awake, "turn on" (green) when asleep, "checking..." (gray) while state is unknown. Clicking calls `POST /api/devices/sleep-wake` with the opposite action. State is tracked server-side and pushed to browsers via WebSocket -- see section 17.
+
+Both buttons are built via DOM manipulation (not the `html` template tag) because the template's XSS protection escapes raw HTML strings.
 
 **Interface auto-selection:** The interface dropdown was removed. The best connection path is selected automatically: WiFi interface (direct IP) is preferred, falls back to the first available interface, then to ADB proxy as a last resort.
 
@@ -904,6 +910,8 @@ Rendered by `DeviceTracker` via WebSocket updates from `ControlCenter`. The serv
 | POST | `/api/devices/disconnect` | Disconnect a network device by address (JSON body: `{ "address": "ip:port" }`) |
 | GET | `/api/devices/labels` | Return all device labels as `{ serial: label }` |
 | PUT | `/api/devices/labels` | Set or delete a device label (JSON body: `{ "serial": "...", "label": "..." }`). Empty label deletes. |
+| GET | `/api/devices/screen-state` | Check device screen state (query param: `?udid=ip:port`). Returns `{ "awake": true/false }`. Uses `dumpsys power` > `mWakefulness`. |
+| POST | `/api/devices/sleep-wake` | Toggle device sleep/wake (JSON body: `{ "udid": "ip:port", "action": "sleep"|"wake" }`). Sends keyevent 223 (sleep) or 224 (wake), re-checks state after 500ms. Returns `{ "awake": true/false }`. |
 
 The "Scan Network" button calls `POST /api/devices/scan` which runs `adb mdns services` to discover ADB-enabled devices advertising via mDNS on the local network. Results are filtered to any `_adb` service except `_adb-tls-pairing`, and exclude already-connected devices. Each result includes a `serial` field (parsed from the mDNS name via `parseSerialFromMdnsName`) and a `label` field (from `DeviceLabelStore`, or empty). Discovered devices are displayed as cards with an optional name input and "Connect" button.
 
@@ -1055,3 +1063,76 @@ Each scan result card includes an optional "Name this device..." text input. If 
 | `src/app/client/NetworkDiscoveryPanel.ts` | Optional name input on scan cards |
 | `src/style/devicelist.css` | Label row, pencil icon, edit input styles |
 | `src/style/home.css` | Discovery card actions layout |
+
+---
+
+## 17. Sleep/Wake Toggle
+
+Device cards show a sleep/wake button that reflects the current screen state and lets users turn devices on or off.
+
+### 17.1 Architecture
+
+Screen state is polled **server-side** and pushed to browsers via the existing WebSocket device update channel. This ensures the cost scales with device count only, not with the number of open browser tabs.
+
+```
+ControlCenter.pollDevices() [every 5s]
+  └─ for each connected device (concurrent):
+       Device.checkScreenState()
+         └─ adb shell "dumpsys power 2>/dev/null | grep mWakefulness"
+         └─ if state changed → update descriptor → emit('update') → WebSocket push
+
+Browser (DeviceTracker)
+  └─ receives descriptor with screen.state field
+  └─ buildDeviceRow() renders button based on descriptor['screen.state']
+```
+
+The browser **never polls**. State flows passively via WebSocket, so an unfocused tab costs nothing.
+
+### 17.2 State Detection
+
+**ADB command:** `dumpsys power 2>/dev/null | grep mWakefulness`
+
+The `2>/dev/null` suppresses "Broken pipe" stderr noise that occurs when grep exits before dumpsys finishes writing.
+
+**State mapping:**
+| `mWakefulness` value | `screen.state` | Button label | Button color |
+|----------------------|-----------------|-------------|--------------|
+| `Awake` | `awake` | "turn off" | Red (#f06c75) |
+| `Asleep` | `asleep` | "turn on" | Green (#4ade80) |
+| `Dozing` | `asleep` | "turn on" | Green (#4ade80) |
+| (unknown/error) | `unknown` | "checking..." | Gray, disabled |
+
+Dozing is the screensaver/ambient mode -- functionally asleep from the user's perspective.
+
+### 17.3 Toggle Mechanism
+
+Clicking the button calls `POST /api/devices/sleep-wake` with `{ udid, action: "sleep"|"wake" }`.
+
+| Action | ADB keyevent | Android constant |
+|--------|-------------|-----------------|
+| sleep | `input keyevent 223` | KEYCODE_SLEEP |
+| wake | `input keyevent 224` | KEYCODE_WAKEUP |
+
+These are explicit sleep/wake events (not KEYCODE_POWER which is a toggle). The endpoint waits 500ms for the device to respond, then re-checks state and returns `{ awake: boolean }`. The button updates immediately from the API response; the server-side poll confirms and broadcasts the state on the next 5s cycle.
+
+### 17.4 Performance
+
+Benchmarks on Google TV Streamer 4K (hardwired Ethernet):
+- `dumpsys power | grep mWakefulness`: ~240ms average (234-281ms over 5 runs)
+- `dumpsys power` reads in-memory PowerManagerService state -- no disk I/O on the device
+- At 5s intervals with concurrent `Promise.all`, even 500 devices adds ~240ms wall time per poll cycle
+
+### 17.5 Descriptor Field
+
+`GoogDeviceDescriptor['screen.state']` -- added as `'awake' | 'asleep' | 'unknown'`. Initialized to `'unknown'` when a device first connects. The first poll cycle (within 5s) resolves it to a real state.
+
+### 17.6 Components
+
+| File | Purpose |
+|------|---------|
+| `src/types/GoogDeviceDescriptor.d.ts` | `screen.state` field definition |
+| `src/server/goog-device/Device.ts` | `checkScreenState()` -- ADB query, change detection, emit |
+| `src/server/goog-device/services/ControlCenter.ts` | Concurrent screen state polling in `pollDevices()` |
+| `src/server/api/DeviceDiscoveryApi.ts` | `screen-state` GET and `sleep-wake` POST endpoints |
+| `src/app/googDevice/client/DeviceTracker.ts` | Button rendering from descriptor state, click handler |
+| `src/style/devicelist.css` | Button styles (`.sleep-wake-btn`, `.state-on`, `.state-off`, `.state-unknown`) |
