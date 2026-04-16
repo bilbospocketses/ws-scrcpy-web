@@ -113,7 +113,7 @@ body.list #device_list_menu {
 }
 
 /* Disconnect button */
-#devices .disconnect-cell {
+#devices .device-info td.disconnect-cell {
     vertical-align: bottom;
     text-align: center;
     padding-left: 12px;
