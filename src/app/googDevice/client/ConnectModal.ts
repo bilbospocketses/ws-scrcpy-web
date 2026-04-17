@@ -19,7 +19,8 @@ export class ConnectModal extends Modal {
         this.dialog.classList.add('connect-modal');
 
         const bounds = videoSettings.bounds;
-        const maxSize = bounds ? Math.max(bounds.width, bounds.height) : undefined;
+        const maxDim = bounds ? Math.max(bounds.width, bounds.height) : 0;
+        const maxSize = maxDim > 0 ? maxDim : undefined;
 
         const codec = normalizeCodec(params.videoCodec);
 
@@ -30,8 +31,8 @@ export class ConnectModal extends Modal {
             pathname: params.pathname || undefined,
             codec,
             encoder: params.encoderName,
-            bitrate: params.bitrate,
-            maxFps: params.maxFps,
+            bitrate: videoSettings.bitrate || undefined,
+            maxFps: videoSettings.maxFps || undefined,
             maxSize,
             audio: true,
             keyboard: true,
