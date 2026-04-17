@@ -9,7 +9,8 @@
   "scripts": {
     "clean": "rm -rf dist",
     "build:dev": "webpack --config webpack/ws-scrcpy-web.dev.ts --stats-error-details",
-    "build": "webpack --config webpack/ws-scrcpy-web.prod.ts --stats-error-details",
+    "build": "webpack --config webpack/ws-scrcpy-web.prod.ts --stats-error-details && npm run build:types",
+    "build:types": "node scripts/build-types.js",
     "start": "npm run build && node dist/index.js",
     "test": "vitest run",
     "lint": "npx @biomejs/biome check src/",
@@ -27,6 +28,7 @@
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "css-loader": "^7.1.4",
+    "dts-bundle-generator": "^9.5.1",
     "jsdom": "^29.0.2",
     "mini-css-extract-plugin": "^2.6.1",
     "style-loader": "^4.0.0",
