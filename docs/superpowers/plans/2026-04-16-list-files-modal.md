@@ -152,7 +152,7 @@ describe('getFileIconType', () => {
 
 - [ ] **Step 3: Run tests**
 
-Run: `cd C:/Users/jscha/source/repos/ws-scrcpy-web && npx vitest run src/app/googDevice/client/__tests__/fileIconUtils.test.ts`
+Run: `npx vitest run src/app/googDevice/client/__tests__/fileIconUtils.test.ts`
 
 Expected: All tests pass.
 
@@ -202,7 +202,7 @@ if (req.method === 'POST' && url === '/api/devices/files/delete') {
 
 - [ ] **Step 2: Build and verify**
 
-Run: `cd C:/Users/jscha/source/repos/ws-scrcpy-web && npm run build`
+Run: `npm run build`
 
 Expected: Build succeeds.
 
@@ -714,7 +714,7 @@ The complete file is too large to include inline. The implementer has full conte
 
 - [ ] **Step 2: Build and verify**
 
-Run: `cd C:/Users/jscha/source/repos/ws-scrcpy-web && npm run build`
+Run: `npm run build`
 
 Expected: Build succeeds. ListFilesModal is created but not yet wired to any entry point.
 
@@ -760,7 +760,7 @@ Note: Check what `ACTION.FILE_LISTING` evaluates to — it might be `'list-files
 
 - [ ] **Step 3: Build and verify**
 
-Run: `cd C:/Users/jscha/source/repos/ws-scrcpy-web && npm run build`
+Run: `npm run build`
 
 Expected: Build succeeds.
 
@@ -804,7 +804,7 @@ Run: `rm src/style/filelisting.css`
 
 - [ ] **Step 4: Build and verify**
 
-Run: `cd C:/Users/jscha/source/repos/ws-scrcpy-web && npm run build`
+Run: `npm run build`
 
 Expected: Build succeeds.
 
@@ -829,7 +829,7 @@ git commit -m "chore: delete filelisting.css, replaced by listfiles.css"
 
 - [ ] **Step 1: Full build from clean state**
 
-Run: `cd C:/Users/jscha/source/repos/ws-scrcpy-web && rm -rf dist && npm run build && npm test`
+Run: `rm -rf dist && npm run build && npm test`
 
 - [ ] **Step 2: Start the server**
 

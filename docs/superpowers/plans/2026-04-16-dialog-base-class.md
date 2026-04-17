@@ -594,7 +594,7 @@ export abstract class Modal {
 
 - [ ] **Step 2: Verify the file compiles**
 
-Run: `cd C:/Users/jscha/source/repos/ws-scrcpy-web && npx tsc --noEmit src/app/ui/Modal.ts`
+Run: `npx tsc --noEmit src/app/ui/Modal.ts`
 
 If this fails due to CSS import, that's expected (tsc doesn't handle CSS imports — webpack does). Verify it's only the CSS import error.
 
@@ -616,11 +616,11 @@ The Modal class uses DOM APIs (`document.createElement`, `HTMLDialogElement.show
 
 - [ ] **Step 1: Check vitest config for DOM environment**
 
-Run: `cat C:/Users/jscha/source/repos/ws-scrcpy-web/vitest.config.ts 2>/dev/null || cat C:/Users/jscha/source/repos/ws-scrcpy-web/vite.config.ts 2>/dev/null || echo "no config"`
+Run: `cat <repo>/vitest.config.ts 2>/dev/null || cat <repo>/vite.config.ts 2>/dev/null || echo "no config"`
 
 If no DOM environment is configured, the test file will use a `// @vitest-environment jsdom` directive. Install `jsdom` as a dev dependency if not present:
 
-Run: `cd C:/Users/jscha/source/repos/ws-scrcpy-web && npm ls jsdom 2>/dev/null || echo "not installed"`
+Run: `npm ls jsdom 2>/dev/null || echo "not installed"`
 
 If not installed: `npm install -D jsdom`
 
@@ -867,7 +867,7 @@ describe('Modal onBeforeClose', () => {
 
 - [ ] **Step 3: Run the tests**
 
-Run: `cd C:/Users/jscha/source/repos/ws-scrcpy-web && npx vitest run src/app/ui/__tests__/modal.test.ts`
+Run: `npx vitest run src/app/ui/__tests__/modal.test.ts`
 
 Expected: All tests pass. If CSS import fails in test environment, add a vitest config alias or mock for `.css` imports.
 
@@ -970,19 +970,19 @@ The `label`, `input`, `chevron`, `status-text`, `status-probing`, `status-ready`
 
 - [ ] **Step 4: Build and verify**
 
-Run: `cd C:/Users/jscha/source/repos/ws-scrcpy-web && npm run build`
+Run: `npm run build`
 
 Expected: Build succeeds with no errors. The compiled output includes both `modal.css` (from Modal.ts import) and `dialog.css` (from ShellModal.ts import, not yet converted).
 
 - [ ] **Step 5: Run all tests**
 
-Run: `cd C:/Users/jscha/source/repos/ws-scrcpy-web && npm test`
+Run: `npm test`
 
 Expected: All existing tests pass (none test ConfigureScrcpy directly — they test control messages, dependency definitions, device labels, and adb client). The new Modal tests from Task 3 also pass.
 
 - [ ] **Step 6: Manual smoke test**
 
-Run: `cd C:/Users/jscha/source/repos/ws-scrcpy-web && npm run build && node dist/index.js`
+Run: `npm run build && node dist/index.js`
 
 Open browser to `http://localhost:8000`. Click "configure stream" on a device card. Verify:
 - Modal appears with glassmorphism styling, centered, dimmed backdrop
@@ -1246,7 +1246,7 @@ Make sure there's no remaining `public close()` method that would shadow `Modal.
 
 - [ ] **Step 3: Build and verify**
 
-Run: `cd C:/Users/jscha/source/repos/ws-scrcpy-web && npm run build`
+Run: `npm run build`
 
 Expected: Build succeeds. Both `modal.css` and `dialog.css` no longer needed — but `dialog.css` may still be imported if any other file references it. Check:
 
@@ -1256,13 +1256,13 @@ Expected: No results — both ConfigureScrcpy and ShellModal now import through 
 
 - [ ] **Step 4: Run all tests**
 
-Run: `cd C:/Users/jscha/source/repos/ws-scrcpy-web && npm test`
+Run: `npm test`
 
 Expected: All tests pass.
 
 - [ ] **Step 5: Manual smoke test**
 
-Run: `cd C:/Users/jscha/source/repos/ws-scrcpy-web && npm run build && node dist/index.js`
+Run: `npm run build && node dist/index.js`
 
 Open browser to `http://localhost:8000`. Click "shell" on a device card. Verify:
 - Shell modal appears with glassmorphism styling, wider sizing
@@ -1299,13 +1299,13 @@ Run: `rm src/style/dialog.css`
 
 - [ ] **Step 3: Build and verify**
 
-Run: `cd C:/Users/jscha/source/repos/ws-scrcpy-web && npm run build`
+Run: `npm run build`
 
 Expected: Build succeeds with no missing CSS errors.
 
 - [ ] **Step 4: Run all tests**
 
-Run: `cd C:/Users/jscha/source/repos/ws-scrcpy-web && npm test`
+Run: `npm test`
 
 Expected: All tests pass.
 
@@ -1324,7 +1324,7 @@ git commit -m "chore: delete dialog.css, replaced by modal.css"
 
 - [ ] **Step 1: Full build from clean state**
 
-Run: `cd C:/Users/jscha/source/repos/ws-scrcpy-web && rm -rf dist && npm run build && node dist/index.js`
+Run: `rm -rf dist && npm run build && node dist/index.js`
 
 - [ ] **Step 2: Test ConfigureScrcpy modal**
 

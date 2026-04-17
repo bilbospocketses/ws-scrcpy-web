@@ -125,7 +125,7 @@ export const DEVICE_SERVER_PATH = '/data/local/tmp/scrcpy-server.jar';
 
 - [ ] **Step 4: Verify build**
 
-Run: `cd /c/Users/jscha/source/repos/ws-scrcpy-web && npx webpack --config webpack/ws-scrcpy-web.prod.ts 2>&1 | tail -5`
+Run: `npx webpack --config webpack/ws-scrcpy-web.prod.ts 2>&1 | tail -5`
 
 Expected: Build succeeds (new files are unused so far; Constants.ts consumers still compile because `SERVER_PACKAGE` and `SERVER_PROCESS_NAME` still exist).
 
@@ -200,7 +200,7 @@ export function serializeOptions(options: ScrcpyOptions): string[] {
 
 - [ ] **Step 2: Verify build**
 
-Run: `cd /c/Users/jscha/source/repos/ws-scrcpy-web && npx webpack --config webpack/ws-scrcpy-web.prod.ts 2>&1 | tail -5`
+Run: `npx webpack --config webpack/ws-scrcpy-web.prod.ts 2>&1 | tail -5`
 
 Expected: Build succeeds (new file, no consumers yet).
 
@@ -291,7 +291,7 @@ export class FrameReader {
 
 - [ ] **Step 2: Verify build**
 
-Run: `cd /c/Users/jscha/source/repos/ws-scrcpy-web && npx webpack --config webpack/ws-scrcpy-web.prod.ts 2>&1 | tail -5`
+Run: `npx webpack --config webpack/ws-scrcpy-web.prod.ts 2>&1 | tail -5`
 
 Expected: Build succeeds.
 
@@ -621,7 +621,7 @@ export class ScrcpyConnection extends Mw {
 
 - [ ] **Step 3: Verify build**
 
-Run: `cd /c/Users/jscha/source/repos/ws-scrcpy-web && npx webpack --config webpack/ws-scrcpy-web.prod.ts 2>&1 | tail -5`
+Run: `npx webpack --config webpack/ws-scrcpy-web.prod.ts 2>&1 | tail -5`
 
 Expected: Build succeeds (ScrcpyConnection imports Mw which is a valid server-side module; all imports resolve).
 
@@ -796,7 +796,7 @@ export class ScrcpyDemuxer {
 
 - [ ] **Step 2: Verify build**
 
-Run: `cd /c/Users/jscha/source/repos/ws-scrcpy-web && npx webpack --config webpack/ws-scrcpy-web.prod.ts 2>&1 | tail -5`
+Run: `npx webpack --config webpack/ws-scrcpy-web.prod.ts 2>&1 | tail -5`
 
 Expected: Build succeeds.
 
@@ -987,7 +987,7 @@ export class AudioPlayer {
 
 - [ ] **Step 3: Verify build**
 
-Run: `cd /c/Users/jscha/source/repos/ws-scrcpy-web && npx webpack --config webpack/ws-scrcpy-web.prod.ts 2>&1 | tail -5`
+Run: `npx webpack --config webpack/ws-scrcpy-web.prod.ts 2>&1 | tail -5`
 
 Expected: Build succeeds.
 
@@ -1238,7 +1238,7 @@ new ScrollControlMessage(position, hScroll, vScroll, 0)
 
 - [ ] **Step 7: Verify build**
 
-Run: `cd /c/Users/jscha/source/repos/ws-scrcpy-web && npx webpack --config webpack/ws-scrcpy-web.prod.ts 2>&1 | tail -20`
+Run: `npx webpack --config webpack/ws-scrcpy-web.prod.ts 2>&1 | tail -20`
 
 Expected: Build succeeds. All control message callers compile with updated signatures.
 
@@ -1500,7 +1500,7 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
 
 - [ ] **Step 2: Verify build**
 
-Run: `cd /c/Users/jscha/source/repos/ws-scrcpy-web && npx webpack --config webpack/ws-scrcpy-web.prod.ts 2>&1 | tail -5`
+Run: `npx webpack --config webpack/ws-scrcpy-web.prod.ts 2>&1 | tail -5`
 
 Expected: Build succeeds. WebCodecsPlayer still extends BaseCanvasBasedPlayer unchanged.
 
@@ -1700,7 +1700,7 @@ async function loadGoogModules() {
 
 - [ ] **Step 4: Verify build**
 
-Run: `cd /c/Users/jscha/source/repos/ws-scrcpy-web && npx webpack --config webpack/ws-scrcpy-web.prod.ts 2>&1 | tail -20`
+Run: `npx webpack --config webpack/ws-scrcpy-web.prod.ts 2>&1 | tail -20`
 
 Expected: Build succeeds. ScrcpyConnection is now wired as middleware. Old WebSocket proxy files still exist but are no longer imported.
 
@@ -2144,7 +2144,7 @@ export class StreamClientScrcpy
 
 - [ ] **Step 2: Verify build**
 
-Run: `cd /c/Users/jscha/source/repos/ws-scrcpy-web && npx webpack --config webpack/ws-scrcpy-web.prod.ts 2>&1 | tail -20`
+Run: `npx webpack --config webpack/ws-scrcpy-web.prod.ts 2>&1 | tail -20`
 
 Expected: Build succeeds. StreamClientScrcpy no longer imports StreamReceiverScrcpy or StreamReceiver types. Old files still exist but are now unreferenced.
 
@@ -2172,7 +2172,7 @@ git commit -m "feat: rewire StreamClientScrcpy to use ScrcpyDemuxer and AudioPla
 - [ ] **Step 1: Delete old streaming files**
 
 ```bash
-cd /c/Users/jscha/source/repos/ws-scrcpy-web
+cd <repo>
 git rm src/server/mw/WebsocketProxy.ts
 git rm src/server/goog-device/mw/WebsocketProxyOverAdb.ts
 git rm src/app/client/StreamReceiver.ts
@@ -2184,7 +2184,7 @@ git rm assets/scrcpy-server.jar
 - [ ] **Step 2: Download vanilla scrcpy-server v3.3.4**
 
 ```bash
-cd /c/Users/jscha/source/repos/ws-scrcpy-web
+cd <repo>
 curl -L -o assets/scrcpy-server "https://github.com/Genymobile/scrcpy/releases/download/v3.3.4/scrcpy-server-v3.3.4"
 ```
 
@@ -2245,7 +2245,7 @@ import '../../../assets/scrcpy-server.jar';
 
 - [ ] **Step 6: Verify build**
 
-Run: `cd /c/Users/jscha/source/repos/ws-scrcpy-web && npx webpack --config webpack/ws-scrcpy-web.prod.ts 2>&1 | tail -20`
+Run: `npx webpack --config webpack/ws-scrcpy-web.prod.ts 2>&1 | tail -20`
 
 Expected: Build succeeds. No references to deleted files remain. Asset is copied to dist.
 
@@ -2285,7 +2285,7 @@ This project bundles the [scrcpy](https://github.com/Genymobile/scrcpy) server c
 - [ ] **Step 2: Full build verification**
 
 ```bash
-cd /c/Users/jscha/source/repos/ws-scrcpy-web
+cd <repo>
 npm run build
 ```
 
@@ -2294,7 +2294,7 @@ Expected: Clean build with no errors.
 - [ ] **Step 3: Lint check**
 
 ```bash
-cd /c/Users/jscha/source/repos/ws-scrcpy-web
+cd <repo>
 npm run lint
 ```
 

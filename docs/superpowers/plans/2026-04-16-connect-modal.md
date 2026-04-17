@@ -256,7 +256,7 @@ If `index.ts` uses the return value, update it to destructure `{ instance }` ins
 
 - [ ] **Step 7: Build and verify**
 
-Run: `cd C:/Users/jscha/source/repos/ws-scrcpy-web && npm run build`
+Run: `npm run build`
 
 Expected: Build succeeds. The embed mode path still works (passes no container, gets `document.body`).
 
@@ -330,7 +330,7 @@ export class ConnectModal extends Modal {
 
 - [ ] **Step 2: Verify imports resolve**
 
-Run: `cd C:/Users/jscha/source/repos/ws-scrcpy-web && npm run build`
+Run: `npm run build`
 
 Expected: Build succeeds. ConnectModal is created but not yet used by any entry point.
 
@@ -409,7 +409,7 @@ Note: player creation and params building happen BEFORE `this.close(true)` (whic
 
 - [ ] **Step 3: Build and verify**
 
-Run: `cd C:/Users/jscha/source/repos/ws-scrcpy-web && npm run build`
+Run: `npm run build`
 
 Expected: Build succeeds.
 
@@ -493,7 +493,7 @@ However, `updateLink` uses `getElementsByName` which queries the live DOM, and t
 
 - [ ] **Step 3: Build and verify**
 
-Run: `cd C:/Users/jscha/source/repos/ws-scrcpy-web && npm run build`
+Run: `npm run build`
 
 Expected: Build succeeds.
 
@@ -534,7 +534,7 @@ Keep the `stop` closure itself (lines 222-235) — it's still used as the `setOn
 
 - [ ] **Step 2: Build and verify**
 
-Run: `cd C:/Users/jscha/source/repos/ws-scrcpy-web && npm run build`
+Run: `npm run build`
 
 Expected: Build succeeds.
 
@@ -559,7 +559,7 @@ git commit -m "refactor: remove disconnect button from more-box (X button is dis
 
 - [ ] **Step 1: Full build from clean state**
 
-Run: `cd C:/Users/jscha/source/repos/ws-scrcpy-web && rm -rf dist && npm run build`
+Run: `rm -rf dist && npm run build`
 
 - [ ] **Step 2: Start the server**
 

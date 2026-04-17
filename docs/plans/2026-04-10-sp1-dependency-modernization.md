@@ -86,7 +86,7 @@
 - [ ] **Step 1: Delete directories**
 
 ```bash
-cd /c/Users/jscha/source/repos/ws-scrcpy-web
+cd <repo>
 rm -rf vendor/ src/app/applDevice/ src/server/appl-device/ typings/
 ```
 
