@@ -39,7 +39,15 @@ export class ConnectModal extends Modal {
             onDisconnect: () => this.close(),
             onError: (err) => {
                 console.error('[ConnectModal]', err);
-                this.close();
+                // Show the error inline for a few seconds so the user sees why the stream failed
+                const errorEl = document.createElement('div');
+                errorEl.className = 'connect-modal-error';
+                errorEl.textContent = `stream failed: ${err.message}`;
+                errorEl.style.cssText = 'padding: 24px; color: #f06c75; font-family: monospace; font-size: 14px; text-align: center;';
+                this.bodyEl.innerHTML = '';
+                this.bodyEl.appendChild(errorEl);
+                // Close after 4s (long enough to read, short enough not to feel stuck)
+                setTimeout(() => this.close(), 4000);
             },
         });
     }
