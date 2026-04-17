@@ -1223,36 +1223,67 @@ git commit -m "style: move stream/toolbar CSS to ws-scrcpy.css, delete body.embe
 
 ---
 
-### Task 11b: Add clipboard toolbar button (preserves device→host clipboard sync)
+### Task 11b: Add clipboard toolbar buttons (get + set, replaces GoogMoreBox clipboard sync)
 
-GoogMoreBox today handles `DeviceMessage.TYPE_CLIPBOARD` by writing the device's clipboard text into a hidden textarea and calling `document.execCommand('copy')`. When we delete GoogMoreBox in Task 12, that capability vanishes unless we reimplement it as a toolbar button with modern APIs.
+GoogMoreBox today handles clipboard in both directions:
+- **GET** (device → host): receives `DeviceMessage.TYPE_CLIPBOARD`, writes text to a hidden textarea, calls `document.execCommand('copy')`
+- **SET** (host → device): user types in GoogMoreBox's textarea, picks "Set clipboard" from a command dropdown, send button calls `CommandControlMessage.createSetClipboardCommand(text)`
+
+When we delete GoogMoreBox in Task 12, both directions vanish. Replace with two toolbar buttons using modern `navigator.clipboard` APIs.
 
 **Files:**
 - Modify: `src/app/googDevice/toolbox/GoogToolBox.ts`
 - Modify: `src/app/googDevice/client/StreamClientScrcpy.ts`
-- Modify: `src/app/SvgImage.ts` (add clipboard icon)
+- Modify: `src/app/SvgImage.ts` (add two clipboard icons)
 
-- [ ] **Step 1: Add clipboard SVG icon**
+- [ ] **Step 1: Add clipboard SVG icons**
 
-In `src/app/SvgImage.ts`, in the icon registry, add:
+In `src/app/SvgImage.ts`, in the icon registry, add two entries. The distinction is the arrow: down = pull from device, up = push to device.
 
 ```typescript
-clipboard: '<svg viewBox="0 0 24 24"><path d="M19 2h-4.18C14.4.84 13.3 0 12 0c-1.3 0-2.4.84-2.82 2H5c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-7 0c.55 0 1 .45 1 1s-.45 1-1 1-1-.45-1-1 .45-1 1-1zm2 16H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V8h10v2z"/></svg>',
+// GET: clipboard with down arrow — pull FROM device TO host
+'clipboard-get': '<svg viewBox="0 0 24 24"><path d="M19 2h-4.18C14.4.84 13.3 0 12 0c-1.3 0-2.4.84-2.82 2H5c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-7 0c.55 0 1 .45 1 1s-.45 1-1 1-1-.45-1-1 .45-1 1-1zm0 18l-5-5h3V9h4v6h3l-5 5z"/></svg>',
+
+// SET: clipboard with up arrow — push FROM host TO device
+'clipboard-set': '<svg viewBox="0 0 24 24"><path d="M19 2h-4.18C14.4.84 13.3 0 12 0c-1.3 0-2.4.84-2.82 2H5c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-7 0c.55 0 1 .45 1 1s-.45 1-1 1-1-.45-1-1 .45-1 1-1zm0 7l5 5h-3v6h-4v-6H7l5-5z"/></svg>',
 ```
 
-- [ ] **Step 2: Add the toolbar button**
+- [ ] **Step 2: Add the toolbar buttons**
 
-In `src/app/googDevice/toolbox/GoogToolBox.ts`, in `createToolBox`, add a new button next to the existing toolbar buttons:
+In `src/app/googDevice/toolbox/GoogToolBox.ts`, in `createToolBox`, add two buttons next to the existing toolbar buttons:
 
 ```typescript
-const clipboardBtn = document.createElement('button');
-clipboardBtn.className = 'control-button';
-clipboardBtn.title = 'copy device clipboard to host';
-clipboardBtn.innerHTML = SvgImage.get('clipboard');
-clipboardBtn.addEventListener('click', () => {
+// GET: pull device clipboard to host
+const clipGetBtn = document.createElement('button');
+clipGetBtn.className = 'control-button';
+clipGetBtn.title = 'copy device clipboard to host';
+clipGetBtn.innerHTML = SvgImage.get('clipboard-get');
+clipGetBtn.addEventListener('click', () => {
     client.sendMessage(CommandControlMessage.createSimpleCommand(ControlMessage.TYPE_GET_CLIPBOARD));
 });
-toolBox.appendChild(clipboardBtn);
+toolBox.appendChild(clipGetBtn);
+
+// SET: push host clipboard to device
+const clipSetBtn = document.createElement('button');
+clipSetBtn.className = 'control-button';
+clipSetBtn.title = 'push host clipboard to device';
+clipSetBtn.innerHTML = SvgImage.get('clipboard-set');
+clipSetBtn.addEventListener('click', async () => {
+    if (!navigator.clipboard?.readText) {
+        console.error('[GoogToolBox] navigator.clipboard.readText unavailable');
+        return;
+    }
+    try {
+        const text = await navigator.clipboard.readText();
+        if (text) {
+            client.sendMessage(CommandControlMessage.createSetClipboardCommand(text));
+        }
+    } catch (err) {
+        // Browser may deny permission; surface via console only (no UI disruption)
+        console.error('[GoogToolBox] clipboard read failed:', err);
+    }
+});
+toolBox.appendChild(clipSetBtn);
 ```
 
 Required imports at the top of the file (if not already present):
@@ -1261,7 +1292,9 @@ import { CommandControlMessage } from '../../controlMessage/CommandControlMessag
 import { ControlMessage } from '../../controlMessage/ControlMessage';
 ```
 
-- [ ] **Step 3: Handle the device response in StreamClientScrcpy**
+Note: `navigator.clipboard.readText()` requires user gesture (button click satisfies this) AND host permission (browser prompts on first click). Secure context required — localhost is considered secure.
+
+- [ ] **Step 3: Handle the device's GET response in StreamClientScrcpy**
 
 In `src/app/googDevice/client/StreamClientScrcpy.ts`, modify `OnDeviceMessage` (around line 268) to handle clipboard messages. The existing version may look like:
 
@@ -1292,22 +1325,31 @@ public OnDeviceMessage = (data: Uint8Array): void => {
 
 (The `if (this.moreBox) { ... }` block is removed; Task 12 will delete the `moreBox` field entirely.)
 
-- [ ] **Step 4: Build and smoke-test**
+- [ ] **Step 4: Build and smoke-test both directions**
 
 ```
 npm run build
 node dist/index.js
 ```
 
-Browse to a device, click the new clipboard button, copy text on the device (long-press → Copy in a text field), click clipboard button again. Paste in your host clipboard somewhere — text should match.
+**GET test:**
+1. On the device: long-press text field → Copy some text (e.g., a URL).
+2. Click the download-arrow clipboard button (tooltip: "copy device clipboard to host").
+3. On host: paste somewhere (e.g., into the browser address bar). Text should match.
 
-Note: `navigator.clipboard.writeText` requires a user gesture and a secure context (HTTPS or localhost). localhost is fine for local dev.
+**SET test:**
+1. On host: copy text to clipboard (anywhere — a file name, a URL, etc.).
+2. Click the up-arrow clipboard button (tooltip: "push host clipboard to device").
+3. If browser prompts for clipboard read permission, grant it.
+4. On device: long-press a text field → Paste. Text should match.
+
+Both directions should work. If permission is denied for SET, you'll see a console error but no UI disruption.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add src/app/googDevice/toolbox/GoogToolBox.ts src/app/googDevice/client/StreamClientScrcpy.ts src/app/SvgImage.ts
-git commit -m "feat: toolbar clipboard button (replaces GoogMoreBox clipboard sync)"
+git commit -m "feat: toolbar clipboard buttons — get (device→host) + set (host→device)"
 ```
 
 ---
