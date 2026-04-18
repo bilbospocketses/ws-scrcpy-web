@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Internal
+- New `src/types/assets.d.ts` declares ambient modules for webpack-loaded side-effect imports (`*.css`, `*.svg`, `*.png`, `*.jpg`, `*.gif`, `*/assets/scrcpy-server`) plus the DefinePlugin build-time constants `__PATHNAME__` and `__WSSCRCPY_VERSION__`. The standalone `tsc` checker and `dts-bundle-generator` can now resolve these imports without error. Drops the TS pre-emit diagnostic count from **78 → 43** (phase 1a of the TS cleanup initiative — clears all TS2307, TS2882, and TS2552 errors)
+
 ### Performance
 - Main frontend bundle (`bundle.js`) dropped from **525 KiB → 162 KiB** (-69%) by converting static imports of `ShellModal`, `ListFilesModal`, and `ConnectModal` to dynamic `await import()` at the click-handler call sites in `DeviceTracker.ts` and `ConfigureScrcpy.ts`. xterm.js (the heaviest dep at ~326 KiB) now loads only when the user clicks the `shell` button — home page initial-paint no longer pays for it. `ConnectModal` and `ListFilesModal` split out similarly. Webpack `performance` budget tuned to 400 KiB asset / 500 KiB entrypoint on both frontend and library configs — the 244 KiB default targets content sites, not a tool app with an embedded streaming stack + terminal + file manager. All 5 webpack configs now build with zero warnings.
 
