@@ -31,7 +31,12 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
         this.tools.add(tool);
     }
 
-    public static buildUrl(item: HostItem): URL {
+    public static buildUrl(item: {
+        secure: boolean;
+        hostname: string;
+        port: number;
+        pathname?: string;
+    }): URL {
         const { secure, port, hostname } = item;
         const pathname = item.pathname ?? '/';
         const protocol = secure ? 'wss:' : 'ws:';
