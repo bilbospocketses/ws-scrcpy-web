@@ -1,10 +1,7 @@
 import Util from '../../app/Util';
 import { TypedEmitter } from '../../common/TypedEmitter';
-import { CloseEventClass } from './CloseEventClass';
 import { ErrorEventClass } from './ErrorEventClass';
-import { EventClass } from './Event';
 import { Message } from './Message';
-import { MessageEventClass } from './MessageEventClass';
 import { MessageType } from './MessageType';
 
 interface MultiplexerEvents extends WebSocketEventMap {
@@ -100,7 +97,7 @@ export class Multiplexer extends TypedEmitter<MultiplexerEvents> implements WebS
                     const data = this.channels.get(message.channelId);
                     if (data) {
                         const { channel } = data;
-                        const msg = new MessageEventClass('message', {
+                        const msg = new MessageEvent('message', {
                             data: new TextDecoder().decode(new Uint8Array(message.data)),
                             lastEventId: event.lastEventId,
                             origin: event.origin,
@@ -116,7 +113,7 @@ export class Multiplexer extends TypedEmitter<MultiplexerEvents> implements WebS
                     const data = this.channels.get(message.channelId);
                     if (data) {
                         const { channel } = data;
-                        const msg = new MessageEventClass('message', {
+                        const msg = new MessageEvent('message', {
                             data: message.data,
                             lastEventId: event.lastEventId,
                             origin: event.origin,
@@ -132,7 +129,7 @@ export class Multiplexer extends TypedEmitter<MultiplexerEvents> implements WebS
                     const data = this.channels.get(message.channelId);
                     if (data) {
                         const { emitter } = data;
-                        const msg = new MessageEventClass('message', {
+                        const msg = new MessageEvent('message', {
                             data: message.data,
                             lastEventId: event.lastEventId,
                             origin: event.origin,
@@ -247,7 +244,7 @@ export class Multiplexer extends TypedEmitter<MultiplexerEvents> implements WebS
                 } else {
                     this.ws.send(message);
                 }
-                this.emit('close', new CloseEventClass('close', { code, reason }));
+                this.emit('close', new CloseEvent('close', { code, reason }));
             } finally {
                 this.readyState = this.CLOSED;
             }
@@ -301,7 +298,7 @@ export class Multiplexer extends TypedEmitter<MultiplexerEvents> implements WebS
             if (this.readyState === this.OPEN) {
                 Util.setImmediate(() => {
                     channel.readyState = this.OPEN;
-                    channel.dispatchEvent(new EventClass('open'));
+                    channel.dispatchEvent(new Event('open'));
                 });
             }
         } else {

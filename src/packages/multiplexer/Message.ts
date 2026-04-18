@@ -1,4 +1,3 @@
-import { CloseEventClass } from './CloseEventClass';
 import { MessageType } from './MessageType';
 
 export class Message {
@@ -56,7 +55,7 @@ export class Message {
                 reason = new TextDecoder().decode(new Uint8Array(this.data, 6, length));
             }
         }
-        return new CloseEventClass('close', {
+        return new CloseEvent('close', {
             code,
             reason,
             wasClean: code === 1000,
