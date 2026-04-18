@@ -245,25 +245,8 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
             }
         }
 
-        // Overlay section 2x2 grid: row 1 = [configure stream, connect], row 2 = [shell, list files]
-        const streamEntry = StreamClientScrcpy.createEntryForDeviceList(device, 'desc-block', fullName, this.params);
-        streamEntry && overlaySection.appendChild(streamEntry);
-
-        // Connect button — row 1 cell 2
-        if (isActive && DeviceTracker.CREATE_DIRECT_LINKS) {
-            const name = `${DeviceTracker.AttributePrefixPlayerFor}${fullName}`;
-            StreamClientScrcpy.getPlayers().forEach((playerClass) => {
-                const { playerCodeName, playerFullName } = playerClass;
-                const connectBtn = document.createElement('div');
-                connectBtn.classList.add('desc-block');
-                connectBtn.setAttribute('name', encodeURIComponent(name));
-                connectBtn.setAttribute(DeviceTracker.AttributePlayerFullName, encodeURIComponent(playerFullName));
-                connectBtn.setAttribute(DeviceTracker.AttributePlayerCodeName, encodeURIComponent(playerCodeName));
-                overlaySection.appendChild(connectBtn);
-            });
-        }
-
-        // Shell and list files (from registered tools) — row 2
+        // Overlay section 2x2 grid: row 1 = [shell, list files], row 2 = [configure stream, connect]
+        // Shell and list files (from registered tools) — row 1
         DeviceTracker.tools.forEach((tool) => {
             const entry = tool.createEntryForDeviceList(device, 'desc-block', this.params);
             if (entry) {
@@ -276,6 +259,24 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
                 }
             }
         });
+
+        // Configure stream — row 2 cell 1
+        const streamEntry = StreamClientScrcpy.createEntryForDeviceList(device, 'desc-block', fullName, this.params);
+        streamEntry && overlaySection.appendChild(streamEntry);
+
+        // Connect button — row 2 cell 2
+        if (isActive && DeviceTracker.CREATE_DIRECT_LINKS) {
+            const name = `${DeviceTracker.AttributePrefixPlayerFor}${fullName}`;
+            StreamClientScrcpy.getPlayers().forEach((playerClass) => {
+                const { playerCodeName, playerFullName } = playerClass;
+                const connectBtn = document.createElement('div');
+                connectBtn.classList.add('desc-block');
+                connectBtn.setAttribute('name', encodeURIComponent(name));
+                connectBtn.setAttribute(DeviceTracker.AttributePlayerFullName, encodeURIComponent(playerFullName));
+                connectBtn.setAttribute(DeviceTracker.AttributePlayerCodeName, encodeURIComponent(playerCodeName));
+                overlaySection.appendChild(connectBtn);
+            });
+        }
 
         // Intercept shell links — open modal instead of navigating to new tab
         const shellLink = overlaySection.querySelector('.shell a') as HTMLAnchorElement | null;
