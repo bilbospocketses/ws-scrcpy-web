@@ -102,7 +102,7 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
     public static parseParameters(params: URLSearchParams): ParamsDeviceTracker {
         const typedParams = super.parseParameters(params);
         const type = Util.parseString(params, 'type', true);
-        if (type !== 'android' && type !== 'ios') {
+        if (type !== 'android') {
             throw Error('Incorrect type');
         }
         return { ...typedParams, type };
