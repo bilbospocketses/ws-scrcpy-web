@@ -199,13 +199,20 @@ export class ScrcpyConnection extends Mw {
         log.info(`Waiting for scrcpy-server to bind localabstract on ${this.serial} (up to 120s)...`);
         const first = await this.connectLocalRetry(localPort, 120000);
         log.info(`scrcpy-server bound on ${this.serial}; collecting audio + control sockets`);
+        // Brief pause between connects so scrcpy-server has a chance to accept
+        // each socket and write its per-connection handshake byte before the next
+        // client connection arrives at the device-side server socket. Back-to-back
+        // connects overwhelm the accept loop on slow devices and at least one
+        // connection silently doesn't get its dummy byte.
+        await new Promise((r) => setTimeout(r, 500));
         const second = await this.connectLocal(localPort, 15000);
+        await new Promise((r) => setTimeout(r, 500));
         const third = await this.connectLocal(localPort, 15000);
 
         // In forward-tunnel mode scrcpy-server writes a single dummy 0x00 byte on
         // each socket before real traffic, to flush adb's forward buffer. Consume
-        // those bytes with a best-effort timeout — if the server version didn't
-        // emit one on a given socket, we move on rather than hang.
+        // those bytes sequentially; if the server version doesn't emit one on a
+        // given socket we log and move on rather than hang.
         await this.consumeDummyByte(first, 'video');
         await this.consumeDummyByte(second, 'audio');
         await this.consumeDummyByte(third, 'control');
