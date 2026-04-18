@@ -37,6 +37,7 @@ export class ConfigureScrcpy extends Modal {
     private saveSettingsButton?: HTMLButtonElement;
     private displayIdSelectElement?: HTMLSelectElement;
     private encoderSelectElement?: HTMLSelectElement;
+    private allVideoEncoders: string[] = [];
     private statusElement?: HTMLElement;
     private advancedChevron?: HTMLElement;
     private statusText = '';
@@ -83,20 +84,13 @@ export class ConfigureScrcpy extends Modal {
     }
 
     private async onProbeResult(result: ProbeResult): Promise<void> {
-        // Populate encoder dropdown (video encoders)
-        const encoderSelect = this.encoderSelectElement || document.createElement('select');
-        let child;
-        while ((child = encoderSelect.firstChild)) {
-            encoderSelect.removeChild(child);
+        // Stash full encoder list; dropdown is filtered by codec further down
+        this.allVideoEncoders = result.videoEncoders;
+        if (!this.encoderSelectElement) {
+            this.encoderSelectElement = document.createElement('select');
         }
-        const allEncoders = ['', ...result.videoEncoders];
-        allEncoders.forEach((value) => {
-            const optionElement = document.createElement('option');
-            optionElement.setAttribute('value', value);
-            optionElement.innerText = value;
-            encoderSelect.appendChild(optionElement);
-        });
-        this.encoderSelectElement = encoderSelect;
+        this.populateEncoderDropdown('');
+        let child;
 
         // Populate video codec dropdown, preferring H.265 (hardware) then AV1
         if (this.videoCodecSelect) {
@@ -154,6 +148,8 @@ export class ConfigureScrcpy extends Modal {
                 // H.264 stays as default if H.265 unavailable; AV1 is software-only and slow
             }
         }
+        // Now that the codec is settled (stored prefs or default), filter encoders to match
+        this.populateEncoderDropdown(this.videoCodecSelect?.value || '');
         if (this.encoderSelectElement) {
             const currentEncoder = this.encoderSelectElement.value;
             if (!currentEncoder) {
@@ -171,6 +167,47 @@ export class ConfigureScrcpy extends Modal {
             this.connectButton.disabled = false;
         }
     }
+
+    private encoderMatchesCodec(encoderName: string, codec: string): boolean {
+        if (!encoderName) return true;
+        const lower = encoderName.toLowerCase();
+        switch (codec) {
+            case 'h264':
+                return lower.includes('.avc.') || lower.includes('.h264.');
+            case 'h265':
+                return lower.includes('.hevc.');
+            case 'av1':
+                return lower.includes('.av1.');
+            default:
+                return true;
+        }
+    }
+
+    private populateEncoderDropdown(codec: string): void {
+        if (!this.encoderSelectElement) return;
+        const previousValue = this.encoderSelectElement.value;
+        while (this.encoderSelectElement.firstChild) {
+            this.encoderSelectElement.removeChild(this.encoderSelectElement.firstChild);
+        }
+        const matching = codec
+            ? this.allVideoEncoders.filter((e) => this.encoderMatchesCodec(e, codec))
+            : this.allVideoEncoders;
+        const options = ['', ...matching];
+        options.forEach((value) => {
+            const opt = document.createElement('option');
+            opt.value = value;
+            opt.innerText = value;
+            this.encoderSelectElement!.appendChild(opt);
+        });
+        if (options.includes(previousValue)) {
+            this.encoderSelectElement.value = previousValue;
+        }
+    }
+
+    private onVideoCodecChange = (): void => {
+        if (!this.videoCodecSelect) return;
+        this.populateEncoderDropdown(this.videoCodecSelect.value);
+    };
 
     private detectVideoCodecs(encoders: string[]): string[] {
         const codecs: string[] = [];
@@ -485,6 +522,7 @@ export class ConfigureScrcpy extends Modal {
         const videoCodecSelect = (this.videoCodecSelect = document.createElement('select'));
         videoCodecSelect.classList.add('input');
         videoCodecSelect.id = videoCodecLabel.htmlFor = `videoCodec_${this.escapedUdid}`;
+        videoCodecSelect.addEventListener('change', this.onVideoCodecChange);
         controls.appendChild(videoCodecSelect);
 
         // Audio codec dropdown
