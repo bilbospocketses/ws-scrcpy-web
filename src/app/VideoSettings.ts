@@ -2,7 +2,6 @@ import { BinaryReader } from './BinaryReader';
 import { BinaryWriter } from './BinaryWriter';
 import Rect from './Rect';
 import Size from './Size';
-import Util from './Util';
 
 interface Settings {
     crop?: Rect | null;
@@ -81,12 +80,12 @@ export default class VideoSettings {
         const codecOptionsLength = reader.readInt32BE();
         if (codecOptionsLength) {
             const codecOptionsBytes = reader.readBytes(codecOptionsLength);
-            codecOptions = Util.utf8ByteArrayToString(codecOptionsBytes);
+            codecOptions = new TextDecoder().decode(codecOptionsBytes);
         }
         const encoderNameLength = reader.readInt32BE();
         if (encoderNameLength) {
             const encoderNameBytes = reader.readBytes(encoderNameLength);
-            encoderName = Util.utf8ByteArrayToString(encoderNameBytes);
+            encoderName = new TextDecoder().decode(encoderNameBytes);
         }
         return new VideoSettings(
             {
@@ -145,11 +144,11 @@ export default class VideoSettings {
         let codecOptionsBytes;
         let encoderNameBytes;
         if (this.codecOptions) {
-            codecOptionsBytes = Util.stringToUtf8ByteArray(this.codecOptions);
+            codecOptionsBytes = new TextEncoder().encode(this.codecOptions);
             additionalLength += codecOptionsBytes.length;
         }
         if (this.encoderName) {
-            encoderNameBytes = Util.stringToUtf8ByteArray(this.encoderName);
+            encoderNameBytes = new TextEncoder().encode(this.encoderName);
             additionalLength += encoderNameBytes.length;
         }
         const writer = new BinaryWriter(VideoSettings.BASE_BUFFER_LENGTH + additionalLength);

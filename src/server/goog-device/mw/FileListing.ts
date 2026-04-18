@@ -1,4 +1,3 @@
-import Util from '../../../app/Util';
 import Protocol from '../../../common/AdbProtocol';
 import { ChannelCode } from '../../../common/ChannelCode';
 import type { Multiplexer } from '../../../packages/multiplexer/Multiplexer';
@@ -23,7 +22,7 @@ export class FileListing extends Mw {
         }
         const buffer = Buffer.from(data);
         const length = buffer.readInt32LE(0);
-        const serial = Util.utf8ByteArrayToString(buffer.slice(4, 4 + length));
+        const serial = new TextDecoder().decode(buffer.slice(4, 4 + length));
         FileListing.log.info(`processChannel: accepted for serial="${serial}"`);
         return new FileListing(ws, serial);
     }
@@ -53,7 +52,7 @@ export class FileListing extends Mw {
             return;
         }
         let offset = 0;
-        const cmd = Util.utf8ByteArrayToString(data.slice(offset, 4));
+        const cmd = new TextDecoder().decode(data.slice(offset, 4));
         offset += 4;
         switch (cmd) {
             case Protocol.LIST:
@@ -62,7 +61,7 @@ export class FileListing extends Mw {
                 const length = data.readUInt32LE(offset);
                 offset += 4;
                 const pathBuffer = data.slice(offset, offset + length);
-                const pathString = Util.utf8ByteArrayToString(pathBuffer);
+                const pathString = new TextDecoder().decode(pathBuffer);
                 FileListing.handle(cmd, serial, pathString, channel).catch((error: Error) => {
                     FileListing.log.error(error.message);
                 });

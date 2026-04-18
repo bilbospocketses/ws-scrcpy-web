@@ -101,7 +101,7 @@ export class Multiplexer extends TypedEmitter<MultiplexerEvents> implements WebS
                     if (data) {
                         const { channel } = data;
                         const msg = new MessageEventClass('message', {
-                            data: Util.utf8ByteArrayToString(new Uint8Array(message.data)),
+                            data: new TextDecoder().decode(new Uint8Array(message.data)),
                             lastEventId: event.lastEventId,
                             origin: event.origin,
                             source: event.source,

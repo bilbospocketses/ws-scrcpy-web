@@ -1,4 +1,3 @@
-import Util from '../../app/Util';
 import { CloseEventClass } from './CloseEventClass';
 import { MessageType } from './MessageType';
 
@@ -14,7 +13,7 @@ export class Message {
     }
 
     public static fromCloseEvent(id: number, code: number, reason?: string): Message {
-        const reasonBytes = reason ? Util.stringToUtf8ByteArray(reason) : new Uint8Array(0);
+        const reasonBytes = reason ? new TextEncoder().encode(reason) : new Uint8Array(0);
         const buf = new Uint8Array(2 + 4 + reasonBytes.byteLength);
         const view = new DataView(buf.buffer);
         view.setUint16(0, code, true);
@@ -54,7 +53,7 @@ export class Message {
             code = view.getUint16(0, true);
             if (this.data.byteLength > 6) {
                 const length = view.getUint32(2, true);
-                reason = Util.utf8ByteArrayToString(new Uint8Array(this.data, 6, length));
+                reason = new TextDecoder().decode(new Uint8Array(this.data, 6, length));
             }
         }
         return new CloseEventClass('close', {

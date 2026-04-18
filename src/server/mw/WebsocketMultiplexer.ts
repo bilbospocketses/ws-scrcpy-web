@@ -1,5 +1,4 @@
 import type WS from 'ws';
-import Util from '../../app/Util';
 import { ACTION } from '../../common/Action';
 import { Multiplexer } from '../../packages/multiplexer/Multiplexer';
 import { Logger } from '../Logger';
@@ -51,7 +50,7 @@ export class WebsocketMultiplexer extends Mw {
         let processed = false;
         for (const mwFactory of WebsocketMultiplexer.mwFactories.values()) {
             try {
-                const code = Util.utf8ByteArrayToString(Buffer.from(data).slice(0, 4));
+                const code = new TextDecoder().decode(Buffer.from(data).slice(0, 4));
                 const buffer = data.byteLength > 4 ? data.slice(4) : undefined;
                 const mw = mwFactory.processChannel(channel, code, buffer);
                 if (mw) {

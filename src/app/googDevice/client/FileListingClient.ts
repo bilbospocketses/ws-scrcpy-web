@@ -393,7 +393,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                 const size = statView.getUint32(4, true);
                 const mtime = statView.getUint32(8, true);
                 const namelen = statView.getUint32(12, true);
-                const name = Util.utf8ByteArrayToString(stat.subarray(16, 16 + namelen));
+                const name = new TextDecoder().decode(stat.subarray(16, 16 + namelen));
                 this.addEntry(new Entry(name, mode, size, mtime));
                 return;
             }
@@ -432,7 +432,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             case Protocol.FAIL: {
                 const dataView = new DataView(data.buffer, data.byteOffset);
                 const length = dataView.getUint32(4, true);
-                const message = Util.utf8ByteArrayToString(data.subarray(8, 8 + length));
+                const message = new TextDecoder().decode(data.subarray(8, 8 + length));
                 console.error(TAG, `FAIL: ${message}`);
                 return;
             }
@@ -592,7 +592,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     }
 
     protected getChannelInitData(): Uint8Array {
-        const serial = Util.stringToUtf8ByteArray(this.serial);
+        const serial = new TextEncoder().encode(this.serial);
         return new BinaryWriter(4 + 4 + serial.byteLength)
             .writeString(ChannelCode.FSLS)
             .writeUInt32LE(serial.length)

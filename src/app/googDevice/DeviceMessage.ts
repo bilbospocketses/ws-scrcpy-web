@@ -1,5 +1,4 @@
 import { BinaryReader } from '../BinaryReader';
-import Util from '../Util';
 
 export default class DeviceMessage {
     public static TYPE_CLIPBOARD = 0;
@@ -7,7 +6,7 @@ export default class DeviceMessage {
     public static TYPE_UHID_OUTPUT = 2;
     public static TYPE_PUSH_RESPONSE = 101; // custom, not used with vanilla scrcpy v3.x
 
-    public static readonly MAGIC_BYTES_MESSAGE = Util.stringToUtf8ByteArray('scrcpy_message');
+    public static readonly MAGIC_BYTES_MESSAGE = new TextEncoder().encode('scrcpy_message');
 
     constructor(
         public readonly type: number,
@@ -36,7 +35,7 @@ export default class DeviceMessage {
         const reader = new BinaryReader(this.data, 1);
         const length = reader.readInt32BE();
         const textBytes = reader.readBytes(length);
-        return Util.utf8ByteArrayToString(textBytes);
+        return new TextDecoder().decode(textBytes);
     }
 
     public getAckSequence(): bigint {

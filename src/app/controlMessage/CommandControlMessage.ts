@@ -1,6 +1,5 @@
 import { BinaryReader } from '../BinaryReader';
 import { BinaryWriter } from '../BinaryWriter';
-import Util from '../Util';
 import type VideoSettings from '../VideoSettings';
 import { ControlMessage } from './ControlMessage';
 
@@ -58,7 +57,7 @@ export class CommandControlMessage extends ControlMessage {
 
     public static createSetClipboardCommand(text: string, paste = false, sequence = 0n): CommandControlMessage {
         const event = new CommandControlMessage(ControlMessage.TYPE_SET_CLIPBOARD);
-        const textBytes: Uint8Array | null = text ? Util.stringToUtf8ByteArray(text) : null;
+        const textBytes: Uint8Array | null = text ? new TextEncoder().encode(text) : null;
         const textLength = textBytes ? textBytes.length : 0;
         // type(1) + sequence(8) + paste(1) + textLength(4) + text
         const writer = new BinaryWriter(1 + 8 + 1 + 4 + textLength)
@@ -103,7 +102,7 @@ export class CommandControlMessage extends ControlMessage {
 
     private static createPushFileStartCommand(id: number, fileName: string, fileSize: number): CommandControlMessage {
         const event = new CommandControlMessage(ControlMessage.TYPE_PUSH_FILE);
-        const text = Util.stringToUtf8ByteArray(fileName);
+        const text = new TextEncoder().encode(fileName);
         const typeField = 1;
         const idField = 2;
         const stateField = 1;
@@ -185,7 +184,7 @@ export class CommandControlMessage extends ControlMessage {
         } else if (state === FilePushState.START) {
             fileSize = reader.readUInt32BE();
             const textLength = reader.readUInt16BE();
-            fileName = Util.utf8ByteArrayToString(reader.readBytes(textLength));
+            fileName = new TextDecoder().decode(reader.readBytes(textLength));
         }
         return { id, state, chunk, fileName, fileSize };
     }
