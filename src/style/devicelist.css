@@ -56,6 +56,7 @@ body.list #device_list_menu {
 }
 
 #devices .device-list button {
+    font-family: monospace;
     font-size: var(--font-size);
     color: var(--button-text-color);
 }
@@ -135,7 +136,7 @@ body.list #device_list_menu {
     background: transparent;
     color: #f06c75;
     padding: 4px 10px;
-    font-size: 12px;
+    font-size: var(--font-size);
     cursor: pointer;
     white-space: nowrap;
     min-width: 95px;
@@ -156,7 +157,7 @@ body.list #device_list_menu {
     border-radius: 6px;
     background: transparent;
     padding: 4px 10px;
-    font-size: 12px;
+    font-size: var(--font-size);
     cursor: pointer;
     white-space: nowrap;
     min-width: 70px;
@@ -262,6 +263,7 @@ body.list #device_list_menu {
     color: #5b9aff;
     text-decoration: none;
     padding: 0.3rem 0.75rem;
+    font-family: monospace;
     font-size: var(--font-size);
     cursor: pointer;
     display: inline-block;
