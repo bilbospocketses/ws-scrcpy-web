@@ -13,4 +13,5 @@ export default interface GoogDeviceDescriptor extends BaseDeviceDescriptor {
     pid: number;
     'last.update.timestamp': number;
     'screen.state': 'awake' | 'asleep' | 'unknown';
+    deviceKind?: 'phone' | 'tablet' | 'tv';
 }
