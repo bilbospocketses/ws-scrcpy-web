@@ -3,6 +3,9 @@
  * Exposes startStream + version via both UMD (window.WsScrcpy) and ESM (named exports).
  */
 
+/// <reference path="../../types/assets.d.ts" />
+/// <reference types="node" />
+
 import '../../style/ws-scrcpy.css';
 import { StreamClientScrcpy } from '../googDevice/client/StreamClientScrcpy';
 import { WebCodecsPlayer } from '../player/WebCodecsPlayer';
