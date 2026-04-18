@@ -191,12 +191,16 @@ body.list #device_list_menu {
     cursor: not-allowed;
 }
 
-/* Services / action buttons — 2x2 grid: [config][connect] / [shell][list files] */
+/* Services / action buttons — 2x2 grid filled column-first:
+   left col = [shell][list files], right col = [connect][configure stream] */
 #devices .device-list div.device .services {
     display: grid;
     grid-template-columns: 1fr 1fr;
+    grid-template-rows: auto auto auto;
+    grid-auto-flow: column;
     gap: 6px;
-    place-items: center;
+    align-items: center;
+    justify-items: start;
     border-top: 1px solid var(--device-border-color);
     padding-top: 4px;
     padding-bottom: 8px;
@@ -212,6 +216,7 @@ body.list #device_list_menu {
 
 #devices .services-label {
     grid-column: 1 / -1;
+    grid-row: 1;
     justify-self: start;
     font-size: 13px;
     color: var(--text-color-light, #888);

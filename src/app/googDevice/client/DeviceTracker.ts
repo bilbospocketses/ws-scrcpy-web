@@ -128,7 +128,7 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
                 <tr><td class="device-label">SDK:</td><td>${device['ro.build.version.sdk']}</td></tr>
             </table>
             <div id="${overlayId}" class="services">
-                <div class="services-label">opens in overlay</div>
+                <div class="services-label">opens in modal</div>
             </div>
         </div>`.content;
         const overlaySection = row.getElementById(overlayId);
@@ -245,8 +245,8 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
             }
         }
 
-        // Overlay section 2x2 grid: row 1 = [shell, list files], row 2 = [configure stream, connect]
-        // Shell and list files (from registered tools) — row 1
+        // Overlay 2x2 grid filled column-first via CSS `grid-auto-flow: column`:
+        // left column = [shell, list files], right column = [connect, configure stream]
         DeviceTracker.tools.forEach((tool) => {
             const entry = tool.createEntryForDeviceList(device, 'desc-block', this.params);
             if (entry) {
@@ -260,11 +260,7 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
             }
         });
 
-        // Configure stream — row 2 cell 1
-        const streamEntry = StreamClientScrcpy.createEntryForDeviceList(device, 'desc-block', fullName, this.params);
-        streamEntry && overlaySection.appendChild(streamEntry);
-
-        // Connect button — row 2 cell 2
+        // Connect button — right column, top
         if (isActive && DeviceTracker.CREATE_DIRECT_LINKS) {
             const name = `${DeviceTracker.AttributePrefixPlayerFor}${fullName}`;
             StreamClientScrcpy.getPlayers().forEach((playerClass) => {
@@ -277,6 +273,10 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
                 overlaySection.appendChild(connectBtn);
             });
         }
+
+        // Configure stream — right column, bottom
+        const streamEntry = StreamClientScrcpy.createEntryForDeviceList(device, 'desc-block', fullName, this.params);
+        streamEntry && overlaySection.appendChild(streamEntry);
 
         // Intercept shell links — open modal instead of navigating to new tab
         const shellLink = overlaySection.querySelector('.shell a') as HTMLAnchorElement | null;

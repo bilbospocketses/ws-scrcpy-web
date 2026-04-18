@@ -661,7 +661,7 @@ export class StreamClientScrcpy
                     id="${configureButtonId}"
                     class="active action-button"
                 >
-                    configure stream
+                    config stream
                 </button>
             </div>`;
             const a = e.content.getElementById(configureButtonId);
