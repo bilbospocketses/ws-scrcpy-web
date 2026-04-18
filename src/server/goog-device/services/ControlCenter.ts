@@ -63,11 +63,14 @@ export class ControlCenter extends BaseControlCenter<GoogDeviceDescriptor> imple
                 }
             }
 
-            // Poll screen state for all connected devices (concurrent)
-            const screenChecks = Array.from(this.deviceMap.values())
-                .filter((d) => d.isConnected())
-                .map((d) => d.checkScreenState());
-            await Promise.all(screenChecks);
+            // Poll screen state + device kind for all connected devices (concurrent)
+            const connected = Array.from(this.deviceMap.values()).filter((d) => d.isConnected());
+            const checks: Promise<void>[] = [];
+            for (const d of connected) {
+                checks.push(d.checkScreenState());
+                checks.push(d.detectDeviceKind());
+            }
+            await Promise.all(checks);
         } catch (_e) {
             // ADB not running or error — retry on next poll
         }
