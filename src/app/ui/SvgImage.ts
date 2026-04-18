@@ -1,10 +1,13 @@
 import ArrowBackSVG from '../../public/images/buttons/arrow_back.svg';
 import BarChartSVG from '../../public/images/buttons/bar_chart.svg';
-import DpadSVG from '../../public/images/buttons/dpad.svg';
-import TouchSVG from '../../public/images/buttons/touch.svg';
 import CancelSVG from '../../public/images/buttons/cancel.svg';
 import ClipboardGetSVG from '../../public/images/buttons/clipboard_get.svg';
 import ClipboardSetSVG from '../../public/images/buttons/clipboard_set.svg';
+import DevicePhoneSVG from '../../public/images/buttons/device_phone.svg';
+import DeviceTabletSVG from '../../public/images/buttons/device_tablet.svg';
+import DeviceTvSVG from '../../public/images/buttons/device_tv.svg';
+import DpadSVG from '../../public/images/buttons/dpad.svg';
+import TouchSVG from '../../public/images/buttons/touch.svg';
 import MenuSVG from '../../public/images/buttons/menu.svg';
 import OfflineSVG from '../../public/images/buttons/offline.svg';
 import RefreshSVG from '../../public/images/buttons/refresh.svg';
@@ -44,6 +47,9 @@ export enum Icon {
     TOUCH_HAND = 19,
     CLIPBOARD_GET = 20,
     CLIPBOARD_SET = 21,
+    DEVICE_TV = 22,
+    DEVICE_TABLET = 23,
+    DEVICE_PHONE = 24,
 }
 
 export default class SvgImage {
@@ -94,6 +100,12 @@ export default class SvgImage {
                 return ClipboardGetSVG;
             case Icon.CLIPBOARD_SET:
                 return ClipboardSetSVG;
+            case Icon.DEVICE_TV:
+                return DeviceTvSVG;
+            case Icon.DEVICE_TABLET:
+                return DeviceTabletSVG;
+            case Icon.DEVICE_PHONE:
+                return DevicePhoneSVG;
             default:
                 return '';
         }
