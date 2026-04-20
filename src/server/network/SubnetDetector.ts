@@ -42,11 +42,14 @@ export async function detectSubnet(deps: DetectorDeps = DEFAULT_DEPS): Promise<D
 }
 
 async function detectViaGateway(deps: DetectorDeps): Promise<DetectedSubnet | null> {
-    if (deps.platform === 'linux' || deps.platform === 'darwin') {
+    if (deps.platform === 'linux') {
         const route = await deps.runCommand('ip route show default');
         const m = route.match(/default via [\d.]+ dev (\S+)/);
         if (!m) return null;
         const ifaceName = m[1];
+        // Hygiene: interface names are typically [a-zA-Z0-9:._-]; reject anything weirder
+        // to avoid any surprises in how the name is passed to execFile.
+        if (!/^[\w:.\-]+$/.test(ifaceName)) return null;
         const addr = await deps.runCommand(`ip -o -4 addr show dev ${ifaceName}`);
         const cidrM = addr.match(/inet (\d+\.\d+\.\d+\.\d+\/\d+)/);
         if (!cidrM) return null;

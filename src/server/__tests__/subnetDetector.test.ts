@@ -125,4 +125,14 @@ describe('SubnetDetector internals', () => {
         expect(__internals.netmaskToPrefix('255.255.0.0')).toBe(16);
         expect(__internals.netmaskToPrefix('255.255.255.255')).toBe(32);
     });
+
+    it('netmaskToPrefix rejects non-contiguous masks', () => {
+        expect(__internals.netmaskToPrefix('255.255.0.255')).toBeNull();
+        expect(__internals.netmaskToPrefix('255.0.255.0')).toBeNull();
+    });
+
+    it('netmaskToPrefix rejects invalid octet values', () => {
+        expect(__internals.netmaskToPrefix('255.255.256.0')).toBeNull();
+        expect(__internals.netmaskToPrefix('notamask')).toBeNull();
+    });
 });
