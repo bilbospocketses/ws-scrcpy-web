@@ -60,6 +60,9 @@ export class ScanMw {
         };
 
         ws.on('message', onMessage);
+        ws.once('close', () => {
+            ws.removeListener('message', onMessage);
+        });
         // Client disconnect does NOT cancel the scan (per spec).
     }
 
