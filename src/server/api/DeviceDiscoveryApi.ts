@@ -3,6 +3,8 @@ import type { IncomingMessage, ServerResponse } from 'http';
 import { AdbClient, parseSerialFromMdnsName } from '../AdbClient';
 import { Config } from '../Config';
 import { DeviceLabelStore } from '../DeviceLabelStore';
+import { detectSubnet } from '../network/SubnetDetector';
+import { resolveMac } from '../network/MacResolver';
 
 export class DeviceDiscoveryApi {
     private adbClient: AdbClient;
@@ -42,6 +44,13 @@ export class DeviceDiscoveryApi {
                 return true;
             }
 
+            if (req.method === 'GET' && url === '/api/devices/scan/subnet') {
+                const detected = await detectSubnet();
+                res.writeHead(200);
+                res.end(JSON.stringify(detected));
+                return true;
+            }
+
             if (req.method === 'POST' && url === '/api/devices/connect') {
                 const body = await readBody(req);
                 const { address, serial, label } = JSON.parse(body);
@@ -56,16 +65,29 @@ export class DeviceDiscoveryApi {
                 }
                 const result = await this.adbClient.connect(address);
                 const success = result.includes('connected');
-                // Manual-add path: serial unknown until connected. Look it up now
-                // via getprop and save the label so it persists.
-                if (success && label && !serial) {
+                if (success && label) {
+                    // Persist the label under the device's real serial AND its MAC.
+                    // Storing under both keys lets future scans (which may only have
+                    // MAC from ARP — no serial without racing adb) still rehydrate
+                    // the label. Only applies when the user provided a label on this
+                    // connect; otherwise nothing to persist.
                     try {
-                        const lookedUp = (await this.adbClient.shell(address, 'getprop ro.serialno')).trim();
-                        if (lookedUp) {
-                            DeviceLabelStore.getInstance().set(lookedUp, label);
+                        let realSerial = serial;
+                        if (!realSerial) {
+                            const lookedUp = (await this.adbClient.shell(address, 'getprop ro.serialno')).trim();
+                            if (lookedUp) realSerial = lookedUp;
+                        }
+                        if (realSerial) {
+                            DeviceLabelStore.getInstance().set(realSerial, label);
+                        }
+                        const ip = address.split(':')[0];
+                        const mac = await resolveMac(ip);
+                        if (mac) {
+                            DeviceLabelStore.getInstance().set(mac, label);
                         }
                     } catch {
-                        // Serial lookup failed — skip saving; user can set the label from the card.
+                        // Serial or MAC lookup failed — partial persist is OK;
+                        // user can edit label later from the card.
                     }
                 }
                 res.writeHead(success ? 200 : 500);

@@ -39,6 +39,16 @@ dialog.modal .modal-frame {
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
 }
 
+/* Nested-modal readability: when a second modal opens on top, the top one uses
+   a fully opaque frame so its content is crisp over the lower modal's glass. */
+body:has(dialog.modal[open] ~ dialog.modal[open]) dialog.modal[open]:last-of-type .modal-frame {
+    background: rgb(30, 35, 45);
+}
+
+[data-theme="light"] body:has(dialog.modal[open] ~ dialog.modal[open]) dialog.modal[open]:last-of-type .modal-frame {
+    background: rgb(245, 248, 252);
+}
+
 dialog.modal .modal-frame button,
 dialog.modal .modal-frame select,
 dialog.modal .modal-frame input {

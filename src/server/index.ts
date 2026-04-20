@@ -5,13 +5,20 @@ import { Logger } from './Logger';
 import { DeviceProbe } from './DeviceProbe';
 import { HostTracker } from './mw/HostTracker';
 import type { MwFactory } from './mw/Mw';
+import { ScanMw } from './mw/ScanMw';
 import { WebsocketMultiplexer } from './mw/WebsocketMultiplexer';
 import { ScrcpyConnection } from './ScrcpyConnection';
+import { AdbClient } from './AdbClient';
+import { DeviceLabelStore } from './DeviceLabelStore';
+import { NetworkScanner } from './network/NetworkScanner';
+import { probeAdb } from './network/AdbHandshakeProbe';
+import { resolveMac } from './network/MacResolver';
 import { DependencyApi } from './api/DependencyApi';
 import { DeviceDiscoveryApi } from './api/DeviceDiscoveryApi';
 import { HttpServer } from './services/HttpServer';
 import type { Service, ServiceClass } from './services/Service';
 import { WebSocketServer } from './services/WebSocketServer';
+import { SCAN_WS_PATH } from '../common/ScanMessage';
 
 const servicesToStart: ServiceClass[] = [HttpServer, WebSocketServer];
 
@@ -31,6 +38,21 @@ HttpServer.addApiHandler(depApi);
 
 const discoveryApi = new DeviceDiscoveryApi();
 HttpServer.addApiHandler(discoveryApi);
+
+// Wire the scanner singleton
+const scanAdb = new AdbClient(config.adbPath);
+const scanner = new NetworkScanner({
+    adbDevices: () => scanAdb.devices(),
+    adbMdnsServices: () => scanAdb.mdnsServices(),
+    adbHandshakeProbe: probeAdb,
+    resolveMac,
+    labelFor: (key: string) => DeviceLabelStore.getInstance().get(key),
+    concurrency: config.scanConcurrency,
+    progressInterval: config.scanProgressInterval,
+    tcpTimeoutMs: config.scanTcpTimeoutMs,
+    handshakeTimeoutMs: config.scanAdbConnectTimeoutMs,
+});
+ScanMw.setScanner(scanner);
 
 async function loadGoogModules() {
     const { ControlCenter } = await import('./goog-device/services/ControlCenter');
@@ -70,6 +92,8 @@ loadGoogModules()
         mw2List.forEach((mwFactory: MwFactory) => {
             WebsocketMultiplexer.registerMw(mwFactory);
         });
+
+        wsService.registerPathHandler(SCAN_WS_PATH, (ws) => ScanMw.attach(ws));
 
         if (process.platform === 'win32') {
             readline

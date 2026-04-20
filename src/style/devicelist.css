@@ -291,6 +291,13 @@ body.list #device_list_menu {
     grid-column: 1 / -1;
 }
 
+/* Empty-state card inside the tracker block spans the full row instead of
+ * sitting in a single grid cell — matches the look of the scan-network
+ * info box below Available Network Devices. */
+#devices .empty-state-card {
+    grid-column: 1 / -1;
+}
+
 /* Device name row — inline label editor */
 #devices .device-name-cell {
     position: relative;

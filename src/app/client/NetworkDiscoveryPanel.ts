@@ -1,23 +1,31 @@
 // src/app/client/NetworkDiscoveryPanel.ts
 
-interface MdnsDevice {
-    name: string;
-    service: string;
-    address: string;
-    port: number;
-    serial: string;
-    label: string;
-}
+import { ScanNetworkModal } from './ScanNetworkModal';
+import { ScanProgressChip } from './ScanProgressChip';
+import { SCAN_WS_PATH, type ScanServerMessage } from '../../common/ScanMessage';
 
 interface ConnectResult {
     success: boolean;
     message: string;
 }
 
+function escapeHtml(s: string): string {
+    return s
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
+
 export class NetworkDiscoveryPanel {
     private container: HTMLElement;
     private infoBox: HTMLElement;
     private resultsContainer: HTMLElement;
+    private chip?: ScanProgressChip;
+    private scanWs?: WebSocket;
+    private scanSessionHits = new Map<string, HTMLElement>();
+    private defaultInfoText = '';
 
     constructor() {
         this.container = document.createElement('div');
@@ -43,6 +51,7 @@ export class NetworkDiscoveryPanel {
             <div class="empty-state-card discovery-info">Click scan network to find devices. Make sure wireless debugging is enabled on the devices you wish to connect with.</div>
         `;
         this.infoBox = this.container.querySelector('.discovery-info')!;
+        this.defaultInfoText = this.infoBox.textContent ?? '';
         this.resultsContainer = this.container.querySelector('.discovery-results')!;
         this.container.querySelector('.discovery-scan-btn')!.addEventListener('click', () => this.scan());
         this.container.querySelector('.discovery-manual-btn')!.addEventListener('click', () => this.toggleManualForm());
@@ -67,56 +76,132 @@ export class NetworkDiscoveryPanel {
         this.infoBox.style.color = error ? '#f87171' : '';
     }
 
-    private async scan(): Promise<void> {
-        const btn = this.container.querySelector('.discovery-scan-btn') as HTMLButtonElement;
-        btn.disabled = true;
-        btn.textContent = 'Scanning...';
-        this.setInfoText('Scanning local network for ADB devices...');
-        this.resultsContainer.innerHTML = '';
+    private restoreInfoText(): void {
+        // If a scan error already swapped in error text, don't overwrite it on chip dismiss.
+        if (this.infoBox.style.color === 'rgb(248, 113, 113)') return;
+        this.infoBox.textContent = this.defaultInfoText;
+        this.infoBox.style.color = '';
+    }
 
+    private async scan(): Promise<void> {
+        // Fetch detected gateway subnet first
+        let gateway: { cidr: string; hostCount: number } | null = null;
         try {
-            const res = await fetch('/api/devices/scan', { method: 'POST' });
-            const devices: MdnsDevice[] = await res.json();
-            this.renderResults(devices);
+            const res = await fetch('/api/devices/scan/subnet');
+            const detected = await res.json();
+            if (detected && detected.cidr) {
+                gateway = { cidr: detected.cidr, hostCount: detected.hostCount };
+            }
         } catch {
-            this.setInfoText('Scan failed. Is ADB available?', true);
-        } finally {
-            btn.disabled = false;
-            btn.textContent = 'scan network';
+            gateway = null;
+        }
+
+        new ScanNetworkModal({
+            gatewaySubnet: gateway,
+            onStartScan: (rawSubnets: string[]) => this.startScanWs(rawSubnets),
+        });
+    }
+
+    private startScanWs(rawSubnets: string[]): void {
+        // Clear the panel before a new scan (matches existing behavior)
+        this.resultsContainer.innerHTML = '';
+        this.scanSessionHits.clear();
+        const grid = document.createElement('div');
+        grid.className = 'discovery-grid';
+        this.resultsContainer.appendChild(grid);
+
+        // Mount the chip into the info box — it replaces the default info text while scanning,
+        // and we restore that text when the chip dismisses (after auto-hide or manual close).
+        this.chip?.dismiss();
+        this.infoBox.textContent = '';
+        this.chip = new ScanProgressChip({
+            parent: this.infoBox,
+            onCancel: () => {
+                if (this.scanWs?.readyState === WebSocket.OPEN) {
+                    this.scanWs.send(JSON.stringify({ type: 'scan.cancel' }));
+                }
+            },
+            onDismiss: () => this.restoreInfoText(),
+        });
+
+        // Open the WS
+        const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const ws = new WebSocket(`${proto}//${location.host}${SCAN_WS_PATH}`);
+        this.scanWs = ws;
+
+        ws.addEventListener('open', () => {
+            ws.send(JSON.stringify({ type: 'scan.start', subnets: rawSubnets }));
+        });
+        let terminalReceived = false;
+        ws.addEventListener('message', (ev: MessageEvent) => {
+            const msg: ScanServerMessage = JSON.parse(ev.data);
+            if (msg.type === 'scan.complete' || msg.type === 'scan.cancelled' || msg.type === 'scan.error') {
+                terminalReceived = true;
+            }
+            this.handleScanMessage(msg, grid);
+        });
+        ws.addEventListener('close', () => {
+            this.scanWs = undefined;
+            if (!terminalReceived) {
+                this.setInfoText('Scan connection lost before completion.', true);
+                this.chip?.dismiss();
+            }
+        });
+        ws.addEventListener('error', () => {
+            this.setInfoText('Scan connection failed.', true);
+            this.chip?.dismiss();
+        });
+    }
+
+    private handleScanMessage(msg: ScanServerMessage, grid: HTMLElement): void {
+        switch (msg.type) {
+            case 'scan.started':
+                this.chip?.setScanning(0, msg.totalHosts, 0);
+                break;
+            case 'scan.progress':
+                this.chip?.setScanning(msg.checked, msg.total, msg.foundSoFar);
+                break;
+            case 'scan.hit':
+                this.renderHit(msg, grid);
+                break;
+            case 'scan.draining':
+                this.chip?.setDraining();
+                break;
+            case 'scan.complete':
+                this.chip?.setComplete(msg.found);
+                break;
+            case 'scan.cancelled':
+                this.chip?.setCancelled(msg.found);
+                break;
+            case 'scan.error':
+                this.setInfoText(`Scan error: ${msg.reason}`, true);
+                this.chip?.dismiss();
+                break;
         }
     }
 
-    private renderResults(devices: MdnsDevice[]): void {
-        if (devices.length === 0) {
-            this.setInfoText('No new devices found on the network. Make sure wireless debugging is enabled on your devices.');
-            return;
-        }
-
-        this.setInfoText('Click scan network to find devices. Make sure wireless debugging is enabled on the devices you wish to connect with.');
-        this.resultsContainer.innerHTML = '';
-        const grid = document.createElement('div');
-        grid.className = 'discovery-grid';
-
-        for (const device of devices) {
-            const card = document.createElement('div');
-            card.className = 'discovery-card';
-            const addr = `${device.address}:${device.port}`;
-            card.innerHTML = `
-                <div class="discovery-card-info">
-                    <div class="discovery-card-name">${device.name}</div>
-                    <div class="discovery-card-address">${addr}</div>
-                </div>
-                <div class="discovery-card-actions">
-                    <input type="text" class="discovery-name-input" placeholder="Name this device..." value="${device.label || ''}" />
-                    <button class="dep-btn dep-update discovery-connect-btn" data-address="${addr}" data-serial="${device.serial}">Connect</button>
-                </div>
-            `;
-            card.querySelector('.discovery-connect-btn')!.addEventListener('click', () =>
-                this.connectDevice(addr, device.serial, card),
-            );
-            grid.appendChild(card);
-        }
-        this.resultsContainer.appendChild(grid);
+    private renderHit(hit: { address: string; serial: string; name: string; label: string }, grid: HTMLElement): void {
+        if (this.scanSessionHits.has(hit.address)) return;
+        const card = document.createElement('div');
+        card.className = 'discovery-card';
+        // Top line shows hit.name (adb-SERIAL for mDNS, model for TCP).
+        // Empty name hides the top line via CSS .discovery-card-name:empty.
+        const displayName = hit.name || '';
+        card.innerHTML = `
+            <div class="discovery-card-info">
+                <div class="discovery-card-name" title="${escapeHtml(displayName)}">${escapeHtml(displayName)}</div>
+                <div class="discovery-card-address" title="${escapeHtml(hit.address)}">${escapeHtml(hit.address)}</div>
+            </div>
+            <div class="discovery-card-actions">
+                <input type="text" class="discovery-name-input" placeholder="Name this device..." value="${escapeHtml(hit.label || '')}" />
+                <button class="dep-btn dep-update discovery-connect-btn" data-address="${escapeHtml(hit.address)}" data-serial="${escapeHtml(hit.serial)}">Connect</button>
+            </div>
+        `;
+        card.querySelector('.discovery-connect-btn')!.addEventListener('click', () =>
+            this.connectDevice(hit.address, hit.serial, card),
+        );
+        grid.appendChild(card);
+        this.scanSessionHits.set(hit.address, card);
     }
 
     private toggleManualForm(show?: boolean): void {

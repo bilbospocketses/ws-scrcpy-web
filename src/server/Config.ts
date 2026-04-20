@@ -6,6 +6,10 @@ import { EnvName } from './EnvName';
 
 const DEFAULT_PORT = 8000;
 const DEFAULT_ADB_PATH = 'adb';
+const DEFAULT_SCAN_CONCURRENCY = 64;
+const DEFAULT_SCAN_TCP_TIMEOUT_MS = 300;
+const DEFAULT_SCAN_ADB_CONNECT_TIMEOUT_MS = 5000;
+const DEFAULT_SCAN_PROGRESS_INTERVAL = 10;
 
 /**
  * Minimal flat config supported by config.json:
@@ -18,6 +22,10 @@ interface FlatConfig {
     port?: number;
     adbPath?: string;
     dependenciesPath?: string;
+    scanConcurrency?: number;
+    scanTcpTimeoutMs?: number;
+    scanAdbConnectTimeoutMs?: number;
+    scanProgressInterval?: number;
     server?: ServerItem[];
 }
 
@@ -91,7 +99,12 @@ export class Config {
             const dependenciesPath = process.env['DEPS_PATH'] ?? fileConfig.dependenciesPath
                 ?? path.resolve(path.dirname(process.argv[1] || '.'), '..', 'dependencies');
 
-            this.instance = new Config(servers, adbPath, dependenciesPath);
+            const scanConcurrency = Number.parseInt(process.env['SCAN_CONCURRENCY'] ?? '', 10) || fileConfig.scanConcurrency || DEFAULT_SCAN_CONCURRENCY;
+            const scanTcpTimeoutMs = Number.parseInt(process.env['SCAN_TCP_TIMEOUT_MS'] ?? '', 10) || fileConfig.scanTcpTimeoutMs || DEFAULT_SCAN_TCP_TIMEOUT_MS;
+            const scanAdbConnectTimeoutMs = Number.parseInt(process.env['SCAN_ADB_CONNECT_TIMEOUT_MS'] ?? '', 10) || fileConfig.scanAdbConnectTimeoutMs || DEFAULT_SCAN_ADB_CONNECT_TIMEOUT_MS;
+            const scanProgressInterval = Number.parseInt(process.env['SCAN_PROGRESS_INTERVAL'] ?? '', 10) || fileConfig.scanProgressInterval || DEFAULT_SCAN_PROGRESS_INTERVAL;
+
+            this.instance = new Config(servers, adbPath, dependenciesPath, scanConcurrency, scanTcpTimeoutMs, scanAdbConnectTimeoutMs, scanProgressInterval);
         }
         return this.instance;
     }
@@ -100,6 +113,10 @@ export class Config {
         private readonly _servers: ServerItem[],
         private readonly _adbPath: string,
         private readonly _dependenciesPath: string,
+        private readonly _scanConcurrency: number,
+        private readonly _scanTcpTimeoutMs: number,
+        private readonly _scanAdbConnectTimeoutMs: number,
+        private readonly _scanProgressInterval: number,
     ) {}
 
     public get servers(): ServerItem[] {
@@ -113,6 +130,11 @@ export class Config {
     public get dependenciesPath(): string {
         return this._dependenciesPath;
     }
+
+    public get scanConcurrency(): number { return this._scanConcurrency; }
+    public get scanTcpTimeoutMs(): number { return this._scanTcpTimeoutMs; }
+    public get scanAdbConnectTimeoutMs(): number { return this._scanAdbConnectTimeoutMs; }
+    public get scanProgressInterval(): number { return this._scanProgressInterval; }
 
     /** Always true in the simplified config — local goog tracker always runs. */
     public get runLocalGoogTracker(): boolean {
