@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'http';
 import { AdbClient, parseSerialFromMdnsName } from '../AdbClient';
 import { Config } from '../Config';
 import { DeviceLabelStore } from '../DeviceLabelStore';
+import { detectSubnet } from '../network/SubnetDetector';
 
 export class DeviceDiscoveryApi {
     private adbClient: AdbClient;
@@ -39,6 +40,13 @@ export class DeviceDiscoveryApi {
                     });
                 res.writeHead(200);
                 res.end(JSON.stringify(available));
+                return true;
+            }
+
+            if (req.method === 'GET' && url === '/api/devices/scan/subnet') {
+                const detected = await detectSubnet();
+                res.writeHead(200);
+                res.end(JSON.stringify(detected));
                 return true;
             }
 
