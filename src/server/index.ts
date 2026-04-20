@@ -10,6 +10,7 @@ import { ScanMw } from './mw/ScanMw';
 import { WebsocketMultiplexer } from './mw/WebsocketMultiplexer';
 import { ScrcpyConnection } from './ScrcpyConnection';
 import { AdbClient } from './AdbClient';
+import { DeviceLabelStore } from './DeviceLabelStore';
 import { NetworkScanner } from './network/NetworkScanner';
 import { DependencyApi } from './api/DependencyApi';
 import { DeviceDiscoveryApi } from './api/DeviceDiscoveryApi';
@@ -63,6 +64,7 @@ const scanner = new NetworkScanner({
     adbConnect: (addr: string) => scanAdb.connect(addr),
     adbDisconnect: (addr: string) => scanAdb.disconnect(addr),
     tcpProbe: tcpProbe5555,
+    labelFor: (serial: string) => DeviceLabelStore.getInstance().get(serial),
     concurrency: config.scanConcurrency,
     progressInterval: config.scanProgressInterval,
     tcpTimeoutMs: config.scanTcpTimeoutMs,

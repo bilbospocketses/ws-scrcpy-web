@@ -9,6 +9,8 @@ export interface NetworkScannerDeps {
     adbConnect: (address: string) => Promise<string>;
     adbDisconnect: (address: string) => Promise<string>;
     tcpProbe: (host: string, port: number, timeoutMs: number) => Promise<boolean>;
+    /** Look up a saved label by device serial. Returns undefined when no label stored. */
+    labelFor?: (serial: string) => string | undefined;
     concurrency: number;
     progressInterval: number;
     tcpTimeoutMs?: number;
@@ -225,13 +227,17 @@ export class NetworkScanner {
         if (this.emittedAddresses.has(partial.address)) return;
         this.emittedAddresses.add(partial.address);
         this.foundSoFar++;
+        // Prefer explicit label, then label-store lookup by serial (only meaningful for
+        // mDNS hits where serial is authoritative; TCP hits currently pass IP:port as
+        // serial, which won't match stored entries until Connect fires and persists).
+        const label = partial.label ?? (this.deps.labelFor ? this.deps.labelFor(partial.serial) : undefined) ?? '';
         this.emit({
             type: 'scan.hit',
             source: partial.source,
             address: partial.address,
             serial: partial.serial,
             name: partial.name,
-            label: partial.label ?? '',
+            label,
         });
     }
 
