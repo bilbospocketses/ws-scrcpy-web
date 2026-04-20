@@ -120,12 +120,20 @@ export class NetworkDiscoveryPanel {
         ws.addEventListener('open', () => {
             ws.send(JSON.stringify({ type: 'scan.start', subnets: rawSubnets }));
         });
+        let terminalReceived = false;
         ws.addEventListener('message', (ev: MessageEvent) => {
             const msg: ScanServerMessage = JSON.parse(ev.data);
+            if (msg.type === 'scan.complete' || msg.type === 'scan.cancelled' || msg.type === 'scan.error') {
+                terminalReceived = true;
+            }
             this.handleScanMessage(msg, grid);
         });
         ws.addEventListener('close', () => {
             this.scanWs = undefined;
+            if (!terminalReceived) {
+                this.setInfoText('Scan connection lost before completion.', true);
+                this.chip?.dismiss();
+            }
         });
         ws.addEventListener('error', () => {
             this.setInfoText('Scan connection failed.', true);
