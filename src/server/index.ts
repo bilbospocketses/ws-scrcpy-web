@@ -1,12 +1,16 @@
 import * as readline from 'readline';
+import * as net from 'net';
 import { Config } from './Config';
 import { DependencyManager } from './DependencyManager';
 import { Logger } from './Logger';
 import { DeviceProbe } from './DeviceProbe';
 import { HostTracker } from './mw/HostTracker';
 import type { MwFactory } from './mw/Mw';
+import { ScanMw } from './mw/ScanMw';
 import { WebsocketMultiplexer } from './mw/WebsocketMultiplexer';
 import { ScrcpyConnection } from './ScrcpyConnection';
+import { AdbClient } from './AdbClient';
+import { NetworkScanner } from './network/NetworkScanner';
 import { DependencyApi } from './api/DependencyApi';
 import { DeviceDiscoveryApi } from './api/DeviceDiscoveryApi';
 import { HttpServer } from './services/HttpServer';
@@ -31,6 +35,39 @@ HttpServer.addApiHandler(depApi);
 
 const discoveryApi = new DeviceDiscoveryApi();
 HttpServer.addApiHandler(discoveryApi);
+
+// Wire the scanner singleton
+function tcpProbe5555(host: string, port: number, timeoutMs: number): Promise<boolean> {
+    return new Promise<boolean>((resolve) => {
+        const socket = new net.Socket();
+        let settled = false;
+        const done = (open: boolean) => {
+            if (settled) return;
+            settled = true;
+            try { socket.destroy(); } catch { /* ignore */ }
+            resolve(open);
+        };
+        socket.setTimeout(timeoutMs);
+        socket.once('connect', () => done(true));
+        socket.once('timeout', () => done(false));
+        socket.once('error', () => done(false));
+        socket.connect(port, host);
+    });
+}
+
+const scanAdb = new AdbClient(config.adbPath);
+const scanner = new NetworkScanner({
+    adbDevices: () => scanAdb.devices(),
+    adbMdnsServices: () => scanAdb.mdnsServices(),
+    adbConnect: (addr: string) => scanAdb.connect(addr),
+    adbDisconnect: (addr: string) => scanAdb.disconnect(addr),
+    tcpProbe: tcpProbe5555,
+    concurrency: 64,
+    progressInterval: 10,
+    tcpTimeoutMs: 300,
+    adbConnectTimeoutMs: 3000,
+});
+ScanMw.setScanner(scanner);
 
 async function loadGoogModules() {
     const { ControlCenter } = await import('./goog-device/services/ControlCenter');
@@ -70,6 +107,8 @@ loadGoogModules()
         mw2List.forEach((mwFactory: MwFactory) => {
             WebsocketMultiplexer.registerMw(mwFactory);
         });
+
+        wsService.registerPathHandler('/ws-scan', (ws) => ScanMw.attach(ws));
 
         if (process.platform === 'win32') {
             readline

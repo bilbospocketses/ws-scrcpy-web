@@ -9,6 +9,7 @@ export class WebSocketServer implements Service {
     private static instance?: WebSocketServer;
     private servers: WSServer[] = [];
     private mwFactories: Set<MwFactory> = new Set();
+    private pathHandlers: Map<string, (ws: WS) => void> = new Map();
 
     protected constructor() {
         // nothing here
@@ -29,6 +30,10 @@ export class WebSocketServer implements Service {
         this.mwFactories.add(mwFactory);
     }
 
+    public registerPathHandler(path: string, handler: (ws: WS) => void): void {
+        this.pathHandlers.set(path, handler);
+    }
+
     public attachToServer(item: ServerAndPort): WSServer {
         const { server, port } = item;
         const TAG = `WebSocket Server {tcp:${port}}`;
@@ -40,6 +45,14 @@ export class WebSocketServer implements Service {
                 return;
             }
             const url = new URL(request.url, 'https://example.org/');
+
+            // Path-based handlers take priority over action-based MW dispatch.
+            const pathHandler = this.pathHandlers.get(url.pathname);
+            if (pathHandler) {
+                pathHandler(ws);
+                return;
+            }
+
             const action = url.searchParams.get('action') || '';
             let processed = false;
             for (const mwFactory of this.mwFactories.values()) {
