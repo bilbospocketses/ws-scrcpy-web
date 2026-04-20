@@ -98,10 +98,22 @@
     background: var(--device-list-default-color, #1e1e1e);
 }
 
+.discovery-card-info {
+    min-width: 0;
+    flex: 1 1 auto;
+}
+
 .discovery-card-name {
     font-size: 14px;
     font-weight: 500;
     color: var(--text-color, #eee);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.discovery-card-name:empty {
+    display: none;
 }
 
 .discovery-card-address {
@@ -109,6 +121,9 @@
     font-family: var(--font-mono);
     color: var(--text-color-secondary, #888);
     margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .discovery-card-actions {

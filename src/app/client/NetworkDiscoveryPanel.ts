@@ -172,10 +172,13 @@ export class NetworkDiscoveryPanel {
         if (this.scanSessionHits.has(hit.address)) return;
         const card = document.createElement('div');
         card.className = 'discovery-card';
+        // Top line shows hit.name (adb-SERIAL for mDNS, model for TCP).
+        // Empty name hides the top line via CSS .discovery-card-name:empty.
+        const displayName = hit.name || '';
         card.innerHTML = `
             <div class="discovery-card-info">
-                <div class="discovery-card-name">${escapeHtml(hit.name || hit.address)}</div>
-                <div class="discovery-card-address">${escapeHtml(hit.address)}</div>
+                <div class="discovery-card-name" title="${escapeHtml(displayName)}">${escapeHtml(displayName)}</div>
+                <div class="discovery-card-address" title="${escapeHtml(hit.address)}">${escapeHtml(hit.address)}</div>
             </div>
             <div class="discovery-card-actions">
                 <input type="text" class="discovery-name-input" placeholder="Name this device..." value="${escapeHtml(hit.label || '')}" />
