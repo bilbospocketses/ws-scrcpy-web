@@ -1034,31 +1034,103 @@ Both buttons are built via DOM manipulation (not the `html` template tag) becaus
 
 ### 14.2 Available Network Devices
 
-**API Endpoints:**
+A two-channel discovery model: **mDNS** advertisement (modern devices) plus a **TCP port-5555 sweep** (older devices that don't advertise mDNS — e.g. pre-Android-11 tablets with wireless debugging enabled on a fixed port). A scan is driven from a configuration dialog rather than running as a one-shot action.
+
+**User flow:**
+
+1. Click **scan network** -> `ScanNetworkModal` opens.
+2. Dialog shows the auto-detected gateway subnet plus any user-added subnets (restored from `localStorage`).
+3. User can add subnets via `AddSubnetModal` (CIDR, bare IP, or IP range), edit an existing row via the **✎** icon (opens `AddSubnetModal` in edit mode with the current value pre-filled), or remove via **×**.
+4. If the combined scan size exceeds 2,048 hosts, `LargeSubnetWarningModal` prompts for confirmation with a per-subnet breakdown.
+5. Scan streams over a WebSocket; hits render as cards under "Available Network Devices" with an optional name input and Connect button.
+
+A **manually add** button sits next to **scan network** and opens an inline form (IP / port / optional label) for the "I just need to add one specific address" case. Reuses `POST /api/devices/connect`.
+
+#### 14.2.1 HTTP Endpoints
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| POST | `/api/devices/scan` | Discover ADB devices on local network via mDNS. Returns serial + existing label for each device. |
-| POST | `/api/devices/connect` | Connect to a discovered device (JSON body: `{ "address": "ip:port", "serial": "...", "label": "..." }`). Serial and label are optional -- if both provided, label is saved. |
-| POST | `/api/devices/disconnect` | Disconnect a network device by address (JSON body: `{ "address": "ip:port" }`) |
-| GET | `/api/devices/labels` | Return all device labels as `{ serial: label }` |
-| PUT | `/api/devices/labels` | Set or delete a device label (JSON body: `{ "serial": "...", "label": "..." }`). Empty label deletes. |
-| GET | `/api/devices/screen-state` | Check device screen state (query param: `?udid=ip:port`). Returns `{ "awake": true/false }`. Uses `dumpsys power` > `mWakefulness`. |
-| POST | `/api/devices/sleep-wake` | Toggle device sleep/wake (JSON body: `{ "udid": "ip:port", "action": "sleep"|"wake" }`). Sends keyevent 223 (sleep) or 224 (wake), re-checks state after 500ms. Returns `{ "awake": true/false }`. |
+| POST | `/api/devices/scan` | **Legacy.** Kept as a REST compatibility shim returning mDNS-only results with the pre-rewrite behavior. External consumers that pre-date `/ws-scan` still work. |
+| GET | `/api/devices/scan/subnet` | Returns the auto-detected gateway subnet as `{ cidr, hostCount }`, or `null` if detection failed. Called by `ScanNetworkModal` on open. |
+| POST | `/api/devices/connect` | JSON body `{ address, serial?, label? }`. On success, label is persisted keyed by both `ro.serialno` AND MAC (see 14.2.3). |
+| POST | `/api/devices/disconnect` | JSON body `{ address }`. |
+| GET | `/api/devices/labels` | All labels as `{ key: label }` where key is serial or MAC. |
+| PUT | `/api/devices/labels` | `{ serial, label }`. Empty label deletes. |
+| GET | `/api/devices/screen-state` | `?udid=ip:port` -> `{ awake }` via `dumpsys power > mWakefulness`. |
+| POST | `/api/devices/sleep-wake` | `{ udid, action: 'sleep'|'wake' }` -> sends keyevent 223/224, re-checks after 500 ms. |
 
-The "Scan Network" button calls `POST /api/devices/scan` which runs `adb mdns services` to discover ADB-enabled devices advertising via mDNS on the local network. Results are filtered to any `_adb` service except `_adb-tls-pairing`, and exclude already-connected devices. Each result includes a `serial` field (parsed from the mDNS name via `parseSerialFromMdnsName`) and a `label` field (from `DeviceLabelStore`, or empty). Discovered devices are displayed as cards with an optional name input and "Connect" button.
+#### 14.2.2 Scan WebSocket (`/ws-scan`)
 
-Connecting calls `POST /api/devices/connect` with the device address plus optional serial and label. If a name was entered, it is saved to `device-labels.json` before connecting. On success, the card shows "Connected" briefly and then disappears. The device appears in the Connected Devices section via the normal WebSocket update flow from `ControlCenter`.
+Path exported as `SCAN_WS_PATH` in `src/common/ScanMessage.ts`. All message shapes live in that file as well.
 
-**Info box:** A persistent help message sits below the discovered device cards. It updates contextually (scanning status, no devices found, help text) but always remains visible so first-time users can see instructions regardless of scan state.
+**Client -> server:**
 
-**Requirement:** Devices must have wireless debugging enabled and be on the same local network. mDNS discovery works on standard home networks.
+| Type | Fields |
+|---|---|
+| `scan.start` | `subnets: string[]` (raw user-typed strings — server re-parses via `SubnetParser`) |
+| `scan.cancel` | (none) |
 
-**Components:**
-- `src/server/api/DeviceDiscoveryApi.ts` -- HTTP endpoint handler (scan, connect, disconnect, labels)
-- `src/server/AdbClient.ts` -- `mdnsServices()`, `connect()`, `disconnect()` methods + `parseMdnsOutput()` + `parseSerialFromMdnsName()` parsers
-- `src/server/DeviceLabelStore.ts` -- label persistence (JSON file, in-memory cache)
-- `src/app/client/NetworkDiscoveryPanel.ts` -- browser-side scan UI with optional name input
+**Server -> client:**
+
+| Type | Fields |
+|---|---|
+| `scan.started` | `totalHosts, totalSubnets, startedAt` |
+| `scan.progress` | `checked, total, foundSoFar` (emitted every `scanProgressInterval` checks) |
+| `scan.hit` | `source: 'mdns' | 'tcp', address, serial, name, label` |
+| `scan.draining` | (none) — fires after `scan.cancel` while in-flight probes wind down |
+| `scan.complete` | `found` |
+| `scan.cancelled` | `found` |
+| `scan.error` | `reason, details?: [{ subnet, error }]` |
+
+Lifecycle: `scan.started -> [progress | hit]* -> (complete | draining -> cancelled | error)`. Late-joining spectators receive a snapshot of current progress + hits on connection.
+
+#### 14.2.3 Server-Side Components
+
+| File | Purpose |
+|---|---|
+| `src/server/mw/ScanMw.ts` | WebSocket middleware. `ScanMw.attach(ws)` is registered at `SCAN_WS_PATH` in `src/server/index.ts`. Handles client messages, proxies to `NetworkScanner`, and removes its message handler on any close transition (clean or abnormal) to avoid listener leaks. |
+| `src/server/network/NetworkScanner.ts` | Singleton orchestrator. State machine `idle -> scanning -> draining -> idle`. Bounded-concurrency probe pool sized by `scanConcurrency`. Cancel drains in-flight probes instead of killing them. Emits the full server message stream plus snapshot replay for mid-scan reconnects. |
+| `src/server/network/AdbHandshakeProbe.ts` | Single-socket CNXN handshake probe: TCP connect -> write CNXN -> read reply header -> close. Replaced an earlier two-socket path (`adb connect` for liveness then `adb disconnect`) that older embedded adbd stacks (notably the SM-T550) silently dropped on the second connection. CNXN packet matches AOSP byte-for-byte: version `0x01000001`, `max_data` `0x00100000`, full `host::features=shell_v2,cmd,stat_v2,...` banner, byte-sum `data_check` (the field is misnamed `data_crc32` in the AOSP struct — historical). Successful replies (`CNXN` or `AUTH`) are logged as hits. |
+| `src/server/network/SubnetDetector.ts` | Gateway subnet auto-detection with a three-level fallback: (1) parse `route print` (Windows) / `ip route` (Linux) for the default route, filtering Windows' synthetic `On-link` and `0.0.0.0` rows; (2) enumerate RFC1918 interfaces and pick the first usable; (3) return null. Exposed via `GET /api/devices/scan/subnet`. |
+| `src/server/network/MacResolver.ts` | ARP-cache lookup after probe traffic primes the table: `arp -a <ip>` on Windows, `ip neigh show to <ip>` on Linux (2s command timeout). Returns a lowercase colon-normalized MAC or `null`. Stateless — each `resolveMac()` call spawns the OS command fresh. |
+| `src/server/DeviceLabelStore.ts` | Label persistence (JSON file, in-memory cache). The store itself is a single-key map — the **dual-key storage** is a call-site pattern in `DeviceDiscoveryApi.connect()`: on a successful network connect, the label is written under *both* the device's real serial (`getprop ro.serialno`) and its MAC (resolved via `MacResolver`). Scanner hit lookup then does `labelFor(mac) ?? labelFor(serial)` — MAC-first catches TCP hits (where serial isn't known until after a follow-up connect), serial-fallback catches mDNS hits. |
+| `src/server/api/DeviceDiscoveryApi.ts` | HTTP endpoint handler (scan, scan/subnet, connect, disconnect, labels, screen-state, sleep-wake). |
+| `src/server/AdbClient.ts` | `mdnsServices()`, `connect()`, `disconnect()`, plus `parseMdnsOutput()` and `parseSerialFromMdnsName()` parsers. mDNS display name normalizes to `adb-{parsedSerial}` format across `_adb._tcp` and `_adb-tls-connect._tcp` service types. |
+| `src/common/SubnetParser.ts` | Input parser used in both client (live validation) and server (re-parse on `scan.start`). Accepts CIDR (`192.168.1.0/24`, prefix `/16` to `/32`), bare IP (treated as `/32`), long-form range (`192.168.1.10-192.168.1.50`), and shorthand range (`192.168.1.10-50`). Range cap: 65,536 literal addresses. When a range aligns to a subnet boundary (first IP ends in `.0` and/or last IP ends in `.255`), the host generator skips those network/broadcast addresses, matching CIDR expansion exactly — so `10.0.0.0-10.0.255.255` yields 65,534 scannable hosts, identical to `10.0.0.0/16`. |
+| `src/common/ScanMessage.ts` | Shared message types + `SCAN_WS_PATH` constant. |
+
+#### 14.2.4 Client-Side Components
+
+| File | Purpose |
+|---|---|
+| `src/app/client/NetworkDiscoveryPanel.ts` | Panel header (scan / manually add buttons), the manual-add inline form, and the results grid. Owns `.discovery-info` — the empty-state card below the grid. On scan start, the default info text is swapped out and `ScanProgressChip` mounts there; on chip dismiss, the default text is restored (guards against overwriting an error message that may already be in place). |
+| `src/app/client/ScanNetworkModal.ts` | Primary configuration dialog. Lists the gateway subnet and any user-added subnets, each with a host count and annotation. User subnets carry a stable monotonic ID so the **✎ edit** path can target by ID rather than index (which can drift on edit). Pencil opens `AddSubnetModal` in edit mode with `initialValue` pre-filled; × removes. Start-scan button is disabled when total host count is zero, fires `LargeSubnetWarningModal` when > 2,048, otherwise hands off to `NetworkDiscoveryPanel.startScanWs()`. Subnet list persisted to `localStorage` under key `ws-scrcpy-web:scan-subnets`. |
+| `src/app/client/AddSubnetModal.ts` | Add-or-edit dialog. Accepts `{ onSubmit, mode?: 'add' \| 'edit', initialValue?: string }`. Edit mode re-titles to "Edit Subnet", switches the button to "save", pre-fills the input, and re-runs validation so a valid pre-filled value leaves save enabled immediately. Live validation via `parseSubnetInput`; error messages embed a clickable link to the subnet cheat sheet when relevant. |
+| `src/app/client/LargeSubnetWarningModal.ts` | Fires when combined scan size > 2,048 hosts. Shows total host count + per-subnet breakdown, user confirms or cancels. Nested-modal readability handled by a CSS `:has()` rule in `src/style/modal.css` that makes the topmost stacked dialog use a fully opaque frame (instead of compounding the glassmorphism of both layers). |
+| `src/app/client/ScanProgressChip.ts` | Lifecycle chip with four states: `scanning`, `draining`, `complete`, `cancelled`. Full-width inside its slot with `min-height: 32px` so all three label states occupy the same footprint regardless of which child button (cancel / × / none) is visible. `setScanning` is a no-op after the chip leaves `scanning` state — prevents stale `scan.progress` messages arriving during drain from resurrecting the scanning label. Drain label holds for a minimum 1200 ms before transitioning to `cancelled` (the real drain can complete in ~300 ms, which is too fast to read). Auto-dismisses 5 s after `complete` / 10 s after `cancelled`, via the `onDismiss?` callback restoring the panel's default info text. |
+| `public/help/subnets.html` | Subnet/CIDR cheat sheet. Opens in a new tab from `ScanNetworkModal` (the "New to CIDR?" link) and from `AddSubnetModal` validation-error messages. Back-link uses `window.close()` so the tab actually closes instead of navigating the new tab back to the app (which would accumulate stale tabs on repeat cheat-sheet visits). |
+
+#### 14.2.5 Config Tuning Knobs
+
+Defaults in `src/server/Config.ts`, overridable via env var or `config.json` keys:
+
+| Key (config.json) | Env var | Default | Purpose |
+|---|---|---|---|
+| `scanConcurrency` | `SCAN_CONCURRENCY` | 64 | Max in-flight TCP connects in the probe pool. |
+| `scanTcpTimeoutMs` | `SCAN_TCP_TIMEOUT_MS` | 300 | Per-host TCP connect timeout. |
+| `scanAdbConnectTimeoutMs` | `SCAN_ADB_CONNECT_TIMEOUT_MS` | 5000 | CNXN handshake reply timeout — needs headroom for slow embedded adbd stacks. |
+| `scanProgressInterval` | `SCAN_PROGRESS_INTERVAL` | 10 | Hosts checked per `scan.progress` emission. Lower = more frequent UI updates, higher = less WS chatter. |
+
+#### 14.2.6 Diagnostic Scripts
+
+Useful when touching the probe path — kept in-tree for ADB-protocol debugging.
+
+| Script | Purpose |
+|---|---|
+| `scripts/dump-cnxn.js` | Prints the CNXN packet we send in hex, for byte-level comparison against a real adb capture. |
+| `scripts/test-probe-single.js <host> [port]` | Fires one single-socket CNXN probe and reports the reply (`CNXN` / `AUTH` / timeout) plus round-trip time. Cheapest reproduction tool for older-Android regressions. |
+
+**Requirement:** Devices must have wireless debugging (Settings -> Developer options) enabled and be on the same local network. mDNS discovery works on standard home networks; TCP port-5555 sweep works even on networks where mDNS is blocked or the device doesn't advertise.
 
 ### 14.3 Dependencies
 
@@ -1141,18 +1213,21 @@ User-assigned names for devices that persist across sessions, disconnects, and r
 
 ### 16.1 Data Storage
 
-Labels are stored in `device-labels.json` in the project root, keyed by hardware serial number (`ro.serialno`):
+Labels are stored in `device-labels.json` in the project root, keyed by either hardware serial (`ro.serialno`) or MAC address. On a successful network connect, the label is written under BOTH keys when available — serial via `adb -s <addr> shell getprop ro.serialno`, MAC via `MacResolver` from the system ARP cache. A file may therefore mix key types:
 
 ```json
 {
   "49241HFAG07SUG": "Living Room TV",
-  "47121FDAQ000WC": "Jamie's Pixel 9"
+  "47121FDAQ000WC": "Jamie's Pixel 9",
+  "aa:bb:cc:dd:ee:ff": "Living Room TV"
 }
 ```
 
+The scanner's hit-lookup order is `labelFor(mac) ?? labelFor(serial) ?? ''` — MAC-first catches TCP hits (where the serial isn't known until after a follow-up `adb connect`), serial-fallback catches mDNS hits (where the serial is authoritatively in the service name). See 14.2.3 for the dual-key write site in `DeviceDiscoveryApi.connect()`.
+
 **`DeviceLabelStore`** (`src/server/DeviceLabelStore.ts`):
 - Singleton with `getInstance()` / `resetInstance()`
-- `get(serial)`, `set(serial, label)`, `delete(serial)`, `getAll()`
+- `get(key)`, `set(key, label)`, `delete(key)`, `getAll()` — key is just a string; the dual-key semantics live in the caller.
 - Reads file on first access, caches in memory, sync writes on every change
 - File path resolves from `__dirname` (dist/) + `..` to project root (same pattern as Logger)
 
@@ -1165,6 +1240,8 @@ Labels are stored in `device-labels.json` in the project root, keyed by hardware
 **Scan results (mDNS):** Serial is parsed from the mDNS service name using `parseSerialFromMdnsName()` in `src/server/AdbClient.ts`:
 - `adb-49241HFAG07SUG` (plain `_adb._tcp`) -> `49241HFAG07SUG`
 - `adb-47121FDAQ000WC-7vmR8a` (`_adb-tls-connect._tcp`) -> `47121FDAQ000WC` (TLS instance suffix stripped)
+
+**Scan results (TCP port-5555 sweep):** The single-socket CNXN probe in `AdbHandshakeProbe` identifies liveness but does not expose the real serial. On a TCP hit the scanner emits `scan.hit` with `serial = address` (the ip:port used as a placeholder identifier) — MAC is resolved via `MacResolver` from the system ARP cache and threaded through the label lookup as the primary key. Real `ro.serialno` is only fetched later when the user clicks **Connect** on the card: `DeviceDiscoveryApi.connect()` runs `adb connect <address>` then `adb -s <address> shell getprop ro.serialno`, and at that point the label is (re)written under both the real serial and the MAC per the dual-key scheme in 14.2.3. For render-time label display, TCP hits therefore rely on the MAC-keyed lookup path.
 
 ### 16.3 Connected Device Cards
 
