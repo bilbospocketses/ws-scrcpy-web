@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Subnet &amp; CIDR Cheat Sheet — ws-scrcpy-web</title>
+<style>
+:root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --mono: ui-monospace, Consolas, "SF Mono", "Liberation Mono", monospace;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif; font-size: 15px; line-height: 1.6; }
+main { max-width: 780px; margin: 0 auto; padding: 32px 24px 64px; }
+h1 { font-size: 28px; margin: 0 0 8px; }
+h2 { font-size: 20px; margin: 40px 0 12px; padding-top: 12px; border-top: 1px solid #30363d; }
+p { margin: 0 0 12px; }
+code, .mono { font-family: var(--mono); font-size: 0.95em; background: var(--panel); padding: 2px 6px; border-radius: 4px; }
+pre { background: var(--panel); padding: 12px 16px; border-radius: 6px; overflow-x: auto; font-family: var(--mono); font-size: 13px; }
+table { width: 100%; border-collapse: collapse; margin: 12px 0; font-family: var(--mono); font-size: 13px; }
+th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid #30363d; }
+th { color: var(--muted); font-weight: 600; }
+.muted { color: var(--muted); }
+.back { display: inline-block; margin-top: 32px; color: var(--accent); text-decoration: none; }
+.back:hover { text-decoration: underline; }
+.footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid #30363d; color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<main>
+<h1>Subnet &amp; CIDR Cheat Sheet</h1>
+<p class="muted">A plain-English guide to the subnet formats ws-scrcpy-web accepts.</p>
+
+<h2>What is a subnet?</h2>
+<p>An IP address is split into two parts: one part identifies the <em>network</em>, the other identifies a specific <em>host</em> (device) on that network. A <strong>subnet</strong> is a named range of addresses that all share the same network part.</p>
+<p>On a home network, every device you own — phone, laptop, TV, router — is on the same subnet. Scanning a subnet means checking every possible host address in that range.</p>
+
+<h2>What is CIDR notation?</h2>
+<p>CIDR (Classless Inter-Domain Routing) writes a subnet as an address plus a slash number, like <code>192.168.1.0/24</code>. The number after the slash is the <strong>prefix length</strong> — how many bits (out of 32) belong to the network part.</p>
+<p>The smaller the prefix, the bigger the subnet. <code>/24</code> holds 256 addresses (254 usable); <code>/16</code> holds 65,536 addresses.</p>
+
+<table>
+<thead><tr><th>Prefix</th><th>Mask</th><th>Total addresses</th><th>Usable hosts</th></tr></thead>
+<tbody>
+<tr><td>/16</td><td>255.255.0.0</td><td>65,536</td><td>65,534</td></tr>
+<tr><td>/20</td><td>255.255.240.0</td><td>4,096</td><td>4,094</td></tr>
+<tr><td>/22</td><td>255.255.252.0</td><td>1,024</td><td>1,022</td></tr>
+<tr><td>/23</td><td>255.255.254.0</td><td>512</td><td>510</td></tr>
+<tr><td>/24</td><td>255.255.255.0</td><td>256</td><td>254</td></tr>
+<tr><td>/25</td><td>255.255.255.128</td><td>128</td><td>126</td></tr>
+<tr><td>/28</td><td>255.255.255.240</td><td>16</td><td>14</td></tr>
+<tr><td>/30</td><td>255.255.255.252</td><td>4</td><td>2</td></tr>
+<tr><td>/32</td><td>255.255.255.255</td><td>1</td><td>1</td></tr>
+</tbody>
+</table>
+<p class="muted">"Usable hosts" excludes the network address (first) and broadcast address (last) for prefixes /30 and shorter.</p>
+
+<h2>Private IP ranges (RFC 1918)</h2>
+<p>Home and office networks use one of three IP address ranges that are reserved for private use. Your router picks one and hands out addresses inside it to every device.</p>
+<ul>
+<li><code>10.0.0.0/8</code> — 16,777,216 addresses. Often used in large organizations.</li>
+<li><code>172.16.0.0/12</code> — 1,048,576 addresses. Less common.</li>
+<li><code>192.168.0.0/16</code> — 65,536 addresses. The default for most home routers.</li>
+</ul>
+
+<h2>What does my home router use?</h2>
+<p>Most consumer routers (Netgear, TP-Link, Linksys, Google Wifi, etc.) default to either <code>192.168.0.0/24</code> or <code>192.168.1.0/24</code>. Some ISPs (including Xfinity and Verizon) use <code>192.168.86.0/24</code> or similar.</p>
+<p>To check your own subnet:</p>
+<ul>
+<li><strong>Windows:</strong> open Command Prompt, run <code>ipconfig</code>. Look for "IPv4 Address" and "Subnet Mask" under your Wi-Fi or Ethernet adapter.</li>
+<li><strong>Mac / Linux:</strong> open Terminal, run <code>ifconfig</code> or <code>ip addr</code>. Look for an <code>inet</code> line showing your address and <code>/N</code> prefix.</li>
+</ul>
+<p>If your IPv4 address is <code>192.168.1.42</code> with netmask <code>255.255.255.0</code>, you're on <code>192.168.1.0/24</code>.</p>
+
+<h2>How to enter subnets in ws-scrcpy-web</h2>
+<p>The "add subnet" dialog accepts three formats:</p>
+
+<p><strong>1. CIDR notation</strong> — the canonical form. Examples:</p>
+<pre>192.168.1.0/24
+10.0.0.0/16
+192.168.86.0/24</pre>
+<p>Prefixes from <code>/16</code> to <code>/32</code> are allowed. Larger prefixes (<code>/15</code> and below) are rejected because scanning more than 65,534 hosts at once is impractically slow. If you need to cover more, add multiple <code>/16</code> entries.</p>
+
+<p><strong>2. Single IP</strong> — treated as <code>/32</code> (one host). Useful when you know exactly one device's address:</p>
+<pre>192.168.1.5</pre>
+
+<p><strong>3. IP range</strong> — a contiguous block within a single <code>/24</code>. Two forms:</p>
+<pre>192.168.1.10-192.168.1.50
+192.168.1.10-50</pre>
+<p>Both mean "addresses <code>.10</code> through <code>.50</code> on the <code>192.168.1.x</code> network" — 41 hosts. Ranges must stay within the same <code>/24</code> (only the last number changes). For wider ranges, use CIDR.</p>
+
+<h2>What does the scan actually do?</h2>
+<p>For each host in the subnets you've listed, ws-scrcpy-web does two things in parallel:</p>
+<ul>
+<li><strong>mDNS discovery</strong> — asks the local network which devices advertise the ADB service. Modern Android devices with wireless debugging enabled usually show up here.</li>
+<li><strong>TCP port-5555 probe</strong> — tries to open a TCP connection to port 5555 on each host. If it succeeds, the scanner runs <code>adb connect</code> to confirm the host actually speaks ADB (not just something else listening on that port), then disconnects cleanly and adds the host to your available devices list.</li>
+</ul>
+<p>The scan is read-only: nothing is written to or changed on any device. It's equivalent to checking whether each address has a doorbell, without entering.</p>
+
+<a class="back" href="../">&larr; Back to ws-scrcpy-web</a>
+
+<div class="footer">
+References: RFC 1918 (Private IPv4 address allocation) · RFC 4632 (CIDR notation).<br>
+Written for ws-scrcpy-web. No third-party content.
+</div>
+</main>
+</body>
+</html>
