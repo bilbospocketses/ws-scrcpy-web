@@ -99,6 +99,22 @@ export const common = () => {
     };
 };
 
+// Copies public/help/ directory into dist/public/help/
+class CopyHelpDirPlugin {
+    apply(compiler: webpack.Compiler) {
+        compiler.hooks.afterEmit.tapAsync('CopyHelpDirPlugin', (_: webpack.Compilation, callback: () => void) => {
+            const fs = require('fs') as typeof import('fs');
+            const srcDir = path.resolve(PROJECT_ROOT, 'public/help');
+            const destDir = path.resolve(CLIENT_DIST_PATH, 'help');
+            fs.mkdirSync(destDir, { recursive: true });
+            for (const file of fs.readdirSync(srcDir)) {
+                fs.copyFileSync(path.join(srcDir, file), path.join(destDir, file));
+            }
+            callback();
+        });
+    }
+}
+
 const front: webpack.Configuration = {
     entry: path.join(PROJECT_ROOT, './src/app/index.ts'),
     externals: ['fs'],
@@ -108,6 +124,7 @@ const front: webpack.Configuration = {
             path.resolve(PROJECT_ROOT, 'public/index.html'),
             path.resolve(CLIENT_DIST_PATH, 'index.html'),
         ),
+        new CopyHelpDirPlugin(),
     ],
     resolve: {
         extensions: ['.tsx', '.ts', '.js'],

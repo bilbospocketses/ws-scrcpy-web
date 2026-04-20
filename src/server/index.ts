@@ -16,6 +16,7 @@ import { DeviceDiscoveryApi } from './api/DeviceDiscoveryApi';
 import { HttpServer } from './services/HttpServer';
 import type { Service, ServiceClass } from './services/Service';
 import { WebSocketServer } from './services/WebSocketServer';
+import { SCAN_WS_PATH } from '../common/ScanMessage';
 
 const servicesToStart: ServiceClass[] = [HttpServer, WebSocketServer];
 
@@ -108,7 +109,7 @@ loadGoogModules()
             WebsocketMultiplexer.registerMw(mwFactory);
         });
 
-        wsService.registerPathHandler('/ws-scan', (ws) => ScanMw.attach(ws));
+        wsService.registerPathHandler(SCAN_WS_PATH, (ws) => ScanMw.attach(ws));
 
         if (process.platform === 'win32') {
             readline

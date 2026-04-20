@@ -1,14 +1,7 @@
 import type WS from 'ws';
 import type { ParsedSubnet } from '../../common/SubnetParser';
 import type { ScanServerMessage } from '../../common/ScanMessage';
-
-function parseSerialFromMdnsName(name: string, service: string): string {
-    let serial = name.startsWith('adb-') ? name.slice(4) : name;
-    if (service.includes('tls-connect') && serial.includes('-')) {
-        serial = serial.substring(0, serial.lastIndexOf('-'));
-    }
-    return serial;
-}
+import { parseSerialFromMdnsName } from '../AdbClient';
 
 export interface NetworkScannerDeps {
     adbDevices: () => Promise<{ serial: string; state: string }[]>;
