@@ -13,12 +13,23 @@ const A_CNXN = 0x4e584e43; // "CNXN"
 const A_AUTH = 0x48545541; // "AUTH"
 const A_CNXN_MAGIC = (A_CNXN ^ 0xffffffff) >>> 0;
 const A_AUTH_MAGIC = (A_AUTH ^ 0xffffffff) >>> 0;
-const ADB_VERSION = 0x01000000; // protocol version 1 — widest compatibility
-const ADB_MAX_DATA = 0x00001000; // 4KB — MAX_PAYLOAD_V1 from Android adb source; widest compat
+// These match EXACTLY what Google's modern adb client emits. Some adbd
+// implementations strictly validate version and reject older values silently.
+// Captured from live `adb connect` on Android platform-tools 36.x.
+const ADB_VERSION = 0x01000001; // A_VERSION — modern ADB protocol
+const ADB_MAX_DATA = 0x00100000; // 1 MB — matches real adb's MAX_PAYLOAD
 const HEADER_SIZE = 24;
-// Real adb sends just "host::" with no trailing null and no features — keep it
-// minimal so older adbd implementations that parse strictly don't balk.
-const HOST_BANNER = Buffer.from('host::', 'utf8');
+// Banner mirrors real adb's "host::features=..." exactly. Devices store the
+// feature list to decide which protocol extensions to use; claiming the full
+// modern feature set makes the tablet's adbd treat us as a real client.
+const HOST_BANNER = Buffer.from(
+    'host::features=shell_v2,cmd,stat_v2,ls_v2,fixed_push_mkdir,apex,abb,' +
+    'fixed_push_symlink_timestamp,abb_exec,remount_shell,track_app,' +
+    'sendrecv_v2,sendrecv_v2_brotli,sendrecv_v2_lz4,sendrecv_v2_zstd,' +
+    'sendrecv_v2_dry_run_send,openscreen_mdns,devicetracker_proto_format,' +
+    'devraw,app_info,server_status,track_mdns',
+    'utf8',
+);
 
 // ADB's data_check is a simple unsigned 32-bit byte SUM of the payload, NOT CRC32.
 // Older adbd (protocol V1, pre-Android 6) validates this strictly and silently
