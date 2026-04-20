@@ -1,4 +1,5 @@
 import { Modal } from '../ui/Modal';
+import { parseSubnetInput } from '../../common/SubnetParser';
 
 export interface AddSubnetModalOptions {
     onAdded: (rawSubnet: string) => void;
@@ -54,28 +55,56 @@ export class AddSubnetModal extends Modal {
     private revalidate(): void {
         const raw = this.input.value.trim();
         if (!raw) {
-            this.status.textContent = '';
+            this.status.replaceChildren();
             this.addBtn.disabled = true;
             return;
         }
-        // Client-side validation mirrors the server-side parser for instant feedback.
-        import('../../common/SubnetParser').then(({ parseSubnetInput }) => {
-            const r = parseSubnetInput(raw);
-            if ('reason' in r) {
-                this.status.textContent = `✗ ${r.reason}`;
-                this.status.style.color = '#f06c75';
-                this.addBtn.disabled = true;
-            } else {
-                const label = r.normalized.includes('/32')
-                    ? `✓ single host`
-                    : r.normalized.includes('-')
-                        ? `✓ range, ${r.hostCount} host${r.hostCount === 1 ? '' : 's'}`
-                        : `✓ CIDR, ${r.hostCount} host${r.hostCount === 1 ? '' : 's'}`;
-                this.status.textContent = label;
-                this.status.style.color = '#8ad67a';
-                this.addBtn.disabled = false;
-            }
-        });
+        const r = parseSubnetInput(raw);
+        if ('reason' in r) {
+            this.status.style.color = '#f06c75';
+            this.renderErrorWithCheatSheetLink(r.reason);
+            this.addBtn.disabled = true;
+        } else {
+            const label = r.normalized.includes('/32')
+                ? `✓ single host`
+                : r.normalized.includes('-')
+                    ? `✓ range, ${r.hostCount} host${r.hostCount === 1 ? '' : 's'}`
+                    : `✓ CIDR, ${r.hostCount} host${r.hostCount === 1 ? '' : 's'}`;
+            this.status.style.color = '#8ad67a';
+            this.status.textContent = label;
+            this.addBtn.disabled = false;
+        }
+    }
+
+    private renderErrorWithCheatSheetLink(message: string): void {
+        // The parser embeds this exact sentence for cheat-sheet references.
+        // We replace it with DOM that includes a clickable link.
+        const CHEAT_SHEET_NOTE = 'See the subnet cheat sheet at /help/subnets.html for help.';
+        this.status.replaceChildren();
+
+        const prefix = document.createTextNode('✗ ');
+        this.status.appendChild(prefix);
+
+        const idx = message.indexOf(CHEAT_SHEET_NOTE);
+        if (idx === -1) {
+            // No cheat-sheet sentence — just plain text
+            this.status.appendChild(document.createTextNode(message));
+            return;
+        }
+
+        const before = message.slice(0, idx);
+        const after = message.slice(idx + CHEAT_SHEET_NOTE.length);
+        if (before) this.status.appendChild(document.createTextNode(before));
+        this.status.appendChild(document.createTextNode('See the '));
+        const link = document.createElement('a');
+        link.href = 'help/subnets.html';
+        link.target = '_blank';
+        link.rel = 'noopener';
+        link.textContent = 'subnet cheat sheet';
+        link.style.cssText = 'color: #58a6ff; text-decoration: underline;';
+        this.status.appendChild(link);
+        this.status.appendChild(document.createTextNode(' for help.'));
+        if (after) this.status.appendChild(document.createTextNode(after));
     }
 
     private submit(): void {
