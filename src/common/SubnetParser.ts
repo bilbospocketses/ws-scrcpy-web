@@ -37,6 +37,7 @@ export function parseSubnetInput(input: string): ParsedSubnet | ParseError {
 }
 
 function parseCidr(input: string): ParsedSubnet | ParseError {
+    if (input.split('/').length > 2) return unrecognized();
     const [ipPart, prefixPart] = input.split('/');
     if (!ipPart || !prefixPart) return unrecognized();
     if (!isValidIp(ipPart)) return { reason: `Invalid IP address "${ipPart}". ${CHEAT_SHEET_NOTE}` };
@@ -54,10 +55,6 @@ function parseCidr(input: string): ParsedSubnet | ParseError {
                 CHEAT_SHEET_NOTE,
         };
     }
-    if (prefix > 32) {
-        return { reason: `Prefix must be between /16 and /32. ${CHEAT_SHEET_NOTE}` };
-    }
-
     const ipInt = ipToInt(ipPart);
     const maskBits = 32 - prefix;
     const netmask = maskBits === 32 ? 0 : (0xffffffff << maskBits) >>> 0;
@@ -108,8 +105,10 @@ function parseRange(input: string): ParsedSubnet | ParseError {
         return { reason: `Invalid end of range "${endStr}". ${CHEAT_SHEET_NOTE}` };
     }
 
-    const startParts = startStr.split('.');
-    const endParts = endIp.split('.');
+    const startNorm = intToIp(ipToInt(startStr));
+    const endNorm = intToIp(ipToInt(endIp));
+    const startParts = startNorm.split('.');
+    const endParts = endNorm.split('.');
     // Same /24 check
     if (startParts[0] !== endParts[0] || startParts[1] !== endParts[1] || startParts[2] !== endParts[2]) {
         return {
@@ -130,7 +129,7 @@ function parseRange(input: string): ParsedSubnet | ParseError {
     const hostCount = endInt - startInt + 1;
     return {
         raw: input,
-        normalized: `${startStr}-${endIp}`,
+        normalized: `${startNorm}-${endNorm}`,
         hostCount,
         *hosts() {
             for (let i = startInt; i <= endInt; i++) {

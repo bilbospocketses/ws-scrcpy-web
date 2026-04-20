@@ -46,6 +46,24 @@ describe('parseSubnetInput — CIDR', () => {
         const r = parseSubnetInput('192.168.1.300/24');
         expect('reason' in r).toBe(true);
     });
+
+    it('handles /31 (yields both addresses)', () => {
+        const r = parseSubnetInput('192.168.1.0/31');
+        if ('reason' in r) throw new Error(r.reason);
+        expect(r.hostCount).toBe(2);
+        expect([...r.hosts()]).toEqual(['192.168.1.0', '192.168.1.1']);
+    });
+
+    it('strips host bits from non-canonical CIDR', () => {
+        const r = parseSubnetInput('192.168.1.5/24');
+        if ('reason' in r) throw new Error(r.reason);
+        expect(r.normalized).toBe('192.168.1.0/24');
+    });
+
+    it('rejects CIDR with extra slashes', () => {
+        const r = parseSubnetInput('192.168.1.0/24/extra');
+        expect('reason' in r).toBe(true);
+    });
 });
 
 describe('parseSubnetInput — bare IP', () => {
@@ -103,6 +121,17 @@ describe('parseSubnetInput — range', () => {
         if (!('reason' in r)) throw new Error('expected error');
         expect(r.reason).toMatch(/same \/24/);
         expect(r.reason).toMatch(/CIDR/);
+    });
+
+    it('allows range across /24 boundary values (.254 to .255)', () => {
+        const r = parseSubnetInput('192.168.1.254-255');
+        if ('reason' in r) throw new Error(r.reason);
+        expect(r.hostCount).toBe(2);
+    });
+
+    it('rejects range with invalid start IP', () => {
+        const r = parseSubnetInput('999.168.1.1-10');
+        expect('reason' in r).toBe(true);
     });
 });
 
