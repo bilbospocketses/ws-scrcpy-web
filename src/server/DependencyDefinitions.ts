@@ -1,13 +1,16 @@
 // biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
-
-// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import { execFile } from 'child_process';
+// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import os from 'os';
 // biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import path from 'path';
 // biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import { promisify } from 'util';
 import { SERVER_VERSION } from '../common/Constants';
+import { Logger } from './Logger';
+import { loadManifest } from './NodePtyResolver';
+
+const log = Logger.for('DependencyDefinitions');
 
 const execFileAsync = promisify(execFile);
 
@@ -61,7 +64,7 @@ async function runVersionCommand(exe: string, args: string[], pattern: RegExp): 
     }
 }
 
-export function getDependencyDefinitions(_depsPath: string): DependencyDefinition[] {
+export function getDependencyDefinitions(depsPath: string): DependencyDefinition[] {
     const platform = getPlatform();
     const arch = getArch();
 
@@ -80,8 +83,32 @@ export function getDependencyDefinitions(_depsPath: string): DependencyDefinitio
             checkLatest: async () => {
                 const res = await fetch('https://nodejs.org/dist/index.json');
                 const releases = (await res.json()) as { version: string; lts: string | false }[];
-                const lts = releases.find((r) => r.lts !== false);
-                return lts ? lts.version.replace(/^v/, '') : null;
+                const ltsReleases = releases.filter((r) => r.lts !== false);
+                if (ltsReleases.length === 0) return null;
+
+                const manifest = await loadManifest(depsPath);
+                if (!manifest) {
+                    log.warn('Prebuilt manifest unavailable; Node update gating skipped');
+                    return ltsReleases[0].version.replace(/^v/, '');
+                }
+
+                const covered = new Set(manifest.coveredAbis);
+                const candidates = ltsReleases.filter((r) => {
+                    const major = parseNodeMajor(r.version);
+                    const abi = NODE_LTS_ABI[major];
+                    return abi !== undefined && covered.has(abi);
+                });
+                if (candidates.length === 0) return null;
+
+                const filteredLatest = candidates[0];
+                const unfilteredLatest = ltsReleases[0];
+                if (filteredLatest.version !== unfilteredLatest.version) {
+                    log.warn(
+                        `Node ${unfilteredLatest.version.replace(/^v/, '')} available but no matching ` +
+                            `node-pty prebuilt; staying on filter max ${filteredLatest.version.replace(/^v/, '')}`,
+                    );
+                }
+                return filteredLatest.version.replace(/^v/, '');
             },
             getDownloadUrl: (version) => {
                 if (platform === 'win32') {
