@@ -64,6 +64,12 @@ Open `http://localhost:8000` in your browser.
 
 This mode requires Node.js and ADB installed on your system. See [Self-Contained Deployment](#self-contained-deployment) for a standalone installation that bundles everything.
 
+### Optional: `npm run fetch-prebuilts`
+
+Pre-populates the `node-pty` native binary for air-gapped or offline setups.
+Normally unnecessary — `npm start` and `npm test` trigger this implicitly
+on first run via the resolver and vitest globalSetup respectively.
+
 ## Self-Contained Deployment
 
 ws-scrcpy-web can run as a fully self-contained application with no system-wide installations required. Everything lives in one folder -- no PATH changes, no global installs, no admin/root needed.
