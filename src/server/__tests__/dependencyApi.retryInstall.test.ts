@@ -5,22 +5,33 @@ import { DependencyStatus } from '../../common/DependencyTypes';
 import { DependencyApi } from '../api/DependencyApi';
 import { DependencyManager } from '../DependencyManager';
 
+interface MockRes {
+    statusCode?: number;
+    body?: string;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    writeHead: (...args: any[]) => any;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    end: (...args: any[]) => any;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    setHeader: (...args: any[]) => any;
+}
+
 function makeMockRes() {
-    const res = new EventEmitter() as EventEmitter & {
-        statusCode?: number;
-        body?: string;
-        writeHead: (code: number) => void;
-        end: (body: string) => void;
-        setHeader: (k: string, v: string) => void;
-    };
-    res.setHeader = vi.fn();
-    res.writeHead = vi.fn((code: number) => {
+    const res = Object.assign(new EventEmitter(), {
+        statusCode: undefined as number | undefined,
+        body: undefined as string | undefined,
+        setHeader: vi.fn(),
+        writeHead: vi.fn(),
+        end: vi.fn(),
+    }) as MockRes;
+    (res.writeHead as ReturnType<typeof vi.fn>).mockImplementation((code: number) => {
         res.statusCode = code;
     });
-    res.end = vi.fn((body: string) => {
+    (res.end as ReturnType<typeof vi.fn>).mockImplementation((body: string) => {
         res.body = body;
     });
-    return res;
+    // biome-ignore lint/suspicious/noExplicitAny: test mock
+    return res as any;
 }
 
 function makeReq(method: string, url: string) {

@@ -161,6 +161,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Config.dependenciesPath` resolution is now strict: `DEPS_PATH` environment variable wins, then `config.json` `dependenciesPath`, then a dev-only fallback that triggers only when a sibling `package.json` is present. Production deployments (Velopack, Docker) must set `DEPS_PATH`. A clear startup error names the env var and config key if no source resolves.
 - Never-auto-downgrade rule: when the (possibly filtered) latest version is older than the installed version, status stays `UpToDate` with an explanatory INFO log.
 
+### Added
+- `DependencyManager.autoInstallMissing()` — first-run bootstrap primitive that installs any managed dep with `installedVersion === null && latestVersion !== null`. Called once after the startup `checkAll` completes.
+- `POST /api/dependencies/retry-install` endpoint — re-runs `checkAll` + `autoInstallMissing` and returns a summary of installed / still-missing / errored deps. Used by the first-run banner's Retry button.
+- Home-page first-run banner (`FirstRunBanner`) — renders when any dep is in `Error` state or `Unknown` with null `installedVersion`. Offers a Retry button for offline-at-first-boot recovery.
+
+### Changed
+- Launcher scripts (`start.cmd`, `start.sh`) now probe `dependencies/node/` first and fall back to `seed/node/` (the Velopack-bundled location) when the dep-managed copy is absent. Supports fresh Velopack installs out of the box.
+
 ## [1.0.0] - 2026-04-17
 
 First public release. Browser-based Android screen mirroring rebuilt from the ground up on vanilla scrcpy v3.x with a modernized Node.js + TypeScript stack.
