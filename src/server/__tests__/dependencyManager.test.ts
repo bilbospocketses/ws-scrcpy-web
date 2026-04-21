@@ -77,3 +77,35 @@ describe('DependencyManager.requestRestart', () => {
         expect(body).toMatch(/^restart-requested-\d+$/);
     });
 });
+
+describe('DependencyManager resolveStatus — never auto-downgrade', () => {
+    it('keeps UpToDate when installed version is newer than latest filtered', () => {
+        const mgr = new DependencyManager('/tmp/test-deps');
+        const info = mgr.getByName('nodejs')!;
+        info.installedVersion = '26.0.0';
+        info.latestVersion = '24.14.1';
+        // @ts-expect-error — invoke private method for unit test
+        mgr.resolveStatus(info);
+        expect(info.status).toBe(DependencyStatus.UpToDate);
+    });
+
+    it('produces UpdateAvailable when installed is older than latest', () => {
+        const mgr = new DependencyManager('/tmp/test-deps');
+        const info = mgr.getByName('nodejs')!;
+        info.installedVersion = '22.11.0';
+        info.latestVersion = '24.14.1';
+        // @ts-expect-error — invoke private method for unit test
+        mgr.resolveStatus(info);
+        expect(info.status).toBe(DependencyStatus.UpdateAvailable);
+    });
+
+    it('produces UpToDate when versions are equal', () => {
+        const mgr = new DependencyManager('/tmp/test-deps');
+        const info = mgr.getByName('nodejs')!;
+        info.installedVersion = '24.14.1';
+        info.latestVersion = '24.14.1';
+        // @ts-expect-error — invoke private method for unit test
+        mgr.resolveStatus(info);
+        expect(info.status).toBe(DependencyStatus.UpToDate);
+    });
+});

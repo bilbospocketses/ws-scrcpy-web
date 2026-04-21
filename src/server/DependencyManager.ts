@@ -177,12 +177,22 @@ export class DependencyManager {
             return;
         }
         if (info.latestVersion === null) {
-            // Installed but don't know latest — keep as unknown
             info.status = DependencyStatus.Unknown;
             return;
         }
         const cmp = compareVersions(info.installedVersion, info.latestVersion);
-        info.status = cmp >= 0 ? DependencyStatus.UpToDate : DependencyStatus.UpdateAvailable;
+        if (cmp > 0) {
+            // Never auto-downgrade: filter (e.g. Option D prebuilt gating) can
+            // report a "latest" older than what the user has. Leave them alone.
+            info.status = DependencyStatus.UpToDate;
+            info.errorMessage = undefined;
+            log.info(
+                `Installed ${info.name} ${info.installedVersion} is newer than filtered latest ` +
+                    `${info.latestVersion}; staying put`,
+            );
+            return;
+        }
+        info.status = cmp === 0 ? DependencyStatus.UpToDate : DependencyStatus.UpdateAvailable;
         info.errorMessage = undefined;
     }
 
