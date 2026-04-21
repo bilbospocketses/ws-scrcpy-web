@@ -1,5 +1,6 @@
 // biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import type { IncomingMessage, ServerResponse } from 'http';
+import { DependencyStatus } from '../../common/DependencyTypes';
 import type { DependencyManager } from '../DependencyManager';
 
 export class DependencyApi {
@@ -67,7 +68,7 @@ export class DependencyApi {
                     if (info.installedVersion === null) {
                         stillMissing.push(info.name);
                     }
-                    if (info.errorMessage) {
+                    if (info.status === DependencyStatus.Error && info.errorMessage) {
                         errors[info.name] = info.errorMessage;
                     }
                 }
