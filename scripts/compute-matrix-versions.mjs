@@ -27,7 +27,8 @@ async function fetchJson(url) {
 function abiForNodeMajor(major) {
     // Node ABI numbers don't change within a major. This table covers current
     // targets; extend when Node announces a new ABI for a new major.
-    const table = { 20: '115', 22: '127', 24: '127', 26: '131' };
+    // Source: https://github.com/nodejs/node/blob/main/doc/abi_version_registry.json
+    const table = { 18: '108', 20: '115', 22: '127', 24: '137', 26: '139' };
     return table[major] ?? String(major);
 }
 
