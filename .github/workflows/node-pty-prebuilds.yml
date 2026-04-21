@@ -56,6 +56,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # NOTE: linux-arm64-musl (Alpine on ARM64) is intentionally absent.
+        # GitHub Actions cannot run JavaScript actions (checkout, setup-node,
+        # upload-artifact, etc.) inside an Alpine container on ARM64 runners —
+        # they require glibc. Users on arm64+musl fall back to compile-at-install
+        # via the resolver's normal chain. See actions/runner#801.
         include:
           - { os: windows-latest,    arch: x64,   libc: '',    abi_label: current, container: '' }
           - { os: windows-latest,    arch: x64,   libc: '',    abi_label: prior,   container: '' }
@@ -67,8 +72,6 @@ jobs:
           - { os: ubuntu-24.04-arm,  arch: arm64, libc: glibc, abi_label: prior,   container: '' }
           - { os: ubuntu-latest,     arch: x64,   libc: musl,  abi_label: current, container: 'alpine' }
           - { os: ubuntu-latest,     arch: x64,   libc: musl,  abi_label: prior,   container: 'alpine' }
-          - { os: ubuntu-24.04-arm,  arch: arm64, libc: musl,  abi_label: current, container: 'alpine' }
-          - { os: ubuntu-24.04-arm,  arch: arm64, libc: musl,  abi_label: prior,   container: 'alpine' }
     runs-on: ${{ matrix.os }}
     container: ${{ matrix.container == 'alpine' && format('node:{0}-alpine', matrix.abi_label == 'current' && needs.precheck.outputs.current_node_version_bare || needs.precheck.outputs.prior_node_version_bare) || null }}
     steps:
@@ -188,7 +191,8 @@ jobs:
 
             Upstream: microsoft/node-pty v${{ needs.precheck.outputs.node_pty_version }}
             Covered ABIs: current ${{ needs.precheck.outputs.current_node_abi }} (Node ${{ needs.precheck.outputs.current_node_version }}), prior ${{ needs.precheck.outputs.prior_node_abi }} (Node ${{ needs.precheck.outputs.prior_node_version }})
-            Platforms: win32-x64, win32-arm64, linux-x64-glibc, linux-arm64-glibc, linux-x64-musl, linux-arm64-musl
+            Platforms: win32-x64, win32-arm64, linux-x64-glibc, linux-arm64-glibc, linux-x64-musl
+            (linux-arm64-musl excluded — GH Actions JS-action runtime doesn't run in Alpine+arm64 containers; those users fall back to compile-at-install.)
 
       - name: Update "latest" alias
         uses: softprops/action-gh-release@v2

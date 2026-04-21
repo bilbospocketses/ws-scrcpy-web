@@ -1413,13 +1413,19 @@ A GitHub Actions workflow at `.github/workflows/node-pty-prebuilds.yml`
 runs weekly (Mondays 09:00 UTC) and on manual dispatch. A pre-check
 compares tracked state in `.github/state/node-pty-prebuilds-state.json`
 against the latest Node LTS list from `nodejs.org/dist/index.json` and
-the latest `microsoft/node-pty` upstream release. On any change, a 12-row
+the latest `microsoft/node-pty` upstream release. On any change, a 10-row
 matrix builds prebuilts for:
 
 ```
-{win32 x64, win32 arm64, linux x64 glibc, linux arm64 glibc, linux x64 musl, linux arm64 musl}
+{win32 x64, win32 arm64, linux x64 glibc, linux arm64 glibc, linux x64 musl}
 × {current LTS, prior LTS}
 ```
+
+`linux arm64 musl` is intentionally excluded: GitHub Actions' JS-action
+runtime (checkout, setup-node, upload-artifact) cannot execute inside an
+Alpine container on an ARM64 runner. Hosts on arm64+musl fall through
+the resolver chain to compile-at-install via the bundled @homebridge
+package. See `actions/runner#801`.
 
 The workflow attaches the tarballs + `SHA256SUMS` + `manifest.json` to a
 versioned GitHub Release and updates a `node-pty-prebuilds-latest`
