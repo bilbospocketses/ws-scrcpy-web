@@ -148,10 +148,9 @@ export class DependencyManager {
     }
 
     public requestRestart(): void {
-        const projectRoot = path.dirname(this.depsPath);
-        const markerPath = path.join(projectRoot, '.restart');
+        const markerPath = path.join(this.depsPath, '.restart');
         fs.writeFileSync(markerPath, `restart-requested-${Date.now()}`);
-        process.exit(0);
+        process.exit(75);
     }
 
     private resolveStatus(info: DependencyInfo): void {
