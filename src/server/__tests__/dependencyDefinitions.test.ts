@@ -17,7 +17,7 @@ describe('getArch', () => {
 
 describe('getDependencyDefinitions', () => {
     it('returns definitions for all managed dependencies', () => {
-        const defs = getDependencyDefinitions();
+        const defs = getDependencyDefinitions('/tmp/test-deps');
         const names = defs.map((d) => d.name);
         expect(names).toContain('nodejs');
         expect(names).toContain('adb');
@@ -25,7 +25,7 @@ describe('getDependencyDefinitions', () => {
     });
 
     it('each definition has required fields', () => {
-        const defs = getDependencyDefinitions();
+        const defs = getDependencyDefinitions('/tmp/test-deps');
         for (const def of defs) {
             expect(def.name).toBeTruthy();
             expect(def.displayName).toBeTruthy();
@@ -36,14 +36,14 @@ describe('getDependencyDefinitions', () => {
     });
 
     it('nodejs definition includes node-pty pairing', () => {
-        const defs = getDependencyDefinitions();
+        const defs = getDependencyDefinitions('/tmp/test-deps');
         const node = defs.find((d) => d.name === 'nodejs');
         expect(node?.pairedWith).toBe('node-pty');
         expect(node?.requiresRestart).toBe(true);
     });
 
     it('scrcpy-server does not require restart', () => {
-        const defs = getDependencyDefinitions();
+        const defs = getDependencyDefinitions('/tmp/test-deps');
         const scrcpy = defs.find((d) => d.name === 'scrcpy-server');
         expect(scrcpy?.requiresRestart).toBe(false);
     });

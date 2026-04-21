@@ -27,7 +27,7 @@ export class DependencyManager {
     private readonly state: Map<string, DependencyInfo>;
 
     constructor(private readonly depsPath: string) {
-        this.definitions = getDependencyDefinitions();
+        this.definitions = getDependencyDefinitions(depsPath);
         this.state = new Map();
 
         for (const def of this.definitions) {

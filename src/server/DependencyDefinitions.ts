@@ -61,7 +61,7 @@ async function runVersionCommand(exe: string, args: string[], pattern: RegExp): 
     }
 }
 
-export function getDependencyDefinitions(): DependencyDefinition[] {
+export function getDependencyDefinitions(_depsPath: string): DependencyDefinition[] {
     const platform = getPlatform();
     const arch = getArch();
 
