@@ -362,4 +362,4 @@ SP5 (docs) captures the install-and-first-run flow for the README.
 - **No Windows service / systemd unit wiring.** That's SP3.
 - **No splash screen, no separate bootstrap server.** Rejected during brainstorm (Q1 → Option A).
 - **No progress bars in the banner.** Dep-panel already shows per-dep progress; banner is a coarse "something needs your attention" signal only.
-- **No automatic reboots.** First-run auto-install does not call `requestRestart()`. Node doesn't need restarting (it's the seed, and it's the only `requiresRestart: true` dep); ADB and scrcpy-server have `requiresRestart: false`.
+- **No automatic reboots.** First-run auto-install does not call `requestRestart()`. In practice, the only dep with `requiresRestart: true` is Node — and Node is always present at first boot via the seed, so Node will never be the target of `autoInstallMissing`. ADB and scrcpy-server have `requiresRestart: false`, so they can safely install without a restart.
