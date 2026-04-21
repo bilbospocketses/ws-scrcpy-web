@@ -78,8 +78,13 @@ export function cacheDirHasBinary(dir: string): boolean {
 }
 
 export function nodeModulesReleaseDir(): string {
-    const pkgDir = path.dirname(require.resolve('node-pty/package.json'));
-    return path.join(pkgDir, 'build', 'Release');
+    // Resolve relative to process.cwd() rather than require.resolve().
+    // Webpack's bundler rewrites `require.resolve('node-pty/package.json')`
+    // into a module-ID lookup that returns a number (the module ID),
+    // not a string path — which then throws from downstream fs calls.
+    // process.cwd() is the repo root during dev (`npm start`/tests) and
+    // the install root in the packaged app.
+    return path.resolve(process.cwd(), 'node_modules', 'node-pty', 'build', 'Release');
 }
 
 export function cachePathForHost(depsPath: string, upstreamVersion: string, host: HostInfo): string {
