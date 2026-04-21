@@ -15,6 +15,7 @@ import { probeAdb } from './network/AdbHandshakeProbe';
 import { resolveMac } from './network/MacResolver';
 import { DependencyApi } from './api/DependencyApi';
 import { DeviceDiscoveryApi } from './api/DeviceDiscoveryApi';
+import { CapabilitiesApi } from './api/CapabilitiesApi';
 import { HttpServer } from './services/HttpServer';
 import type { Service, ServiceClass } from './services/Service';
 import { WebSocketServer } from './services/WebSocketServer';
@@ -39,6 +40,9 @@ HttpServer.addApiHandler(depApi);
 
 const discoveryApi = new DeviceDiscoveryApi();
 HttpServer.addApiHandler(discoveryApi);
+
+const capabilitiesApi = new CapabilitiesApi();
+HttpServer.addApiHandler(capabilitiesApi);
 
 // Wire the scanner singleton
 const scanAdb = new AdbClient(config.adbPath);
