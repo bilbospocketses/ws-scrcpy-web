@@ -1,5 +1,5 @@
-import type { IPty } from 'node-pty';
-import * as pty from 'node-pty';
+import type { IPty } from '@homebridge/node-pty-prebuilt-multiarch';
+import * as pty from '@homebridge/node-pty-prebuilt-multiarch';
 import * as os from 'os';
 import type WS from 'ws';
 import { ACTION } from '../../../common/Action';

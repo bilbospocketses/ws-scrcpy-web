@@ -36,7 +36,7 @@
     "format": "npx @biomejs/biome check --write src/"
   },
   "dependencies": {
-    "node-pty": "^1.1.0",
+    "@homebridge/node-pty-prebuilt-multiarch": "^0.13.1",
     "ws": "^8.18.0"
   },
   "devDependencies": {
