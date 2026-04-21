@@ -18,7 +18,7 @@ const DEFAULT_SCAN_PROGRESS_INTERVAL = 10;
  * The full ServerItem array form is also accepted for advanced SSL setups:
  *   { "server": [{ "secure": true, "port": 443, "options": { ... } }] }
  */
-interface FlatConfig {
+export interface FlatConfig {
     port?: number;
     adbPath?: string;
     dependenciesPath?: string;
@@ -27,6 +27,32 @@ interface FlatConfig {
     scanAdbConnectTimeoutMs?: number;
     scanProgressInterval?: number;
     server?: ServerItem[];
+}
+
+/**
+ * Pure resolver: produces the absolute dependencies-folder path the app should
+ * manage. Priority: DEPS_PATH env → config.json → dev fallback → hard-fail.
+ * Dev fallback only triggers when a package.json is a sibling of the entry
+ * script's parent directory (the unambiguous "we are in a dev checkout" tell).
+ */
+export function resolveDependenciesPath(
+    env: NodeJS.ProcessEnv,
+    fileConfig: FlatConfig,
+    entryScript: string,
+    exists: (p: string) => boolean = fs.existsSync,
+): string {
+    if (env['DEPS_PATH']) return env['DEPS_PATH'];
+    if (fileConfig.dependenciesPath) return fileConfig.dependenciesPath;
+    const entryDir = path.dirname(entryScript);
+    const devCandidate = path.resolve(entryDir, '..', 'dependencies');
+    const devTell = path.resolve(entryDir, '..', 'package.json');
+    if (exists(devTell)) return devCandidate;
+    throw new Error(
+        'DEPS_PATH is not set and no dependencies path is configured. ' +
+        'Set the DEPS_PATH environment variable (the launcher script does this automatically) ' +
+        'or add "dependenciesPath" to config.json. ' +
+        'Expected location example: <installFolder>/dependencies/',
+    );
 }
 
 export class Config {
@@ -96,8 +122,11 @@ export class Config {
             // ADB_PATH env var overrides file config, which overrides default
             const adbPath = process.env['ADB_PATH'] ?? fileConfig.adbPath ?? DEFAULT_ADB_PATH;
 
-            const dependenciesPath = process.env['DEPS_PATH'] ?? fileConfig.dependenciesPath
-                ?? path.resolve(path.dirname(process.argv[1] || '.'), '..', 'dependencies');
+            const dependenciesPath = resolveDependenciesPath(
+                process.env,
+                fileConfig,
+                process.argv[1] ?? '.',
+            );
 
             const scanConcurrency = Number.parseInt(process.env['SCAN_CONCURRENCY'] ?? '', 10) || fileConfig.scanConcurrency || DEFAULT_SCAN_CONCURRENCY;
             const scanTcpTimeoutMs = Number.parseInt(process.env['SCAN_TCP_TIMEOUT_MS'] ?? '', 10) || fileConfig.scanTcpTimeoutMs || DEFAULT_SCAN_TCP_TIMEOUT_MS;
