@@ -17,7 +17,9 @@ import type { DependencyInfo, UpdateResult } from '../common/DependencyTypes';
 import { compareVersions, DependencyStatus } from '../common/DependencyTypes';
 import type { DependencyDefinition } from './DependencyDefinitions';
 import { getDependencyDefinitions, getPlatform } from './DependencyDefinitions';
+import { Logger } from './Logger';
 
+const log = Logger.for('DependencyManager');
 const execFileAsync = promisify(execFile);
 
 export class DependencyManager {
@@ -77,18 +79,26 @@ export class DependencyManager {
         } catch (err) {
             info.status = DependencyStatus.Error;
             info.errorMessage = err instanceof Error ? err.message : String(err);
+            log.warn(`Latest-version check failed for ${name}: ${info.errorMessage}`);
         }
     }
 
     public async checkAll(): Promise<void> {
-        // Check all installed versions first
         for (const def of this.definitions) {
             await this.checkInstalled(def.name);
         }
-        // Then check all latest versions
         for (const def of this.definitions) {
             await this.checkLatest(def.name);
         }
+        const updates = Array.from(this.state.values())
+            .filter((i) => i.status === DependencyStatus.UpdateAvailable)
+            .map((i) => i.name);
+        const upToDate = Array.from(this.state.values()).filter((i) => i.status === DependencyStatus.UpToDate).length;
+        const summary =
+            updates.length === 0
+                ? `all ${upToDate} up-to-date`
+                : `${updates.length} update available (${updates.join(', ')}), ${upToDate} up-to-date`;
+        log.info(`Dependency check complete: ${summary}`);
     }
 
     public async update(name: string): Promise<UpdateResult> {
@@ -99,6 +109,7 @@ export class DependencyManager {
         }
 
         info.status = DependencyStatus.Updating;
+        const fromVersion = info.installedVersion ?? 'not installed';
         const tmpDir = path.join(os.tmpdir(), 'ws-scrcpy-web', `update-${name}-${Date.now()}`);
 
         try {
@@ -109,6 +120,8 @@ export class DependencyManager {
             if (!info.latestVersion) {
                 throw new Error('Could not determine latest version');
             }
+
+            log.info(`Updating ${name}: ${fromVersion} → ${info.latestVersion}`);
 
             const version = info.latestVersion;
             const url = def.getDownloadUrl(version);
@@ -129,10 +142,13 @@ export class DependencyManager {
             info.status = DependencyStatus.UpToDate;
             info.errorMessage = undefined;
 
+            log.info(`Updated ${name} to ${version}${def.requiresRestart ? ' (restart queued)' : ''}`);
+
             return { success: true, newVersion: version, requiresRestart: def.requiresRestart };
         } catch (err) {
             info.status = DependencyStatus.Error;
             info.errorMessage = err instanceof Error ? err.message : String(err);
+            log.error(`Update ${name} failed: ${info.errorMessage}`);
             return {
                 success: false,
                 errorMessage: info.errorMessage,
@@ -151,6 +167,7 @@ export class DependencyManager {
     public requestRestart(): void {
         const markerPath = path.join(this.depsPath, '.restart');
         fs.writeFileSync(markerPath, `restart-requested-${Date.now()}`);
+        log.info(`Restart requested; writing marker at ${markerPath} and exiting with code 75`);
         process.exit(75);
     }
 

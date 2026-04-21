@@ -53,6 +53,14 @@ export class Logger {
         writeToFile(line);
     }
 
+    warn(...args: unknown[]): void {
+        const ts = timestamp();
+        const message = args.map(String).join(' ');
+        const line = `${ts} ${this.tag} WARN ${message}`;
+        console.warn(this.tag, ...args);
+        writeToFile(line);
+    }
+
     error(...args: unknown[]): void {
         const ts = timestamp();
         const message = args.map(String).join(' ');
