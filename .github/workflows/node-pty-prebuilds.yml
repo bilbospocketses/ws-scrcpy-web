@@ -16,8 +16,10 @@ jobs:
       changed: ${{ steps.check.outputs.changed }}
       node_pty_version: ${{ steps.check.outputs.node_pty_version }}
       current_node_version: ${{ steps.check.outputs.current_node_version }}
+      current_node_version_bare: ${{ steps.check.outputs.current_node_version_bare }}
       current_node_abi: ${{ steps.check.outputs.current_node_abi }}
       prior_node_version: ${{ steps.check.outputs.prior_node_version }}
+      prior_node_version_bare: ${{ steps.check.outputs.prior_node_version_bare }}
       prior_node_abi: ${{ steps.check.outputs.prior_node_abi }}
     steps:
       - uses: actions/checkout@v4
@@ -35,6 +37,9 @@ jobs:
           jq -r '.fresh | "node_pty_version=\(.nodePtyVersion)"' /tmp/check.json >> "$GITHUB_OUTPUT"
           jq -r '.fresh.nodeCurrentLts | "current_node_version=\(.version)\ncurrent_node_abi=\(.abi)"' /tmp/check.json >> "$GITHUB_OUTPUT"
           jq -r '.fresh.nodePriorLts | "prior_node_version=\(.version)\nprior_node_abi=\(.abi)"' /tmp/check.json >> "$GITHUB_OUTPUT"
+          # v-stripped forms for Docker Hub tags (node:24.15.0-alpine etc.)
+          jq -r '.fresh.nodeCurrentLts.version | sub("^v"; "") | "current_node_version_bare=\(.)"' /tmp/check.json >> "$GITHUB_OUTPUT"
+          jq -r '.fresh.nodePriorLts.version | sub("^v"; "") | "prior_node_version_bare=\(.)"' /tmp/check.json >> "$GITHUB_OUTPUT"
 
   build:
     needs: precheck
@@ -56,7 +61,7 @@ jobs:
           - { os: ubuntu-24.04-arm,  arch: arm64, libc: musl,  abi_label: current, container: 'alpine' }
           - { os: ubuntu-24.04-arm,  arch: arm64, libc: musl,  abi_label: prior,   container: 'alpine' }
     runs-on: ${{ matrix.os }}
-    container: ${{ matrix.container == 'alpine' && format('node:{0}-alpine', matrix.abi_label == 'current' && needs.precheck.outputs.current_node_version || needs.precheck.outputs.prior_node_version) || null }}
+    container: ${{ matrix.container == 'alpine' && format('node:{0}-alpine', matrix.abi_label == 'current' && needs.precheck.outputs.current_node_version_bare || needs.precheck.outputs.prior_node_version_bare) || null }}
     steps:
       - uses: actions/checkout@v4
 
