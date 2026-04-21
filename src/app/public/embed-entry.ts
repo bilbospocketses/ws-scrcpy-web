@@ -19,6 +19,8 @@ declare global {
 
 const CODECS = new Set(['h264', 'h265', 'av1']);
 const DEVICE_KINDS = new Set(['phone', 'tablet', 'tv']);
+const AUDIO_SOURCES = new Set(['playback', 'output', 'mic']);
+const AUDIO_CODECS = new Set(['opus', 'aac', 'flac', 'raw']);
 
 export function parseEmbedParams(params: URLSearchParams): {
     deviceId: string | null;
@@ -53,6 +55,16 @@ export function parseEmbedParams(params: URLSearchParams): {
     const deviceKind = params.get('deviceKind');
     if (deviceKind && DEVICE_KINDS.has(deviceKind)) {
         options.deviceKind = deviceKind as StartStreamOptions['deviceKind'];
+    }
+
+    const audioSource = params.get('audioSource');
+    if (audioSource && AUDIO_SOURCES.has(audioSource)) {
+        options.audioSource = audioSource as StartStreamOptions['audioSource'];
+    }
+
+    const audioCodec = params.get('audioCodec');
+    if (audioCodec && AUDIO_CODECS.has(audioCodec)) {
+        options.audioCodec = audioCodec as StartStreamOptions['audioCodec'];
     }
 
     readInt('port');

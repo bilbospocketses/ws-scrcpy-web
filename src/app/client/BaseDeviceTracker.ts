@@ -79,7 +79,6 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
         return a;
     }
 
-    protected title = 'Device list';
     protected tableId = 'base_device_list';
     protected descriptors: DD[] = [];
     protected elementId: string;
@@ -96,7 +95,6 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
         this.elementId = `tracker_instance${++BaseDeviceTracker.instanceId}`;
         this.trackerName = `Unavailable. Host: ${params.hostname}, type: ${params.type}`;
         this.setBodyClass('list');
-        this.setTitle();
     }
 
     public static parseParameters(params: URLSearchParams): ParamsDeviceTracker {

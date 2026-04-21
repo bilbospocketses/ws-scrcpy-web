@@ -64,6 +64,9 @@ export function startStream(
         fitToScreen: true,
         ...(videoCodec !== undefined ? { videoCodec } : {}),
         ...(options.encoder !== undefined ? { encoderName: options.encoder } : {}),
+        ...(typeof options.audio === 'boolean' ? { audioEnabled: options.audio } : {}),
+        ...(options.audioSource !== undefined ? { audioSource: options.audioSource } : {}),
+        ...(options.audioCodec !== undefined ? { audioCodec: options.audioCodec } : {}),
     };
 
     // Only build a VideoSettings when the caller actually provided one of the

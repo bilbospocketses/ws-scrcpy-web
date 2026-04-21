@@ -1,4 +1,5 @@
 import { ACTION } from '../../../common/Action';
+import { applyStreamParams } from '../../../common/StreamUrlParams';
 import { SERVER_PORT } from '../../../common/Constants';
 import { ControlCenterCommand } from '../../../common/ControlCenterCommand';
 import type GoogDeviceDescriptor from '../../../types/GoogDeviceDescriptor';
@@ -233,37 +234,26 @@ export class StreamClientScrcpy
         const host = hostname || window.location.hostname;
         const p = port || Number.parseInt(window.location.port, 10) || (secure ? 443 : 80);
         const url = new URL(`${protocol}://${host}:${p}/`);
-        url.searchParams.set('action', ACTION.STREAM_SCRCPY);
-        url.searchParams.set('udid', this.params.udid);
-
-        // Pass video settings as query params for server-side ScrcpyOptions
-        if (this.player) {
-            const vs = this.player.getVideoSettings();
-            if (vs.bitrate) url.searchParams.set('bitrate', vs.bitrate.toString());
-            if (vs.maxFps) url.searchParams.set('maxFps', vs.maxFps.toString());
-            if (vs.bounds) {
-                const maxDim = Math.max(vs.bounds.width, vs.bounds.height);
-                if (maxDim > 0) url.searchParams.set('maxSize', maxDim.toString());
-            }
-            if (vs.displayId) url.searchParams.set('displayId', vs.displayId.toString());
-        }
-
-        // Pass codec selections from ConfigureScrcpy
-        const videoCodec = this.params.videoCodec;
-        if (videoCodec && videoCodec !== 'h264') {
-            url.searchParams.set('videoCodec', videoCodec);
-        }
-
-        const audioCodec = this.params.audioCodec;
-        if (audioCodec && audioCodec !== 'opus') {
-            url.searchParams.set('audioCodec', audioCodec);
-        }
-
-        const encoderName = this.params.encoderName;
-        if (encoderName) {
-            url.searchParams.set('videoEncoder', encoderName);
-        }
-
+        const vs = this.player?.getVideoSettings();
+        applyStreamParams(
+            url,
+            {
+                udid: this.params.udid,
+                videoCodec: this.params.videoCodec,
+                audioCodec: this.params.audioCodec,
+                audioEnabled: this.params.audioEnabled,
+                audioSource: this.params.audioSource,
+                encoderName: this.params.encoderName,
+            },
+            vs
+                ? {
+                      bitrate: vs.bitrate,
+                      maxFps: vs.maxFps,
+                      bounds: vs.bounds ? { width: vs.bounds.width, height: vs.bounds.height } : undefined,
+                      displayId: vs.displayId,
+                  }
+                : undefined,
+        );
         return url.toString();
     }
 
@@ -310,7 +300,6 @@ export class StreamClientScrcpy
 
     public onMetadata = (meta: SessionMetadata): void => {
         this.deviceName = meta.deviceName;
-        this.setTitle(`Stream ${this.deviceName}`);
         console.log(
             TAG,
             `Connected: ${meta.deviceName} ${meta.screenWidth}x${meta.screenHeight} video=${meta.videoCodec} audio=${meta.audioCodec}`,

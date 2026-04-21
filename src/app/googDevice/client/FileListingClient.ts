@@ -103,7 +103,6 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         this.serial = this.params.udid;
         this.path = this.params.path;
         this.openNewConnection();
-        this.setTitle(`Listing ${this.serial}`);
         this.setBodyClass('file-listing');
         this.name = `${TAG} [${this.serial}]`;
         this.tableBodyId = `${Util.escapeUdid(this.serial)}_list`;

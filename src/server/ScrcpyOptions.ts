@@ -3,6 +3,8 @@ export interface ScrcpyOptions {
     scid: string;
     videoCodec?: 'h264' | 'h265' | 'av1';
     audioCodec?: 'opus' | 'aac' | 'flac' | 'raw';
+    audioSource?: 'output' | 'playback' | 'mic';
+    audioDup?: boolean;
     maxSize?: number;
     videoBitRate?: number;
     maxFps?: number;
@@ -20,6 +22,8 @@ export interface ScrcpyOptions {
 const DEFAULTS: Omit<Required<ScrcpyOptions>, 'scid' | 'videoEncoder'> = {
     videoCodec: 'h264',
     audioCodec: 'opus',
+    audioSource: 'output',
+    audioDup: false,
     maxSize: 0,
     videoBitRate: 8000000,
     maxFps: 0,

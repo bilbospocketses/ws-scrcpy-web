@@ -22,7 +22,7 @@ dialog.modal::backdrop {
 dialog.modal .modal-frame {
     font-family: var(--font-mono);
     color: var(--text-color, #ddd);
-    width: clamp(400px, 50vw, 650px);
+    width: clamp(400px, 50vw, 700px);
     max-height: 80vh;
     display: flex;
     flex-direction: column;
@@ -339,6 +339,7 @@ dialog.modal .modal-advanced input:not([type="checkbox"]) {
     padding: 4px 8px;
 }
 
+dialog.modal .modal-controls input[type="checkbox"],
 dialog.modal .modal-advanced input[type="checkbox"] {
     grid-column: controls;
     justify-self: start;

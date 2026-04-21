@@ -562,7 +562,9 @@ Calling `startStream()` a second time on the same container without first callin
 | `bitrate`   | int    | auto                             | Video bitrate in bps.                                     |
 | `maxFps`    | int    | auto                             | Frame rate cap.                                           |
 | `maxSize`   | int    | auto                             | Longest-dimension pixel bound.                            |
-| `audio`     | bool   | `true`                           | `"true"` / `"false"`.                                     |
+| `audio`     | bool   | `true`                           | `"true"` / `"false"`. Server force-disables on Android 10 or older. |
+| `audioSource` | string | `output`                         | `"playback"` / `"output"` / `"mic"`. `output` (default) silences device audio during the session, matching scrcpy's own default. `playback` requires Android 13+ and uses `--audio-dup` to keep device audio playing during capture. |
+| `audioCodec`  | string | `opus`                            | `"opus"` / `"aac"` / `"flac"` / `"raw"`. `aac` is the documented fallback when a device's Opus encoder fails. |
 | `keyboard`  | bool   | `true`                           | `"true"` / `"false"`.                                     |
 
 `embed.html` sets `body { background: transparent }` so iframe consumers can place any background they like behind the video. A small status overlay in the top-left shows `connecting...`, then `connected <codec> <resolution>` (auto-hides after 2 s), or an error / disconnect message.

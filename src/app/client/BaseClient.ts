@@ -3,7 +3,6 @@ import type { ParamsBase } from '../../types/ParamsBase';
 import Util from '../Util';
 
 export class BaseClient<P extends ParamsBase, TE extends EventMap> extends TypedEmitter<TE> {
-    protected title = 'BaseClient';
     protected params: P;
 
     protected constructor(params: P) {
@@ -24,14 +23,6 @@ export class BaseClient<P extends ParamsBase, TE extends EventMap> extends Typed
             port: Util.parseIntEnv(query.get('port')),
             pathname: Util.parseStringEnv(query.get('pathname')),
         };
-    }
-
-    public setTitle(text = this.title): void {
-        let titleTag: HTMLTitleElement | null = document.querySelector('head > title');
-        if (!titleTag) {
-            titleTag = document.createElement('title');
-        }
-        titleTag.innerText = text;
     }
 
     public setBodyClass(text: string): void {

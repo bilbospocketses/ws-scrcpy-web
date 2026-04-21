@@ -9,5 +9,7 @@ export interface ParamsStreamScrcpy extends ParamsStream {
     videoSettings?: VideoSettings;
     videoCodec?: string;
     audioCodec?: string;
+    audioEnabled?: boolean;
+    audioSource?: 'playback' | 'output' | 'mic';
     encoderName?: string;
 }

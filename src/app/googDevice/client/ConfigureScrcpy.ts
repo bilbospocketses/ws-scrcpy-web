@@ -1,3 +1,11 @@
+import {
+    audioCaptureSupported,
+    audioDupSupported,
+    audioEnabledDefault,
+    defaultAudioSourceForSdk,
+    type AudioSource,
+} from '../../../common/AudioDefaults';
+import { AudioSettingsStore } from '../../client/AudioSettingsStore';
 import type { ProbeResult } from '../../../common/ProbeResult';
 import type GoogDeviceDescriptor from '../../../types/GoogDeviceDescriptor';
 import type { ParamsStreamScrcpy } from '../../../types/ParamsStreamScrcpy';
@@ -28,6 +36,11 @@ export class ConfigureScrcpy extends Modal {
     private playerName?: string;
     private videoCodecSelect?: HTMLSelectElement;
     private audioCodecSelect?: HTMLSelectElement;
+    private audioSourceSelect?: HTMLSelectElement;
+    private audioEnabledCheckbox?: HTMLInputElement;
+    private readonly deviceKind?: 'phone' | 'tablet' | 'tv';
+    private readonly sdkInt: number;
+    private readonly savedAudio: ReturnType<typeof AudioSettingsStore.load>;
     private displayInfo?: DisplayInfo;
     private connectButton?: HTMLButtonElement;
     private fitToScreenCheckbox?: HTMLInputElement;
@@ -59,6 +72,9 @@ export class ConfigureScrcpy extends Modal {
         this.params = params;
         this.udid = descriptor.udid;
         this.escapedUdid = Util.escapeUdid(this.udid);
+        this.deviceKind = descriptor.deviceKind;
+        this.sdkInt = Number.parseInt(descriptor['ro.build.version.sdk'], 10);
+        this.savedAudio = AudioSettingsStore.load(descriptor.udid);
         this.TAG = `ConfigureScrcpy[${this.udid}]`;
         this.populateUI();
         this.runProbe();
@@ -117,6 +133,12 @@ export class ConfigureScrcpy extends Modal {
                 opt.innerText = codec;
                 this.audioCodecSelect!.appendChild(opt);
             });
+            // Apply saved codec if it's one of the available options for this device,
+            // otherwise leave the first option (opus) selected.
+            const savedCodec = this.savedAudio?.codec;
+            if (savedCodec && audioCodecs.includes(savedCodec)) {
+                this.audioCodecSelect.value = savedCodec;
+            }
         }
 
         // Populate display selector with probe data (single default display)
@@ -515,6 +537,7 @@ export class ConfigureScrcpy extends Modal {
         this.displayIdSelectElement.id = displayIdLabel.htmlFor = `displayId_${this.escapedUdid}`;
         this.displayIdSelectElement.onchange = this.onDisplayIdChange;
 
+        // ── Video settings group ──────────────────────────────────────────
         // Video codec dropdown
         const videoCodecLabel = document.createElement('label');
         videoCodecLabel.classList.add('label');
@@ -525,16 +548,6 @@ export class ConfigureScrcpy extends Modal {
         videoCodecSelect.id = videoCodecLabel.htmlFor = `videoCodec_${this.escapedUdid}`;
         videoCodecSelect.addEventListener('change', this.onVideoCodecChange);
         controls.appendChild(videoCodecSelect);
-
-        // Audio codec dropdown
-        const audioCodecLabel = document.createElement('label');
-        audioCodecLabel.classList.add('label');
-        audioCodecLabel.innerText = 'audio codec:';
-        controls.appendChild(audioCodecLabel);
-        const audioCodecSelect = (this.audioCodecSelect = document.createElement('select'));
-        audioCodecSelect.classList.add('input');
-        audioCodecSelect.id = audioCodecLabel.htmlFor = `audioCodec_${this.escapedUdid}`;
-        controls.appendChild(audioCodecSelect);
 
         // Encoder dropdown
         const encoderLabel = document.createElement('label');
@@ -548,18 +561,100 @@ export class ConfigureScrcpy extends Modal {
         this.encoderSelectElement.classList.add('input');
         this.encoderSelectElement.id = encoderLabel.htmlFor = `encoderName_${this.escapedUdid}`;
 
-        // Bitrate slider
-        this.appendBasicInput(controls, {
-            label: 'bitrate',
-            id: 'bitrate',
-            range: { min: 524288, max: 8388608, step: 524288, formatter: Util.prettyBytes },
-        });
-
         // Max FPS slider
         this.appendBasicInput(controls, {
             label: 'max fps',
             id: 'maxFps',
             range: { min: 1, max: 60, step: 1 },
+        });
+
+        // ── Audio settings group ──────────────────────────────────────────
+        // Audio codec dropdown
+        const audioCodecLabel = document.createElement('label');
+        audioCodecLabel.classList.add('label');
+        audioCodecLabel.innerText = 'audio codec:';
+        controls.appendChild(audioCodecLabel);
+        const audioCodecSelect = (this.audioCodecSelect = document.createElement('select'));
+        audioCodecSelect.classList.add('input');
+        audioCodecSelect.id = audioCodecLabel.htmlFor = `audioCodec_${this.escapedUdid}`;
+        controls.appendChild(audioCodecSelect);
+
+        // Audio source dropdown. Three options:
+        //   playback — capture playback and also keep audio on the device (Android 13+)
+        //   output   — capture the whole output; device goes silent during the session
+        //   mic      — capture the device microphone
+        const audioSourceLabel = document.createElement('label');
+        audioSourceLabel.classList.add('label');
+        audioSourceLabel.innerText = 'audio source:';
+        controls.appendChild(audioSourceLabel);
+        const audioSourceSelect = (this.audioSourceSelect = document.createElement('select'));
+        audioSourceSelect.classList.add('input');
+        audioSourceSelect.id = audioSourceLabel.htmlFor = `audioSource_${this.escapedUdid}`;
+        // Source options are filtered by SDK capability — we only show what can
+        // actually work on the connected device. `playback` requires Android 13+
+        // (SDK 33) because the `--audio-dup` flag (which keeps device audio) is
+        // Android-13-only; below that, playback would just silence the device
+        // like `output` does, so it's not worth offering separately.
+        const dupOk = audioDupSupported(this.sdkInt);
+        const audioSourceOptions: Array<{ value: AudioSource; label: string }> = [
+            { value: 'output', label: 'output — silences device during session (default)' },
+        ];
+        if (dupOk) {
+            audioSourceOptions.push({
+                value: 'playback',
+                label: 'playback — keeps device audio (Android 13+)',
+            });
+        }
+        audioSourceOptions.push({ value: 'mic', label: 'mic — captures device microphone' });
+        for (const { value, label } of audioSourceOptions) {
+            const opt = document.createElement('option');
+            opt.value = value;
+            opt.innerText = label;
+            audioSourceSelect.appendChild(opt);
+        }
+        // Apply saved source if present and still valid for this device's SDK,
+        // otherwise fall back to the SDK-aware default.
+        const savedSource = this.savedAudio?.source;
+        const savedSourceUsable = savedSource && audioSourceOptions.some((o) => o.value === savedSource);
+        audioSourceSelect.value = savedSourceUsable ? savedSource : defaultAudioSourceForSdk(this.sdkInt);
+        controls.appendChild(audioSourceSelect);
+
+        // Enable-audio checkbox. Default:
+        //   SDK<30 → off, checkbox disabled entirely (scrcpy can't capture)
+        //   SDK≥30 → on, checkbox interactive
+        const captureOk = audioCaptureSupported(this.sdkInt);
+        const audioEnabledLabel = document.createElement('label');
+        audioEnabledLabel.classList.add('label');
+        audioEnabledLabel.innerText = 'enable audio:';
+        controls.appendChild(audioEnabledLabel);
+        const audioEnabledCheckbox = (this.audioEnabledCheckbox = document.createElement('input'));
+        audioEnabledCheckbox.type = 'checkbox';
+        audioEnabledCheckbox.id = audioEnabledLabel.htmlFor = `audioEnabled_${this.escapedUdid}`;
+        // If the user has saved a preference for this device, honor it (gated by
+        // capture support). Otherwise fall back to the kind-based default.
+        const savedEnabled = this.savedAudio?.enabled;
+        audioEnabledCheckbox.checked =
+            captureOk && (typeof savedEnabled === 'boolean' ? savedEnabled : audioEnabledDefault(this.deviceKind));
+        audioEnabledCheckbox.disabled = !captureOk;
+        if (!captureOk) {
+            audioEnabledLabel.title = audioEnabledCheckbox.title =
+                'Android 11+ required for audio capture (device SDK too old)';
+        }
+        audioEnabledCheckbox.addEventListener('change', () => {
+            const enabled = audioEnabledCheckbox.checked;
+            if (this.audioCodecSelect) this.audioCodecSelect.disabled = !enabled;
+            if (this.audioSourceSelect) this.audioSourceSelect.disabled = !enabled;
+        });
+        controls.appendChild(audioEnabledCheckbox);
+        // Apply initial disabled state so the codec + source dropdowns track the checkbox
+        audioCodecSelect.disabled = !audioEnabledCheckbox.checked;
+        audioSourceSelect.disabled = !audioEnabledCheckbox.checked;
+
+        // ── Overall bitrate (covers video + audio + control) ─────────────
+        this.appendBasicInput(controls, {
+            label: 'bitrate',
+            id: 'bitrate',
+            range: { min: 524288, max: 8388608, step: 524288, formatter: Util.prettyBytes },
         });
 
         // Set up the advanced toggle button (already in DOM from buildBody)
@@ -664,6 +759,15 @@ export class ConfigureScrcpy extends Modal {
             const fitToScreen = this.getFitToScreenValue();
             player.saveVideoSettings(this.udid, videoSettings, fitToScreen, this.displayInfo);
         }
+        // Persist the audio group (enable / source / codec) alongside video.
+        // ConnectModal.connect-button flow loads these on click via AudioSettingsStore.
+        if (this.audioEnabledCheckbox && this.audioSourceSelect && this.audioCodecSelect) {
+            AudioSettingsStore.save(this.udid, {
+                enabled: this.audioEnabledCheckbox.checked,
+                source: this.audioSourceSelect.value as AudioSource,
+                codec: this.audioCodecSelect.value,
+            });
+        }
         if (this.saveSettingsButton) {
             const original = this.saveSettingsButton.textContent;
             this.saveSettingsButton.textContent = 'saved';
@@ -687,6 +791,8 @@ export class ConfigureScrcpy extends Modal {
         const displayInfo = this.displayInfo;
         const videoCodec = this.videoCodecSelect?.value;
         const audioCodec = this.audioCodecSelect?.value;
+        const audioEnabled = this.audioEnabledCheckbox?.checked ?? audioEnabledDefault(this.deviceKind);
+        const audioSource = (this.audioSourceSelect?.value as AudioSource | undefined) ?? defaultAudioSourceForSdk(this.sdkInt);
         const encoderName = this.encoderSelectElement?.value || undefined;
 
         // Get the device label from the modal header before closing (close() removes dialog from DOM)
@@ -706,6 +812,8 @@ export class ConfigureScrcpy extends Modal {
             fitToScreen,
             videoCodec,
             audioCodec,
+            audioEnabled,
+            audioSource,
             encoderName,
         };
         const { ConnectModal } = await import('./ConnectModal');

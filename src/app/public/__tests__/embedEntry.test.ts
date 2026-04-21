@@ -48,6 +48,23 @@ describe('parseEmbedParams', () => {
         expect(parse('device=x').options.deviceKind).toBeUndefined();
     });
 
+    it('accepts only playback/output/mic for audioSource; ignores others', () => {
+        expect(parse('device=x&audioSource=playback').options.audioSource).toBe('playback');
+        expect(parse('device=x&audioSource=output').options.audioSource).toBe('output');
+        expect(parse('device=x&audioSource=mic').options.audioSource).toBe('mic');
+        expect(parse('device=x&audioSource=voice-call').options.audioSource).toBeUndefined();
+        expect(parse('device=x').options.audioSource).toBeUndefined();
+    });
+
+    it('accepts only opus/aac/flac/raw for audioCodec; ignores others', () => {
+        expect(parse('device=x&audioCodec=opus').options.audioCodec).toBe('opus');
+        expect(parse('device=x&audioCodec=aac').options.audioCodec).toBe('aac');
+        expect(parse('device=x&audioCodec=flac').options.audioCodec).toBe('flac');
+        expect(parse('device=x&audioCodec=raw').options.audioCodec).toBe('raw');
+        expect(parse('device=x&audioCodec=mp3').options.audioCodec).toBeUndefined();
+        expect(parse('device=x').options.audioCodec).toBeUndefined();
+    });
+
     it('ignores unknown params', () => {
         expect(() => parse('device=x&mystery=42&another=foo')).not.toThrow();
     });

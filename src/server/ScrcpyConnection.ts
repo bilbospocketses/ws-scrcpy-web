@@ -16,6 +16,7 @@ import { ControlCenter } from './goog-device/services/ControlCenter';
 import { Logger } from './Logger';
 import { Mw, type RequestParameters } from './mw/Mw';
 import { type ScrcpyOptions, serializeOptions } from './ScrcpyOptions';
+import { scrcpyOptionsFromQuery } from './scrcpyOptionsFromQuery';
 import '../../assets/scrcpy-server';
 
 const log = Logger.for('ScrcpyConnection');
@@ -77,36 +78,7 @@ export class ScrcpyConnection extends Mw {
 
     private buildOptions(): ScrcpyOptions {
         const scid = crypto.randomInt(0, 0x7fffffff).toString(16).padStart(8, '0');
-        const options: ScrcpyOptions = { scid };
-
-        const maxSize = this.queryParams.get('maxSize');
-        if (maxSize) options.maxSize = Number.parseInt(maxSize, 10);
-
-        const bitrate = this.queryParams.get('bitrate');
-        if (bitrate) options.videoBitRate = Number.parseInt(bitrate, 10);
-
-        const maxFps = this.queryParams.get('maxFps');
-        if (maxFps) options.maxFps = Number.parseInt(maxFps, 10);
-
-        const displayId = this.queryParams.get('displayId');
-        if (displayId) options.displayId = Number.parseInt(displayId, 10);
-
-        const videoCodec = this.queryParams.get('videoCodec');
-        if (videoCodec === 'h265' || videoCodec === 'av1') {
-            options.videoCodec = videoCodec;
-        }
-
-        const audioCodec = this.queryParams.get('audioCodec');
-        if (audioCodec === 'aac' || audioCodec === 'flac' || audioCodec === 'raw') {
-            options.audioCodec = audioCodec;
-        }
-
-        const videoEncoder = this.queryParams.get('videoEncoder');
-        if (videoEncoder) {
-            options.videoEncoder = videoEncoder;
-        }
-
-        return options;
+        return scrcpyOptionsFromQuery(this.queryParams, scid);
     }
 
     private async start(): Promise<void> {
@@ -123,7 +95,16 @@ export class ScrcpyConnection extends Mw {
         //    ClassNotFoundException. cleanup=false keeps the JAR around.
         const sdkInt = await this.getSdkInt();
         const useTunnelForward = sdkInt > 0 && sdkInt < 28;
-        if (sdkInt > 0 && sdkInt < 30 && options.audio === undefined) {
+        // Audio-capture gates:
+        //  * SDK<30: scrcpy can't capture audio at all.
+        //  * SDK<33 with explicit audio_source=playback: --audio-dup requires
+        //    Android 13+; without it the device would be silenced anyway so the
+        //    user's opt-in to "keep device audio" can't be honored — force off
+        //    rather than surprise them with silence.
+        //  (Default source is `output`, which works on every audio-capable SDK.)
+        if (sdkInt > 0 && sdkInt < 30) {
+            options.audio = false;
+        } else if (sdkInt > 0 && sdkInt < 33 && options.audioSource === 'playback') {
             options.audio = false;
         }
         if (useTunnelForward) {

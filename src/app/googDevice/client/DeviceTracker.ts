@@ -12,6 +12,12 @@ import Util from '../../Util';
 import { html } from '../../ui/HtmlTag';
 import SvgImage from '../../ui/SvgImage';
 import { StreamClientScrcpy } from './StreamClientScrcpy';
+import { AudioSettingsStore } from '../../client/AudioSettingsStore';
+import {
+    audioCaptureSupported,
+    audioEnabledDefault,
+    defaultAudioSourceForSdk,
+} from '../../../common/AudioDefaults';
 
 
 export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never> {
@@ -335,6 +341,22 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
                 const hash = url.hash.startsWith('#!') ? url.hash.slice(2) : url.hash.slice(1);
                 const query = new URLSearchParams(hash);
                 const params = StreamClientScrcpy.parseParameters(query);
+
+                // Apply audio prefs: saved-from-ConfigureScrcpy if present,
+                // otherwise SDK-aware defaults so the connect-button respects
+                // device capability (playback+dup on Android 13+, output below).
+                const sdkInt = Number.parseInt(device['ro.build.version.sdk'], 10);
+                const saved = AudioSettingsStore.load(device.udid);
+                if (saved) {
+                    params.audioEnabled = saved.enabled;
+                    params.audioSource = saved.source;
+                    params.audioCodec = saved.codec;
+                } else {
+                    params.audioEnabled =
+                        audioCaptureSupported(sdkInt) && audioEnabledDefault(device.deviceKind);
+                    params.audioSource = defaultAudioSourceForSdk(sdkInt);
+                    // audioCodec left unset → server uses scrcpy's opus default
+                }
 
                 // Get device label from the card
                 const nameEl = link.closest('.device')?.querySelector('.device-name-text');

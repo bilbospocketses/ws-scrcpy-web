@@ -19,6 +19,19 @@ export interface StartStreamOptions {
 
     // Features
     audio?: boolean;      // default true
+    /**
+     * Where scrcpy captures audio from on the device:
+     *   - `playback` (default on Android 13+) — captures playback AND keeps
+     *     device audio playing via `--audio-dup`.
+     *   - `output` — captures the whole output; silences device during session.
+     *   - `mic` — captures the device microphone.
+     */
+    audioSource?: 'playback' | 'output' | 'mic';
+    /**
+     * Audio codec to request from scrcpy-server. `opus` is scrcpy's default;
+     * `aac` is a common fallback when a device's Opus encoder fails.
+     */
+    audioCodec?: 'opus' | 'aac' | 'flac' | 'raw';
     keyboard?: boolean;   // default true
 
     /**

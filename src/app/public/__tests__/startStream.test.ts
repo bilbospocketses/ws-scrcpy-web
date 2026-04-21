@@ -67,4 +67,39 @@ describe('startStream', () => {
         const args = (StreamClientScrcpy.start as ReturnType<typeof vi.fn>).mock.calls[0];
         expect(args[3]).toBeUndefined();
     });
+
+    it('propagates audio=false through to params.audioEnabled', async () => {
+        const { StreamClientScrcpy } = await import('../../googDevice/client/StreamClientScrcpy');
+        startStream(container, 'abc123', { audio: false });
+        const args = (StreamClientScrcpy.start as ReturnType<typeof vi.fn>).mock.calls[0];
+        expect(args[0].audioEnabled).toBe(false);
+    });
+
+    it('propagates audio=true through to params.audioEnabled', async () => {
+        const { StreamClientScrcpy } = await import('../../googDevice/client/StreamClientScrcpy');
+        startStream(container, 'abc123', { audio: true });
+        const args = (StreamClientScrcpy.start as ReturnType<typeof vi.fn>).mock.calls[0];
+        expect(args[0].audioEnabled).toBe(true);
+    });
+
+    it('omits audioEnabled when caller does not specify audio', async () => {
+        const { StreamClientScrcpy } = await import('../../googDevice/client/StreamClientScrcpy');
+        startStream(container, 'abc123');
+        const args = (StreamClientScrcpy.start as ReturnType<typeof vi.fn>).mock.calls[0];
+        expect(args[0].audioEnabled).toBeUndefined();
+    });
+
+    it('propagates audioSource through to params.audioSource', async () => {
+        const { StreamClientScrcpy } = await import('../../googDevice/client/StreamClientScrcpy');
+        startStream(container, 'abc123', { audioSource: 'playback' });
+        const args = (StreamClientScrcpy.start as ReturnType<typeof vi.fn>).mock.calls[0];
+        expect(args[0].audioSource).toBe('playback');
+    });
+
+    it('propagates audioCodec through to params.audioCodec', async () => {
+        const { StreamClientScrcpy } = await import('../../googDevice/client/StreamClientScrcpy');
+        startStream(container, 'abc123', { audioCodec: 'aac' });
+        const args = (StreamClientScrcpy.start as ReturnType<typeof vi.fn>).mock.calls[0];
+        expect(args[0].audioCodec).toBe('aac');
+    });
 });
