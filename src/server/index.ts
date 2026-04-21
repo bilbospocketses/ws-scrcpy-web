@@ -19,6 +19,7 @@ import { HttpServer } from './services/HttpServer';
 import type { Service, ServiceClass } from './services/Service';
 import { WebSocketServer } from './services/WebSocketServer';
 import { SCAN_WS_PATH } from '../common/ScanMessage';
+import { resolveNodePty } from './NodePtyResolver';
 
 const servicesToStart: ServiceClass[] = [HttpServer, WebSocketServer];
 
@@ -55,6 +56,10 @@ const scanner = new NetworkScanner({
 ScanMw.setScanner(scanner);
 
 async function loadGoogModules() {
+    // Resolve node-pty. If unavailable, shell modal will be disabled client-side
+    // via /api/capabilities (added in Task 5). Server still starts; don't block on this.
+    await resolveNodePty(config.dependenciesPath);
+
     const { ControlCenter } = await import('./goog-device/services/ControlCenter');
     const { DeviceTracker } = await import('./goog-device/mw/DeviceTracker');
 
