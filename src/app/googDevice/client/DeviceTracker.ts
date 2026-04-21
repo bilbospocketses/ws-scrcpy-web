@@ -19,6 +19,53 @@ import {
     defaultAudioSourceForSdk,
 } from '../../../common/AudioDefaults';
 
+// ---------- capability gating ----------
+
+interface Capabilities {
+    shell: boolean;
+}
+
+let capabilitiesCache: Capabilities | undefined;
+let capabilitiesPromise: Promise<Capabilities> | undefined;
+
+function getCapabilities(): Promise<Capabilities> {
+    if (capabilitiesCache) return Promise.resolve(capabilitiesCache);
+    if (capabilitiesPromise) return capabilitiesPromise;
+    capabilitiesPromise = fetch('/api/capabilities')
+        .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))))
+        .then((data: Capabilities) => {
+            capabilitiesCache = data;
+            return data;
+        })
+        .catch(() => {
+            // Fetch failed → fail open: shell button stays clickable; backend will
+            // reject at click time anyway. Avoids disabling shell on network hiccups.
+            capabilitiesCache = { shell: true };
+            return capabilitiesCache as Capabilities;
+        });
+    return capabilitiesPromise;
+}
+
+function applyShellCapability(link: HTMLAnchorElement, available: boolean): void {
+    if (available) return; // default state is enabled — nothing to do
+    // Visually disable: pointer-events off, muted opacity, tooltip explaining why
+    link.style.pointerEvents = 'none';
+    link.style.opacity = '0.4';
+    link.title =
+        'Shell unavailable — no node-pty prebuilt matches your Node version. ' +
+        'Update Node in the Dependencies panel or wait for the next prebuild release.';
+    // Belt-and-suspenders: also block keyboard activation
+    link.setAttribute('aria-disabled', 'true');
+    link.setAttribute('tabindex', '-1');
+}
+
+// Kick off the fetch early so the result is ready when the first device renders.
+// Brief flash-of-enabled is acceptable: button appears enabled, then is patched
+// async. Any click before patch resolves opens ShellModal which will fail at the
+// WebSocket layer — the same error path as a server-side rejection.
+getCapabilities();
+
+// ---------- end capability gating ----------
 
 export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never> {
     public static readonly ACTION = ACTION.GOOG_DEVICE_LIST;
@@ -299,6 +346,15 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
                 const { ShellModal } = await import('./ShellModal');
                 new ShellModal(device.udid, label, this.params);
             });
+
+            // Gate shell link on server-side node-pty availability.
+            // If capabilities are already cached, apply immediately (no flash).
+            // Otherwise patch once the in-flight fetch resolves.
+            if (capabilitiesCache !== undefined) {
+                applyShellCapability(shellLink, capabilitiesCache.shell);
+            } else {
+                getCapabilities().then((caps) => applyShellCapability(shellLink, caps.shell));
+            }
         }
 
         // Intercept list files links — open ListFilesModal instead of navigating to new tab

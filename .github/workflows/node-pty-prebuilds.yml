@@ -1,0 +1,199 @@
+name: node-pty prebuilds
+
+on:
+  schedule:
+    - cron: '0 9 * * 1'       # Mondays 09:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write   # to commit state file + create releases
+  issues: write     # to open failure issues
+
+jobs:
+  precheck:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.check.outputs.changed }}
+      node_pty_version: ${{ steps.check.outputs.node_pty_version }}
+      current_node_version: ${{ steps.check.outputs.current_node_version }}
+      current_node_version_bare: ${{ steps.check.outputs.current_node_version_bare }}
+      current_node_abi: ${{ steps.check.outputs.current_node_abi }}
+      prior_node_version: ${{ steps.check.outputs.prior_node_version }}
+      prior_node_version_bare: ${{ steps.check.outputs.prior_node_version_bare }}
+      prior_node_abi: ${{ steps.check.outputs.prior_node_abi }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - id: check
+        run: |
+          set +e
+          node scripts/compute-matrix-versions.mjs > /tmp/check.json
+          RC=$?
+          set -e
+          CHANGED=$([ "$RC" = "1" ] && echo "true" || echo "false")
+          echo "changed=$CHANGED" >> "$GITHUB_OUTPUT"
+          jq -r '.fresh | "node_pty_version=\(.nodePtyVersion)"' /tmp/check.json >> "$GITHUB_OUTPUT"
+          jq -r '.fresh.nodeCurrentLts | "current_node_version=\(.version)\ncurrent_node_abi=\(.abi)"' /tmp/check.json >> "$GITHUB_OUTPUT"
+          jq -r '.fresh.nodePriorLts | "prior_node_version=\(.version)\nprior_node_abi=\(.abi)"' /tmp/check.json >> "$GITHUB_OUTPUT"
+          # v-stripped forms for Docker Hub tags (node:24.15.0-alpine etc.)
+          jq -r '.fresh.nodeCurrentLts.version | sub("^v"; "") | "current_node_version_bare=\(.)"' /tmp/check.json >> "$GITHUB_OUTPUT"
+          jq -r '.fresh.nodePriorLts.version | sub("^v"; "") | "prior_node_version_bare=\(.)"' /tmp/check.json >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: precheck
+    if: needs.precheck.outputs.changed == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest,    arch: x64,   libc: '',    abi_label: current, container: '' }
+          - { os: windows-latest,    arch: x64,   libc: '',    abi_label: prior,   container: '' }
+          - { os: windows-11-arm,    arch: arm64, libc: '',    abi_label: current, container: '' }
+          - { os: windows-11-arm,    arch: arm64, libc: '',    abi_label: prior,   container: '' }
+          - { os: ubuntu-latest,     arch: x64,   libc: glibc, abi_label: current, container: '' }
+          - { os: ubuntu-latest,     arch: x64,   libc: glibc, abi_label: prior,   container: '' }
+          - { os: ubuntu-24.04-arm,  arch: arm64, libc: glibc, abi_label: current, container: '' }
+          - { os: ubuntu-24.04-arm,  arch: arm64, libc: glibc, abi_label: prior,   container: '' }
+          - { os: ubuntu-latest,     arch: x64,   libc: musl,  abi_label: current, container: 'alpine' }
+          - { os: ubuntu-latest,     arch: x64,   libc: musl,  abi_label: prior,   container: 'alpine' }
+          - { os: ubuntu-24.04-arm,  arch: arm64, libc: musl,  abi_label: current, container: 'alpine' }
+          - { os: ubuntu-24.04-arm,  arch: arm64, libc: musl,  abi_label: prior,   container: 'alpine' }
+    runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container == 'alpine' && format('node:{0}-alpine', matrix.abi_label == 'current' && needs.precheck.outputs.current_node_version_bare || needs.precheck.outputs.prior_node_version_bare) || null }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build toolchain (Alpine)
+        if: matrix.container == 'alpine'
+        run: apk add --no-cache python3 make g++ tar gzip
+
+      - name: Setup Node (non-Alpine)
+        if: matrix.container == ''
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.abi_label == 'current' && needs.precheck.outputs.current_node_version || needs.precheck.outputs.prior_node_version }}
+
+      - name: Build node-pty prebuilt
+        shell: bash
+        run: |
+          set -e
+          UPSTREAM_VER="${{ needs.precheck.outputs.node_pty_version }}"
+          ABI="${{ matrix.abi_label == 'current' && needs.precheck.outputs.current_node_abi || needs.precheck.outputs.prior_node_abi }}"
+          PLATFORM="${{ startsWith(matrix.os, 'windows') && 'win32' || 'linux' }}"
+          ARCH="${{ matrix.arch }}"
+          LIBC_SUFFIX=""
+          if [ "$PLATFORM" = "linux" ]; then LIBC_SUFFIX="-${{ matrix.libc }}"; fi
+          KEY="node-pty-v${UPSTREAM_VER}-node-abi${ABI}-${PLATFORM}-${ARCH}${LIBC_SUFFIX}"
+
+          mkdir build && cd build
+          npm init -y
+          npm install --no-save "node-pty@${UPSTREAM_VER}"
+
+          PACK_DIR="../artifacts/${KEY}"
+          mkdir -p "$PACK_DIR"
+          cp node_modules/node-pty/build/Release/pty.node "$PACK_DIR/"
+          if [ "$PLATFORM" = "win32" ]; then
+            cp node_modules/node-pty/build/Release/conpty.node "$PACK_DIR/" 2>/dev/null || true
+            cp node_modules/node-pty/build/Release/*.dll "$PACK_DIR/" 2>/dev/null || true
+            cp node_modules/node-pty/build/Release/*.exe "$PACK_DIR/" 2>/dev/null || true
+          fi
+
+          cd ../artifacts
+          tar -czf "${KEY}.tar.gz" "${KEY}"
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "${KEY}.tar.gz" > "${KEY}.tar.gz.sha256"
+          else
+            shasum -a 256 "${KEY}.tar.gz" > "${KEY}.tar.gz.sha256"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prebuilt-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.libc }}-${{ matrix.abi_label }}
+          path: artifacts/*
+
+  publish:
+    needs: [precheck, build]
+    if: needs.precheck.outputs.changed == 'true' && needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: downloaded
+          pattern: prebuilt-*
+          merge-multiple: true
+
+      - name: Build SHA256SUMS + manifest
+        run: |
+          cd downloaded
+          cat *.sha256 > SHA256SUMS
+          rm -f *.sha256
+          UPSTREAM_VER="${{ needs.precheck.outputs.node_pty_version }}"
+          CURRENT_ABI="${{ needs.precheck.outputs.current_node_abi }}"
+          PRIOR_ABI="${{ needs.precheck.outputs.prior_node_abi }}"
+          cat > manifest.json <<JSON
+          {
+            "upstreamVersion": "${UPSTREAM_VER}",
+            "coveredAbis": ["${CURRENT_ABI}", "${PRIOR_ABI}"]
+          }
+          JSON
+          ls -la
+
+      - name: Commit state file
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/state/node-pty-prebuilds-state.json
+          git diff --cached --quiet && exit 0
+          git commit -m "chore(ci): bump node-pty prebuild state to node-pty v${{ needs.precheck.outputs.node_pty_version }}"
+          git push
+
+      - name: Create versioned release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: node-pty-prebuilds-v${{ needs.precheck.outputs.node_pty_version }}
+          name: "node-pty prebuilds v${{ needs.precheck.outputs.node_pty_version }}"
+          files: |
+            downloaded/*.tar.gz
+            downloaded/SHA256SUMS
+            downloaded/manifest.json
+          body: |
+            Prebuilt node-pty binaries for ws-scrcpy-web's NodePtyResolver fallback.
+
+            Upstream: microsoft/node-pty v${{ needs.precheck.outputs.node_pty_version }}
+            Covered ABIs: current ${{ needs.precheck.outputs.current_node_abi }} (Node ${{ needs.precheck.outputs.current_node_version }}), prior ${{ needs.precheck.outputs.prior_node_abi }} (Node ${{ needs.precheck.outputs.prior_node_version }})
+            Platforms: win32-x64, win32-arm64, linux-x64-glibc, linux-arm64-glibc, linux-x64-musl, linux-arm64-musl
+
+      - name: Update "latest" alias
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: node-pty-prebuilds-latest
+          name: "node-pty prebuilds (latest)"
+          files: |
+            downloaded/manifest.json
+          body: "Manifest pointing at the latest published prebuild release."
+
+  open-issue-on-failure:
+    needs: [precheck, build, publish]
+    if: failure() && needs.precheck.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const date = new Date().toISOString().split('T')[0];
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `prebuild-failure: node-pty matrix failed on ${date}`,
+              body: `One or more matrix rows failed in workflow run ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}.
+
+              Node-pty version: ${{ needs.precheck.outputs.node_pty_version }}
+              Current Node: ${{ needs.precheck.outputs.current_node_version }} (ABI ${{ needs.precheck.outputs.current_node_abi }})
+              Prior Node: ${{ needs.precheck.outputs.prior_node_version }} (ABI ${{ needs.precheck.outputs.prior_node_abi }})
+
+              Check the failing rows and investigate (commonly: runner image change, upstream build script change, or missing system package).`,
+              labels: ['prebuild-failure', 'ci'],
+            });

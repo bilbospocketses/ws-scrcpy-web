@@ -1,5 +1,5 @@
-import type { IPty } from 'node-pty';
-import * as pty from 'node-pty';
+import type { IPty } from '@homebridge/node-pty-prebuilt-multiarch';
+import { getNodePty } from '../../NodePtyResolver';
 import * as os from 'os';
 import type WS from 'ws';
 import { ACTION } from '../../../common/Action';
@@ -44,12 +44,16 @@ export class RemoteShell extends Mw {
     }
 
     public createTerminal(params: XtermServiceParameters): IPty {
+        const handle = getNodePty();
+        if (!handle?.available || !handle.pty) {
+            throw new Error(`node-pty not available: ${handle?.reason ?? 'resolver did not run'}`);
+        }
         const env = Object.assign({}, process.env) as any;
         env['COLORTERM'] = 'truecolor';
         const { cols = 80, rows = 24 } = params;
         const cwd = process.cwd();
         const file = OS_WINDOWS ? 'adb.exe' : 'adb';
-        const term = pty.spawn(file, ['-s', params.udid, 'shell'], {
+        const term = handle.pty.spawn(file, ['-s', params.udid, 'shell'], {
             name: 'xterm-256color',
             cols,
             rows,

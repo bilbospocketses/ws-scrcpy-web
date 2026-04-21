@@ -1368,3 +1368,97 @@ Benchmarks on Google TV Streamer 4K (hardwired Ethernet):
 | `src/server/api/DeviceDiscoveryApi.ts` | `screen-state` GET and `sleep-wake` POST endpoints |
 | `src/app/googDevice/client/DeviceTracker.ts` | Button rendering from descriptor state, click handler |
 | `src/style/devicelist.css` | Button styles (`.sleep-wake-btn`, `.state-on`, `.state-off`, `.state-unknown`) |
+
+## 18. node-pty Prebuilt Resolution
+
+`node-pty` is a native Node module used by the shell modal to spawn an
+interactive terminal. Historically it required a C++ toolchain at install
+time; as of SP1 (April 2026) the app uses a two-source prebuilt chain so
+no user ever compiles native code.
+
+### 18.1 Runtime Resolution
+
+At server startup, `src/server/NodePtyResolver.ts` executes a three-step
+chain and caches the result:
+
+1. **Homebridge prebuilts** — Try `@homebridge/node-pty-prebuilt-multiarch`
+   as installed by npm. Covers every platform + arch + libc + Node ABI
+   that homebridge publishes — which is most of the target matrix, most
+   of the time.
+
+2. **Disk cache** — If that fails to load, look for a cached prebuilt
+   under `dependencies/node-pty/prebuilds/{key}/pty.node`.
+   `@homebridge/node-pty-prebuilt-multiarch` does not use `node-gyp-build`;
+   its loader (`lib/prebuild-file-path.js`) resolves the binary at
+   `<package>/prebuilds/{platform}-{arch}/node.abi{modules}[.musl].node`
+   via a plain `fs.existsSync` at require-time. The resolver copies the
+   cached `.node` file to that exact path before the dynamic import so
+   homebridge's loader finds it.
+
+3. **GitHub Releases fallback** — If no cached prebuilt matches, fetch
+   `manifest.json` from our GH Release `node-pty-prebuilds-latest`. If
+   the manifest covers the current Node ABI, download the corresponding
+   tarball from the versioned release (`node-pty-prebuilds-v{upstream}`),
+   verify SHA256 against the release's `SHA256SUMS`, extract into the
+   cache, copy the `.node` file to homebridge's prebuilds directory, and
+   then import.
+
+If all three sources fail, the resolver returns `{ available: false }`
+and the shell modal is disabled client-side via `/api/capabilities`.
+Every other feature continues to work.
+
+### 18.2 Fallback Publisher Workflow
+
+A GitHub Actions workflow at `.github/workflows/node-pty-prebuilds.yml`
+runs weekly (Mondays 09:00 UTC) and on manual dispatch. A pre-check
+compares tracked state in `.github/state/node-pty-prebuilds-state.json`
+against the latest Node LTS list from `nodejs.org/dist/index.json` and
+the latest `microsoft/node-pty` upstream release. On any change, a 12-row
+matrix builds prebuilts for:
+
+```
+{win32 x64, win32 arm64, linux x64 glibc, linux arm64 glibc, linux x64 musl, linux arm64 musl}
+× {current LTS, prior LTS}
+```
+
+The workflow attaches the tarballs + `SHA256SUMS` + `manifest.json` to a
+versioned GitHub Release and updates a `node-pty-prebuilds-latest`
+release whose only asset is the manifest (used by the consumer resolver).
+Any failed matrix row auto-opens an issue tagged `prebuild-failure` with
+a link to the run.
+
+### 18.3 Libc Detection
+
+`src/server/libcDetect.ts` probes three signals to determine whether the
+runtime uses glibc or musl:
+
+- `process.report.header.glibcVersionRuntime` (Node 15.6+)
+- `/etc/alpine-release` file existence
+- `ldd --version` stderr output
+
+This ensures minimal containers without one or two signals still get a
+correct answer.
+
+### 18.4 Capability Surface
+
+`GET /api/capabilities` returns `{ shell: boolean }`. `DeviceTracker`
+fetches this once on mount and renders the shell anchor on each device
+card as disabled-via-CSS + `aria-disabled` + tooltip when
+`shell === false`.
+
+### 18.5 Files
+
+| File | Purpose |
+|------|---------|
+| `src/server/NodePtyResolver.ts` | Three-step resolution chain: homebridge → disk cache → GH Releases |
+| `src/server/libcDetect.ts` | glibc vs musl detection via process.report, alpine-release, ldd |
+| `src/server/api/CapabilitiesApi.ts` | `GET /api/capabilities` endpoint returning `{ shell: boolean }` |
+| `src/app/googDevice/client/DeviceTracker.ts` | Fetch capabilities on mount, gate shell anchor client-side |
+| `.github/workflows/node-pty-prebuilds.yml` | Weekly/manual dispatch CI; 12-row matrix, SHA256 verification, release publish |
+| `.github/state/node-pty-prebuilds-state.json` | Tracked build state (Node LTS versions, upstream release) |
+| `scripts/compute-matrix-versions.mjs` | Pre-check script for workflow matrix computation |
+
+### 18.6 Reference Docs
+
+- **Design spec:** `docs/superpowers/specs/2026-04-21-sp1-node-pty-prebuilts-design.md`
+- **Implementation plan:** `docs/superpowers/plans/2026-04-21-sp1-node-pty-prebuilts.md`
