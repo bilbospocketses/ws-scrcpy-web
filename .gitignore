@@ -18,6 +18,7 @@ spike/
 dependencies/node/
 dependencies/adb/
 dependencies/node-pty/
+dependencies/servy/
 .restart
 
 # Superpowers brainstorm artifacts

@@ -122,12 +122,23 @@ function main() {
         console.log('  seed/ skip (will be populated in P6 packaging)');
     }
 
-    // 9. Optional: servy-cli.exe (added by P3 fetch-servy.mjs)
-    const servyExe = join(REPO_ROOT, 'dependencies', 'servy-cli.exe');
-    if (existsSync(servyExe)) {
-        step('Copy servy-cli.exe', () => copyFileSync(servyExe, join(PUBLISH, 'servy-cli.exe')));
+    // 9. Servy CLI (P3). On Windows: invoke fetch-servy.mjs to download, verify
+    // (sha256), and place servy-cli.exe directly under publish/. On non-Windows
+    // hosts, fetch-servy.mjs no-ops; that's fine because the launcher EXEs above
+    // are Windows-only too.
+    const fetchServyScript = join(__dirname, 'fetch-servy.mjs');
+    if (process.platform === 'win32') {
+        step('Fetch + verify Servy', () => {
+            execFileSync(process.execPath, [fetchServyScript], { stdio: 'inherit' });
+        });
+        const placedServy = join(PUBLISH, 'servy-cli.exe');
+        if (!existsSync(placedServy)) {
+            throw new Error(
+                `fetch-servy.mjs returned 0 but ${placedServy} is missing; aborting stage.`,
+            );
+        }
     } else {
-        console.log('  servy-cli.exe skip (will be added in P3)');
+        console.log('  servy-cli.exe skip (non-Windows host)');
     }
 
     console.log('\npublish/ is ready for vpk pack.');

@@ -6,6 +6,7 @@ import { DependencyPanel } from './client/DependencyPanel';
 import { FirstRunBanner } from './client/FirstRunBanner';
 import { HostTracker } from './client/HostTracker';
 import { NetworkDiscoveryPanel } from './client/NetworkDiscoveryPanel';
+import { createSettingsHeader } from './client/SettingsHeader';
 import { createThemeToggle, initTheme } from './client/ThemeToggle';
 import type { Tool } from './client/Tool';
 import { WelcomeModal } from './client/WelcomeModal';
@@ -21,17 +22,9 @@ function maybeShowWelcomeModal(): void {
             new WelcomeModal({
                 webPort: runtime.webPort,
                 portWasAutoShifted: runtime.portWasAutoShifted,
-                onDecision: async (choice) => {
-                    const installMode = choice === 'service' ? 'user-service' : 'user';
-                    try {
-                        await fetch('/api/config', {
-                            method: 'PATCH',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ installMode, firstRunComplete: true }),
-                        });
-                    } catch {
-                        // Silent — first-run flag will retry on next load.
-                    }
+                onDecision: () => {
+                    // WelcomeModal owns persistence (install or PATCH) for P3+.
+                    // Caller may use this to refresh UI state if needed.
                 },
             });
         })
@@ -75,6 +68,7 @@ window.onload = async (): Promise<void> => {
         });
     }
 
+    document.body.appendChild(createSettingsHeader());
     document.body.appendChild(createThemeToggle());
 
     const pageContainer = document.createElement('div');

@@ -23,6 +23,31 @@
     background: var(--device-list-hover-color);
 }
 
+/* Settings (gear) header button — sits to the LEFT of the theme toggle.
+   Mirrors .theme-toggle dimensions/glassmorphism for visual consistency. */
+.settings-header {
+    position: fixed;
+    top: 12px;
+    right: 56px; /* 12px (theme-toggle right) + 36px (theme-toggle width) + 8px gap */
+    z-index: 100;
+    background: var(--device-list-default-color);
+    border: 1px solid var(--device-border-color);
+    border-radius: 50%;
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    color: var(--text-color);
+    transition: background-color 0.15s;
+    padding: 0;
+}
+
+.settings-header:hover {
+    background: var(--device-list-hover-color);
+}
+
 /* Page container — centers content, caps at 5 device cards */
 .page-container {
     max-width: 1800px;

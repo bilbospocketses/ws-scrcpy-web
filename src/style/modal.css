@@ -494,3 +494,110 @@ dialog.list-files-modal .modal-body {
     flex-direction: column;
     overflow: hidden;
 }
+
+/* ── Settings modal ── */
+dialog.settings-modal .modal-frame {
+    width: clamp(420px, 60vw, 640px);
+    max-height: 85vh;
+}
+
+dialog.settings-modal .settings-section {
+    padding: 0.75rem 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+[data-theme="light"] dialog.settings-modal .settings-section {
+    border-bottom-color: rgba(0, 0, 0, 0.08);
+}
+
+dialog.settings-modal .settings-section:last-child {
+    border-bottom: none;
+}
+
+dialog.settings-modal .settings-section-heading {
+    font-size: 14px;
+    font-weight: 600;
+    margin: 0 0 0.5rem;
+}
+
+dialog.settings-modal .settings-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.25rem;
+}
+
+dialog.settings-modal .settings-label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--text-color-light, #888);
+    font-size: 13px;
+}
+
+dialog.settings-modal .settings-input {
+    box-sizing: border-box;
+    background: var(--stream-bg-color, #1a1a2e);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+    color: var(--text-color, #ddd);
+    padding: 4px 8px;
+    width: 110px;
+    font: inherit;
+}
+
+[data-theme="light"] dialog.settings-modal .settings-input {
+    background: #fff;
+    border-color: rgba(0, 0, 0, 0.15);
+}
+
+dialog.settings-modal .settings-btn {
+    border: 0.5px solid var(--text-color, #ddd);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-color, #ddd);
+    padding: 6px 14px;
+    cursor: pointer;
+    font: inherit;
+}
+
+dialog.settings-modal .settings-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+dialog.settings-modal .settings-btn-primary {
+    color: #5b9aff;
+    border-color: #5b9aff;
+}
+
+dialog.settings-modal .settings-btn-danger {
+    color: #ff6b6b;
+    border-color: #ff6b6b;
+}
+
+dialog.settings-modal .settings-status {
+    margin: 0.25rem 0 0;
+    color: var(--text-color-light, #888);
+    font-size: 13px;
+    min-height: 1em;
+}
+
+dialog.settings-modal .settings-status-error {
+    color: var(--error-color, #ff6b6b);
+}
+
+dialog.settings-modal .settings-stub-note {
+    margin: 0;
+    color: var(--text-color-light, #888);
+    font-size: 13px;
+    font-style: italic;
+}
+
+dialog.settings-modal .settings-service-body {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+}

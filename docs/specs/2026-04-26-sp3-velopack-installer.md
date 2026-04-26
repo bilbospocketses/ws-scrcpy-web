@@ -37,7 +37,6 @@ A Velopack-based MSI installer for Windows, plus a Rust launcher (replaces the `
 
 ## Non-goals (deferred)
 
-- Linux Velopack installer (deferred until Windows path is battle-tested)
 - macOS support (perma-deferred per `feedback_no_macos.md`)
 - Custom MSI install-wizard UI (port picker, service picker, etc.) — Velopack's WiX template is fixed; we don't fork it
 - Single-instance detection (port already-in-use → open existing tab vs auto-shift) — deferred to v0.x polish
@@ -607,7 +606,7 @@ Don't delete published releases (breaks in-flight downloads). Mark broken releas
 | Item | Status |
 |---|---|
 | Single-instance detection (avoid two listeners on different ports if app already running) | Deferred to v0.x |
-| Linux Velopack installer | Deferred (Windows path validates the mechanism first) |
+| Linux Velopack installer + systemd service mode | **In-scope for SP3** as a later sub-phase; ships before SP3 closes. Windows path lands first to validate the Velopack mechanism, then Linux follows on the same release surface. P3 ships a `ServiceClient` interface + Windows `ServyClient` implementation + Linux `SystemdClient` stub so the Linux phase is purely additive. |
 | Notification style consistency follow-up (toasts, native confirms → styled modals) | Tracked in `todo_ws_scrcpy_web.md` post-SP3 |
 | Custom MSI install-wizard UI (port picker, service picker) | Not feasible without WiX template forking; covered via first-run modal |
 | Automated post-release smoke test in CI | Deferred to v0.x; manual checklist on Hyper-V for v0.1.0 |

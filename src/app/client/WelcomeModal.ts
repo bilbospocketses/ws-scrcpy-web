@@ -1,10 +1,17 @@
 import { Modal } from '../ui/Modal';
+import type { ServiceStatusResponse, ServiceInstallResponse } from '../../common/ServiceEvents';
 
 export type WelcomeChoice = 'service' | 'on-demand';
 
 export interface WelcomeModalOptions {
     webPort: number;
     portWasAutoShifted: boolean;
+    /**
+     * Notified after the modal has successfully persisted the user's decision
+     * (either via POST /api/service/install or PATCH /api/config). The caller
+     * does NOT need to issue any further requests — the modal owns first-run
+     * completion to keep the install/PATCH ordering correct.
+     */
     onDecision: (choice: WelcomeChoice) => void;
 }
 
@@ -12,6 +19,7 @@ export class WelcomeModal extends Modal {
     private opts!: WelcomeModalOptions;
     private yesBtn!: HTMLButtonElement;
     private noBtn!: HTMLButtonElement;
+    private statusEl!: HTMLElement;
 
     constructor(options: WelcomeModalOptions) {
         super({ title: 'Welcome to ws-scrcpy-web' });
@@ -78,6 +86,11 @@ export class WelcomeModal extends Modal {
         later.textContent = 'you can change this later in settings.';
         container.appendChild(later);
 
+        this.statusEl = document.createElement('p');
+        this.statusEl.style.cssText =
+            'margin: 0 0 12px; color: var(--text-color-light); font-size: 13px; min-height: 1em;';
+        container.appendChild(this.statusEl);
+
         const buttons = document.createElement('div');
         buttons.style.cssText = 'display: flex; gap: 12px; justify-content: flex-end; flex-wrap: wrap;';
 
@@ -86,7 +99,9 @@ export class WelcomeModal extends Modal {
         this.yesBtn.style.cssText =
             'border: 0.5px solid var(--text-color, #ddd); border-radius: 6px; ' +
             'background: transparent; color: #5b9aff; padding: 8px 16px; cursor: pointer;';
-        this.yesBtn.addEventListener('click', () => this.choose('service'));
+        this.yesBtn.addEventListener('click', () => {
+            void this.onYes();
+        });
         buttons.appendChild(this.yesBtn);
 
         this.noBtn = document.createElement('button');
@@ -94,15 +109,116 @@ export class WelcomeModal extends Modal {
         this.noBtn.style.cssText =
             'border: 0.5px solid var(--text-color, #ddd); border-radius: 6px; ' +
             'background: transparent; color: #5b9aff; padding: 8px 16px; cursor: pointer;';
-        this.noBtn.addEventListener('click', () => this.choose('on-demand'));
+        this.noBtn.addEventListener('click', () => {
+            void this.onNo();
+        });
         buttons.appendChild(this.noBtn);
 
         container.appendChild(buttons);
     }
 
-    private choose(choice: WelcomeChoice): void {
-        this.opts.onDecision(choice);
+    private setStatus(msg: string, isError = false): void {
+        this.statusEl.textContent = msg;
+        this.statusEl.style.color = isError
+            ? 'var(--error-color, #ff6b6b)'
+            : 'var(--text-color-light)';
+    }
+
+    private setBusy(busy: boolean): void {
+        this.yesBtn.disabled = busy;
+        this.noBtn.disabled = busy;
+    }
+
+    /** "Yes, install service" — try real service install; on Linux, fall back to user mode. */
+    private async onYes(): Promise<void> {
+        this.setBusy(true);
+        this.setStatus('checking service support…');
+
+        let statusResp: ServiceStatusResponse | null = null;
+        try {
+            const r = await fetch('/api/service/status');
+            if (r.ok) {
+                statusResp = (await r.json()) as ServiceStatusResponse;
+            }
+        } catch {
+            // fall through with statusResp=null
+        }
+
+        if (!statusResp) {
+            this.setStatus("couldn't reach server. try again?", true);
+            this.setBusy(false);
+            return;
+        }
+
+        if (!statusResp.supported) {
+            // Linux (or other unsupported platform): show notice + fall back to user mode.
+            const reason =
+                statusResp.unsupportedReason ||
+                'service mode is not supported on this platform.';
+            this.setStatus(`${reason} falling back to on-demand mode…`);
+            const ok = await this.patchConfig({ installMode: 'user', firstRunComplete: true });
+            if (!ok) {
+                this.setStatus("couldn't save preference. try again?", true);
+                this.setBusy(false);
+                return;
+            }
+            this.opts.onDecision('on-demand');
+            this.close();
+            return;
+        }
+
+        // Supported (Windows): real install.
+        this.setStatus('installing service…');
+        try {
+            const r = await fetch('/api/service/install', { method: 'POST' });
+            const data = (await r.json().catch(() => null)) as ServiceInstallResponse | null;
+            if (!r.ok || !data || data.ok !== true) {
+                const errMsg =
+                    data && data.ok === false
+                        ? data.error
+                        : `install failed (${r.status})`;
+                this.setStatus(errMsg, true);
+                this.setBusy(false);
+                return;
+            }
+            // Server has updated installMode on success. Defensively also PATCH
+            // firstRunComplete so the welcome modal does not re-appear on next
+            // load even if the backend's /install handler omits that flag.
+            // Failure here is non-fatal — install itself succeeded.
+            await this.patchConfig({ firstRunComplete: true });
+            this.opts.onDecision('service');
+            this.close();
+        } catch {
+            this.setStatus("couldn't reach server. try again?", true);
+            this.setBusy(false);
+        }
+    }
+
+    /** "No, run on demand" — PATCH config to lock in user mode + complete first-run. */
+    private async onNo(): Promise<void> {
+        this.setBusy(true);
+        this.setStatus('saving…');
+        const ok = await this.patchConfig({ installMode: 'user', firstRunComplete: true });
+        if (!ok) {
+            this.setStatus("couldn't save preference. try again?", true);
+            this.setBusy(false);
+            return;
+        }
+        this.opts.onDecision('on-demand');
         this.close();
+    }
+
+    private async patchConfig(body: Record<string, unknown>): Promise<boolean> {
+        try {
+            const r = await fetch('/api/config', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+            return r.ok;
+        } catch {
+            return false;
+        }
     }
 
     /** No-op: Modal base shows the dialog from its constructor. Provided for caller ergonomics. */
