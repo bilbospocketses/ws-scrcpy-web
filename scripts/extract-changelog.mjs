@@ -31,7 +31,7 @@ export const SIGNPATH_CREDIT =
     '_Signed via [SignPath Foundation](https://signpath.org)._\n\n';
 
 export const UNSIGNED_WARNING =
-    '> ⚠️ **This release is unsigned.** [SignPath Foundation](https://signpath.org) is reviewing our application for free OSS code-signing. Once approved, we\'ll cut a signed v0.1.1. Until then, you may see Windows SmartScreen warnings — verify integrity via the `SHA256SUMS` file in this release.\n\n';
+    '> ⚠️ **This release is unsigned.** [SignPath Foundation](https://signpath.org) is reviewing our application for free OSS code-signing. Once approved, the next release will be signed automatically. Until then, you may see Windows SmartScreen warnings — verify integrity via the `SHA256SUMS` file in this release.\n\n';
 
 /**
  * Strip a single leading `v` from a version string. `v0.1.0` -> `0.1.0`,

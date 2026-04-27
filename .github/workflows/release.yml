@@ -88,6 +88,7 @@ jobs:
             --packTitle "ws-scrcpy-web" `
             --packAuthors "ws-scrcpy-web contributors" `
             --channel ${{ needs.prepare.outputs.channel }} `
+            --icon assets/tray-icon.ico `
             -o Releases
 
       - name: Upload unsigned Setup.exe

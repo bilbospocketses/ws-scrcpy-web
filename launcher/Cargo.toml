@@ -19,5 +19,8 @@ serde_json.workspace = true
 velopack.workspace = true
 windows.workspace = true
 
+[build-dependencies]
+winresource.workspace = true
+
 [dev-dependencies]
 tempfile = "3.10"

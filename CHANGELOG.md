@@ -7,14 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Removed
-
-- **Windows MSI artifact withdrawn from the release pipeline.** The MSI we shipped in v0.1.0 was Velopack's `--msiDeploymentTool` output — designed for SCCM / Intune mass deployment, not user-clickable. Double-clicking it silently registered a "Deployment Tool" entry in Add/Remove Programs without installing the actual app. Setup.exe (per-user, wizardful) and Portable.zip remain the supported Windows install paths. A real user-facing WiX MSI is logged as a future enhancement; for v0.1.x this just removes the misleading artifact.
+## [0.1.1] - 2026-04-27
 
 ### Fixed
 
-- `fix(test)`: widen `libcDetect.test.ts` mocked `accessSync` path parameter from `string` to `fs.PathLike` to match the real `fs.accessSync` signature; unblocks CI `tsc --noEmit` step that started failing on `main` after v0.1.0.
-- `fix(server)`: `detectInstallScope` now uses `path.win32.dirname` for execPath splitting, so injected `platform: 'win32'` test cases resolve correctly on POSIX CI hosts (previously `path.dirname` treated backslashes as literals on Linux runners and returned `.`, making every Windows install look like `system`). No production behavior change on real Windows.
+- **Setup.exe now installs successfully on clean Windows boxes.** v0.1.0 failed with `VCRUNTIME140.dll was not found` → `application install hook failed` on any machine missing the Visual C++ Redistributable (true of a fresh Win11 install). The Rust launcher and tray binaries now statically link the MSVC C runtime (`-C target-feature=+crt-static`), so they have no runtime DLL dependency on VCRedist. Verified with `dumpbin /dependents`: only Windows-native DLLs remain.
+- Internal: `libcDetect.test.ts` mock typing widened from `string` to `fs.PathLike`, and `detectInstallScope` now uses `path.win32.dirname` for execPath splitting on POSIX CI hosts. CI-only fixes; no runtime behavior change.
+
+### Changed
+
+- **Branded app icon** now appears in Explorer, taskbar, Start Menu, Add/Remove Programs, and the Setup.exe installer itself. Previously all three displayed the default Rust toolchain / Velopack generic icon. Setup.exe gets it via `vpk pack --icon`; the launcher and tray binaries embed it via new `build.rs` files using the `winresource` crate.
+
+### Removed
+
+- **Windows MSI artifact withdrawn.** The MSI we shipped in v0.1.0 was Velopack's `--msiDeploymentTool` output — designed for SCCM / Intune mass deployment, not user-clickable (it silently registered as a "Deployment Tool" in Add/Remove Programs without installing the actual app). Setup.exe (per-user, wizardful) and Portable.zip remain the supported Windows install paths. A real user-facing WiX MSI is logged as a future enhancement.
 
 ## [0.1.0] - 2026-04-27
 
