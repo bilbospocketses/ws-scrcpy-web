@@ -18,7 +18,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::config::AppConfig;
+use common::config::AppConfig;
+
 use crate::log;
 
 const FLAG_INSTALL: &str = "--veloapp-install";

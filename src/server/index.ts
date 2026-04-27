@@ -6,6 +6,7 @@ import { CapabilitiesApi } from './api/CapabilitiesApi';
 import { ConfigApi } from './api/ConfigApi';
 import { DependencyApi } from './api/DependencyApi';
 import { DeviceDiscoveryApi } from './api/DeviceDiscoveryApi';
+import { ServerShutdownApi } from './api/ServerShutdownApi';
 import { ServiceApi } from './api/ServiceApi';
 import { Config } from './Config';
 import { DependencyManager } from './DependencyManager';
@@ -81,6 +82,9 @@ HttpServer.addApiHandler(configApi);
 
 const serviceApi = new ServiceApi();
 HttpServer.addApiHandler(serviceApi);
+
+const shutdownApi = new ServerShutdownApi();
+HttpServer.addApiHandler(shutdownApi);
 
 // Wire the scanner singleton
 const scanAdb = new AdbClient(config.adbPath);

@@ -1,22 +1,21 @@
 [package]
-name = "ws-scrcpy-web-launcher"
+name = "ws-scrcpy-web-common"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
 
-[[bin]]
-name = "ws-scrcpy-web-launcher"
-path = "src/main.rs"
+[lib]
+name = "common"
+path = "src/lib.rs"
 
 [dependencies]
 anyhow.workspace = true
-common = { path = "../common", package = "ws-scrcpy-web-common" }
-ctrlc.workspace = true
+png = "0.18"
 serde.workspace = true
 serde_json.workspace = true
-velopack.workspace = true
+tray-icon.workspace = true
 windows.workspace = true
 
 [dev-dependencies]

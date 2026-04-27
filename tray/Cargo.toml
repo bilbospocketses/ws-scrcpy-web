@@ -12,3 +12,6 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
+common = { path = "../common", package = "ws-scrcpy-web-common" }
+ureq.workspace = true
+windows.workspace = true

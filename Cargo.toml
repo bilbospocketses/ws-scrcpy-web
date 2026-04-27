@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["launcher", "tray"]
+members = ["common", "launcher", "tray"]
 
 [workspace.package]
 version = "0.1.0-pre.0"
@@ -14,11 +14,14 @@ anyhow = "1.0"
 ctrlc = "3.4"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+tray-icon = "0.22"
+ureq = { version = "2.10", default-features = false, features = ["tls"] }
 velopack = "0.0"
 windows = { version = "0.58", features = [
     "Win32_System_Threading",
     "Win32_System_Console",
     "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
 ] }
 
 [profile.release]

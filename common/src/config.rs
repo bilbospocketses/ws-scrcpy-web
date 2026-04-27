@@ -1,19 +1,16 @@
-// Read-only Rust view of `<installRoot>/config.json`.
-//
-// Mirrors only the three fields the Rust launcher needs for hook decisions
-// (per SP3 P2 Contract 1). The TS source of truth is `src/server/Config.ts`.
-//
-// Behavior:
-//   - Missing file -> `AppConfig::default()`.
-//   - Malformed JSON -> log warning, return `AppConfig::default()` (do NOT
-//     fail the hook; recovery during install/uninstall must not block on a
-//     bad config file).
-//   - Missing fields -> serde defaults via `#[serde(default)]`.
+//! Read-only view of `<installRoot>/config.json`.
+//!
+//! Mirrors only the fields the Rust binaries (launcher + tray helper) need.
+//! The TS source of truth is `src/server/Config.ts`.
+//!
+//! Two load entry points:
+//!   - [`AppConfig::load`] — lenient: missing/malformed -> default. Never logs.
+//!     Callers that want logging on the fallback path use `load_strict`.
+//!   - [`AppConfig::load_strict`] — strict: missing -> Err, malformed -> Err.
 
 use serde::Deserialize;
+use std::fmt;
 use std::path::Path;
-
-use crate::log;
 
 #[derive(Debug, Deserialize, Default, PartialEq, Eq)]
 #[serde(default)]
@@ -26,6 +23,38 @@ pub struct AppConfig {
     pub web_port: Option<u16>,
 }
 
+/// Errors from [`AppConfig::load_strict`]. Lenient [`AppConfig::load`] never
+/// returns errors — it always falls back to [`AppConfig::default`].
+#[derive(Debug)]
+pub enum ConfigError {
+    /// `config.json` not present at the expected path.
+    Missing,
+    /// I/O failure while reading the file.
+    Io(std::io::Error),
+    /// JSON parse failure.
+    Json(serde_json::Error),
+}
+
+impl fmt::Display for ConfigError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ConfigError::Missing => write!(f, "config.json not found"),
+            ConfigError::Io(e) => write!(f, "config.json read failed: {e}"),
+            ConfigError::Json(e) => write!(f, "config.json parse failed: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for ConfigError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            ConfigError::Missing => None,
+            ConfigError::Io(e) => Some(e),
+            ConfigError::Json(e) => Some(e),
+        }
+    }
+}
+
 impl AppConfig {
     /// `installMode` ends in `-service` (i.e., service-mode install).
     pub fn is_service_mode(&self) -> bool {
@@ -34,33 +63,30 @@ impl AppConfig {
             .is_some_and(|m| m.ends_with("-service"))
     }
 
-    /// Read from a specific path. Missing file -> default. Bad JSON -> default + warn.
-    pub fn load_from(path: &Path) -> Self {
+    /// Strict load from a specific path. Missing file or parse error -> Err.
+    pub fn load_strict_from(path: &Path) -> Result<Self, ConfigError> {
         if !path.exists() {
-            return Self::default();
+            return Err(ConfigError::Missing);
         }
-        match std::fs::read_to_string(path) {
-            Ok(text) => match serde_json::from_str::<AppConfig>(&text) {
-                Ok(cfg) => cfg,
-                Err(e) => {
-                    log::error(&format!(
-                        "config: failed to parse {path:?}: {e}; using defaults"
-                    ));
-                    Self::default()
-                }
-            },
-            Err(e) => {
-                log::error(&format!(
-                    "config: failed to read {path:?}: {e}; using defaults"
-                ));
-                Self::default()
-            }
-        }
+        let text = std::fs::read_to_string(path).map_err(ConfigError::Io)?;
+        serde_json::from_str::<AppConfig>(&text).map_err(ConfigError::Json)
     }
 
-    /// Read from `<install_root>/config.json`.
+    /// Strict load from `<install_root>/config.json`.
+    pub fn load_strict(install_root: &Path) -> Result<Self, ConfigError> {
+        Self::load_strict_from(&install_root.join("config.json"))
+    }
+
+    /// Lenient load from a specific path. Missing or malformed -> default.
+    /// Never logs; callers that want feedback on the fallback path should
+    /// use [`AppConfig::load_strict_from`] and log themselves.
+    pub fn load_from(path: &Path) -> Self {
+        Self::load_strict_from(path).unwrap_or_default()
+    }
+
+    /// Lenient load from `<install_root>/config.json`.
     pub fn load(install_root: &Path) -> Self {
-        Self::load_from(&install_root.join("config.json"))
+        Self::load_strict(install_root).unwrap_or_default()
     }
 }
 
@@ -155,5 +181,32 @@ mod tests {
         assert!(mk(Some("system-service")).is_service_mode());
         assert!(!mk(Some("system")).is_service_mode());
         assert!(!mk(None).is_service_mode());
+    }
+
+    #[test]
+    fn load_strict_returns_missing_for_absent_file() {
+        let dir = tempdir().unwrap();
+        let err = AppConfig::load_strict(dir.path()).unwrap_err();
+        assert!(matches!(err, ConfigError::Missing));
+    }
+
+    #[test]
+    fn load_strict_returns_json_err_for_malformed_file() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("config.json"), "{not valid").unwrap();
+        let err = AppConfig::load_strict(dir.path()).unwrap_err();
+        assert!(matches!(err, ConfigError::Json(_)));
+    }
+
+    #[test]
+    fn load_strict_succeeds_for_valid_file() {
+        let dir = tempdir().unwrap();
+        fs::write(
+            dir.path().join("config.json"),
+            r#"{"installMode":"user-service"}"#,
+        )
+        .unwrap();
+        let cfg = AppConfig::load_strict(dir.path()).unwrap();
+        assert!(cfg.is_service_mode());
     }
 }

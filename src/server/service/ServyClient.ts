@@ -26,14 +26,22 @@
  * `not-installed`.
  */
 
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { Logger } from '../Logger';
 import type {
     ServiceClient,
     ServiceInstallOptions,
     ServiceStatus,
 } from './ServiceClient';
+
+const log = Logger.for('ServyClient');
+
+/** HKCU Run-key path — user-scope autostart. Survives without admin elevation. */
+const TRAY_RUN_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
+/** Run-key value name; matches the binary name conventionally. */
+const TRAY_RUN_VALUE = 'WsScrcpyWebTray';
 
 /**
  * Resolve the absolute path of `servy-cli.exe`.
@@ -151,10 +159,42 @@ export class ServyClient implements ServiceClient {
             '--logPath', opts.logPath,
         ];
         runServy(this.servyPath, args);
+
+        // SP3 P4a — register and spawn the tray helper for user-login autostart.
+        // The Servy registration above succeeded; tray is a UX nicety on top, so
+        // we tolerate failures without bubbling them up. The user's service is
+        // already installed; tray-icon failure is a degraded but functional mode.
+        try {
+            const trayPath = this.resolveTrayHelperPath();
+            this.registerTrayRunKey(trayPath);
+            // Detached + unref'd so the helper process outlives this API call
+            // and continues running independently of the Node server lifecycle.
+            spawn(trayPath, [], { detached: true, stdio: 'ignore' }).unref();
+        } catch (err) {
+            log.warn(
+                `tray helper setup failed (service install succeeded): ${
+                    (err as Error).message
+                }`,
+            );
+        }
     }
 
     public async uninstall(name: string): Promise<void> {
         runServy(this.servyPath, ['uninstall', '--name', name]);
+
+        // SP3 P4a — best-effort removal of the tray Run-key. The Servy uninstall
+        // above already succeeded; failure to remove the Run-key shouldn't
+        // bubble up. Worst case the user sees a stale Run-key entry on next
+        // login that fails silently when the binary is gone.
+        try {
+            this.unregisterTrayRunKey();
+        } catch (err) {
+            log.warn(
+                `tray Run-key removal failed (service uninstall succeeded): ${
+                    (err as Error).message
+                }`,
+            );
+        }
     }
 
     public async status(name: string): Promise<ServiceStatus> {
@@ -168,5 +208,84 @@ export class ServyClient implements ServiceClient {
 
     public async stop(name: string): Promise<void> {
         runServy(this.servyPath, ['stop', '--name', name]);
+    }
+
+    /**
+     * Resolve the absolute path of the tray helper exe. Mirrors
+     * `resolveServyPath`'s dual-layout strategy:
+     *   1. Installed (Velopack): sibling of the launcher in `process.cwd()`.
+     *   2. Dev / from-source: `<cwd>/publish/ws-scrcpy-web-tray.exe`.
+     *
+     * Throws a descriptive error listing both attempted paths if neither
+     * exists — install() catches and downgrades this to a warning.
+     */
+    private resolveTrayHelperPath(): string {
+        const installedCandidate = path.join(process.cwd(), 'ws-scrcpy-web-tray.exe');
+        if (fs.existsSync(installedCandidate)) return installedCandidate;
+        const cwdPublishCandidate = path.join(process.cwd(), 'publish', 'ws-scrcpy-web-tray.exe');
+        if (fs.existsSync(cwdPublishCandidate)) return cwdPublishCandidate;
+        throw new Error(
+            `ws-scrcpy-web-tray.exe not found (looked at ${installedCandidate} and ${cwdPublishCandidate})`,
+        );
+    }
+
+    /**
+     * Register the tray helper to auto-start at user login via HKCU Run-key.
+     * Idempotent — `/f` overwrites any existing value with the same name.
+     *
+     * Uses `reg.exe` with array-form args (no shell interpolation) so a path
+     * containing spaces or special chars cannot inject extra arguments.
+     */
+    private registerTrayRunKey(trayHelperPath: string): void {
+        execFileSync(
+            'reg.exe',
+            [
+                'add',
+                TRAY_RUN_KEY,
+                '/v', TRAY_RUN_VALUE,
+                '/t', 'REG_SZ',
+                '/d', trayHelperPath,
+                '/f',
+            ],
+            { stdio: ['ignore', 'pipe', 'pipe'] },
+        );
+    }
+
+    /**
+     * Remove the tray helper Run-key entry. Tolerant of "value does not exist"
+     * (already removed / never installed); other reg.exe failures rethrow.
+     *
+     * reg.exe localizes its error messages, so we match a couple of English
+     * substrings observed on en-US Windows. On non-English locales we may
+     * surface a spurious error; install/uninstall both wrap this in a try
+     * block that logs and proceeds, so the worst-case impact is a noisy log
+     * rather than a failed uninstall.
+     */
+    private unregisterTrayRunKey(): void {
+        try {
+            execFileSync(
+                'reg.exe',
+                [
+                    'delete',
+                    TRAY_RUN_KEY,
+                    '/v', TRAY_RUN_VALUE,
+                    '/f',
+                ],
+                { stdio: ['ignore', 'pipe', 'pipe'] },
+            );
+        } catch (err) {
+            const e = err as NodeJS.ErrnoException & {
+                stderr?: Buffer | string;
+                stdout?: Buffer | string;
+            };
+            const stderr = typeof e.stderr === 'string' ? e.stderr : e.stderr?.toString('utf8') ?? '';
+            const stdout = typeof e.stdout === 'string' ? e.stdout : e.stdout?.toString('utf8') ?? '';
+            const detail = `${stderr}\n${stdout}\n${e.message ?? ''}`;
+            if (/cannot find/i.test(detail) || /system was unable to find/i.test(detail)) {
+                // Run-key was already absent — desired post-state achieved.
+                return;
+            }
+            throw err;
+        }
     }
 }
