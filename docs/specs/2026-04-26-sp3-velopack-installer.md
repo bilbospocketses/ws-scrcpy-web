@@ -411,9 +411,24 @@ vpk pack \
 
 ### Code signing
 
-Microsoft Trusted Signing — Basic tier ($9.99/mo, covers all our apps under one identity, 5,000 sigs/month quota). Velopack supports via `--azureTrustedSignFile metadata.json`.
+**SignPath Foundation OSS program** (free for verified open-source projects per https://signpath.org/free-for-open-source) — applied 2026-04-27, awaiting approval (typically 2-4 weeks).
 
-CI step downloads signing metadata from a secret (`secrets.AZURE_TRUSTED_SIGNING_METADATA`), invokes vpk pack with the flag, signs all .exe / .msi / .nupkg artifacts.
+Two signing policies under one SignPath account:
+- **Windows policy:** Authenticode → signs inner `ws-scrcpy-web-launcher.exe` + `ws-scrcpy-web-tray.exe` pre-pack, signs the MSI post-pack
+- **Linux policy:** detached GPG → produces `.AppImage.sig` alongside the AppImage post-pack (per https://docs.signpath.io/crypto-providers/gpg)
+
+CI uses `signpath/github-action-submit-signing-request@v2` with `wait-for-completion: true` to submit unsigned artifacts and download signed versions in the same workflow. Single secret: `SIGNPATH_API_TOKEN`. Three non-secret identifiers in workflow YAML: organization-id, project-slug (one per policy), signing-policy-slug.
+
+**Estimated quota usage:** ~4 signatures per release (launcher + tray exes, MSI, AppImage). Well under SignPath Foundation's typical limits.
+
+**SignPath OSS program requirement:** the downloads page must mention SignPath Foundation. Satisfied via:
+- README "Downloads" section includes the credit
+- Every GitHub Release page auto-prepends `_Signed via [SignPath Foundation](https://signpath.org)._` to release notes via `scripts/extract-changelog.mjs`
+- `docs/RELEASING.md` notes the requirement to prevent drift
+
+**Pre-approval workflow:** `release.yml` infers signing mode from the presence of `SIGNPATH_API_TOKEN` secret. When the secret is absent (today), workflow runs in **unsigned mode** — produces all artifacts plus a `SHA256SUMS` file, publishes to GH Release with a prominent "⚠️ Unsigned: SignPath approval pending" notice auto-prepended. **v0.1.0 = unsigned** (gives SignPath a live download URL to test against per their review process). **v0.1.1 = first signed release**, cut once SignPath approves and the secret is added; the unsigned-mode notice automatically disappears.
+
+**Alternative considered + rejected: Microsoft Trusted Signing** ($9.99/mo, faster identity validation ~3-5 days). Worse SmartScreen reputation than DigiCert EV; ongoing $120/year vs $0 for SignPath OSS. Trusted Signing remains a valid fallback if SignPath OSS approval is denied.
 
 ### `publish/` folder contents
 

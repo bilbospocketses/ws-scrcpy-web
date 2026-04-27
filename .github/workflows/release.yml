@@ -1,0 +1,214 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      channel: ${{ steps.channel.outputs.channel }}
+      signing_mode: ${{ steps.signing.outputs.mode }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+      - id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      - id: channel
+        run: |
+          if [[ "${GITHUB_REF_NAME}" == *-beta* ]]; then
+            echo "channel=beta" >> "$GITHUB_OUTPUT"
+          else
+            echo "channel=stable" >> "$GITHUB_OUTPUT"
+          fi
+      - id: signing
+        env:
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+        run: |
+          if [ -n "$SIGNPATH_API_TOKEN" ]; then
+            echo "mode=signed" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=unsigned" >> "$GITHUB_OUTPUT"
+          fi
+      - run: node scripts/assert-version-sync.mjs ${{ github.ref_name }}
+
+  build-windows:
+    needs: prepare
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          cache: npm
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.x
+      - uses: dtolnay/rust-toolchain@stable
+      - run: dotnet tool install -g vpk
+      - run: npm ci --omit=dev
+      - run: npm run build
+      - run: cargo build --release --workspace
+      - run: node scripts/fetch-servy.mjs
+      - run: node scripts/stage-publish.mjs
+
+      - name: Upload unsigned exes
+        if: needs.prepare.outputs.signing_mode == 'signed'
+        id: upload-unsigned-exes
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-windows-exes
+          path: |
+            publish/ws-scrcpy-web-launcher.exe
+            publish/ws-scrcpy-web-tray.exe
+      - name: Sign inner exes via SignPath
+        if: needs.prepare.outputs.signing_mode == 'signed'
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_WINDOWS_POLICY_SLUG }}
+          github-artifact-id: ${{ steps.upload-unsigned-exes.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: publish/
+
+      - name: vpk pack
+        shell: pwsh
+        run: |
+          vpk pack `
+            --packId WsScrcpyWeb `
+            --packVersion ${{ needs.prepare.outputs.version }} `
+            --packDir publish `
+            --mainExe ws-scrcpy-web-launcher.exe `
+            --packTitle "ws-scrcpy-web" `
+            --packAuthors "ws-scrcpy-web contributors" `
+            --msi `
+            --instLocation Either `
+            --channel ${{ needs.prepare.outputs.channel }} `
+            -o Releases
+
+      - name: Upload unsigned MSI
+        if: needs.prepare.outputs.signing_mode == 'signed'
+        id: upload-unsigned-msi
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-windows-msi
+          path: Releases/*.msi
+      - name: Sign MSI via SignPath
+        if: needs.prepare.outputs.signing_mode == 'signed'
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_WINDOWS_POLICY_SLUG }}
+          github-artifact-id: ${{ steps.upload-unsigned-msi.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: Releases/
+
+      - name: Drop Velopack Setup.exe (we ship MSI only)
+        shell: pwsh
+        run: Remove-Item Releases/*-Setup.exe -Force -ErrorAction SilentlyContinue
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-final
+          path: |
+            Releases/*.msi
+            Releases/*-Portable.zip
+            Releases/*.nupkg
+            Releases/RELEASES
+            Releases/releases.${{ needs.prepare.outputs.channel }}.json
+
+  build-linux:
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          cache: npm
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.x
+      - uses: dtolnay/rust-toolchain@stable
+      - run: dotnet tool install -g vpk
+      - run: npm ci --omit=dev
+      - run: npm run build
+      - run: cargo build --release --workspace
+      - run: node scripts/stage-publish.mjs
+      - run: node scripts/package-linux.mjs
+
+      - name: Upload unsigned AppImage
+        if: needs.prepare.outputs.signing_mode == 'signed'
+        id: upload-unsigned-appimage
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-linux-appimage
+          path: Releases/*.AppImage
+      - name: Sign AppImage via SignPath (detached GPG)
+        if: needs.prepare.outputs.signing_mode == 'signed'
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_LINUX_POLICY_SLUG }}
+          github-artifact-id: ${{ steps.upload-unsigned-appimage.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: Releases/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-final
+          path: |
+            Releases/*.AppImage
+            Releases/*.AppImage.sig
+
+  publish:
+    needs: [prepare, build-windows, build-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Generate SHA256SUMS
+        run: |
+          cd artifacts
+          find . -type f \( -name '*.msi' -o -name '*.AppImage' -o -name '*.AppImage.sig' -o -name '*-Portable.zip' -o -name '*.nupkg' \) -exec sha256sum {} \; > ../SHA256SUMS
+          cd ..
+          cat SHA256SUMS
+
+      - name: Generate release notes
+        run: |
+          UNSIGNED_FLAG=""
+          if [ "${{ needs.prepare.outputs.signing_mode }}" = "unsigned" ]; then
+            UNSIGNED_FLAG="--unsigned"
+          fi
+          node scripts/extract-changelog.mjs ${{ github.ref_name }} $UNSIGNED_FLAG > release-notes.md
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          prerelease: ${{ needs.prepare.outputs.channel == 'beta' }}
+          body_path: release-notes.md
+          files: |
+            artifacts/windows-final/*.msi
+            artifacts/windows-final/*-Portable.zip
+            artifacts/windows-final/*.nupkg
+            artifacts/windows-final/RELEASES
+            artifacts/windows-final/releases.${{ needs.prepare.outputs.channel }}.json
+            artifacts/linux-final/*.AppImage
+            artifacts/linux-final/*.AppImage.sig
+            SHA256SUMS

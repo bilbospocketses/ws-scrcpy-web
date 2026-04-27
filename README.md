@@ -43,6 +43,18 @@ A modernized spiritual successor to [ws-scrcpy](https://github.com/NetrisTV/ws-s
 - **Server logging** -- all server output logged to `ws-scrcpy-web.log` with timestamps, tag prefixes, and 5MB rotation
 - Docker support (Dockerfile included)
 
+## Downloads
+
+Get the latest release from the [Releases page](https://github.com/bilbospocketses/ws-scrcpy-web/releases/latest):
+
+- **Windows (MSI):** `ws-scrcpy-web-<version>-Setup.msi` — installs to `%LOCALAPPDATA%` or `Program Files`, Velopack-managed auto-updates
+- **Windows (Portable ZIP):** `ws-scrcpy-web-<version>-Portable.zip` — unzip and run, no install
+- **Linux (AppImage):** `ws-scrcpy-web-<version>.AppImage` — `chmod +x` and run; see [Linux install](#linux-install-appimage) below
+
+Release artifacts are code-signed via [SignPath Foundation](https://signpath.org), which provides free code signing for OSS projects. Each release also ships a `SHA256SUMS` file you can verify against.
+
+For data-handling details, see our [Privacy Policy](PRIVACY.md).
+
 ## Requirements
 
 Required for building from source. See [Self-Contained Deployment](#self-contained-deployment) for standalone installations that bundle everything.
@@ -148,6 +160,18 @@ You can also install/uninstall the service later from Settings → Service.
 #### AppImage placement caveat
 
 The systemd unit's `ExecStart=` is set to the absolute AppImage path at install time. **Do not move or rename the AppImage after installing the service** — the service will fail to start on next boot/login. If you need to relocate the AppImage, uninstall the service first, move the file, then re-install.
+
+#### Verifying the AppImage signature
+
+Once SignPath Foundation's OSS approval lands (tracked for v0.1.1), each AppImage release will ship with a detached GPG signature alongside it. Verify with:
+
+```bash
+gpg --verify ws-scrcpy-web-<version>.AppImage.sig ws-scrcpy-web-<version>.AppImage
+```
+
+The public key for SignPath Foundation's Linux signing policy is published at <https://signpath.org/keys>.
+
+Until SignPath approval lands, the v0.1.0 release ships **unsigned** — the `.sig` file will not exist, and you'll need to verify integrity via the `SHA256SUMS` file in the release instead. The release notes for unsigned releases include a prominent notice. v0.1.1 will be the first signed release.
 
 #### glibc requirement
 

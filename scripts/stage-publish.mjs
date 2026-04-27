@@ -62,22 +62,36 @@ function requirePath(path, label) {
 }
 
 function main() {
-    console.log('Staging publish/ ...');
+    const isWindows = process.platform === 'win32';
+    const exeSuffix = isWindows ? '.exe' : '';
+    console.log(`Staging publish/ for ${isWindows ? 'Windows' : 'Linux'} ...`);
 
     // 1. Verify required prereqs (fail fast before any file ops)
-    const launcherExe = join(REPO_ROOT, 'target', 'release', 'ws-scrcpy-web-launcher.exe');
-    const trayExe = join(REPO_ROOT, 'target', 'release', 'ws-scrcpy-web-tray.exe');
+    const launcherBin = join(
+        REPO_ROOT,
+        'target',
+        'release',
+        `ws-scrcpy-web-launcher${exeSuffix}`,
+    );
+    // Tray helper is Windows-only (per P4b decision (b): common::tray returns
+    // Cancelled on non-Windows; no Linux tray binary is shipped). On Linux we
+    // skip both copy and prereq check.
+    const trayBin = isWindows
+        ? join(REPO_ROOT, 'target', 'release', 'ws-scrcpy-web-tray.exe')
+        : null;
     const distDir = join(REPO_ROOT, 'dist');
     const pkgJson = join(REPO_ROOT, 'package.json');
     const pkgLock = join(REPO_ROOT, 'package-lock.json');
-    const startCmd = join(REPO_ROOT, 'start.cmd');
+    // start.cmd is the legacy Windows dev launcher; not relevant for Linux
+    // packaging where the AppImage's main exe is the launcher itself.
+    const startCmd = isWindows ? join(REPO_ROOT, 'start.cmd') : null;
 
-    requirePath(launcherExe, 'launcher binary (cargo build --release)');
-    requirePath(trayExe, 'tray binary (cargo build --release)');
+    requirePath(launcherBin, 'launcher binary (cargo build --release)');
+    if (trayBin) requirePath(trayBin, 'tray binary (cargo build --release)');
     requirePath(distDir, 'dist/ (npm run build)');
     requirePath(pkgJson, 'package.json');
     requirePath(pkgLock, 'package-lock.json');
-    requirePath(startCmd, 'start.cmd');
+    if (startCmd) requirePath(startCmd, 'start.cmd');
 
     // 2. Clean publish/ for idempotency
     if (existsSync(PUBLISH)) {
@@ -86,10 +100,12 @@ function main() {
     mkdirSync(PUBLISH, { recursive: true });
 
     // 3. Binaries
-    step('Copy launcher.exe', () =>
-        copyFileSync(launcherExe, join(PUBLISH, 'ws-scrcpy-web-launcher.exe')),
+    step(`Copy launcher${exeSuffix}`, () =>
+        copyFileSync(launcherBin, join(PUBLISH, `ws-scrcpy-web-launcher${exeSuffix}`)),
     );
-    step('Copy tray.exe', () => copyFileSync(trayExe, join(PUBLISH, 'ws-scrcpy-web-tray.exe')));
+    if (trayBin) {
+        step('Copy tray.exe', () => copyFileSync(trayBin, join(PUBLISH, 'ws-scrcpy-web-tray.exe')));
+    }
 
     // 4. dist/
     step('Copy dist/', () => cpSync(distDir, join(PUBLISH, 'dist'), { recursive: true }));
@@ -111,8 +127,10 @@ function main() {
         });
     });
 
-    // 7. Legacy dev launcher
-    step('Copy start.cmd', () => copyFileSync(startCmd, join(PUBLISH, 'start.cmd')));
+    // 7. Legacy dev launcher (Windows only)
+    if (startCmd) {
+        step('Copy start.cmd', () => copyFileSync(startCmd, join(PUBLISH, 'start.cmd')));
+    }
 
     // 8. Optional: seed/ (added during P6 packaging finalization)
     const seedDir = join(REPO_ROOT, 'seed');
@@ -122,12 +140,10 @@ function main() {
         console.log('  seed/ skip (will be populated in P6 packaging)');
     }
 
-    // 9. Servy CLI (P3). On Windows: invoke fetch-servy.mjs to download, verify
-    // (sha256), and place servy-cli.exe directly under publish/. On non-Windows
-    // hosts, fetch-servy.mjs no-ops; that's fine because the launcher EXEs above
-    // are Windows-only too.
+    // 9. Servy CLI (P3) — Windows only. On Linux, systemd is the service manager
+    // (per P4b SystemdClient); no Servy binary is bundled.
     const fetchServyScript = join(__dirname, 'fetch-servy.mjs');
-    if (process.platform === 'win32') {
+    if (isWindows) {
         step('Fetch + verify Servy', () => {
             execFileSync(process.execPath, [fetchServyScript], { stdio: 'inherit' });
         });
@@ -138,10 +154,10 @@ function main() {
             );
         }
     } else {
-        console.log('  servy-cli.exe skip (non-Windows host)');
+        console.log('  servy-cli.exe skip (Linux uses systemd)');
     }
 
-    console.log('\npublish/ is ready for vpk pack.');
+    console.log(`\npublish/ is ready for vpk pack (${isWindows ? 'Windows MSI' : 'Linux AppImage'}).`);
 }
 
 main();

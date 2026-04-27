@@ -7,14 +7,23 @@ on:
     branches: [main]
 
 jobs:
-  build:
+  build-and-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: 24.x
           cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - run: npm ci
-      - run: npx @biomejs/biome check src/
+      - run: npx tsc --noEmit
+      - run: npm test
+      - run: cargo test --workspace
+      - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: npm run build
+      - name: Version sync (on tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: node scripts/assert-version-sync.mjs ${{ github.ref_name }}
