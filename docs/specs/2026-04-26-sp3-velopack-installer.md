@@ -545,8 +545,9 @@ Pattern uses Velopack's documented `file:///` feed support and the spike's porta
 | PR push | `npm test`, `tsc --noEmit`, `cargo test`, `cargo clippy -- -D warnings`, `npm run build` (smoke build) |
 | Tag push | All of above + `vpk pack` + signing + GH Release upload |
 
-### Pre-release manual checklist (run on Hyper-V VM)
+### Pre-release manual checklist (run on Hyper-V VM for Windows; user's 2 Linux VMs for Linux)
 
+**Windows checklist:**
 1. ✅ Install MSI (PerUser scope) — first-run modal appears, port shown, "Run as Service?" prompts
 2. ✅ Pick "No service" → home loads, Stop Server & Exit visible, tray icon present
 3. ✅ Tray click → "Exit ws-scrcpy-web?" → exit cleanly
@@ -559,6 +560,20 @@ Pattern uses Velopack's documented `file:///` feed support and the spike's porta
 10. ✅ Settings → "Uninstall ws-scrcpy-web" with "also remove user data" UNCHECKED → MSI uninstall fires → app removed but `dependencies/`, `config.json`, `logs/` preserved
 11. ✅ Re-install → first-run modal does NOT appear (firstRunComplete preserved); previous data intact
 12. ✅ Settings → "Uninstall" with "also remove user data" CHECKED → all data gone
+
+**P4a-specific verification (must pass before SP3 closes):**
+13. ✅ **Servy auto-restart-on-exit-0 behavior** (P4a risk item): in service mode, click tray helper → confirm exit → tray POSTs `/api/server/shutdown` → server replies 200 → server `process.exit(0)`. **Verify Servy does NOT auto-restart the service after this clean exit.** Open `services.msc` and confirm `ws-scrcpy-web` is in `Stopped` state and stays stopped (wait 30s to be sure). If Servy DOES auto-restart, document the workaround: ServerShutdownApi handler must call `servy stop self` before `process.exit(0)`. Fix is bounded (~10 lines in ServerShutdownApi.ts + a status-detection branch in ServyClient).
+14. ✅ Tray helper Run-key verification: after service install, check `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\WsScrcpyWebTray` exists and points at `<installRoot>\current\ws-scrcpy-web-tray.exe`. After service uninstall, verify the value is gone. After log-off + log-back-in, confirm tray icon auto-appears (Run-key fired).
+15. ✅ Tray helper survival across service restart: with service running and tray helper visible, restart Windows. After re-login, tray icon reappears (Run-key fired) and connects to the service that auto-started.
+16. ✅ Tray helper graceful degradation: stop the service via `services.msc` (NOT via the tray). Click the tray icon → POST fails (server gone) → tray helper exits silently. No error popups.
+
+**Linux checklist (P4b — runs once Linux sub-phase ships):**
+17. ✅ Install via .deb (or .rpm/.AppImage per P4b decisions) on Linux VM #1 — first-run flow analogous to Windows
+18. ✅ "Install as Service" creates systemd unit at `~/.config/systemd/user/ws-scrcpy-web.service` for user scope (or `/etc/systemd/system/` for system scope); `systemctl --user enable --now` (or `sudo systemctl enable --now`) succeeds
+19. ✅ Service survives logout (`loginctl enable-linger` on user-scope install) — verify with `who -u` showing no active session yet `systemctl --user status` shows running
+20. ✅ Settings → "Uninstall Service" calls `systemctl disable` + `systemctl stop` + removes unit file cleanly
+21. ✅ Tray icon on Linux: per P4b decision (DEs that support tray show it; DEs that don't get a documented "use Settings web UI to stop the server" fallback)
+22. ✅ Repeat all of above on Linux VM #2 with a different distro (e.g., VM #1 = Ubuntu, VM #2 = Fedora) to catch distro-specific issues
 
 Manual checklist gates the tag push for v0.1.0. CI automation deferred.
 
