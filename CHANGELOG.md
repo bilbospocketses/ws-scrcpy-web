@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **Windows MSI artifact withdrawn from the release pipeline.** The MSI we shipped in v0.1.0 was Velopack's `--msiDeploymentTool` output — designed for SCCM / Intune mass deployment, not user-clickable. Double-clicking it silently registered a "Deployment Tool" entry in Add/Remove Programs without installing the actual app. Setup.exe (per-user, wizardful) and Portable.zip remain the supported Windows install paths. A real user-facing WiX MSI is logged as a future enhancement; for v0.1.x this just removes the misleading artifact.
+
 ### Fixed
 
 - `fix(test)`: widen `libcDetect.test.ts` mocked `accessSync` path parameter from `string` to `fs.PathLike` to match the real `fs.accessSync` signature; unblocks CI `tsc --noEmit` step that started failing on `main` after v0.1.0.

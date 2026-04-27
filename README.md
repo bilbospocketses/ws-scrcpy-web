@@ -48,7 +48,6 @@ Input flows back as mouse, UHID keyboard, i16-fixed-point scroll, and a D-pad/To
 Get the latest release from the [Releases page](https://github.com/bilbospocketses/ws-scrcpy-web/releases/latest):
 
 - **Windows installer (`Setup.exe`)** — installs per-user under `%LOCALAPPDATA%`, no admin required, Velopack-managed auto-updates. Best for most Windows users.
-- **Windows MSI** — installs system-wide under `Program Files` (requires admin). For corporate / SCCM / Group Policy deployment scenarios. Same auto-update behavior as Setup.exe.
 - **Windows portable ZIP** — unzip and run; no install required, no auto-updates. Useful for air-gapped setups.
 - **Linux AppImage** — `chmod +x ws-scrcpy-web-<version>.AppImage` and run. See [Linux install](#linux-install-appimage) below.
 
