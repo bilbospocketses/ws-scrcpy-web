@@ -16,14 +16,17 @@ serde.workspace = true
 serde_json.workspace = true
 
 # Windows-only: the real tray icon implementation lives in `#[cfg(windows)]`
-# blocks of `src/tray.rs`. On Linux we ship a stub (P4b decision: path (b) —
-# defer the Linux tray; web UI Stop Server button covers the gap). Keeping
-# `tray-icon` and the `windows` crate conditional avoids pulling in
-# libappindicator / GTK3 system libraries on `cross check` for Linux targets,
-# which would otherwise fail without a custom Docker image.
+# blocks of `src/tray.rs`, built directly on `Shell_NotifyIconW` from the
+# `windows` crate. On Linux we ship a stub (P4b decision: path (b) — defer the
+# Linux tray; web UI Stop Server button covers the gap). Keeping `windows`
+# conditional avoids pulling Win32 bindings into Linux builds.
+#
+# Historical note: P4a originally used the `tray-icon` crate, which pulled
+# `glib`/`gtk`/`libappindicator` transitively on Linux (~30 crates) and
+# triggered dependabot alert GHSA-wrw7-89jp-8q8g (glib 0.18.5 unsoundness).
+# P4b cleanup replaced it with raw Win32 calls — drops the alert at the source
+# and removes the unmaintained gtk-rs gtk3 dep tree.
 [target.'cfg(windows)'.dependencies]
-png = "0.18"
-tray-icon.workspace = true
 windows.workspace = true
 
 [dev-dependencies]
