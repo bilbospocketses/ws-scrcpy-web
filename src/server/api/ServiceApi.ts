@@ -19,39 +19,9 @@ import {
     type ServiceClientFactoryResult,
 } from '../service';
 import type { ServiceAccount } from '../service/ServiceClient';
+import { readJsonBody } from './utils';
 
 const log = Logger.for('ServiceApi');
-
-/**
- * Drain `req` and parse a JSON body. Returns `{}` on empty body or parse
- * failure — the install endpoint treats body parsing as best-effort because
- * the body is optional (Linux defaults to user scope, Windows ignores it).
- */
-function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
-    return new Promise((resolve) => {
-        let body = '';
-        req.on('data', (chunk: Buffer) => {
-            body += chunk.toString();
-        });
-        req.on('end', () => {
-            if (body.length === 0) {
-                resolve({});
-                return;
-            }
-            try {
-                const parsed = JSON.parse(body);
-                if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-                    resolve(parsed as Record<string, unknown>);
-                    return;
-                }
-            } catch {
-                // fall through
-            }
-            resolve({});
-        });
-        req.on('error', () => resolve({}));
-    });
-}
 
 /**
  * HTTP API for SP3 P3 service-mode operations.

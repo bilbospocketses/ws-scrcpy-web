@@ -8,6 +8,7 @@ import { HostTracker } from './client/HostTracker';
 import { NetworkDiscoveryPanel } from './client/NetworkDiscoveryPanel';
 import { createSettingsHeader } from './client/SettingsHeader';
 import { createThemeToggle, initTheme } from './client/ThemeToggle';
+import { createUpdateButton } from './client/UpdateButton';
 import type { Tool } from './client/Tool';
 import { WelcomeModal } from './client/WelcomeModal';
 import type { AppConfigEnvelope } from '../common/ConfigEvents';
@@ -70,6 +71,7 @@ window.onload = async (): Promise<void> => {
 
     document.body.appendChild(createSettingsHeader());
     document.body.appendChild(createThemeToggle());
+    document.body.appendChild(createUpdateButton());
 
     const pageContainer = document.createElement('div');
     pageContainer.className = 'page-container';

@@ -8,7 +8,9 @@ import { DependencyApi } from './api/DependencyApi';
 import { DeviceDiscoveryApi } from './api/DeviceDiscoveryApi';
 import { ServerShutdownApi } from './api/ServerShutdownApi';
 import { ServiceApi } from './api/ServiceApi';
+import { UpdatesApi } from './api/UpdatesApi';
 import { Config } from './Config';
+import { UpdateService } from './UpdateService';
 import { DependencyManager } from './DependencyManager';
 import { findAvailablePort } from './PortPicker';
 import { DeviceLabelStore } from './DeviceLabelStore';
@@ -85,6 +87,11 @@ HttpServer.addApiHandler(serviceApi);
 
 const shutdownApi = new ServerShutdownApi();
 HttpServer.addApiHandler(shutdownApi);
+
+const updateService = new UpdateService();
+updateService.init();
+const updatesApi = new UpdatesApi(updateService);
+HttpServer.addApiHandler(updatesApi);
 
 // Wire the scanner singleton
 const scanAdb = new AdbClient(config.adbPath);

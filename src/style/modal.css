@@ -601,3 +601,29 @@ dialog.settings-modal .settings-service-body {
     align-items: flex-start;
     gap: 0.5rem;
 }
+
+/* ── Updates section (SP3 P5) ── */
+dialog.settings-modal .settings-updates-body {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+}
+
+dialog.settings-modal .settings-updates-body .settings-row {
+    margin-bottom: 0;
+}
+
+/* Wider input for the github-owner text field (the default 110px feels cramped). */
+dialog.settings-modal .settings-updates-body input[type="text"].settings-input {
+    width: 220px;
+}
+
+/* Tighter number input for the interval. */
+dialog.settings-modal .settings-updates-body input[type="number"].settings-input {
+    width: 90px;
+}
+
+dialog.settings-modal .settings-updates-status {
+    margin-top: 0.5rem;
+}

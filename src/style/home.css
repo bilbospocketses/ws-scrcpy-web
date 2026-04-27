@@ -298,3 +298,102 @@
 .discovery-dismiss-btn:hover:not(:disabled) {
     background: var(--danger-hover-bg) !important;
 }
+
+/* ── Update button (top-right, third from edge) ──
+   Layout: [update-button] ← [settings-header] ← [theme-toggle] ← right edge.
+   Theme toggle sits at right:12px (36px wide), settings-header at right:56px
+   (36px wide + 8px gap), so update-button starts at right:100px and grows
+   leftward (it's a pill, not a circle). Mirrors their glassmorphism. */
+.update-button-container {
+    position: fixed;
+    top: 12px;
+    right: 100px;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 36px;
+    padding: 0 12px;
+    background: var(--device-list-default-color);
+    border: 1px solid var(--device-border-color);
+    border-radius: 18px;
+    color: var(--text-color);
+    font-size: 13px;
+    font-family: var(--font-mono);
+    transition: background-color 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.update-button-container .update-button-label {
+    white-space: nowrap;
+}
+
+.update-button-container .update-button-action,
+.update-button-container .update-button-retry {
+    background: transparent;
+    border: none;
+    color: inherit;
+    font-family: var(--font-mono);
+    font-size: inherit;
+    cursor: pointer;
+    padding: 0;
+    white-space: nowrap;
+}
+
+.update-button-container .update-button-action:disabled,
+.update-button-container .update-button-retry:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.update-button-container .update-button-retry {
+    margin-left: 4px;
+    text-decoration: underline;
+}
+
+/* Spinner — pure CSS (no SVG). */
+.update-button-container .update-button-spinner {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border: 2px solid currentColor;
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: update-button-spin 0.8s linear infinite;
+}
+
+@keyframes update-button-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* State colors — map to existing CSS vars where they exist; fall back to
+   sensible literals matching the rest of the app's palette. */
+.update-button-container.state-checking {
+    color: var(--text-color-light);
+    border-color: var(--device-border-color);
+}
+
+.update-button-container.state-downloading {
+    color: #5b9aff; /* deep blue — matches .settings-btn-primary */
+    border-color: #5b9aff;
+}
+
+.update-button-container.state-downloading:hover {
+    background: var(--device-list-hover-color);
+}
+
+.update-button-container.state-ready {
+    color: var(--success-color, #4ade80);
+    border-color: var(--success-color, #4ade80);
+    cursor: pointer;
+}
+
+.update-button-container.state-ready:hover {
+    background: var(--success-hover-bg, rgba(74, 222, 128, 0.12));
+}
+
+.update-button-container.state-error {
+    color: var(--danger-color, #ff6b6b);
+    border-color: var(--danger-color, #ff6b6b);
+}
