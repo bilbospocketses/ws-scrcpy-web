@@ -45,6 +45,21 @@ export interface ServiceInstallOptions {
     envVars: Record<string, string>;
     /** Absolute path used for the service log file. */
     logPath: string;
+    /**
+     * Linux-only systemd scope selector.
+     *
+     *   - `'user'`   → unit at `~/.config/systemd/user/<name>.service`,
+     *                  installed without sudo, started via `systemctl --user`.
+     *                  `loginctl enable-linger` is invoked best-effort so the
+     *                  service survives logout.
+     *   - `'system'` → unit at `/etc/systemd/system/<name>.service`, requires
+     *                  root (the API enforces this with a 403 before reaching
+     *                  the client).
+     *
+     * Required on Linux (SystemdClient throws if undefined). Ignored on
+     * Windows — ServyClient consumes `account` instead.
+     */
+    scope?: 'user' | 'system';
 }
 
 /**

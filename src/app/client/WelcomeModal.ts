@@ -20,6 +20,18 @@ export class WelcomeModal extends Modal {
     private yesBtn!: HTMLButtonElement;
     private noBtn!: HTMLButtonElement;
     private statusEl!: HTMLElement;
+    /**
+     * Cached platform from the first /api/service/status fetch. We render
+     * with windows-style copy synchronously (matches existing flow), then
+     * patch the heading/scope chooser after the async fetch resolves.
+     */
+    private platform: NodeJS.Platform | null = null;
+    /** Linux-only: scope chooser fieldset. Hidden on Windows. */
+    private scopeFieldset: HTMLFieldSetElement | null = null;
+    private scopeUserRadio: HTMLInputElement | null = null;
+    private scopeSystemRadio: HTMLInputElement | null = null;
+    private headingEl: HTMLElement | null = null;
+    private descEl: HTMLElement | null = null;
 
     constructor(options: WelcomeModalOptions) {
         super({ title: 'Welcome to ws-scrcpy-web' });
@@ -28,6 +40,11 @@ export class WelcomeModal extends Modal {
         // Defer body/footer fill past class-field init phase (ES2022 useDefineForClassFields).
         queueMicrotask(() => {
             this.fillBody(this.bodyEl);
+            // Probe platform asynchronously so we can morph copy / show the
+            // Linux scope chooser. Failure is silent — the modal still works
+            // with the default Windows-style copy and the install POST will
+            // surface any platform-specific error inline.
+            void this.probePlatform();
         });
     }
 
@@ -71,15 +88,55 @@ export class WelcomeModal extends Modal {
 
         const heading = document.createElement('p');
         heading.style.cssText = 'margin: 0 0 8px; font-weight: 600; font-size: 14px;';
-        heading.textContent = 'run as a windows service?';
+        heading.textContent = 'run as a service?';
+        this.headingEl = heading;
         container.appendChild(heading);
 
         const desc = document.createElement('p');
         desc.style.cssText = 'margin: 0 0 8px;';
         desc.textContent =
             'recommended for always-on access (headless servers, multi-user setups). ' +
-            'the server starts with windows and runs in the background.';
+            'the server starts at login and runs in the background.';
+        this.descEl = desc;
         container.appendChild(desc);
+
+        // Linux-only scope chooser. Created hidden — probePlatform() unhides it
+        // when status.platform === 'linux' && supported. Windows leaves it
+        // hidden so the existing yes/no flow is bit-for-bit identical to P3/P4a.
+        const fieldset = document.createElement('fieldset');
+        fieldset.style.cssText =
+            'margin: 0 0 12px; padding: 8px 12px; ' +
+            'border: 1px solid rgba(255,255,255,0.12); border-radius: 6px; display: none;';
+        const legend = document.createElement('legend');
+        legend.textContent = 'scope';
+        legend.style.cssText = 'padding: 0 6px; font-size: 13px; color: var(--text-color-light);';
+        fieldset.appendChild(legend);
+
+        const userLabel = document.createElement('label');
+        userLabel.style.cssText = 'display: flex; align-items: center; gap: 8px; padding: 4px 0; cursor: pointer;';
+        const userRadio = document.createElement('input');
+        userRadio.type = 'radio';
+        userRadio.name = 'welcome-scope';
+        userRadio.value = 'user';
+        userRadio.checked = true;
+        userLabel.appendChild(userRadio);
+        userLabel.appendChild(document.createTextNode('just for me (no sudo)'));
+        fieldset.appendChild(userLabel);
+
+        const sysLabel = document.createElement('label');
+        sysLabel.style.cssText = 'display: flex; align-items: center; gap: 8px; padding: 4px 0; cursor: pointer;';
+        const sysRadio = document.createElement('input');
+        sysRadio.type = 'radio';
+        sysRadio.name = 'welcome-scope';
+        sysRadio.value = 'system';
+        sysLabel.appendChild(sysRadio);
+        sysLabel.appendChild(document.createTextNode('all users (requires sudo)'));
+        fieldset.appendChild(sysLabel);
+
+        this.scopeFieldset = fieldset;
+        this.scopeUserRadio = userRadio;
+        this.scopeSystemRadio = sysRadio;
+        container.appendChild(fieldset);
 
         const later = document.createElement('p');
         later.style.cssText = 'margin: 0 0 16px; color: var(--text-color-light); font-size: 13px;';
@@ -129,6 +186,45 @@ export class WelcomeModal extends Modal {
         this.noBtn.disabled = busy;
     }
 
+    /**
+     * One-shot platform probe driven from the constructor's queueMicrotask.
+     * On Linux+supported, surface the scope chooser and morph the copy to
+     * mention systemd. Windows path is bit-for-bit identical to P3/P4a.
+     */
+    private async probePlatform(): Promise<void> {
+        let statusResp: ServiceStatusResponse | null = null;
+        try {
+            const r = await fetch('/api/service/status');
+            if (r.ok) {
+                statusResp = (await r.json()) as ServiceStatusResponse;
+            }
+        } catch {
+            // Probe failure: leave default copy in place. onYes() will surface
+            // any real error when the install POST fails.
+        }
+        if (!statusResp) return;
+        this.platform = statusResp.platform;
+
+        if (statusResp.platform === 'linux' && statusResp.supported) {
+            if (this.headingEl) this.headingEl.textContent = 'run as a systemd service?';
+            if (this.descEl) {
+                this.descEl.textContent =
+                    'recommended for always-on access. the server starts at login ' +
+                    '(or boot, for system scope).';
+            }
+            if (this.scopeFieldset) {
+                this.scopeFieldset.style.display = '';
+            }
+        } else if (statusResp.platform === 'win32') {
+            if (this.headingEl) this.headingEl.textContent = 'run as a windows service?';
+            if (this.descEl) {
+                this.descEl.textContent =
+                    'recommended for always-on access (headless servers, multi-user setups). ' +
+                    'the server starts with windows and runs in the background.';
+            }
+        }
+    }
+
     /** "Yes, install service" — try real service install; on Linux, fall back to user mode. */
     private async onYes(): Promise<void> {
         this.setBusy(true);
@@ -167,10 +263,19 @@ export class WelcomeModal extends Modal {
             return;
         }
 
-        // Supported (Windows): real install.
+        // Supported. Linux: include scope in the body. Windows: empty body
+        // (the API ignores the body entirely on Windows).
         this.setStatus('installing service…');
+        const requestBody: { scope?: 'user' | 'system' } = {};
+        if (statusResp.platform === 'linux') {
+            requestBody.scope = this.scopeSystemRadio?.checked ? 'system' : 'user';
+        }
         try {
-            const r = await fetch('/api/service/install', { method: 'POST' });
+            const r = await fetch('/api/service/install', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(requestBody),
+            });
             const data = (await r.json().catch(() => null)) as ServiceInstallResponse | null;
             if (!r.ok || !data || data.ok !== true) {
                 const errMsg =

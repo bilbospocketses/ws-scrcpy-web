@@ -37,7 +37,8 @@
     "fetch-prebuilts": "node scripts/fetch-prebuilts.mjs",
     "version:bump": "node scripts/bump-version.mjs",
     "version:check": "node scripts/assert-version-sync.mjs",
-    "package:stage": "node scripts/stage-publish.mjs"
+    "package:stage": "node scripts/stage-publish.mjs",
+    "package:linux": "node scripts/package-linux.mjs"
   },
   "dependencies": {
     "velopack": "^0.0.1589-ga2c5a97",

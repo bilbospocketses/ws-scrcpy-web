@@ -8,6 +8,7 @@ import {
     WS_SCRCPY_SERVICE_NAME,
     type ServiceActionFailure,
     type ServiceActionSuccess,
+    type ServiceInstallRequest,
     type ServiceStatusResponse,
 } from '../../common/ServiceEvents';
 import { Config } from '../Config';
@@ -20,6 +21,37 @@ import {
 import type { ServiceAccount } from '../service/ServiceClient';
 
 const log = Logger.for('ServiceApi');
+
+/**
+ * Drain `req` and parse a JSON body. Returns `{}` on empty body or parse
+ * failure — the install endpoint treats body parsing as best-effort because
+ * the body is optional (Linux defaults to user scope, Windows ignores it).
+ */
+function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
+    return new Promise((resolve) => {
+        let body = '';
+        req.on('data', (chunk: Buffer) => {
+            body += chunk.toString();
+        });
+        req.on('end', () => {
+            if (body.length === 0) {
+                resolve({});
+                return;
+            }
+            try {
+                const parsed = JSON.parse(body);
+                if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+                    resolve(parsed as Record<string, unknown>);
+                    return;
+                }
+            } catch {
+                // fall through
+            }
+            resolve({});
+        });
+        req.on('error', () => resolve({}));
+    });
+}
 
 /**
  * HTTP API for SP3 P3 service-mode operations.
@@ -58,7 +90,7 @@ export class ServiceApi {
                 return await this.handleStatus(res);
             }
             if (req.method === 'POST' && url === '/api/service/install') {
-                return await this.handleInstall(res);
+                return await this.handleInstall(req, res);
             }
             if (req.method === 'POST' && url === '/api/service/uninstall') {
                 return await this.handleUninstall(res);
@@ -99,7 +131,7 @@ export class ServiceApi {
         return true;
     }
 
-    private async handleInstall(res: ServerResponse): Promise<boolean> {
+    private async handleInstall(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
         const result = this.factory();
         if (!result.supported) {
             const body: ServiceActionFailure = {
@@ -112,7 +144,36 @@ export class ServiceApi {
         }
 
         const cfg = Config.getInstance();
-        const scope = this.scope();
+
+        // Scope resolution differs by platform:
+        //   - Windows: ignore the request body, use the injected scope detector
+        //     (auto-detects from execPath via detectInstallScope()).
+        //   - Linux:   read `scope` from the request body, default to 'user'
+        //     when absent. If the caller asked for system scope but we're not
+        //     root, return 403 BEFORE invoking the client — SystemdClient also
+        //     guards this, but doing it at the API boundary lets us return a
+        //     clean HTTP error code.
+        let scope: 'user' | 'system';
+        if (result.platform === 'linux') {
+            const body = await readJsonBody(req);
+            const requested = (body as ServiceInstallRequest).scope;
+            scope = requested === 'system' ? 'system' : 'user';
+
+            if (scope === 'system' && process.getuid?.() !== 0) {
+                const failure: ServiceActionFailure = {
+                    ok: false,
+                    error:
+                        'system scope requires root. Relaunch the AppImage with sudo, ' +
+                        'or pick user scope.',
+                };
+                res.writeHead(403);
+                res.end(JSON.stringify(failure));
+                return true;
+            }
+        } else {
+            scope = this.scope();
+        }
+
         const account: ServiceAccount = scope === 'user' ? 'currentUser' : 'LocalSystem';
         const newInstallMode: InstallMode = scope === 'user' ? 'user-service' : 'system-service';
 
@@ -138,6 +199,8 @@ export class ServiceApi {
                 maxRestartAttempts: 3,
                 envVars,
                 logPath,
+                // Linux SystemdClient consumes scope; Windows ServyClient ignores it.
+                scope,
             });
         } catch (err) {
             const body: ServiceActionFailure = { ok: false, error: (err as Error).message };

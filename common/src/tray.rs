@@ -1,4 +1,6 @@
-//! Windows tray-icon event loop with exit-confirm dialog.
+//! Cross-platform tray-icon event loop with exit-confirm dialog.
+//!
+//! ## Windows (full implementation)
 //!
 //! Synchronous, blocking. Designed to be called from a dedicated thread
 //! (the launcher) or from the main thread (the tray helper binary). Per
@@ -12,30 +14,60 @@
 //!
 //! No async runtime, no winit dependency — just `tray-icon` plus a manual
 //! Win32 message pump via the `windows` crate.
-
-use anyhow::{anyhow, Context, Result};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-
-use tray_icon::{Icon, TrayIcon, TrayIconBuilder, TrayIconEvent};
-
-use windows::core::PCWSTR;
-use windows::Win32::Foundation::HWND;
-use windows::Win32::UI::WindowsAndMessaging::{
-    DispatchMessageW, GetMessageW, MessageBoxW, PostQuitMessage, TranslateMessage, IDYES,
-    MB_ICONQUESTION, MB_YESNO, MSG, WM_QUIT,
-};
+//!
+//! ## Linux (best-effort stub — SP3 P4b decision: path (b))
+//!
+//! On Linux, [`run`] is a no-op that immediately returns
+//! [`TrayAction::Cancelled`]. Background:
+//!
+//! - `tray-icon` 0.22 on Linux is backed by `libappindicator` and requires a
+//!   running GTK main loop on the tray thread, plus system libraries
+//!   (`libgtk-3-dev`, `libappindicator3-dev`, `libxdo-dev`) at compile time.
+//!   Pulling those in would fail `cross check` against the default
+//!   `cross-rs` Docker image and significantly grow the dependency tree
+//!   (gtk, glib, atk, gdk, gio, cairo, pango, …).
+//! - P4b is best-effort either way: the web UI Settings → Stop Server button
+//!   already covers the "no tray" case (shipped in P3).
+//! - Returning [`TrayAction::Cancelled`] means callers (`launcher/src/tray.rs`,
+//!   `tray/src/main.rs`) log a benign info message and exit/continue without
+//!   shutting down anything they shouldn't. No process termination, no
+//!   spurious shutdown POST. This is exactly the existing
+//!   `TrayAction::Cancelled` semantics on Windows.
+//!
+//! A future Linux tray (with libappindicator + GTK) is deferred to P5+.
 
 /// Result of the user's interaction with the tray.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrayAction {
     /// User chose "Yes" on the exit-confirmation dialog.
     ConfirmedExit,
-    /// Loop exited without a user-confirmed action (reserved for future
-    /// programmatic-shutdown paths; the public [`run`] never returns this
-    /// today — `IDNO` keeps the loop running).
+    /// Loop exited without a user-confirmed action. On Windows this is
+    /// reserved for future programmatic-shutdown paths (the public [`run`]
+    /// never returns this from the IDNO path — IDNO keeps the loop running).
+    /// On Linux this is the immediate return value, signalling
+    /// "Linux tray not implemented; do nothing."
     Cancelled,
 }
+
+#[cfg(windows)]
+use anyhow::{anyhow, Context, Result};
+#[cfg(windows)]
+use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(windows)]
+use std::sync::Arc;
+
+#[cfg(windows)]
+use tray_icon::{Icon, TrayIcon, TrayIconBuilder, TrayIconEvent};
+
+#[cfg(windows)]
+use windows::core::PCWSTR;
+#[cfg(windows)]
+use windows::Win32::Foundation::HWND;
+#[cfg(windows)]
+use windows::Win32::UI::WindowsAndMessaging::{
+    DispatchMessageW, GetMessageW, MessageBoxW, PostQuitMessage, TranslateMessage, IDYES,
+    MB_ICONQUESTION, MB_YESNO, MSG, WM_QUIT,
+};
 
 /// Run a tray icon event loop. BLOCKS the calling thread until the user
 /// confirms exit (returns [`TrayAction::ConfirmedExit`]).
@@ -48,6 +80,10 @@ pub enum TrayAction {
 /// # Errors
 /// Returns Err if icon decode fails, tray construction fails, or the message
 /// pump itself errors.
+///
+/// # Linux behavior (P4b path (b))
+/// Returns [`TrayAction::Cancelled`] immediately. See module-level docs.
+#[cfg(windows)]
 pub fn run(
     icon_bytes: &[u8],
     tooltip: &str,
@@ -119,6 +155,7 @@ pub fn run(
 // >= 256) or BMP-encoded entries (classic). Our placeholder uses PNG
 // entries, so we handle the PNG path; BMP fallback is included for
 // robustness when the user replaces the icon with a classic ICO.
+#[cfg(windows)]
 fn decode_ico(bytes: &[u8]) -> Result<Icon> {
     let (rgba, w, h) = parse_ico_to_rgba(bytes)?;
     Icon::from_rgba(rgba, w, h).map_err(|e| anyhow!("Icon::from_rgba failed: {e}"))
@@ -131,6 +168,7 @@ fn decode_ico(bytes: &[u8]) -> Result<Icon> {
 ///   - BMP (classic ICO bitmap with 32-bit RGBA)
 ///
 /// Returns `(rgba_pixels, width, height)`.
+#[cfg(windows)]
 fn parse_ico_to_rgba(bytes: &[u8]) -> Result<(Vec<u8>, u32, u32)> {
     // ICONDIR header: 6 bytes (reserved u16=0, type u16=1, count u16).
     if bytes.len() < 6 {
@@ -193,6 +231,7 @@ fn parse_ico_to_rgba(bytes: &[u8]) -> Result<(Vec<u8>, u32, u32)> {
 
 /// Decode a PNG payload using the `png` crate (already pulled in transitively
 /// by `tray-icon`).
+#[cfg(windows)]
 fn decode_png_to_rgba(payload: &[u8]) -> Result<(Vec<u8>, u32, u32)> {
     // png 0.18 requires `BufRead + Seek`; wrap the slice.
     let decoder = png::Decoder::new(std::io::Cursor::new(payload));
@@ -245,6 +284,7 @@ fn decode_png_to_rgba(payload: &[u8]) -> Result<(Vec<u8>, u32, u32)> {
 /// Decode a classic ICO BMP entry (32bpp BI_RGB only — sufficient for the
 /// fallback case; if the user supplies a more exotic ICO we'll surface a
 /// clear error rather than try to handle every BMP variant).
+#[cfg(windows)]
 fn decode_bmp_entry_to_rgba(payload: &[u8]) -> Result<(Vec<u8>, u32, u32)> {
     // BITMAPINFOHEADER is 40 bytes; ICO BMP entries omit the BITMAPFILEHEADER.
     if payload.len() < 40 {
@@ -292,6 +332,7 @@ fn decode_bmp_entry_to_rgba(payload: &[u8]) -> Result<(Vec<u8>, u32, u32)> {
 
 /// Win32 message pump. Runs until `WM_QUIT` is posted (e.g., by our click
 /// handler after IDYES).
+#[cfg(windows)]
 fn pump_messages() {
     let mut msg = MSG::default();
     loop {
@@ -324,6 +365,7 @@ fn pump_messages() {
 /// `tray-icon` 0.22 emits a `TrayIconEvent` enum variant for clicks; we
 /// treat a left-button "Up" event as "the user clicked." Right clicks are
 /// reserved for the future context menu; we ignore them today.
+#[cfg(windows)]
 fn is_left_click(event: &TrayIconEvent) -> bool {
     use tray_icon::{MouseButton, MouseButtonState};
     if let TrayIconEvent::Click {
@@ -338,11 +380,12 @@ fn is_left_click(event: &TrayIconEvent) -> bool {
 }
 
 /// Convert a Rust `&str` to a NUL-terminated UTF-16 vector for Win32 PCWSTR.
+#[cfg(windows)]
 fn to_wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 mod tests {
     use super::*;
 
@@ -404,4 +447,45 @@ mod tests {
     // MessageBoxW path requires a Win32 message pump and synthetic input,
     // which would need a UI-test harness (e.g., spawning a child process and
     // injecting WM_LBUTTONUP). Out of scope for P4a unit tests.
+}
+
+// =====================================================================
+// Linux (and other non-Windows) stub — SP3 P4b decision: path (b).
+//
+// Returns `TrayAction::Cancelled` immediately. Callers
+// (`launcher/src/tray.rs`, `tray/src/main.rs`) treat this as
+// "tray-not-shown; do nothing." A real Linux tray (libappindicator + GTK
+// main loop) is deferred to a later milestone. See module-level docs for
+// the full rationale.
+// =====================================================================
+
+/// Linux / non-Windows stub for [`run`]. Always returns
+/// [`Ok(TrayAction::Cancelled)`] without showing any UI.
+///
+/// The signature matches the Windows implementation so callers can invoke
+/// `common::tray::run(...)` unchanged across platforms. All four arguments
+/// are unused on this platform.
+#[cfg(not(windows))]
+pub fn run(
+    _icon_bytes: &[u8],
+    _tooltip: &str,
+    _confirm_title: &str,
+    _confirm_body: &str,
+) -> anyhow::Result<TrayAction> {
+    Ok(TrayAction::Cancelled)
+}
+
+#[cfg(all(test, not(windows)))]
+mod linux_stub_tests {
+    use super::*;
+
+    #[test]
+    fn run_returns_cancelled_on_non_windows() {
+        // Smoke test: the stub is a no-op that never errors and never
+        // claims a confirmed exit. Caller code (launcher tray spawn,
+        // tray-helper main) is allowed to depend on this being a fast
+        // synchronous return.
+        let action = run(b"", "tooltip", "title", "body").expect("stub must not error");
+        assert_eq!(action, TrayAction::Cancelled);
+    }
 }

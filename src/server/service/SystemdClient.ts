@@ -1,42 +1,370 @@
 /**
- * Linux ServiceClient stub for SP3 P3.
+ * Linux ServiceClient implementation backed by systemd / systemctl.
  *
- * Per the SP3 plan, Linux Velopack + systemd service mode are in-scope for
- * SP3 as a later sub-phase. P3 lays the architectural groundwork so the Linux
- * sub-phase is purely additive — no churn on ServiceApi.ts, SettingsModal.ts,
- * or WelcomeModal.ts when this stub gets replaced with a real implementation.
+ * Mirrors the ServyClient (Windows) shape: synchronous CLI invocations via
+ * `execFileSync` wrapped in resolved Promises to satisfy the cross-platform
+ * `ServiceClient` interface.
  *
- * Every method throws the same sentinel string. Tests assert the throws to
- * pin the contract; replacing the stub later means deleting the throws and
- * filling in the systemctl invocations.
+ * Two scopes are supported (selected via `ServiceInstallOptions.scope`):
+ *
+ *   - **user**   — unit at `~/.config/systemd/user/<name>.service`. Installed
+ *                  without sudo. Started via `systemctl --user`. `loginctl
+ *                  enable-linger` is invoked best-effort so the service
+ *                  survives a full logout. A `~/.config/autostart/
+ *                  ws-scrcpy-web-tray.desktop` file is written to autostart
+ *                  the tray helper at desktop login (best-effort).
+ *
+ *   - **system** — unit at `/etc/systemd/system/<name>.service`. REQUIRES
+ *                  root; SystemdClient throws if `process.getuid() !== 0`
+ *                  before any side effect. No tray autostart (system-scope
+ *                  services typically run on headless servers without a
+ *                  desktop session).
+ *
+ * Status is detected via `systemctl is-active` (machine-readable single
+ * keyword) rather than `systemctl status` (verbose, locale-sensitive).
+ *
+ * `uninstall` resolves the active scope from whichever unit file exists on
+ * disk, then disables + removes it. Idempotent — a no-op if neither unit
+ * file is present.
+ *
+ * See `docs/plans/sp3-p4b-contracts.md` for the full spec.
  */
 
+import { execFileSync } from 'node:child_process';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { Logger } from '../Logger';
 import type {
     ServiceClient,
     ServiceInstallOptions,
     ServiceStatus,
 } from './ServiceClient';
 
-export const SYSTEMD_NOT_IMPLEMENTED_MESSAGE = 'Linux service mode lands later in SP3';
+const log = Logger.for('SystemdClient');
+
+/** systemd scope: per-user (default.target) or system-wide (multi-user.target). */
+export type SystemdScope = 'user' | 'system';
+
+/** Filename of the tray helper binary on Linux (no extension). */
+const TRAY_HELPER_BIN = 'ws-scrcpy-web-tray';
+/** Autostart .desktop filename written under `~/.config/autostart/`. */
+const TRAY_AUTOSTART_FILE = 'ws-scrcpy-web-tray.desktop';
+
+/**
+ * Wrap execFileSync so the thrown Error includes stderr — matches the pattern
+ * established in ServyClient. Without this, Node surfaces only the exit code.
+ */
+function runSystemctl(args: string[], label: string): string {
+    try {
+        return execFileSync('systemctl', args, {
+            stdio: ['ignore', 'pipe', 'pipe'],
+            encoding: 'utf8',
+        });
+    } catch (err) {
+        const e = err as NodeJS.ErrnoException & { stderr?: Buffer | string; stdout?: Buffer | string };
+        const stderr = typeof e.stderr === 'string' ? e.stderr : e.stderr?.toString('utf8') ?? '';
+        const stdout = typeof e.stdout === 'string' ? e.stdout : e.stdout?.toString('utf8') ?? '';
+        const detail = (stderr || stdout || e.message).trim();
+        throw new Error(`systemctl ${label} failed: ${detail || e.message}`);
+    }
+}
+
+/**
+ * Render the systemd unit file body for the given install options + scope.
+ * Exposed so tests can snapshot the rendered output.
+ */
+export function renderUnitFile(opts: ServiceInstallOptions, scope: SystemdScope): string {
+    const envLines = Object.entries(opts.envVars)
+        .map(([k, v]) => `Environment=${k}=${v}`)
+        .join('\n');
+    const wantedBy = scope === 'user' ? 'default.target' : 'multi-user.target';
+    // StartLimitIntervalSec=300 means: count restart attempts in a rolling
+    // 5-minute window; if maxRestartAttempts is exceeded, systemd gives up.
+    return [
+        '[Unit]',
+        `Description=${opts.description}`,
+        'After=network.target',
+        '',
+        '[Service]',
+        'Type=simple',
+        `ExecStart=${opts.binPath}`,
+        'Restart=on-failure',
+        'RestartSec=5',
+        `StartLimitBurst=${opts.maxRestartAttempts}`,
+        'StartLimitIntervalSec=300',
+        ...(envLines ? [envLines] : []),
+        `StandardOutput=append:${opts.logPath}`,
+        `StandardError=append:${opts.logPath}`,
+        '',
+        '[Install]',
+        `WantedBy=${wantedBy}`,
+        '',
+    ].join('\n');
+}
+
+/**
+ * Resolve the absolute path of the tray helper binary.
+ *
+ * Mirrors `ServyClient.resolveTrayHelperPath` shape:
+ *   1. Installed (Velopack AppImage layout): sibling of the launcher in
+ *      `process.cwd()`.
+ *   2. Dev / from-source: `<cwd>/publish/ws-scrcpy-web-tray`.
+ *
+ * Returns `null` if neither candidate exists. Callers fall back to a bare-name
+ * `Exec=ws-scrcpy-web-tray` in the .desktop file (PATH lookup) and log a
+ * warning — best-effort so a missing tray binary doesn't fail the service
+ * install.
+ */
+function resolveTrayHelperPath(
+    cwd: string = process.cwd(),
+    exists: (p: string) => boolean = fs.existsSync,
+): string | null {
+    const installedCandidate = path.join(cwd, TRAY_HELPER_BIN);
+    if (exists(installedCandidate)) return installedCandidate;
+    const devCandidate = path.join(cwd, 'publish', TRAY_HELPER_BIN);
+    if (exists(devCandidate)) return devCandidate;
+    return null;
+}
 
 export class SystemdClient implements ServiceClient {
-    public async install(_opts: ServiceInstallOptions): Promise<void> {
-        throw new Error(SYSTEMD_NOT_IMPLEMENTED_MESSAGE);
+    /** Absolute path to the user-scope unit file for `name`. */
+    public userUnitPath(name: string): string {
+        return path.join(os.homedir(), '.config', 'systemd', 'user', `${name}.service`);
     }
 
-    public async uninstall(_name: string): Promise<void> {
-        throw new Error(SYSTEMD_NOT_IMPLEMENTED_MESSAGE);
+    /** Absolute path to the system-scope unit file for `name`. */
+    public systemUnitPath(name: string): string {
+        return path.join('/etc', 'systemd', 'system', `${name}.service`);
     }
 
-    public async status(_name: string): Promise<ServiceStatus> {
-        throw new Error(SYSTEMD_NOT_IMPLEMENTED_MESSAGE);
+    /** Absolute path to the tray helper autostart .desktop file (user scope). */
+    public trayAutostartPath(): string {
+        return path.join(os.homedir(), '.config', 'autostart', TRAY_AUTOSTART_FILE);
     }
 
-    public async restart(_name: string): Promise<void> {
-        throw new Error(SYSTEMD_NOT_IMPLEMENTED_MESSAGE);
+    /**
+     * Inspect the filesystem to decide which scope owns this service. Used by
+     * uninstall / status / restart / stop so callers don't have to track
+     * scope themselves after the initial install.
+     */
+    private resolveActiveScope(name: string): SystemdScope | null {
+        if (fs.existsSync(this.userUnitPath(name))) return 'user';
+        if (fs.existsSync(this.systemUnitPath(name))) return 'system';
+        return null;
     }
 
-    public async stop(_name: string): Promise<void> {
-        throw new Error(SYSTEMD_NOT_IMPLEMENTED_MESSAGE);
+    public async install(opts: ServiceInstallOptions): Promise<void> {
+        const scope = opts.scope;
+        if (!scope) {
+            throw new Error(
+                'SystemdClient.install: scope is required (caller must pass user or system)',
+            );
+        }
+
+        if (scope === 'system' && process.getuid?.() !== 0) {
+            // Throw BEFORE any side effect — ServiceApi catches and returns 403.
+            throw new Error(
+                'system scope requires root. Relaunch the AppImage with sudo, or pick user scope.',
+            );
+        }
+
+        const unitContent = renderUnitFile(opts, scope);
+        const unitPath = scope === 'user'
+            ? this.userUnitPath(opts.name)
+            : this.systemUnitPath(opts.name);
+
+        fs.mkdirSync(path.dirname(unitPath), { recursive: true });
+        fs.writeFileSync(unitPath, unitContent, { mode: 0o644 });
+
+        const baseArgs = scope === 'user' ? ['--user'] : [];
+        runSystemctl([...baseArgs, 'daemon-reload'], 'daemon-reload');
+        runSystemctl(
+            [...baseArgs, 'enable', '--now', `${opts.name}.service`],
+            `enable --now ${opts.name}.service`,
+        );
+
+        if (scope === 'user') {
+            // Best-effort linger so the service survives a full logout.
+            // Common reasons this can fail: loginctl absent (non-systemd-logind
+            // systems), missing privileges on hardened distros. Service is
+            // already installed + running — degraded but functional.
+            try {
+                execFileSync('loginctl', ['enable-linger', os.userInfo().username], {
+                    stdio: ['ignore', 'pipe', 'pipe'],
+                });
+            } catch (err) {
+                log.warn(
+                    `loginctl enable-linger failed (service still installed): ${
+                        (err as Error).message
+                    }`,
+                );
+            }
+
+            // Best-effort tray autostart. System scope skips this — headless
+            // server case dominant, no desktop session to autostart into.
+            try {
+                this.writeTrayAutostart();
+            } catch (err) {
+                log.warn(
+                    `tray autostart .desktop write failed (service install succeeded): ${
+                        (err as Error).message
+                    }`,
+                );
+            }
+        }
+    }
+
+    public async uninstall(name: string): Promise<void> {
+        const scope = this.resolveActiveScope(name);
+        if (scope === null) {
+            // Already uninstalled — idempotent. Mirrors ServyClient's tolerance
+            // of "not installed" cases.
+            return;
+        }
+
+        if (scope === 'system' && process.getuid?.() !== 0) {
+            throw new Error('system-scope service uninstall requires root.');
+        }
+
+        const baseArgs = scope === 'user' ? ['--user'] : [];
+
+        // Best-effort disable+stop. systemctl returns non-zero if the service
+        // is already stopped or never started — that's not an error for our
+        // purposes. The unit file removal below is the load-bearing step.
+        try {
+            runSystemctl(
+                [...baseArgs, 'disable', '--now', `${name}.service`],
+                `disable --now ${name}.service`,
+            );
+        } catch (err) {
+            log.info(`systemctl disable returned: ${(err as Error).message}`);
+        }
+
+        const unitPath = scope === 'user' ? this.userUnitPath(name) : this.systemUnitPath(name);
+        try {
+            fs.unlinkSync(unitPath);
+        } catch {
+            // Already gone — desired post-state achieved.
+        }
+
+        try {
+            runSystemctl([...baseArgs, 'daemon-reload'], 'daemon-reload (after uninstall)');
+        } catch (err) {
+            log.warn(`daemon-reload after uninstall failed: ${(err as Error).message}`);
+        }
+
+        // Best-effort autostart cleanup (user scope only — system scope never
+        // wrote one). Idempotent: ignore "already gone".
+        if (scope === 'user') {
+            try {
+                this.removeTrayAutostart();
+            } catch (err) {
+                log.warn(
+                    `tray autostart removal failed (service uninstall succeeded): ${
+                        (err as Error).message
+                    }`,
+                );
+            }
+        }
+    }
+
+    public async status(name: string): Promise<ServiceStatus> {
+        const scope = this.resolveActiveScope(name);
+        if (scope === null) return 'not-installed';
+
+        const baseArgs = scope === 'user' ? ['--user'] : [];
+        // is-active prints one of: active, inactive, activating, failed,
+        // unknown. It also exits non-zero for inactive/failed — that's NOT an
+        // error for our purposes (the unit file exists; we just want the
+        // running state).
+        try {
+            const out = execFileSync(
+                'systemctl',
+                [...baseArgs, 'is-active', `${name}.service`],
+                { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8' },
+            ).trim();
+            return out === 'active' ? 'running' : 'stopped';
+        } catch {
+            // Non-zero exit (inactive / failed / activating) — treat as stopped.
+            return 'stopped';
+        }
+    }
+
+    public async restart(name: string): Promise<void> {
+        const scope = this.resolveActiveScope(name);
+        if (scope === null) {
+            throw new Error(`systemctl restart: ${name}.service not installed`);
+        }
+        const baseArgs = scope === 'user' ? ['--user'] : [];
+        runSystemctl(
+            [...baseArgs, 'restart', `${name}.service`],
+            `restart ${name}.service`,
+        );
+    }
+
+    public async stop(name: string): Promise<void> {
+        const scope = this.resolveActiveScope(name);
+        if (scope === null) {
+            // Idempotent — nothing to stop.
+            return;
+        }
+        const baseArgs = scope === 'user' ? ['--user'] : [];
+        // Tolerate "already stopped" / "not loaded" — match ServyClient stop semantics.
+        try {
+            runSystemctl(
+                [...baseArgs, 'stop', `${name}.service`],
+                `stop ${name}.service`,
+            );
+        } catch (err) {
+            log.info(`systemctl stop returned: ${(err as Error).message}`);
+        }
+    }
+
+    /**
+     * Write the tray helper autostart .desktop file under
+     * `~/.config/autostart/`. The Linux equivalent of Windows's HKCU Run-key.
+     *
+     * If the tray binary can't be located on disk, write a `Exec=<bare-name>`
+     * pointing at PATH lookup so a tray binary later placed on PATH still
+     * works. Logs a warning in that case.
+     */
+    private writeTrayAutostart(): void {
+        const desktopPath = this.trayAutostartPath();
+        const trayPath = resolveTrayHelperPath();
+        let exec: string;
+        if (trayPath) {
+            exec = trayPath;
+        } else {
+            exec = TRAY_HELPER_BIN;
+            log.warn(
+                `tray helper binary not found next to launcher or in publish/; ` +
+                `writing Exec=${TRAY_HELPER_BIN} (relies on PATH lookup at login)`,
+            );
+        }
+
+        const content = [
+            '[Desktop Entry]',
+            'Type=Application',
+            'Name=ws-scrcpy-web tray',
+            `Exec=${exec}`,
+            'Hidden=false',
+            'NoDisplay=false',
+            'X-GNOME-Autostart-enabled=true',
+            '',
+        ].join('\n');
+
+        fs.mkdirSync(path.dirname(desktopPath), { recursive: true });
+        fs.writeFileSync(desktopPath, content, { mode: 0o644 });
+    }
+
+    /** Remove the tray autostart .desktop file. Idempotent. */
+    private removeTrayAutostart(): void {
+        const desktopPath = this.trayAutostartPath();
+        try {
+            fs.unlinkSync(desktopPath);
+        } catch {
+            // Already gone — desired post-state.
+        }
     }
 }

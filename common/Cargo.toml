@@ -12,9 +12,17 @@ path = "src/lib.rs"
 
 [dependencies]
 anyhow.workspace = true
-png = "0.18"
 serde.workspace = true
 serde_json.workspace = true
+
+# Windows-only: the real tray icon implementation lives in `#[cfg(windows)]`
+# blocks of `src/tray.rs`. On Linux we ship a stub (P4b decision: path (b) —
+# defer the Linux tray; web UI Stop Server button covers the gap). Keeping
+# `tray-icon` and the `windows` crate conditional avoids pulling in
+# libappindicator / GTK3 system libraries on `cross check` for Linux targets,
+# which would otherwise fail without a custom Docker image.
+[target.'cfg(windows)'.dependencies]
+png = "0.18"
 tray-icon.workspace = true
 windows.workspace = true
 

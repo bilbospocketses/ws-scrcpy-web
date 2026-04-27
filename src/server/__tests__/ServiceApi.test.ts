@@ -12,8 +12,30 @@ import type {
     ServiceClientFactoryResult,
 } from '../service/ServiceClient';
 
-function makeReqRes(url: string, method = 'GET') {
-    const req = { url, method } as IncomingMessage;
+function makeReqRes(url: string, method = 'GET', body?: string) {
+    // Minimal IncomingMessage: only the on('data')/on('end') hooks readJsonBody
+    // uses are needed. Fire data + end synchronously on the first listener
+    // attach so the awaited Promise resolves on the next microtask.
+    const listeners: Record<string, Array<(...args: unknown[]) => void>> = {};
+    const req = {
+        url,
+        method,
+        on(event: string, handler: (...args: unknown[]) => void) {
+            (listeners[event] ??= []).push(handler);
+            // Fire body+end after handlers are attached. The install handler
+            // attaches data/end/error in one synchronous block; we kick the
+            // pump on the 'end' attach which is the last of the three.
+            if (event === 'end') {
+                queueMicrotask(() => {
+                    if (body) {
+                        for (const h of listeners.data ?? []) h(Buffer.from(body, 'utf8'));
+                    }
+                    for (const h of listeners.end ?? []) h();
+                });
+            }
+            return this;
+        },
+    } as unknown as IncomingMessage;
     let statusCode = 0;
     const chunks: string[] = [];
     const res = {
@@ -269,6 +291,149 @@ describe('ServiceApi', () => {
         expect(JSON.parse((res as any).getBody())).toEqual({
             ok: false,
             error: expect.stringContaining('access denied'),
+        });
+    });
+
+    // ── Linux scope branch (SP3 P4b) ────────────────────────────────────────
+    //
+    // ServiceApi inspects result.platform === 'linux' to decide whether to
+    // parse the JSON body for `scope`. The injected scope() factory is a
+    // no-op on Linux — scope arrives via the request body, defaults to
+    // 'user' when absent, and a system-scope request from a non-root process
+    // returns 403 BEFORE the client install is invoked.
+    describe('Linux scope branch', () => {
+        let savedGetuid: typeof process.getuid | undefined;
+        beforeEach(() => {
+            savedGetuid = process.getuid;
+        });
+        afterEach(() => {
+            if (savedGetuid) {
+                Object.defineProperty(process, 'getuid', {
+                    value: savedGetuid,
+                    configurable: true,
+                });
+            }
+        });
+
+        it('POST /install on Linux with empty body defaults to user scope', async () => {
+            const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(async () => undefined);
+            const client = fakeClient({
+                install: installFn,
+                status: vi.fn(async () => 'running' as const),
+            });
+            const factoryResult: ServiceClientFactoryResult = {
+                client,
+                supported: true,
+                platform: 'linux',
+            };
+            const api = new ServiceApi(() => factoryResult, () => 'system' /* should be ignored on Linux */);
+            const { req, res } = makeReqRes('/api/service/install', 'POST', '');
+            await api.handle(req, res);
+            expect((res as any).getStatus()).toBe(200);
+            const body = JSON.parse((res as any).getBody());
+            expect(body.installMode).toBe('user-service');
+            const opts = installFn.mock.calls[0]?.[0];
+            expect(opts?.scope).toBe('user');
+            expect(opts?.account).toBe('currentUser');
+        });
+
+        it('POST /install on Linux with {scope: "user"} body installs user scope', async () => {
+            const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(async () => undefined);
+            const client = fakeClient({
+                install: installFn,
+                status: vi.fn(async () => 'running' as const),
+            });
+            const factoryResult: ServiceClientFactoryResult = {
+                client,
+                supported: true,
+                platform: 'linux',
+            };
+            const api = new ServiceApi(() => factoryResult, () => 'system');
+            const { req, res } = makeReqRes(
+                '/api/service/install',
+                'POST',
+                JSON.stringify({ scope: 'user' }),
+            );
+            await api.handle(req, res);
+            expect((res as any).getStatus()).toBe(200);
+            const opts = installFn.mock.calls[0]?.[0];
+            expect(opts?.scope).toBe('user');
+        });
+
+        it('POST /install on Linux with {scope: "system"} as root installs system scope', async () => {
+            Object.defineProperty(process, 'getuid', { value: () => 0, configurable: true });
+            const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(async () => undefined);
+            const client = fakeClient({
+                install: installFn,
+                status: vi.fn(async () => 'running' as const),
+            });
+            const factoryResult: ServiceClientFactoryResult = {
+                client,
+                supported: true,
+                platform: 'linux',
+            };
+            const api = new ServiceApi(() => factoryResult, () => 'user');
+            const { req, res } = makeReqRes(
+                '/api/service/install',
+                'POST',
+                JSON.stringify({ scope: 'system' }),
+            );
+            await api.handle(req, res);
+            expect((res as any).getStatus()).toBe(200);
+            const body = JSON.parse((res as any).getBody());
+            expect(body.installMode).toBe('system-service');
+            const opts = installFn.mock.calls[0]?.[0];
+            expect(opts?.scope).toBe('system');
+            expect(opts?.account).toBe('LocalSystem');
+        });
+
+        it('POST /install on Linux with {scope: "system"} as non-root returns 403', async () => {
+            Object.defineProperty(process, 'getuid', {
+                value: () => 1000,
+                configurable: true,
+            });
+            const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(async () => undefined);
+            const client = fakeClient({ install: installFn });
+            const factoryResult: ServiceClientFactoryResult = {
+                client,
+                supported: true,
+                platform: 'linux',
+            };
+            const api = new ServiceApi(() => factoryResult, () => 'user');
+            const { req, res } = makeReqRes(
+                '/api/service/install',
+                'POST',
+                JSON.stringify({ scope: 'system' }),
+            );
+            await api.handle(req, res);
+            expect((res as any).getStatus()).toBe(403);
+            const body = JSON.parse((res as any).getBody());
+            expect(body.ok).toBe(false);
+            expect(body.error).toMatch(/system scope requires root/);
+            expect(installFn).not.toHaveBeenCalled();
+        });
+
+        it('POST /install on Linux with malformed JSON body falls back to user scope', async () => {
+            const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(async () => undefined);
+            const client = fakeClient({
+                install: installFn,
+                status: vi.fn(async () => 'running' as const),
+            });
+            const factoryResult: ServiceClientFactoryResult = {
+                client,
+                supported: true,
+                platform: 'linux',
+            };
+            const api = new ServiceApi(() => factoryResult, () => 'system');
+            const { req, res } = makeReqRes(
+                '/api/service/install',
+                'POST',
+                'not-json{',
+            );
+            await api.handle(req, res);
+            expect((res as any).getStatus()).toBe(200);
+            const opts = installFn.mock.calls[0]?.[0];
+            expect(opts?.scope).toBe('user');
         });
     });
 

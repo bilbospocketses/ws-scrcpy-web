@@ -129,6 +129,34 @@ The launcher scripts (`start.cmd` / `start.sh`) solve a specific problem: on Win
 
 On Linux, file locking is not an issue (running binaries can be overwritten), but the launcher still handles the restart loop for consistency.
 
+### Linux install (AppImage)
+
+Linux releases ship as a single self-contained AppImage built with [Velopack](https://velopack.io/). No package manager, no sudo (for user-scope installs), no system-wide changes.
+
+1. Download `WsScrcpyWeb-linux.AppImage` from the [Releases](https://github.com/bilbospocketses/ws-scrcpy-web/releases) page.
+2. Make it executable: `chmod +x WsScrcpyWeb-linux.AppImage`
+3. Run it: `./WsScrcpyWeb-linux.AppImage`
+4. Open `http://localhost:8000` in your browser.
+
+The first-run welcome modal offers to install ws-scrcpy-web as a systemd service. Two scopes are available:
+
+- **just for me (no sudo)** — installs to `~/.config/systemd/user/ws-scrcpy-web.service`. Starts at login. `loginctl enable-linger` is invoked best-effort so the service survives logout.
+- **all users (requires sudo)** — installs to `/etc/systemd/system/ws-scrcpy-web.service`. Starts at boot. Requires the AppImage to be relaunched with `sudo` so the install API can write to `/etc/`.
+
+You can also install/uninstall the service later from Settings → Service.
+
+#### AppImage placement caveat
+
+The systemd unit's `ExecStart=` is set to the absolute AppImage path at install time. **Do not move or rename the AppImage after installing the service** — the service will fail to start on next boot/login. If you need to relocate the AppImage, uninstall the service first, move the file, then re-install.
+
+#### glibc requirement
+
+The bundled `node-pty` native binary is built against glibc. Musl-based distros (Alpine and similar) are not supported in v0.1. Run on glibc-based distros: Ubuntu, Debian, Fedora, Arch, openSUSE, etc. — anything that ships glibc 2.31+ should work.
+
+#### Tray icon
+
+ws-scrcpy-web tries to surface a system tray icon (best-effort) for quick stop/restart. On stock GNOME without the AppIndicator extension, on headless servers, or on minimal Wayland sessions, the tray may not appear — that's expected. Use Settings → Server → Stop Server in the web UI as a fallback.
+
 ## Configuration
 
 The server can be configured via environment variables or a `config.json` file:

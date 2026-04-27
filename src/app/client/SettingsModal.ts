@@ -12,6 +12,8 @@ export class SettingsModal extends Modal {
     private webPortStatus!: HTMLElement;
     private serverSaveBtn!: HTMLButtonElement;
     private currentWebPort: number | null = null;
+    /** Linux scope chooser for the install action. Recreated each refresh. */
+    private serviceScopeSystemRadio: HTMLInputElement | null = null;
 
     constructor() {
         super({ title: 'Settings' });
@@ -222,6 +224,48 @@ export class SettingsModal extends Modal {
         this.serviceSection.appendChild(statusLine);
 
         if (status === 'not-installed') {
+            // Linux: scope chooser before the install button. Windows leaves
+            // it null and the install POST sends no body (Windows ignores).
+            this.serviceScopeSystemRadio = null;
+            if (resp.platform === 'linux') {
+                const fieldset = document.createElement('fieldset');
+                fieldset.className = 'settings-scope-fieldset';
+                fieldset.style.cssText =
+                    'margin: 8px 0; padding: 8px 12px; ' +
+                    'border: 1px solid rgba(255,255,255,0.12); border-radius: 6px;';
+                const legend = document.createElement('legend');
+                legend.textContent = 'scope';
+                legend.style.cssText =
+                    'padding: 0 6px; font-size: 13px; color: var(--text-color-light);';
+                fieldset.appendChild(legend);
+
+                const userLabel = document.createElement('label');
+                userLabel.style.cssText =
+                    'display: flex; align-items: center; gap: 8px; padding: 4px 0; cursor: pointer;';
+                const userRadio = document.createElement('input');
+                userRadio.type = 'radio';
+                userRadio.name = 'settings-scope';
+                userRadio.value = 'user';
+                userRadio.checked = true;
+                userLabel.appendChild(userRadio);
+                userLabel.appendChild(document.createTextNode('just for me (no sudo)'));
+                fieldset.appendChild(userLabel);
+
+                const sysLabel = document.createElement('label');
+                sysLabel.style.cssText =
+                    'display: flex; align-items: center; gap: 8px; padding: 4px 0; cursor: pointer;';
+                const sysRadio = document.createElement('input');
+                sysRadio.type = 'radio';
+                sysRadio.name = 'settings-scope';
+                sysRadio.value = 'system';
+                sysLabel.appendChild(sysRadio);
+                sysLabel.appendChild(document.createTextNode('all users (requires sudo)'));
+                fieldset.appendChild(sysLabel);
+
+                this.serviceSection.appendChild(fieldset);
+                this.serviceScopeSystemRadio = sysRadio;
+            }
+
             const installBtn = document.createElement('button');
             installBtn.type = 'button';
             installBtn.className = 'settings-btn settings-btn-primary';
@@ -261,8 +305,18 @@ export class SettingsModal extends Modal {
         btn.disabled = true;
         const prevText = btn.textContent;
         btn.textContent = 'installing…';
+        // Linux: include scope from the radio chooser. Windows: serviceScopeSystemRadio
+        // is null, so the body stays empty and the API ignores it.
+        const requestBody: { scope?: 'user' | 'system' } = {};
+        if (this.serviceScopeSystemRadio) {
+            requestBody.scope = this.serviceScopeSystemRadio.checked ? 'system' : 'user';
+        }
         try {
-            const r = await fetch('/api/service/install', { method: 'POST' });
+            const r = await fetch('/api/service/install', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(requestBody),
+            });
             const data = (await r.json().catch(() => null)) as ServiceInstallResponse | null;
             if (!r.ok || !data || data.ok !== true) {
                 const errMsg =

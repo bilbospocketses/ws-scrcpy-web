@@ -43,6 +43,21 @@ export interface ServiceActionFailure {
 export type ServiceInstallResponse = ServiceActionSuccess | ServiceActionFailure;
 export type ServiceUninstallResponse = ServiceActionSuccess | ServiceActionFailure;
 
+/**
+ * Request body for `POST /api/service/install`.
+ *
+ * - On **Linux**, `scope` selects between user-level (`~/.config/systemd/user/`,
+ *   no sudo) and system-level (`/etc/systemd/system/`, requires root) systemd
+ *   units. Defaults to `'user'` when omitted. If `scope === 'system'` and the
+ *   server isn't running as root, the API returns HTTP 403 with a descriptive
+ *   error.
+ * - On **Windows**, `scope` is IGNORED — the install scope is auto-detected
+ *   from `process.execPath` (Per-Machine vs Per-User) at install time.
+ */
+export interface ServiceInstallRequest {
+    scope?: 'user' | 'system';
+}
+
 /** Canonical Windows service name registered with Servy / SCM. */
 export const WS_SCRCPY_SERVICE_NAME = 'WsScrcpyWeb';
 export const WS_SCRCPY_SERVICE_DISPLAY_NAME = 'ws-scrcpy-web';

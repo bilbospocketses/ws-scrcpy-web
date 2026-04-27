@@ -2,8 +2,8 @@
  * Factory entry point for the cross-platform ServiceClient.
  *
  * Selects the right implementation for `process.platform`:
- *   - 'win32'   -> ServyClient (real, supported=true)
- *   - 'linux'   -> SystemdClient (stub, supported=false; lands later in SP3)
+ *   - 'win32'   -> ServyClient   (real, supported=true)
+ *   - 'linux'   -> SystemdClient (real, supported=true; SP3 P4b)
  *   - other     -> throwing stub (supported=false; service mode unsupported)
  *
  * The factory always returns a ServiceClient (never null) so callers don't
@@ -59,10 +59,8 @@ export function getServiceClient(
     if (platform === 'linux') {
         return {
             client: new SystemdClient(),
-            supported: false,
+            supported: true,
             platform,
-            unsupportedReason:
-                'Linux service mode lands later in SP3 — for now, run from source',
         };
     }
     return {
