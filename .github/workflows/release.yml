@@ -116,7 +116,6 @@ jobs:
             Releases/*-Setup.exe
             Releases/*-Portable.zip
             Releases/*.nupkg
-            Releases/RELEASES
             Releases/releases.${{ needs.prepare.outputs.channel }}.json
 
   build-linux:
@@ -168,6 +167,8 @@ jobs:
   publish:
     needs: [prepare, build-windows, build-linux]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -201,7 +202,6 @@ jobs:
             artifacts/windows-final/*-Setup.exe
             artifacts/windows-final/*-Portable.zip
             artifacts/windows-final/*.nupkg
-            artifacts/windows-final/RELEASES
             artifacts/windows-final/releases.${{ needs.prepare.outputs.channel }}.json
             artifacts/linux-final/*.AppImage
             artifacts/linux-final/*.AppImage.sig
