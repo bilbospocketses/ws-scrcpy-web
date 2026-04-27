@@ -7,16 +7,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
+## [0.1.2] - 2026-04-27
 
-- **Linux AppImage is now truly portable — `chmod +x` and run on any Linux from the last 18 years.** Two changes land together:
-  - The Rust launcher is now built for the `x86_64-unknown-linux-musl` target, so the binary itself has zero glibc dependency. The `Build launcher (musl-static)` CI step links musl statically; `ldd` on the produced ELF reports `not a dynamic executable`. Equivalent of the static-CRT story we did on Windows in v0.1.1.
-  - Velopack ships an older fuse2-linked AppImage runtime by default. We now post-process every Linux release to swap that runtime with the upstream static-fuse runtime from [AppImage/type2-runtime](https://github.com/AppImage/type2-runtime). Result: the AppImage no longer needs `libfuse2` (or `libfuse3`) installed on the host. New `scripts/swap-appimage-runtime.mjs` handles the swap; called from `package-linux.mjs` after `vpk pack`.
-- Linux build still depends on glibc 2.31+ in practice because the bundled Node 24 binary requires it, but the launcher itself runs on anything (including musl-libc distros like Alpine).
+**First actually-installable release.** v0.1.0 (initial tag) and v0.1.1 (VCRUNTIME fix + branded icons) both shipped with broken installers — v0.1.0 crashed on a clean Win11 install with `VCRUNTIME140.dll was not found`, and v0.1.1 fixed that crash but exposed a separate gap where the post-install app launch silent-failed because the bundled Node bootstrap binary was missing from the installer payload. Both have been withdrawn from the Releases page; this is the first version that actually installs and runs end-to-end on a clean machine. See § Install-blocker fixes below for the full chain.
+
+### Install-blocker fixes (the v0.1.0 → v0.1.2 journey)
+
+- **v0.1.1 fix → still in v0.1.2:** the Rust launcher and tray binaries now statically link the MSVC C runtime (`-C target-feature=+crt-static`), so they have no runtime DLL dependency on the Visual C++ Redistributable. v0.1.0 crashed with `VCRUNTIME140.dll was not found` on any Windows install missing VCRedist (true of fresh Win11). Verified with `dumpbin /dependents`: only Windows-native DLLs remain.
+- **v0.1.2 fix:** `Setup.exe` now actually launches the installed app. v0.1.1 fixed the VCRUNTIME crash but the launcher then silent-failed at first run because no Node binary could be found at `<install>/current/seed/node/`. Process lifetime was under 200 ms — invisible in Task Manager. The SP3 spec called for shipping a bootstrap Node binary at that path, but the script that populates `seed/` was deferred during P6 packaging and never landed. New `scripts/fetch-node.mjs` downloads + SHA256-verifies Node v24.15.0 LTS from `nodejs.org/dist/`, stages the binary into `seed/node/`, and is invoked from `release.yml` before `stage-publish.mjs` on both Windows and Linux jobs.
+- **v0.1.1 fix → still in v0.1.2:** branded app icon now appears in Explorer, taskbar, Start Menu, Add/Remove Programs, and the Setup.exe installer itself. Setup.exe gets it via `vpk pack --icon`; launcher and tray binaries embed it via `winresource`-driven `build.rs` files.
+- **v0.1.1 change → still in v0.1.2:** the broken Velopack `--msiDeploymentTool` MSI artifact was withdrawn from the release pipeline. It was an SCCM/Intune deployment-tool harness, not a user-clickable installer. Setup.exe (per-user, wizardful) and Portable.zip remain the supported Windows install paths. A real user-facing WiX MSI is logged as a future enhancement.
+- **v0.1.2 change:** Linux AppImage is now truly portable — `chmod +x` and run on any Linux from the last 18 years. Two changes land together: (i) the Rust launcher is built for `x86_64-unknown-linux-musl`, so the binary itself has zero glibc dependency (`ldd` on the shipped ELF reports `not a dynamic executable`); (ii) the AppImage runtime stub is swapped post-`vpk pack` with the upstream static-fuse runtime from [AppImage/type2-runtime](https://github.com/AppImage/type2-runtime), so the .AppImage no longer needs `libfuse2` (or `libfuse3`) installed on the host. Net minimum-glibc is still 2.31+ (set by the bundled Node 24), but the launcher itself runs on anything including musl-libc distros like Alpine.
+
+### Installation
+
+- **Windows installer (`Setup.exe`)** — installs per-user under `%LocalAppData%`, no admin required. Best for most users. Velopack-managed auto-updates from the in-app **Settings** panel or the header **Update Available** button.
+- **Linux AppImage** — single executable; `chmod +x` and run, on any glibc 2.31+ or musl-libc distro. Velopack-managed auto-updates.
+- **Windows portable ZIP** — unzip and run; no install required, no auto-updates. Air-gapped friendly.
+- Stable and beta release channels, switchable in Settings without reinstall.
+- Manual install path still works: clone the repo, `npm install`, `npm start`.
+
+### Service mode
+
+- Optional Windows service (managed by [Servy](https://github.com/aelassas/servy)) so `ws-scrcpy-web` runs at login or boot. Pick from the first-run welcome modal or Settings → Service.
+- Optional Linux systemd unit. User scope (no sudo) writes to `~/.config/systemd/user/`; system scope (requires sudo) writes to `/etc/systemd/system/`. Welcome modal asks per-platform; `loginctl enable-linger` keeps user-scope services alive after logout.
+- A small system-tray icon on Windows shows a single confirm-and-exit dialog. (Linux skips the tray entirely; use the web UI Stop Server button.)
+
+### Streaming features
+
+- **Multi-codec video** (H.264, H.265, AV1) and **multi-codec audio** (Opus, AAC, FLAC, raw PCM), all decoded via WebCodecs in the browser. No WASM fallbacks.
+- **Audio capture** is SDK-aware with three sources (output / playback / mic), per-device persisted preferences, and graceful gating for older Android. Playback mode keeps device audio audible during capture (Android 13+).
+- **D-pad / Touch input modes** with a toolbar toggle for leanback TV apps. UHID keyboard and mouse with hardware-level input via USB HID. Scroll wheel and Shift+scroll forwarding tuned for high-latency streams.
+- **Programmatic stream API**: load `ws-scrcpy.umd.js` or `ws-scrcpy.esm.js` and call `WsScrcpy.startStream(container, deviceId, options)` to embed a stream into any DOM element. Bundled TypeScript types. Thin `embed.html?device=<udid>` shim for iframe consumers.
+
+### Device discovery
+
+- **Network scan** combining mDNS (modern devices) with a TCP-port-5555 sweep (older devices that do not advertise). Auto-detects gateway subnet; accepts additional subnets as CIDR, bare IP, or IP range. mDNS and TCP hits dedupe automatically.
+- **Quick Scan** button on the home page for fast mDNS-only discovery.
+- **Device labels** persist across sessions, keyed by both serial and MAC, so devices keep their names whether they show up via mDNS or TCP.
+- **Sleep / wake toggle** on each device card with server-polled state, kept in sync over WebSocket so buttons stay accurate when the device sleeps via timer or remote.
+
+### UI
+
+- **First-run welcome modal** that shows the chosen port (with auto-shift if 8000 is busy) and the service-install prompt.
+- **Settings panel** (gear icon, top-right) for web port, auto-update preferences, channel selection, GitHub owner override, and service install/uninstall. Dev-mode banner when running from source.
+- **Dark / light theme toggle** persisted in localStorage.
+- File browser with breadcrumbs, sortable columns, drag-and-drop upload, download with progress, bulk delete.
+- Remote ADB shell terminal with xterm.js.
+- Browser tab title is now static ("Android Power Tools") on every page.
+
+### Self-contained dependencies
+
+- Bundled Node.js 24.15.0 LTS, ADB platform-tools, and `scrcpy-server` v3.3.4. The app downloads ADB and `scrcpy-server` on first run if missing, with SHA256 verification. Node ships in the installer payload itself (the v0.1.2 fix above) so first-run works offline.
+- Native `node-pty` prebuilds for Windows (x64, arm64) and Linux glibc (x64, arm64), built weekly via GitHub Actions matrix. Falls back to source-compile on unsupported targets.
+- **In-app dependency updater** in the Settings panel: check and update Node.js, ADB, and `scrcpy-server` from the home page with one click.
+
+### Privacy and code signing
+
+- `PRIVACY.md` documents outbound traffic (update checks, optional dep installs from `nodejs.org`, `dl.google.com`, `github.com`). No telemetry. No analytics. No project-operated server.
+- Code signing via [SignPath Foundation](https://signpath.org)'s free OSS program — application is in review. Once approved, the next release will be the first signed release. Until then, integrity is verifiable via the `SHA256SUMS` file shipped with each release.
+
+## [0.1.1] - 2026-04-27
 
 ### Fixed
 
-- **Setup.exe now installs successfully on clean Windows boxes.** v0.1.0 failed with `VCRUNTIME140.dll was not found` → `application install hook failed` on any machine missing the Visual C++ Redistributable (true of a fresh Win11 install). The Rust launcher and tray binaries now statically link the MSVC C runtime (`-C target-feature=+crt-static`), so they have no runtime DLL dependency on VCRedist. Verified with `dumpbin /dependents`: only Windows-native DLLs remain.
+- **Setup.exe now installs successfully on clean Windows boxes.** v0.1.0 failed with `VCRUNTIME140.dll was not found` → `application install hook failed` on any machine missing the Visual C++ Redistributable (true of a fresh Win11 install). The Rust launcher and tray binaries now statically link the MSVC C runtime (`-C target-feature=+crt-static`), so they have no runtime DLL dependency on VCRedist. Verified with `dumpbin /dependents`: only Windows-native DLLs remain. *(Setup.exe install completes; app launch is still broken in v0.1.1 — see v0.1.2.)*
 - Internal: `libcDetect.test.ts` mock typing widened from `string` to `fs.PathLike`, and `detectInstallScope` now uses `path.win32.dirname` for execPath splitting on POSIX CI hosts. CI-only fixes; no runtime behavior change.
 
 ### Changed

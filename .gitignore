@@ -19,7 +19,12 @@ dependencies/node/
 dependencies/adb/
 dependencies/node-pty/
 dependencies/servy/
+dependencies/node-bootstrap/
 .restart
+
+# Bootstrap Node binary staged into installer payload by scripts/fetch-node.mjs.
+# Build artifact, not source — re-fetched from nodejs.org on each release build.
+seed/
 
 # Superpowers brainstorm artifacts
 .superpowers/

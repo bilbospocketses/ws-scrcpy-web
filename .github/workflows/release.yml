@@ -54,6 +54,8 @@ jobs:
       - run: npm run build
       - run: cargo build --release --workspace
       - run: node scripts/fetch-servy.mjs
+      - name: Fetch + stage seed Node binary (first-run bootstrap)
+        run: node scripts/fetch-node.mjs
       - run: node scripts/stage-publish.mjs
 
       - name: Upload unsigned exes
@@ -146,6 +148,8 @@ jobs:
           BIN=target/x86_64-unknown-linux-musl/release/ws-scrcpy-web-launcher
           file "$BIN"
           ldd "$BIN" || true   # ldd exits nonzero on a fully-static binary — that is the goal
+      - name: Fetch + stage seed Node binary (first-run bootstrap)
+        run: node scripts/fetch-node.mjs
       - run: node scripts/stage-publish.mjs
       - run: node scripts/package-linux.mjs
 
