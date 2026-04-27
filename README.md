@@ -47,9 +47,10 @@ Input flows back as mouse, UHID keyboard, i16-fixed-point scroll, and a D-pad/To
 
 Get the latest release from the [Releases page](https://github.com/bilbospocketses/ws-scrcpy-web/releases/latest):
 
-- **Windows (Setup.exe):** `ws-scrcpy-web-<version>-Setup.exe` — installs to `%LOCALAPPDATA%`, Velopack-managed auto-updates
-- **Windows (Portable ZIP):** `ws-scrcpy-web-<version>-Portable.zip` — unzip and run, no install
-- **Linux (AppImage):** `ws-scrcpy-web-<version>.AppImage` — `chmod +x` and run; see [Linux install](#linux-install-appimage) below
+- **Windows installer (`Setup.exe`)** — installs per-user under `%LOCALAPPDATA%`, no admin required, Velopack-managed auto-updates. Best for most Windows users.
+- **Windows MSI** — installs system-wide under `Program Files` (requires admin). For corporate / SCCM / Group Policy deployment scenarios. Same auto-update behavior as Setup.exe.
+- **Windows portable ZIP** — unzip and run; no install required, no auto-updates. Useful for air-gapped setups.
+- **Linux AppImage** — `chmod +x ws-scrcpy-web-<version>.AppImage` and run. See [Linux install](#linux-install-appimage) below.
 
 Release artifacts are code-signed via [SignPath Foundation](https://signpath.org), which provides free code signing for OSS projects. Each release also ships a `SHA256SUMS` file you can verify against.
 
@@ -84,9 +85,17 @@ on first run via the resolver and vitest globalSetup respectively.
 
 ## Self-Contained Deployment
 
-ws-scrcpy-web can run as a fully self-contained application with no system-wide installations required. Everything lives in one folder -- no PATH changes, no global installs, no admin/root needed.
+ws-scrcpy-web ships as a fully self-contained app with no system-wide installations required. There are three deployment paths, all of which keep all dependencies inside the install folder — no PATH changes, no global installs, no admin/root needed.
 
-### What's in the Box
+### Three deployment paths
+
+| Path | Best for | Notes |
+|------|----------|-------|
+| **Windows installer** (`Setup.exe`) | Most Windows users | Velopack-managed install to `%LocalAppData%`. Auto-updates. Optional Windows service mode. |
+| **Linux AppImage** | Most Linux users | Single executable. Velopack-managed auto-updates. Optional systemd service mode. |
+| **Portable ZIP** (Windows) / source build | Air-gapped or no-install setups | Extract and run; layout shown below. |
+
+### What's in the box (portable / source layout)
 
 ```
 ws-scrcpy-web/
@@ -95,19 +104,29 @@ ws-scrcpy-web/
       scrcpy-server        -- Android-side binary, pushed to devices via ADB
     public/                -- browser UI (HTML, JS, CSS)
     index.js               -- server entry point
-  dependencies/
+  dependencies/            -- populated automatically on first run
     node/                  -- Node.js runtime + node-pty native files
     adb/                   -- ADB platform-tools
   start.cmd                -- Windows launcher
   start.sh                 -- Linux launcher
 ```
 
-### Initial Setup
+(The `Setup.exe` and AppImage paths use Velopack's own install layout — `current/` plus a stable launcher stub — and you don't need to think about it.)
 
-1. Download [Node.js LTS](https://nodejs.org) and extract the binary to `dependencies/node/`
-2. Download [ADB platform-tools](https://developer.android.com/tools/releases/platform-tools) and extract to `dependencies/adb/`
-3. Run `start.cmd` (Windows) or `./start.sh` (Linux)
-4. Open `http://localhost:8000`
+### Initial setup
+
+1. Run `start.cmd` (Windows) or `./start.sh` (Linux). The launcher script handles the rest.
+2. On first run, the in-app **dependency manager** automatically downloads Node.js, ADB platform-tools, and `scrcpy-server` into `dependencies/`. You'll see a progress banner; it takes a minute or two depending on your connection.
+3. Once dependencies are populated, the server starts. Open `http://localhost:8000` in your browser.
+4. From the home page's **Dependencies** panel you can re-check or update Node.js, ADB, and `scrcpy-server` later with one click — they're independently swappable without rebuilding the app.
+
+If you prefer to avoid the network fetch on first run (air-gapped setups, slow connections), you can pre-populate `dependencies/` manually:
+
+- **Node.js** — extract a Node.js LTS Windows / Linux build into `dependencies/node/` (the binary should be at `dependencies/node/node.exe` or `dependencies/node/node`).
+- **ADB** — extract Android `platform-tools` into `dependencies/adb/`.
+- **scrcpy-server** — drop the appropriate `scrcpy-server-vX.Y.Z` binary into `dist/assets/`.
+
+The dependency manager skips downloads when it finds an existing valid copy.
 
 ### What Updates Automatically (In-App Updater)
 
@@ -183,13 +202,25 @@ ws-scrcpy-web tries to surface a system tray icon (best-effort) for quick stop/r
 
 ## Configuration
 
-The server can be configured via environment variables or a `config.json` file:
+Almost all configuration is managed through the in-app **Settings** panel (gear icon, top-right of the home page). Settings persist to `config.json` next to the running app:
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PORT` | `8000` | HTTP server port |
-| `ADB_PATH` | `adb` | Path to ADB executable |
-| `CONFIG_PATH` | `config.json` | Path to config file |
+| Field | Default | Where to change it |
+|-------|---------|--------------------|
+| `webPort` | `8000` (auto-shifts if busy) | Settings → Server → Web port |
+| `installMode` | (set on first run) | Welcome modal / Settings → Service |
+| `firstRunComplete` | `false` | Set automatically after first-run modal |
+| `autoUpdate` | `true` | Settings → Updates → Automatically download updates |
+| `updateCheckIntervalMinutes` | `60` | Settings → Updates → Check interval |
+| `channel` | `stable` | Settings → Updates → Channel |
+| `githubOwner` | `bilbospocketses` | Settings → Updates → GitHub owner (override for forks) |
+
+A few advanced switches are only available via environment variables:
+
+| Variable | Purpose |
+|----------|---------|
+| `DEPS_PATH` | Override the location of the `dependencies/` folder (used by the installer to point at the per-user data dir while the app itself lives under `current/`). |
+| `VELOPACK_FEED_URL` | Force the Velopack auto-updater to use a custom feed URL (mostly useful for the local update-flow sandbox test). |
+| `ADB_PATH` | Override the path to the ADB executable (rarely needed; the dependency manager handles ADB by default). |
 
 ## Logging
 
