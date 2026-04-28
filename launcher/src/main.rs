@@ -3,6 +3,7 @@
 mod elevated_runner;
 mod hooks;
 mod log;
+mod migrate;
 mod paths;
 mod single_instance;
 mod spawn;
@@ -77,16 +78,25 @@ fn main() {
     // back to the install_root walk on non-Windows or if data_root_from_env
     // returns None for any reason — preserves the pre-Phase-1 behavior in
     // those cases.
-    let config_dir = match common::config::data_root_from_env() {
-        Some(p) => Some(p),
-        None => match resolve_install_root() {
-            Ok(p) => Some(p),
-            Err(e) => {
-                log::error(&format!("could not resolve install root for tray: {e}"));
-                None
-            }
-        },
+    let install_root = match resolve_install_root() {
+        Ok(p) => Some(p),
+        Err(e) => {
+            log::error(&format!("could not resolve install root: {e}"));
+            None
+        }
     };
+    let data_root = common::config::data_root_from_env();
+
+    // One-shot upgrade migration: when v0.1.21+ runs over a v0.1.20
+    // install layout, the user's existing <install_root>/config.json is
+    // copied to <data_root>/config.json so settings (installMode,
+    // webPort, firstRunComplete, etc.) carry over. Idempotent — only
+    // fires when the data_root copy is missing.
+    if let (Some(ir), Some(dr)) = (install_root.as_deref(), data_root.as_deref()) {
+        migrate::migrate_legacy_config(ir, dr);
+    }
+
+    let config_dir = data_root.or(install_root);
     let is_service_mode = config_dir
         .as_deref()
         .map(common::config::AppConfig::load)
