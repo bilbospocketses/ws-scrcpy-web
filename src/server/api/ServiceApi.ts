@@ -219,30 +219,6 @@ export class ServiceApi {
             DEPS_PATH: cfg.dependenciesPath,
         };
 
-        // Velopack auto-update relies on user-context paths (LOCALAPPDATA /
-        // APPDATA / USERPROFILE) to find its install state and write its
-        // update cache. When the service runs as Local System, those env
-        // vars resolve to C:\Windows\system32\config\systemprofile\... where
-        // no Velopack state exists, and UpdateManager construction fails
-        // with "Could not auto-locate app manifest." We freeze the
-        // installing user's paths into the service's env block so both the
-        // service-launcher (Velopack init in main.rs) and the supervised
-        // Node child (UpdateService.init) see real user paths instead of
-        // the system profile.
-        //
-        // Risk acknowledged: if Velopack stages an update from the service
-        // (running as Local System) into a user-owned LOCALAPPDATA dir,
-        // file ACLs may end up Local-System-owned and bite a later
-        // user-mode launcher. Watch for this in testing.
-        if (result.platform === 'win32') {
-            for (const key of ['LOCALAPPDATA', 'APPDATA', 'USERPROFILE'] as const) {
-                const value = process.env[key];
-                if (value && value.length > 0) {
-                    envVars[key] = value;
-                }
-            }
-        }
-
         // Persist installMode to disk BEFORE invoking the install. The
         // service-instance's Node process loads Config from config.json
         // synchronously at startup; if we write installMode AFTER Servy
