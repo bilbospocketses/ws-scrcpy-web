@@ -49,7 +49,13 @@ jobs:
         with:
           dotnet-version: 9.x
       - uses: dtolnay/rust-toolchain@stable
-      - run: dotnet tool install -g vpk
+      # Pin vpk to a known-good prerelease that has --msi / --instLocation.
+      # Stable vpk 0.0.1298 (the default with no --version) does NOT have
+      # those flags — they were added in the 0.0.1500+ prerelease line.
+      # Match the npm `velopack` package version to keep client/server
+      # serialization in sync. v0.1.22 should re-evaluate when stable
+      # catches up.
+      - run: dotnet tool install -g vpk --version 0.0.1589-ga2c5a97
       - run: npm ci --omit=dev
       - run: npm run build
       - run: cargo build --release --workspace
@@ -172,7 +178,13 @@ jobs:
           targets: x86_64-unknown-linux-musl
       - name: Install musl-tools (linker for musl target)
         run: sudo apt-get update && sudo apt-get install -y musl-tools
-      - run: dotnet tool install -g vpk
+      # Pin vpk to a known-good prerelease that has --msi / --instLocation.
+      # Stable vpk 0.0.1298 (the default with no --version) does NOT have
+      # those flags — they were added in the 0.0.1500+ prerelease line.
+      # Match the npm `velopack` package version to keep client/server
+      # serialization in sync. v0.1.22 should re-evaluate when stable
+      # catches up.
+      - run: dotnet tool install -g vpk --version 0.0.1589-ga2c5a97
       - run: npm ci --omit=dev
       - run: npm run build
       - name: Build launcher (musl-static — no glibc dependency)

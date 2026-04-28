@@ -196,25 +196,37 @@ mod tests {
         assert_eq!(cfg, AppConfig::default());
     }
 
+    // data_root_for_windows uses backslash-rooted Windows paths. PathBuf::join
+    // on Linux converts those into forward-slash-separated paths because
+    // the platform-native separator differs, which makes the asserted-against
+    // string literals diverge. The function is only meaningfully called on
+    // Windows (data_root_from_env returns None elsewhere), so gate the
+    // assertions to Windows runners. Mirrors the existing gate on
+    // launcher::paths::tests::compute_*_on_windows.
+
     #[test]
+    #[cfg(windows)]
     fn data_root_for_windows_uses_programdata_when_set() {
         let result = data_root_for_windows(Some("C:\\ProgramData"));
         assert_eq!(result, PathBuf::from("C:\\ProgramData\\WsScrcpyWeb"));
     }
 
     #[test]
+    #[cfg(windows)]
     fn data_root_for_windows_honors_custom_programdata() {
         let result = data_root_for_windows(Some("D:\\Custom\\ProgramData"));
         assert_eq!(result, PathBuf::from("D:\\Custom\\ProgramData\\WsScrcpyWeb"));
     }
 
     #[test]
+    #[cfg(windows)]
     fn data_root_for_windows_falls_back_when_programdata_missing() {
         let result = data_root_for_windows(None);
         assert_eq!(result, PathBuf::from("C:\\ProgramData\\WsScrcpyWeb"));
     }
 
     #[test]
+    #[cfg(windows)]
     fn data_root_for_windows_falls_back_on_empty_programdata() {
         let result = data_root_for_windows(Some(""));
         assert_eq!(result, PathBuf::from("C:\\ProgramData\\WsScrcpyWeb"));
