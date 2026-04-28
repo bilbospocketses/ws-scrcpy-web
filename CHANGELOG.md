@@ -7,7 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.1.22] - 2026-04-28
+## [0.1.22] - 2026-04-28 [YANKED]
+
+**This release was yanked on 2026-04-28** after VM testing showed the in-app updater never completes the v0.1.21 → v0.1.22 swap. The fresh-MSI install of v0.1.22 itself works correctly; only the auto-update path is broken across the v0.1.21 → v0.1.22 boundary.
+
+### Known issues (why this was yanked)
+
+- **In-app updater hangs (service mode) or silently fails (local mode).** velopack.log confirms the JS SDK downloads the v0.1.22 nupkg into `<installRoot>\packages\` correctly and hands off to `Update.exe apply --waitPid <pid> --silent --root <installRoot>`. `Update.exe` then enters a retry loop respawning the launcher every ~13 s, and the launcher exits silently without reaching its supervisor, so `current\` is never swapped. Service mode shows `Update.exe` running indefinitely with the service stopped; local mode appears to "succeed" but the post-update launcher reports `v0.1.21` again. Root cause is being investigated in v0.1.23 — likely an unhandled velopack lifecycle flag the launcher exits silently on.
+- **To upgrade from v0.1.21 to a future v0.1.23+:** uninstall ws-scrcpy-web via Add/Remove Programs and fresh-install the new MSI. The in-app updater will not work across this version boundary; the v0.1.21 binary's `Update.exe` is the same broken `Update.exe` shipped in v0.1.22, so only a clean reinstall escapes it.
 
 ### Added
 
