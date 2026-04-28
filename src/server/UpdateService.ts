@@ -2,7 +2,12 @@
 import * as fs from 'fs';
 // biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import * as path from 'path';
-import { UpdateManager, type UpdateInfo, type UpdateOptions } from 'velopack';
+import {
+    UpdateManager,
+    type UpdateInfo,
+    type UpdateOptions,
+    type VelopackLocatorConfig,
+} from 'velopack';
 import { getAppVersion } from './appVersion';
 import type { UpdateChannel } from '../common/ConfigEvents';
 import type { UpdateState } from '../common/UpdateEvents';
@@ -22,7 +27,11 @@ export interface UpdateManagerLike {
     waitExitThenApplyUpdate(update: UpdateInfo, silent?: boolean, restart?: boolean, restartArgs?: string[]): void;
 }
 
-export type UpdateManagerFactory = (feedUrl: string, opts: UpdateOptions) => UpdateManagerLike;
+export type UpdateManagerFactory = (
+    feedUrl: string,
+    opts: UpdateOptions,
+    locator?: VelopackLocatorConfig,
+) => UpdateManagerLike;
 
 export interface UpdateServiceOptions {
     /** Override the install-root path used for sq.version detection. Default: dirname(process.execPath). */
@@ -51,8 +60,8 @@ export interface UpdateServiceState {
     pendingUpdate?: UpdateInfo;
 }
 
-const defaultUpdateManagerFactory: UpdateManagerFactory = (feedUrl, opts) =>
-    new UpdateManager(feedUrl, opts);
+const defaultUpdateManagerFactory: UpdateManagerFactory = (feedUrl, opts, locator) =>
+    new UpdateManager(feedUrl, opts, locator);
 
 /**
  * Backend-owned state machine for SP3 P5 update flow. Singleton-style — one
@@ -73,6 +82,7 @@ export class UpdateService {
     private state: UpdateServiceState;
     private timer: NodeJS.Timeout | null = null;
     private readonly installRoot: string;
+    private readonly locator: VelopackLocatorConfig;
     private readonly factory: UpdateManagerFactory;
     private readonly feedUrlOverride: string | undefined;
     private readonly existsSync: (p: string) => boolean;
@@ -92,6 +102,28 @@ export class UpdateService {
         // and dependencies/. Same pattern as the v0.1.10 scrcpy-server seed
         // path fix in DependencyManager.ts.
         this.installRoot = opts.installRoot ?? path.resolve(__dirname, '..', '..');
+        // Phase 2 of Program Files migration: explicitly hand Velopack the
+        // install paths via VelopackLocatorConfig instead of relying on its
+        // env-var-driven auto-locate. Removes the v0.1.20 service-mode
+        // failure mode ("Could not auto-locate app manifest" when running
+        // as Local System with %LocalAppData% pointing at the system
+        // profile) and stays correct for the Phase 4 Program Files install
+        // root where Velopack should auto-locate fine anyway. Computed
+        // once — installRoot is immutable for the lifetime of the service.
+        this.locator = {
+            RootAppDir: this.installRoot,
+            UpdateExePath: path.join(this.installRoot, 'Update.exe'),
+            PackagesDir: path.join(this.installRoot, 'packages'),
+            // sq.version is Velopack's per-version manifest file, written
+            // inside the swappable `current/` dir. v0.1.17's marker check
+            // moved to `<installRoot>/Update.exe` (which Velopack actually
+            // creates on Windows install); the in-current sq.version
+            // continues to be the manifest file Velopack expects to find
+            // for runtime version reporting.
+            ManifestPath: path.join(this.installRoot, 'current', 'sq.version'),
+            CurrentBinaryDir: path.join(this.installRoot, 'current'),
+            IsPortable: false,
+        };
         this.factory = opts.updateManagerFactory ?? defaultUpdateManagerFactory;
         this.feedUrlOverride = opts.feedUrlOverride;
         this.existsSync = opts.existsSync ?? fs.existsSync;
@@ -154,11 +186,15 @@ export class UpdateService {
         try {
             const cfg = Config.getInstance().getAppConfig();
             const feedUrl = this.buildFeedUrl(cfg.githubOwner);
-            this.mgr = this.factory(feedUrl, {
-                ExplicitChannel: cfg.channel,
-                AllowVersionDowngrade: false,
-                MaximumDeltasBeforeFallback: 10,
-            });
+            this.mgr = this.factory(
+                feedUrl,
+                {
+                    ExplicitChannel: cfg.channel,
+                    AllowVersionDowngrade: false,
+                    MaximumDeltasBeforeFallback: 10,
+                },
+                this.locator,
+            );
             const currentVersion = this.mgr.getCurrentVersion();
             this.state = { isInstalled: true, currentVersion, status: 'idle' };
             log.info(`initialized for v${currentVersion} on ${cfg.channel} channel`);
@@ -189,11 +225,15 @@ export class UpdateService {
         }
         const feedUrl = this.buildFeedUrl(githubOwner);
         try {
-            const newMgr = this.factory(feedUrl, {
-                ExplicitChannel: channel,
-                AllowVersionDowngrade: false,
-                MaximumDeltasBeforeFallback: 10,
-            });
+            const newMgr = this.factory(
+                feedUrl,
+                {
+                    ExplicitChannel: channel,
+                    AllowVersionDowngrade: false,
+                    MaximumDeltasBeforeFallback: 10,
+                },
+                this.locator,
+            );
             // Only swap if construction succeeded — keep the old mgr otherwise.
             this.mgr = newMgr;
             this.state.pendingUpdate = undefined;

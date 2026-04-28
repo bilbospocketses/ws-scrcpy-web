@@ -156,6 +156,60 @@ describe('UpdateService', () => {
         expect(captured[0]).toBe('https://internal.example/feed/');
     });
 
+    // ── VelopackLocator override (Phase 2 of Program Files migration) ──
+
+    it('init: passes a VelopackLocatorConfig to the factory anchored at installRoot', () => {
+        const installRoot = path.join('/fake', 'install', 'root');
+        let receivedLocator: unknown;
+        const factory = vi.fn((_feed: string, _opts: UpdateOptions, locator?: unknown) => {
+            receivedLocator = locator;
+            return fakeMgr();
+        });
+        const svc = new UpdateService({
+            installRoot,
+            existsSync: () => true,
+            updateManagerFactory: factory,
+            setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
+            clearIntervalFn: () => undefined,
+        });
+        svc.init();
+
+        expect(receivedLocator).toBeDefined();
+        const loc = receivedLocator as Record<string, unknown>;
+        expect(loc.RootAppDir).toBe(installRoot);
+        expect(loc.UpdateExePath).toBe(path.join(installRoot, 'Update.exe'));
+        expect(loc.PackagesDir).toBe(path.join(installRoot, 'packages'));
+        expect(loc.ManifestPath).toBe(path.join(installRoot, 'current', 'sq.version'));
+        expect(loc.CurrentBinaryDir).toBe(path.join(installRoot, 'current'));
+        expect(loc.IsPortable).toBe(false);
+    });
+
+    it('reconfigure: passes the same locator to the new factory invocation', async () => {
+        const installRoot = '/fake/install/root';
+        const captured: unknown[] = [];
+        const factory = vi.fn((_feed: string, _opts: UpdateOptions, locator?: unknown) => {
+            captured.push(locator);
+            return fakeMgr();
+        });
+        const svc = new UpdateService({
+            installRoot,
+            existsSync: () => true,
+            updateManagerFactory: factory,
+            setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
+            clearIntervalFn: () => undefined,
+        });
+        svc.init();
+        await svc.reconfigure('beta', 'a-different-owner');
+
+        // init + reconfigure both invoked the factory; both got the locator.
+        expect(captured.length).toBeGreaterThanOrEqual(2);
+        const initLocator = captured[0] as Record<string, unknown>;
+        const reconfigLocator = captured[captured.length - 1] as Record<string, unknown>;
+        expect(initLocator.RootAppDir).toBe(installRoot);
+        expect(reconfigLocator.RootAppDir).toBe(installRoot);
+        expect(reconfigLocator).toEqual(initLocator);
+    });
+
     // ── checkForUpdates ─────────────────────────────────────────────────
 
     it('checkForUpdates: null result → status=idle, no pendingUpdate', async () => {
