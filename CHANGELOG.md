@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.22] - 2026-04-28
+
+### Added
+
+- **Job Object on Node spawn (Windows).** The launcher adopts the supervised Node child into a process-wide kill-on-close Windows Job Object. When the launcher exits — graceful, killed by Servy stop, or torn down by MSI uninstall — the OS automatically terminates Node and every descendant (node-pty, scrcpy.exe, etc.). Fixes orphaned `node.exe` after service uninstall, and the cosmetic `pty.node` MSI-rename-to-`.rbf` residual observed in v0.1.21 (the running Node held the `.node` loaded; killing it on launcher exit means the file is no longer locked when the MSI scheduler runs). No-op on non-Windows. Failure to create or assign the job is logged and swallowed — the launcher continues with v0.1.21 behavior.
+
+### Removed
+
+- **Setup.exe artifact.** The PerMachine MSI is the only Windows install path from v0.1.22 forward. Setup.exe was kept through v0.1.21 as a per-user fallback during the migration window; the multi-user / service-mode / Velopack-under-SYSTEM trade-offs make it no longer worth shipping. CI release workflow drops the Setup.exe sign + upload steps and the windows-final + GitHub-Release artifact patterns. README, RELEASING.md, and PROGRAMDATA-MIGRATION.md updated.
+- **v0.1.20 service-install env-var passthrough.** `ServiceApi.handleInstall` no longer freezes the installing user's `LOCALAPPDATA`/`APPDATA`/`USERPROFILE` into the service-Node's env block. The Phase-2 `VelopackLocatorConfig` override (v0.1.21) makes the service-Node's `UpdateManager` work under SYSTEM at root cause; the env-var workaround was kept only as belt-and-braces during the migration window.
+- **v0.1.20→v0.1.21 legacy-config migration shim** (`launcher/src/migrate.rs`). The one-shot copy from `%LocalAppData%\WsScrcpyWeb\config.json` to `<dataRoot>\config.json` was only meaningful during the in-place upgrade window. v0.1.22+ ships exclusively as a fresh PerMachine MSI install, so the shim is dead code on every install path.
+
+### Fixed
+
+- Pre-existing clippy regressions surfaced by the rust-clippy 1.95 toolchain bump (doc list overindent in `common/src/tray.rs`, field-reassign-with-default in `launcher/src/user_session_spawn.rs`) so `cargo clippy --workspace -- -D warnings` stays green.
+
 ## [0.1.21] - 2026-04-28
 
 ### Changed
