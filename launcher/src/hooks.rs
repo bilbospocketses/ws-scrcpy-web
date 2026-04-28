@@ -229,6 +229,30 @@ fn on_uninstall(install_root: &Path, data_root: &Path) -> i32 {
             "hook(uninstall): servy uninstall returned {uninstall_code}"
         ));
     }
+
+    // v0.1.21: kill the standalone tray helper and remove its HKCU Run-key
+    // entry. Mirrors the in-app uninstall path in elevated_runner. Without
+    // these two steps an MSI uninstall:
+    //   - leaves the tray icon resident (its exe is still loaded; MSI
+    //     can't delete the on-disk binary while the process holds it,
+    //     so MSI renames it to C:\Config.Msi\<id>.rbf and schedules
+    //     delete-on-reboot — leaving a zombie tray pointing at a
+    //     renamed file).
+    //   - leaves an HKCU\...\Run\WsScrcpyWebTray entry pointing at a
+    //     non-existent path, which is benign on next login but messy.
+    // Best-effort, unconditional within service mode (the only path that
+    // ever registered a standalone tray helper in the first place).
+    if let Err(e) = crate::elevated_runner::unregister_tray_run_key() {
+        log::error(&format!("hook(uninstall): tray Run-key cleanup: {e}"));
+    } else {
+        log::info("hook(uninstall): tray Run-key cleared");
+    }
+    let _ = std::process::Command::new("taskkill")
+        .args(["/F", "/IM", "ws-scrcpy-web-tray.exe"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+
     // Always exit 0 — uninstall must not be blocked by a flaky service teardown.
     0
 }

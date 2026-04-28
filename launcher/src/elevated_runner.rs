@@ -359,7 +359,7 @@ fn register_tray_run_key(tray_path: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn unregister_tray_run_key() -> Result<(), String> {
+pub fn unregister_tray_run_key() -> Result<(), String> {
     let out = Command::new("reg.exe")
         .args(["delete", TRAY_RUN_KEY, "/v", TRAY_RUN_VALUE, "/f"])
         .output()
