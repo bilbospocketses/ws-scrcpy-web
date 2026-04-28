@@ -10,7 +10,33 @@
 
 use serde::Deserialize;
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+/// Pure resolver for the writable-state root on Windows. Mirrors
+/// `resolveDataRoot` in `src/server/Config.ts` (Phase 1 of the Program
+/// Files migration). Returns `<programdata>\WsScrcpyWeb`. The TS side
+/// returns null on non-Windows; callers needing the cross-platform
+/// "data root or install root fallback" semantic should compose this
+/// with their install-root knowledge.
+pub fn data_root_for_windows(programdata: Option<&str>) -> PathBuf {
+    let pd = programdata
+        .filter(|s| !s.is_empty())
+        .unwrap_or("C:\\ProgramData");
+    PathBuf::from(pd).join("WsScrcpyWeb")
+}
+
+/// Convenience wrapper around [`data_root_for_windows`] that reads
+/// `PROGRAMDATA` from the process env. Returns `Some` on Windows, `None`
+/// elsewhere — non-Windows callers should fall back to install-root for
+/// data-root semantics until/unless a Linux migration target is defined.
+pub fn data_root_from_env() -> Option<PathBuf> {
+    if cfg!(windows) {
+        let pd = std::env::var("PROGRAMDATA").ok();
+        Some(data_root_for_windows(pd.as_deref()))
+    } else {
+        None
+    }
+}
 
 #[derive(Debug, Deserialize, Default, PartialEq, Eq)]
 #[serde(default)]
@@ -168,6 +194,30 @@ mod tests {
 
         let cfg = AppConfig::load(dir.path());
         assert_eq!(cfg, AppConfig::default());
+    }
+
+    #[test]
+    fn data_root_for_windows_uses_programdata_when_set() {
+        let result = data_root_for_windows(Some("C:\\ProgramData"));
+        assert_eq!(result, PathBuf::from("C:\\ProgramData\\WsScrcpyWeb"));
+    }
+
+    #[test]
+    fn data_root_for_windows_honors_custom_programdata() {
+        let result = data_root_for_windows(Some("D:\\Custom\\ProgramData"));
+        assert_eq!(result, PathBuf::from("D:\\Custom\\ProgramData\\WsScrcpyWeb"));
+    }
+
+    #[test]
+    fn data_root_for_windows_falls_back_when_programdata_missing() {
+        let result = data_root_for_windows(None);
+        assert_eq!(result, PathBuf::from("C:\\ProgramData\\WsScrcpyWeb"));
+    }
+
+    #[test]
+    fn data_root_for_windows_falls_back_on_empty_programdata() {
+        let result = data_root_for_windows(Some(""));
+        assert_eq!(result, PathBuf::from("C:\\ProgramData\\WsScrcpyWeb"));
     }
 
     #[test]

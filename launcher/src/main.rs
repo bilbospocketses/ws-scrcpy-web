@@ -72,14 +72,22 @@ fn main() {
     // In service mode this is a no-op (separate tray helper handles UI).
     // We deliberately use the lenient `load` here: a missing/malformed
     // config.json should never block startup over a tray decision.
-    let install_root = match resolve_install_root() {
-        Ok(p) => Some(p),
-        Err(e) => {
-            log::error(&format!("could not resolve install root for tray: {e}"));
-            None
-        }
+    //
+    // Phase 1: load from <dataRoot> (PROGRAMDATA-rooted on Windows). Falls
+    // back to the install_root walk on non-Windows or if data_root_from_env
+    // returns None for any reason — preserves the pre-Phase-1 behavior in
+    // those cases.
+    let config_dir = match common::config::data_root_from_env() {
+        Some(p) => Some(p),
+        None => match resolve_install_root() {
+            Ok(p) => Some(p),
+            Err(e) => {
+                log::error(&format!("could not resolve install root for tray: {e}"));
+                None
+            }
+        },
     };
-    let is_service_mode = install_root
+    let is_service_mode = config_dir
         .as_deref()
         .map(common::config::AppConfig::load)
         .map(|cfg| cfg.is_service_mode())

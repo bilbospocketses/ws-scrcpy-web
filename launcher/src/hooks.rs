@@ -60,10 +60,14 @@ pub fn handle_velopack_hook(args: &[String]) -> Option<i32> {
         }
     };
 
+    // Phase 1: writable state (config.json) lives at <dataRoot>. servy-cli
+    // and other binaries continue to resolve from <installRoot>.
+    let data_root = common::config::data_root_from_env().unwrap_or_else(|| install_root.clone());
+
     let code = match kind {
-        HookKind::Install => on_install(&install_root),
-        HookKind::Updated => on_updated(&install_root),
-        HookKind::Uninstall => on_uninstall(&install_root),
+        HookKind::Install => on_install(&data_root),
+        HookKind::Updated => on_updated(&install_root, &data_root),
+        HookKind::Uninstall => on_uninstall(&install_root, &data_root),
     };
     Some(code)
 }
@@ -97,8 +101,18 @@ fn default_config_json() -> String {
     s
 }
 
-fn on_install(install_root: &Path) -> i32 {
-    let cfg_path = install_root.join("config.json");
+fn on_install(data_root: &Path) -> i32 {
+    // Phase 1: skeleton config.json lives at <dataRoot>/config.json.
+    // Best-effort dir create — Phase 4 MSI provides the ACL grant; on
+    // pre-Phase-4 layouts data_root collapses to install_root which
+    // already exists.
+    if !data_root.exists() {
+        if let Err(e) = std::fs::create_dir_all(data_root) {
+            log::error(&format!("hook(install): could not create {data_root:?}: {e}"));
+            return 0;
+        }
+    }
+    let cfg_path = data_root.join("config.json");
     if cfg_path.exists() {
         log::info(&format!("hook(install): {cfg_path:?} already present; leaving as-is"));
         return 0;
@@ -117,8 +131,8 @@ fn on_install(install_root: &Path) -> i32 {
     }
 }
 
-fn on_updated(install_root: &Path) -> i32 {
-    let cfg = AppConfig::load(install_root);
+fn on_updated(install_root: &Path, data_root: &Path) -> i32 {
+    let cfg = AppConfig::load(data_root);
     if !cfg.is_service_mode() {
         log::info("hook(updated): not service mode; nothing to do");
         return 0;
@@ -126,8 +140,8 @@ fn on_updated(install_root: &Path) -> i32 {
     run_servy(install_root, &["restart", "WsScrcpyWeb"], "updated")
 }
 
-fn on_uninstall(install_root: &Path) -> i32 {
-    let cfg = AppConfig::load(install_root);
+fn on_uninstall(install_root: &Path, data_root: &Path) -> i32 {
+    let cfg = AppConfig::load(data_root);
     if !cfg.is_service_mode() {
         log::info("hook(uninstall): not service mode; nothing to do");
         return 0;
@@ -268,7 +282,8 @@ mod tests {
         .unwrap();
         // No `current/servy-cli.exe` either way; this should still exit 0
         // because we short-circuit before looking for servy.
-        assert_eq!(on_updated(dir.path()), 0);
+        // install_root and data_root collapse to the same dir in this test.
+        assert_eq!(on_updated(dir.path(), dir.path()), 0);
     }
 
     #[test]
@@ -281,7 +296,7 @@ mod tests {
         )
         .unwrap();
         // No servy-cli.exe placed -> P2 must log+exit 0, not fail.
-        assert_eq!(on_updated(dir.path()), 0);
+        assert_eq!(on_updated(dir.path(), dir.path()), 0);
     }
 
     #[test]
@@ -292,7 +307,7 @@ mod tests {
             r#"{"installMode":null,"firstRunComplete":false}"#,
         )
         .unwrap();
-        assert_eq!(on_uninstall(dir.path()), 0);
+        assert_eq!(on_uninstall(dir.path(), dir.path()), 0);
     }
 
     #[test]
@@ -304,7 +319,7 @@ mod tests {
             r#"{"installMode":"system-service","firstRunComplete":true}"#,
         )
         .unwrap();
-        assert_eq!(on_uninstall(dir.path()), 0);
+        assert_eq!(on_uninstall(dir.path(), dir.path()), 0);
     }
 
     #[test]
@@ -319,7 +334,7 @@ mod tests {
         fs::write(logs.join("server.log"), "keep me").unwrap();
         fs::write(&cfg, r#"{"installMode":"user-service"}"#).unwrap();
 
-        on_uninstall(dir.path());
+        on_uninstall(dir.path(), dir.path());
 
         assert!(cfg.exists(), "config.json must be preserved");
         assert!(deps.join("marker.txt").exists(), "deps must be preserved");

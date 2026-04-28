@@ -23,9 +23,16 @@ const ICON_BYTES: &[u8] = include_bytes!("../../assets/tray-icon.ico");
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn main() -> Result<()> {
-    let install_root = install_root_from_exe().context("resolve install root")?;
+    // Phase 1 of the Program Files migration: config.json lives under
+    // <dataRoot> (PROGRAMDATA-rooted on Windows). Fall back to the
+    // pre-Phase-1 install_root location on non-Windows or if data_root
+    // resolution returns None for any reason.
+    let config_dir = match common::config::data_root_from_env() {
+        Some(p) => p,
+        None => install_root_from_exe().context("resolve install root")?,
+    };
     // Lenient: missing/malformed config means we use the default port.
-    let cfg = common::config::AppConfig::load(&install_root);
+    let cfg = common::config::AppConfig::load(&config_dir);
     let port = cfg.web_port.unwrap_or(8000);
 
     let action = common::tray::run(

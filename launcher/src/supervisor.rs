@@ -48,8 +48,8 @@ pub fn decide_restart(exit_code: i32, marker_exists: bool) -> Option<RestartReas
 pub fn run() -> Result<i32> {
     let paths = Paths::from_env()?;
     log::info(&format!(
-        "supervisor: install_root={:?} deps_path={:?}",
-        paths.install_root, paths.deps_path
+        "supervisor: install_root={:?} data_root={:?} deps_path={:?}",
+        paths.install_root, paths.data_root, paths.deps_path
     ));
 
     // Stale marker cleanup on startup. Prevents an old marker from a
