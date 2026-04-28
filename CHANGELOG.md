@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.21] - 2026-04-28
+
+### Changed
+
+- **Install layout migrated to per-machine** (Windows). Binaries now live at `C:\Program Files\WsScrcpyWeb\` (Velopack-managed); writable runtime state (`config.json`, `dependencies\`, logs) lives at `C:\ProgramData\WsScrcpyWeb\` with `Authenticated Users:Modify (OI)(CI)` granted at MSI install time. **Existing v0.1.x users must uninstall + reinstall** — Velopack auto-update cannot migrate across install locations. Detailed upgrade instructions in `docs/PROGRAMDATA-MIGRATION.md`. The Setup.exe artifact still ships through v0.1.21 as a fallback for users who prefer per-user installs without UAC on every update; v0.1.22 will drop Setup.exe.
+- **Service-mode + multi-user state is now coherent.** All users (and the Local System service-Node) share `C:\ProgramData\WsScrcpyWeb\config.json` and the downloaded `dependencies\` tree. Settings changed in any context are visible to all others. Bob's first login after Alice installs the service automatically picks up the existing service URL via the shared config — no second WelcomeModal, no orphaned per-user instances.
+- **Updates require UAC every apply** (consequence of per-machine install). Velopack's `Update.exe` writes to Program Files which non-admin users cannot modify. The signed Update.exe triggers a single UAC prompt per update. Documented in PROGRAMDATA-MIGRATION.md.
+- **Tray menu** — left-click now opens the app in the default browser (the most common action becomes the cheapest gesture). Right-click shows a popup menu with "Open ws-scrcpy-web" + "Exit". Pre-v0.1.21 left-click was the exit-confirm dialog only; that path moved to the right-click menu's "Exit" item. Both the user-mode launcher tray and the standalone service-mode tray helper share the new menu.
+
+### Added
+
+- **Two-root path resolution** under the hood. `installRoot` (binaries, Velopack-managed) and `dataRoot` (writable state) are now distinct concepts in both the TS server (`resolveDataRoot` + `Config.dataRoot`) and the Rust launcher (`Paths::data_root`). `dataRoot` defaults to `%PROGRAMDATA%\WsScrcpyWeb` on Windows and collapses to `installRoot` on non-Windows hosts (Linux AppImage layout unchanged).
+- **VelopackLocator runtime override.** `UpdateService.init()` builds a `VelopackLocatorConfig` from `installRoot` and passes it to `new UpdateManager(...)`. Velopack no longer relies on `%LOCALAPPDATA%`-walking auto-locate, fixing the v0.1.20 service-mode failure ("Could not auto-locate app manifest. Treating as dev mode.") at root cause. The v0.1.20 `LOCALAPPDATA`/`APPDATA`/`USERPROFILE` env-var passthrough in `ServiceApi.handleInstall` remains in place as belt-and-braces; v0.1.22 will remove it.
+- **One-shot legacy-config migration shim** (`launcher/src/migrate.rs`). When v0.1.21+ runs over a v0.1.20 install (i.e. Setup.exe → MSI upgrade where the user retained `%LocalAppData%\WsScrcpyWeb\config.json`), the launcher copies the legacy config to `<dataRoot>` on first start so settings carry over. Idempotent; no-op once `<dataRoot>\config.json` exists.
+- `docs/PROGRAMDATA-MIGRATION.md` — full upgrade guide for existing v0.1.x users.
+
+### Fixed
+
+- **Service-mode auto-update silently bailed.** Per-machine install resolves Velopack auto-locate cleanly without env-var hackery; the service-Node (Local System) and user-mode launcher both see the same install root via the explicit `VelopackLocatorConfig`. UI Settings → Updates now reports the live version + channel in service mode instead of dev-mode copy.
+
 ## [0.1.20] - 2026-04-28
 
 ### Fixed

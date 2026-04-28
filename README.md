@@ -47,9 +47,12 @@ Input flows back as mouse, UHID keyboard, i16-fixed-point scroll, and a D-pad/To
 
 Get the latest release from the [Releases page](https://github.com/bilbospocketses/ws-scrcpy-web/releases/latest):
 
-- **Windows installer (`Setup.exe`)** — installs per-user under `%LOCALAPPDATA%`, no admin required, Velopack-managed auto-updates. Best for most Windows users.
+- **Windows MSI** (recommended, v0.1.21+) — installs per-machine to `C:\Program Files\WsScrcpyWeb\` with writable runtime state at `C:\ProgramData\WsScrcpyWeb\`. Requires admin (UAC) to install and to apply each subsequent update. Multi-user friendly; service mode and local mode share configuration.
+- **Windows installer (`Setup.exe`)** — per-user under `%LOCALAPPDATA%`, no admin required. Service mode is supported but the in-app updater can't operate while running as Local System. Shipped through v0.1.21 as a fallback; **dropped in v0.1.22** in favor of the MSI.
 - **Windows portable ZIP** — unzip and run; no install required, no auto-updates. Useful for air-gapped setups.
 - **Linux AppImage** — `chmod +x ws-scrcpy-web-<version>.AppImage` and run. See [Linux install](#linux-install-appimage) below.
+
+**Upgrading from v0.1.20 or earlier on Windows:** the install layout changed. See [docs/PROGRAMDATA-MIGRATION.md](docs/PROGRAMDATA-MIGRATION.md) for the uninstall-then-reinstall steps.
 
 Release artifacts are code-signed via [SignPath Foundation](https://signpath.org), which provides free code signing for OSS projects. Each release also ships a `SHA256SUMS` file you can verify against.
 
@@ -90,7 +93,8 @@ ws-scrcpy-web ships as a fully self-contained app with no system-wide installati
 
 | Path | Best for | Notes |
 |------|----------|-------|
-| **Windows installer** (`Setup.exe`) | Most Windows users | Velopack-managed install to `%LocalAppData%`. Auto-updates. Optional Windows service mode. |
+| **Windows MSI** (`*.msi`, recommended) | Most Windows users; multi-user / service-mode setups | Per-machine install to `C:\Program Files\WsScrcpyWeb\`. Writable state at `C:\ProgramData\WsScrcpyWeb\` (Authenticated Users:Modify). Velopack auto-updates apply with one UAC prompt each. |
+| **Windows installer** (`Setup.exe`, fallback through v0.1.21) | Per-user installs without UAC on every update | Velopack-managed per-user install to `%LocalAppData%`. Service mode works but in-app updater is degraded. Dropped in v0.1.22. |
 | **Linux AppImage** | Most Linux users | Single executable. Velopack-managed auto-updates. Optional systemd service mode. |
 | **Portable ZIP** (Windows) / source build | Air-gapped or no-install setups | Extract and run; layout shown below. |
 

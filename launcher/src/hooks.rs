@@ -16,7 +16,7 @@
 // missing servy-cli would block the update from completing.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use common::config::AppConfig;
 
@@ -102,16 +102,26 @@ fn default_config_json() -> String {
 }
 
 fn on_install(data_root: &Path) -> i32 {
-    // Phase 1: skeleton config.json lives at <dataRoot>/config.json.
-    // Best-effort dir create — Phase 4 MSI provides the ACL grant; on
-    // pre-Phase-4 layouts data_root collapses to install_root which
-    // already exists.
+    // Phase 4 of Program Files migration: at MSI install time we run
+    // elevated (PerMachine MSI), so this hook is the right place to:
+    //   1. Create <dataRoot> if missing
+    //   2. Grant Authenticated Users:Modify (OI)(CI) on <dataRoot>
+    //   3. Write skeleton config.json so the backend's first read
+    //      finds a well-formed file
+    //
+    // Without step 2, the ProgramData root inherits Authenticated
+    // Users:ReadAndExecute only — second-user logins can't write
+    // config or downloaded deps. The grant uses the
+    // Authenticated-Users SID (S-1-5-11) instead of the localized
+    // group name so the command works regardless of system locale.
     if !data_root.exists() {
         if let Err(e) = std::fs::create_dir_all(data_root) {
             log::error(&format!("hook(install): could not create {data_root:?}: {e}"));
             return 0;
         }
     }
+    grant_data_root_acl(data_root);
+
     let cfg_path = data_root.join("config.json");
     if cfg_path.exists() {
         log::info(&format!("hook(install): {cfg_path:?} already present; leaving as-is"));
@@ -129,6 +139,58 @@ fn on_install(data_root: &Path) -> i32 {
             0
         }
     }
+}
+
+/// Grant `Authenticated Users` Modify access (with object + container
+/// inheritance) to the data root via `icacls`. Best-effort — failures
+/// are logged but never block the install. Idempotent: re-running just
+/// re-grants the same ACE.
+///
+/// Windows-only because `icacls` doesn't exist elsewhere; on non-Windows
+/// the data root collapses to the install root and Linux ACL semantics
+/// are managed elsewhere (a future concern).
+#[cfg(windows)]
+fn grant_data_root_acl(data_root: &Path) {
+    // SID *S-1-5-11 = NT AUTHORITY\Authenticated Users (all locales).
+    // (OI)(CI)M = Object Inheritance + Container Inheritance + Modify.
+    // /T = recurse to existing items (fresh dir = no-op).
+    // /C = continue on per-file errors (defensive).
+    // /Q = suppress success spam.
+    let target = data_root.as_os_str();
+    let result = Command::new("icacls")
+        .arg(target)
+        .args(["/grant", "*S-1-5-11:(OI)(CI)M", "/T", "/C", "/Q"])
+        // Suppress icacls's "Successfully processed N files" chatter —
+        // we already log success/failure ourselves via the launcher
+        // log file. Without this, the chatter leaks into test runners
+        // and stdout-captured CI logs.
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    match result {
+        Ok(status) if status.success() => {
+            log::info(&format!(
+                "hook(install): granted Authenticated Users:Modify (OI)(CI) on {data_root:?}"
+            ));
+        }
+        Ok(status) => {
+            log::error(&format!(
+                "hook(install): icacls returned {} for {data_root:?}",
+                status.code().unwrap_or(-1)
+            ));
+        }
+        Err(e) => {
+            log::error(&format!(
+                "hook(install): could not invoke icacls on {data_root:?}: {e}"
+            ));
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn grant_data_root_acl(_data_root: &Path) {
+    // Linux/macOS: data_root collapses to install_root; ACL handling
+    // is out of scope for this hook on non-Windows hosts.
 }
 
 fn on_updated(install_root: &Path, data_root: &Path) -> i32 {
