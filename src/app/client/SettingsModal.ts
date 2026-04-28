@@ -483,12 +483,20 @@ export class SettingsModal extends Modal {
                 }
                 return;
             }
-            const data = (await r.json()) as { status: UpdatesStatusResponse } | UpdatesStatusResponse;
-            // Backend returns { config, status } per contracts; tolerate either.
-            const status: UpdatesStatusResponse =
-                'status' in data && (data as { status: UpdatesStatusResponse }).status
-                    ? (data as { status: UpdatesStatusResponse }).status
-                    : (data as UpdatesStatusResponse);
+            // The PATCH /api/updates/config endpoint returns a flat
+            // UpdatesStatusResponse (see UpdatesApi.handleConfig). Pre-v0.1.21
+            // this code tried to "tolerate either" a flat or wrapped
+            // ({ status: ... }) shape via `'status' in data`, but
+            // UpdatesStatusResponse itself has a `status: UpdateState` string
+            // field — making `'status' in data` always true and unwrapping
+            // the flat response to the literal string ('idle' / 'checking' /
+            // …). syncControlsToStatus then read .autoUpdate / .githubOwner /
+            // .updateCheckIntervalMinutes off the string, getting undefined,
+            // and painted the controls blank with githubOwner = "undefined"
+            // until the next page reload. v0.1.21 fixes the type lie: the
+            // server only ever returns the flat shape, so we read it
+            // directly.
+            const status = (await r.json()) as UpdatesStatusResponse;
             this.updatesLastStatus = status;
             // Reflect the new server-side values into the controls (e.g.,
             // channel switch may have changed status; owner may have been
