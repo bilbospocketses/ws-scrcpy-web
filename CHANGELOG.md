@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.16] - 2026-04-28
+
+### Notes
+
+- Update-flow validation — no code changes. Cut to exercise the in-app updater end-to-end against a v0.1.15 install (local instance + service instance).
+
 ## [0.1.15] - 2026-04-28
 
 ### Fixed
