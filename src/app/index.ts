@@ -63,7 +63,7 @@ function maybeResumeUninstall(): void {
 function maybeShowWelcomeModal(): void {
     fetch('/api/config')
         .then((r) => (r.ok ? (r.json() as Promise<Partial<AppConfigEnvelope>>) : null))
-        .then((data) => {
+        .then(async (data) => {
             const runtime = data?.runtime;
             const config = data?.config;
             if (!runtime || !config) return;
@@ -71,40 +71,58 @@ function maybeShowWelcomeModal(): void {
             const isServiceInstance =
                 config.installMode === 'user-service' || config.installMode === 'system-service';
 
-            // v0.1.9: route based on installMode.
-            //   - service instance, first time seen → ServiceFirstRunModal
-            //     (informational + bookmark hint)
-            //   - service instance, already dismissed → no modal
-            //   - non-service, firstRunComplete=false → WelcomeModal
-            //     (existing flow)
-            //   - non-service, firstRunComplete=true → no modal
+            // v0.1.10: gate on localStorage flags, not server-side config.
+            // Pre-v0.1.10 used serviceFirstRunSeen / firstRunComplete from
+            // config.json — which got reset by service uninstall/reinstall
+            // cycles, re-firing the modal even after the user had dismissed
+            // it before. localStorage survives mode flips; flags only set
+            // when the user explicitly checks "don't show again".
             //
-            // The v0.1.8 bug was: service instance with stale
-            // in-memory firstRunComplete=false re-showed WelcomeModal
-            // after install-flow redirect. Gating on installMode
-            // makes that impossible — service instances never see
-            // the install-mode prompt.
+            // Routing:
+            //   - service instance + not dismissed → ServiceFirstRunModal
+            //   - non-service + first-run + not dismissed → WelcomeModal
+            //   - else → maybe show port-change bookmark reminder
+            //
+            // Only one modal at a time — bookmark modal yields to either
+            // first-run modal so we don't pile dialogs on first contact.
+            const gate = await import('./client/firstRunGate');
             if (isServiceInstance) {
-                if (config.serviceFirstRunSeen !== true) {
+                if (!gate.isServiceFirstRunDismissed()) {
                     void import('./client/ServiceFirstRunModal').then(({ ServiceFirstRunModal }) => {
                         new ServiceFirstRunModal({ webPort: runtime.webPort });
                     });
+                    return;
                 }
+                maybeShowPortChangeModal(runtime.webPort);
                 return;
             }
 
-            if (runtime.firstRunComplete !== false) return;
-            new WelcomeModal({
-                webPort: runtime.webPort,
-                portWasAutoShifted: runtime.portWasAutoShifted,
-                onDecision: () => {
-                    // WelcomeModal owns persistence (install or PATCH) for P3+.
-                },
-            });
+            if (runtime.firstRunComplete === false && !gate.isWelcomeDismissed()) {
+                new WelcomeModal({
+                    webPort: runtime.webPort,
+                    portWasAutoShifted: runtime.portWasAutoShifted,
+                    onDecision: () => {
+                        // WelcomeModal owns persistence (install or PATCH) for P3+.
+                    },
+                });
+                return;
+            }
+
+            maybeShowPortChangeModal(runtime.webPort);
         })
         .catch(() => {
             // /api/config absent (e.g., dev server without P2 wiring) — silently bail.
         });
+}
+
+function maybeShowPortChangeModal(currentPort: number): void {
+    void import('./client/firstRunGate').then((gate) => {
+        const dismissedFor = gate.getBookmarkDismissedPort();
+        if (dismissedFor === currentPort) return;
+        void import('./client/PortChangeModal').then(({ PortChangeModal }) => {
+            new PortChangeModal({ webPort: currentPort });
+        });
+    });
 }
 
 // Initialize theme immediately to prevent flash of wrong colors

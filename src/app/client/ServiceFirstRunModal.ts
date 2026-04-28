@@ -1,4 +1,5 @@
 import { Modal } from '../ui/Modal';
+import { setServiceFirstRunDismissed } from './firstRunGate';
 
 /**
  * One-shot informational modal shown on the FIRST page load of a
@@ -29,6 +30,7 @@ export interface ServiceFirstRunModalOptions {
 export class ServiceFirstRunModal extends Modal {
     private opts!: ServiceFirstRunModalOptions;
     private dismissBtn: HTMLButtonElement | null = null;
+    private dontShowCheckbox: HTMLInputElement | null = null;
 
     constructor(options: ServiceFirstRunModalOptions) {
         super({ title: 'ws-scrcpy-web is running as a service' });
@@ -79,20 +81,43 @@ export class ServiceFirstRunModal extends Modal {
 
         const tip = document.createElement('p');
         tip.style.cssText =
-            'margin: 0; padding: 8px 12px; ' +
+            'margin: 0 0 12px; padding: 8px 12px; ' +
             'background: rgba(91, 154, 255, 0.08); border-left: 3px solid #5b9aff; ' +
             'color: var(--text-color-light); font-size: 13px; line-height: 1.5;';
         tip.textContent =
             'tip: bookmark this URL now. the service keeps it valid across reboots, ' +
             'so you can return here any time without reopening the desktop app.';
         container.appendChild(tip);
+
+        // v0.1.10 don't-show-again checkbox. Only the box+button combo
+        // persists the dismissal — without the checkbox, the modal will
+        // re-appear on the next page load. Pre-v0.1.10 dismissal was
+        // tracked server-side as serviceFirstRunSeen, which got reset
+        // by uninstall/reinstall cycles. localStorage survives those.
+        const dontShowLabel = document.createElement('label');
+        dontShowLabel.style.cssText =
+            'display: flex; align-items: center; gap: 8px; margin: 0; ' +
+            'font-size: 13px; color: var(--text-color-light); cursor: pointer;';
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        dontShowLabel.appendChild(checkbox);
+        dontShowLabel.appendChild(
+            document.createTextNode("don't show this again on this browser"),
+        );
+        this.dontShowCheckbox = checkbox;
+        container.appendChild(dontShowLabel);
     }
 
     private async dismiss(): Promise<void> {
         if (this.dismissBtn) this.dismissBtn.disabled = true;
-        // Persist the flag. If the PATCH fails, we still close the
-        // modal — re-showing it on next load is better UX than
-        // wedging the user out.
+        if (this.dontShowCheckbox?.checked) {
+            setServiceFirstRunDismissed();
+        }
+        // Keep persisting serviceFirstRunSeen on the server too — other
+        // code paths (e.g., the resume-token UX overlay) may still read
+        // it for reasons unrelated to modal-gating. localStorage is now
+        // the modal authority; the server flag is non-load-bearing for
+        // gating but harmless to maintain.
         try {
             await fetch('/api/config', {
                 method: 'PATCH',

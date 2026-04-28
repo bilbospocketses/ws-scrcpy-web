@@ -1,5 +1,6 @@
 import { Modal } from '../ui/Modal';
 import type { ServiceStatusResponse, ServiceInstallResponse } from '../../common/ServiceEvents';
+import { setWelcomeDismissed } from './firstRunGate';
 
 export type WelcomeChoice = 'service' | 'on-demand';
 
@@ -19,6 +20,7 @@ export class WelcomeModal extends Modal {
     private opts!: WelcomeModalOptions;
     private yesBtn!: HTMLButtonElement;
     private noBtn!: HTMLButtonElement;
+    private dontShowCheckbox!: HTMLInputElement;
     private statusEl!: HTMLElement;
     /**
      * Cached platform from the first /api/service/status fetch. We render
@@ -162,6 +164,21 @@ export class WelcomeModal extends Modal {
         this.statusEl.style.cssText =
             'margin: 0 0 12px; color: var(--text-color-light); font-size: 13px; min-height: 1em;';
         container.appendChild(this.statusEl);
+
+        // v0.1.10 don't-show-again checkbox. Only persists the dismissal
+        // flag when the user clicks "no, run on demand" — the install-service
+        // path redirects to the service instance which has its own modal.
+        const dontShowLabel = document.createElement('label');
+        dontShowLabel.style.cssText =
+            'display: flex; align-items: center; gap: 8px; margin: 0 0 12px; ' +
+            'font-size: 13px; color: var(--text-color-light); cursor: pointer;';
+        this.dontShowCheckbox = document.createElement('input');
+        this.dontShowCheckbox.type = 'checkbox';
+        dontShowLabel.appendChild(this.dontShowCheckbox);
+        dontShowLabel.appendChild(
+            document.createTextNode("don't show this again on this browser"),
+        );
+        container.appendChild(dontShowLabel);
 
         const buttons = document.createElement('div');
         buttons.style.cssText = 'display: flex; gap: 12px; justify-content: flex-end; flex-wrap: wrap;';
@@ -339,6 +356,14 @@ export class WelcomeModal extends Modal {
             this.setStatus("couldn't save preference. try again?", true);
             this.setBusy(false);
             return;
+        }
+        // v0.1.10: only suppress future first-run modal when the user
+        // explicitly opts out via the checkbox. Without this gate the
+        // modal would still keep firing because firstRunComplete server
+        // state alone was load-bearing-but-broken across uninstall cycles
+        // — the localStorage flag is the new authority.
+        if (this.dontShowCheckbox.checked) {
+            setWelcomeDismissed();
         }
         this.opts.onDecision('on-demand');
         this.close();
