@@ -16,7 +16,7 @@
 // missing servy-cli would block the update from completing.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 
 use common::config::AppConfig;
 
@@ -163,9 +163,11 @@ fn grant_data_root_acl(data_root: &Path) {
         // Suppress icacls's "Successfully processed N files" chatter —
         // we already log success/failure ourselves via the launcher
         // log file. Without this, the chatter leaks into test runners
-        // and stdout-captured CI logs.
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        // and stdout-captured CI logs. Qualified rather than imported
+        // so the unused-import lint doesn't fire on non-Windows builds
+        // where this whole function is a no-op stub.
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .status();
     match result {
         Ok(status) if status.success() => {
