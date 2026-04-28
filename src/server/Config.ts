@@ -110,14 +110,46 @@ export function resolveAdbPath(
 }
 
 /**
+ * Pure resolver for the writable-state root (Phase 1 of the Program Files
+ * migration plan). On Windows this is `<PROGRAMDATA>\WsScrcpyWeb` — a
+ * machine-wide, all-users-writable location distinct from the install root
+ * (where Velopack manages binaries). Returns `null` on non-Windows; the
+ * AppImage layout is unchanged for now.
+ *
+ * Defaulting `PROGRAMDATA` to `C:\ProgramData` matches Microsoft's
+ * documented value for the system ProgramData folder when the env var is
+ * unexpectedly missing — an extremely rare edge but worth covering rather
+ * than crashing.
+ */
+export function resolveDataRoot(
+    env: NodeJS.ProcessEnv,
+    platform: NodeJS.Platform = process.platform,
+): string | null {
+    if (platform !== 'win32') return null;
+    const programData = env['PROGRAMDATA'] && env['PROGRAMDATA'].length > 0
+        ? env['PROGRAMDATA']
+        : 'C:\\ProgramData';
+    return path.win32.join(programData, 'WsScrcpyWeb');
+}
+
+/**
  * Resolve the path used for reading/writing config.json when no override is
  * supplied via EnvName.CONFIG_PATH. Order:
- *   1. <installRoot>/config.json — sibling of `current/` in installed layout.
- *      We approximate installRoot as parent of the entry script's parent dir.
- *   2. <repoRoot>/config.json — dev fallback when entry's grandparent has a
- *      package.json (mirrors resolveDependenciesPath's dev tell).
+ *   1. <dataRoot>/config.json when `dataRoot` is provided (production path
+ *      after Phase 1 — the writable state root that the launcher and the
+ *      Node server agree on).
+ *   2. <repoRoot>/config.json — dev fallback when no dataRoot is supplied.
+ *      Computed as the parent of the entry script's directory, matching the
+ *      pre-Phase-1 behavior where config.json sat next to dist/.
  */
-export function resolveConfigPath(entryScript: string, exists: (p: string) => boolean = fs.existsSync): string {
+export function resolveConfigPath(
+    entryScript: string,
+    exists: (p: string) => boolean = fs.existsSync,
+    dataRoot: string | null = null,
+): string {
+    if (dataRoot) {
+        return path.join(dataRoot, 'config.json');
+    }
     const entryDir = path.dirname(entryScript);
     const repoRoot = path.resolve(entryDir, '..');
     if (exists(path.join(repoRoot, 'package.json'))) {
@@ -326,12 +358,19 @@ export class Config {
             const envConfigPath = process.env[EnvName.CONFIG_PATH];
             const warn = (msg: string) => console.warn(`[Config] ${msg}`);
 
-            // Resolve the config file path. EnvName.CONFIG_PATH override wins.
+            // Phase 1: writable state lives at <dataRoot> (ProgramData on
+            // Windows). Compute it once here and thread it through both the
+            // config-path and dependencies-path resolvers below.
+            const dataRoot = resolveDataRoot(process.env);
+
+            // Resolve the config file path. EnvName.CONFIG_PATH override wins;
+            // otherwise prefer <dataRoot>/config.json on Windows, falling back
+            // to the dev-mode entry-script-relative resolution on non-Windows.
             const configFilePath = envConfigPath
                 ? path.isAbsolute(envConfigPath)
                     ? envConfigPath
                     : path.resolve(process.cwd(), envConfigPath)
-                : resolveConfigPath(process.argv[1] ?? '.');
+                : resolveConfigPath(process.argv[1] ?? '.', fs.existsSync, dataRoot);
 
             // Load file if it exists; otherwise empty defaults. We do NOT throw
             // when the file is absent (Contract 1: defaults applied on read).
