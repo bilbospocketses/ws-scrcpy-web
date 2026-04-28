@@ -202,10 +202,19 @@ export class DependencyManager {
      * Velopack ships it; subsequent updater fetches replace this copy
      * with whatever Genymobile released.
      *
-     * The seed lives at <install-root>/seed/scrcpy-server/scrcpy-server,
-     * which is `<this.depsPath>/../seed/scrcpy-server/scrcpy-server`
-     * because depsPath is `<install-root>/dependencies`. We resolve via
-     * path.dirname to avoid hardcoding the install layout.
+     * v0.1.10: seed-path fix. The Velopack production layout is:
+     *   <installRoot>/current/                    (Velopack-managed image)
+     *     ws-scrcpy-web-launcher.exe
+     *     dist/                                   (__dirname of this bundle)
+     *     seed/scrcpy-server/scrcpy-server        (where vpk packs the seed)
+     *   <installRoot>/dependencies/               (depsPath, sibling of current/)
+     *
+     * v0.1.9 used `path.dirname(depsPath)` = `<installRoot>` and looked at
+     * `<installRoot>/seed/...` — which doesn't exist. The seed actually
+     * lives at `<installRoot>/current/seed/...`. Fixing by anchoring at
+     * __dirname (always `<image>/dist/`), so `__dirname/..` is the image
+     * root that contains seed/. This mirrors the Rust launcher's
+     * `exe_dir.join("seed")` resolution for seed/node.
      */
     private promoteSeedScrcpyServer(): void {
         const destDir = path.join(this.depsPath, 'scrcpy-server');
@@ -213,8 +222,7 @@ export class DependencyManager {
         if (fs.existsSync(destFile)) {
             return; // already promoted or updater-installed
         }
-        const installRoot = path.dirname(this.depsPath);
-        const seedFile = path.join(installRoot, 'seed', 'scrcpy-server', 'scrcpy-server');
+        const seedFile = path.join(__dirname, '..', 'seed', 'scrcpy-server', 'scrcpy-server');
         if (!fs.existsSync(seedFile)) {
             return; // no seed available — autoInstallMissing will fall through to network download
         }

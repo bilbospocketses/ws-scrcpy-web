@@ -1,6 +1,8 @@
 // biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import { execFile } from 'child_process';
 // biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
+import fs from 'fs';
+// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import os from 'os';
 // biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import path from 'path';
@@ -147,8 +149,14 @@ export function getDependencyDefinitions(depsPath: string): DependencyDefinition
             displayName: 'scrcpy-server',
             description: 'Runs on Android device to capture screen, audio, and accept input',
             requiresRestart: false,
-            checkInstalled: async (_depsPath) => {
-                return SERVER_VERSION;
+            checkInstalled: async (depsPath) => {
+                // v0.1.10: actually verify the file exists at <depsPath>/scrcpy-server/scrcpy-server.
+                // Pre-v0.1.9 the JAR was webpack-bundled into dist/assets/ so was always present;
+                // v0.1.9 moved it to <deps>/scrcpy-server/ but left this check unconditionally
+                // returning SERVER_VERSION, so autoInstallMissing thought it was installed and
+                // skipped both seed-promote AND network download. Result: missing JAR, connect dies.
+                const file = path.join(depsPath, 'scrcpy-server', 'scrcpy-server');
+                return fs.existsSync(file) ? SERVER_VERSION : null;
             },
             checkLatest: async () => {
                 const res = await fetch('https://api.github.com/repos/Genymobile/scrcpy/releases/latest', {

@@ -50,6 +50,36 @@ describe('getDependencyDefinitions', () => {
     });
 });
 
+describe('scrcpy-server.checkInstalled (v0.1.10 regression fix)', () => {
+    it('returns null when the JAR is missing from <deps>/scrcpy-server/', async () => {
+        // Pre-v0.1.10 this returned SERVER_VERSION unconditionally, masking a missing
+        // file from autoInstallMissing's loop and skipping both seed-promote and
+        // network install. v0.1.10 must actually check fs.existsSync.
+        const tmp = await import('node:fs/promises').then((m) =>
+            m.mkdtemp(`${require('node:os').tmpdir()}/wsscrcpy-checkinstalled-`),
+        );
+        const defs = getDependencyDefinitions(tmp);
+        const scrcpy = defs.find((d) => d.name === 'scrcpy-server');
+        const result = await scrcpy?.checkInstalled(tmp);
+        expect(result).toBeNull();
+    });
+
+    it('returns SERVER_VERSION when the JAR exists at <deps>/scrcpy-server/scrcpy-server', async () => {
+        const fsMod = await import('node:fs/promises');
+        const os = await import('node:os');
+        const pathMod = await import('node:path');
+        const tmp = await fsMod.mkdtemp(`${os.tmpdir()}/wsscrcpy-checkinstalled-`);
+        await fsMod.mkdir(pathMod.join(tmp, 'scrcpy-server'), { recursive: true });
+        await fsMod.writeFile(pathMod.join(tmp, 'scrcpy-server', 'scrcpy-server'), 'fake-jar-bytes');
+
+        const { SERVER_VERSION } = await import('../../common/Constants');
+        const defs = getDependencyDefinitions(tmp);
+        const scrcpy = defs.find((d) => d.name === 'scrcpy-server');
+        const result = await scrcpy?.checkInstalled(tmp);
+        expect(result).toBe(SERVER_VERSION);
+    });
+});
+
 describe('parseNodeMajor', () => {
     it('parses leading-v version strings', () => {
         expect(parseNodeMajor('v24.14.1')).toBe(24);
