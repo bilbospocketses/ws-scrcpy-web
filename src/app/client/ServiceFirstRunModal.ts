@@ -35,6 +35,12 @@ export class ServiceFirstRunModal extends Modal {
     constructor(options: ServiceFirstRunModalOptions) {
         super({ title: 'ws-scrcpy-web is running as a service' });
         this.opts = options;
+        // v0.1.14: same eager bookmark-port flag as WelcomeModal — the
+        // service first-run copy includes a bookmark hint, so the
+        // PortChangeModal would be redundant. State-level enforcement
+        // of "first-run overrides port modal" beyond just the if/else
+        // ordering in index.ts.
+        setBookmarkDismissedPort(this.opts.webPort);
         // Defer body fill past class-field init phase
         // (ES2022 useDefineForClassFields). Same pattern as
         // WelcomeModal. The footer is set up via buildFooter() which

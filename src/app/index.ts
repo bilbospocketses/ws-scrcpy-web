@@ -97,7 +97,16 @@ function maybeShowWelcomeModal(): void {
                 return;
             }
 
-            if (runtime.firstRunComplete === false && !gate.isWelcomeDismissed()) {
+            // v0.1.14: drop the `firstRunComplete === false` short-circuit.
+            // localStorage's welcomeDismissed flag is the only source of
+            // truth for "user has accepted the welcome modal." Pre-v0.1.14
+            // the gate ANDed firstRunComplete (server-side) with the flag,
+            // so dismissing the modal WITHOUT the checkbox flipped
+            // firstRunComplete=true and suppressed the modal forever even
+            // though the user hadn't opted out — port modal then fired
+            // instead. Now: gate purely on the localStorage flag, redisplay
+            // until the user explicitly checks "don't show again."
+            if (!gate.isWelcomeDismissed()) {
                 new WelcomeModal({
                     webPort: runtime.webPort,
                     portWasAutoShifted: runtime.portWasAutoShifted,

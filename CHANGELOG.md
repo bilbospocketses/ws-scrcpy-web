@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.14] - 2026-04-28
+
+### Fixed
+
+- **Welcome modal didn't redisplay after dismiss-without-checkbox.** Pre-v0.1.14 the gate ANDed `firstRunComplete === false` with `!welcomeDismissed`. Clicking "no, run on demand" without the checkbox PATCHed `firstRunComplete=true` server-side but left `welcomeDismissed` unset, so the gate evaluated `false && true = false` and the welcome modal stayed silent on refresh — `PortChangeModal` fired instead. Gate now uses the localStorage flag alone; modal redisplays until the user explicitly checks "don't show again," matching the original spec.
+- **Port modal could redundantly fire on first-run pages.** Both `WelcomeModal` and `ServiceFirstRunModal` already include bookmark-hint copy in their callouts, so the port modal would have been duplicate noise. Constructors now eagerly set `bookmarkDismissedForPort = currentPort` — state-level enforcement of "first-run overrides port modal," not just code-path order in `index.ts`. Later port changes still re-trigger `PortChangeModal` correctly because the saved port mismatches the new one.
+
 ## [0.1.13] - 2026-04-28
 
 ### Notes

@@ -39,6 +39,14 @@ export class WelcomeModal extends Modal {
         super({ title: 'Welcome to ws-scrcpy-web' });
         this.opts = options;
         this.dialog.classList.add('welcome-modal');
+        // v0.1.14: eagerly mark the bookmark-port as "covered" the moment
+        // this modal is constructed. The Welcome copy already includes a
+        // bookmark hint, so a port modal would be redundant noise on the
+        // same page load. State-level enforcement (the flag itself) of the
+        // "first-run overrides port modal" rule, in addition to the
+        // priority order in index.ts. If the user later changes ports,
+        // the saved port mismatches and the port modal correctly returns.
+        setBookmarkDismissedPort(this.opts.webPort);
         // Defer body/footer fill past class-field init phase (ES2022 useDefineForClassFields).
         queueMicrotask(() => {
             this.fillBody(this.bodyEl);
