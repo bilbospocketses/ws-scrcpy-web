@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.23-beta.15] - 2026-04-29
+
 ### Changed
 
 - **Settings modal redesigned to a clean two-column grid (description left, control right).** Every section — Server, Updates, Service, App — now uses the same `.settings-section-body` CSS grid (`[labels] 40% [controls] 1fr`) so labels and controls align vertically across rows AND across sections. Inputs are no longer nested inside their labels (the previous pattern made input X-position drift with label-text length). Action buttons (save / install / uninstall / check-for-updates / apply-update) moved to dedicated `.settings-section-footer` rows that span both columns and right-align. Mirrors the ConfigureScrcpy modal aesthetic. Files: `src/app/client/SettingsModal.ts` (~530 lines rewritten), `src/style/modal.css` (settings-modal block).
