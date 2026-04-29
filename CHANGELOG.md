@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.23-beta.14] - 2026-04-29
+
+No code changes. Cut as an in-app update target so v0.1.23-beta.13 fresh installs can exercise the post-hygiene swap path. Pairs with the beta.9 Job Object kill-on-close release fix (Update.exe survives launcher exit), beta.11 Rust auto-apply disable (no post-apply Update.exe loop), and beta.13 pre-apply hygiene (adb daemon doesn't lock install root). This should be the first end-to-end-clean apply: Update.exe spawns, parent exits, daemon is killed, swap renames `current\` successfully, hooks fire, beta.14 launcher boots automatically with no manual intervention required.
+
 ## [0.1.23-beta.13] - 2026-04-29
 
 ### Fixed
