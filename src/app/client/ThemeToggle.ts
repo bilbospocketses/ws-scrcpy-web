@@ -10,16 +10,26 @@ export function initTheme(): void {
 export function createThemeToggle(): HTMLElement {
     const btn = document.createElement('button');
     btn.className = 'theme-toggle';
-    btn.title = getTheme() === 'dark' ? 'Switch to light mode' : 'Switch to dark mode';
-    btn.innerHTML = getTheme() === 'dark' ? SUN_SVG : MOON_SVG;
+
+    const refresh = (): void => {
+        const theme = getTheme();
+        btn.title = theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode';
+        btn.innerHTML = theme === 'dark' ? SUN_SVG : MOON_SVG;
+    };
+
+    refresh();
 
     btn.addEventListener('click', () => {
-        const current = getTheme();
-        const next = current === 'dark' ? 'light' : 'dark';
+        const next = getTheme() === 'dark' ? 'light' : 'dark';
         setTheme(next);
         notifyThemeChanged();
-        btn.innerHTML = next === 'dark' ? SUN_SVG : MOON_SVG;
-        btn.title = next === 'dark' ? 'Switch to light mode' : 'Switch to dark mode';
+        // refresh() is called by the MutationObserver below — no need to call inline.
+    });
+
+    const observer = new MutationObserver(refresh);
+    observer.observe(document.documentElement, {
+        attributes: true,
+        attributeFilter: ['data-theme'],
     });
 
     return btn;
