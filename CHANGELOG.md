@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.23-beta.10] - 2026-04-29
+
+No code changes. Cut as an in-app update target so v0.1.23-beta.9 fresh installs can exercise the auto-relaunch path now that the Job Object kill-on-close release is in place. This is the first release that should let `Update.exe` survive past launcher exit and complete the swap + relaunch automatically — no manual relaunch required.
+
 ## [0.1.23-beta.9] - 2026-04-29
 
 ### Fixed
