@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.23-beta.16] - 2026-04-29
+
+No code changes. Cut as an in-app update target so v0.1.23-beta.15 fresh installs can exercise the redesigned Settings modal's "apply update" button end-to-end via the in-app updater (gear icon → Updates section → "apply update v0.1.23-beta.16").
+
 ## [0.1.23-beta.15] - 2026-04-29
 
 ### Changed
