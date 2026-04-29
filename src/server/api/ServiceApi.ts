@@ -457,7 +457,17 @@ export class ServiceApi {
         res: ServerResponse,
     ): Promise<boolean> {
         const launcherPath = resolveLauncherPathForElevation();
-        const spawnResult = await runElevated('spawn-user-launcher', { launcherPath });
+        // v0.1.23 §1c bug 1.c: pass --local-takeover so the spawned
+        // user-session launcher overrides its is_service_mode decision
+        // and spawns the local tray. config.json still reads
+        // installMode='user-service' at spawn time — only after the
+        // resume-flow uninstall completes does it flip to 'user'.
+        // Without this flag the new launcher boots with no tray and the
+        // user is stranded post-uninstall.
+        const spawnResult = await runElevated('spawn-user-launcher', {
+            launcherPath,
+            launcherArgs: ['--local-takeover'],
+        });
         if (!spawnResult.ok) {
             log.warn(`uninstall handoff: spawn-user-launcher failed: ${spawnResult.errorMessage ?? '(no message)'}`);
             return false;

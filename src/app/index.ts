@@ -14,6 +14,11 @@ import { WelcomeModal } from './client/WelcomeModal';
 import type { AppConfigEnvelope } from '../common/ConfigEvents';
 import { StreamClientScrcpy } from './googDevice/client/StreamClientScrcpy';
 
+function isResumingUninstall(): boolean {
+    const params = new URLSearchParams(location.search);
+    return params.get('resume') === 'uninstall-service' && Boolean(params.get('token'));
+}
+
 function maybeResumeUninstall(): void {
     const params = new URLSearchParams(location.search);
     if (params.get('resume') !== 'uninstall-service') return;
@@ -46,13 +51,18 @@ function maybeResumeUninstall(): void {
                 setTimeout(() => overlay.remove(), 4000);
                 return;
             }
-            // v0.1.9: include a bookmark-reminder note since the
-            // user's previous bookmark (if any) pointed at the
-            // service-instance port and is now stale.
+            // v0.1.23 §1c bug 1.b fix: full-page reload after uninstall
+            // succeeds so the post-uninstall page re-evaluates from
+            // scratch with the now-canonical installMode='user'. Pre-fix,
+            // the ServiceFirstRunModal had been mounted by
+            // maybeShowWelcomeModal racing against this fetch (see
+            // bug 1.a fix below) — even with that race fixed, we still
+            // want a clean slate so the WelcomeModal / port reminder
+            // logic runs on the now-correct config.
             overlay.textContent =
                 `service uninstalled. ws-scrcpy-web is running in user mode now (port ${location.port || '80'}). ` +
-                'if you bookmarked the service-mode page, update it to this URL.';
-            setTimeout(() => overlay.remove(), 5000);
+                'reloading…';
+            setTimeout(() => location.reload(), 3000);
         })
         .catch((err) => {
             overlay.textContent = `uninstall failed: ${(err as Error).message}`;
@@ -61,6 +71,16 @@ function maybeResumeUninstall(): void {
 }
 
 function maybeShowWelcomeModal(): void {
+    // v0.1.23 §1c bug 1.a fix: skip modal display entirely while the
+    // resume-uninstall flow is in flight. Pre-fix, this would race
+    // against maybeResumeUninstall: /api/config still reflected the
+    // OUTGOING service mode at this moment (the resume flow flips
+    // installMode AFTER the uninstall succeeds), so the racing fetch
+    // would mount ServiceFirstRunModal which then covered the
+    // uninstall progress overlay. maybeResumeUninstall reloads the
+    // page on success, which re-runs maybeShowWelcomeModal cleanly
+    // against the now-canonical post-uninstall state.
+    if (isResumingUninstall()) return;
     fetch('/api/config')
         .then((r) => (r.ok ? (r.json() as Promise<Partial<AppConfigEnvelope>>) : null))
         .then(async (data) => {

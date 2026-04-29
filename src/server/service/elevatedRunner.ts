@@ -94,7 +94,13 @@ export interface UninstallServiceArgs {
  */
 export interface SpawnUserLauncherArgs {
     launcherPath: string;
-    /** Currently unused; reserved for future "auto-resume" semantics. */
+    /**
+     * Argv passed to the spawned user-session launcher. v0.1.23 §1c bug
+     * 1.c uses `['--local-takeover']` so the new launcher overrides its
+     * is_service_mode decision (config.json still says service mode at
+     * spawn time; the resume-uninstall flow flips it after) and spawns
+     * the local tray.
+     */
     launcherArgs?: string[];
 }
 

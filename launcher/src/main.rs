@@ -150,11 +150,25 @@ fn main() {
     let data_root = common::config::data_root_from_env();
 
     let config_dir = data_root.or(install_root);
-    let is_service_mode = config_dir
+    let mut is_service_mode = config_dir
         .as_deref()
         .map(common::config::AppConfig::load)
         .map(|cfg| cfg.is_service_mode())
         .unwrap_or(false);
+
+    // v0.1.23 §1c bug 1.c: `--local-takeover` flag forces local-mode tray
+    // spawn even when config.json still says installMode='user-service' /
+    // 'system-service'. Set by ServiceApi.handoffUninstallToUserSession
+    // when it spawns a user-session launcher to perform the uninstall —
+    // at spawn time config still reflects the OUTGOING service mode (the
+    // resume flow updates it post-uninstall). Without this hint, the
+    // freshly spawned local launcher reads is_service_mode=true → skips
+    // tray spawn → user is left with no tray after the service goes away.
+    if args.iter().any(|a| a == "--local-takeover") && is_service_mode {
+        log::info("--local-takeover override: forcing is_service_mode=false (post-uninstall handoff)");
+        is_service_mode = false;
+    }
+
     let _tray_handle = tray::spawn(is_service_mode);
 
     let exit_code = match supervisor::run() {
