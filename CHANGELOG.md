@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Service uninstall WTS handoff — Hyper-V Enhanced Session / RDP regression (§1c bug 1, real fix).** v0.1.24-beta.1 added `SE_TCB_NAME` enable-before-`WTSQueryUserToken` thinking the privilege was the issue. VM smoke test on v0.1.24-beta.1 proved otherwise: privilege flip succeeded but `WTSQueryUserToken` still failed with `ERROR_NO_TOKEN` (HRESULT 0x800703F0). Root cause: `WTSGetActiveConsoleSessionId()` returns the **physical console** session, not the user's interactive session. On Hyper-V Enhanced Session Mode (RDP-like VM access), real RDP, or any VDI scenario, the physical console is empty (`Conn` state, no logged-on user) while the user is in a different session. `qwinsta` on the VM confirmed: testdude was in session 1 but `WTSGetActiveConsoleSessionId` returned 3 (the empty console). Fix: replaced `WTSGetActiveConsoleSessionId` with a `WTSEnumerateSessionsW` walk that filters by `State == WTSActive` AND non-empty `WTSUserName`, returning the first matching session. Falls back to `WTSGetActiveConsoleSessionId` only if enumeration finds nothing (preserves existing behavior on bare-metal single-user installs). The SE_TCB_NAME enable from beta.1 is kept — still required, just not sufficient.
 
+## [0.1.24-beta.2] - 2026-04-29
+
 ## [0.1.24-beta.1] - 2026-04-29
 
 ### Fixed
