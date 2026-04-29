@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.23-beta.26] - 2026-04-29
+
+### Fixed
+
+- **Service uninstall flow no longer leaves user stranded with the wrong modal + no tray (item 6 §1c bug 1).** Three sub-fixes:
+  - **(1.a)** `maybeShowWelcomeModal` early-returns when `?resume=uninstall-service` is in the URL. Pre-fix it raced against the in-flight uninstall, fetching `/api/config` while installMode still showed the OUTGOING service mode, mounting `ServiceFirstRunModal`, native `<dialog>` stacking covered the uninstall progress overlay.
+  - **(1.b)** `maybeResumeUninstall` reloads the page on success rather than just removing the overlay. The reload re-runs `maybeShowWelcomeModal` cleanly against the now-canonical `installMode='user'` and picks the right modal.
+  - **(1.c)** `ServiceApi.handoffUninstallToUserSession` passes `['--local-takeover']` to the WTS-spawned user-session launcher. `main.rs` detects the flag and forces `is_service_mode=false` even though `config.json` still reads `'user-service'` at spawn time (the resume flow flips it AFTER the uninstall completes). New launcher boots with local tray as expected — pre-fix the user was left with no tray + an orphan browser tab they didn't click into.
+
+### Notes
+
+- **Item 6 §1c bug 3 (HKCU vs HKLM Run-key) resolved as no-code-change.** Audit confirmed `HKCU\...\Run\WsScrcpyWebTray` is the only Run-key write site and HKLM was never wired in any layer (no MSI customization, no Velopack hook, no Servy autostart). Per-user HKCU is the correct design — User A installed the service for themselves; their tray represents their UI affordance. Other users who launch via the Public desktop shortcut (Velopack default) get their own tray spawned for their session.
+- **Item 6 §1c bug 2 (multi-user port drift) deferred to a future multi-user-VM diagnostic session.** Root cause requires live observation with `handle.exe` / Procmon at User B login time. Static code reading can't answer "why does the service-Node restart on User B login at all?" — fixing without that risks treating a symptom (port drift) without addressing the cause.
+
 ## [0.1.23-beta.25] - 2026-04-29
 
 ### Fixed
