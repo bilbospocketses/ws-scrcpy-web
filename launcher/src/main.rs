@@ -3,6 +3,8 @@
 mod elevated_runner;
 mod hooks;
 #[cfg(windows)]
+mod install_acl;
+#[cfg(windows)]
 mod job_object;
 mod log;
 mod paths;
@@ -46,6 +48,39 @@ fn main() {
     if let Some(code) = hooks::handle_velopack_hook(&args) {
         log::info(&format!("hook handler exiting with code {code}"));
         std::process::exit(code);
+    }
+
+    // v0.1.23-beta.7: ensure the install root has Authenticated Users:Modify
+    // so Velopack's writability self-test passes and the in-app updater can
+    // swap `current\` without falling back to LocalAppData + elevated
+    // Update.exe (which silently dies during the swap on Windows). The
+    // grant attempted during the `--veloapp-install` hook gets stripped by
+    // MSI's component-permission step, so we apply it from the running
+    // launcher's first non-hook startup. ShellExecuteEx with verb=runas
+    // fires a one-time UAC prompt; subsequent launches find the install
+    // root writable and skip the elevation entirely.
+    //
+    // Failure (UAC dismissed, no admin available, etc.) is logged and
+    // swallowed — the app itself works without this grant; only the
+    // in-app updater is degraded. User can manually re-grant via
+    // `icacls "C:\Program Files\WsScrcpyWeb" /grant *S-1-5-11:(OI)(CI)M /T /C /Q`
+    // or just relaunch the app to retry.
+    #[cfg(windows)]
+    {
+        match resolve_install_root() {
+            Ok(install_root) => {
+                if let Err(e) = install_acl::ensure_writable(&install_root) {
+                    log::error(&format!(
+                        "install-root ACL grant failed; in-app updater will be degraded: {e:#}"
+                    ));
+                }
+            }
+            Err(e) => {
+                log::error(&format!(
+                    "could not resolve install_root for ACL check: {e:#}"
+                ));
+            }
+        }
     }
 
     // Single-instance guard. Runs AFTER hook + elevate-and-run dispatch

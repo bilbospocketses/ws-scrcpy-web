@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.23-beta.7] - 2026-04-29
+
+### Fixed
+
+- **Install-root ACL grant now survives MSI install (Fix 2 follow-up).** The `--veloapp-install` hook's `icacls` grant on `C:\Program Files\WsScrcpyWeb\` was getting stripped by MSI's component-permission step (~3 seconds after our hook ran). v0.1.23-beta.7 adds a deferred grant: at first non-hook launcher start, if the install root isn't user-writable, `ShellExecuteExW(verb="runas")` invokes `icacls.exe` elevated to apply the grant — single one-time UAC prompt per install. Once granted, all subsequent launches find the install root writable and skip the elevation entirely. Also fixes migrations from v0.1.21 / v0.1.22 / v0.1.23-beta.{1..6} → beta.7+ (those installs lack the grant; first launch under beta.7 catches them). UAC dismissal is logged and swallowed — the app keeps running with degraded auto-update; user can manually retry by relaunching.
+- **`--veloapp-obsolete` promoted to a proper handler.** v0.1.23-beta.5 → beta.6 VM testing surfaced this previously-unknown velopack lifecycle flag, which beta.1's catch-all caught and exited cleanly. beta.7 now recognizes it as `HookKind::Obsolete` with a named handler so it stops appearing as `[ERROR] hook: unknown velopack flag` in the launcher log; the runtime behavior is unchanged (log + exit 0 to allow Update.exe to swap `current\`).
+
+### Notes
+
+- v0.1.23-beta.7 is the first build with the fully-automatic in-app updater path. Fresh-install via the MSI; on first launch, accept the UAC prompt for icacls; subsequent updates apply silently with no further UAC prompts.
+- Migrations from v0.1.21 / v0.1.22 / v0.1.23-beta.{1..6}: the in-app updater on those builds is broken at varying levels. To get to beta.7, uninstall via Add/Remove Programs and fresh-install the v0.1.23-beta.7 MSI. From beta.7 forward, the updater is fully automatic.
+
 ## [0.1.23-beta.6] - 2026-04-28
 
 No code changes. Cut as an in-app update target so v0.1.23-beta.5 fresh installs can exercise the explicit-Apply path now that the install root is user-writable. Tests whether Velopack's swap actually completes when no elevation step is required.

@@ -25,6 +25,7 @@ use crate::log;
 const FLAG_INSTALL: &str = "--veloapp-install";
 const FLAG_UPDATED: &str = "--veloapp-updated";
 const FLAG_UNINSTALL: &str = "--veloapp-uninstall";
+const FLAG_OBSOLETE: &str = "--veloapp-obsolete";
 const FLAG_PREFIX: &str = "--veloapp-";
 
 #[derive(Debug, PartialEq, Eq)]
@@ -32,6 +33,14 @@ pub enum HookKind {
     Install,
     Updated,
     Uninstall,
+    /// Velopack invokes the OLD launcher with `--veloapp-obsolete <old-version>`
+    /// immediately before swapping `current\` to the new version. The hook
+    /// is a chance to clean up state specific to the old version (running
+    /// tray helper, supervised processes). v0.1.23-beta.5 → beta.6 VM
+    /// testing first surfaced this flag — beta.1's catch-all handled it
+    /// (logged + exit 0), and beta.7 promotes it to a proper handler so it
+    /// stops appearing as "unknown velopack flag" in the launcher log.
+    Obsolete,
     /// Any `--veloapp-*` flag we don't explicitly handle. v0.1.22 ship surfaced
     /// the in-app updater spawn-loop where Update.exe respawns the launcher
     /// indefinitely after passing some velopack lifecycle flag that
@@ -51,6 +60,7 @@ pub fn parse_hook_flag(args: &[String]) -> Option<HookKind> {
             FLAG_INSTALL => return Some(HookKind::Install),
             FLAG_UPDATED => return Some(HookKind::Updated),
             FLAG_UNINSTALL => return Some(HookKind::Uninstall),
+            FLAG_OBSOLETE => return Some(HookKind::Obsolete),
             other if other.starts_with(FLAG_PREFIX) && unknown.is_none() => {
                 unknown = Some(other.to_string());
             }
@@ -82,6 +92,7 @@ pub fn handle_velopack_hook(args: &[String]) -> Option<i32> {
         HookKind::Install => on_install(&install_root, &data_root),
         HookKind::Updated => on_updated(&install_root, &data_root),
         HookKind::Uninstall => on_uninstall(&install_root, &data_root),
+        HookKind::Obsolete => on_obsolete(),
         HookKind::Unknown(flag) => on_unknown(&flag),
     };
     Some(code)
@@ -114,6 +125,17 @@ fn default_config_json() -> String {
     let mut s = serde_json::to_string_pretty(&v).expect("serde_json on a static value");
     s.push('\n');
     s
+}
+
+/// `--veloapp-obsolete <old-version>` fires on the OLD launcher binary
+/// immediately before Velopack swaps `current\` to the new version. The
+/// Job Object on the supervisor's Node child (v0.1.22+) already takes
+/// care of process-tree cleanup when the supervisor exits; this hook
+/// just needs to exit cleanly so Update.exe can proceed with the swap.
+/// Returns 0 unconditionally — the swap MUST NOT be blocked here.
+fn on_obsolete() -> i32 {
+    log::info("hook(obsolete): exiting cleanly so Update.exe can swap current\\");
+    0
 }
 
 /// Catch-all for unknown `--veloapp-*` flags. Logs the flag (via
@@ -425,6 +447,17 @@ mod tests {
     fn parse_takes_first_match_when_multiple() {
         let args = vec![s("--veloapp-install"), s("--veloapp-uninstall")];
         assert_eq!(parse_hook_flag(&args), Some(HookKind::Install));
+    }
+
+    #[test]
+    fn parse_recognizes_obsolete_flag() {
+        let args = vec![s("--veloapp-obsolete"), s("0.1.23-beta.5")];
+        assert_eq!(parse_hook_flag(&args), Some(HookKind::Obsolete));
+    }
+
+    #[test]
+    fn on_obsolete_returns_zero() {
+        assert_eq!(on_obsolete(), 0);
     }
 
     #[test]
