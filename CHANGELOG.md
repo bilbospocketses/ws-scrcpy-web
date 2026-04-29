@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.23-beta.22] - 2026-04-29
+
+No code changes. In-app update target for beta.21 so the round-3 Settings modal layout (label-control rows everywhere, no centered footers) can be exercised via the in-app updater.
+
 ## [0.1.23-beta.21] - 2026-04-29
 
 ### Changed
