@@ -111,7 +111,25 @@ fn main() {
     // Per SP3 P2 Contract 5: VelopackApp::build().run() MUST be the first
     // executable code path on the normal-launch branch. May terminate or
     // restart the process.
-    velopack::VelopackApp::build().run();
+    //
+    // v0.1.23-beta.11: explicitly disable auto-apply-on-startup on the Rust
+    // SDK side. This is the parallel fix to v0.1.23-beta.3's Node-side
+    // `setAutoApplyOnStartup(false)` (`src/server/index.ts`); we'd disabled
+    // it on the JS layer but missed that the Rust `VelopackApp` (velopack
+    // crate 0.0.1298, src/app.rs:147–162) defaults `auto_apply: true` and
+    // does the EXACT same thing — checks `manager.get_update_pending_restart()`
+    // for any downloaded package with version > current, and auto-fires
+    // `apply_updates_and_restart_with_args`. After a successful apply, the
+    // .nupkg stays in `<installRoot>\packages\` so this re-fired Update.exe
+    // every time the launcher booted post-update — visible to the user as
+    // "Update.exe runs the update, closes, then launches and runs the
+    // update again" loop on beta.9 → beta.10 VM testing 2026-04-29.
+    //
+    // Apply must fire ONLY on explicit user click via `UpdateService.applyUpdate`
+    // — same rationale as Gotcha 1 in feedback_velopack_permachine_lessons.md.
+    // The defense is needed on BOTH SDKs because BOTH evaluate the same
+    // pending-package check, independently.
+    velopack::VelopackApp::build().set_auto_apply_on_startup(false).run();
 
     // Spawn the tray icon thread BEFORE the supervisor's blocking loop.
     // In service mode this is a no-op (separate tray helper handles UI).

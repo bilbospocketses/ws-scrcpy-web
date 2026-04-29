@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.23-beta.11] - 2026-04-29
+
+### Fixed
+
+- **Update.exe loop after successful apply (Gotcha 1 redux on the Rust SDK).** v0.1.23-beta.9 → beta.10 VM testing surfaced this: clicking Apply ran Update.exe, swap completed, launcher relaunched as beta.10 — and then the SAME pending package re-fired Update.exe, looping. Root cause: v0.1.23-beta.3 disabled `setAutoApplyOnStartup` on the Node-side Velopack SDK (`src/server/index.ts`) but the parallel Rust `VelopackApp` (velopack crate 0.0.1298) defaults `auto_apply: true` and does the exact same `manager.get_update_pending_restart()` → auto-fire-Update.exe check from `launcher/src/main.rs:114`. Fix: explicit `.set_auto_apply_on_startup(false)` on the Rust SDK call too. Apply now fires ONLY on explicit user click via `UpdateService.applyUpdate`. Stuck users on beta.9/beta.10 can recover by deleting the staged `.nupkg` from `C:\Program Files\WsScrcpyWeb\packages\WsScrcpyWeb-*-beta-full.nupkg` before next launch (or fresh-installing beta.11 over the loop).
+
 ## [0.1.23-beta.10] - 2026-04-29
 
 No code changes. Cut as an in-app update target so v0.1.23-beta.9 fresh installs can exercise the auto-relaunch path now that the Job Object kill-on-close release is in place. This is the first release that should let `Update.exe` survive past launcher exit and complete the swap + relaunch automatically — no manual relaunch required.
