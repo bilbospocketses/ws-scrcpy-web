@@ -8,6 +8,7 @@ import { HostTracker } from './client/HostTracker';
 import { NetworkDiscoveryPanel } from './client/NetworkDiscoveryPanel';
 import { createSettingsHeader } from './client/SettingsHeader';
 import { createThemeToggle, initTheme } from './client/ThemeToggle';
+import { installThemeEmbedListener, notifyThemeReady } from './public/themeEmbed';
 import { createUpdateButton } from './client/UpdateButton';
 import type { Tool } from './client/Tool';
 import { WelcomeModal } from './client/WelcomeModal';
@@ -156,6 +157,8 @@ function maybeShowPortChangeModal(currentPort: number): void {
 
 // Initialize theme immediately to prevent flash of wrong colors
 initTheme();
+installThemeEmbedListener();
+notifyThemeReady();
 
 window.onload = async (): Promise<void> => {
     const hash = location.hash.replace(/^#!/, '');
