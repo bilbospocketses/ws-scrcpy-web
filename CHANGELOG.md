@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.23] - 2026-04-29
+
+First stable v0.1.23 cut, rolling up everything from the 26-beta investigation. Eight architectural fixes in the in-app updater chain (install-root ACL via UAC, Job Object kill-on-close release, Rust SDK auto-apply disable, adb pre-apply hygiene + cwd anchoring, node-pty Local-Dependencies-Only restructure with `process.getBuiltinModule` runtime require, Logger to dataRoot, UI uninstall-flow modal race code path), Settings modal redesign (label-control grid layout, dual-purpose apply-update button), CI prerelease flag drop, and migration documentation. See per-beta entries below for the diagnosis chain.
+
+**Migration:** users on v0.1.21 / v0.1.22 / v0.1.23-beta.{1..6} must fresh-install the v0.1.23 MSI — the in-app updater on those builds is broken at varying severity and won't reach v0.1.23 by clicking apply. v0.1.23-beta.7+ users can in-app update normally. See `docs/PROGRAMDATA-MIGRATION.md` for the per-bug fix-version table.
+
+### Known issues (carried into v0.1.24)
+
+- **Service uninstall flow doesn't redirect cleanly back to local mode.** Clicking "uninstall service" from the service-mode Settings UI shows "couldn't reach server" with a retry button rather than redirecting to the local launcher. The service WILL still uninstall correctly. Root cause traced to the WTS handoff (`spawn_user_launcher_command`) failing with exit code 4 in ~1ms — likely `WTSQueryUserToken` returning `ERROR_PRIVILEGE_NOT_HELD` because Servy hosts the service without `SE_TCB_NAME` explicitly enabled in the process token. Fix direction: `AdjustTokenPrivileges` before `WTSQueryUserToken` in `launcher/src/user_session_spawn.rs`.
+- **Local tray doesn't restore after a service uninstall.** Even after the service is fully uninstalled (via the Settings → "stopped — uninstall?" button after a failed first attempt), the local-mode tray icon doesn't appear. Workaround: close `ws-scrcpy-web-launcher.exe` from Task Manager and relaunch via the Start menu shortcut. Root cause: launcher's `is_service_mode` decision is made once at startup; the in-launcher tray thread doesn't spawn dynamically when `installMode` flips post-uninstall.
+- **Multi-user port drift in service mode (§1c bug 2).** User A flips to service on port 8004, logs out, User B logs in → tray-click opens a dead port because the actual service moved to 8005 and `config.json` wasn't re-persisted. Needs a focused multi-user-VM diagnostic session with `handle.exe` / Procmon to root-cause the unexpected service restart at User B login. Hypothesis: launcher's port-collision auto-shift fires during a User-B-login-time service restart, `Config.reconcileWebPort` updates in-memory but doesn't persist.
+- **Cosmetic node-pty `AttachConsole failed` errors in server.log when opening shell sessions.** Functionally harmless — actual shell I/O works; these come from node-pty's internal `conpty_console_list_agent.js` helper failing to attach to our hidden-subsystem parent process. Tracked as todo §9a for a future seed-patch or upstream fix.
+
 ## [0.1.23-beta.26] - 2026-04-29
 
 ### Fixed
