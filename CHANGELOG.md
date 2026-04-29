@@ -9,13 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Service uninstall WTS handoff (§1c bug 1, follow-up to v0.1.23-beta.26).** `spawn_in_active_user_session` now explicitly enables `SE_TCB_NAME` ("Act as part of the operating system") on the launcher's process token via `AdjustTokenPrivileges` before calling `WTSQueryUserToken`. On v0.1.23 the WTS call failed in ~1ms with `ERROR_NO_TOKEN` (HRESULT 0x800703F0) — not the originally-hypothesized `ERROR_PRIVILEGE_NOT_HELD`. Diagnostic session on the v0.1.23 VM showed the service IS running as LocalSystem (per `sc qc`) and the active session ID was correctly resolved, but Servy's service token had `SE_TCB_NAME` present-but-disabled. Modern Windows service hosts (Servy, NSSM) often default to minimal-privilege tokens, so even LocalSystem identities don't get the privilege auto-enabled. The new `enable_se_tcb_privilege()` helper flips the bit explicitly; checks `ERROR_NOT_ALL_ASSIGNED` (1300) to detect the rarer "privilege isn't even in the token" case (would mean the host stripped it via `SERVICE_REQUIRED_PRIVILEGES_INFO`). Result is logged either way for diagnostic clarity.
+- **Service uninstall WTS handoff — Hyper-V Enhanced Session / RDP regression (§1c bug 1, real fix).** v0.1.24-beta.1 added `SE_TCB_NAME` enable-before-`WTSQueryUserToken` thinking the privilege was the issue. VM smoke test on v0.1.24-beta.1 proved otherwise: privilege flip succeeded but `WTSQueryUserToken` still failed with `ERROR_NO_TOKEN` (HRESULT 0x800703F0). Root cause: `WTSGetActiveConsoleSessionId()` returns the **physical console** session, not the user's interactive session. On Hyper-V Enhanced Session Mode (RDP-like VM access), real RDP, or any VDI scenario, the physical console is empty (`Conn` state, no logged-on user) while the user is in a different session. `qwinsta` on the VM confirmed: testdude was in session 1 but `WTSGetActiveConsoleSessionId` returned 3 (the empty console). Fix: replaced `WTSGetActiveConsoleSessionId` with a `WTSEnumerateSessionsW` walk that filters by `State == WTSActive` AND non-empty `WTSUserName`, returning the first matching session. Falls back to `WTSGetActiveConsoleSessionId` only if enumeration finds nothing (preserves existing behavior on bare-metal single-user installs). The SE_TCB_NAME enable from beta.1 is kept — still required, just not sufficient.
+
+## [0.1.24-beta.1] - 2026-04-29
+
+### Fixed
+
+- **Service uninstall WTS handoff (§1c bug 1, first attempt — superseded by [Unreleased] / beta.2).** `spawn_in_active_user_session` now explicitly enables `SE_TCB_NAME` ("Act as part of the operating system") on the launcher's process token via `AdjustTokenPrivileges` before calling `WTSQueryUserToken`. Hypothesis was that Servy's service token had the privilege present-but-disabled. **The privilege flip succeeded on the VM but the WTS call still failed** — the actual root cause was different (see [Unreleased] / beta.2). The privilege enable is still kept since it's required for Servy hardening, just not sufficient on its own.
 
 ### Changed
 
-- **Settings modal label column widened.** Grid layout changed from `[labels] 40% [controls] 1fr` to `[labels] 1fr [controls] 260px`. The 260px controls column reserves space for the widest button ("not installed — install?", ~210px) plus ~50px of slack for future button-text growth. Frees up ~90px for the labels column at the modal's max width, reducing description wrapping (e.g. "saving will restart the server and redirect to the new port" now fits in 2 lines instead of 3). All other modals untouched.
-
-## [0.1.24-beta.1] - 2026-04-29
+- **Settings modal label column widened.** Grid layout changed from `[labels] 40% [controls] 1fr` to `[labels] 1fr [controls] 260px`. The 260px controls column reserves space for the widest button ("not installed — install?", ~210px) plus ~50px of slack for future button-text growth. Frees up ~90px for the labels column at the modal's max width, reducing description wrapping. All other modals untouched.
 
 ## [0.1.23] - 2026-04-29
 

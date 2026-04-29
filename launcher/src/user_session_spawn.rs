@@ -31,14 +31,24 @@
 // error code that does NOT mean "no user is logged in," but rather
 // "your token's SE_TCB_NAME is disabled."
 //
-// v0.1.24 §1c bug 1 fix: explicitly enable SE_TCB_NAME on our process
-// token via AdjustTokenPrivileges before calling WTSQueryUserToken.
-// If the privilege was already enabled this is a free no-op; if it
-// was present-but-disabled (the actual case observed on the v0.1.23
-// VM, Servy 8.2 / Windows 11), the enable flips the bit and the WTS
-// call succeeds. If the privilege isn't present at all (would imply
-// the host stripped it via SERVICE_REQUIRED_PRIVILEGES_INFO), we log
-// loudly and let WTSQueryUserToken fail with the original error.
+// v0.1.24 §1c bug 1 fix (part 1): explicitly enable SE_TCB_NAME on
+// our process token via AdjustTokenPrivileges before calling
+// WTSQueryUserToken. Required for hardened service hosts (Servy,
+// NSSM) where the privilege is present-but-disabled. Free no-op if
+// already enabled.
+//
+// v0.1.24 §1c bug 1 fix (part 2): use WTSEnumerateSessionsW to find
+// the active interactive session, NOT WTSGetActiveConsoleSessionId.
+// The "active console session" is the physical console attached to
+// the machine. On Hyper-V Enhanced Session Mode (RDP-like VM access),
+// real RDP, or any VDI scenario, the user is in a different session
+// while the physical console is empty (`Conn` state with no logged-in
+// user). The v0.1.23 + v0.1.24-beta.1 code asked the empty console
+// for a user token and got ERROR_NO_TOKEN. The robust pattern: walk
+// all sessions, filter by State == WTSActive AND WTSUserName non-
+// empty, return that session's ID. Falls back to console session if
+// enumeration finds nothing (preserves existing behavior on bare-
+// metal single-user installs).
 
 #![cfg(windows)]
 
@@ -68,6 +78,84 @@ pub struct SpawnResult {
     pub pid: u32,
     pub session_id: u32,
     pub error_message: Option<String>,
+}
+
+/// Walk all WTS sessions and return the ID of the first session with
+/// `State == WTSActive` AND a non-empty username. This is the active
+/// interactive user session — the one we want to spawn a process into.
+///
+/// Falls back to `WTSGetActiveConsoleSessionId()` if enumeration finds
+/// no matching session — preserves existing behavior on bare-metal
+/// single-user installs where the physical console IS the user
+/// session. Returns `None` if both strategies fail.
+fn find_active_user_session_id() -> Option<u32> {
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::System::RemoteDesktop::{
+        WTSActive, WTSEnumerateSessionsW, WTSFreeMemory, WTSGetActiveConsoleSessionId,
+        WTSQuerySessionInformationW, WTSUserName, WTS_SESSION_INFOW,
+    };
+
+    unsafe {
+        let mut sessions_ptr: *mut WTS_SESSION_INFOW = std::ptr::null_mut();
+        let mut count: u32 = 0;
+        // First arg HANDLE(0) == WTS_CURRENT_SERVER_HANDLE (local machine).
+        let enum_ok = WTSEnumerateSessionsW(
+            HANDLE(std::ptr::null_mut()),
+            0,
+            1,
+            &mut sessions_ptr,
+            &mut count,
+        )
+        .is_ok();
+
+        let mut found: Option<u32> = None;
+        if enum_ok && !sessions_ptr.is_null() {
+            let sessions = std::slice::from_raw_parts(sessions_ptr, count as usize);
+            for s in sessions {
+                if s.State != WTSActive {
+                    continue;
+                }
+                // Query the session's username. WTSUserName returns a
+                // PWSTR (UTF-16) that must be freed with WTSFreeMemory.
+                let mut buf_ptr: windows::core::PWSTR = windows::core::PWSTR::null();
+                let mut bytes: u32 = 0;
+                let q = WTSQuerySessionInformationW(
+                    HANDLE(std::ptr::null_mut()),
+                    s.SessionId,
+                    WTSUserName,
+                    &mut buf_ptr,
+                    &mut bytes,
+                );
+                if q.is_err() || buf_ptr.is_null() {
+                    continue;
+                }
+                // bytes includes the null terminator; convert to chars.
+                // An empty username means no logged-on user (e.g.,
+                // services session, listener session).
+                let username_len = (bytes as usize / 2).saturating_sub(1);
+                if username_len > 0 {
+                    found = Some(s.SessionId);
+                    WTSFreeMemory(buf_ptr.as_ptr() as *mut _);
+                    break;
+                }
+                WTSFreeMemory(buf_ptr.as_ptr() as *mut _);
+            }
+            WTSFreeMemory(sessions_ptr as *mut _);
+        }
+
+        if found.is_some() {
+            return found;
+        }
+
+        // Fallback: bare-metal single-user case. On a non-RDP / non-
+        // Enhanced-Session machine the console IS the user session.
+        let console = WTSGetActiveConsoleSessionId();
+        if console == 0xFFFF_FFFF {
+            None
+        } else {
+            Some(console)
+        }
+    }
 }
 
 /// Enable SE_TCB_NAME on the current process token. Required before
@@ -143,9 +231,7 @@ pub fn spawn_in_active_user_session(args: &SpawnUserLauncherArgs) -> SpawnResult
     use windows::Win32::System::Environment::{
         CreateEnvironmentBlock, DestroyEnvironmentBlock,
     };
-    use windows::Win32::System::RemoteDesktop::{
-        WTSGetActiveConsoleSessionId, WTSQueryUserToken,
-    };
+    use windows::Win32::System::RemoteDesktop::WTSQueryUserToken;
     use windows::Win32::System::Threading::{
         CreateProcessAsUserW, CREATE_UNICODE_ENVIRONMENT, NORMAL_PRIORITY_CLASS,
         PROCESS_INFORMATION, STARTUPINFOW,
@@ -178,20 +264,25 @@ pub fn spawn_in_active_user_session(args: &SpawnUserLauncherArgs) -> SpawnResult
         )),
     }
 
-    unsafe {
-        let session_id = WTSGetActiveConsoleSessionId();
-        if session_id == 0xFFFF_FFFF {
+    let session_id = match find_active_user_session_id() {
+        Some(id) => id,
+        None => {
             return SpawnResult {
                 ok: false,
                 pid: 0,
                 session_id: 0,
                 error_message: Some(
-                    "no active console session (WTSGetActiveConsoleSessionId returned -1)"
+                    "no active interactive user session found (WTSEnumerateSessions returned no Active session with a logged-on user, and WTSGetActiveConsoleSessionId fallback also failed)"
                         .to_string(),
                 ),
             };
         }
+    };
+    log::info(&format!(
+        "spawn-user-launcher: resolved active interactive session id={session_id}"
+    ));
 
+    unsafe {
         let mut user_token: HANDLE = HANDLE::default();
         if let Err(e) = WTSQueryUserToken(session_id, &mut user_token) {
             return SpawnResult {
