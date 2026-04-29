@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Service uninstall WTS handoff (§1c bug 1, follow-up to v0.1.23-beta.26).** `spawn_in_active_user_session` now explicitly enables `SE_TCB_NAME` ("Act as part of the operating system") on the launcher's process token via `AdjustTokenPrivileges` before calling `WTSQueryUserToken`. On v0.1.23 the WTS call failed in ~1ms with `ERROR_NO_TOKEN` (HRESULT 0x800703F0) — not the originally-hypothesized `ERROR_PRIVILEGE_NOT_HELD`. Diagnostic session on the v0.1.23 VM showed the service IS running as LocalSystem (per `sc qc`) and the active session ID was correctly resolved, but Servy's service token had `SE_TCB_NAME` present-but-disabled. Modern Windows service hosts (Servy, NSSM) often default to minimal-privilege tokens, so even LocalSystem identities don't get the privilege auto-enabled. The new `enable_se_tcb_privilege()` helper flips the bit explicitly; checks `ERROR_NOT_ALL_ASSIGNED` (1300) to detect the rarer "privilege isn't even in the token" case (would mean the host stripped it via `SERVICE_REQUIRED_PRIVILEGES_INFO`). Result is logged either way for diagnostic clarity.
+
+### Changed
+
+- **Settings modal label column widened.** Grid layout changed from `[labels] 40% [controls] 1fr` to `[labels] 1fr [controls] 260px`. The 260px controls column reserves space for the widest button ("not installed — install?", ~210px) plus ~50px of slack for future button-text growth. Frees up ~90px for the labels column at the modal's max width, reducing description wrapping (e.g. "saving will restart the server and redirect to the new port" now fits in 2 lines instead of 3). All other modals untouched.
+
 ## [0.1.23] - 2026-04-29
 
 First stable v0.1.23 cut, rolling up everything from the 26-beta investigation. Eight architectural fixes in the in-app updater chain (install-root ACL via UAC, Job Object kill-on-close release, Rust SDK auto-apply disable, adb pre-apply hygiene + cwd anchoring, node-pty Local-Dependencies-Only restructure with `process.getBuiltinModule` runtime require, Logger to dataRoot, UI uninstall-flow modal race code path), Settings modal redesign (label-control grid layout, dual-purpose apply-update button), CI prerelease flag drop, and migration documentation. See per-beta entries below for the diagnosis chain.

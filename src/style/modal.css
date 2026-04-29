@@ -529,7 +529,7 @@ dialog.settings-modal .settings-section-heading {
  */
 dialog.settings-modal .settings-section-body {
     display: grid;
-    grid-template-columns: [labels] 40% [controls] 1fr;
+    grid-template-columns: [labels] 1fr [controls] 260px;
     align-items: center;
     gap: 0.5rem 0.75rem;
 }

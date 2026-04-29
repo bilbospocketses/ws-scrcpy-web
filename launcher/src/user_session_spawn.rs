@@ -22,9 +22,23 @@
 // JSON the Node side reads back.
 //
 // IMPORTANT: This is admin-only. The caller (Node service process) is
-// running as Local System, which has SE_TCB_NAME by default. If invoked
-// from a non-Local-System context, WTSQueryUserToken returns
-// ERROR_PRIVILEGE_NOT_HELD.
+// running as Local System, which holds SE_TCB_NAME ("Act as part of
+// the operating system") in its token — but on modern Windows, even
+// for LocalSystem, the privilege is often present-but-DISABLED in
+// service tokens (especially when the service is hosted by a wrapper
+// like Servy that uses minimal-privilege defaults). WTSQueryUserToken
+// then returns ERROR_NO_TOKEN (HRESULT 0x800703F0) — a misleading
+// error code that does NOT mean "no user is logged in," but rather
+// "your token's SE_TCB_NAME is disabled."
+//
+// v0.1.24 §1c bug 1 fix: explicitly enable SE_TCB_NAME on our process
+// token via AdjustTokenPrivileges before calling WTSQueryUserToken.
+// If the privilege was already enabled this is a free no-op; if it
+// was present-but-disabled (the actual case observed on the v0.1.23
+// VM, Servy 8.2 / Windows 11), the enable flips the bit and the WTS
+// call succeeds. If the privilege isn't present at all (would imply
+// the host stripped it via SERVICE_REQUIRED_PRIVILEGES_INFO), we log
+// loudly and let WTSQueryUserToken fail with the original error.
 
 #![cfg(windows)]
 
@@ -54,6 +68,72 @@ pub struct SpawnResult {
     pub pid: u32,
     pub session_id: u32,
     pub error_message: Option<String>,
+}
+
+/// Enable SE_TCB_NAME on the current process token. Required before
+/// WTSQueryUserToken on hardened service hosts (Servy, NSSM, etc.)
+/// where LocalSystem's token has the privilege present-but-disabled.
+/// Returns Ok(()) when enabled (or already enabled). Returns Err with
+/// a diagnostic when the privilege is missing entirely or the calls
+/// failed — caller should log and continue (the subsequent WTS call
+/// will surface the real failure mode).
+fn enable_se_tcb_privilege() -> Result<(), String> {
+    use windows::Win32::Foundation::{CloseHandle, GetLastError, HANDLE, LUID};
+    use windows::Win32::Security::{
+        AdjustTokenPrivileges, LookupPrivilegeValueW, LUID_AND_ATTRIBUTES,
+        SE_PRIVILEGE_ENABLED, SE_TCB_NAME, TOKEN_ADJUST_PRIVILEGES, TOKEN_PRIVILEGES,
+        TOKEN_QUERY,
+    };
+    use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+    unsafe {
+        let mut token: HANDLE = HANDLE::default();
+        if let Err(e) = OpenProcessToken(
+            GetCurrentProcess(),
+            TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY,
+            &mut token,
+        ) {
+            return Err(format!("OpenProcessToken failed: {e:?}"));
+        }
+
+        let mut luid = LUID::default();
+        let lookup = LookupPrivilegeValueW(
+            windows::core::PCWSTR::null(),
+            SE_TCB_NAME,
+            &mut luid,
+        );
+        if let Err(e) = lookup {
+            let _ = CloseHandle(token);
+            return Err(format!("LookupPrivilegeValueW(SeTcbPrivilege) failed: {e:?}"));
+        }
+
+        let tp = TOKEN_PRIVILEGES {
+            PrivilegeCount: 1,
+            Privileges: [LUID_AND_ATTRIBUTES {
+                Luid: luid,
+                Attributes: SE_PRIVILEGE_ENABLED,
+            }],
+        };
+
+        let adjust = AdjustTokenPrivileges(token, false, Some(&tp), 0, None, None);
+        // AdjustTokenPrivileges returns success even when not all
+        // privileges were assigned — must check GetLastError for
+        // ERROR_NOT_ALL_ASSIGNED (1300) explicitly.
+        let last = GetLastError();
+        let _ = CloseHandle(token);
+
+        if let Err(e) = adjust {
+            return Err(format!("AdjustTokenPrivileges failed: {e:?}"));
+        }
+        // 0x522 == ERROR_NOT_ALL_ASSIGNED
+        if last.0 == 0x522 {
+            return Err(
+                "SeTcbPrivilege not present in process token (service host stripped it)"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    }
 }
 
 pub fn spawn_in_active_user_session(args: &SpawnUserLauncherArgs) -> SpawnResult {
@@ -86,6 +166,18 @@ pub fn spawn_in_active_user_session(args: &SpawnUserLauncherArgs) -> SpawnResult
         };
     }
 
+    // v0.1.24 §1c bug 1 fix: enable SE_TCB_NAME before WTSQueryUserToken.
+    // See module-level docs for rationale. We log the result either way
+    // for diagnostic purposes — if the privilege flip fails AND the
+    // subsequent WTS call also fails, the combined log makes the root
+    // cause obvious.
+    match enable_se_tcb_privilege() {
+        Ok(()) => log::info("spawn-user-launcher: SeTcbPrivilege enabled on process token"),
+        Err(msg) => log::info(&format!(
+            "spawn-user-launcher: SeTcbPrivilege enable skipped/failed: {msg} (continuing; WTSQueryUserToken will surface the real error)"
+        )),
+    }
+
     unsafe {
         let session_id = WTSGetActiveConsoleSessionId();
         if session_id == 0xFFFF_FFFF {
@@ -107,7 +199,7 @@ pub fn spawn_in_active_user_session(args: &SpawnUserLauncherArgs) -> SpawnResult
                 pid: 0,
                 session_id,
                 error_message: Some(format!(
-                    "WTSQueryUserToken failed (session {session_id}): {e:?}. Caller must be Local System with SE_TCB_NAME."
+                    "WTSQueryUserToken failed (session {session_id}): {e:?}. SE_TCB_NAME enable was attempted; check launcher.log for the enable-step result."
                 )),
             };
         }
