@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.23-beta.18] - 2026-04-29
+
+No code changes. In-app update target for beta.17 so the redesigned Settings → Updates UI can exercise its "apply update" button end-to-end with the green-when-ready state.
+
 ## [0.1.23-beta.17] - 2026-04-29
 
 ### Changed
