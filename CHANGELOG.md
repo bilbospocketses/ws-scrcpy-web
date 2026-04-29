@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.23-beta.25] - 2026-04-29
+
+### Fixed
+
+- **`ws-scrcpy-web.log` now lives at `<dataRoot>/ws-scrcpy-web.log` instead of `<installRoot>/current/ws-scrcpy-web.log`.** The previous location was inside the Velopack-swappable image, so every in-app update wiped accumulated logs (and made post-update troubleshooting harder). Path now resolves via `path.dirname(DEPS_PATH)` — the launcher already sets `DEPS_PATH=<dataRoot>/dependencies/`, so dataRoot derivation is consistent with everything else. Logger also adds an idempotent `mkdirSync` for the log directory so first-launch races don't lose lines.
+
+### Known issues
+
+- **Cosmetic node-pty AttachConsole errors in server.log when opening a shell session.** Originate from node-pty's internal `conpty_console_list_agent.js` helper which `fork()`s a Node child to enumerate processes attached to the conpty session and fails because our parent Node process runs without a console window (Windows hidden subsystem launcher). The error dumps to the agent's stderr which bubbles into server.log. **Functionally harmless** — actual shell I/O goes through a different node-pty path that works fine; commands like `dumpsys` execute correctly. Fixing requires either a node-pty patch or stripping the agent from the seed; deferred until we either expose a "list processes" feature or upstream fixes it.
+
 ## [0.1.23-beta.24] - 2026-04-29
 
 No code changes. In-app update target for beta.23 — verifies node-pty actually loads from the dataRoot package across the upgrade boundary, not just at fresh install. Shell button on connected devices should be functional in both beta.23 and beta.24 (was disabled in beta.19–beta.22 due to the `(void 0)` resolver bug).
