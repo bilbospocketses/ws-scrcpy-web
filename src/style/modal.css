@@ -520,20 +520,66 @@ dialog.settings-modal .settings-section-heading {
     margin: 0 0 0.5rem;
 }
 
-dialog.settings-modal .settings-row {
-    display: flex;
+/*
+ * v0.1.23-stable Settings layout: two-column CSS grid mirroring
+ * .modal-controls in ConfigureScrcpy. Labels live on the left, every
+ * control sits on the right at the same x-coordinate across all rows
+ * and all sections. Section action buttons (save / check now / install)
+ * live in .settings-section-footer which spans both columns.
+ */
+dialog.settings-modal .settings-section-body {
+    display: grid;
+    grid-template-columns: [labels] 40% [controls] 1fr;
     align-items: center;
-    gap: 0.75rem;
-    flex-wrap: wrap;
-    margin-bottom: 0.25rem;
+    gap: 0.5rem 0.75rem;
+}
+
+dialog.settings-modal .settings-row {
+    display: contents;
 }
 
 dialog.settings-modal .settings-label {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
+    grid-column: labels;
     color: var(--text-color-light, #888);
     font-size: 13px;
+}
+
+/*
+ * Right-column wrapper. Multi-control rows (radios, checkbox+text)
+ * use this to lay them out in a flex row inside the grid cell.
+ */
+dialog.settings-modal .settings-control {
+    grid-column: controls;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    min-width: 0;
+}
+
+dialog.settings-modal .settings-control .settings-radio-label {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    color: var(--text-color, #ddd);
+    font-size: 13px;
+    cursor: pointer;
+    margin: 0;
+}
+
+dialog.settings-modal .settings-section-footer {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.75rem;
+    margin-top: 0.5rem;
+    flex-wrap: wrap;
+}
+
+dialog.settings-modal .settings-section-footer .settings-status {
+    flex: 1;
+    margin: 0;
+    text-align: left;
 }
 
 dialog.settings-modal .settings-input {
@@ -543,8 +589,14 @@ dialog.settings-modal .settings-input {
     border-radius: 6px;
     color: var(--text-color, #ddd);
     padding: 4px 8px;
-    width: 110px;
+    width: 100%;
+    max-width: 240px;
     font: inherit;
+}
+
+dialog.settings-modal .settings-input:focus {
+    outline: none;
+    border-color: #5b9aff;
 }
 
 [data-theme="light"] dialog.settings-modal .settings-input {
@@ -595,35 +647,58 @@ dialog.settings-modal .settings-stub-note {
     font-style: italic;
 }
 
-dialog.settings-modal .settings-service-body {
-    display: flex;
+/*
+ * v0.1.23-stable: per-section legacy layout overrides removed.
+ * All sections now use the unified .settings-section-body grid above.
+ * Section-specific input widths handled inline (max-width on the
+ * .settings-input itself).
+ */
+
+/* App section: reset-prompts confirm panel (collapsed by default). */
+dialog.settings-modal .settings-confirm-panel {
+    grid-column: 1 / -1;
+    display: none;
     flex-direction: column;
-    align-items: flex-start;
     gap: 0.5rem;
-}
-
-/* ── Updates section (SP3 P5) ── */
-dialog.settings-modal .settings-updates-body {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 0.5rem;
-}
-
-dialog.settings-modal .settings-updates-body .settings-row {
-    margin-bottom: 0;
-}
-
-/* Wider input for the github-owner text field (the default 110px feels cramped). */
-dialog.settings-modal .settings-updates-body input[type="text"].settings-input {
-    width: 220px;
-}
-
-/* Tighter number input for the interval. */
-dialog.settings-modal .settings-updates-body input[type="number"].settings-input {
-    width: 90px;
-}
-
-dialog.settings-modal .settings-updates-status {
+    padding: 0.75rem;
+    border-radius: 6px;
+    background: rgba(91, 154, 255, 0.08);
+    border-left: 3px solid #5b9aff;
     margin-top: 0.5rem;
+}
+
+dialog.settings-modal .settings-confirm-panel.expanded {
+    display: flex;
+}
+
+dialog.settings-modal .settings-confirm-panel p {
+    margin: 0;
+    color: var(--text-color-light, #888);
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+dialog.settings-modal .settings-confirm-panel .settings-confirm-buttons {
+    display: flex;
+    gap: 0.75rem;
+    justify-content: flex-end;
+}
+
+/* Service section: scope chooser fieldset for Linux installs. */
+dialog.settings-modal .settings-scope-fieldset {
+    grid-column: 1 / -1;
+    margin: 0.25rem 0;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 6px;
+}
+
+[data-theme="light"] dialog.settings-modal .settings-scope-fieldset {
+    border-color: rgba(0, 0, 0, 0.12);
+}
+
+dialog.settings-modal .settings-scope-fieldset legend {
+    padding: 0 0.4rem;
+    font-size: 13px;
+    color: var(--text-color-light, #888);
 }

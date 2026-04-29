@@ -239,7 +239,18 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          prerelease: ${{ needs.prepare.outputs.channel == 'beta' }}
+          # v0.1.23 (item 8 of §1e): no prerelease flag for beta tags. GitHub's
+          # /releases/latest API endpoint EXCLUDES prereleases, and Velopack's
+          # GithubSource queries that endpoint to find the latest release in
+          # the configured channel — so flagging beta tags as prereleases
+          # broke discovery for beta-channel users (they could never receive
+          # in-app updates). Channel separation is already handled by
+          # Velopack's per-channel releases.<channel>.json feed file (see
+          # the `files:` block below); the prerelease flag was redundant
+          # gating that ALSO broke discovery. Stable users on the stable
+          # channel won't see beta releases because their feed file lists
+          # only stable assets. See feedback_velopack_permachine_lessons.md
+          # Gotcha 5 for the full diagnosis.
           body_path: release-notes.md
           files: |
             artifacts/windows-final/*.msi

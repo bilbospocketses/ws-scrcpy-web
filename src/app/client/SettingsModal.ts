@@ -8,17 +8,36 @@ import type {
 } from '../../common/ServiceEvents';
 import type { UpdatesStatusResponse, UpdatesConfigPatchRequest } from '../../common/UpdateEvents';
 
+/**
+ * Settings modal — unified two-column grid layout.
+ *
+ * Every section is built from the same primitive:
+ *   <div class="settings-section-body">       <-- grid container
+ *     <div class="settings-row">              <-- display: contents
+ *       <label class="settings-label">...     <-- grid-column: labels
+ *       <div   class="settings-control">...   <-- grid-column: controls
+ *     </div>
+ *     <div class="settings-section-footer">   <-- spans both columns,
+ *       <p class="settings-status">...        <-- right-aligned content
+ *       <button class="settings-btn ...">...
+ *     </div>
+ *   </div>
+ *
+ * Inputs are siblings of labels (NOT nested inside them — the previous
+ * pattern broke vertical alignment because input position drifted with
+ * label-text length). Buttons live in section footers, never inline
+ * with the inputs they affect, so the right column stays a clean
+ * "value column" across all rows.
+ */
 export class SettingsModal extends Modal {
     private serviceSection!: HTMLElement;
     private webPortInput!: HTMLInputElement;
     private webPortStatus!: HTMLElement;
     private serverSaveBtn!: HTMLButtonElement;
     private currentWebPort: number | null = null;
-    /** Linux scope chooser for the install action. Recreated each refresh. */
     private serviceScopeSystemRadio: HTMLInputElement | null = null;
 
     // ── Updates section state ─────────────────────────────────────────────
-    private updatesSection!: HTMLElement;
     private updatesBody!: HTMLElement;
     private updatesStatusEl!: HTMLElement;
     private updatesAutoCheckbox: HTMLInputElement | null = null;
@@ -28,8 +47,8 @@ export class SettingsModal extends Modal {
     private updatesOwnerInput: HTMLInputElement | null = null;
     private updatesCheckNowBtn: HTMLButtonElement | null = null;
     private updatesIntervalDebounce: number | undefined;
-    /** Last status snapshot so PATCH responses can update the inline message. */
     private updatesLastStatus: UpdatesStatusResponse | null = null;
+    private updatesApplyInFlight = false;
 
     constructor() {
         super({ title: 'Settings' });
@@ -54,31 +73,70 @@ export class SettingsModal extends Modal {
         container.appendChild(this.buildAppSection());
     }
 
-    // ── Server section ─────────────────────────────────────────────────────
-    private buildServerSection(): HTMLElement {
+    // ── Layout primitives ──────────────────────────────────────────────────
+    /**
+     * Build a section shell. Returns { section, body } — body is the
+     * grid container into which rows + footer go.
+     */
+    private buildSection(title: string): { section: HTMLElement; body: HTMLElement } {
         const section = document.createElement('section');
         section.className = 'settings-section';
-
         const heading = document.createElement('h3');
         heading.className = 'settings-section-heading';
-        heading.textContent = 'Server';
+        heading.textContent = title;
         section.appendChild(heading);
+        const body = document.createElement('div');
+        body.className = 'settings-section-body';
+        section.appendChild(body);
+        return { section, body };
+    }
 
+    /**
+     * Build a single grid row: description label on the left, control(s)
+     * on the right. The control argument is appended to a flex container
+     * in the right column — pass a single input, or a fragment with
+     * multiple controls (e.g. radios + their labels).
+     */
+    private buildRow(labelText: string, control: HTMLElement | DocumentFragment): HTMLElement {
         const row = document.createElement('div');
         row.className = 'settings-row';
 
-        const label = document.createElement('label');
+        const label = document.createElement('span');
         label.className = 'settings-label';
-        label.textContent = 'web port';
+        label.textContent = labelText;
         row.appendChild(label);
+
+        const controlWrap = document.createElement('div');
+        controlWrap.className = 'settings-control';
+        controlWrap.appendChild(control);
+        row.appendChild(controlWrap);
+
+        return row;
+    }
+
+    private buildSectionFooter(): { footer: HTMLElement; statusEl: HTMLParagraphElement } {
+        const footer = document.createElement('div');
+        footer.className = 'settings-section-footer';
+        const statusEl = document.createElement('p');
+        statusEl.className = 'settings-status';
+        footer.appendChild(statusEl);
+        return { footer, statusEl };
+    }
+
+    // ── Server section ─────────────────────────────────────────────────────
+    private buildServerSection(): HTMLElement {
+        const { section, body } = this.buildSection('Server');
 
         this.webPortInput = document.createElement('input');
         this.webPortInput.type = 'number';
         this.webPortInput.min = '1024';
         this.webPortInput.max = '65535';
         this.webPortInput.className = 'settings-input';
-        label.appendChild(this.webPortInput);
+        this.webPortInput.style.maxWidth = '120px';
+        body.appendChild(this.buildRow('web port', this.webPortInput));
 
+        const { footer, statusEl } = this.buildSectionFooter();
+        this.webPortStatus = statusEl;
         this.serverSaveBtn = document.createElement('button');
         this.serverSaveBtn.type = 'button';
         this.serverSaveBtn.className = 'settings-btn settings-btn-primary';
@@ -86,13 +144,8 @@ export class SettingsModal extends Modal {
         this.serverSaveBtn.addEventListener('click', () => {
             void this.onSavePort();
         });
-        row.appendChild(this.serverSaveBtn);
-
-        section.appendChild(row);
-
-        this.webPortStatus = document.createElement('p');
-        this.webPortStatus.className = 'settings-status';
-        section.appendChild(this.webPortStatus);
+        footer.appendChild(this.serverSaveBtn);
+        body.appendChild(footer);
 
         return section;
     }
@@ -140,11 +193,6 @@ export class SettingsModal extends Modal {
             const data = (await r.json()) as AppConfigPatchResponse;
             this.currentWebPort = data.config.webPort;
             if (data.restartRequired) {
-                // v0.1.8: server schedules its own exit-75 ~1s after
-                // responding, supervisor restarts Node on the new
-                // port. Browser redirects 4s after the response —
-                // gives the supervisor time to bring the new server
-                // up before navigation hits the new URL.
                 this.setServerStatus(
                     'server restarting on new port. redirecting in a moment…',
                     false,
@@ -171,24 +219,12 @@ export class SettingsModal extends Modal {
 
     // ── Updates section ────────────────────────────────────────────────────
     private buildUpdatesSection(): HTMLElement {
-        const section = document.createElement('section');
-        section.className = 'settings-section settings-updates-section';
-
-        const heading = document.createElement('h3');
-        heading.className = 'settings-section-heading';
-        heading.textContent = 'Updates';
-        section.appendChild(heading);
-
-        // Body — populated by refreshUpdates() once /api/updates/status returns.
-        const body = document.createElement('div');
-        body.className = 'settings-updates-body';
-        const loading = document.createElement('p');
-        loading.className = 'settings-status';
-        loading.textContent = 'loading…';
-        body.appendChild(loading);
-        section.appendChild(body);
-
-        this.updatesSection = section;
+        const { section, body } = this.buildSection('Updates');
+        const placeholder = document.createElement('p');
+        placeholder.className = 'settings-status';
+        placeholder.style.gridColumn = '1 / -1';
+        placeholder.textContent = 'loading…';
+        body.appendChild(placeholder);
         this.updatesBody = body;
         return section;
     }
@@ -214,9 +250,11 @@ export class SettingsModal extends Modal {
         this.updatesBody.replaceChildren();
         const err = document.createElement('p');
         err.className = 'settings-status settings-status-error';
+        err.style.gridColumn = '1 / -1';
         err.textContent = msg;
         this.updatesBody.appendChild(err);
 
+        const { footer } = this.buildSectionFooter();
         const retryBtn = document.createElement('button');
         retryBtn.type = 'button';
         retryBtn.className = 'settings-btn';
@@ -224,13 +262,12 @@ export class SettingsModal extends Modal {
         retryBtn.addEventListener('click', () => {
             void this.refreshUpdates();
         });
-        this.updatesBody.appendChild(retryBtn);
+        footer.appendChild(retryBtn);
+        this.updatesBody.appendChild(footer);
     }
 
     private renderUpdatesSection(s: UpdatesStatusResponse): void {
         this.updatesBody.replaceChildren();
-
-        // Reset cached element refs (rebuilt below).
         this.updatesAutoCheckbox = null;
         this.updatesIntervalInput = null;
         this.updatesChannelStableRadio = null;
@@ -239,47 +276,34 @@ export class SettingsModal extends Modal {
         this.updatesCheckNowBtn = null;
 
         if (!s.isInstalled) {
-            // Dev mode — single inline note, no controls (per spec § E + contracts).
-            // v0.1.17: surface the running version so it's obvious what build
-            // is on disk even when the updater can't run.
+            // Dev mode — single inline note spanning both columns, no controls.
             const devNote = document.createElement('p');
             devNote.className = 'settings-stub-note';
+            devNote.style.gridColumn = '1 / -1';
             const versionStr = s.currentVersion ? `current: v${s.currentVersion} — ` : '';
             devNote.textContent = `${versionStr}dev mode — packaging features disabled`;
             this.updatesBody.appendChild(devNote);
             return;
         }
 
-        // ── Current version + auto-download checkbox ──
-        const autoRow = document.createElement('div');
-        autoRow.className = 'settings-row';
-
-        const autoLabel = document.createElement('label');
-        autoLabel.className = 'settings-label';
+        // Row 1: auto-download checkbox.
         const autoCheckbox = document.createElement('input');
         autoCheckbox.type = 'checkbox';
         autoCheckbox.checked = s.autoUpdate;
         autoCheckbox.addEventListener('change', () => {
             void this.patchUpdatesConfig({ autoUpdate: autoCheckbox.checked });
         });
-        autoLabel.appendChild(autoCheckbox);
-        autoLabel.appendChild(document.createTextNode('automatically download updates'));
-        autoRow.appendChild(autoLabel);
-        this.updatesBody.appendChild(autoRow);
+        this.updatesBody.appendChild(this.buildRow('automatically download updates', autoCheckbox));
         this.updatesAutoCheckbox = autoCheckbox;
 
-        // ── Update check interval ──
-        const intervalRow = document.createElement('div');
-        intervalRow.className = 'settings-row';
-        const intervalLabel = document.createElement('label');
-        intervalLabel.className = 'settings-label';
-        intervalLabel.textContent = 'check interval (minutes)';
+        // Row 2: check interval.
         const intervalInput = document.createElement('input');
         intervalInput.type = 'number';
         intervalInput.min = '5';
         intervalInput.max = '1440';
         intervalInput.step = '1';
         intervalInput.className = 'settings-input';
+        intervalInput.style.maxWidth = '110px';
         intervalInput.value = String(s.updateCheckIntervalMinutes);
         intervalInput.addEventListener('input', () => {
             if (this.updatesIntervalDebounce !== undefined) {
@@ -296,21 +320,13 @@ export class SettingsModal extends Modal {
             }
             this.commitIntervalChange(intervalInput);
         });
-        intervalLabel.appendChild(intervalInput);
-        intervalRow.appendChild(intervalLabel);
-        this.updatesBody.appendChild(intervalRow);
+        this.updatesBody.appendChild(this.buildRow('check interval (minutes)', intervalInput));
         this.updatesIntervalInput = intervalInput;
 
-        // ── Channel radios ──
-        const channelRow = document.createElement('div');
-        channelRow.className = 'settings-row';
-        const channelLabel = document.createElement('span');
-        channelLabel.className = 'settings-label';
-        channelLabel.textContent = 'channel';
-        channelRow.appendChild(channelLabel);
-
+        // Row 3: channel radios.
+        const channelFrag = document.createDocumentFragment();
         const stableLabel = document.createElement('label');
-        stableLabel.className = 'settings-label';
+        stableLabel.className = 'settings-radio-label';
         const stableRadio = document.createElement('input');
         stableRadio.type = 'radio';
         stableRadio.name = 'updates-channel';
@@ -323,10 +339,10 @@ export class SettingsModal extends Modal {
         });
         stableLabel.appendChild(stableRadio);
         stableLabel.appendChild(document.createTextNode('stable'));
-        channelRow.appendChild(stableLabel);
+        channelFrag.appendChild(stableLabel);
 
         const betaLabel = document.createElement('label');
-        betaLabel.className = 'settings-label';
+        betaLabel.className = 'settings-radio-label';
         const betaRadio = document.createElement('input');
         betaRadio.type = 'radio';
         betaRadio.name = 'updates-channel';
@@ -339,26 +355,19 @@ export class SettingsModal extends Modal {
         });
         betaLabel.appendChild(betaRadio);
         betaLabel.appendChild(document.createTextNode('beta'));
-        channelRow.appendChild(betaLabel);
+        channelFrag.appendChild(betaLabel);
 
-        this.updatesBody.appendChild(channelRow);
+        this.updatesBody.appendChild(this.buildRow('update channel', channelFrag));
         this.updatesChannelStableRadio = stableRadio;
         this.updatesChannelBetaRadio = betaRadio;
 
-        // ── GitHub owner ──
-        const ownerRow = document.createElement('div');
-        ownerRow.className = 'settings-row';
-        const ownerLabel = document.createElement('label');
-        ownerLabel.className = 'settings-label';
-        ownerLabel.textContent = 'github owner';
+        // Row 4: github owner.
         const ownerInput = document.createElement('input');
         ownerInput.type = 'text';
         ownerInput.className = 'settings-input';
         ownerInput.value = s.githubOwner;
         ownerInput.addEventListener('blur', () => {
             const next = ownerInput.value.trim();
-            // Send only if changed and non-empty (backend accepts any non-empty
-            // string; we don't reject client-side per decision 7).
             if (next.length === 0) {
                 ownerInput.value = this.updatesLastStatus?.githubOwner ?? '';
                 return;
@@ -366,34 +375,35 @@ export class SettingsModal extends Modal {
             if (next === this.updatesLastStatus?.githubOwner) return;
             void this.patchUpdatesConfig({ githubOwner: next });
         });
-        ownerLabel.appendChild(ownerInput);
-        ownerRow.appendChild(ownerLabel);
-        this.updatesBody.appendChild(ownerRow);
+        this.updatesBody.appendChild(this.buildRow('github owner', ownerInput));
         this.updatesOwnerInput = ownerInput;
 
-        // ── Manual check now button ──
-        const checkRow = document.createElement('div');
-        checkRow.className = 'settings-row';
-        const checkBtn = document.createElement('button');
-        checkBtn.type = 'button';
-        checkBtn.className = 'settings-btn settings-btn-primary';
-        checkBtn.textContent = 'check for updates now';
-        checkBtn.addEventListener('click', () => {
-            void this.onCheckNowClick();
+        // Footer: status text + dual-purpose action button.
+        // The button is "check for updates now" when there's nothing to apply,
+        // and flips to "apply update v{X}" when status === 'ready' (mirroring
+        // the home-page UpdateButton chip). Single click handler branches on
+        // current status — we don't add/remove listeners as state changes,
+        // we just retitle the button.
+        const { footer, statusEl } = this.buildSectionFooter();
+        this.updatesStatusEl = statusEl;
+        const actionBtn = document.createElement('button');
+        actionBtn.type = 'button';
+        actionBtn.className = 'settings-btn settings-btn-primary';
+        actionBtn.textContent = 'check for updates now';
+        actionBtn.addEventListener('click', () => {
+            const cur = this.updatesLastStatus;
+            if (cur && cur.status === 'ready') {
+                void this.onApplyClick(actionBtn);
+            } else {
+                void this.onCheckNowClick();
+            }
         });
-        checkRow.appendChild(checkBtn);
-        this.updatesBody.appendChild(checkRow);
-        this.updatesCheckNowBtn = checkBtn;
+        footer.appendChild(actionBtn);
+        this.updatesBody.appendChild(footer);
+        this.updatesCheckNowBtn = actionBtn;
 
-        // ── Inline status ──
-        const status = document.createElement('p');
-        status.className = 'settings-status settings-updates-status';
-        this.updatesBody.appendChild(status);
-        this.updatesStatusEl = status;
         this.applyUpdatesStatusText(s);
-
-        // Disable Check Now while a check or download is in flight.
-        this.applyButtonsDisabledState(s);
+        this.applyActionButtonState(s);
     }
 
     private applyUpdatesStatusText(s: UpdatesStatusResponse): void {
@@ -444,16 +454,34 @@ export class SettingsModal extends Modal {
         return `${diffDay}d ago`;
     }
 
-    private applyButtonsDisabledState(s: UpdatesStatusResponse): void {
+    /**
+     * Drive the dual-purpose action button's label + disabled state from
+     * the latest status. The button physically stays mounted across
+     * polls/PATCHes; we just retitle it. Click branches on current status,
+     * so swapping label here is enough to swap behavior.
+     *
+     *   - status='ready' → "apply update v{availableVersion}", enabled
+     *   - status='checking' / 'downloading' → "check for updates now", disabled
+     *   - everything else → "check for updates now", enabled
+     */
+    private applyActionButtonState(s: UpdatesStatusResponse): void {
+        if (!this.updatesCheckNowBtn) return;
+        const btn = this.updatesCheckNowBtn;
         const busy = s.status === 'checking' || s.status === 'downloading';
-        if (this.updatesCheckNowBtn) this.updatesCheckNowBtn.disabled = busy;
+        btn.disabled = busy || this.updatesApplyInFlight;
+        if (s.status === 'ready') {
+            btn.textContent = s.availableVersion
+                ? `apply update v${s.availableVersion}`
+                : 'apply update';
+        } else {
+            btn.textContent = 'check for updates now';
+        }
     }
 
     private commitIntervalChange(input: HTMLInputElement): void {
         const raw = input.value.trim();
         const n = Number.parseInt(raw, 10);
         if (!Number.isFinite(n) || n < 5 || n > 1440) {
-            // Restore last known good value silently; surface in inline status.
             input.value = String(this.updatesLastStatus?.updateCheckIntervalMinutes ?? 60);
             if (this.updatesStatusEl) {
                 this.updatesStatusEl.textContent = 'interval must be between 5 and 1440 minutes';
@@ -485,25 +513,17 @@ export class SettingsModal extends Modal {
             }
             // The PATCH /api/updates/config endpoint returns a flat
             // UpdatesStatusResponse (see UpdatesApi.handleConfig). Pre-v0.1.21
-            // this code tried to "tolerate either" a flat or wrapped
-            // ({ status: ... }) shape via `'status' in data`, but
-            // UpdatesStatusResponse itself has a `status: UpdateState` string
-            // field — making `'status' in data` always true and unwrapping
-            // the flat response to the literal string ('idle' / 'checking' /
-            // …). syncControlsToStatus then read .autoUpdate / .githubOwner /
-            // .updateCheckIntervalMinutes off the string, getting undefined,
-            // and painted the controls blank with githubOwner = "undefined"
-            // until the next page reload. v0.1.21 fixes the type lie: the
-            // server only ever returns the flat shape, so we read it
-            // directly.
+            // this code tried to "tolerate either" a flat or wrapped shape via
+            // `'status' in data`, but UpdatesStatusResponse itself has a
+            // `status: UpdateState` string field — making `'status' in data`
+            // always true and unwrapping the flat response to the literal
+            // string. v0.1.21 fixes the type lie: the server only ever returns
+            // the flat shape, so we read it directly.
             const status = (await r.json()) as UpdatesStatusResponse;
             this.updatesLastStatus = status;
-            // Reflect the new server-side values into the controls (e.g.,
-            // channel switch may have changed status; owner may have been
-            // accepted as-is even if the resulting check failed).
             this.syncControlsToStatus(status);
             this.applyUpdatesStatusText(status);
-            this.applyButtonsDisabledState(status);
+            this.applyActionButtonState(status);
         } catch {
             if (this.updatesStatusEl) {
                 this.updatesStatusEl.textContent = "couldn't reach server";
@@ -540,6 +560,66 @@ export class SettingsModal extends Modal {
         }
     }
 
+    /**
+     * Apply a downloaded update from inside the Settings modal — mirrors
+     * the home-page UpdateButton chip's apply path. POST /api/updates/apply
+     * returns 200 then the server exits ~100ms later (after Velopack's
+     * pre-apply hygiene + waitExitThenApplyUpdate); we show a "restarting…"
+     * message and reload the page after a grace window so the user lands
+     * on the new version once Velopack's swap + relaunch completes.
+     */
+    private async onApplyClick(btn: HTMLButtonElement): Promise<void> {
+        if (this.updatesApplyInFlight) return;
+        this.updatesApplyInFlight = true;
+        btn.disabled = true;
+        const prevText = btn.textContent;
+        btn.textContent = 'applying…';
+        if (this.updatesStatusEl) {
+            this.updatesStatusEl.textContent = 'applying update…';
+            this.updatesStatusEl.classList.remove('settings-status-error');
+        }
+        try {
+            const r = await fetch('/api/updates/apply', { method: 'POST' });
+            if (!r.ok) {
+                if (this.updatesStatusEl) {
+                    this.updatesStatusEl.textContent = `apply failed (${r.status})`;
+                    this.updatesStatusEl.classList.add('settings-status-error');
+                }
+                btn.disabled = false;
+                btn.textContent = prevText;
+                this.updatesApplyInFlight = false;
+                // Re-poll to learn the current state (probably 409 because state
+                // wasn't 'ready' anymore by the time we got here).
+                void this.refreshUpdates();
+                return;
+            }
+            // Success: server is exiting within ~100ms. Show "restarting…" and
+            // attempt a page reload after a 5s grace period. The reload will
+            // fail until Velopack finishes the swap and relaunches the server;
+            // that's expected — leave the message visible.
+            if (this.updatesStatusEl) {
+                this.updatesStatusEl.textContent = 'server restarting to apply update — page will reload…';
+            }
+            btn.textContent = 'restarting…';
+            window.setTimeout(() => {
+                try {
+                    window.location.reload();
+                } catch {
+                    /* server still down — user will reload manually */
+                }
+            }, 5_000);
+        } catch {
+            if (this.updatesStatusEl) {
+                this.updatesStatusEl.textContent = "couldn't reach server";
+                this.updatesStatusEl.classList.add('settings-status-error');
+            }
+            btn.disabled = false;
+            btn.textContent = prevText;
+            this.updatesApplyInFlight = false;
+            void this.refreshUpdates();
+        }
+    }
+
     private async onCheckNowClick(): Promise<void> {
         if (!this.updatesCheckNowBtn) return;
         const btn = this.updatesCheckNowBtn;
@@ -563,7 +643,7 @@ export class SettingsModal extends Modal {
             this.updatesLastStatus = s;
             this.syncControlsToStatus(s);
             this.applyUpdatesStatusText(s);
-            this.applyButtonsDisabledState(s);
+            this.applyActionButtonState(s);
         } catch {
             if (this.updatesStatusEl) {
                 this.updatesStatusEl.textContent = "couldn't reach server";
@@ -571,7 +651,6 @@ export class SettingsModal extends Modal {
             }
         } finally {
             btn.textContent = prev;
-            // applyButtonsDisabledState handles re-enable based on status.
             if (
                 this.updatesLastStatus &&
                 this.updatesLastStatus.status !== 'checking' &&
@@ -584,19 +663,12 @@ export class SettingsModal extends Modal {
 
     // ── Service section ────────────────────────────────────────────────────
     private buildServiceSection(): HTMLElement {
-        const section = document.createElement('section');
-        section.className = 'settings-section';
-
-        const heading = document.createElement('h3');
-        heading.className = 'settings-section-heading';
-        heading.textContent = 'Service';
-        section.appendChild(heading);
-
-        const body = document.createElement('div');
-        body.className = 'settings-service-body';
-        body.textContent = 'loading…';
-        section.appendChild(body);
-
+        const { section, body } = this.buildSection('Service');
+        const placeholder = document.createElement('p');
+        placeholder.className = 'settings-status';
+        placeholder.style.gridColumn = '1 / -1';
+        placeholder.textContent = 'loading…';
+        body.appendChild(placeholder);
         this.serviceSection = body;
         return section;
     }
@@ -605,6 +677,7 @@ export class SettingsModal extends Modal {
         this.serviceSection.replaceChildren();
         const loading = document.createElement('p');
         loading.className = 'settings-status';
+        loading.style.gridColumn = '1 / -1';
         loading.textContent = 'loading…';
         this.serviceSection.appendChild(loading);
 
@@ -620,7 +693,6 @@ export class SettingsModal extends Modal {
             this.renderServiceError("couldn't reach server", () => void this.refreshService());
             return;
         }
-
         this.renderServiceState(resp);
     }
 
@@ -630,40 +702,34 @@ export class SettingsModal extends Modal {
         if (!resp.supported) {
             const notice = document.createElement('p');
             notice.className = 'settings-status';
-            const reason =
+            notice.style.gridColumn = '1 / -1';
+            notice.textContent =
                 resp.unsupportedReason ||
                 'service mode is currently windows-only. linux support arrives later in SP3.';
-            notice.textContent = reason;
             this.serviceSection.appendChild(notice);
             return;
         }
 
         const status = resp.status ?? 'not-installed';
 
-        const statusLine = document.createElement('p');
-        statusLine.className = 'settings-status';
-        statusLine.textContent = `status: ${status}`;
-        this.serviceSection.appendChild(statusLine);
+        // Status row.
+        const statusValue = document.createElement('span');
+        statusValue.textContent = status;
+        statusValue.style.color = 'var(--text-color, #ddd)';
+        this.serviceSection.appendChild(this.buildRow('service status', statusValue));
 
         if (status === 'not-installed') {
-            // Linux: scope chooser before the install button. Windows leaves
-            // it null and the install POST sends no body (Windows ignores).
             this.serviceScopeSystemRadio = null;
             if (resp.platform === 'linux') {
+                // Scope chooser: spans both columns as a fieldset.
                 const fieldset = document.createElement('fieldset');
                 fieldset.className = 'settings-scope-fieldset';
-                fieldset.style.cssText =
-                    'margin: 8px 0; padding: 8px 12px; ' +
-                    'border: 1px solid rgba(255,255,255,0.12); border-radius: 6px;';
                 const legend = document.createElement('legend');
                 legend.textContent = 'scope';
-                legend.style.cssText =
-                    'padding: 0 6px; font-size: 13px; color: var(--text-color-light);';
                 fieldset.appendChild(legend);
 
                 const userLabel = document.createElement('label');
-                userLabel.style.cssText =
-                    'display: flex; align-items: center; gap: 8px; padding: 4px 0; cursor: pointer;';
+                userLabel.className = 'settings-radio-label';
                 const userRadio = document.createElement('input');
                 userRadio.type = 'radio';
                 userRadio.name = 'settings-scope';
@@ -674,8 +740,7 @@ export class SettingsModal extends Modal {
                 fieldset.appendChild(userLabel);
 
                 const sysLabel = document.createElement('label');
-                sysLabel.style.cssText =
-                    'display: flex; align-items: center; gap: 8px; padding: 4px 0; cursor: pointer;';
+                sysLabel.className = 'settings-radio-label';
                 const sysRadio = document.createElement('input');
                 sysRadio.type = 'radio';
                 sysRadio.name = 'settings-scope';
@@ -688,6 +753,7 @@ export class SettingsModal extends Modal {
                 this.serviceScopeSystemRadio = sysRadio;
             }
 
+            const { footer } = this.buildSectionFooter();
             const installBtn = document.createElement('button');
             installBtn.type = 'button';
             installBtn.className = 'settings-btn settings-btn-primary';
@@ -695,8 +761,10 @@ export class SettingsModal extends Modal {
             installBtn.addEventListener('click', () => {
                 void this.onInstallService(installBtn);
             });
-            this.serviceSection.appendChild(installBtn);
+            footer.appendChild(installBtn);
+            this.serviceSection.appendChild(footer);
         } else {
+            const { footer } = this.buildSectionFooter();
             const uninstallBtn = document.createElement('button');
             uninstallBtn.type = 'button';
             uninstallBtn.className = 'settings-btn settings-btn-danger';
@@ -704,7 +772,8 @@ export class SettingsModal extends Modal {
             uninstallBtn.addEventListener('click', () => {
                 void this.onUninstallService(uninstallBtn);
             });
-            this.serviceSection.appendChild(uninstallBtn);
+            footer.appendChild(uninstallBtn);
+            this.serviceSection.appendChild(footer);
         }
     }
 
@@ -712,23 +781,24 @@ export class SettingsModal extends Modal {
         this.serviceSection.replaceChildren();
         const err = document.createElement('p');
         err.className = 'settings-status settings-status-error';
+        err.style.gridColumn = '1 / -1';
         err.textContent = msg;
         this.serviceSection.appendChild(err);
 
+        const { footer } = this.buildSectionFooter();
         const retryBtn = document.createElement('button');
         retryBtn.type = 'button';
         retryBtn.className = 'settings-btn';
         retryBtn.textContent = 'retry';
         retryBtn.addEventListener('click', onRetry);
-        this.serviceSection.appendChild(retryBtn);
+        footer.appendChild(retryBtn);
+        this.serviceSection.appendChild(footer);
     }
 
     private async onInstallService(btn: HTMLButtonElement): Promise<void> {
         btn.disabled = true;
         const prevText = btn.textContent;
         btn.textContent = 'installing…';
-        // Linux: include scope from the radio chooser. Windows: serviceScopeSystemRadio
-        // is null, so the body stays empty and the API ignores it.
         const requestBody: { scope?: 'user' | 'system' } = {};
         if (this.serviceScopeSystemRadio) {
             requestBody.scope = this.serviceScopeSystemRadio.checked ? 'system' : 'user';
@@ -748,7 +818,6 @@ export class SettingsModal extends Modal {
                 this.renderServiceError(errMsg, () => void this.refreshService());
                 return;
             }
-            // v0.1.8 install-flow auto-redirect.
             if (data.redirectTo) {
                 btn.textContent = 'switching to service mode…';
                 setTimeout(() => {
@@ -780,18 +849,10 @@ export class SettingsModal extends Modal {
                 this.renderServiceError(errMsg, () => void this.refreshService());
                 return;
             }
-            // v0.1.9 uninstall-flow Path A handoff: when the
-            // service-instance API has spawned a fresh user-session
-            // local launcher and issued a resume token, it returns
-            // `redirectTo` pointing at the new local instance with
-            // the token embedded in URL params. Frontend honors it
-            // by navigating; the local instance reads the token,
-            // validates server-side, and fires the actual uninstall
-            // in its own user-session UAC context. Without this
-            // branch, v0.1.8 silently dropped the redirect and the
-            // user's UI just blinked back to "running" because the
-            // service was never actually uninstalled (the local
-            // instance was supposed to do it).
+            // v0.1.9 uninstall-flow Path A handoff: the service-instance API
+            // spawned a fresh user-session local launcher and issued a resume
+            // token. Honor the redirect so the local instance fires the actual
+            // uninstall in its own user-session UAC context.
             if (data.redirectTo) {
                 btn.textContent = 'switching to user mode for uninstall…';
                 setTimeout(() => {
@@ -808,103 +869,58 @@ export class SettingsModal extends Modal {
         }
     }
 
-    // ── App (stub) ─────────────────────────────────────────────────────────
+    // ── App section ────────────────────────────────────────────────────────
     private buildAppSection(): HTMLElement {
-        const section = document.createElement('section');
-        section.className = 'settings-section';
-
-        const heading = document.createElement('h3');
-        heading.className = 'settings-section-heading';
-        heading.textContent = 'App';
-        section.appendChild(heading);
-
-        section.appendChild(this.buildResetPromptsRow());
-
-        return section;
-    }
-
-    /**
-     * v0.1.12: "Reset welcome prompts" button. Clears the three localStorage
-     * gates (welcomeDismissed, serviceFirstRunDismissed, bookmarkDismissedForPort)
-     * so the first-run / bookmark modals will fire again on the next page load.
-     *
-     * Two-step UX: clicking "reset" reveals an inline confirmation row
-     * with explanatory copy and confirm/cancel buttons. Clears + reloads
-     * on confirm so the user sees the modals immediately rather than
-     * having to manually refresh.
-     *
-     * Only clears first-run gates — does NOT touch audio prefs, theme,
-     * scan history, or any other localStorage keys.
-     */
-    private buildResetPromptsRow(): HTMLElement {
-        const wrap = document.createElement('div');
-        wrap.style.cssText = 'display: flex; flex-direction: column; gap: 8px;';
-
-        const desc = document.createElement('p');
-        desc.style.cssText = 'margin: 0; color: var(--text-color-light); font-size: 13px;';
-        desc.textContent =
-            'reset welcome and bookmark prompts so they appear again next page load. ' +
-            'useful if you dismissed them and want to re-read the bookmark hints.';
-        wrap.appendChild(desc);
+        const { section, body } = this.buildSection('App');
 
         const resetBtn = document.createElement('button');
-        resetBtn.textContent = 'reset welcome prompts';
-        resetBtn.style.cssText =
-            'border: 0.5px solid var(--text-color, #ddd); border-radius: 6px; ' +
-            'background: transparent; color: #5b9aff; padding: 8px 16px; cursor: pointer; ' +
-            'align-self: flex-start;';
+        resetBtn.type = 'button';
+        resetBtn.className = 'settings-btn settings-btn-primary';
+        resetBtn.textContent = 'reset';
+        body.appendChild(this.buildRow('reset welcome and bookmark prompts', resetBtn));
 
-        const confirmRow = document.createElement('div');
-        confirmRow.style.cssText =
-            'display: none; flex-direction: column; gap: 8px; ' +
-            'padding: 12px; border-radius: 6px; ' +
-            'background: rgba(91, 154, 255, 0.08); border-left: 3px solid #5b9aff;';
+        // Confirm panel — hidden by default, expands inside the grid below
+        // the reset row when the button is clicked. Spans both columns.
+        const confirmPanel = document.createElement('div');
+        confirmPanel.className = 'settings-confirm-panel';
 
         const confirmText = document.createElement('p');
-        confirmText.style.cssText =
-            'margin: 0; color: var(--text-color-light); font-size: 13px; line-height: 1.5;';
         confirmText.textContent =
-            'this will clear the localStorage flags that suppress the welcome modal, ' +
+            'this clears the localStorage flags that suppress the welcome modal, ' +
             'service-mode modal, and per-port bookmark reminder. the page will reload ' +
             'so the appropriate modal can re-fire. it does not affect server settings, ' +
             'install mode, audio preferences, or scan history.';
-        confirmRow.appendChild(confirmText);
+        confirmPanel.appendChild(confirmText);
 
         const confirmButtons = document.createElement('div');
-        confirmButtons.style.cssText = 'display: flex; gap: 12px;';
+        confirmButtons.className = 'settings-confirm-buttons';
+
+        const cancelBtn = document.createElement('button');
+        cancelBtn.type = 'button';
+        cancelBtn.className = 'settings-btn';
+        cancelBtn.textContent = 'cancel';
+        cancelBtn.addEventListener('click', () => {
+            confirmPanel.classList.remove('expanded');
+        });
+        confirmButtons.appendChild(cancelBtn);
 
         const confirmBtn = document.createElement('button');
+        confirmBtn.type = 'button';
+        confirmBtn.className = 'settings-btn settings-btn-primary';
         confirmBtn.textContent = 'confirm reset';
-        confirmBtn.style.cssText =
-            'border: 0.5px solid var(--text-color, #ddd); border-radius: 6px; ' +
-            'background: transparent; color: #5b9aff; padding: 6px 14px; cursor: pointer;';
         confirmBtn.addEventListener('click', () => {
             resetAllDismissals();
             window.location.reload();
         });
         confirmButtons.appendChild(confirmBtn);
 
-        const cancelBtn = document.createElement('button');
-        cancelBtn.textContent = 'cancel';
-        cancelBtn.style.cssText =
-            'border: 0.5px solid var(--text-color, #ddd); border-radius: 6px; ' +
-            'background: transparent; color: var(--text-color-light); padding: 6px 14px; cursor: pointer;';
-        cancelBtn.addEventListener('click', () => {
-            confirmRow.style.display = 'none';
-            resetBtn.style.display = '';
-        });
-        confirmButtons.appendChild(cancelBtn);
-
-        confirmRow.appendChild(confirmButtons);
+        confirmPanel.appendChild(confirmButtons);
+        body.appendChild(confirmPanel);
 
         resetBtn.addEventListener('click', () => {
-            resetBtn.style.display = 'none';
-            confirmRow.style.display = 'flex';
+            confirmPanel.classList.toggle('expanded');
         });
 
-        wrap.appendChild(resetBtn);
-        wrap.appendChild(confirmRow);
-        return wrap;
+        return section;
     }
-
 }
