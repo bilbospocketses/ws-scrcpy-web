@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.23-beta.4] - 2026-04-28
+
+No code changes. Cut as an in-app update target so v0.1.23-beta.3 fresh installs can exercise the explicit-Apply path now that autoApply is disabled. Tests whether the underlying Update.exe swap actually completes when the user explicitly clicks Apply (vs the loop-on-startup behavior beta.1 → beta.2 surfaced).
+
 ## [0.1.23-beta.3] - 2026-04-28
 
 ### Fixed
