@@ -117,26 +117,30 @@ export class SettingsModal extends Modal {
         return row;
     }
 
-    private buildSectionFooter(): { footer: HTMLElement; statusEl: HTMLParagraphElement } {
-        const footer = document.createElement('div');
-        footer.className = 'settings-section-footer';
-        const statusEl = document.createElement('p');
-        statusEl.className = 'settings-status';
-        footer.appendChild(statusEl);
-        return { footer, statusEl };
-    }
-
     /**
-     * Inline-row footer variant: button + note side-by-side, centered as a
-     * group on the modal's vertical axis. Used by Server's [save] [note]
-     * pairing where the note reads horizontally next to the action button.
+     * Build a single grid row whose LABEL element is returned along with
+     * the row, so callers can mutate the label text dynamically (status
+     * messages, dynamic notes). Same shape as buildRow but exposes the
+     * label for live updates. Use this when the description on the left
+     * is itself the status / dynamic info — the action button on the
+     * right stays put while the label changes underneath the changing
+     * state.
      */
-    private buildSectionFooterRow(): { footer: HTMLElement; statusEl: HTMLParagraphElement } {
-        const footer = document.createElement('div');
-        footer.className = 'settings-section-footer-row';
-        const statusEl = document.createElement('p');
-        statusEl.className = 'settings-status';
-        return { footer, statusEl };
+    private buildDynamicLabelRow(
+        labelText: string,
+        control: HTMLElement | DocumentFragment,
+    ): { row: HTMLElement; labelEl: HTMLSpanElement } {
+        const row = document.createElement('div');
+        row.className = 'settings-row';
+        const labelEl = document.createElement('span');
+        labelEl.className = 'settings-label';
+        labelEl.textContent = labelText;
+        row.appendChild(labelEl);
+        const controlWrap = document.createElement('div');
+        controlWrap.className = 'settings-control';
+        controlWrap.appendChild(control);
+        row.appendChild(controlWrap);
+        return { row, labelEl };
     }
 
     // ── Server section ─────────────────────────────────────────────────────
@@ -151,12 +155,10 @@ export class SettingsModal extends Modal {
         this.webPortInput.style.maxWidth = '120px';
         body.appendChild(this.buildRow('web port', this.webPortInput));
 
-        // Footer-row: [save button] [inline note explaining the redirect].
-        // Note text is dynamic via webPortStatus — starts as a generic
-        // "saving will redirect to the new port" hint, swaps to error /
-        // saving / saved messaging via setServerStatus during onSavePort.
-        const { footer, statusEl } = this.buildSectionFooterRow();
-        this.webPortStatus = statusEl;
+        // Save row: label = redirect-note (wraps in left column), control =
+        // save button (left-aligned in right column like every other control).
+        // The label text is dynamic — starts with the redirect explainer
+        // and swaps to "saving…" / "saved." / error during onSavePort.
         this.serverSaveBtn = document.createElement('button');
         this.serverSaveBtn.type = 'button';
         this.serverSaveBtn.className = 'settings-btn settings-btn-primary';
@@ -164,9 +166,15 @@ export class SettingsModal extends Modal {
         this.serverSaveBtn.addEventListener('click', () => {
             void this.onSavePort();
         });
-        footer.appendChild(this.serverSaveBtn);
-        footer.appendChild(this.webPortStatus);
-        body.appendChild(footer);
+        const { row: saveRow, labelEl: saveLabelEl } = this.buildDynamicLabelRow(
+            'saving will restart the server and redirect to the new port',
+            this.serverSaveBtn,
+        );
+        body.appendChild(saveRow);
+        // setServerStatus mutates this label to show progress / errors.
+        // We keep the original element type as <span> so it lines up with
+        // every other label in the modal — no extra <p> wrapper.
+        this.webPortStatus = saveLabelEl as unknown as HTMLElement;
 
         return section;
     }
@@ -272,13 +280,6 @@ export class SettingsModal extends Modal {
 
     private renderUpdatesError(msg: string): void {
         this.updatesBody.replaceChildren();
-        const err = document.createElement('p');
-        err.className = 'settings-status settings-status-error';
-        err.style.gridColumn = '1 / -1';
-        err.textContent = msg;
-        this.updatesBody.appendChild(err);
-
-        const { footer } = this.buildSectionFooter();
         const retryBtn = document.createElement('button');
         retryBtn.type = 'button';
         retryBtn.className = 'settings-btn';
@@ -286,8 +287,9 @@ export class SettingsModal extends Modal {
         retryBtn.addEventListener('click', () => {
             void this.refreshUpdates();
         });
-        footer.appendChild(retryBtn);
-        this.updatesBody.appendChild(footer);
+        const { row, labelEl } = this.buildDynamicLabelRow(msg, retryBtn);
+        labelEl.classList.add('settings-status-error');
+        this.updatesBody.appendChild(row);
     }
 
     private renderUpdatesSection(s: UpdatesStatusResponse): void {
@@ -402,14 +404,15 @@ export class SettingsModal extends Modal {
         this.updatesBody.appendChild(this.buildRow('github owner', ownerInput));
         this.updatesOwnerInput = ownerInput;
 
-        // Footer: status text + dual-purpose action button.
-        // The button is "check for updates now" when there's nothing to apply,
+        // Action row: label = live status text (idle: "last checked … —
+        // up to date (vX)", ready: "vX ready to apply", checking/downloading:
+        // progress, error: failure reason — wraps in left column as needed),
+        // control = dual-purpose action button (left-aligned in right column
+        // like every other control). Same row pattern as inputs above. The
+        // button is "check for updates now" when there's nothing to apply
         // and flips to "apply update v{X}" when status === 'ready' (mirroring
         // the home-page UpdateButton chip). Single click handler branches on
-        // current status — we don't add/remove listeners as state changes,
-        // we just retitle the button.
-        const { footer, statusEl } = this.buildSectionFooter();
-        this.updatesStatusEl = statusEl;
+        // current status — we just retitle the button as state changes.
         const actionBtn = document.createElement('button');
         actionBtn.type = 'button';
         actionBtn.className = 'settings-btn settings-btn-primary';
@@ -422,9 +425,12 @@ export class SettingsModal extends Modal {
                 void this.onCheckNowClick();
             }
         });
-        footer.appendChild(actionBtn);
-        this.updatesBody.appendChild(footer);
+        const { row: actionRow, labelEl: actionLabelEl } = this.buildDynamicLabelRow('', actionBtn);
+        this.updatesBody.appendChild(actionRow);
         this.updatesCheckNowBtn = actionBtn;
+        // Track the label element so applyUpdatesStatusText can mutate it
+        // (kept type-compatible with the previous statusEl field).
+        this.updatesStatusEl = actionLabelEl as unknown as HTMLElement;
 
         this.applyUpdatesStatusText(s);
         this.applyActionButtonState(s);
@@ -777,13 +783,14 @@ export class SettingsModal extends Modal {
             this.serviceScopeSystemRadio = sysRadio;
         }
 
-        // Single centered button whose label combines status + action.
-        // No separate status row — the state IS the button text.
-        const { footer } = this.buildSectionFooter();
+        // One row: label = informational blurb (left column, wraps),
+        // control = state-aware action button (left-aligned in right
+        // column like every other control). Green for install (positive
+        // action, mirrors apply-update); red for uninstall (destructive).
         const btn = document.createElement('button');
         btn.type = 'button';
         if (status === 'not-installed') {
-            btn.className = 'settings-btn settings-btn-primary';
+            btn.className = 'settings-btn settings-btn-ready';
             btn.textContent = 'not installed — install?';
             btn.addEventListener('click', () => {
                 void this.onInstallService(btn);
@@ -795,26 +802,21 @@ export class SettingsModal extends Modal {
                 void this.onUninstallService(btn);
             });
         }
-        footer.appendChild(btn);
-        this.serviceSection.appendChild(footer);
+        this.serviceSection.appendChild(
+            this.buildRow('installs/uninstalls the server as an always-on service', btn),
+        );
     }
 
     private renderServiceError(msg: string, onRetry: () => void): void {
         this.serviceSection.replaceChildren();
-        const err = document.createElement('p');
-        err.className = 'settings-status settings-status-error';
-        err.style.gridColumn = '1 / -1';
-        err.textContent = msg;
-        this.serviceSection.appendChild(err);
-
-        const { footer } = this.buildSectionFooter();
         const retryBtn = document.createElement('button');
         retryBtn.type = 'button';
         retryBtn.className = 'settings-btn';
         retryBtn.textContent = 'retry';
         retryBtn.addEventListener('click', onRetry);
-        footer.appendChild(retryBtn);
-        this.serviceSection.appendChild(footer);
+        const { row, labelEl } = this.buildDynamicLabelRow(msg, retryBtn);
+        labelEl.classList.add('settings-status-error');
+        this.serviceSection.appendChild(row);
     }
 
     private async onInstallService(btn: HTMLButtonElement): Promise<void> {

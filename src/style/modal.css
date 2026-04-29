@@ -542,16 +542,24 @@ dialog.settings-modal .settings-label {
     grid-column: labels;
     color: var(--text-color-light, #888);
     font-size: 13px;
-    /* Equal row heights across the whole modal — sets the visual rhythm. */
+    /* Equal row heights across the whole modal — sets the visual rhythm.
+       Long labels (status messages, descriptive notes) wrap within the
+       40% column rather than pushing the modal wide. */
     min-height: 32px;
     display: flex;
     align-items: center;
+    line-height: 1.4;
+    word-break: break-word;
+    padding-right: 0.75rem;
 }
 
 /*
  * Right-column wrapper. Multi-control rows (radios, checkbox+text)
  * use this to lay them out in a flex row inside the grid cell.
  * min-height matches .settings-label so rows stay flush at 32px.
+ * justify-content stays at flex-start (default) so controls hug the
+ * left edge of the right column — buttons align with inputs above
+ * them across all rows.
  */
 dialog.settings-modal .settings-control {
     grid-column: controls;
@@ -570,55 +578,6 @@ dialog.settings-modal .settings-control .settings-radio-label {
     font-size: 13px;
     cursor: pointer;
     margin: 0;
-}
-
-/*
- * Section footer: centered vertical stack by default.
- * Status text wraps full-width above the action button so the modal
- * doesn't have to stretch horizontally for long messages, and the
- * action button sits centered on the modal's vertical axis.
- *
- * Sections that need a horizontal arrangement (e.g. Server's
- * [save] [note] inline pairing) use .settings-section-footer-row
- * instead.
- */
-dialog.settings-modal .settings-section-footer {
-    grid-column: 1 / -1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.5rem;
-    margin-top: 0.5rem;
-}
-
-dialog.settings-modal .settings-section-footer .settings-status {
-    margin: 0;
-    text-align: center;
-    align-self: stretch;
-}
-
-/*
- * Inline footer variant: button + note side-by-side, centered as a
- * group on the modal's vertical axis. Used by the Server section
- * where we want "[save] saving will redirect…" reading horizontally.
- */
-dialog.settings-modal .settings-section-footer-row {
-    grid-column: 1 / -1;
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    justify-content: center;
-    gap: 0.75rem;
-    margin-top: 0.5rem;
-    flex-wrap: wrap;
-}
-
-dialog.settings-modal .settings-section-footer-row .settings-status {
-    margin: 0;
-    text-align: left;
-    /* Cap the inline note width so it wraps within the right-column
-       budget rather than pushing the modal wide. */
-    max-width: 60%;
 }
 
 /*
