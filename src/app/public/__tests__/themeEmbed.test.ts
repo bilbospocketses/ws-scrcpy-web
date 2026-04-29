@@ -185,6 +185,18 @@ describe('notifyThemeChanged', () => {
         );
     });
 
+    it('defaults target to window.parent', () => {
+        const parentMock = { postMessage: vi.fn() };
+        const originalParent = window.parent;
+        Object.defineProperty(window, 'parent', { value: parentMock, configurable: true });
+        try {
+            notifyThemeChanged();
+            expect(parentMock.postMessage).toHaveBeenCalled();
+        } finally {
+            Object.defineProperty(window, 'parent', { value: originalParent, configurable: true });
+        }
+    });
+
     it('is a no-op when target equals window (not embedded)', () => {
         const spy = vi.spyOn(window, 'postMessage');
         notifyThemeChanged(window);
