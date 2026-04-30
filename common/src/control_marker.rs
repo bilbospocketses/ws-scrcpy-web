@@ -122,6 +122,23 @@ where
     }
 }
 
+/// Production poll loop. Sleeps `cadence` between ticks and spawns
+/// processes via `std::process::Command`. Runs forever. Intended to be
+/// invoked on a dedicated thread; thread death is caller's problem.
+///
+/// On entry, calls `cleanup_stale` once with a 60s threshold to clear any
+/// leftover marker from a crashed previous tray-helper run.
+pub fn poll_for_handoff(data_root: &Path, own_session: u32, cadence: Duration) {
+    cleanup_stale(data_root, Utc::now(), Duration::from_secs(60));
+    loop {
+        let mut spawn = |path: &Path, args: &[String]| -> io::Result<()> {
+            std::process::Command::new(path).args(args).spawn().map(|_| ())
+        };
+        let _ = poll_once(data_root, own_session, &mut spawn);
+        std::thread::sleep(cadence);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -351,5 +368,25 @@ mod tests {
         let outcome = poll_once(tmp.path(), 99, &mut |_, _| { spawned = true; Ok(()) });
         assert_eq!(outcome, PollOutcome::Spawned);
         assert!(spawned);
+    }
+
+    #[test]
+    fn poll_once_spawn_failed_preserves_marker() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let m = Marker {
+            verb: "uninstall-service".to_string(),
+            target_session_id: Some(1),
+            launcher_path: PathBuf::from("a.exe"),
+            launcher_args: vec![],
+            written_at: "2026-04-29T23:30:00Z".to_string(),
+        };
+        write(tmp.path(), &m).expect("write");
+        let outcome = poll_once(
+            tmp.path(),
+            1,
+            &mut |_, _| Err(std::io::Error::other("boom")),
+        );
+        assert_eq!(outcome, PollOutcome::SpawnFailed);
+        assert!(read(tmp.path()).expect("read").is_some(), "marker preserved for retry");
     }
 }
