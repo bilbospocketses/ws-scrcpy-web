@@ -399,7 +399,20 @@ export class ServiceApi {
             if (isWindows && runningAsService && this.isLikelyLocalSystem()) {
                 const handoff = await this.handoffUninstallToUserSession(cfg.dependenciesPath, res);
                 if (handoff) return true;
-                log.warn('uninstall handoff failed; attempting direct uninstall (browser tab will likely disconnect)');
+                // Handoff failed AND we're running as LocalSystem. We CANNOT fall
+                // through to direct runElevated() here — PowerShell Start-Process
+                // -Verb RunAs from LocalSystem has no interactive desktop to show
+                // the UAC prompt on, so it silently fails. Return a clear error
+                // and let the user retry (per spec
+                // docs/superpowers/specs/2026-04-30-service-mode-admin-uac-ux-design.md).
+                const body: ServiceActionFailure = {
+                    ok: false,
+                    error: "Couldn't reach the user session to relay the uninstall request. Make sure ws-scrcpy-web is running for your user, then try again.",
+                    reason: 'handoff-timeout',
+                };
+                res.writeHead(503);
+                res.end(JSON.stringify(body));
+                return true;
             }
         }
 
