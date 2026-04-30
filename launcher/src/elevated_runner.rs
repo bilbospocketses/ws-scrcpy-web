@@ -350,6 +350,13 @@ fn run_capture(exe: &str, args: &[impl AsRef<std::ffi::OsStr>]) -> Result<Captur
 const TRAY_RUN_KEY: &str = r"HKLM\Software\Microsoft\Windows\CurrentVersion\Run";
 const TRAY_RUN_VALUE: &str = "WsScrcpyWebTray";
 
+/// Pre-v0.1.25 the tray was registered under HKCU\...\Run from the
+/// elevated install context, which only wrote to the installing admin's
+/// hive. We keep this path constant so install upgrades can clean up
+/// that stale value. Other users' hives never had it written, so the
+/// cleanup is intentionally limited to the elevated user's HKCU.
+const STALE_HKCU_TRAY_RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
+
 fn register_tray_run_key(tray_path: &str) -> Result<(), String> {
     let out = Command::new("reg.exe")
         .args(["add", TRAY_RUN_KEY, "/v", TRAY_RUN_VALUE, "/t", "REG_SZ", "/d", tray_path, "/f"])
@@ -369,6 +376,28 @@ pub fn unregister_tray_run_key() -> Result<(), String> {
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
         // "cannot find" is the desired post-state — value already absent.
+        if stderr.to_lowercase().contains("cannot find")
+            || stderr.to_lowercase().contains("system was unable to find")
+        {
+            return Ok(());
+        }
+        return Err(stderr.into_owned());
+    }
+    Ok(())
+}
+
+/// Best-effort delete of the pre-v0.1.25 HKCU tray Run-key value, run
+/// during install to clean up upgrades from the HKCU era. "Value not
+/// found" is treated as success (matches `unregister_tray_run_key`
+/// semantics) — fresh installs have nothing to clean up, and that's
+/// the expected post-state.
+fn cleanup_stale_hkcu_tray_run_key() -> Result<(), String> {
+    let out = Command::new("reg.exe")
+        .args(["delete", STALE_HKCU_TRAY_RUN_KEY, "/v", TRAY_RUN_VALUE, "/f"])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
         if stderr.to_lowercase().contains("cannot find")
             || stderr.to_lowercase().contains("system was unable to find")
         {
