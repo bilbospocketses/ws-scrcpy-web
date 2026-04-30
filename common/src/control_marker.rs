@@ -1,7 +1,9 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Marker {
@@ -48,6 +50,33 @@ pub fn read(data_root: &Path) -> io::Result<Option<Marker>> {
         Err(e) => return Err(e),
     };
     Ok(serde_json::from_str(&body).ok())
+}
+
+/// Delete the marker file. Idempotent — absent file is not an error.
+pub fn delete(data_root: &Path) -> io::Result<()> {
+    let path = data_root.join(CONTROL_DIR).join(UNINSTALL_HANDOFF_FILENAME);
+    match fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
+/// If a marker is present and its `writtenAt` is older than `max_age` from
+/// `now`, delete it. Failures are logged-and-ignored (poller continues).
+/// Used at tray helper startup to clear leftovers from a crashed previous
+/// session.
+pub fn cleanup_stale(data_root: &Path, now: DateTime<Utc>, max_age: Duration) {
+    let Ok(Some(marker)) = read(data_root) else { return };
+    let Ok(written) = DateTime::parse_from_rfc3339(&marker.written_at) else {
+        // Unparseable timestamp -> treat as stale (overwrites a malformed marker).
+        let _ = delete(data_root);
+        return;
+    };
+    let age = now.signed_duration_since(written.with_timezone(&Utc));
+    if age.to_std().map(|d| d > max_age).unwrap_or(false) {
+        let _ = delete(data_root);
+    }
 }
 
 #[cfg(test)]
@@ -138,5 +167,58 @@ mod tests {
         // caller's preference (poller continues on next tick).
         let result = read(tmp.path()).expect("read does not error on corrupt");
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn delete_is_idempotent() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        // Delete on absent should be Ok
+        delete(tmp.path()).expect("delete absent ok");
+        // Write + delete + delete-again
+        let m = Marker {
+            verb: "uninstall-service".to_string(),
+            target_session_id: Some(1),
+            launcher_path: PathBuf::from("a.exe"),
+            launcher_args: vec![],
+            written_at: "2026-04-29T23:30:00Z".to_string(),
+        };
+        write(tmp.path(), &m).expect("write");
+        delete(tmp.path()).expect("delete present ok");
+        delete(tmp.path()).expect("second delete ok");
+        assert!(read(tmp.path()).expect("read").is_none());
+    }
+
+    #[test]
+    fn cleanup_stale_removes_old_marker() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let old = Marker {
+            verb: "uninstall-service".to_string(),
+            target_session_id: Some(1),
+            launcher_path: PathBuf::from("a.exe"),
+            launcher_args: vec![],
+            // 5 minutes ago
+            written_at: "2026-04-29T23:25:00Z".to_string(),
+        };
+        write(tmp.path(), &old).expect("write");
+        // Pretend "now" is 5 minutes after the marker's written_at
+        let now = chrono::DateTime::parse_from_rfc3339("2026-04-29T23:30:00Z").unwrap();
+        cleanup_stale(tmp.path(), now.into(), std::time::Duration::from_secs(60));
+        assert!(read(tmp.path()).expect("read").is_none());
+    }
+
+    #[test]
+    fn cleanup_stale_keeps_fresh_marker() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let fresh = Marker {
+            verb: "uninstall-service".to_string(),
+            target_session_id: Some(1),
+            launcher_path: PathBuf::from("a.exe"),
+            launcher_args: vec![],
+            written_at: "2026-04-29T23:29:30Z".to_string(),
+        };
+        write(tmp.path(), &fresh).expect("write");
+        let now = chrono::DateTime::parse_from_rfc3339("2026-04-29T23:30:00Z").unwrap();
+        cleanup_stale(tmp.path(), now.into(), std::time::Duration::from_secs(60));
+        assert!(read(tmp.path()).expect("read").is_some());
     }
 }
