@@ -12,7 +12,7 @@ import type {
     ServiceClientFactoryResult,
 } from '../service/ServiceClient';
 
-function makeReqRes(url: string, method = 'GET', body?: string) {
+function makeReqRes(url: string, method = 'GET', body?: string, headers?: Record<string, string>) {
     // Minimal IncomingMessage: only the on('data')/on('end') hooks readJsonBody
     // uses are needed. Fire data + end synchronously on the first listener
     // attach so the awaited Promise resolves on the next microtask.
@@ -20,6 +20,7 @@ function makeReqRes(url: string, method = 'GET', body?: string) {
     const req = {
         url,
         method,
+        headers: headers ?? {},
         on(event: string, handler: (...args: unknown[]) => void) {
             (listeners[event] ??= []).push(handler);
             // Fire body+end after handlers are attached. The install handler
@@ -154,7 +155,10 @@ describe('ServiceApi', () => {
         const { req, res } = makeReqRes('/api/service/install', 'POST');
         await api.handle(req, res);
         expect((res as any).getStatus()).toBe(501);
-        expect(JSON.parse((res as any).getBody())).toEqual({ ok: false, error: 'nope' });
+        const body = JSON.parse((res as any).getBody());
+        expect(body.ok).toBe(false);
+        expect(body.error).toBe('nope');
+        expect(body.reason).toBe('unsupported');
     });
 
     it('POST /install calls client.install with installMode=user-service for user scope', async () => {
@@ -389,10 +393,10 @@ describe('ServiceApi', () => {
         const { req, res } = makeReqRes('/api/service/uninstall', 'POST');
         await api.handle(req, res);
         expect((res as any).getStatus()).toBe(500);
-        expect(JSON.parse((res as any).getBody())).toEqual({
-            ok: false,
-            error: expect.stringContaining('access denied'),
-        });
+        const body = JSON.parse((res as any).getBody());
+        expect(body.ok).toBe(false);
+        expect(body.error).toEqual(expect.stringContaining('access denied'));
+        expect(body.reason).toBe('servy-failure');
     });
 
     // ── Linux scope branch (SP3 P4b) ────────────────────────────────────────
@@ -548,5 +552,130 @@ describe('ServiceApi', () => {
         const { req, res } = makeReqRes('/api/service/bogus', 'GET');
         await api.handle(req, res);
         expect((res as any).getStatus()).toBe(404);
+    });
+
+    // ── reason discriminator + no-direct-uninstall guard (v0.1.25) ──────────
+
+    it('returns 503 with reason=handoff-timeout when LocalSystem handoff fails (does NOT direct-uninstall)', async () => {
+        const uninstallSpy = vi.fn(async () => undefined);
+        const client = fakeClient({
+            uninstall: uninstallSpy,
+            status: vi.fn(async () => 'running' as const),
+        });
+        const factoryResult: ServiceClientFactoryResult = {
+            client,
+            supported: true,
+            platform: 'win32',
+        };
+        const api = new ServiceApi(() => factoryResult, () => 'user');
+        // Force isLikelyLocalSystem() to return true.
+        vi.spyOn(
+            api as unknown as { isLikelyLocalSystem: () => boolean },
+            'isLikelyLocalSystem',
+        ).mockReturnValue(true);
+        // Force the handoff to fail (resolve false synchronously).
+        vi.spyOn(
+            api as unknown as { handoffUninstallToUserSession: (...args: unknown[]) => Promise<boolean> },
+            'handoffUninstallToUserSession',
+        ).mockResolvedValue(false);
+        // Set installMode to 'system-service' so the running-as-service branch fires.
+        Config.getInstance().updateAppConfig({ installMode: 'system-service' });
+
+        const { req, res } = makeReqRes('/api/service/uninstall', 'POST');
+        await api.handle(req, res);
+
+        expect((res as any).getStatus()).toBe(503);
+        const body = JSON.parse((res as any).getBody());
+        expect(body.ok).toBe(false);
+        expect(body.reason).toBe('handoff-timeout');
+        // Critical: the direct uninstall path must NOT have been attempted.
+        expect(uninstallSpy).not.toHaveBeenCalled();
+    });
+
+    it('returns reason=unsupported when service mode is unsupported (POST /uninstall)', async () => {
+        const factoryResult: ServiceClientFactoryResult = {
+            client: fakeClient(),
+            supported: false,
+            platform: 'linux',
+            unsupportedReason: 'systemd not found',
+        };
+        const api = new ServiceApi(() => factoryResult, () => 'user');
+        const { req, res } = makeReqRes('/api/service/uninstall', 'POST');
+        await api.handle(req, res);
+        expect((res as any).getStatus()).toBe(501);
+        const body = JSON.parse((res as any).getBody());
+        expect(body.ok).toBe(false);
+        expect(body.reason).toBe('unsupported');
+    });
+
+    it('returns reason=uac-declined when client.uninstall throws UAC-declined error', async () => {
+        const { ServiceInstallError } = await import('../service/ServyClient');
+        const uninstallFn = vi.fn(async () => {
+            throw new ServiceInstallError(
+                'user declined elevation. Service uninstall requires Administrator',
+                {
+                    ok: false,
+                    exitCode: -1,
+                    stdout: '',
+                    stderr: '',
+                    errorMessage: 'user declined elevation. Service uninstall requires Administrator',
+                },
+            );
+        });
+        const client = fakeClient({ uninstall: uninstallFn as any });
+        const factoryResult: ServiceClientFactoryResult = {
+            client,
+            supported: true,
+            platform: 'win32',
+        };
+        const api = new ServiceApi(() => factoryResult, () => 'user');
+        const { req, res } = makeReqRes('/api/service/uninstall', 'POST');
+        await api.handle(req, res);
+        expect((res as any).getStatus()).toBe(403);
+        const body = JSON.parse((res as any).getBody());
+        expect(body.ok).toBe(false);
+        expect(body.reason).toBe('uac-declined');
+    });
+
+    it('returns reason=invalid-token when resume token is invalid', async () => {
+        const factoryResult: ServiceClientFactoryResult = {
+            client: fakeClient(),
+            supported: true,
+            platform: 'win32',
+        };
+        const api = new ServiceApi(() => factoryResult, () => 'user');
+        // Provide a token that will fail consumeToken validation (it won't match
+        // any issued token in the temp dir, so consumeToken returns false).
+        const { req, res } = makeReqRes(
+            '/api/service/uninstall',
+            'POST',
+            undefined,
+            { 'x-resume-token': 'bogus-token-value' },
+        );
+        await api.handle(req, res);
+        expect((res as any).getStatus()).toBe(401);
+        const body = JSON.parse((res as any).getBody());
+        expect(body.ok).toBe(false);
+        expect(body.reason).toBe('invalid-token');
+    });
+
+    it('returns reason=servy-failure when client.uninstall throws a generic Error', async () => {
+        const client = fakeClient({
+            uninstall: vi.fn(async () => {
+                throw new Error('servy crashed');
+            }),
+        });
+        const factoryResult: ServiceClientFactoryResult = {
+            client,
+            supported: true,
+            platform: 'win32',
+        };
+        const api = new ServiceApi(() => factoryResult, () => 'user');
+        const { req, res } = makeReqRes('/api/service/uninstall', 'POST');
+        await api.handle(req, res);
+        expect((res as any).getStatus()).toBe(500);
+        const body = JSON.parse((res as any).getBody());
+        expect(body.ok).toBe(false);
+        expect(body.reason).toBe('servy-failure');
     });
 });
