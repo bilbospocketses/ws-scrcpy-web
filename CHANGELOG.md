@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Admin-confirmation modal before clicking Install Service / Uninstall Service in the Settings panel. Sets the expectation that a Windows UAC prompt is coming and gives a clean cancel path before the OS dialog fires.
+
+### Fixed
+
+- **Service uninstall no longer silently fails for non-admin users.** Previously the backend's LocalSystem context would fall through to a direct `runElevated` call after the user-session handoff failed, but PowerShell `Start-Process -Verb RunAs` from LocalSystem has no interactive desktop to show the UAC prompt — the elevation silently never happened and the frontend's "uninstalling…" button hung. Backend now returns a clear 503 + actionable error instead.
+- Service-mode failure responses now carry a `reason` discriminator and the frontend maps each variant to a specific actionable message (e.g., "Couldn't reach the user session. Make sure ws-scrcpy-web is running for your user, then try again.") instead of surfacing raw error strings.
+- The "uninstalling…" button on the Settings modal now swaps to "still waiting for user session…" after 5 seconds so the user can tell the long handoff path is still working, not frozen.
+- Tightened the gap between the home-page top-right controls and the connected-devices section's outer top border (page-container `padding-top` 64px → 56px).
+
 ## [0.1.25-beta.2] - 2026-04-30
 
 ### Fixed
