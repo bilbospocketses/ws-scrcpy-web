@@ -361,6 +361,27 @@ const TRAY_RUN_VALUE: &str = "WsScrcpyWebTray";
 /// cleanup is intentionally limited to the elevated user's HKCU.
 const STALE_HKCU_TRAY_RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
 
+/// Classify the outcome of a `reg.exe delete` command based on its exit code.
+/// Exit code 0 = success. Exit code 1 = value not found (locale-stable path);
+/// treated as no-op success. Other codes = real errors; stderr propagated.
+fn classify_reg_delete_outcome(status_code: Option<i32>, stderr: &[u8]) -> Result<(), String> {
+    match status_code {
+        Some(0) | Some(1) => Ok(()),
+        _ => Err(String::from_utf8_lossy(stderr).into_owned()),
+    }
+}
+
+/// Run `reg.exe delete <key> /v <value> /f` and treat exit code 1
+/// (the locale-stable "value not found" path) as success. Other
+/// non-zero exits are propagated with stderr in the error payload.
+fn reg_delete_value_best_effort(key: &str, value: &str) -> Result<(), String> {
+    let out = Command::new("reg.exe")
+        .args(["delete", key, "/v", value, "/f"])
+        .output()
+        .map_err(|e| e.to_string())?;
+    classify_reg_delete_outcome(out.status.code(), &out.stderr)
+}
+
 fn register_tray_run_key(tray_path: &str) -> Result<(), String> {
     let out = Command::new("reg.exe")
         .args(["add", TRAY_RUN_KEY, "/v", TRAY_RUN_VALUE, "/t", "REG_SZ", "/d", tray_path, "/f"])
@@ -372,44 +393,18 @@ fn register_tray_run_key(tray_path: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Unregister the tray from the HKLM Run key. Exit code 1 (value not found)
+/// is treated as success — the desired post-state is that the value is absent.
 pub fn unregister_tray_run_key() -> Result<(), String> {
-    let out = Command::new("reg.exe")
-        .args(["delete", TRAY_RUN_KEY, "/v", TRAY_RUN_VALUE, "/f"])
-        .output()
-        .map_err(|e| e.to_string())?;
-    if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        // "cannot find" is the desired post-state — value already absent.
-        if stderr.to_lowercase().contains("cannot find")
-            || stderr.to_lowercase().contains("system was unable to find")
-        {
-            return Ok(());
-        }
-        return Err(stderr.into_owned());
-    }
-    Ok(())
+    reg_delete_value_best_effort(TRAY_RUN_KEY, TRAY_RUN_VALUE)
 }
 
 /// Best-effort delete of the pre-v0.1.25 HKCU tray Run-key value, run
-/// during install to clean up upgrades from the HKCU era. "Value not
-/// found" is treated as success (matches `unregister_tray_run_key`
-/// semantics) — fresh installs have nothing to clean up, and that's
-/// the expected post-state.
+/// during install to clean up upgrades from the HKCU era. Exit code 1
+/// (value not found) is treated as success — fresh installs have nothing
+/// to clean up, and that's the expected post-state.
 fn cleanup_stale_hkcu_tray_run_key() -> Result<(), String> {
-    let out = Command::new("reg.exe")
-        .args(["delete", STALE_HKCU_TRAY_RUN_KEY, "/v", TRAY_RUN_VALUE, "/f"])
-        .output()
-        .map_err(|e| e.to_string())?;
-    if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        if stderr.to_lowercase().contains("cannot find")
-            || stderr.to_lowercase().contains("system was unable to find")
-        {
-            return Ok(());
-        }
-        return Err(stderr.into_owned());
-    }
-    Ok(())
+    reg_delete_value_best_effort(STALE_HKCU_TRAY_RUN_KEY, TRAY_RUN_VALUE)
 }
 
 #[cfg(test)]
@@ -498,5 +493,36 @@ mod tests {
             TRAY_RUN_KEY.starts_with(r"HKLM\"),
             "TRAY_RUN_KEY must target HKLM, got: {TRAY_RUN_KEY}"
         );
+    }
+
+    #[test]
+    fn classify_reg_delete_outcome_success_status_returns_ok() {
+        let result = classify_reg_delete_outcome(Some(0), b"");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn classify_reg_delete_outcome_value_not_found_status_returns_ok() {
+        // Exit code 1 is the locale-stable "value not found" path;
+        // this is the bug fix — replacing English-only stderr matching.
+        let result = classify_reg_delete_outcome(Some(1), b"any stderr");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn classify_reg_delete_outcome_other_failure_propagates_stderr() {
+        let stderr_text = b"some error message";
+        let result = classify_reg_delete_outcome(Some(5), stderr_text);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("some error message"));
+    }
+
+    #[test]
+    fn classify_reg_delete_outcome_killed_by_signal_propagates_stderr() {
+        // None from status.code() means the process was killed by a signal.
+        let stderr_text = b"killed";
+        let result = classify_reg_delete_outcome(None, stderr_text);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("killed"));
     }
 }
