@@ -48,11 +48,16 @@
     background: var(--device-list-hover-color);
 }
 
-/* Page container — centers content, caps at 5 device cards */
+/* Page container — centers content, caps at 5 device cards.
+   padding-top reserves space at the top for the fixed-position controls
+   cluster (settings + theme + update button, all at top:12px with 36px
+   height = 48px bottom edge), so the connected-devices section's outer
+   top border sits ~16px below the controls instead of being crowded by
+   them. */
 .page-container {
     max-width: 1800px;
     margin: 0 auto;
-    padding: 0;
+    padding: 64px 0 0 0;
 }
 
 /* Page sections */
