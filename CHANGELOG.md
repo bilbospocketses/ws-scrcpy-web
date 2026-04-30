@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.25-beta.3] - 2026-04-30
+
 ### Added
 
 - Admin-confirmation modal before clicking Install Service / Uninstall Service in the Settings panel. Sets the expectation that a Windows UAC prompt is coming and gives a clean cancel path before the OS dialog fires.
