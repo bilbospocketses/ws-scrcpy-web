@@ -4,7 +4,11 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-describe('resolveActiveSessionId', () => {
+// resolveActiveSessionId is a Windows-only helper (it shells out to the
+// launcher's --print-active-session flag, which calls
+// WTSGetActiveConsoleSessionId). The test stubs are Windows .cmd scripts
+// that Linux/macOS can't exec — skip the whole suite off-Windows.
+describe.skipIf(process.platform !== 'win32')('resolveActiveSessionId', () => {
     it('returns the integer parsed from the helper exe stdout', async () => {
         // Create a stub script that prints a number and exits 0.
         const dir = mkdtempSync(join(tmpdir(), 'active-session-test-'));
