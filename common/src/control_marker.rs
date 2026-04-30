@@ -79,6 +79,49 @@ pub fn cleanup_stale(data_root: &Path, now: DateTime<Utc>, max_age: Duration) {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PollOutcome {
+    /// No marker present.
+    Idle,
+    /// Marker present but `targetSessionId` doesn't match this tray helper's
+    /// session. Marker is left alone so the right tray helper can pick it up.
+    WrongSession,
+    /// Marker matched, spawn was invoked, marker deleted.
+    Spawned,
+    /// Spawn returned an error. Marker is NOT deleted so a future tick can
+    /// retry (for transient failures like file-locked-by-AV).
+    SpawnFailed,
+}
+
+/// Run one poll iteration. Returns the outcome. Splitting this out from
+/// `poll_for_handoff` makes the loop body unit-testable.
+///
+/// `spawn` takes `(launcher_path, launcher_args)` and returns Ok(()) on
+/// successful spawn (the launcher started; we don't wait for it to bind).
+pub fn poll_once<F>(
+    data_root: &Path,
+    own_session: u32,
+    spawn: &mut F,
+) -> PollOutcome
+where
+    F: FnMut(&Path, &[String]) -> io::Result<()>,
+{
+    let Ok(Some(marker)) = read(data_root) else { return PollOutcome::Idle };
+    if let Some(target) = marker.target_session_id {
+        if target != own_session {
+            return PollOutcome::WrongSession;
+        }
+    }
+    // Convert Vec<String> args into &[String] for the spawn callback.
+    match spawn(&marker.launcher_path, &marker.launcher_args) {
+        Ok(()) => {
+            let _ = delete(data_root);
+            PollOutcome::Spawned
+        }
+        Err(_) => PollOutcome::SpawnFailed,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -236,5 +279,77 @@ mod tests {
         let now = chrono::DateTime::parse_from_rfc3339("2026-04-29T23:30:00Z").unwrap();
         cleanup_stale(tmp.path(), now.into(), std::time::Duration::from_secs(60));
         assert!(read(tmp.path()).expect("read").is_none(), "unparseable timestamp should be reaped");
+    }
+
+    #[test]
+    fn poll_once_session_match_spawns_and_deletes() {
+        // We don't actually exec a real binary in unit test land. Use a
+        // fake spawn closure to validate the contract: marker present +
+        // session matches -> spawn called with (path, args) -> marker
+        // deleted.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let target_exe = PathBuf::from("nonexistent-launcher.exe");
+        let m = Marker {
+            verb: "uninstall-service".to_string(),
+            target_session_id: Some(1),
+            launcher_path: target_exe.clone(),
+            launcher_args: vec!["--local-takeover".to_string()],
+            written_at: "2026-04-29T23:30:00Z".to_string(),
+        };
+        write(tmp.path(), &m).expect("write");
+
+        let spawn_log = std::sync::Arc::new(std::sync::Mutex::new(Vec::<(PathBuf, Vec<String>)>::new()));
+        let log_clone = spawn_log.clone();
+        let outcome = poll_once(
+            tmp.path(),
+            1,
+            &mut |path, args| { log_clone.lock().unwrap().push((path.to_path_buf(), args.to_vec())); Ok(()) },
+        );
+        assert_eq!(outcome, PollOutcome::Spawned);
+        let log = spawn_log.lock().unwrap();
+        assert_eq!(log.len(), 1);
+        assert_eq!(log[0].0, target_exe);
+        assert_eq!(log[0].1, vec!["--local-takeover"]);
+        assert!(read(tmp.path()).expect("read").is_none(), "marker deleted after spawn");
+    }
+
+    #[test]
+    fn poll_once_session_mismatch_ignores() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let m = Marker {
+            verb: "uninstall-service".to_string(),
+            target_session_id: Some(2),  // for a different session
+            launcher_path: PathBuf::from("a.exe"),
+            launcher_args: vec![],
+            written_at: "2026-04-29T23:30:00Z".to_string(),
+        };
+        write(tmp.path(), &m).expect("write");
+        let outcome = poll_once(tmp.path(), 1, &mut |_, _| panic!("must not spawn"));
+        assert_eq!(outcome, PollOutcome::WrongSession);
+        assert!(read(tmp.path()).expect("read").is_some(), "marker preserved for other tray helper");
+    }
+
+    #[test]
+    fn poll_once_no_marker_returns_idle() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let outcome = poll_once(tmp.path(), 1, &mut |_, _| panic!("must not spawn"));
+        assert_eq!(outcome, PollOutcome::Idle);
+    }
+
+    #[test]
+    fn poll_once_null_target_session_spawns_for_any() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let m = Marker {
+            verb: "uninstall-service".to_string(),
+            target_session_id: None,
+            launcher_path: PathBuf::from("a.exe"),
+            launcher_args: vec![],
+            written_at: "2026-04-29T23:30:00Z".to_string(),
+        };
+        write(tmp.path(), &m).expect("write");
+        let mut spawned = false;
+        let outcome = poll_once(tmp.path(), 99, &mut |_, _| { spawned = true; Ok(()) });
+        assert_eq!(outcome, PollOutcome::Spawned);
+        assert!(spawned);
     }
 }
