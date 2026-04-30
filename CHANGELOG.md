@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Service uninstall handoff — file-marker IPC replaces the broken cross-session WTS spawn (Theory D).** v0.1.24-beta.{1,2,3} attempted three layered fixes for the WTS handoff (privilege flips, session enumeration, primary-token forcing) and all failed with `ERROR_ACCESS_DENIED` when invoking `CreateProcessAsUserW` from the LocalSystem service-Node. Theory D drops the cross-session spawn entirely. The service-Node now writes a JSON marker at `<dataRoot>/control/uninstall-handoff.json`; a polling thread inside the user-session tray helper detects it and natively spawns the launcher in its own session — no `WTSQueryUserToken`, no `CreateProcessAsUserW`, no privilege hunting. End-to-end VM-verified on 2026-04-30: install → uninstall → install → uninstall completes smoothly with the correct tray icon at every step.
+- **Tray icon URL no longer goes stale across mode swaps.** Pre-fix, the tray helper read `config.json::webPort` once at startup and cached the resulting URL; clicking the tray after a service-uninstall handoff opened the dead service port instead of the new local port. The tray now re-reads `config.json` on every click via a closure-injected URL provider, so `localhost:<port>` always points at whichever launcher is currently bound. Same fix in the launcher's in-process tray (local mode) and the standalone tray helper (service mode).
+
 ### Changed
 
 - **Settings modal layout — fixed-width tracks so dynamic content never reflows the controls column.** Modal width restored to the original 640px cap. Labels track is now a fixed 20rem (down from 1fr greedy) and the controls track is widened to 16rem (up from 200px) so the longest steady-state button text ("not installed — install?") fits without wrapping. Column gap is 1rem with a small whitespace track on the right of the controls — the controls column now sits a touch left of the modal's right edge instead of hugging it. Result: changing button states (install ↔ uninstall, status messages, version strings) no longer shift the column horizontally.

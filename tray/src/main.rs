@@ -31,9 +31,17 @@ fn main() -> Result<()> {
         Some(p) => p,
         None => install_root_from_exe().context("resolve install root")?,
     };
-    // Lenient: missing/malformed config means we use the default port.
-    let cfg = common::config::AppConfig::load(&config_dir);
-    let port = cfg.web_port.unwrap_or(8000);
+    // Build a URL provider closure that re-reads config.json on every
+    // invocation. Necessary because the user may flip between local and
+    // service modes during the tray helper's lifetime — each mode binds a
+    // different port, and a cached URL would point at a dead port after
+    // the swap. The closure is invoked on every tray click (left + Open).
+    let config_dir_for_url = config_dir.clone();
+    let url_provider: Box<dyn Fn() -> String> = Box::new(move || {
+        let cfg = common::config::AppConfig::load(&config_dir_for_url);
+        let port = cfg.web_port.unwrap_or(8000);
+        format!("http://localhost:{port}")
+    });
 
     // Theory D: poll <dataRoot>/control/uninstall-handoff.json on a background
     // thread so service-Node can hand off uninstall flows without WTS APIs.
@@ -77,18 +85,22 @@ fn main() -> Result<()> {
         }
     }
 
-    let open_url = format!("http://localhost:{port}");
     let action = common::tray::run(
         ICON_BYTES,
         "ws-scrcpy-web (service)",
         "Exit ws-scrcpy-web?",
         "Stop the service and quit?",
-        &open_url,
+        url_provider,
     )
     .context("tray loop")?;
 
     if matches!(action, common::tray::TrayAction::ConfirmedExit) {
-        request_server_shutdown(port);
+        // Re-read config to get the CURRENT port — may have changed since
+        // the tray started (mode swap mid-session).
+        let shutdown_port = common::config::AppConfig::load(&config_dir)
+            .web_port
+            .unwrap_or(8000);
+        request_server_shutdown(shutdown_port);
     }
     Ok(())
 }

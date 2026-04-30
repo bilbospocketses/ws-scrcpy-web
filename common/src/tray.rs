@@ -132,10 +132,14 @@ struct TrayState {
     /// PCWSTR pointers handed to Win32 stay valid across the message loop.
     confirm_title_w: Vec<u16>,
     confirm_body_w: Vec<u16>,
-    /// URL invoked on left-click and the "Open" menu item. Phase 3 of the
-    /// Program Files migration: tray now opens the app directly instead of
-    /// asking to exit on left-click.
-    open_url_w: Vec<u16>,
+    /// URL provider invoked on each tray click (left-click + "Open" menu).
+    /// Re-evaluated on every click so the tray reflects the current
+    /// `webPort` from `config.json` even when the user flips between
+    /// local and service modes mid-session (each mode binds a different
+    /// port). Caching the URL once at startup, as we did pre-Theory-D,
+    /// would leave the click target stale after a service-uninstall
+    /// handoff that rebinds to a fresh local port.
+    open_url_provider: Box<dyn Fn() -> String>,
     /// "Open ws-scrcpy-web" wide label for the popup menu.
     menu_label_open_w: Vec<u16>,
     /// "Exit" wide label for the popup menu.
@@ -162,7 +166,7 @@ pub fn run(
     tooltip: &str,
     confirm_title: &str,
     confirm_body: &str,
-    open_url: &str,
+    open_url_provider: Box<dyn Fn() -> String>,
 ) -> Result<TrayAction> {
     // SAFETY: GetModuleHandleW(NULL) returns the HMODULE for the calling
     // process's executable; always safe to call.
@@ -216,7 +220,7 @@ pub fn run(
         confirmed: Cell::new(false),
         confirm_title_w: to_wide(confirm_title),
         confirm_body_w: to_wide(confirm_body),
-        open_url_w: to_wide(open_url),
+        open_url_provider,
         menu_label_open_w: to_wide("Open ws-scrcpy-web"),
         menu_label_exit_w: to_wide("Exit"),
     });
@@ -394,7 +398,7 @@ unsafe extern "system" fn tray_wnd_proc(
         let event = (lparam.0 as u32) & 0xFFFF;
         if event == WM_LBUTTONUP {
             if let Some(s) = state {
-                open_url_via_shell(hwnd, &s.open_url_w);
+                open_url_via_shell(hwnd, &(s.open_url_provider)());
             }
             return LRESULT(0);
         }
@@ -412,7 +416,7 @@ unsafe extern "system" fn tray_wnd_proc(
         if let Some(s) = state {
             match id {
                 MENU_ID_OPEN => {
-                    open_url_via_shell(hwnd, &s.open_url_w);
+                    open_url_via_shell(hwnd, &(s.open_url_provider)());
                     return LRESULT(0);
                 }
                 MENU_ID_EXIT => {
@@ -431,7 +435,8 @@ unsafe extern "system" fn tray_wnd_proc(
 /// Fire-and-forget — failures fall through silently; the worst case is the
 /// user's click did nothing, which they can retry.
 #[cfg(windows)]
-unsafe fn open_url_via_shell(hwnd: HWND, url_w: &[u16]) {
+unsafe fn open_url_via_shell(hwnd: HWND, url: &str) {
+    let url_w = to_wide(url);
     let verb_w = to_wide("open");
     // ShellExecuteW returns an HINSTANCE; values <= 32 indicate failure.
     // We don't care which failure mode — the click is best-effort.
@@ -701,7 +706,7 @@ pub fn run(
     _tooltip: &str,
     _confirm_title: &str,
     _confirm_body: &str,
-    _open_url: &str,
+    _open_url_provider: Box<dyn Fn() -> String>,
 ) -> anyhow::Result<TrayAction> {
     Ok(TrayAction::Cancelled)
 }
@@ -716,8 +721,14 @@ mod linux_stub_tests {
         // claims a confirmed exit. Caller code (launcher tray spawn,
         // tray-helper main) is allowed to depend on this being a fast
         // synchronous return.
-        let action = run(b"", "tooltip", "title", "body", "http://localhost:8000")
-            .expect("stub must not error");
+        let action = run(
+            b"",
+            "tooltip",
+            "title",
+            "body",
+            Box::new(|| "http://localhost:8000".to_string()),
+        )
+        .expect("stub must not error");
         assert_eq!(action, TrayAction::Cancelled);
     }
 }
