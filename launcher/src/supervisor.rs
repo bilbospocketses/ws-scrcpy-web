@@ -56,6 +56,21 @@ pub fn run() -> Result<i32> {
     // previous crash from triggering an immediate respawn loop.
     cleanup_stale_marker(&paths.restart_marker);
 
+    // Service-mode tray Run-key migration. Idempotent — fast-paths when
+    // already correct. LocalSystem token (the privilege context Servy
+    // runs the launcher under) has the rights to write HKLM without UAC.
+    // In local mode this is a no-op: HKLM\Run is only used for the
+    // standalone tray helper which only exists in service mode.
+    {
+        let cfg = common::config::AppConfig::load(&paths.data_root);
+        if cfg.is_service_mode() {
+            match crate::elevated_runner::migrate_tray_run_key_for_service(&paths.install_root) {
+                Ok(()) => log::info("supervisor: tray HKLM migration check complete"),
+                Err(e) => log::error(&format!("supervisor: tray HKLM migration: {e}")),
+            }
+        }
+    }
+
     // Install Ctrl+C handler. Failure is non-fatal — we'll still run, just
     // without graceful shutdown on signal.
     let stop = Arc::new(AtomicBool::new(false));

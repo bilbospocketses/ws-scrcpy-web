@@ -401,6 +401,64 @@ fn register_tray_run_key(tray_path: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Service-mode startup migration: ensure HKLM\...\Run\WsScrcpyWebTray
+/// points at the tray helper exe. Idempotent — fast-paths when the value
+/// is already correct, only writes when missing or pointing at a wrong
+/// path.
+///
+/// Called from `supervisor::run` when the launcher is starting in service
+/// mode. The launcher under Servy runs as LocalSystem, which can write
+/// HKLM with no UAC prompt.
+///
+/// `install_root` is the resolved installation root; the tray helper
+/// is expected at `<install_root>/current/ws-scrcpy-web-tray.exe`.
+///
+/// Returns `Ok(())` on success or "no migration needed" (already correct);
+/// returns `Err` only on actual failure. Caller should log + proceed
+/// rather than fail service start.
+pub fn migrate_tray_run_key_for_service(install_root: &std::path::Path) -> Result<(), String> {
+    let tray_path = install_root
+        .join("current")
+        .join("ws-scrcpy-web-tray.exe");
+    if !tray_path.exists() {
+        return Err(format!(
+            "tray helper not found at expected path {tray_path:?}; skipping HKLM migration"
+        ));
+    }
+    let tray_path_str = tray_path
+        .to_str()
+        .ok_or_else(|| format!("tray path {tray_path:?} is not valid UTF-8"))?;
+
+    // Fast path: read the current value via reg.exe query and short-circuit
+    // when it's already correct. Avoids log noise on every service start.
+    let query = Command::new("reg.exe")
+        .args([
+            "query",
+            TRAY_RUN_KEY,
+            "/v",
+            TRAY_RUN_VALUE,
+        ])
+        .output()
+        .map_err(|e| format!("reg.exe query failed to spawn: {e}"))?;
+
+    if query.status.success() {
+        // reg.exe query stdout when present looks like:
+        //   HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion\Run
+        //       WsScrcpyWebTray    REG_SZ    C:\...\ws-scrcpy-web-tray.exe
+        // Confirming the trailing path matches is enough to declare "already
+        // migrated" — if reg.exe outputs the expected exe path verbatim, the
+        // registration is correct.
+        let stdout = String::from_utf8_lossy(&query.stdout);
+        if stdout.contains(tray_path_str) {
+            return Ok(());
+        }
+        // Value present but path differs — fall through to overwrite.
+    }
+    // Either the value wasn't present (query exit != 0) or the path differs —
+    // either way, write it.
+    register_tray_run_key(tray_path_str)
+}
+
 /// Unregister the tray from the HKLM Run key. Exit code 1 (value not found)
 /// is treated as success — the desired post-state is that the value is absent.
 pub fn unregister_tray_run_key() -> Result<(), String> {
