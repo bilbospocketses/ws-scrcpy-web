@@ -58,13 +58,23 @@ fn main() -> Result<()> {
         };
         #[cfg(not(windows))]
         let own_session: u32 = 0;
-        std::thread::spawn(move || {
-            common::control_marker::poll_for_handoff(
-                &data_root,
-                own_session,
-                std::time::Duration::from_millis(750),
-            );
-        });
+        if own_session == u32::MAX {
+            // 0xFFFFFFFF means no session attached to the physical console.
+            // Skip spawning the poller — we'd silently mis-route any marker
+            // that targets a real session.
+            eprintln!("tray: WTSGetActiveConsoleSessionId returned 0xFFFFFFFF; control-marker poller not started");
+        } else {
+            // Thread killed at process exit is safe: if a spawn-without-delete
+            // window leaves a stale marker on disk, cleanup_stale on next tray
+            // startup (60s threshold) reaps it before the poll loop resumes.
+            std::thread::spawn(move || {
+                common::control_marker::poll_for_handoff(
+                    &data_root,
+                    own_session,
+                    std::time::Duration::from_millis(750),
+                );
+            });
+        }
     }
 
     let open_url = format!("http://localhost:{port}");
