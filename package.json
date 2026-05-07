@@ -30,6 +30,8 @@
     "build:dev": "webpack --config webpack/ws-scrcpy-web.dev.ts --stats-error-details",
     "build": "webpack --config webpack/ws-scrcpy-web.prod.ts --stats-error-details && npm run build:types",
     "build:types": "node scripts/build-types.js",
+    "stage-seed": "node scripts/stage-seed-node-pty.mjs",
+    "prestart": "npm run stage-seed",
     "start": "npm run build && node dist/index.js",
     "test": "vitest run",
     "lint": "npx @biomejs/biome check src/",
