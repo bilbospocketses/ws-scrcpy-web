@@ -1,5 +1,5 @@
 import path from 'path';
-import { DEVICE_SERVER_PATH, SERVER_PACKAGE, SERVER_PROCESS_NAME, SERVER_VERSION } from '../../common/Constants';
+import { DEVICE_SERVER_PATH, SERVER_PACKAGE, SERVER_PROCESS_NAME } from '../../common/Constants';
 import type { Device } from './Device';
 
 const FILE_DIR = path.join(__dirname, 'assets');

@@ -64,7 +64,22 @@ describe('scrcpy-server.checkInstalled (v0.1.10 regression fix)', () => {
         expect(result).toBeNull();
     });
 
-    it('returns SERVER_VERSION when the JAR exists at <deps>/scrcpy-server/scrcpy-server', async () => {
+    it('returns marker contents when both JAR and .version marker are present', async () => {
+        const fsMod = await import('node:fs/promises');
+        const os = await import('node:os');
+        const pathMod = await import('node:path');
+        const tmp = await fsMod.mkdtemp(`${os.tmpdir()}/wsscrcpy-checkinstalled-`);
+        await fsMod.mkdir(pathMod.join(tmp, 'scrcpy-server'), { recursive: true });
+        await fsMod.writeFile(pathMod.join(tmp, 'scrcpy-server', 'scrcpy-server'), 'fake-jar-bytes');
+        await fsMod.writeFile(pathMod.join(tmp, 'scrcpy-server', '.version'), '4.0');
+
+        const defs = getDependencyDefinitions(tmp);
+        const scrcpy = defs.find((d) => d.name === 'scrcpy-server');
+        const result = await scrcpy?.checkInstalled(tmp);
+        expect(result).toBe('4.0');
+    });
+
+    it('falls back to SERVER_VERSION when JAR exists but .version marker is absent (legacy seed install)', async () => {
         const fsMod = await import('node:fs/promises');
         const os = await import('node:os');
         const pathMod = await import('node:path');

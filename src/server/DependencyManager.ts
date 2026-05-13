@@ -17,6 +17,7 @@ import { compareVersions, DependencyStatus } from '../common/DependencyTypes';
 import type { DependencyDefinition } from './DependencyDefinitions';
 import { getDependencyDefinitions, getPlatform } from './DependencyDefinitions';
 import { Logger } from './Logger';
+import { writeInstalledScrcpyServerVersion } from './scrcpyServerVersion';
 
 const log = Logger.for('DependencyManager');
 const execFileAsync = promisify(execFile);
@@ -144,9 +145,13 @@ export class DependencyManager {
             // Extract / install
             await this.install(name, def, downloadPath, version, tmpDir);
 
-            // Update state
-            info.installedVersion = version;
-            info.status = DependencyStatus.UpToDate;
+            // Re-read installed version from disk rather than trusting the
+            // requested `version` directly. For scrcpy-server this means the
+            // .version marker just written by installScrcpyServer is read
+            // back through the same path checkAll() uses — the in-memory
+            // state stays sourced from a single place and the post-update
+            // "Update available" loop can't re-emerge from a desync.
+            await this.checkInstalled(name);
             info.errorMessage = undefined;
 
             log.info(`Updated ${name} to ${version}${def.requiresRestart ? ' (restart queued)' : ''}`);
@@ -293,7 +298,7 @@ export class DependencyManager {
                 await this.installAdb(downloadPath, tmpDir, platform);
                 break;
             case 'scrcpy-server':
-                await this.installScrcpyServer(downloadPath);
+                await this.installScrcpyServer(downloadPath, version);
                 break;
             default:
                 throw new Error(`No install handler for: ${name}`);
@@ -374,12 +379,17 @@ export class DependencyManager {
         this.copyDirContents(platformToolsDir, destDir);
     }
 
-    private async installScrcpyServer(downloadPath: string): Promise<void> {
+    private async installScrcpyServer(downloadPath: string, version: string): Promise<void> {
         // scrcpy-server is a direct binary download (no archive)
         const destDir = path.join(this.depsPath, 'scrcpy-server');
         fs.mkdirSync(destDir, { recursive: true });
         const destFile = path.join(destDir, 'scrcpy-server');
         fs.copyFileSync(downloadPath, destFile);
+        // Persist the installed version so checkInstalled can report it back
+        // accurately on subsequent calls. Without this, the bundled
+        // SERVER_VERSION constant would be returned for any updater-installed
+        // version, producing a "perpetual Update available" UI loop.
+        writeInstalledScrcpyServerVersion(this.depsPath, version);
     }
 
     private async extractZip(zipPath: string, destDir: string, platform: 'win32' | 'linux'): Promise<void> {

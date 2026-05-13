@@ -3,7 +3,7 @@ import path from 'path';
 // biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import type WS from 'ws';
 import { ACTION } from '../common/Action';
-import { DEVICE_SERVER_PATH, SERVER_PACKAGE, SERVER_VERSION } from '../common/Constants';
+import { DEVICE_SERVER_PATH, SERVER_PACKAGE } from '../common/Constants';
 import type { ProbeResult } from '../common/ProbeResult';
 import { AdbClient } from './AdbClient';
 import { Config } from './Config';
@@ -13,6 +13,7 @@ import { ControlCenter } from './goog-device/services/ControlCenter';
 import { Logger } from './Logger';
 import { Mw, type RequestParameters } from './mw/Mw';
 import { parseScrcpyEncoderList } from './scrcpyEncoderList';
+import { getInstalledScrcpyServerVersion } from './scrcpyServerVersion';
 
 const log = Logger.for('DeviceProbe');
 
@@ -36,6 +37,10 @@ const log = Logger.for('DeviceProbe');
  */
 function serverFile(): string {
     return path.join(Config.getInstance().dependenciesPath, 'scrcpy-server', 'scrcpy-server');
+}
+
+function installedVersion(): string {
+    return getInstalledScrcpyServerVersion(Config.getInstance().dependenciesPath);
 }
 
 export class DeviceProbe extends Mw {
@@ -138,7 +143,7 @@ export class DeviceProbe extends Mw {
         await ensureScrcpyServerPushed(this.adbClient, this.serial, serverFile());
         // cleanup=false leaves the JAR on-device so the subsequent stream session
         // hits a warm dex cache and skips the ~15s dexopt re-run.
-        const cmd = `CLASSPATH=${DEVICE_SERVER_PATH} app_process / ${SERVER_PACKAGE} ${SERVER_VERSION} cleanup=false list_encoders=true 2>&1`;
+        const cmd = `CLASSPATH=${DEVICE_SERVER_PATH} app_process / ${SERVER_PACKAGE} ${installedVersion()} cleanup=false list_encoders=true 2>&1`;
         const output = await this.adbClient.shell(this.serial, cmd);
         return parseScrcpyEncoderList(output);
     }

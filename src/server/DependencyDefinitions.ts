@@ -8,9 +8,9 @@ import os from 'os';
 import path from 'path';
 // biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import { promisify } from 'util';
-import { SERVER_VERSION } from '../common/Constants';
 import { Logger } from './Logger';
 import { loadManifest } from './NodePtyResolver';
+import { getInstalledScrcpyServerVersion } from './scrcpyServerVersion';
 
 const log = Logger.for('DependencyDefinitions');
 
@@ -150,13 +150,15 @@ export function getDependencyDefinitions(depsPath: string): DependencyDefinition
             description: 'Runs on Android device to capture screen, audio, and accept input',
             requiresRestart: false,
             checkInstalled: async (depsPath) => {
-                // v0.1.10: actually verify the file exists at <depsPath>/scrcpy-server/scrcpy-server.
-                // Pre-v0.1.9 the JAR was webpack-bundled into dist/assets/ so was always present;
-                // v0.1.9 moved it to <deps>/scrcpy-server/ but left this check unconditionally
-                // returning SERVER_VERSION, so autoInstallMissing thought it was installed and
-                // skipped both seed-promote AND network download. Result: missing JAR, connect dies.
+                // The JAR file presence gates "installed at all"; the actual version
+                // comes from the .version marker (or SERVER_VERSION as fallback for
+                // legacy seed installs that predate the marker). Pre-fix this
+                // returned SERVER_VERSION unconditionally even when the on-disk
+                // binary had been replaced by an updater download — UI showed
+                // "Update available" forever in a loop. See scrcpyServerVersion.ts.
                 const file = path.join(depsPath, 'scrcpy-server', 'scrcpy-server');
-                return fs.existsSync(file) ? SERVER_VERSION : null;
+                if (!fs.existsSync(file)) return null;
+                return getInstalledScrcpyServerVersion(depsPath);
             },
             checkLatest: async () => {
                 const res = await fetch('https://api.github.com/repos/Genymobile/scrcpy/releases/latest', {

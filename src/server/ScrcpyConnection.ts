@@ -7,7 +7,7 @@ import path from 'path';
 import type WS from 'ws';
 import { ACTION } from '../common/Action';
 import { ChannelId } from '../common/ChannelId';
-import { DEVICE_SERVER_PATH, SERVER_PACKAGE, SERVER_VERSION } from '../common/Constants';
+import { DEVICE_SERVER_PATH, SERVER_PACKAGE } from '../common/Constants';
 import { AUDIO_DISABLED, AUDIO_ERROR, codecName } from '../common/ScrcpyCodec';
 import { AdbClient } from './AdbClient';
 import { Config } from './Config';
@@ -18,6 +18,7 @@ import { Logger } from './Logger';
 import { Mw, type RequestParameters } from './mw/Mw';
 import { type ScrcpyOptions, serializeOptions } from './ScrcpyOptions';
 import { scrcpyOptionsFromQuery } from './scrcpyOptionsFromQuery';
+import { getInstalledScrcpyServerVersion } from './scrcpyServerVersion';
 
 const log = Logger.for('ScrcpyConnection');
 
@@ -28,6 +29,10 @@ const log = Logger.for('ScrcpyConnection');
  */
 function serverFile(): string {
     return path.join(Config.getInstance().dependenciesPath, 'scrcpy-server', 'scrcpy-server');
+}
+
+function installedVersion(): string {
+    return getInstalledScrcpyServerVersion(Config.getInstance().dependenciesPath);
 }
 
 interface SessionMetadata {
@@ -290,7 +295,7 @@ export class ScrcpyConnection extends Mw {
 
     private launchServer(options: ScrcpyOptions): void {
         const args = serializeOptions(options);
-        const cmd = `CLASSPATH=${DEVICE_SERVER_PATH} app_process / ${SERVER_PACKAGE} ${SERVER_VERSION} ${args.join(' ')}`;
+        const cmd = `CLASSPATH=${DEVICE_SERVER_PATH} app_process / ${SERVER_PACKAGE} ${installedVersion()} ${args.join(' ')}`;
         this.serverProcess = this.adbClient.shellSpawn(this.serial, cmd);
         // Tee scrcpy-server's stdout/stderr into our log so its failure reason is visible.
         const logLine = (stream: 'stdout' | 'stderr', data: Buffer) => {
