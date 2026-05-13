@@ -909,7 +909,7 @@ These are not npm packages in the build -- they are external binaries bundled in
 | 16 | `node-pty` | 1.1.0 | Provides pseudo-terminal for ADB shell sessions in the browser | npm prebuilt binaries | Native DLL (conpty.dll + OpenConsole.exe) is ABI-locked to Node.js version. Must update together with Node.js. |
 | 17 | Node.js | 24.14.1 LTS | JavaScript runtime that runs the ws-scrcpy-web server | nodejs.org | Paired with node-pty (#16). Only use LTS (even-numbered) releases. |
 | 18 | ADB (platform-tools) | latest | Communicates with Android devices (push, shell, tunnel) | Google SDK | Standalone zip download and extract |
-| 19 | scrcpy-server | 3.3.4 | Runs on Android device to capture screen, audio, and accept input | Genymobile/scrcpy releases | Single binary replace. Update `SERVER_VERSION` in `src/common/Constants.ts` to match. |
+| 19 | scrcpy-server | 3.3.4 (bundled seed) | Runs on Android device to capture screen, audio, and accept input | Genymobile/scrcpy releases | Single binary replace via the in-app dep panel — installed version is tracked at `<deps>/scrcpy-server/.version` and read by `src/server/scrcpyServerVersion.ts`; both the UI display and the wire-protocol arg passed to `app_process` resolve from the marker. `SERVER_VERSION` in `src/common/Constants.ts` is the fallback for legacy seed installs predating the marker — bump it only when bumping the bundled seed binary, not on every user-facing scrcpy release. |
 
 ### Quick check
 
