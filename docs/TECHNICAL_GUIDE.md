@@ -744,7 +744,7 @@ Browser WS connect (action=stream, udid=xxx, videoCodec=h265, ...)
 | `PORT` | `8000` | HTTP/WS server port |
 | `ADB_PATH` | `adb` | Path to ADB executable |
 | `CONFIG_PATH` | `config.json` | Path to config file |
-| `DEPS_PATH` | see below | Absolute path to the dep-manager's writable folder. Resolution priority: env → `config.json` `dependenciesPath` → dev fallback (`<entry>/../dependencies` if `<entry>/../package.json` exists) → hard-fail with instructive startup error. Production deployments (Velopack, Docker) must set it explicitly. |
+| `DEPS_PATH` | see below | Absolute path to the dep-manager's writable folder. Resolution priority: env → `config.json` `dependenciesPath` → `<dataRoot>/dependencies/` on Windows (where `<dataRoot>` defaults to `%PROGRAMDATA%\WsScrcpyWeb\`) or `<entryDir>/../dependencies/` on Linux. Production deployments (Velopack, Docker) and dev mode must set it explicitly (or on Linux, place the repo such that `<entry>/../dependencies` is writable). Hard-fail with instructive startup error if unset and non-writable. |
 
 ---
 
@@ -1011,7 +1011,7 @@ ws-scrcpy-web/                           -- installFolder (depsPath parent)
 **Key invariants:**
 - `dependencies/` is the dep-manager's canonical writable location. It survives Velopack app updates.
 - `seed/` is shipped by the Velopack installer as a fallback Node (read-only from the app's perspective, refreshed on every Velopack app update).
-- Dev checkouts have neither `seed/` nor (initially) anything useful in `dependencies/`. `Config.resolveDependenciesPath` detects the dev layout via a sibling `package.json` tell and falls back to `<repo>/dependencies/`.
+- Dev mode running `node dist/index.js` from the repo resolves dependencies the same way an MSI install does — via `<dataRoot>/dependencies/` on Windows (where `<dataRoot>` defaults to `%PROGRAMDATA%\WsScrcpyWeb\`), via `<entryDir>/../dependencies/` on Linux. The launcher's `paths.rs::compute` and the server's `resolveDependenciesPath` produce the same result on Windows; tests in `config.depsPath.test.ts` lock that contract.
 
 ### 13.5 Adding a New Managed Dependency
 

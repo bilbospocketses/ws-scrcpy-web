@@ -15,7 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `resolveDependenciesPath` now returns `<dataRoot>/dependencies/` on Windows regardless of dev-tell, matching `launcher/src/paths.rs` and the MSI install layout. Dev mode (`npm start` from repo) now reads/writes the same ProgramData state an installed app does. Linux dev unchanged. ([design spec](docs/superpowers/specs/2026-05-14-dev-install-layout-parity-design.md))
+- `prestart` chain now also stages `assets/scrcpy-server` into `seed/scrcpy-server/` so `DependencyManager.promoteSeedScrcpyServer` works identically in dev and install — no first-launch network fetch for scrcpy-server when running from repo.
 - **Code-signing path: SignPath Foundation declined the application.** SignPath cited project-awareness criteria — the OSS program looks for visible community engagement (GitHub stars, Reddit mentions, and similar signals) before issuing certificates, and ws-scrcpy-web didn't clear that bar. All SignPath references have been removed from public-facing docs (`README.md`, `PRIVACY.md`, `docs/RELEASING.md`, `RELEASE_NOTES.md`), and the auto-prepended SignPath credit has been stripped from CI-generated release notes (`scripts/extract-changelog.mjs`). The dormant `signpath/github-action-submit-signing-request@v2` steps in `.github/workflows/release.yml` have been commented out and left as scaffolding for a future signer; the `prepare` job's signing-mode gate now keys on a generic `SIGNING_API_TOKEN` secret so wiring a successor in won't require renaming. Historical design docs (`docs/plans/sp3-p6-contracts.md`, `docs/specs/2026-04-26-sp3-velopack-installer.md`, `docs/superpowers/plans/2026-04-28-program-files-migration.md`) carry top-of-file retraction headers pointing readers here; their bodies are otherwise preserved as point-in-time snapshots. Existing GitHub Releases bodies (v0.1.4 → v0.1.25-beta.3) had their SignPath credit + review-pending notice replaced with the same disclosure. Release artifacts remain **unsigned** for now — an alternative code-signing path is under evaluation. Integrity continues to be verifiable via the `SHA256SUMS` file shipped with each release; the `--unsigned` warning block in release notes has been rephrased to drop the SignPath name.
+
+### Removed
+
+- Pre-Phase-1 orphan `<repo>/config.json` (never read on Windows since dataRoot migration).
 
 ### Repository
 
