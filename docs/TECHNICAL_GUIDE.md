@@ -744,7 +744,7 @@ Browser WS connect (action=stream, udid=xxx, videoCodec=h265, ...)
 | `PORT` | `8000` | HTTP/WS server port |
 | `ADB_PATH` | `adb` | Path to ADB executable |
 | `CONFIG_PATH` | `config.json` | Path to config file |
-| `DEPS_PATH` | see below | Absolute path to the dep-manager's writable folder. Resolution priority: env → `config.json` `dependenciesPath` → `<dataRoot>/dependencies/` on Windows (where `<dataRoot>` defaults to `%PROGRAMDATA%\WsScrcpyWeb\`) or `<entryDir>/../dependencies/` on Linux. Production deployments (Velopack, Docker) and dev mode must set it explicitly (or on Linux, place the repo such that `<entry>/../dependencies` is writable). Hard-fail with instructive startup error if unset and non-writable. |
+| `DEPS_PATH` | see below | Absolute path to the dep-manager's writable folder. Resolution priority: env → `config.json` `dependenciesPath` → `<dataRoot>/dependencies/` on Windows (where `<dataRoot>` defaults to `%PROGRAMDATA%\WsScrcpyWeb\`) or `<entryDir>/../dependencies/` on Linux. Production deployments (Velopack, Docker) must set it explicitly. Dev mode on Windows resolves automatically via `<dataRoot>`; on Linux, place the repo such that `<entry>/../dependencies` is writable. Hard-fail with instructive startup error if unset and the platform fallback is unavailable. |
 
 ---
 
