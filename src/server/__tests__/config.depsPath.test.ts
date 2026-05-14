@@ -85,6 +85,7 @@ describe('resolveDependenciesPath', () => {
     });
 
     it('error message names DEPS_PATH and the platform-appropriate fallback location', () => {
+        expect.assertions(3);
         try {
             resolveDependenciesPath({}, {}, '/no/pkg/dist/index.js', () => false, 'linux');
         } catch (e) {
