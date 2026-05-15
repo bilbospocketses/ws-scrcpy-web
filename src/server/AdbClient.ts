@@ -1,7 +1,7 @@
 import { type ChildProcess, execFile, spawn } from 'child_process';
-import * as fs from 'fs';
 import * as path from 'path';
 import { promisify } from 'util';
+import { AdbDaemonManager } from './AdbDaemonManager';
 
 const execFileAsync = promisify(execFile);
 
@@ -100,6 +100,14 @@ export class AdbClient {
     public readonly cwd: string;
 
     /**
+     * Singleton manager for the adb daemon's lifecycle. All public methods
+     * await `daemon.ensureReady()` before invoking adb, so 7+ AdbClient
+     * instances scattered across the server can no longer race independent
+     * `adb start-server` invocations.
+     */
+    private readonly daemon: AdbDaemonManager;
+
+    /**
      * `adbPath` is required. Callers MUST pass `Config.getInstance().adbPath`
      * (or an explicit override). The previous default of `'adb'` masked
      * packaging bugs by silently falling through to whatever adb happened
@@ -107,9 +115,15 @@ export class AdbClient {
      */
     constructor(public readonly adbPath: string) {
         this.cwd = path.dirname(adbPath);
+        this.daemon = AdbDaemonManager.getInstance(adbPath);
     }
 
     private async exec(args: string[], opts: AdbExecOptions = {}): Promise<string> {
+        // Daemon coordination first — propagate any AdbExecError from the
+        // manager (binary-missing, spawn-timeout) unchanged. Inside the try
+        // block, the catch's err-classifier would unhelpfully rewrap an
+        // already-classified error as ('unknown', args=<this method's args>).
+        await this.daemon.ensureReady();
         const execOpts: { maxBuffer: number; timeout?: number; killSignal?: NodeJS.Signals; cwd?: string } = {
             maxBuffer: 10 * 1024 * 1024,
             cwd: this.cwd,
@@ -149,6 +163,7 @@ export class AdbClient {
     }
 
     async shell(serial: string, command: string): Promise<string> {
+        await this.daemon.ensureReady();
         const { stdout } = await execFileAsync(this.adbPath, ['-s', serial, 'shell', command], {
             maxBuffer: 10 * 1024 * 1024,
             cwd: this.cwd,
@@ -202,7 +217,18 @@ export class AdbClient {
         return props;
     }
 
-    /** Long-running shell command using spawn (doesn't wait for completion) */
+    /**
+     * Long-running shell command using spawn (doesn't wait for completion).
+     *
+     * NOTE: This is the one public method that does NOT await
+     * `daemon.ensureReady()` — spawn() returns a ChildProcess synchronously
+     * and the callers (`ScrcpyConnection.launchServer`, `Device.runShellCommandSpawn`)
+     * are sync too. Making them async would cascade through the streaming
+     * lifecycle. The implicit invariant: callers only reach shellSpawn after
+     * Device exists, which means `adbClient.devices()` already ran and
+     * coordinated the daemon. If we ever add a code path that hits shellSpawn
+     * pre-enumeration, this comment is the trip-wire to revisit the API.
+     */
     shellSpawn(serial: string, command: string): ChildProcess {
         return spawn(this.adbPath, ['-s', serial, 'shell', command], {
             stdio: ['ignore', 'pipe', 'pipe'],
@@ -231,125 +257,27 @@ export class AdbClient {
     }
 
     /**
-     * Starts the long-lived adb daemon explicitly so subsequent adb invocations
-     * find it warm. Without this pre-warm, the first batch of parallel adb
-     * calls (e.g. NetworkScanner's worker pool fired off by a Quick Scan on a
-     * wiped ProgramData) all race to spawn the daemon — losers report
-     * "protocol fault: connection reset" or time out, the winning client's
-     * daemon child may get orphaned, and no daemon survives.
+     * Ensures the long-lived `adb start-server` daemon is up. Delegates to
+     * the AdbDaemonManager singleton — see AdbDaemonManager for the
+     * single-flight + state-machine semantics that prevent the multi-spawn
+     * race for port 5037.
      *
-     * `waitForBinaryMs` covers the first-launch case where adb.exe isn't yet
-     * on disk because autoInstallMissing is still downloading it. Caller
-     * picks: short (~5s default) for scan-time defense; long (~5min) for the
-     * server-startup background warmup. After the binary appears, the actual
-     * start invocation gets a 30s budget — generous for cold-start.
-     *
-     * Idempotent: a no-op when the daemon is already running, so repeat calls
-     * are cheap. `this.adbPath` resolves to the configured local-deps path
-     * (Config.adbPath → resolveAdbPath → <dependenciesPath>/adb/adb.exe), per
-     * the Local-Dependencies-Only architecture.
+     * Idempotent: a no-op when the daemon is already ready. Callers needing
+     * a per-call timeout (e.g. scan-time short-circuit) should reach for the
+     * manager directly via `AdbDaemonManager.getInstance(adbPath).ensureReady({ waitMs })`.
      */
-    async startServer(opts: { waitForBinaryMs?: number; daemonStartTimeoutMs?: number } = {}): Promise<void> {
-        const waitMs = opts.waitForBinaryMs ?? 5_000;
-        const pollIntervalMs = 250;
-        const deadline = Date.now() + waitMs;
-        while (!fs.existsSync(this.adbPath)) {
-            if (Date.now() >= deadline) {
-                throw new AdbExecError(
-                    'spawn',
-                    this.adbPath,
-                    ['start-server'],
-                    new Error(`adb binary not present after ${waitMs}ms wait`),
-                );
-            }
-            await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
-        }
-        await this.spawnDetachedDaemon(opts.daemonStartTimeoutMs ?? 30_000);
+    async startServer(): Promise<void> {
+        return this.daemon.ensureReady();
     }
 
     /**
-     * Spawn `adb start-server` with `detached: true` so the daemon escapes
-     * Node's Windows job object. Without detach, Node's child_process puts
-     * adb in a job with kill-on-job-close — when `adb start-server` returns
-     * (or times out), the OS kills every descendant including the daemon
-     * `adb fork-server` child. Result: daemon NEVER survives our spawn, and
-     * `ControlCenter`'s 5s poll re-spawns the doomed dance forever (verified
-     * via `C:\Temp\watch-adb.ps1` capture 2026-05-15: parent + would-be
-     * daemon child died at the same millisecond every 5s cycle).
-     *
-     * The user's manual `adb start-server` from PowerShell works because
-     * PowerShell doesn't create a job object — adb is free to fork-and-
-     * detach normally. `detached: true` on Windows uses
-     * CREATE_NEW_PROCESS_GROUP which excludes the spawned process from
-     * Node's job, matching the PowerShell behavior.
-     *
-     * Watches exit code: 0 = daemon spawned and parent exited normally,
-     * non-zero = adb reported failure (stderr appended to error message).
-     * Safety timeout kills the parent if adb hangs.
-     */
-    private spawnDetachedDaemon(timeoutMs: number): Promise<void> {
-        return new Promise<void>((resolve, reject) => {
-            const proc = spawn(this.adbPath, ['start-server'], {
-                cwd: this.cwd,
-                detached: true,
-                stdio: ['ignore', 'pipe', 'pipe'],
-                windowsHide: true,
-            });
-            let stderrBuf = '';
-            let stdoutBuf = '';
-            let settled = false;
-            const settleOk = () => {
-                if (settled) return;
-                settled = true;
-                clearTimeout(timer);
-                // Release Node's reference to the child so its stdio pipes
-                // don't keep our event loop alive. The detached daemon
-                // grandchild continues running in its own process group.
-                proc.unref();
-                resolve();
-            };
-            const settleErr = (err: AdbExecError) => {
-                if (settled) return;
-                settled = true;
-                clearTimeout(timer);
-                reject(err);
-            };
-
-            proc.stdout?.on('data', (chunk: Buffer) => { stdoutBuf += chunk.toString(); });
-            proc.stderr?.on('data', (chunk: Buffer) => { stderrBuf += chunk.toString(); });
-
-            proc.on('error', (err) => {
-                settleErr(new AdbExecError('spawn', this.adbPath, ['start-server'], err));
-            });
-
-            proc.on('exit', (code) => {
-                if (code === 0) {
-                    settleOk();
-                } else {
-                    const detail = (stderrBuf + stdoutBuf).trim() || `adb start-server exited with code ${code}`;
-                    settleErr(new AdbExecError('exit', this.adbPath, ['start-server'], new Error(detail)));
-                }
-            });
-
-            const timer = setTimeout(() => {
-                try { proc.kill(); } catch { /* best-effort */ }
-                settleErr(new AdbExecError('timeout', this.adbPath, ['start-server'], new Error(`${timeoutMs}ms deadline`)));
-            }, timeoutMs);
-            timer.unref();
-        });
-    }
-
-    /**
-     * Terminates the long-lived `adb start-server` daemon. Used as pre-apply
-     * hygiene before Velopack's in-app updater so the daemon's CWD-lock on
-     * the install dir is released and the rename of `current\` can proceed.
-     *
-     * Idempotent — `adb kill-server` is a no-op when the daemon isn't
-     * running, and the underlying `exec` call still succeeds. Bounded by
-     * a 5s timeout so a stuck daemon doesn't hang the apply path; if
-     * timeout fires, the caller's belt-and-braces taskkill will catch it.
+     * Terminates the long-lived `adb start-server` daemon. Delegates to the
+     * AdbDaemonManager singleton's kill(). Used as pre-apply hygiene before
+     * Velopack's in-app updater so the daemon's CWD-lock on the install dir
+     * is released, and during clean SIGINT/SIGTERM so the daemon doesn't
+     * outlive our process tree.
      */
     async killServer(): Promise<void> {
-        await this.exec(['kill-server'], { timeoutMs: 5_000 });
+        return this.daemon.kill();
     }
 }

@@ -2,7 +2,7 @@ import * as readline from 'readline';
 import { VelopackApp } from 'velopack';
 import { SCAN_WS_PATH } from '../common/ScanMessage';
 import { AdbClient } from './AdbClient';
-import { setAdbDaemonReady } from './adbReady';
+import { AdbDaemonManager } from './AdbDaemonManager';
 import { CapabilitiesApi } from './api/CapabilitiesApi';
 import { ConfigApi } from './api/ConfigApi';
 import { DependencyApi } from './api/DependencyApi';
@@ -113,16 +113,38 @@ HttpServer.addApiHandler(whoamiApi);
 
 // Wire the scanner singleton
 const scanAdb = new AdbClient(config.adbPath);
+
+// Kick the daemon spawn at module load so it's already up (or in-flight) by
+// the time anything async — port reconciliation, depManager checks, the WS
+// server, ControlCenter.init's first `adb devices` — needs it. Fire-and-forget;
+// the manager's single-flight ensures other early adb callers (every
+// AdbClient method awaits ensureReady() internally) share this one spawn
+// rather than racing fresh ones. 5min internal binary-wait covers a cold
+// first-install download.
+const adbDaemon = AdbDaemonManager.getInstance(config.adbPath);
+void (async () => {
+    const log = Logger.for('AdbClient');
+    try {
+        await adbDaemon.ensureReady();
+        log.info('daemon pre-warmed at startup');
+    } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        log.warn(`startup pre-warm failed: ${msg}; scan-time defense will retry`);
+    }
+})();
+
 const scanner = new NetworkScanner({
     adbDevices: () => scanAdb.devices(),
     adbMdnsServices: () => scanAdb.mdnsServices(),
     adbHandshakeProbe: probeAdb,
-    // Scan-time pre-warm: default 5s wait-for-binary covers transient cases
-    // (autoInstall in flight, daemon mid-spawn). The server-startup background
-    // warmup below covers the cold first-install case with a longer budget;
-    // this scan-time call short-circuits cleanly with scan.error if adb truly
-    // isn't ready yet, instead of letting N parallel workers race the daemon.
-    adbStartServer: () => scanAdb.startServer(),
+    // Scan-time short-circuit: race the manager's in-flight (or fresh) spawn
+    // against a 5s deadline. If the binary isn't on disk and the manager's
+    // internal binary-wait is still polling, this surfaces a clean
+    // scan.error toast within 5s instead of blocking the user for the
+    // manager's full 5min budget. Single-flight in the manager means this
+    // call shares the spawn with the module-load pre-warm above — no second
+    // adb process is launched.
+    adbStartServer: () => adbDaemon.ensureReady({ waitMs: 5_000 }),
     resolveMac,
     labelFor: (key: string) => DeviceLabelStore.getInstance().get(key),
     concurrency: config.scanConcurrency,
@@ -218,29 +240,12 @@ reconcileWebPort()
             .then(() => depManager.autoInstallMissing())
             .catch((err: Error) => Logger.for('DependencyManager').error('Initial check/install failed:', err.message));
 
-        // Pre-warm the adb daemon in the background so by the time the user
-        // hits Quick Scan, the daemon is already up and the worker pool
-        // doesn't race to spawn it. Runs independently of the depManager
-        // chain so it survives autoInstall failures: startServer's
-        // wait-for-binary loop polls until adb.exe appears (whether
-        // autoInstall, a retry, or manual placement put it there). 5-minute
-        // budget covers a cold first-install download on a slow connection;
-        // gives up cleanly if adb is still missing, in which case the
-        // scan-time pre-warm (5s default) is the second line of defense.
-        const adbReadyPromise = (async () => {
-            const log = Logger.for('AdbClient');
-            try {
-                await scanAdb.startServer({ waitForBinaryMs: 5 * 60 * 1000 });
-                log.info('daemon pre-warmed at startup');
-            } catch (err) {
-                const msg = err instanceof Error ? err.message : String(err);
-                log.warn(`startup pre-warm failed: ${msg}; scan-time defense will retry`);
-            }
-        })();
-        // Publish to the module-singleton so other early adb callers
-        // (notably ControlCenter.init) can await this before their first
-        // adb invocation, avoiding the cold-daemon spawn race.
-        setAdbDaemonReady(adbReadyPromise);
+        // adb daemon pre-warm has been moved to module load (right after the
+        // scanAdb singleton is constructed). All AdbClient methods await
+        // `daemon.ensureReady()` internally, so post-port-reconcile callers
+        // (ControlCenter.init's first `adb devices`, scanner workers, the
+        // exit-handler's `killServer`) all transparently share the manager's
+        // single-flight spawn rather than fanning out N parallel races.
     })
     .catch((error) => {
         Logger.for('Server').error(error.message);
