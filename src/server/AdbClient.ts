@@ -249,7 +249,7 @@ export class AdbClient {
      * (Config.adbPath → resolveAdbPath → <dependenciesPath>/adb/adb.exe), per
      * the Local-Dependencies-Only architecture.
      */
-    async startServer(opts: { waitForBinaryMs?: number } = {}): Promise<void> {
+    async startServer(opts: { waitForBinaryMs?: number; daemonStartTimeoutMs?: number } = {}): Promise<void> {
         const waitMs = opts.waitForBinaryMs ?? 5_000;
         const pollIntervalMs = 250;
         const deadline = Date.now() + waitMs;
@@ -264,7 +264,79 @@ export class AdbClient {
             }
             await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
         }
-        await this.exec(['start-server'], { timeoutMs: 30_000 });
+        await this.spawnDetachedDaemon(opts.daemonStartTimeoutMs ?? 30_000);
+    }
+
+    /**
+     * Spawn `adb start-server` with `detached: true` so the daemon escapes
+     * Node's Windows job object. Without detach, Node's child_process puts
+     * adb in a job with kill-on-job-close — when `adb start-server` returns
+     * (or times out), the OS kills every descendant including the daemon
+     * `adb fork-server` child. Result: daemon NEVER survives our spawn, and
+     * `ControlCenter`'s 5s poll re-spawns the doomed dance forever (verified
+     * via `C:\Temp\watch-adb.ps1` capture 2026-05-15: parent + would-be
+     * daemon child died at the same millisecond every 5s cycle).
+     *
+     * The user's manual `adb start-server` from PowerShell works because
+     * PowerShell doesn't create a job object — adb is free to fork-and-
+     * detach normally. `detached: true` on Windows uses
+     * CREATE_NEW_PROCESS_GROUP which excludes the spawned process from
+     * Node's job, matching the PowerShell behavior.
+     *
+     * Watches exit code: 0 = daemon spawned and parent exited normally,
+     * non-zero = adb reported failure (stderr appended to error message).
+     * Safety timeout kills the parent if adb hangs.
+     */
+    private spawnDetachedDaemon(timeoutMs: number): Promise<void> {
+        return new Promise<void>((resolve, reject) => {
+            const proc = spawn(this.adbPath, ['start-server'], {
+                cwd: this.cwd,
+                detached: true,
+                stdio: ['ignore', 'pipe', 'pipe'],
+                windowsHide: true,
+            });
+            let stderrBuf = '';
+            let stdoutBuf = '';
+            let settled = false;
+            const settleOk = () => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timer);
+                // Release Node's reference to the child so its stdio pipes
+                // don't keep our event loop alive. The detached daemon
+                // grandchild continues running in its own process group.
+                proc.unref();
+                resolve();
+            };
+            const settleErr = (err: AdbExecError) => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timer);
+                reject(err);
+            };
+
+            proc.stdout?.on('data', (chunk: Buffer) => { stdoutBuf += chunk.toString(); });
+            proc.stderr?.on('data', (chunk: Buffer) => { stderrBuf += chunk.toString(); });
+
+            proc.on('error', (err) => {
+                settleErr(new AdbExecError('spawn', this.adbPath, ['start-server'], err));
+            });
+
+            proc.on('exit', (code) => {
+                if (code === 0) {
+                    settleOk();
+                } else {
+                    const detail = (stderrBuf + stdoutBuf).trim() || `adb start-server exited with code ${code}`;
+                    settleErr(new AdbExecError('exit', this.adbPath, ['start-server'], new Error(detail)));
+                }
+            });
+
+            const timer = setTimeout(() => {
+                try { proc.kill(); } catch { /* best-effort */ }
+                settleErr(new AdbExecError('timeout', this.adbPath, ['start-server'], new Error(`${timeoutMs}ms deadline`)));
+            }, timeoutMs);
+            timer.unref();
+        });
     }
 
     /**

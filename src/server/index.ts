@@ -269,6 +269,18 @@ function exit(signal: string) {
         return;
     }
     interrupted = true;
+    // Tear down our adb daemon on clean shutdown. We started it via
+    // AdbClient.startServer; per the "own the daemon's lifetime" stance,
+    // a clean SIGINT/SIGTERM should not leave the daemon orphaned holding
+    // port 5037. This path is for clean exit ONLY — process.exit(75)
+    // (restart-for-update) bypasses this function so the daemon stays
+    // alive across supervisor-driven restarts. Fire-and-forget; the
+    // watchdog below catches any hang, and a stuck adb is no worse than
+    // today's behavior.
+    serverLog.info('Stopping adb daemon (kill-server) ...');
+    scanAdb.killServer().catch((err: Error) => {
+        serverLog.warn(`adb kill-server during exit failed: ${err.message}`);
+    });
     runningServices.forEach((service: Service) => {
         const serviceName = service.getName();
         serverLog.info(`Stopping ${serviceName} ...`);
