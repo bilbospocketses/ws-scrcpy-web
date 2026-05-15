@@ -1,4 +1,3 @@
-import * as readline from 'readline';
 import { VelopackApp } from 'velopack';
 import { SCAN_WS_PATH } from '../common/ScanMessage';
 import { AdbClient } from './AdbClient';
@@ -218,19 +217,18 @@ reconcileWebPort()
             Logger.for('Server').warn(`browser open check failed: ${(err as Error).message}`);
         }
 
-        if (process.platform === 'win32') {
-            readline
-                .createInterface({
-                    input: process.stdin,
-                    output: process.stdout,
-                })
-                .on('SIGINT', () => exit('SIGINT'));
-        }
-
-        // Wrap so the handler receives the literal signal name. Node's
-        // process.on('SIGINT', cb) DOES pass the signal name, but readline's
-        // SIGINT event passes nothing — without the wrappers, exit() logged
-        // "Received signal undefined" on Ctrl+C.
+        // `process.on('SIGINT')` fires on Ctrl+C on modern Node (≥10) on
+        // Windows too, so the older `readline.createInterface()` workaround
+        // for win32 Ctrl+C detection has been removed. Keeping it actively
+        // HURT shutdown: the readline interface listens on `process.stdin`
+        // (flowing mode), which ref'd the ReadStream to the event loop and
+        // prevented natural drain on `exit()` — the 10s exit watchdog
+        // fired on every Ctrl+C as a result. Root cause confirmed
+        // 2026-05-15 via active-handles dump in the watchdog path
+        // (handle[2] ReadStream fd=0 was the lingerer).
+        //
+        // Wrap so the handler receives the literal signal name (the
+        // `cb` already gets it from Node).
         process.on('SIGINT', () => exit('SIGINT'));
         process.on('SIGTERM', () => exit('SIGTERM'));
 
