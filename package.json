@@ -71,5 +71,8 @@
     "vitest": "^4.1.4",
     "webpack": "^5.106.2",
     "webpack-cli": "^7.0.2"
+  },
+  "overrides": {
+    "fast-uri": "3.1.2"
   }
 }
