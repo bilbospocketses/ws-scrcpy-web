@@ -1,0 +1,38 @@
+version: 2
+
+# Dependabot version updates for ws-scrcpy-web.
+#
+# Security updates (CVE-driven) are managed separately via the repo-level
+# "Dependabot security updates" toggle — they fire whenever an advisory
+# lands on a dependency we use, regardless of this schedule.
+#
+# Version updates (non-security upgrades) fire on the schedule below.
+# Tuned for low noise: weekly, batched in Monday morning ET, capped at
+# 5 open PRs per ecosystem.
+
+updates:
+  # npm: tracks package.json + package-lock.json (root only).
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+
+  # github-actions: tracks SHA-pinned action references in .github/workflows/.
+  # Dependabot keys on the `# vX.Y.Z` comment after each SHA to detect
+  # upstream tag movement.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(actions)"

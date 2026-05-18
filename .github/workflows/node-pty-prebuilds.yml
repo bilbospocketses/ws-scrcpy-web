@@ -10,10 +10,6 @@ on:
         type: boolean
         default: false
 
-permissions:
-  contents: write   # to commit state file + create releases
-  issues: write     # to open failure issues
-
 jobs:
   precheck:
     runs-on: ubuntu-latest
@@ -27,8 +23,8 @@ jobs:
       prior_node_version_bare: ${{ steps.check.outputs.prior_node_version_bare }}
       prior_node_abi: ${{ steps.check.outputs.prior_node_abi }}
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: '22'
       - id: check
@@ -75,7 +71,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     container: ${{ matrix.container == 'alpine' && format('node:{0}-alpine', matrix.abi_label == 'current' && needs.precheck.outputs.current_node_version_bare || needs.precheck.outputs.prior_node_version_bare) || null }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Install build toolchain (Alpine)
         if: matrix.container == 'alpine'
@@ -83,7 +79,7 @@ jobs:
 
       - name: Setup Node (non-Alpine)
         if: matrix.container == ''
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: ${{ matrix.abi_label == 'current' && needs.precheck.outputs.current_node_version || needs.precheck.outputs.prior_node_version }}
 
@@ -160,7 +156,7 @@ jobs:
             shasum -a 256 "${KEY}.tar.gz" > "${KEY}.tar.gz.sha256"
           fi
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: prebuilt-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.libc }}-${{ matrix.abi_label }}
           path: artifacts/*
@@ -169,9 +165,11 @@ jobs:
     needs: [precheck, build]
     if: needs.precheck.outputs.changed == 'true' && needs.build.result == 'success'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # softprops/action-gh-release creates the release; final step pushes the state-file commit to main
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/download-artifact@v8
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: downloaded
           pattern: prebuilt-*
@@ -217,7 +215,7 @@ jobs:
       - name: Create versioned release
         # Runs before the state-file commit so release asset uploads are not
         # blocked by a git push race (main can move during the matrix run).
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
         with:
           tag_name: node-pty-prebuilds-v${{ needs.precheck.outputs.node_pty_version }}
           name: "node-pty prebuilds v${{ needs.precheck.outputs.node_pty_version }}"
@@ -234,7 +232,7 @@ jobs:
             (linux-arm64-musl excluded — GH Actions JS-action runtime doesn't run in Alpine+arm64 containers; those users fall back to compile-at-install.)
 
       - name: Update "latest" alias
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
         with:
           tag_name: node-pty-prebuilds-latest
           name: "node-pty prebuilds (latest)"
@@ -264,8 +262,10 @@ jobs:
     needs: [precheck, build, publish]
     if: failure() && needs.precheck.outputs.changed == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      issues: write     # to file the prebuild-failure issue
     steps:
-      - uses: actions/github-script@v9
+      - uses: actions/github-script@d746ffe35508b1917358783b479e04febd2b8f71 # v9.0.0
         with:
           script: |
             const date = new Date().toISOString().split('T')[0];
