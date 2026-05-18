@@ -48,7 +48,7 @@
   },
   "dependencies": {
     "velopack": "^0.0.1589-ga2c5a97",
-    "ws": "^8.18.0"
+    "ws": "^8.20.1"
   },
   "optionalDependencies": {
     "node-pty": "^1.1.0"
