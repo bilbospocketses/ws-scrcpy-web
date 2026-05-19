@@ -389,7 +389,9 @@ describe('UpdateService', () => {
         await expect(svc.applyUpdate()).rejects.toThrow(/apply not allowed in current state/);
     });
 
-    it('applyUpdate: calls waitExitThenApplyUpdate(pending, true, true) after pre-apply hygiene', async () => {
+    it('applyUpdate (local mode): waitExitThenApplyUpdate called with restart=true', async () => {
+        // Default installMode is null after Config._resetForTest + empty config.json,
+        // which is treated as local mode (Velopack relaunches the user-mode launcher).
         Config.getInstance().updateAppConfig({ autoUpdate: false });
         const info = fakeUpdateInfo('0.2.0');
         const applyFn = vi.fn();
@@ -415,6 +417,73 @@ describe('UpdateService', () => {
         const args = applyFn.mock.calls[0]!;
         expect(args[0]).toBe(info);
         expect(args[1]).toBe(true);
+        // restart=true in local mode (Velopack relaunches us post-swap).
+        expect(args[2]).toBe(true);
+    });
+
+    // v0.1.25-beta.8 smoke A.2 regression: when installMode is a service mode,
+    // restart MUST be false. The --veloapp-updated hook's `servy-cli restart` is
+    // solely responsible for bringing the service back under SCM/Servy supervision.
+    // Velopack's parallel post-swap relaunch (restart=true) would spawn a ghost
+    // LocalSystem launcher that holds the single-instance mutex and starves out
+    // Servy's --recoveryAction=RestartProcess attempts, leaving SCM with the
+    // service stuck Stopped until reboot. See §32 in todo_ws_scrcpy_web.md.
+    it.each([
+        ['user-service' as const],
+        ['system-service' as const],
+    ])('applyUpdate (%s): waitExitThenApplyUpdate called with restart=false', async (installMode) => {
+        Config.getInstance().updateAppConfig({ autoUpdate: false, installMode });
+        const info = fakeUpdateInfo('0.2.0');
+        const applyFn = vi.fn();
+        const mgr = fakeMgr({
+            checkForUpdatesAsync: async () => info,
+            waitExitThenApplyUpdate: applyFn,
+        });
+        const svc = new UpdateService({
+            installRoot: '/fake',
+            existsSync: () => true,
+            updateManagerFactory: () => mgr,
+            setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
+            clearIntervalFn: () => undefined,
+        });
+        svc.init();
+        await svc.checkForUpdates();
+        expect(svc.getStatus().status).toBe('ready');
+        await svc.applyUpdate();
+        expect(applyFn).toHaveBeenCalledTimes(1);
+        const args = applyFn.mock.calls[0]!;
+        expect(args[0]).toBe(info);
+        expect(args[1]).toBe(true);
+        // restart=false in service mode — hook's servy-cli restart handles relaunch.
+        expect(args[2]).toBe(false);
+    });
+
+    // Symmetry check: local-mode variants other than the default null should also
+    // get restart=true. Keeps the boolean wiring honest if someone widens InstallMode later.
+    it.each([
+        ['user' as const],
+        ['system' as const],
+    ])('applyUpdate (%s): waitExitThenApplyUpdate called with restart=true', async (installMode) => {
+        Config.getInstance().updateAppConfig({ autoUpdate: false, installMode });
+        const info = fakeUpdateInfo('0.2.0');
+        const applyFn = vi.fn();
+        const mgr = fakeMgr({
+            checkForUpdatesAsync: async () => info,
+            waitExitThenApplyUpdate: applyFn,
+        });
+        const svc = new UpdateService({
+            installRoot: '/fake',
+            existsSync: () => true,
+            updateManagerFactory: () => mgr,
+            setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
+            clearIntervalFn: () => undefined,
+        });
+        svc.init();
+        await svc.checkForUpdates();
+        expect(svc.getStatus().status).toBe('ready');
+        await svc.applyUpdate();
+        expect(applyFn).toHaveBeenCalledTimes(1);
+        const args = applyFn.mock.calls[0]!;
         expect(args[2]).toBe(true);
     });
 

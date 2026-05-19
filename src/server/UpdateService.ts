@@ -334,8 +334,25 @@ export class UpdateService {
         }
         log.info(`applying update v${this.state.availableVersion}`);
         await this.preApplyHygiene();
-        // silent=true (no UI from Velopack updater), restart=true (Velopack relaunches us).
-        this.mgr.waitExitThenApplyUpdate(this.state.pendingUpdate, true, true);
+        // silent=true (no UI from Velopack updater).
+        //
+        // restart semantics depend on install mode:
+        //   - local mode (installMode in {null, 'user', 'system'}): restart=true so
+        //     Velopack relaunches the user-mode launcher post-swap. Unchanged
+        //     behavior from v0.1.x stable.
+        //   - service mode (installMode in {'user-service', 'system-service'}): restart=false.
+        //     The launcher's --veloapp-updated hook (launcher/src/hooks.rs:312) calls
+        //     `servy-cli restart` which brings the service back under SCM/Servy
+        //     supervision. Letting Velopack ALSO relaunch spawns a parallel LocalSystem
+        //     launcher outside Servy: it inherits the LocalSystem token from
+        //     Update.exe's parent chain, grabs the single-instance mutex, and starves
+        //     out Servy's --recoveryAction=RestartProcess attempts — SCM ends up
+        //     reporting the service as Stopped until reboot, even though HTTP is
+        //     still being served by the ghost LocalSystem launcher. v0.1.25-beta.8
+        //     smoke A.2 caught this; see §32 in todo_ws_scrcpy_web.md.
+        const installMode = Config.getInstance().getAppConfig().installMode;
+        const isServiceMode = installMode === 'user-service' || installMode === 'system-service';
+        this.mgr.waitExitThenApplyUpdate(this.state.pendingUpdate, true, !isServiceMode);
     }
 
     /**
