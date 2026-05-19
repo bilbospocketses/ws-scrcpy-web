@@ -252,7 +252,7 @@ export class Device extends TypedEmitter<DeviceEvents> {
                 if (pids.length < 2) {
                     return false;
                 }
-                const parentPid = pids[0].replace('\r', '');
+                const parentPid = pids[0].replaceAll('\r', '');
                 const list = pids[1].split(' ');
                 if (list.includes(parentPid)) {
                     return false;
