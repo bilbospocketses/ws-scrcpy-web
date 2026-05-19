@@ -27,11 +27,11 @@ export class Device extends TypedEmitter<DeviceEvents> {
     private connected = true;
     private pidDetectionVariant: PID_DETECTION = PID_DETECTION.UNKNOWN;
     private adbClient: AdbClient;
-    private properties?: Record<string, string>;
-    private updateTimeoutId?: Timeout;
+    private properties?: Record<string, string> | undefined;
+    private updateTimeoutId?: Timeout | undefined;
     private updateTimeout = Device.INITIAL_UPDATE_TIMEOUT;
     private updateCount = 0;
-    private throttleTimeoutId?: Timeout;
+    private throttleTimeoutId?: Timeout | undefined;
     private lastEmit = 0;
     public readonly TAG: string;
     public readonly descriptor: GoogDeviceDescriptor;

@@ -301,7 +301,7 @@ function sanitizeAppConfig(raw: FlatConfig, warn: (msg: string) => void): AppCon
 }
 
 export class Config {
-    private static instance?: Config;
+    private static instance?: Config | undefined;
 
     private _appConfig: AppConfig;
     private _configFilePath: string;

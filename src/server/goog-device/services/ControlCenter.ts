@@ -15,12 +15,12 @@ import { BaseControlCenter } from '../../services/BaseControlCenter';
 
 export class ControlCenter extends BaseControlCenter<GoogDeviceDescriptor> implements Service {
     private static readonly POLL_INTERVAL = 5000;
-    private static instance?: ControlCenter;
+    private static instance?: ControlCenter | undefined;
 
     private initialized = false;
     private adbClient = new AdbClient(Config.getInstance().adbPath);
     private knownDevices = new Map<string, string>(); // serial -> state
-    private pollIntervalId?: Timeout;
+    private pollIntervalId?: Timeout | undefined;
     private deviceMap: Map<string, Device> = new Map();
     private descriptors: Map<string, GoogDeviceDescriptor> = new Map();
     private readonly id: string;

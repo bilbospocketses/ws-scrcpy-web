@@ -71,7 +71,7 @@ export interface ServiceInstallOptions {
      * Required on Linux (SystemdClient throws if undefined). Ignored on
      * Windows — ServyClient runs the service as Local System.
      */
-    scope?: 'user' | 'system';
+    scope?: 'user' | 'system' | undefined;
 }
 
 /**
@@ -99,5 +99,5 @@ export interface ServiceClientFactoryResult {
     supported: boolean;
     platform: NodeJS.Platform;
     /** Present when supported=false; shown verbatim by the UI / API. */
-    unsupportedReason?: string;
+    unsupportedReason?: string | undefined;
 }

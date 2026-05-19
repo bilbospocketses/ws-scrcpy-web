@@ -164,9 +164,9 @@ export class CommandControlMessage extends ControlMessage {
     public static pushFileCommandFromData(data: Uint8Array): {
         id: number;
         state: FilePushState;
-        chunk?: Uint8Array;
-        fileSize?: number;
-        fileName?: string;
+        chunk?: Uint8Array | undefined;
+        fileSize?: number | undefined;
+        fileName?: string | undefined;
     } {
         const reader = new BinaryReader(data);
         const type = reader.readUInt8();

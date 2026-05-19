@@ -15,7 +15,7 @@ export abstract class ManagerClient<P extends ParamsBase, TE extends EventMap> e
         throw Error('Not implemented');
     }
 
-    protected readonly action?: string;
+    protected readonly action?: string | undefined;
     protected url: URL;
     protected ws?: Multiplexer | WebSocket;
 

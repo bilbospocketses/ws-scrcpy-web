@@ -3,7 +3,7 @@ import { createThemeToggle } from '../client/ThemeToggle';
 
 export interface ModalOptions {
     title: string;
-    onClose?: (result: unknown) => void;
+    onClose?: ((result: unknown) => void) | undefined;
 }
 
 export abstract class Modal {

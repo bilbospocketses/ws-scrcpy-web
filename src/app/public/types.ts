@@ -5,20 +5,20 @@
 
 export interface StartStreamOptions {
     // Connection (optional — defaults to current location)
-    host?: string;
-    port?: number;
-    secure?: boolean;
-    pathname?: string;
+    host?: string | undefined;
+    port?: number | undefined;
+    secure?: boolean | undefined;
+    pathname?: string | undefined;
 
     // Stream settings (optional — smart auto-selection if omitted)
-    codec?: 'h264' | 'h265' | 'av1';
-    encoder?: string;
-    bitrate?: number;
-    maxFps?: number;
-    maxSize?: number;
+    codec?: 'h264' | 'h265' | 'av1' | undefined;
+    encoder?: string | undefined;
+    bitrate?: number | undefined;
+    maxFps?: number | undefined;
+    maxSize?: number | undefined;
 
     // Features
-    audio?: boolean;      // default true
+    audio?: boolean | undefined;      // default true
     /**
      * Where scrcpy captures audio from on the device:
      *   - `playback` (default on Android 13+) — captures playback AND keeps
@@ -26,25 +26,25 @@ export interface StartStreamOptions {
      *   - `output` — captures the whole output; silences device during session.
      *   - `mic` — captures the device microphone.
      */
-    audioSource?: 'playback' | 'output' | 'mic';
+    audioSource?: 'playback' | 'output' | 'mic' | undefined;
     /**
      * Audio codec to request from scrcpy-server. `opus` is scrcpy's default;
      * `aac` is a common fallback when a device's Opus encoder fails.
      */
-    audioCodec?: 'opus' | 'aac' | 'flac' | 'raw';
-    keyboard?: boolean;   // default true
+    audioCodec?: 'opus' | 'aac' | 'flac' | 'raw' | undefined;
+    keyboard?: boolean | undefined;   // default true
 
     /**
      * Android device kind. When provided, seeds the stream toolbar's
      * D-pad/Touch toggle to the appropriate default (D-pad for TV,
      * Touch for phone/tablet). When omitted, falls back to D-pad default.
      */
-    deviceKind?: 'phone' | 'tablet' | 'tv';
+    deviceKind?: 'phone' | 'tablet' | 'tv' | undefined;
 
     // Lifecycle callbacks
-    onConnect?: (info: StreamInfo) => void;
-    onDisconnect?: (reason?: string) => void;
-    onError?: (err: Error) => void;
+    onConnect?: ((info: StreamInfo) => void) | undefined;
+    onDisconnect?: ((reason?: string) => void) | undefined;
+    onError?: ((err: Error) => void) | undefined;
 }
 
 export interface StreamInfo {

@@ -259,7 +259,10 @@ export class Multiplexer extends TypedEmitter<MultiplexerEvents> implements WebS
             } else {
                 this.ws.send(message);
             }
-            this.emit('close', new CloseEvent('close', { code, reason }));
+            // EOP-compatible: omit reason when undefined.
+            const closeInit: CloseEventInit = { code };
+            if (reason !== undefined) closeInit.reason = reason;
+            this.emit('close', new CloseEvent('close', closeInit));
         } else {
             this.ws.close(code, reason);
         }

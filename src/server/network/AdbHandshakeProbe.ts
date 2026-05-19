@@ -42,7 +42,7 @@ function adbChecksum(payload: Buffer): number {
 
 export interface AdbHandshakeResult {
     isAdb: boolean;
-    model?: string;
+    model?: string | undefined;
 }
 
 export function buildCnxnPacket(): Buffer {

@@ -33,11 +33,11 @@ import { DeviceTracker } from './DeviceTracker';
 
 type StartParams = {
     udid: string;
-    playerName?: string;
-    player?: BasePlayer;
-    fitToScreen?: boolean;
-    videoSettings?: VideoSettings;
-    deviceKind?: 'phone' | 'tablet' | 'tv';
+    playerName?: string | undefined;
+    player?: BasePlayer | undefined;
+    fitToScreen?: boolean | undefined;
+    videoSettings?: VideoSettings | undefined;
+    deviceKind?: 'phone' | 'tablet' | 'tv' | undefined;
 };
 
 const TAG = '[StreamClientScrcpy]';
@@ -77,8 +77,8 @@ async function browserSupportsCodec(codec: string): Promise<boolean> {
 
 async function detectBestCodecAndEncoder(
     udid: string,
-    params: { hostname?: string; port?: number; secure?: boolean },
-): Promise<{ videoCodec: string; encoderName?: string }> {
+    params: { hostname?: string | undefined; port?: number | undefined; secure?: boolean | undefined },
+): Promise<{ videoCodec: string; encoderName?: string | undefined }> {
     // 1. Probe the device for available encoders
     let videoEncoders: string[] = [];
     try {
@@ -130,27 +130,27 @@ export class StreamClientScrcpy
     public static ACTION = 'stream';
     private static players: Map<string, PlayerClass> = new Map<string, PlayerClass>();
 
-    private controlButtons?: HTMLElement;
+    private controlButtons?: HTMLElement | undefined;
     private deviceName = '';
-    private touchHandler?: FeaturedInteractionHandler;
-    private uhidManager?: UhidManager;
-    private uhidKeyboard?: UhidKeyboardHandler;
-    private uhidMouse?: UhidMouseHandler;
-    private player?: BasePlayer;
-    private fitToScreen?: boolean;
-    private demuxer?: ScrcpyDemuxer;
-    private audioPlayer?: AudioPlayer;
+    private touchHandler?: FeaturedInteractionHandler | undefined;
+    private uhidManager?: UhidManager | undefined;
+    private uhidKeyboard?: UhidKeyboardHandler | undefined;
+    private uhidMouse?: UhidMouseHandler | undefined;
+    private player?: BasePlayer | undefined;
+    private fitToScreen?: boolean | undefined;
+    private demuxer?: ScrcpyDemuxer | undefined;
+    private audioPlayer?: AudioPlayer | undefined;
     private frameSizes: number[] = [];
     private baselineFrameSize = 0;
     private degradationCount = 0;
     private lastRefreshTime = 0;
-    private stopFn?: () => void;
+    private stopFn?: (() => void) | undefined;
 
     /** Public hook — fires after session metadata is parsed. Used by the public startStream API. */
-    public onMetadataReceived?: (info: { codec: string; encoder: string; resolution: string }) => void;
+    public onMetadataReceived?: ((info: { codec: string; encoder: string; resolution: string }) => void) | undefined;
 
     /** Public hook — fires on async stream errors (WebSocket refused, probe failure, etc.). */
-    public onErrorReceived?: (err: Error) => void;
+    public onErrorReceived?: ((err: Error) => void) | undefined;
 
     public static registerPlayer(playerClass: PlayerClass): void {
         if (playerClass.isSupported()) {

@@ -4,7 +4,7 @@ import * as path from 'path';
 const DEFAULT_PATH = path.resolve(__dirname, '..', 'device-labels.json');
 
 export class DeviceLabelStore {
-    private static instance?: DeviceLabelStore;
+    private static instance?: DeviceLabelStore | undefined;
     private labels: Record<string, string> = {};
 
     private constructor(private readonly filePath: string) {

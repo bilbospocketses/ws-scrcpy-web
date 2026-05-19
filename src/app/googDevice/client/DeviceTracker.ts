@@ -120,7 +120,7 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
         }
     }
 
-    private updateLink(params: { url: string; name: string; fullName: string; udid: string; deviceKind?: 'phone' | 'tablet' | 'tv' }): void {
+    private updateLink(params: { url: string; name: string; fullName: string; udid: string; deviceKind?: 'phone' | 'tablet' | 'tv' | undefined }): void {
         const { url, fullName, udid, deviceKind } = params;
         const playerTds = document.getElementsByName(
             encodeURIComponent(`${DeviceTracker.AttributePrefixPlayerFor}${fullName}`),

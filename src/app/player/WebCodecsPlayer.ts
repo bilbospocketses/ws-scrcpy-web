@@ -60,7 +60,7 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
     public override readonly supportsScreenshot = true;
     private context: CanvasRenderingContext2D;
     private decoder: VideoDecoder;
-    private configData?: Uint8Array;
+    private configData?: Uint8Array | undefined;
     private detectedCodec: 'h264' | 'h265' | 'av1' | null = null;
     private metadataWidth = 0;
     private metadataHeight = 0;

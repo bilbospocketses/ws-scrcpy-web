@@ -38,7 +38,7 @@ export class ConfigureScrcpy extends Modal {
     private audioCodecSelect?: HTMLSelectElement;
     private audioSourceSelect?: HTMLSelectElement;
     private audioEnabledCheckbox?: HTMLInputElement;
-    private readonly deviceKind?: 'phone' | 'tablet' | 'tv';
+    private readonly deviceKind?: 'phone' | 'tablet' | 'tv' | undefined;
     private readonly sdkInt: number;
     private readonly savedAudio: ReturnType<typeof AudioSettingsStore.load>;
     private displayInfo?: DisplayInfo;

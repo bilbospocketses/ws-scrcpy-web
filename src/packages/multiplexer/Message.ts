@@ -55,11 +55,12 @@ export class Message {
                 reason = new TextDecoder().decode(new Uint8Array(this.data, 6, length));
             }
         }
-        return new CloseEvent('close', {
-            code,
-            reason,
-            wasClean: code === 1000,
-        });
+        // EOP-compatible: only set code/reason when present so the DOM
+        // CloseEventInit `?: T` shape doesn't reject explicit-undefined.
+        const init: CloseEventInit = { wasClean: code === 1000 };
+        if (code !== undefined) init.code = code;
+        if (reason !== undefined) init.reason = reason;
+        return new CloseEvent('close', init);
     }
 
     public toBuffer(): Uint8Array<ArrayBuffer> {

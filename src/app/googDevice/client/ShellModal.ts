@@ -12,27 +12,27 @@ import { Modal } from '../../ui/Modal';
 const TAG = '[ShellModal]';
 
 export class ShellModal extends Modal {
-    private term?: Terminal;
-    private fitAddon?: FitAddon;
-    private ws?: Multiplexer;
-    private resizeObserver?: ResizeObserver;
+    private term?: Terminal | undefined;
+    private fitAddon?: FitAddon | undefined;
+    private ws?: Multiplexer | undefined;
+    private resizeObserver?: ResizeObserver | undefined;
     private shellStarted = false;
     private readonly udid: string;
     private readonly params: {
-        hostname?: string;
-        port?: number;
-        secure?: boolean;
-        pathname?: string;
+        hostname?: string | undefined;
+        port?: number | undefined;
+        secure?: boolean | undefined;
+        pathname?: string | undefined;
     };
 
     constructor(
         udid: string,
         deviceName: string,
         params: {
-            hostname?: string;
-            port?: number;
-            secure?: boolean;
-            pathname?: string;
+            hostname?: string | undefined;
+            port?: number | undefined;
+            secure?: boolean | undefined;
+            pathname?: string | undefined;
         },
     ) {
         super({ title: deviceName });
