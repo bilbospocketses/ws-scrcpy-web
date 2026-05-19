@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.25-beta.6] - 2026-05-18
+
 ### Security
 
 - **Tier 4 hardening — workflow least-privilege + Sigstore build attestations.** Audited ws-scrcpy-web's lockdown against the Control Menu repo (which today represents the canonical hardening baseline across my projects) and closed four concrete gaps in the GitHub Actions workflows:
