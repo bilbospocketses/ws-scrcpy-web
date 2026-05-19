@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **§25c-1.1 — `tsconfig.json` `noFallthroughCasesInSwitch: true`.** First flag in the §25c series of additional TS strict-mode flags evaluated as part of TS6's broader compliance scope (the §25 mandate focused on `using` declarations; §25c picks up the audit-type-only-patterns sub-bullet). Zero violations on `src/` as-written — every existing `switch` statement already terminates each case with explicit `break` / `return` / `throw`. tsc clean. vitest 684/684 unchanged. Cheap signal-to-noise win — guards against future PRs accidentally introducing fallthrough bugs (a hard-to-catch class of error where execution silently bleeds into the next case).
+
 ### Security
 
 - **`.github/workflows/codeql.yml` — `github/codeql-action` v3.35.5 → v4.35.5 cross-repo carryover.** Driven by Node 20 deprecation in the v3 line (CodeQL Action's v3 runtime EOL'd December 2026 per the deprecation warning surfaced during §27's first run). Bumps both pin sites (`init` line 85, `analyze` line 92) from SHA `458d36d7d4f47d0dd16ca424c1d3cda0060f1360` to `9e0d7b8d25671d64c341c19c0152d693099fb5ba`. Same dereferenced commit SHA control-menu PR #16 shipped 2026-05-19. Both SOPs applied at pin time: precise version comment `# v4.35.5` per [[dependabot-precise-version-comment]]; commit SHA (not annotated-tag-object SHA `f25eda876ebb741d872b63b9f2c6dfdd77f14b83`) per [[action-sha-pin-commit-not-tag-object]] — `gh api repos/github/codeql-action/git/ref/tags/v4.35.5` returns `{object.type: "tag"}`, dereferenced via `gh api repos/github/codeql-action/git/tags/<tag-obj-sha>` to the commit. CodeQL Action v4 uses Node 24 runtime; same query suites, same analysis behavior — no workflow logic changes needed.
