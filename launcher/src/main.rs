@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod deferred_servy_restart;
 mod elevated_runner;
 mod hooks;
 #[cfg(windows)]
@@ -76,6 +77,20 @@ fn main() {
     // the SHA-pinned launcher instead of resolving via system PATH.
     if let Some(code) = unzip_handler::handle(&args) {
         log::info(&format!("unzip exiting with code {code}"));
+        std::process::exit(code);
+    }
+
+    // Deferred-servy-restart dispatch — §32 follow-up. The
+    // --veloapp-updated hook spawns this subcommand DETACHED so it can
+    // sleep until Update.exe has had time to exit + release file handles
+    // on current/ before invoking `servy-cli restart`. Synchronously
+    // calling servy-cli from inside the hook had Servy start a new
+    // SERVICE LAUNCHER while Update.exe was still alive, and the new
+    // Node child was killed by file-sharing-violation on current/dist/
+    // before reaching Logger init. See deferred_servy_restart.rs module
+    // comment for the full rationale.
+    if let Some(code) = deferred_servy_restart::handle(&args) {
+        log::info(&format!("deferred-servy-restart exiting with code {code}"));
         std::process::exit(code);
     }
 

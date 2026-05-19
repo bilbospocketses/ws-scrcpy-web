@@ -315,7 +315,112 @@ fn on_updated(install_root: &Path, data_root: &Path) -> i32 {
         log::info("hook(updated): not service mode; nothing to do");
         return 0;
     }
-    run_servy(install_root, &["restart", "--name", "WsScrcpyWeb"], "updated")
+
+    // §32 follow-up — calling servy-cli synchronously here had Servy spawn
+    // the new SERVICE LAUNCHER while Update.exe was still alive (Update.exe
+    // is the parent of this hook process — it waits for the hook to exit
+    // before completing its own cleanup + exit). The new Node child was
+    // killed by file-sharing-violation on `<installRoot>\current\dist\`
+    // before reaching even Logger init. v0.1.25-beta.10 smoke A.2 caught
+    // this; ~75-second window where service appeared Stopped + app
+    // unreachable until Servy's recoveryDelay timed out.
+    //
+    // Fix: spawn the launcher's --deferred-servy-restart subcommand
+    // DETACHED. The hook returns 0 immediately so Update.exe can exit and
+    // release file handles on current/. The detached subcommand sleeps
+    // for DEFERRED_RESTART_DELAY_MS, then invokes `servy-cli restart`.
+    let servy = install_root.join("current").join("servy-cli.exe");
+    if !servy.exists() {
+        log::info(&format!(
+            "hook(updated): servy-cli.exe absent at {servy:?}; skipping (P2 OK)"
+        ));
+        return 0;
+    }
+
+    spawn_deferred_servy_restart(install_root)
+}
+
+/// 8 seconds: empirical buffer above the observed Update.exe lifetime.
+/// v0.1.25-beta.10 smoke A.2 showed Update.exe still holding file handles
+/// on current/ during the synchronous-hook window. 8s gives Update.exe
+/// time to exit + release handles, while keeping the user-visible
+/// "applying update" window short.
+const DEFERRED_RESTART_DELAY_MS: &str = "8000";
+const DEFERRED_RESTART_SERVICE: &str = "WsScrcpyWeb";
+
+#[cfg(windows)]
+fn spawn_deferred_servy_restart(install_root: &Path) -> i32 {
+    use std::os::windows::process::CommandExt;
+
+    // DETACHED_PROCESS = 0x00000008 — child has no inherited console.
+    // CREATE_NEW_PROCESS_GROUP = 0x00000200 — child becomes its own process
+    //   group leader, severing console-Ctrl signal propagation from the
+    //   hook (and from Update.exe, the hook's parent). A stray Ctrl in the
+    //   parent chain must not kill our deferred-restart helper.
+    const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
+    const DETACHED_PROCESS: u32 = 0x00000008;
+
+    let launcher = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(e) => {
+            log::error(&format!(
+                "hook(updated): cannot resolve current_exe for deferred-restart spawn: {e} — falling back to synchronous run_servy"
+            ));
+            return run_servy(
+                install_root,
+                &["restart", "--name", DEFERRED_RESTART_SERVICE],
+                "updated-fallback",
+            );
+        }
+    };
+
+    let spawn_result = Command::new(&launcher)
+        .args([
+            "--deferred-servy-restart",
+            DEFERRED_RESTART_DELAY_MS,
+            DEFERRED_RESTART_SERVICE,
+        ])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .creation_flags(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS)
+        .spawn();
+
+    match spawn_result {
+        Ok(child) => {
+            log::info(&format!(
+                "hook(updated): scheduled deferred servy-restart (child pid {}, delay {DEFERRED_RESTART_DELAY_MS}ms)",
+                child.id()
+            ));
+            // Drop the child handle without wait()-ing — the child is
+            // detached and will run independently of our process tree.
+            std::mem::drop(child);
+            0
+        }
+        Err(e) => {
+            log::error(&format!(
+                "hook(updated): failed to spawn deferred-servy-restart: {e} — falling back to synchronous run_servy"
+            ));
+            run_servy(
+                install_root,
+                &["restart", "--name", DEFERRED_RESTART_SERVICE],
+                "updated-fallback",
+            )
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn spawn_deferred_servy_restart(install_root: &Path) -> i32 {
+    // Service-mode is Windows-only; this branch should never execute on
+    // non-Windows in production. Keep the pre-fix synchronous behavior
+    // so unit tests + any unforeseen non-Windows service mode keep
+    // working.
+    run_servy(
+        install_root,
+        &["restart", "--name", DEFERRED_RESTART_SERVICE],
+        "updated-fallback",
+    )
 }
 
 fn on_uninstall(install_root: &Path, data_root: &Path) -> i32 {
