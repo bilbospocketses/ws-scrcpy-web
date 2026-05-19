@@ -6,7 +6,7 @@ Thanks for your interest. This document covers the essentials for getting a deve
 
 - **Node.js 24 LTS or newer** (`engines` field pins `>=24`)
 - **ADB** (Android Debug Bridge) available on `PATH` or inside a `dependencies/adb/` folder at the repo root
-- **scrcpy-server v3.3.4** binary (downloaded by the in-app updater; no manual step needed for local dev)
+- **scrcpy-server** binary (downloaded by the in-app updater; no manual step needed for local dev)
 - An Android device (physical or emulator) reachable via ADB, USB or network
 
 ## Setup
