@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.25-beta.10] - 2026-05-19
+
+### Notes
+
+- **No code changes vs v0.1.25-beta.9.** This release exists solely as the destination half of the §32 service-mode upgrade smoke verification. The §32 fix (`UpdateService.applyUpdate` passes `restart=false` in service mode) lives in the SOURCE version's `applyUpdate` call, so verifying it requires upgrading FROM a fixed version (v0.1.25-beta.9, the first carrier of the fix) TO any later version. v0.1.25-beta.10 is that "any later version" — no functional delta, just a version bump (`package.json` + `Cargo.toml` + `Cargo.lock` + `CHANGELOG.md`) so the upgrade flow has somewhere to go. The load-bearing test: clean VM → install v0.1.25-beta.9 MSI → service mode → Settings → Apply update → confirm service stays RUNNING in `services.msc`, no ghost LocalSystem launcher process, no "stopped — uninstall?" affordance in Settings, app reachable on the same port, no reboot required.
+
 ## [0.1.25-beta.9] - 2026-05-19
 
 ### Fixed
