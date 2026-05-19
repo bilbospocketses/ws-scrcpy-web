@@ -345,6 +345,13 @@ fn on_updated(install_root: &Path, data_root: &Path) -> i32 {
 /// on current/ during the synchronous-hook window. 8s gives Update.exe
 /// time to exit + release handles, while keeping the user-visible
 /// "applying update" window short.
+///
+/// Gated on `cfg(windows)` because only the Windows arm of
+/// `spawn_deferred_servy_restart` consumes it (Linux/macOS service mode
+/// doesn't exist; the non-Windows arm falls back to synchronous
+/// `run_servy`). Without the gate, clippy's `-D warnings` job on Linux
+/// flags this as dead code.
+#[cfg(windows)]
 const DEFERRED_RESTART_DELAY_MS: &str = "8000";
 const DEFERRED_RESTART_SERVICE: &str = "WsScrcpyWeb";
 
