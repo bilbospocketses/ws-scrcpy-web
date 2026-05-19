@@ -25,9 +25,9 @@ function makeReqRes(url: string, method = 'GET', body?: string) {
             if (event === 'end') {
                 queueMicrotask(() => {
                     if (body !== undefined) {
-                        for (const h of listeners.data ?? []) h(Buffer.from(body, 'utf8'));
+                        for (const h of listeners['data'] ?? []) h(Buffer.from(body, 'utf8'));
                     }
-                    for (const h of listeners.end ?? []) h();
+                    for (const h of listeners['end'] ?? []) h();
                 });
             }
             return this;

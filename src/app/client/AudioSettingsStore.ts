@@ -27,11 +27,11 @@ function isValidStored(value: unknown): value is StoredAudioSettings {
     if (!value || typeof value !== 'object') return false;
     const v = value as Record<string, unknown>;
     return (
-        typeof v.enabled === 'boolean' &&
-        typeof v.source === 'string' &&
-        VALID_SOURCES.has(v.source) &&
-        typeof v.codec === 'string' &&
-        VALID_CODECS.has(v.codec)
+        typeof v['enabled'] === 'boolean' &&
+        typeof v['source'] === 'string' &&
+        VALID_SOURCES.has(v['source'] as string) &&
+        typeof v['codec'] === 'string' &&
+        VALID_CODECS.has(v['codec'] as string)
     );
 }
 

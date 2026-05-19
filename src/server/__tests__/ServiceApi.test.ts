@@ -29,9 +29,9 @@ function makeReqRes(url: string, method = 'GET', body?: string, headers?: Record
             if (event === 'end') {
                 queueMicrotask(() => {
                     if (body) {
-                        for (const h of listeners.data ?? []) h(Buffer.from(body, 'utf8'));
+                        for (const h of listeners['data'] ?? []) h(Buffer.from(body, 'utf8'));
                     }
-                    for (const h of listeners.end ?? []) h();
+                    for (const h of listeners['end'] ?? []) h();
                 });
             }
             return this;
@@ -200,7 +200,7 @@ describe('ServiceApi', () => {
         expect((opts as { account?: unknown })?.account).toBeUndefined();
         expect(opts?.startType).toBe('Automatic');
         expect(opts?.maxRestartAttempts).toBe(3);
-        expect(opts?.envVars.DEPS_PATH).toBeDefined();
+        expect(opts?.envVars['DEPS_PATH']).toBeDefined();
         // v0.1.6: binPath must be the launcher exe in the install root,
         // NOT process.execPath. startupDir must equal the install root so
         // SCM hands the launched child the right CWD.

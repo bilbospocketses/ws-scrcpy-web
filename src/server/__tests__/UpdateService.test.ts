@@ -176,12 +176,12 @@ describe('UpdateService', () => {
 
         expect(receivedLocator).toBeDefined();
         const loc = receivedLocator as Record<string, unknown>;
-        expect(loc.RootAppDir).toBe(installRoot);
-        expect(loc.UpdateExePath).toBe(path.join(installRoot, 'Update.exe'));
-        expect(loc.PackagesDir).toBe(path.join(installRoot, 'packages'));
-        expect(loc.ManifestPath).toBe(path.join(installRoot, 'current', 'sq.version'));
-        expect(loc.CurrentBinaryDir).toBe(path.join(installRoot, 'current'));
-        expect(loc.IsPortable).toBe(false);
+        expect(loc['RootAppDir']).toBe(installRoot);
+        expect(loc['UpdateExePath']).toBe(path.join(installRoot, 'Update.exe'));
+        expect(loc['PackagesDir']).toBe(path.join(installRoot, 'packages'));
+        expect(loc['ManifestPath']).toBe(path.join(installRoot, 'current', 'sq.version'));
+        expect(loc['CurrentBinaryDir']).toBe(path.join(installRoot, 'current'));
+        expect(loc['IsPortable']).toBe(false);
     });
 
     it('reconfigure: passes the same locator to the new factory invocation', async () => {
@@ -205,8 +205,8 @@ describe('UpdateService', () => {
         expect(captured.length).toBeGreaterThanOrEqual(2);
         const initLocator = captured[0] as Record<string, unknown>;
         const reconfigLocator = captured[captured.length - 1] as Record<string, unknown>;
-        expect(initLocator.RootAppDir).toBe(installRoot);
-        expect(reconfigLocator.RootAppDir).toBe(installRoot);
+        expect(initLocator['RootAppDir']).toBe(installRoot);
+        expect(reconfigLocator['RootAppDir']).toBe(installRoot);
         expect(reconfigLocator).toEqual(initLocator);
     });
 

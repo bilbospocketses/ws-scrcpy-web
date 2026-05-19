@@ -59,7 +59,7 @@ export class GoogToolBox extends ToolBox {
             type: K,
             element: ToolBoxElement<T>,
         ) => {
-            if (!element.optional?.code) {
+            if (!element.optional?.['code']) {
                 return;
             }
             const { code } = element.optional;

@@ -109,7 +109,7 @@ export abstract class BaseCanvasBasedPlayer extends BasePlayer {
     }
 
     private shiftFrame(): void {
-        if (this.getState() !== BasePlayer.STATE.PLAYING) {
+        if (this.getState() !== BasePlayer.STATE['PLAYING']) {
             return;
         }
         const first = this.framesList.shift();
@@ -179,7 +179,7 @@ export abstract class BaseCanvasBasedPlayer extends BasePlayer {
 
     public override play(): void {
         super.play();
-        if (this.getState() !== BasePlayer.STATE.PLAYING || !this.screenInfo) {
+        if (this.getState() !== BasePlayer.STATE['PLAYING'] || !this.screenInfo) {
             return;
         }
         if (!this.canvas) {

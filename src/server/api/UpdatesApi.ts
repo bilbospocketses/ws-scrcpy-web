@@ -217,32 +217,32 @@ function validatePatch(raw: Record<string, unknown>): ValidationResult {
     const out: UpdatesConfigPatchRequest = {};
 
     if ('autoUpdate' in raw) {
-        if (typeof raw.autoUpdate !== 'boolean') {
+        if (typeof raw['autoUpdate'] !== 'boolean') {
             return { ok: false, error: 'autoUpdate must be a boolean' };
         }
-        out.autoUpdate = raw.autoUpdate;
+        out.autoUpdate = raw['autoUpdate'];
     }
 
     if ('channel' in raw) {
-        if (typeof raw.channel !== 'string' || !VALID_CHANNELS.includes(raw.channel as UpdateChannel)) {
+        if (typeof raw['channel'] !== 'string' || !VALID_CHANNELS.includes(raw['channel'] as UpdateChannel)) {
             return {
                 ok: false,
                 error: `channel must be one of: ${VALID_CHANNELS.join(', ')}`,
             };
         }
-        out.channel = raw.channel as UpdateChannel;
+        out.channel = raw['channel'] as UpdateChannel;
     }
 
     if ('githubOwner' in raw) {
         // Decision 7: any non-empty string accepted.
-        if (typeof raw.githubOwner !== 'string' || raw.githubOwner.length === 0) {
+        if (typeof raw['githubOwner'] !== 'string' || (raw['githubOwner'] as string).length === 0) {
             return { ok: false, error: 'githubOwner must be a non-empty string' };
         }
-        out.githubOwner = raw.githubOwner;
+        out.githubOwner = raw['githubOwner'] as string;
     }
 
     if ('updateCheckIntervalMinutes' in raw) {
-        const n = raw.updateCheckIntervalMinutes;
+        const n = raw['updateCheckIntervalMinutes'];
         if (typeof n !== 'number' || !Number.isInteger(n) || n < 5 || n > 1440) {
             return {
                 ok: false,

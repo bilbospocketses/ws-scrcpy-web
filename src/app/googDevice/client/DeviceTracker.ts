@@ -249,11 +249,11 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
                 const isAwake = screenState === 'awake';
                 sleepBtn.className = `sleep-wake-btn ${isAwake ? 'state-on' : 'state-off'}`;
                 sleepBtn.textContent = isAwake ? 'turn off' : 'turn on';
-                sleepBtn.dataset.awake = String(isAwake);
+                sleepBtn.dataset['awake'] = String(isAwake);
             }
 
             sleepBtn.addEventListener('click', async () => {
-                const isAwake = sleepBtn.dataset.awake === 'true';
+                const isAwake = sleepBtn.dataset['awake'] === 'true';
                 sleepBtn.disabled = true;
                 // §25b — using-declaration replaces the prior try/finally that
                 // re-enabled the button on every exit path. Captures sleepBtn
@@ -270,11 +270,11 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
                         body: JSON.stringify({ udid: device.udid, action: isAwake ? 'sleep' : 'wake' }),
                     });
                     const result = await res.json();
-                    sleepBtn.dataset.awake = String(result.awake);
+                    sleepBtn.dataset['awake'] = String(result.awake);
                     sleepBtn.textContent = result.awake ? 'turn off' : 'turn on';
                     sleepBtn.className = `sleep-wake-btn ${result.awake ? 'state-on' : 'state-off'}`;
                 } catch {
-                    sleepBtn.dataset.awake = String(isAwake);
+                    sleepBtn.dataset['awake'] = String(isAwake);
                     sleepBtn.textContent = isAwake ? 'turn off' : 'turn on';
                     sleepBtn.className = `sleep-wake-btn ${isAwake ? 'state-on' : 'state-off'}`;
                 }

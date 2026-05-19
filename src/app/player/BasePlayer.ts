@@ -79,7 +79,7 @@ export abstract class BasePlayer extends TypedEmitter<PlayerEvents> {
     };
     private totalStatsCounter = 0;
     private dirtyStatsWidth = 0;
-    private state: number = BasePlayer.STATE.STOPPED;
+    private state: number = BasePlayer.STATE['STOPPED'];
     private qualityAnimationId?: number;
     private showQualityStats = BasePlayer.DEFAULT_SHOW_QUALITY_STATS;
     protected receivedFirstFrame = false;
@@ -311,15 +311,15 @@ export abstract class BasePlayer extends TypedEmitter<PlayerEvents> {
         if (this.needScreenInfoBeforePlay() && !this.screenInfo) {
             return;
         }
-        this.state = BasePlayer.STATE.PLAYING;
+        this.state = BasePlayer.STATE['PLAYING'];
     }
 
     public pause(): void {
-        this.state = BasePlayer.STATE.PAUSED;
+        this.state = BasePlayer.STATE['PAUSED'];
     }
 
     public stop(): void {
-        this.state = BasePlayer.STATE.STOPPED;
+        this.state = BasePlayer.STATE['STOPPED'];
     }
 
     public getState(): number {
@@ -445,7 +445,7 @@ export abstract class BasePlayer extends TypedEmitter<PlayerEvents> {
             this.totalStatsCounter++;
         }
         this.drawStats();
-        if (this.state !== BasePlayer.STATE.STOPPED) {
+        if (this.state !== BasePlayer.STATE['STOPPED']) {
             this.qualityAnimationId = requestAnimationFrame(this.updateQualityStats);
         }
     };

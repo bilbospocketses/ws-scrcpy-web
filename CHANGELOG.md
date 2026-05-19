@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **§25c-2.3 — `tsconfig.json` `noPropertyAccessFromIndexSignature: true`.** Third flag in the §25c-2 series. 52 violations fixed across 8 files, all mechanical `obj.key` → `obj['key']` rewrites where `obj`'s static type is an index signature (`Record<string, unknown>`, `DOMStringMap`, `process.env`, runtime-shaped objects via `as Record<...>` casts, etc.). The flag enforces visual distinction between known compile-time properties (dot-access, type-checked) and string-keyed lookups into open-ended dictionaries (bracket-access, runtime-checked). Touched files:
+  - **`AudioSettingsStore.ts` (5)** — `v.enabled/source/codec` on the `Record<string, unknown>` validation type-guard
+  - **`DeviceTracker.ts` (4)** — `sleepBtn.dataset['awake']` (DOMStringMap is canonical index-signature)
+  - **`StreamClientScrcpy.ts` (2)** — `STATE['PAUSED']`/`STATE['PLAYING']` (BasePlayer's STATE enum is typed via index signature)
+  - **`GoogToolBox.ts` (1)** — `element.optional['code']`
+  - **`BaseCanvasBasedPlayer.ts` (2)** — `STATE['PLAYING']`
+  - **`BasePlayer.ts` (5)** — `STATE['STOPPED']` ×2, `STATE['PLAYING']` ×2, `STATE['PAUSED']`
+  - **`UpdatesApi.ts` (8)** — `raw['autoUpdate']/['channel']/['githubOwner']/['updateCheckIntervalMinutes']` on `Record<string, unknown>` validation
+  - **`server/index.ts` (8)** — diagnostic walk of arbitrary `Record<string, unknown>` handle objects: `handle['address']/['fd']/['spawnfile']/['path']/['_idleTimeout']`
+  - **Test files (17)** — `__tests__/ServiceApi.test.ts` (3), `__tests__/UpdatesApi.test.ts` (2), `__tests__/UpdateService.test.ts` (8 + 2)
+  - Vitest 684/684 unchanged. tsc clean. No behavioral change — pure access-syntax tightening.
+
 - **§25c-2.2 — `tsconfig.json` `noUnusedLocals: true`.** Second flag in the §25c-2 series. 19 violations fixed, falling into three categories:
   - **Stale class fields (write-only or fully dead) — deletions:** `WelcomeModal.platform` (assigned from status fetch, never read), `WelcomeModal.scopeUserRadio` (assigned from radio el, never read; sibling `scopeSystemRadio` is the live one), `ConfigureScrcpy.resetSettingsButton` + `loadSettingsButton` (the `(this.X = document.createElement(...))` write-then-store-locally idiom was redundant; reverted to plain `const X = document.createElement(...)`), `ListFilesModal.requireClean` + `requestedPath` (initial value, no assignments anywhere). Total: 6 deleted fields + 4 cleaned-up DOM assignments.
   - **Dead test-file imports — deletions:** `modal.test.ts: ModalOptions`, `dependencyTypes.test.ts: DependencyStatus`, `adbClient.test.ts: afterAll + beforeAll`, `discoverServicePort.test.ts: beforeEach`, `libcDetect.test.ts: beforeEach`, `ConfigApi.ts: path`, `StreamClientScrcpy.ts: HostTracker + CommandControlMessage`. Total: 9 dead import-binding deletions.

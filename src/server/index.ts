@@ -350,18 +350,18 @@ function exit(signal: string) {
                 let detail = '';
                 try {
                     const handle = h as Record<string, unknown>;
-                    if (typeof handle.address === 'function') {
+                    if (typeof handle['address'] === 'function') {
                         try {
-                            detail += ` addr=${JSON.stringify((handle.address as () => unknown)())}`;
+                            detail += ` addr=${JSON.stringify((handle['address'] as () => unknown)())}`;
                         } catch {
                             /* address() may throw on closed sockets */
                         }
                     }
-                    if (handle.fd !== undefined) detail += ` fd=${handle.fd}`;
-                    if (handle.spawnfile) detail += ` spawnfile=${handle.spawnfile as string}`;
-                    if (handle.path) detail += ` path=${handle.path as string}`;
-                    if (typeof handle._idleTimeout === 'number' && handle._idleTimeout > 0) {
-                        detail += ` timeoutMs=${handle._idleTimeout}`;
+                    if (handle['fd'] !== undefined) detail += ` fd=${handle['fd']}`;
+                    if (handle['spawnfile']) detail += ` spawnfile=${handle['spawnfile'] as string}`;
+                    if (handle['path']) detail += ` path=${handle['path'] as string}`;
+                    if (typeof handle['_idleTimeout'] === 'number' && handle['_idleTimeout'] > 0) {
+                        detail += ` timeoutMs=${handle['_idleTimeout']}`;
                     }
                 } catch {
                     /* best-effort property extraction */

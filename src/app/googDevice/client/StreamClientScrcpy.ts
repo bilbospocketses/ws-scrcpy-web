@@ -270,10 +270,10 @@ export class StreamClientScrcpy
     public onVideoFrame = (data: Uint8Array, pts: bigint, isConfig: boolean, isKeyframe: boolean): void => {
         if (!this.player) return;
         const STATE = BasePlayer.STATE;
-        if (this.player.getState() === STATE.PAUSED) {
+        if (this.player.getState() === STATE['PAUSED']) {
             this.player.play();
         }
-        if (this.player.getState() === STATE.PLAYING) {
+        if (this.player.getState() === STATE['PLAYING']) {
             (this.player as WebCodecsPlayer).pushVideoFrame(data, pts, isConfig, isKeyframe);
         }
 
