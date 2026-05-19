@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`.github/workflows/release.yml` — `actions/setup-dotnet` v4.3.1 → v5.2.0 (SHA-pinned) + `dotnet-version` 9.x → 10.x in both `build-windows` and `build-linux` jobs.** Two motivations: (1) brings the action up to its current major (only breaking change in v5.0.0 is the action's internal Node 24 runtime, which GitHub-hosted runners already satisfy); (2) bumps the SDK from .NET 9 (STS, end-of-life Nov 2026) to .NET 10 (current LTS, end-of-life Nov 2028) — consistent with Control Menu's same upgrade landed 2026-05-09. `vpk` (Velopack 0.0.1589-ga2c5a97) is a global tool installed via `dotnet tool install -g`; it runs on the SDK's runtime support stack, and .NET 10 SDK ships runtimes for older TFMs. **Supersedes Dependabot PR #11** which only proposed the setup-dotnet bump in isolation. Validation: signed commit on a feature branch → PR with `build-and-test` green → squash-merge → fresh beta tag fires `release.yml` end-to-end exercising both Windows and Linux build legs.
+
 ### Security
 
 - **Repo hardening — Tier 3: CodeQL, required CI on main, SSH signed commits, Dependabot triage.** Continuation of the multi-tier hardening pass.
