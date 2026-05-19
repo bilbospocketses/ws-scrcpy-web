@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **§25c-1.2 — `tsconfig.json` `noImplicitReturns: true`.** Second flag in the §25c series. Zero violations on `src/` as-written — every function in the codebase either has a single return path or has explicit return on every branch. tsc clean. vitest 684/684 unchanged. Guards against future PRs accidentally writing functions where some control-flow paths exit without returning a value (a subtle bug where callers silently get `undefined`).
+
 - **§25c-1.1 — `tsconfig.json` `noFallthroughCasesInSwitch: true`.** First flag in the §25c series of additional TS strict-mode flags evaluated as part of TS6's broader compliance scope (the §25 mandate focused on `using` declarations; §25c picks up the audit-type-only-patterns sub-bullet). Zero violations on `src/` as-written — every existing `switch` statement already terminates each case with explicit `break` / `return` / `throw`. tsc clean. vitest 684/684 unchanged. Cheap signal-to-noise win — guards against future PRs accidentally introducing fallthrough bugs (a hard-to-catch class of error where execution silently bleeds into the next case).
 
 ### Security
