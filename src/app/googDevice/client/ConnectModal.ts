@@ -60,15 +60,15 @@ export class ConnectModal extends Modal {
         // Empty — startStream populates the container after super() completes
     }
 
-    protected onEscapeKey(_event: Event): void {
+    protected override onEscapeKey(_event: Event): void {
         // Block — UHID keyboard capture needs Escape
     }
 
-    protected onBackdropClick(_event: MouseEvent): void {
+    protected override onBackdropClick(_event: MouseEvent): void {
         // Block — protect stream from accidental close
     }
 
-    protected onBeforeClose(): void {
+    protected override onBeforeClose(): void {
         this.handle?.stop();
         this.handle = undefined;
     }

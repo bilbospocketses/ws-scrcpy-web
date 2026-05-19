@@ -63,15 +63,15 @@ export class ShellModal extends Modal {
         container.appendChild(terminalContainer);
     }
 
-    protected onEscapeKey(_event: Event): void {
+    protected override onEscapeKey(_event: Event): void {
         // no-op: Escape is a terminal key
     }
 
-    protected onBackdropClick(_event: MouseEvent): void {
+    protected override onBackdropClick(_event: MouseEvent): void {
         // no-op: protect session from accidental dismissal
     }
 
-    protected onCloseButtonClick(): void {
+    protected override onCloseButtonClick(): void {
         if (!this.shellStarted) {
             // Terminal hasn't connected yet — close directly
             this.close();
@@ -82,7 +82,7 @@ export class ShellModal extends Modal {
         }
     }
 
-    protected onBeforeClose(): void {
+    protected override onBeforeClose(): void {
         // Send stop message
         if (this.ws && this.ws.readyState === this.ws.OPEN) {
             const message: MessageXtermClient = {

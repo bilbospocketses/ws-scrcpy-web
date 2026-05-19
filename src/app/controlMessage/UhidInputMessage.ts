@@ -31,7 +31,7 @@ export class UhidInputMessage extends ControlMessage {
         return new UhidInputMessage(id, report);
     }
 
-    public toUint8Array(): Uint8Array {
+    public override toUint8Array(): Uint8Array {
         // type(1) + id(2) + size(2) + data(N)
         return new BinaryWriter(1 + 2 + 2 + this.data.length)
             .writeUInt8(this.type)

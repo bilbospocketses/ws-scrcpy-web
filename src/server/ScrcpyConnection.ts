@@ -57,7 +57,7 @@ export class ScrcpyConnection extends Mw {
     private serverProcess?: import('child_process').ChildProcess;
     private released = false;
 
-    public static processRequest(ws: WS, params: RequestParameters): ScrcpyConnection | undefined {
+    public static override processRequest(ws: WS, params: RequestParameters): ScrcpyConnection | undefined {
         const { action, url } = params;
         if (action !== ACTION.STREAM_SCRCPY) {
             return;
@@ -517,7 +517,7 @@ export class ScrcpyConnection extends Mw {
         }
     }
 
-    public release(): void {
+    public override release(): void {
         if (this.released) return;
         this.released = true;
         log.info(`Releasing session for ${this.serial}`);

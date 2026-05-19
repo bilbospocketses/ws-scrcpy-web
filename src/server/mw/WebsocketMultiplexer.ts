@@ -10,7 +10,7 @@ export class WebsocketMultiplexer extends Mw {
     private multiplexer: Multiplexer;
     // private mw: Set<Mw> = new Set();
 
-    public static processRequest(ws: WS, params: RequestParameters): WebsocketMultiplexer | undefined {
+    public static override processRequest(ws: WS, params: RequestParameters): WebsocketMultiplexer | undefined {
         const { action } = params;
         if (action !== ACTION.MULTIPLEX) {
             return;
@@ -71,7 +71,7 @@ export class WebsocketMultiplexer extends Mw {
         }
     }
 
-    public release(): void {
+    public override release(): void {
         super.release();
     }
 }

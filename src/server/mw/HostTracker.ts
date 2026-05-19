@@ -15,7 +15,7 @@ export class HostTracker extends Mw {
     private static localTrackers: Set<TrackerClass> = new Set<TrackerClass>();
     private static remoteHostItems?: HostItem[];
 
-    public static processChannel(ws: Multiplexer, code: string): Mw | undefined {
+    public static override processChannel(ws: Multiplexer, code: string): Mw | undefined {
         if (code !== ChannelCode.HSTS) {
             return;
         }
@@ -56,7 +56,7 @@ export class HostTracker extends Mw {
         this.sendMessage(message);
     }
 
-    public release(): void {
+    public override release(): void {
         super.release();
     }
 }

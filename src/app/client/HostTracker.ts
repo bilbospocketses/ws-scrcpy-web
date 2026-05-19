@@ -18,7 +18,7 @@ export interface HostTrackerEvents {
 export class HostTracker extends ManagerClient<ParamsBase, HostTrackerEvents> {
     private static instance?: HostTracker;
 
-    public static start(): void {
+    public static override start(): void {
         this.getInstance();
     }
 
@@ -99,7 +99,7 @@ export class HostTracker extends ManagerClient<ParamsBase, HostTrackerEvents> {
         // do nothing
     }
 
-    public destroy(): void {
+    public override destroy(): void {
         super.destroy();
         this.trackers.forEach((tracker) => {
             tracker.destroy();
@@ -107,11 +107,11 @@ export class HostTracker extends ManagerClient<ParamsBase, HostTrackerEvents> {
         this.trackers.length = 0;
     }
 
-    protected supportMultiplexing(): boolean {
+    protected override supportMultiplexing(): boolean {
         return true;
     }
 
-    protected getChannelInitData(): Uint8Array {
+    protected override getChannelInitData(): Uint8Array {
         return new TextEncoder().encode(ChannelCode.HSTS);
     }
 }

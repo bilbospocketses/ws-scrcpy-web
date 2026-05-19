@@ -17,14 +17,14 @@ export class DeviceTracker extends Mw {
     private adt: ControlCenter = ControlCenter.getInstance();
     private readonly id: string;
 
-    public static processChannel(ws: Multiplexer, code: string): Mw | undefined {
+    public static override processChannel(ws: Multiplexer, code: string): Mw | undefined {
         if (code !== ChannelCode.GTRC) {
             return;
         }
         return new DeviceTracker(ws);
     }
 
-    public static processRequest(ws: WS, params: RequestParameters): DeviceTracker | undefined {
+    public static override processRequest(ws: WS, params: RequestParameters): DeviceTracker | undefined {
         if (params.action !== ACTION.GOOG_DEVICE_LIST) {
             return;
         }
@@ -85,7 +85,7 @@ export class DeviceTracker extends Mw {
         });
     }
 
-    public release(): void {
+    public override release(): void {
         super.release();
         this.adt.off('device', this.sendDeviceMessage);
     }

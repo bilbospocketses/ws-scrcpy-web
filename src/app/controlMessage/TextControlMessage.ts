@@ -18,7 +18,7 @@ export class TextControlMessage extends ControlMessage {
     /**
      * @override
      */
-    public toUint8Array(): Uint8Array {
+    public override toUint8Array(): Uint8Array {
         const textBytes = new TextEncoder().encode(this.text);
         return new BinaryWriter(1 + TextControlMessage.TEXT_SIZE_FIELD_LENGTH + textBytes.length)
             .writeUInt8(this.type)
@@ -27,11 +27,11 @@ export class TextControlMessage extends ControlMessage {
             .toUint8Array();
     }
 
-    public toString(): string {
+    public override toString(): string {
         return `TextControlMessage{text=${this.text}}`;
     }
 
-    public toJSON(): TextControlMessageInterface {
+    public override toJSON(): TextControlMessageInterface {
         return {
             type: this.type,
             text: this.text,

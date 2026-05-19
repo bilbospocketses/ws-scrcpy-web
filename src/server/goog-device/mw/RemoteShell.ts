@@ -26,21 +26,21 @@ export class RemoteShell extends Mw {
     private closeCode = 1000;
     private closeReason = '';
 
-    public static processChannel(ws: Multiplexer, code: string): Mw | undefined {
+    public static override processChannel(ws: Multiplexer, code: string): Mw | undefined {
         if (code !== ChannelCode.SHEL) {
             return;
         }
         return new RemoteShell(ws);
     }
 
-    public static processRequest(ws: WS, params: RequestParameters): RemoteShell | undefined {
+    public static override processRequest(ws: WS, params: RequestParameters): RemoteShell | undefined {
         if (params.action !== ACTION.SHELL) {
             return;
         }
         return new RemoteShell(ws);
     }
 
-    constructor(protected ws: WS | Multiplexer) {
+    constructor(protected override ws: WS | Multiplexer) {
         super(ws);
     }
 
@@ -168,7 +168,7 @@ export class RemoteShell extends Mw {
         };
     }
 
-    public release(): void {
+    public override release(): void {
         super.release();
         if (this.timeoutBuffer) {
             clearTimeout(this.timeoutBuffer);

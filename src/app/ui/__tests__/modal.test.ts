@@ -37,15 +37,15 @@ class StickyModal extends Modal {
         container.textContent = 'sticky';
     }
 
-    protected onEscapeKey(_event: Event): void {
+    protected override onEscapeKey(_event: Event): void {
         this.escapeCalled = true;
     }
 
-    protected onBackdropClick(_event: MouseEvent): void {
+    protected override onBackdropClick(_event: MouseEvent): void {
         this.backdropCalled = true;
     }
 
-    protected onCloseButtonClick(): void {
+    protected override onCloseButtonClick(): void {
         this.closeButtonCalled = true;
         this.close();
     }
@@ -57,7 +57,7 @@ class FooterModal extends Modal {
         container.textContent = 'body';
     }
 
-    protected buildFooter(): HTMLElement | null {
+    protected override buildFooter(): HTMLElement | null {
         const footer = document.createElement('div');
         footer.textContent = 'footer content';
         return footer;
@@ -232,7 +232,7 @@ describe('Modal onBeforeClose', () => {
             protected buildBody(container: HTMLElement): void {
                 container.textContent = 'track';
             }
-            protected onBeforeClose(): void {
+            protected override onBeforeClose(): void {
                 order.push(document.body.contains(this['dialog']) ? 'cleanup-while-attached' : 'cleanup-while-detached');
             }
         }

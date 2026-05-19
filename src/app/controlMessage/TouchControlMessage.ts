@@ -46,7 +46,7 @@ export class TouchControlMessage extends ControlMessage {
     /**
      * @override
      */
-    public toUint8Array(): Uint8Array {
+    public override toUint8Array(): Uint8Array {
         return new BinaryWriter(TouchControlMessage.PAYLOAD_LENGTH + 1)
             .writeUInt8(this.type)
             .writeUInt8(this.action)
@@ -62,11 +62,11 @@ export class TouchControlMessage extends ControlMessage {
             .toUint8Array();
     }
 
-    public toString(): string {
+    public override toString(): string {
         return `TouchControlMessage{action=${this.action}, pointerId=${this.pointerId}, position=${this.position}, pressure=${this.pressure}, actionButton=${this.actionButton}, buttons=${this.buttons}}`;
     }
 
-    public toJSON(): TouchControlMessageInterface {
+    public override toJSON(): TouchControlMessageInterface {
         return {
             type: this.type,
             action: this.action,

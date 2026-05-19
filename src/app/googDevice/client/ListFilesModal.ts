@@ -136,7 +136,7 @@ export class ListFilesModal extends Modal implements DragAndPushListener {
         // Empty — content is built after super() completes
     }
 
-    protected buildFooter(): HTMLElement | null {
+    protected override buildFooter(): HTMLElement | null {
         const footer = document.createElement('div');
         footer.className = 'list-files-footer';
 
@@ -182,19 +182,19 @@ export class ListFilesModal extends Modal implements DragAndPushListener {
         return footer;
     }
 
-    protected onEscapeKey(_event: Event): void {
+    protected override onEscapeKey(_event: Event): void {
         if (this.confirmClose()) this.close();
     }
 
-    protected onBackdropClick(_event: MouseEvent): void {
+    protected override onBackdropClick(_event: MouseEvent): void {
         if (this.confirmClose()) this.close();
     }
 
-    protected onCloseButtonClick(): void {
+    protected override onCloseButtonClick(): void {
         if (this.confirmClose()) this.close();
     }
 
-    protected onBeforeClose(): void {
+    protected override onBeforeClose(): void {
         // Clean up upload handler
         if (this.filePushHandler) {
             this.filePushHandler.release();

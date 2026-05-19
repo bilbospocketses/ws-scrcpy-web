@@ -35,3 +35,9 @@ seed/
 device-labels.json
 ws-scrcpy-web.log
 ws-scrcpy-web.log.1
+
+# Per-session Claude Code settings (allow-list etc) — local-only, never share
+.claude/
+
+# Visual Studio local IDE state — local-only, never share
+.vs/

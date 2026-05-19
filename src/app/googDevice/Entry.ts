@@ -10,7 +10,7 @@ export class Entry extends Stats {
         super(mode, size, mtime);
     }
 
-    public toString(): string {
+    public override toString(): string {
         return this.name;
     }
 }

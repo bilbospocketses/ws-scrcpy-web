@@ -9,9 +9,9 @@ import { FilePushReader } from '../filePush/FilePushReader';
 export class FileListing extends Mw {
     public static readonly TAG = 'FileListing';
     private static readonly log = Logger.for('FileListing');
-    protected name = 'FileListing';
+    protected override name = 'FileListing';
 
-    public static processChannel(ws: Multiplexer, code: string, data: ArrayBuffer): Mw | undefined {
+    public static override processChannel(ws: Multiplexer, code: string, data: ArrayBuffer): Mw | undefined {
         FileListing.log.info(`processChannel: code="${code}", dataLen=${data?.byteLength ?? 0}`);
         if (code !== ChannelCode.FSLS) {
             return;
@@ -37,7 +37,7 @@ export class FileListing extends Mw {
         });
     }
 
-    protected sendMessage = (): void => {
+    protected override sendMessage = (): void => {
         throw Error('Do not use this method. You must send data over channels');
     };
 

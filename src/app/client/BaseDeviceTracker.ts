@@ -97,7 +97,7 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
         this.setBodyClass('list');
     }
 
-    public static parseParameters(params: URLSearchParams): ParamsDeviceTracker {
+    public static override parseParameters(params: URLSearchParams): ParamsDeviceTracker {
         const typedParams = super.parseParameters(params);
         const type = Util.parseString(params, 'type', true);
         if (type !== 'android') {
@@ -263,7 +263,7 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
         });
     }
 
-    public destroy(): void {
+    public override destroy(): void {
         super.destroy();
         if (this.created) {
             const el = document.getElementById(this.elementId);
@@ -281,7 +281,7 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
         }
     }
 
-    protected supportMultiplexing(): boolean {
+    protected override supportMultiplexing(): boolean {
         return true;
     }
 
@@ -289,7 +289,7 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
         throw Error('Not implemented. Must override');
     }
 
-    protected getChannelInitData(): Uint8Array {
+    protected override getChannelInitData(): Uint8Array {
         return new TextEncoder().encode(this.getChannelCode());
     }
 }

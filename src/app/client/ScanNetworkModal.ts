@@ -93,7 +93,7 @@ export class ScanNetworkModal extends Modal {
         container.appendChild(cheatLink);
     }
 
-    protected buildFooter(): HTMLElement | null {
+    protected override buildFooter(): HTMLElement | null {
         const footer = document.createElement('div');
         // Defer content so class-field init (after super) doesn't clobber this.startBtn.
         queueMicrotask(() => this.fillFooter(footer));

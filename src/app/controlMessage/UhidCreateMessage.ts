@@ -130,7 +130,7 @@ export class UhidCreateMessage extends ControlMessage {
         return new UhidCreateMessage(id, 0, 0, 'ws-scrcpy mouse', MOUSE_DESCRIPTOR);
     }
 
-    public toUint8Array(): Uint8Array {
+    public override toUint8Array(): Uint8Array {
         const nameBytes = new TextEncoder().encode(this.name);
         if (nameBytes.length > 0xff) {
             throw new Error(`UHID name too long (${nameBytes.length} bytes, max 255)`);
