@@ -4,6 +4,14 @@ on:
   push:
     tags: ['v*']
 
+# Workflow-level default permissions. Per-job blocks override with their
+# own narrower writes (id-token + attestations on build legs, contents:write
+# on publish). The prepare leg inherits this read-only default. Closes
+# OpenSSF Scorecard alert #16 (TokenPermissionsID, no topLevel permission
+# defined) — see §31 in todo_ws_scrcpy_web.md.
+permissions:
+  contents: read
+
 jobs:
   prepare:
     runs-on: ubuntu-latest

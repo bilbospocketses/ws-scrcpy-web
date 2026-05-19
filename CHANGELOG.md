@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **`release.yml` — workflow-level `permissions: contents: read` added (closes OpenSSF Scorecard alert #16, `TokenPermissionsID`).** Mirrors the workflow-level default pattern already in place on `ci.yml` (PR #17) and `node-pty-prebuilds.yml` (PR #20). Per-job blocks unchanged — `build-windows` + `build-linux` still get `id-token: write` + `attestations: write` for Sigstore provenance, `publish` still gets `contents: write` for `softprops/action-gh-release` to push the release. The `prepare` leg, which previously had `contents: read` declared per-job, now inherits the workflow-level default; the per-job declaration is left in place (explicit > implicit for forward-reading clarity).
+- **OpenSSF Scorecard alert triage (§31) — 10 of 13 open alerts dismissed with documented rationale; 1 fixed in code (above); 2 remain open as Scorecard re-finds them on each run.** Cleared per the `feedback_tech_debt_triage_detail.md` protocol (per-alert decision = fix / dismiss-with-rationale / accept). Dismissal categories:
+  - **Won't fix — required write permission** (#14 + #15, `TokenPermissionsID` on `node-pty-prebuilds.yml:177` publish job and `release.yml:234` publish job): `contents: write` is required for `softprops/action-gh-release` to publish releases. Scoping down breaks publish.
+  - **Won't fix — workflow currently disabled** (#17, `PinnedDependenciesID` on `Dockerfile:1`): `FROM node:18-slim` is unpinned AND on EOL Node 18; `docker-publish.yml.disabled` is shelved as Group A SP4 backlog. Re-evaluated when SP4 ships.
+  - **False positive — `npmCommand` install-by-name is registry-integrity-checked** (#18 + #19, `PinnedDependenciesID` on `node-pty-prebuilds.yml:117/145`): `npm install <pkg>@<exact-version>` is integrity-verified by npm against the registry tarball hash; the `--integrity=` flag doesn't apply to install-by-name. #19's `node-pty@${UPSTREAM_VER}` is dynamic-at-runtime by workflow design (the workflow's purpose is to track upstream node-pty version drift).
+  - **Won't fix — out of scope** (#20, `FuzzingID`; #25, `CIIBestPracticesID`): WebSocket-bridge frontend doesn't fit fuzzing infra; OpenSSF Best Practices badge to be evaluated if/when v0.5.0 ships.
+  - **Won't fix — upstream-blocked transitive** (#21, `VulnerabilitiesID`, RUSTSEC-2024-0388): The `derivative` v2.2.0 crate is unmaintained (RustSec INFO classification, no patched version exists). Pulled in transitively by `velopack 0.0.1298` → launcher. Dependabot will catch the next velopack release; any velopack swap to `derive_more`/`derive-where`/`educe` auto-clears this.
+  - **Won't fix — solo-owned repo** (#22, `BranchProtectionID`; #24, `CodeReviewID`): Scorecard grades on codeowners-review + required-approvers + last-push-approval + up-to-date-branches — none apply to a solo-owned repo (per `feedback_pr_workflow.md`). The `Protect main` ruleset (id 16554336) covers what matters: `non_fast_forward`, `required_linear_history`, `required_signatures`, `required_status_checks`, `pull_request`.
+  - **Won't fix — self-heals** (#23, `MaintainedID`): "Repository was created within the last 90 days" — repo went public 2026-04-17; self-heals around 2026-07-16.
+  - **Won't fix — Scorecard feature gap** (#26, `SASTID`): CodeQL is configured via `.github/workflows/codeql.yml` (advanced setup, PR #19); Scorecard's SAST detector can't see advanced-setup configs.
+
 ## [0.1.25-beta.8] - 2026-05-19
 
 ### Security
