@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.25-beta.7] - 2026-05-19
+
 ### Docs
 
 - **README.md + CONTRIBUTING.md — stripped stale scrcpy-server version pin (`v3.3.4`).** Per user direction during the 2026-05-19 LATE session: "remove versions unless they are explicitly needed." Three pins removed: README "Genymobile's vanilla scrcpy-server v3.3.4" → "scrcpy-server"; README "Vanilla scrcpy-server v3.x" → "Vanilla scrcpy-server"; CONTRIBUTING.md "scrcpy-server v3.3.4" → "scrcpy-server". The v3.3.4 pin was stale (post-§17 we're on the v4.0 wire protocol) AND not actionable for users — the in-app dependency manager handles the version automatically, so the explicit pin in user-facing prose only served to mislead. Same rationale dropped "not supported in v0.1" → "not supported" in the glibc requirement section: the in-version qualifier signals "might change in v0.2+" but we have no plans to add musl support; the cleaner absolute statement is more accurate today and tomorrow. **Kept verbatim:** the historical upgrade-path warnings (v0.1.20-and-earlier PROGRAMDATA migration, v0.1.21/v0.1.22/v0.1.23-beta.{1..6} broken-updater chain) — those target users on specific old versions and are concrete migration help; removing would orphan them.
