@@ -212,7 +212,7 @@ const libraryUmd: webpack.Configuration = {
     output: {
         filename: 'ws-scrcpy.umd.js',
         path: CLIENT_DIST_PATH,
-        library: { name: 'WsScrcpy', type: 'umd', export: undefined },
+        library: { name: 'WsScrcpy', type: 'umd' },
         globalObject: 'globalThis',
     },
     performance: libraryPerformance,
