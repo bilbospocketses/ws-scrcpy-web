@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **`.github/workflows/codeql.yml` — bare-major `# v3` SHA-pin comments on `github/codeql-action/init` + `/analyze` → precise `# v3.35.5`.** Cross-repo SOP audit ([[dependabot-precise-version-comment]] landed during this session via control-menu PR #14's `actions/upload-artifact` Dependabot blind-spot incident) flagged two bare-major comments in this repo. Bare `# v3` is interpreted by Dependabot as a "track v3 line" range pin — silently skipping major-bump PRs even when v4+ ships. The current SHA `458d36d7d4f47d0dd16ca424c1d3cda0060f1360` already resolves to v3.35.5 (released 2026-05-15); fix is comment-only, no SHA bump. Re-enables Dependabot bump discovery on the next weekly run. Audit also verified rule [[action-sha-pin-commit-not-tag-object]] across all 14 unique action pins in `ws-scrcpy-web/.github/workflows/` — every pin is a commit SHA (not annotated-tag-object SHA), including `actions/github-script@v9.0.0` which uses an annotated tag and was already correctly pinned to the commit. No SHA-type violations to fix.
+
 ### Changed
 
 - **§25 — TS6 `using` / `await using` adoption across `src/server/` + `src/packages/multiplexer/` (release-readiness gate).** Replaces every `try { … } finally { /* cleanup */ }` pattern in the server-side codebase with TC39 Stage 3 Explicit Resource Management (native in TypeScript 6, ES2026). User direction 2026-05-18 was MUST-CONVERT across `src/`, with frontend `src/app/*` allowed slower-paced. 13 conversion sites this pass; 10 frontend `src/app/*` sites carved out for a follow-up.
