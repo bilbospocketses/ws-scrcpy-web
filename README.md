@@ -4,13 +4,13 @@
   <img src="assets/banner.png" alt="ws-scrcpy-web" width="600">
 </p>
 
-ws-scrcpy-web is a self-hosted, browser-based Android screen-mirroring app (independent project at [bilbospocketses/ws-scrcpy-web](https://github.com/bilbospocketses/ws-scrcpy-web), descended from [NetrisTV/ws-scrcpy](https://github.com/NetrisTV/ws-scrcpy)) that needs no client install beyond a browser. A local Node.js server uses ADB to push Genymobile's vanilla [scrcpy-server](https://github.com/Genymobile/scrcpy) v3.3.4 onto the device and multiplexes its video/audio/control TCP sockets onto a single WebSocket via a 1-byte channel prefix. The browser client is a custom TypeScript protocol layer that demuxes the stream and decodes H.264/H.265/AV1 video and Opus/AAC/FLAC/PCM audio entirely through WebCodecs (no WASM fallbacks).
+ws-scrcpy-web is a self-hosted, browser-based Android screen-mirroring app (independent project at [bilbospocketses/ws-scrcpy-web](https://github.com/bilbospocketses/ws-scrcpy-web), descended from [NetrisTV/ws-scrcpy](https://github.com/NetrisTV/ws-scrcpy)) that needs no client install beyond a browser. A local Node.js server uses ADB to push Genymobile's vanilla [scrcpy-server](https://github.com/Genymobile/scrcpy) onto the device and multiplexes its video/audio/control TCP sockets onto a single WebSocket via a 1-byte channel prefix. The browser client is a custom TypeScript protocol layer that demuxes the stream and decodes H.264/H.265/AV1 video and Opus/AAC/FLAC/PCM audio entirely through WebCodecs (no WASM fallbacks).
 
 Input flows back as mouse, UHID keyboard, i16-fixed-point scroll, and a D-pad/Touch mode toggle for leanback TV apps, alongside extras like an ADB shell, file manager, mDNS scan, sleep/wake, and device labels. It ships self-contained (bundled Node + ADB, launcher scripts, in-app updater) and exposes a public `WsScrcpy.startStream()` UMD/ESM library plus an `embed.html` shim for embedding live streams into other apps.
 
 ## Key Design Decisions
 
-- **Vanilla scrcpy-server v3.x** -- uses unmodified Genymobile scrcpy-server binaries. No Java patching, no custom forks. Drop in new versions as they release.
+- **Vanilla scrcpy-server** -- uses unmodified Genymobile scrcpy-server binaries. No Java patching, no custom forks. Drop in new versions as they release; the in-app dependency manager checks for and applies updates.
 - **Node.js ADB proxy** -- the server bridges ADB tunnels to WebSocket connections for the browser. The protocol layer is implemented in TypeScript.
 - **WebCodecs only** -- no WASM decoder fallbacks. Modern browsers only.
 - **Pure browser code** -- no Node.js Buffer polyfill or path-browserify in the browser bundle.
@@ -278,7 +278,7 @@ AppImage signing is currently under evaluation; releases ship **unsigned** for n
 
 #### glibc requirement
 
-The bundled `node-pty` native binary is built against glibc. Musl-based distros (Alpine and similar) are not supported in v0.1. Run on glibc-based distros: Ubuntu, Debian, Fedora, Arch, openSUSE, etc. — anything that ships glibc 2.31+ should work.
+The bundled `node-pty` native binary is built against glibc. Musl-based distros (Alpine and similar) are not supported. Run on glibc-based distros: Ubuntu, Debian, Fedora, Arch, openSUSE, etc. — anything that ships glibc 2.31+ should work.
 
 #### Tray icon
 
