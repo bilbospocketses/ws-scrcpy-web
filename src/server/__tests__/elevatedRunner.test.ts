@@ -3,7 +3,6 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
-    buildPsRunAsCommand,
     parseResult,
     pollForResultFile,
     toSnakeCase,
@@ -84,48 +83,15 @@ describe('parseResult', () => {
     });
 });
 
-describe('buildPsRunAsCommand', () => {
-    const params = {
-        launcherPath: 'C:\\app\\ws-scrcpy-web-launcher.exe',
-        command: 'install-service',
-        argsPath: 'C:\\Users\\me\\AppData\\Local\\Temp\\args.json',
-        resultPath: 'C:\\Users\\me\\AppData\\Local\\Temp\\result.json',
-    };
-
-    it('produces a Start-Process -Verb RunAs invocation (no -Wait, no -PassThru)', () => {
-        const cmd = buildPsRunAsCommand(params);
-        expect(cmd).toContain('Start-Process');
-        expect(cmd).toContain('-Verb RunAs');
-        // v0.1.8: -Wait + -PassThru removed because they're unreliable
-        // for cross-session (elevated) children. Result-file polling
-        // replaces them.
-        expect(cmd).not.toContain('-Wait');
-        expect(cmd).not.toContain('-PassThru');
-        expect(cmd).toContain("'C:\\app\\ws-scrcpy-web-launcher.exe'");
-    });
-
-    it('includes the elevate-and-run argv with command + paths', () => {
-        const cmd = buildPsRunAsCommand(params);
-        expect(cmd).toContain("'--elevate-and-run'");
-        expect(cmd).toContain("'install-service'");
-        expect(cmd).toContain("'C:\\Users\\me\\AppData\\Local\\Temp\\args.json'");
-        expect(cmd).toContain("'C:\\Users\\me\\AppData\\Local\\Temp\\result.json'");
-    });
-
-    it('escapes single quotes in path values (defense against PS injection)', () => {
-        const evil = {
-            ...params,
-            launcherPath: "C:\\app'with'quotes\\launcher.exe",
-        };
-        const cmd = buildPsRunAsCommand(evil);
-        expect(cmd).toContain("'C:\\app''with''quotes\\launcher.exe'");
-    });
-
-    it('uses ErrorActionPreference Stop so a UAC-decline propagates as a non-zero PS exit', () => {
-        const cmd = buildPsRunAsCommand(params);
-        expect(cmd).toContain('$ErrorActionPreference = "Stop"');
-    });
-});
+// §30: removed the `describe('buildPsRunAsCommand', ...)` block — the
+// builder + its 4 tests were dropped along with the PowerShell elevation
+// path. The replacement (launcher `--request-uac` invoked via
+// execFileAsync's array-form argv) doesn't need shell-escape tests because
+// argv is passed as a JS string array, not joined into a shell command line.
+// Exit-code mapping (0 vs 1223 vs other) is exercised end-to-end on Windows
+// via the existing service install/uninstall flows; pure-unit coverage
+// would require mocking the launcher subprocess, which would test the mock
+// rather than the integration.
 
 describe('pollForResultFile', () => {
     let tmpDir: string;

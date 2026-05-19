@@ -12,6 +12,7 @@ mod single_instance;
 mod spawn;
 mod supervisor;
 mod tray;
+mod uac_requester;
 #[cfg(windows)]
 mod user_session_spawn;
 
@@ -54,6 +55,18 @@ fn main() {
     // --veloapp-* flag and exiting. Without seeing the exact argv we can't
     // know which flag to handle. Cheap to keep around long-term.
     log::info(&format!("argv: {:?}", args));
+
+    // Request-UAC dispatch (§30, replaces the prior PowerShell
+    // Start-Process -Verb RunAs path that the Node server used to fire
+    // the UAC prompt). When invoked, this launcher process ShellExecuteEx's
+    // ITSELF with --elevate-and-run + verb=runas, returns exit 0 on UAC
+    // accept / 1223 on decline / 3 on other failure. Same exit-code
+    // contract Node was reading off PowerShell pre-§30, so the surrounding
+    // result-file polling stays unchanged.
+    if let Some(code) = uac_requester::handle(&args) {
+        log::info(&format!("request-uac exiting with code {code}"));
+        std::process::exit(code);
+    }
 
     // Elevate-and-run dispatch comes BEFORE Velopack hooks because the
     // helper is invoked through a UAC prompt and is a single-shot

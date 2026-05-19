@@ -191,43 +191,40 @@ export async function runElevated(
             };
         }
     } else {
-        // Standard PowerShell elevation path — fires UAC for the
-        // user to accept. Used for install-service and
-        // uninstall-service from the user-session local launcher.
-        const psScript = buildPsRunAsCommand({
-            launcherPath,
-            command,
-            argsPath,
-            resultPath,
-        });
-        let psFailed = false;
-        let psErrorMessage = '';
+        // §30 — Standard elevation path: spawn this launcher binary with
+        // `--request-uac`, which calls ShellExecuteExW(verb="runas") on
+        // itself to fire the UAC prompt + re-spawn elevated with
+        // `--elevate-and-run`. Replaces the prior
+        // `powershell.exe Start-Process -Verb RunAs` path that resolved
+        // PowerShell via system PATH (Local-Dependencies-Only violation,
+        // per CLAUDE.md). The launcher binary is SHA-pinned-to-release
+        // and lives in `current/` alongside this Node process, so no
+        // external binary discovery is needed.
+        //
+        // Exit-code contract from `--request-uac`:
+        //   0    = UAC accepted; elevated launcher is being spawned.
+        //   1223 = UAC declined by the user (Windows ERROR_CANCELLED).
+        //   other = unexpected ShellExecuteExW failure.
+        let uacFailed = false;
+        let uacErrorMessage = '';
         try {
             await execFileAsync(
-                'powershell.exe',
-                [
-                    '-NoProfile',
-                    '-NonInteractive',
-                    '-ExecutionPolicy', 'Bypass',
-                    '-Command', psScript,
-                ],
+                launcherPath,
+                ['--request-uac', command, argsPath, resultPath],
                 { windowsHide: true, maxBuffer: 1024 * 1024 },
             );
         } catch (err) {
-            // PS exits non-zero only when Start-Process itself
-            // failed — usually UAC declined (Windows
-            // ERROR_CANCELLED 1223).
-            psFailed = true;
-            psErrorMessage = (err as Error).message ?? '(no message)';
-            log.warn(`runElevated PowerShell start failed: ${psErrorMessage}`);
+            uacFailed = true;
+            uacErrorMessage = (err as Error).message ?? '(no message)';
+            log.warn(`runElevated request-uac failed: ${uacErrorMessage}`);
         }
 
-        if (psFailed) {
+        if (uacFailed) {
             return {
                 ok: false,
                 exitCode: -1,
                 stdout: '',
-                stderr: psErrorMessage,
+                stderr: uacErrorMessage,
                 errorMessage:
                     'user declined elevation. Service install requires Administrator privileges; ' +
                     'click Yes on the UAC prompt to continue.',
@@ -352,50 +349,10 @@ export function parseResult(raw: string): ElevatedResult {
     }
 }
 
-interface PsRunAsParams {
-    launcherPath: string;
-    command: string;
-    argsPath: string;
-    resultPath: string;
-}
-
-/**
- * Build the PowerShell command string for `Start-Process -Verb RunAs`.
- * Each argument value is single-quote-escaped (PowerShell single-quoted
- * strings only need `'` doubled) and passed as a member of the
- * `-ArgumentList` array so PowerShell quotes them correctly when forming
- * the Win32 lpCommandLine.
- *
- * v0.1.8: dropped `-Wait -PassThru`. Those flags interact badly with
- * `-Verb RunAs` because the elevated child runs in a different logon
- * session — `-Wait` was not reliably waiting for the cross-session
- * child to exit. We now use a result-file polling pattern (see
- * `pollForResultFile`) and let PowerShell exit immediately after kicking
- * off the elevation. PowerShell's exit code now only signals whether
- * the elevation request itself succeeded (UAC accepted vs declined),
- * not the elevated child's eventual exit code.
- *
- * Exported for unit-testing.
- */
-export function buildPsRunAsCommand(params: PsRunAsParams): string {
-    const q = (s: string) => `'${s.replace(/'/g, "''")}'`;
-    const argList = [
-        '--elevate-and-run',
-        params.command,
-        params.argsPath,
-        params.resultPath,
-    ]
-        .map(q)
-        .join(',');
-    // Start-Process exits 0 on success; on UAC denial it throws a
-    // Win32Exception that PowerShell surfaces as a terminating error,
-    // which makes execFile reject with non-zero exit. The Node side
-    // uses that as the UAC-declined signal. The result file is the
-    // source of truth for the elevated operation's outcome.
-    return [
-        '$ErrorActionPreference = "Stop";',
-        `Start-Process -FilePath ${q(params.launcherPath)} ` +
-            `-ArgumentList ${argList} ` +
-            `-Verb RunAs -WindowStyle Hidden`,
-    ].join(' ');
-}
+// §30: removed `buildPsRunAsCommand` + `PsRunAsParams` (was the PowerShell
+// Start-Process -Verb RunAs command-builder). The PS-spawn path was replaced
+// by the launcher's own `--request-uac` subcommand (see `launcher/src/uac_requester.rs`),
+// which calls `ShellExecuteExW(verb="runas")` directly. The launcher is
+// SHA-pinned to release and lives in `current/` alongside this Node process —
+// no system-PATH binary discovery, no PowerShell layer, no Local-Dependencies-Only
+// rule violation. Argv is passed via execFileAsync's array form (no shell escaping).
