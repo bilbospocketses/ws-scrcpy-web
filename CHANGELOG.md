@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **CodeQL — migrated from default setup to advanced setup; gain Rust coverage on both Linux and Windows.** Default setup is GitHub-managed and supports a fixed language list (`actions, c-cpp, csharp, go, java-kotlin, javascript-typescript, python, ruby, swift`) that does NOT include Rust — verified directly today (`PATCH ... languages[]=rust` returns `422 Invalid request: rust is not a possible value`). Advanced setup means we own a `.github/workflows/codeql.yml` workflow file and pick the languages + build modes + triggers + schedule explicitly; in exchange Rust analysis is available. User direction: "Today, EVERYTHING needs a solid security baseline, so not evaluating the code with the automated runners is a no-op." Migration ships in this commit. New file `.github/workflows/codeql.yml`:
+  - **Languages + matrix:** `actions` + `javascript-typescript` + `rust` (×2). Rust runs on **both** `ubuntu-latest` AND `windows-latest` runners because the launcher + tray code is heavily `cfg(windows)`-gated (14 `cfg(windows)` blocks in `launcher/src` across `main.rs`, `hooks.rs`, `paths.rs`, `single_instance.rs`, `elevated_runner.rs`; the `tray` crate's `windows` dep is unconditional in the dep tree but only meaningful on Windows targets). Single-OS Rust scanning would miss the bulk of the security-relevant code.
+  - **Build mode:** `none` for `actions` + `javascript-typescript` (CodeQL extracts directly from source). `autobuild` for Rust (CodeQL invokes `cargo build` on the workspace). `dtolnay/rust-toolchain@stable` installed conditionally for the Rust matrix entries so autobuild has a current toolchain.
+  - **SHA pinning:** `github/codeql-action/init@458d36d7d4f47d0dd16ca424c1d3cda0060f1360 # v3` and `analyze@458d36d7d4f47d0dd16ca424c1d3cda0060f1360 # v3`. Dependabot's `github-actions` ecosystem covers future bumps.
+  - **Triggers:** `push` to `main`, `pull_request` to `main`, weekly cron Monday 09:00 ET (13:00 UTC during DST) — matches `dependabot.yml`'s cadence.
+  - **Permissions:** workflow-level `contents: read`; per-job `security-events: write` (SARIF upload) + `packages: read` + `actions: read` + `contents: read`.
+  - **Category labels:** `/language:actions`, `/language:javascript-typescript`, `/language:rust-linux`, `/language:rust-windows` — distinct labels for the two Rust runs so SARIF results are aggregated correctly.
+  - **Default-setup disable (applied via API after merge, not in this commit):** `DELETE /repos/.../code-scanning/default-setup` to stop the old GitHub-managed scans. Brief overlap during the PR window is acceptable (just duplicate analyses, not a correctness issue).
+  - **Cost accepted:** CI minutes (Rust autobuild on both platforms adds ~5-10 min per push/PR/cron run) + owning the workflow config + adopting future CodeQL features manually rather than getting them automatically via default setup. Per user direction, security posture takes precedence over CI latency.
+  - **`feedback_do_that_thing.md` tweak (filed separately in `~/.claude` repo):** the "do that thing" SOP gains a new step-1 sub-bullet: in any Rust-containing repo with advanced-setup CodeQL, the SOP must verify the `codeql.yml` SHA pins are current and the most recent CodeQL run on `main` succeeded. This is the maintenance discipline the advanced-setup choice requires.
+
 ## [0.1.25-beta.6] - 2026-05-18
 
 ### Security

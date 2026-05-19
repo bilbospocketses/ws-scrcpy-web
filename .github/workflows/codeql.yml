@@ -1,0 +1,91 @@
+# CodeQL advanced setup.
+#
+# Migrated from CodeQL default setup 2026-05-18 LATE to gain Rust coverage —
+# default setup's supported-language list does not include `rust`, but advanced
+# setup does. This file owns the configuration that default setup used to
+# manage automatically; SHA pins must be kept current (Dependabot's
+# github-actions ecosystem covers bumps) and the matrix must be revisited
+# whenever languages or platforms change in the codebase.
+#
+# Languages scanned:
+#   - actions             — workflow YAML, GitHub Actions security queries
+#   - javascript-typescript  — Node server + browser client + scripts/
+#   - rust (ubuntu-latest) — launcher/tray/common cross-platform + cfg(unix) paths
+#   - rust (windows-latest) — launcher/tray/common cfg(windows) paths
+#
+# Rust uses build-mode: autobuild — CodeQL invokes `cargo build` on the
+# workspace. dtolnay/rust-toolchain@stable is installed first to ensure a
+# current toolchain (the GitHub-hosted runner's default Rust may lag).
+#
+# The two-OS Rust matrix exists because launcher + tray code is heavily
+# `cfg(windows)`-gated (14 cfg blocks in launcher/src alone) and the tray
+# crate's `windows` dep is unconditional in the dep tree but only compiles
+# meaningful code on Windows targets. Single-OS Rust scanning would miss the
+# bulk of the security-relevant code.
+
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 13 * * 1'  # Monday 09:00 ET (13:00 UTC during DST) — matches dependabot.yml cadence
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }}${{ matrix.os-label && format(' / {0}', matrix.os-label) || '' }})
+    runs-on: ${{ matrix.os }}
+    permissions:
+      security-events: write   # Upload SARIF analysis results
+      packages: read           # Read packages for dependency resolution
+      actions: read            # Read workflow runs for category metadata
+      contents: read           # Read the checked-out repo
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: actions
+            build-mode: none
+            os: ubuntu-latest
+            os-label: ''
+            category-suffix: ''
+          - language: javascript-typescript
+            build-mode: none
+            os: ubuntu-latest
+            os-label: ''
+            category-suffix: ''
+          - language: rust
+            build-mode: autobuild
+            os: ubuntu-latest
+            os-label: 'ubuntu-latest'
+            category-suffix: '-linux'
+          - language: rust
+            build-mode: autobuild
+            os: windows-latest
+            os-label: 'windows-latest'
+            category-suffix: '-windows'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Setup Rust toolchain
+        if: matrix.language == 'rust'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@458d36d7d4f47d0dd16ca424c1d3cda0060f1360  # v3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          # query-suite: default (omitted — uses CodeQL's curated default suite)
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@458d36d7d4f47d0dd16ca424c1d3cda0060f1360  # v3
+        with:
+          category: "/language:${{ matrix.language }}${{ matrix.category-suffix }}"
