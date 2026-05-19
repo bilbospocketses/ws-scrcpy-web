@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { AdbClient, AdbExecError, parseMdnsOutput, parseSerialFromMdnsName } from '../AdbClient';
 import { tempDir } from '../util/disposable';
 

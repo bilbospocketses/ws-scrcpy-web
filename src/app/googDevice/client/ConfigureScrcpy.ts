@@ -44,8 +44,6 @@ export class ConfigureScrcpy extends Modal {
     private displayInfo?: DisplayInfo;
     private connectButton?: HTMLButtonElement;
     private fitToScreenCheckbox?: HTMLInputElement;
-    private resetSettingsButton?: HTMLButtonElement;
-    private loadSettingsButton?: HTMLButtonElement;
     private saveSettingsButton?: HTMLButtonElement;
     private displayIdSelectElement?: HTMLSelectElement;
     private encoderSelectElement?: HTMLSelectElement;
@@ -698,13 +696,13 @@ export class ConfigureScrcpy extends Modal {
         const settingsRow = document.createElement('div');
         settingsRow.classList.add('modal-settings');
 
-        const resetSettingsButton = (this.resetSettingsButton = document.createElement('button'));
+        const resetSettingsButton = document.createElement('button');
         resetSettingsButton.classList.add('button');
         resetSettingsButton.innerText = 'reset';
         resetSettingsButton.addEventListener('click', this.resetSettings);
         settingsRow.appendChild(resetSettingsButton);
 
-        const loadSettingsButton = (this.loadSettingsButton = document.createElement('button'));
+        const loadSettingsButton = document.createElement('button');
         loadSettingsButton.classList.add('button');
         loadSettingsButton.innerText = 'load';
         loadSettingsButton.addEventListener('click', this.loadSettings);

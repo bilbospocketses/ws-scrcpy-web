@@ -349,20 +349,6 @@ export class ScrcpyConnection extends Mw {
         });
     }
 
-    private async connectLocalRetry(port: number, maxWaitMs: number): Promise<net.Socket> {
-        const deadline = Date.now() + maxWaitMs;
-        let lastErr: Error | null = null;
-        while (Date.now() < deadline) {
-            try {
-                return await this.connectLocal(port, 1000);
-            } catch (e) {
-                lastErr = e as Error;
-                await new Promise((r) => setTimeout(r, 200));
-            }
-        }
-        throw lastErr ?? new Error(`Timeout connecting to 127.0.0.1:${port}`);
-    }
-
     private acceptSockets(server: net.Server, count: number, timeoutMs: number): Promise<net.Socket[]> {
         return new Promise((resolve, reject) => {
             const sockets: net.Socket[] = [];

@@ -601,8 +601,6 @@ export class ListFilesModal extends Modal implements DragAndPushListener {
         }
     }
 
-    private requireClean = false;
-    private requestedPath = '';
     private pendingEntries: Entry[] = [];
 
     private handleReply(channel: Multiplexer, e: MessageEvent): void {

@@ -10,6 +10,7 @@
         "noFallthroughCasesInSwitch": true,
         "noImplicitOverride": true,
         "noImplicitReturns": true,
+        "noUnusedLocals": true,
         "noUnusedParameters": true,
         "esModuleInterop": true,
         "allowSyntheticDefaultImports": true,

@@ -8,8 +8,6 @@ import type { ParamsStreamScrcpy } from '../../../types/ParamsStreamScrcpy';
 import { Attribute } from '../../Attribute';
 import { AudioPlayer } from '../../audio/AudioPlayer';
 import { BaseClient } from '../../client/BaseClient';
-import { HostTracker } from '../../client/HostTracker';
-import { CommandControlMessage } from '../../controlMessage/CommandControlMessage';
 import type { ControlMessage } from '../../controlMessage/ControlMessage';
 import type { KeyCodeControlMessage } from '../../controlMessage/KeyCodeControlMessage';
 import type { DisplayInfo } from '../../DisplayInfo';
@@ -206,7 +204,7 @@ export class StreamClientScrcpy
         videoSettings?: VideoSettings,
         private readonly container?: HTMLElement,
         private readonly onDisconnectCallback?: () => void,
-        private readonly deviceKind?: 'phone' | 'tablet' | 'tv',
+        deviceKind?: 'phone' | 'tablet' | 'tv',
     ) {
         super(params);
         const { udid, player: playerName } = this.params;
@@ -676,7 +674,6 @@ export class StreamClientScrcpy
     private static onConfigureStreamClick = (event: MouseEvent): void => {
         const button = event.currentTarget as HTMLAnchorElement;
         const udid = Util.parseStringEnv(button.getAttribute(Attribute.UDID) || '');
-        const fullName = button.getAttribute(Attribute.FULL_NAME);
         const secure = Util.parseBooleanEnv(button.getAttribute(Attribute.SECURE) || undefined) || false;
         const hostname = Util.parseStringEnv(button.getAttribute(Attribute.HOSTNAME) || undefined) || '';
         const port = Util.parseIntEnv(button.getAttribute(Attribute.PORT) || undefined);

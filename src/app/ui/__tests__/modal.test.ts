@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest';
-import { Modal, type ModalOptions } from '../Modal';
+import { Modal } from '../Modal';
 
 // jsdom doesn't implement showModal/close — stub them
 beforeEach(() => {

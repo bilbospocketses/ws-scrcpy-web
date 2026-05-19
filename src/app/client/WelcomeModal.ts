@@ -22,15 +22,8 @@ export class WelcomeModal extends Modal {
     private noBtn!: HTMLButtonElement;
     private dontShowCheckbox!: HTMLInputElement;
     private statusEl!: HTMLElement;
-    /**
-     * Cached platform from the first /api/service/status fetch. We render
-     * with windows-style copy synchronously (matches existing flow), then
-     * patch the heading/scope chooser after the async fetch resolves.
-     */
-    private platform: NodeJS.Platform | null = null;
     /** Linux-only: scope chooser fieldset. Hidden on Windows. */
     private scopeFieldset: HTMLFieldSetElement | null = null;
-    private scopeUserRadio: HTMLInputElement | null = null;
     private scopeSystemRadio: HTMLInputElement | null = null;
     private headingEl: HTMLElement | null = null;
     private descEl: HTMLElement | null = null;
@@ -144,7 +137,6 @@ export class WelcomeModal extends Modal {
         fieldset.appendChild(sysLabel);
 
         this.scopeFieldset = fieldset;
-        this.scopeUserRadio = userRadio;
         this.scopeSystemRadio = sysRadio;
         container.appendChild(fieldset);
 
@@ -261,7 +253,6 @@ export class WelcomeModal extends Modal {
             // any real error when the install POST fails.
         }
         if (!statusResp) return;
-        this.platform = statusResp.platform;
 
         if (statusResp.platform === 'linux' && statusResp.supported) {
             if (this.headingEl) this.headingEl.textContent = 'run as a systemd service?';
