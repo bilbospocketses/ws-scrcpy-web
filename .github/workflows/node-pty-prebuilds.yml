@@ -290,3 +290,44 @@ jobs:
               Check the failing rows and investigate (commonly: runner image change, upstream build script change, or missing system package).`,
               labels: ['prebuild-failure', 'ci'],
             });
+
+  close-issue-on-success:
+    # Symmetric pair to open-issue-on-failure. Closes any open prebuild-failure
+    # issues when a subsequent matrix run completes successfully end-to-end
+    # (build + publish both green). Gated on explicit success of both jobs so
+    # "nothing changed, build skipped" runs don't auto-close real failure
+    # signals. If the underlying problem re-emerges, open-issue-on-failure
+    # files a fresh issue on the next run — no need to reopen.
+    needs: [precheck, build, publish]
+    if: needs.precheck.outputs.changed == 'true' && needs.build.result == 'success' && needs.publish.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write     # to comment + close prebuild-failure issues
+    steps:
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const openIssues = await github.paginate(github.rest.issues.listForRepo, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'prebuild-failure',
+              per_page: 100,
+            });
+            for (const issue of openIssues) {
+              if (issue.pull_request) continue;   // listForRepo also returns PRs
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body: `Auto-closed by [run ${context.runId}](${runUrl}) — node-pty prebuild matrix completed successfully end-to-end.`,
+              });
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: 'closed',
+                state_reason: 'completed',
+              });
+            }
