@@ -17,8 +17,8 @@ export abstract class BaseCanvasBasedPlayer extends BasePlayer {
     protected framesList: Uint8Array[] = [];
     protected decodedFrames: DecodedFrame[] = [];
     protected videoStats: PlaybackQuality[] = [];
-    protected animationFrameId?: number;
-    protected canvas?: CanvasDecoder;
+    protected animationFrameId?: number | undefined;
+    protected canvas?: CanvasDecoder | undefined;
 
     public static hasWebGLSupport(): boolean {
         // For some reason if I use here `this.tag` image on canvas will be flattened

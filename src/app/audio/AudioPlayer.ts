@@ -8,7 +8,7 @@ export class AudioPlayer {
     private gainNode?: GainNode;
     private started = false;
     private workletReady = false;
-    private configData?: Uint8Array;
+    private configData?: Uint8Array | undefined;
 
     constructor(private readonly codec: string) {}
 

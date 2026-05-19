@@ -1,17 +1,17 @@
 export interface StreamParamsInput {
     udid: string;
-    videoCodec?: string;
-    audioCodec?: string;
-    audioEnabled?: boolean;
-    audioSource?: 'playback' | 'output' | 'mic';
-    encoderName?: string;
+    videoCodec?: string | undefined;
+    audioCodec?: string | undefined;
+    audioEnabled?: boolean | undefined;
+    audioSource?: 'playback' | 'output' | 'mic' | undefined;
+    encoderName?: string | undefined;
 }
 
 export interface VideoSettingsInput {
-    bitrate?: number;
-    maxFps?: number;
-    bounds?: { width: number; height: number };
-    displayId?: number;
+    bitrate?: number | undefined;
+    maxFps?: number | undefined;
+    bounds?: { width: number; height: number } | undefined;
+    displayId?: number | undefined;
 }
 
 /**

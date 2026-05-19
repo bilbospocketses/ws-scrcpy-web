@@ -35,7 +35,7 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
         secure: boolean;
         hostname: string;
         port: number;
-        pathname?: string;
+        pathname?: string | undefined;
     }): URL {
         const { secure, port, hostname } = item;
         const pathname = item.pathname ?? '/';

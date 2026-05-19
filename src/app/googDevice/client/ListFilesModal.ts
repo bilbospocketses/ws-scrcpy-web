@@ -24,8 +24,8 @@ type SortDir = 'asc' | 'desc';
 type Download = {
     cmd: string;
     receivedBytes: number;
-    entry?: Entry;
-    progressEl?: HTMLElement;
+    entry?: Entry | undefined;
+    progressEl?: HTMLElement | undefined;
     chunks: Uint8Array[];
     path: string;
     pathToLoadAfter: string;
@@ -55,10 +55,10 @@ function formatDate(date: Date): string {
 export class ListFilesModal extends Modal implements DragAndPushListener {
     private readonly udid: string;
     private readonly params: {
-        hostname?: string;
-        port?: number;
-        secure?: boolean;
-        pathname?: string;
+        hostname?: string | undefined;
+        port?: number | undefined;
+        secure?: boolean | undefined;
+        pathname?: string | undefined;
     };
 
     private iconSize = DEFAULT_ICON_SIZE;
@@ -71,17 +71,17 @@ export class ListFilesModal extends Modal implements DragAndPushListener {
     private filterText = '';
 
     // WebSocket state
-    private multiplexer?: Multiplexer;
+    private multiplexer?: Multiplexer | undefined;
     private wsUrl = '';
     private channels: Set<Multiplexer> = new Set();
     private downloads: Map<Multiplexer, Download> = new Map();
     private uploads: Map<string, Upload> = new Map();
     private activeDownloads = 0;
     private activeUploads = 0;
-    private reloadTimeout?: number;
+    private reloadTimeout?: number | undefined;
 
     // Upload infrastructure
-    private filePushHandler?: FilePushHandler;
+    private filePushHandler?: FilePushHandler | undefined;
     private enterCount = 0;
 
     // DOM references
@@ -99,10 +99,10 @@ export class ListFilesModal extends Modal implements DragAndPushListener {
         udid: string,
         deviceLabel: string,
         params: {
-            hostname?: string;
-            port?: number;
-            secure?: boolean;
-            pathname?: string;
+            hostname?: string | undefined;
+            port?: number | undefined;
+            secure?: boolean | undefined;
+            pathname?: string | undefined;
         },
     ) {
         super({ title: deviceLabel });
@@ -415,7 +415,7 @@ export class ListFilesModal extends Modal implements DragAndPushListener {
     // The FSLS channel — a sub-multiplexer on the shared WebSocket multiplexer.
     // ManagerClient creates this via createChannel(getChannelInitData()).
     // loadDirectory creates command sub-channels on THIS channel, not on the root multiplexer.
-    private fsChannel?: Multiplexer;
+    private fsChannel?: Multiplexer | undefined;
 
     private connectAndLoad(): void {
         this.wsUrl = this.buildWebSocketUrl();

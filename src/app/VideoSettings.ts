@@ -4,30 +4,30 @@ import Rect from './Rect';
 import Size from './Size';
 
 interface Settings {
-    crop?: Rect | null;
+    crop?: Rect | null | undefined;
     bitrate: number;
-    bounds?: Size | null;
+    bounds?: Size | null | undefined;
     maxFps: number;
     iFrameInterval: number;
-    sendFrameMeta?: boolean;
-    lockedVideoOrientation?: number;
-    displayId?: number;
-    codecOptions?: string;
-    encoderName?: string;
+    sendFrameMeta?: boolean | undefined;
+    lockedVideoOrientation?: number | undefined;
+    displayId?: number | undefined;
+    codecOptions?: string | undefined;
+    encoderName?: string | undefined;
 }
 
 export default class VideoSettings {
     public static readonly BASE_BUFFER_LENGTH: number = 35;
-    public readonly crop?: Rect | null = null;
+    public readonly crop?: Rect | null | undefined = null;
     public readonly bitrate: number = 0;
-    public readonly bounds?: Size | null = null;
+    public readonly bounds?: Size | null | undefined = null;
     public readonly maxFps: number = 0;
     public readonly iFrameInterval: number = 0;
     public readonly sendFrameMeta: boolean = false;
     public readonly lockedVideoOrientation: number = -1;
     public readonly displayId: number = 0;
-    public readonly codecOptions?: string;
-    public readonly encoderName?: string;
+    public readonly codecOptions?: string | undefined;
+    public readonly encoderName?: string | undefined;
 
     constructor(
         data?: Settings,

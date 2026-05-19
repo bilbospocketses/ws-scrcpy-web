@@ -22,8 +22,8 @@ export class NetworkDiscoveryPanel {
     private container: HTMLElement;
     private infoBox: HTMLElement;
     private resultsContainer: HTMLElement;
-    private chip?: ScanProgressChip;
-    private scanWs?: WebSocket;
+    private chip?: ScanProgressChip | undefined;
+    private scanWs?: WebSocket | undefined;
     private scanSessionHits = new Map<string, HTMLElement>();
     private defaultInfoText = '';
 

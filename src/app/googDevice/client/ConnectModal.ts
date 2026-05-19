@@ -6,7 +6,7 @@ import { startStream } from '../../public/startStream';
 import type { StreamHandle } from '../../public/types';
 
 export class ConnectModal extends Modal {
-    private handle?: StreamHandle;
+    private handle?: StreamHandle | undefined;
 
     constructor(
         params: ParamsStreamScrcpy,

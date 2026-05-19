@@ -14,15 +14,15 @@ export interface DependencyInfo {
     latestVersion: string | null;
     status: DependencyStatus;
     description: string;
-    errorMessage?: string;
+    errorMessage?: string | undefined;
     requiresRestart: boolean;
-    pairedWith?: string;
+    pairedWith?: string | undefined;
 }
 
 export interface UpdateResult {
     success: boolean;
-    newVersion?: string;
-    errorMessage?: string;
+    newVersion?: string | undefined;
+    errorMessage?: string | undefined;
     requiresRestart: boolean;
 }
 

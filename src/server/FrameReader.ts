@@ -24,8 +24,8 @@ export interface ScrcpyFrame {
 
 export class FrameReader {
     private buffer: Buffer = Buffer.alloc(0);
-    private frameCallback?: (frame: ScrcpyFrame) => void;
-    private endCallback?: () => void;
+    private frameCallback?: ((frame: ScrcpyFrame) => void) | undefined;
+    private endCallback?: (() => void) | undefined;
 
     constructor(private readonly socket: net.Socket) {
         socket.on('data', this.onData);

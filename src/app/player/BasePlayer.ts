@@ -59,17 +59,17 @@ export abstract class BasePlayer extends TypedEmitter<PlayerEvents> {
         STOPPED: 3,
     };
     private static STATS_HEIGHT = 12;
-    protected screenInfo?: ScreenInfo;
+    protected screenInfo?: ScreenInfo | undefined;
     protected videoSettings: VideoSettings;
-    protected parentElement?: HTMLElement;
+    protected parentElement?: HTMLElement | undefined;
     protected touchableCanvas: HTMLCanvasElement;
     protected inputBytes: BitrateStat[] = [];
-    protected perSecondQualityStats?: FramesPerSecondStats;
-    protected momentumQualityStats?: PlaybackQuality;
+    protected perSecondQualityStats?: FramesPerSecondStats | undefined;
+    protected momentumQualityStats?: PlaybackQuality | undefined;
     protected bounds: Size | null = null;
-    protected sessionVideoCodec?: string;
-    protected sessionAudioCodec?: string;
-    protected sessionEncoder?: string;
+    protected sessionVideoCodec?: string | undefined;
+    protected sessionAudioCodec?: string | undefined;
+    protected sessionEncoder?: string | undefined;
     private totalStats: PlaybackQuality = {
         decodedFrames: 0,
         droppedFrames: 0,
@@ -80,7 +80,7 @@ export abstract class BasePlayer extends TypedEmitter<PlayerEvents> {
     private totalStatsCounter = 0;
     private dirtyStatsWidth = 0;
     private state: number = BasePlayer.STATE['STOPPED'];
-    private qualityAnimationId?: number;
+    private qualityAnimationId?: number | undefined;
     private showQualityStats = BasePlayer.DEFAULT_SHOW_QUALITY_STATS;
     protected receivedFirstFrame = false;
     private statLines: string[] = [];

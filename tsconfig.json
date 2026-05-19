@@ -7,6 +7,7 @@
         "outDir": "./build",
         "rootDir": "./src",
         "strict": true,
+        "exactOptionalPropertyTypes": true,
         "noFallthroughCasesInSwitch": true,
         "noImplicitOverride": true,
         "noImplicitReturns": true,

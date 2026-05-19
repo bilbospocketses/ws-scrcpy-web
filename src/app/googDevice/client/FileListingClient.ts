@@ -28,9 +28,9 @@ const storagePath = '/storage';
 
 type Download = {
     receivedBytes: number;
-    entry?: Entry;
-    progressEl?: HTMLElement;
-    anchor?: HTMLElement;
+    entry?: Entry | undefined;
+    progressEl?: HTMLElement | undefined;
+    anchor?: HTMLElement | undefined;
     chunks: Uint8Array[];
     path: string;
     pathToLoadAfter: string;

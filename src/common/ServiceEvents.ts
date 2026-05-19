@@ -23,8 +23,8 @@ export type ServiceStatus = 'running' | 'stopped' | 'not-installed';
 export interface ServiceStatusResponse {
     supported: boolean;
     platform: NodeJS.Platform;
-    status?: ServiceStatus;
-    unsupportedReason?: string;
+    status?: ServiceStatus | undefined;
+    unsupportedReason?: string | undefined;
 }
 
 /** Success response shape for /api/service/install and /api/service/uninstall. */

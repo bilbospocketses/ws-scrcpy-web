@@ -8,7 +8,7 @@ export interface DetectedSubnet {
     cidr: string;
     hostCount: number;
     source: 'gateway' | 'interface';
-    interfaceName?: string;
+    interfaceName?: string | undefined;
 }
 
 export interface DetectorDeps {

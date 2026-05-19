@@ -70,18 +70,18 @@ export abstract class InteractionHandler {
     private static pointerToIdMap: Map<number, number> = new Map();
     private static touchPointRadius = 10;
     private static centerPointRadius = 5;
-    private static touchPointImage?: HTMLImageElement;
-    private static centerPointImage?: HTMLImageElement;
+    private static touchPointImage?: HTMLImageElement | undefined;
+    private static centerPointImage?: HTMLImageElement | undefined;
     private static pointImagesLoaded = false;
     private static eventListeners: Map<string, Set<InteractionHandler>> = new Map();
     private multiTouchActive = false;
-    private multiTouchCenter?: Point;
+    private multiTouchCenter?: Point | undefined;
     private multiTouchShift = false;
     private dirtyPlace: Point[] = [];
     protected readonly ctx: CanvasRenderingContext2D | null;
     protected readonly tag: HTMLCanvasElement;
     protected over = false;
-    protected lastPosition?: MouseEvent;
+    protected lastPosition?: MouseEvent | undefined;
 
     protected constructor(
         public readonly player: BasePlayer,

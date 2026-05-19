@@ -45,7 +45,7 @@ export class FilePushReader {
     private pushId = -1;
     private state: State = State.INITIAL;
     private tempFilePath = '';
-    private writeStream?: fs.WriteStream;
+    private writeStream?: fs.WriteStream | undefined;
     private disposed = false;
 
     constructor(

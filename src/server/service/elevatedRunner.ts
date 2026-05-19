@@ -53,7 +53,7 @@ export interface ElevatedResult {
     exitCode: number;
     stdout: string;
     stderr: string;
-    errorMessage?: string;
+    errorMessage?: string | undefined;
 }
 
 /**

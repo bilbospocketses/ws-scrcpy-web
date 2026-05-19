@@ -59,12 +59,12 @@ export interface UpdateServiceState {
     isInstalled: boolean;
     currentVersion: string;
     status: UpdateState;
-    progress?: number;
-    availableVersion?: string;
-    errorMessage?: string;
-    lastCheckedAt?: Date;
+    progress?: number | undefined;
+    availableVersion?: string | undefined;
+    errorMessage?: string | undefined;
+    lastCheckedAt?: Date | undefined;
     /** Internal: the UpdateInfo we got from checkForUpdatesAsync, kept until apply. */
-    pendingUpdate?: UpdateInfo;
+    pendingUpdate?: UpdateInfo | undefined;
 }
 
 const defaultUpdateManagerFactory: UpdateManagerFactory = (feedUrl, opts, locator) =>
