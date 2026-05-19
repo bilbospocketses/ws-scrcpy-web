@@ -175,6 +175,17 @@ fn fail(code: i32, msg: &str) -> ElevatedResult {
 fn install_service(args: &InstallServiceArgs) -> ElevatedResult {
     log::info(&format!("install-service: name={}", args.name));
 
+    // §32 Part 3: register `--postStopPath` pointing at the launcher
+    // itself with `--post-stop-handler` as its only param. Servy fires
+    // this every time the supervised launcher exits. For user-initiated
+    // stops (sc stop, services.msc), the handler exits 0 immediately
+    // because no marker is present. For Velopack apply-update flows, the
+    // handler sees the marker that UpdateService wrote pre-exit, sleeps
+    // long enough for Update.exe to release file handles on current/,
+    // then `sc start`s the service. The post-stop process is fire-and-
+    // forget per Servy docs — it doesn't block service shutdown and is
+    // outside Velopack's process tree, so it survives any Job-Object
+    // cleanup that killed our prior Part 1/Part 2 attempts.
     let servy_args = vec![
         "install".to_string(),
         "--name".to_string(),
@@ -199,6 +210,12 @@ fn install_service(args: &InstallServiceArgs) -> ElevatedResult {
         args.log_path.clone(),
         "--stderr".to_string(),
         args.log_path.clone(),
+        "--postStopPath".to_string(),
+        args.bin_path.clone(),
+        "--postStopParams".to_string(),
+        "--post-stop-handler".to_string(),
+        "--postStopStartupDir".to_string(),
+        args.startup_dir.clone(),
     ];
 
     let install_out = match run_capture(&args.servy_path, &servy_args) {

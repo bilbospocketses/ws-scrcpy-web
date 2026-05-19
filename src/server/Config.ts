@@ -512,6 +512,24 @@ export class Config {
         return path.join(path.dirname(this._dependenciesPath), '.restart');
     }
 
+    /**
+     * Canonical path for the `apply-update-pending` marker. UpdateService.applyUpdate
+     * writes this file before triggering process.exit; the launcher's post-stop
+     * handler (registered as Servy's --postStopPath) reads it after every supervised
+     * launcher exit to decide whether the exit was a user-initiated stop (marker
+     * absent → no-op) or a Velopack apply (marker present → sleep + sc start).
+     *
+     * Matches `launcher/src/post_stop_handler.rs::marker_path` —
+     * `<dataRoot>/control/apply-update-pending`. Lives under the `control/` subdir
+     * alongside the existing uninstall-handoff marker (see `common/src/control_marker.rs`).
+     */
+    public get applyUpdatePendingMarkerPath(): string {
+        const base = this._dataRoot !== null
+            ? this._dataRoot
+            : path.dirname(this._dependenciesPath);
+        return path.join(base, 'control', 'apply-update-pending');
+    }
+
     public get scanConcurrency(): number { return this._scanConcurrency; }
     public get scanTcpTimeoutMs(): number { return this._scanTcpTimeoutMs; }
     public get scanAdbConnectTimeoutMs(): number { return this._scanAdbConnectTimeoutMs; }
