@@ -10,6 +10,14 @@ on:
         type: boolean
         default: false
 
+# Workflow-level default permissions. The publish + open-issue-on-failure
+# jobs override with their own narrower writes (per the Tier 1 hardening pass);
+# precheck + build legs inherit this read-only default. Closes the two
+# `actions/missing-workflow-permissions` CodeQL alerts surfaced post-migration
+# to advanced setup (alert #3 on precheck, #5 on build).
+permissions:
+  contents: read
+
 jobs:
   precheck:
     runs-on: ubuntu-latest
