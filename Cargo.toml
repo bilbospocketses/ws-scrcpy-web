@@ -17,6 +17,11 @@ serde_json = "1.0"
 ureq = { version = "2.10", default-features = false, features = ["tls"] }
 velopack = "0.0"
 winresource = "0.1"
+# Used by launcher --unzip to handle dependency-archive extraction without
+# shelling out to PowerShell/unzip (Local-Dependencies-Only compliance).
+# default-features = false drops the bzip2/zstd/lzma codec features; deflate
+# is the only compression we need for Node.js + ADB platform-tools zips.
+zip = { version = "2", default-features = false, features = ["deflate"] }
 windows = { version = "0.58", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",

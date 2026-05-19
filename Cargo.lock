@@ -170,6 +170,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "crossbeam-utils"
+version = "0.8.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d0a5c400df2834b80a4c3327b3aad3a4c4cd4de0629063962b03235697506a28"
+
+[[package]]
 name = "crypto-common"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1215,7 +1221,7 @@ dependencies = [
  "uuid",
  "windows 0.61.3",
  "xml",
- "zip",
+ "zip 3.0.0",
 ]
 
 [[package]]
@@ -1726,7 +1732,7 @@ checksum = "1ffae5123b2d3fc086436f8834ae3ab053a283cfac8fe0a0b8eaae044768a4c4"
 
 [[package]]
 name = "ws-scrcpy-web-common"
-version = "0.1.25-beta.6"
+version = "0.1.25-beta.7"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1738,7 +1744,7 @@ dependencies = [
 
 [[package]]
 name = "ws-scrcpy-web-launcher"
-version = "0.1.25-beta.6"
+version = "0.1.25-beta.7"
 dependencies = [
  "anyhow",
  "ctrlc",
@@ -1749,11 +1755,12 @@ dependencies = [
  "windows 0.58.0",
  "winresource",
  "ws-scrcpy-web-common",
+ "zip 2.4.2",
 ]
 
 [[package]]
 name = "ws-scrcpy-web-tray"
-version = "0.1.25-beta.6"
+version = "0.1.25-beta.7"
 dependencies = [
  "anyhow",
  "ureq 2.12.1",
@@ -1878,6 +1885,23 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "zip"
+version = "2.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fabe6324e908f85a1c52063ce7aa26b68dcb7eb6dbc83a2d148403c9bc3eba50"
+dependencies = [
+ "arbitrary",
+ "crc32fast",
+ "crossbeam-utils",
+ "displaydoc",
+ "flate2",
+ "indexmap",
+ "memchr",
+ "thiserror",
+ "zopfli",
 ]
 
 [[package]]
