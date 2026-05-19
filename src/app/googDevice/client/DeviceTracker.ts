@@ -68,13 +68,13 @@ getCapabilities();
 // ---------- end capability gating ----------
 
 export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never> {
-    public static readonly ACTION = ACTION.GOOG_DEVICE_LIST;
+    public static override readonly ACTION = ACTION.GOOG_DEVICE_LIST;
     public static readonly CREATE_DIRECT_LINKS = true;
     private static instancesByUrl: Map<string, DeviceTracker> = new Map();
-    protected static tools: Set<Tool> = new Set();
-    protected tableId = 'goog_device_list';
+    protected static override tools: Set<Tool> = new Set();
+    protected override tableId = 'goog_device_list';
 
-    public static start(hostItem: HostItem): DeviceTracker {
+    public static override start(hostItem: HostItem): DeviceTracker {
         const url = this.buildUrlForTracker(hostItem).toString();
         let instance = this.instancesByUrl.get(url);
         if (!instance) {
@@ -98,7 +98,7 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
         // nothing here;
     }
 
-    protected setIdAndHostName(id: string, hostName: string): void {
+    protected override setIdAndHostName(id: string, hostName: string): void {
         super.setIdAndHostName(id, hostName);
         for (const value of DeviceTracker.instancesByUrl.values()) {
             if (value.id === id && value !== this) {
@@ -440,11 +440,11 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
         });
     }
 
-    protected getChannelCode(): string {
+    protected override getChannelCode(): string {
         return ChannelCode.GTRC;
     }
 
-    public destroy(): void {
+    public override destroy(): void {
         super.destroy();
         DeviceTracker.instancesByUrl.delete(this.url.toString());
         if (!DeviceTracker.instancesByUrl.size) {

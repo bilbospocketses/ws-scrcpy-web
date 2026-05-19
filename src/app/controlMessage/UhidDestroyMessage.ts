@@ -7,7 +7,7 @@ export class UhidDestroyMessage extends ControlMessage {
         super(ControlMessage.TYPE_UHID_DESTROY);
     }
 
-    public toUint8Array(): Uint8Array {
+    public override toUint8Array(): Uint8Array {
         return new BinaryWriter(3).writeUInt8(this.type).writeUInt16BE(this.id).toUint8Array();
     }
 }

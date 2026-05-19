@@ -33,7 +33,7 @@ export class ScrollControlMessage extends ControlMessage {
     /**
      * @override
      */
-    public toUint8Array(): Uint8Array {
+    public override toUint8Array(): Uint8Array {
         // Normalize scroll ticks to [-1, 1] then encode as i16 fixed-point
         // scrcpy desktop uses /16; we use /128 for slower scrolling over latent streams
         const hScrollNorm = Math.max(-1, Math.min(1, this.hScroll / 128));
@@ -50,11 +50,11 @@ export class ScrollControlMessage extends ControlMessage {
             .toUint8Array();
     }
 
-    public toString(): string {
+    public override toString(): string {
         return `ScrollControlMessage{hScroll=${this.hScroll}, vScroll=${this.vScroll}, buttons=${this.buttons}, position=${this.position}}`;
     }
 
-    public toJSON(): ScrollControlMessageInterface {
+    public override toJSON(): ScrollControlMessageInterface {
         return {
             type: this.type,
             position: this.position.toJSON(),

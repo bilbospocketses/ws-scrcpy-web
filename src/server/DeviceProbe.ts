@@ -46,7 +46,7 @@ function installedVersion(): string {
 export class DeviceProbe extends Mw {
     private adbClient = new AdbClient(Config.getInstance().adbPath);
 
-    public static processRequest(ws: WS, params: RequestParameters): DeviceProbe | undefined {
+    public static override processRequest(ws: WS, params: RequestParameters): DeviceProbe | undefined {
         const { action, url } = params;
         if (action !== ACTION.PROBE_DEVICE) {
             return;

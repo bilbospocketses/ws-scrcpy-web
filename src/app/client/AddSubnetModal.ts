@@ -56,7 +56,7 @@ export class AddSubnetModal extends Modal {
         }
     }
 
-    protected buildFooter(): HTMLElement | null {
+    protected override buildFooter(): HTMLElement | null {
         const footer = document.createElement('div');
         // Defer content so class-field init doesn't clobber this.addBtn.
         queueMicrotask(() => this.fillFooter(footer));

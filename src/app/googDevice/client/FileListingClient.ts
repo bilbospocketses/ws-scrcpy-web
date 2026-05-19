@@ -48,13 +48,13 @@ const Message: Record<Foreground, string> = {
 };
 
 export class FileListingClient extends ManagerClient<ParamsFileListing, never> implements DragAndPushListener {
-    public static readonly ACTION = ACTION.FILE_LISTING;
+    public static override readonly ACTION = ACTION.FILE_LISTING;
     public static readonly PARENT_DIR = '..';
     public static readonly PROPERTY_NAME = 'data-name';
     public static readonly PROPERTY_ENTRY_ID = 'data-entry-id';
     public static REMOVE_ROW_TIMEOUT = 2000;
 
-    public static start(params: ParamsFileListing): FileListingClient {
+    public static override start(params: ParamsFileListing): FileListingClient {
         return new FileListingClient(params);
     }
 
@@ -260,7 +260,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         });
     }
 
-    public static parseParameters(params: URLSearchParams): ParamsFileListing {
+    public static override parseParameters(params: URLSearchParams): ParamsFileListing {
         const typedParams = super.parseParameters(params);
         const { action } = typedParams;
         if (action !== ACTION.FILE_LISTING) {
@@ -271,7 +271,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         return { ...typedParams, action, udid: Util.parseString(params, 'udid', true), path };
     }
 
-    protected buildDirectWebSocketUrl(): URL {
+    protected override buildDirectWebSocketUrl(): URL {
         const localUrl = super.buildDirectWebSocketUrl();
         localUrl.searchParams.set('action', ACTION.MULTIPLEX);
         return localUrl;
@@ -586,11 +586,11 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         this.loadContent(this.path);
     }
 
-    protected supportMultiplexing(): boolean {
+    protected override supportMultiplexing(): boolean {
         return true;
     }
 
-    protected getChannelInitData(): Uint8Array {
+    protected override getChannelInitData(): Uint8Array {
         const serial = new TextEncoder().encode(this.serial);
         return new BinaryWriter(4 + 4 + serial.byteLength)
             .writeString(ChannelCode.FSLS)

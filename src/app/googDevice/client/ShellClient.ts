@@ -15,8 +15,8 @@ import Util from '../../Util';
 const TAG = '[ShellClient]';
 
 export class ShellClient extends ManagerClient<ParamsShell, never> {
-    public static ACTION = ACTION.SHELL;
-    public static start(params: ParamsShell): ShellClient {
+    public static override ACTION = ACTION.SHELL;
+    public static override start(params: ParamsShell): ShellClient {
         return new ShellClient(params);
     }
 
@@ -43,11 +43,11 @@ export class ShellClient extends ManagerClient<ParamsShell, never> {
         this.term.focus();
     }
 
-    protected supportMultiplexing(): boolean {
+    protected override supportMultiplexing(): boolean {
         return true;
     }
 
-    public static parseParameters(params: URLSearchParams): ParamsShell {
+    public static override parseParameters(params: URLSearchParams): ParamsShell {
         const typedParams = super.parseParameters(params);
         const { action } = typedParams;
         if (action !== ACTION.SHELL) {
@@ -127,7 +127,7 @@ export class ShellClient extends ManagerClient<ParamsShell, never> {
         return entry;
     }
 
-    protected getChannelInitData(): Uint8Array {
+    protected override getChannelInitData(): Uint8Array {
         return new TextEncoder().encode(ChannelCode.SHEL);
     }
 }

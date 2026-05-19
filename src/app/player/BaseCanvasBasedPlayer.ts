@@ -50,13 +50,13 @@ export abstract class BaseCanvasBasedPlayer extends BasePlayer {
         displayInfo?: DisplayInfo,
         name = 'Canvas',
         storageKeyPrefix = 'DummyCanvas',
-        protected tag: HTMLCanvasElement = BaseCanvasBasedPlayer.createElement(),
+        protected override tag: HTMLCanvasElement = BaseCanvasBasedPlayer.createElement(),
     ) {
         super(udid, displayInfo, name, storageKeyPrefix, tag);
     }
 
     protected abstract decode(data: Uint8Array): void;
-    public abstract getPreferredVideoSetting(): VideoSettings;
+    public abstract override getPreferredVideoSetting(): VideoSettings;
 
     protected drawDecoded = (): void => {
         if (!this.canvas) {
@@ -147,7 +147,7 @@ export abstract class BaseCanvasBasedPlayer extends BasePlayer {
         };
     }
 
-    protected resetStats(): void {
+    protected override resetStats(): void {
         super.resetStats();
         this.videoStats = [];
     }
@@ -177,7 +177,7 @@ export abstract class BaseCanvasBasedPlayer extends BasePlayer {
         this.tag.height = Math.round(height);
     }
 
-    public play(): void {
+    public override play(): void {
         super.play();
         if (this.getState() !== BasePlayer.STATE.PLAYING || !this.screenInfo) {
             return;
@@ -190,12 +190,12 @@ export abstract class BaseCanvasBasedPlayer extends BasePlayer {
         this.shiftFrame();
     }
 
-    public stop(): void {
+    public override stop(): void {
         super.stop();
         this.clearState();
     }
 
-    public setScreenInfo(screenInfo: ScreenInfo): void {
+    public override setScreenInfo(screenInfo: ScreenInfo): void {
         super.setScreenInfo(screenInfo);
         this.clearState();
         const { width, height } = screenInfo.videoSize;
@@ -207,7 +207,7 @@ export abstract class BaseCanvasBasedPlayer extends BasePlayer {
         }
     }
 
-    public pushFrame(frame: Uint8Array): void {
+    public override pushFrame(frame: Uint8Array): void {
         super.pushFrame(frame);
         if (BasePlayer.isIFrame(frame)) {
             if (this.videoSettings) {

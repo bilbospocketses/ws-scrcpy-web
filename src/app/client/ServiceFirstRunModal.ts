@@ -55,7 +55,7 @@ export class ServiceFirstRunModal extends Modal {
         // Body content is rendered by fillBody() from the constructor.
     }
 
-    protected buildFooter(): HTMLElement | null {
+    protected override buildFooter(): HTMLElement | null {
         const footer = document.createElement('div');
         const btn = document.createElement('button');
         btn.textContent = 'got it';

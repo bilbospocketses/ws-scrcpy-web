@@ -512,7 +512,7 @@ export class ConfigureScrcpy extends Modal {
         container.appendChild(advancedSection);
     }
 
-    protected buildFooter(): HTMLElement | null {
+    protected override buildFooter(): HTMLElement | null {
         // Create the footer structure — populateUI() will fill in the status element and connect button
         const footer = document.createElement('div');
         return footer;

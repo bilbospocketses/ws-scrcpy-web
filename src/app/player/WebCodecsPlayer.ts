@@ -14,11 +14,11 @@ function toHex(value: number) {
 }
 
 export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
-    public static readonly storageKeyPrefix = 'WebCodecsPlayer';
-    public static readonly playerFullName = 'connect';
-    public static readonly playerCodeName = 'webcodecs';
+    public static override readonly storageKeyPrefix = 'WebCodecsPlayer';
+    public static override readonly playerFullName = 'connect';
+    public static override readonly playerCodeName = 'webcodecs';
 
-    public static readonly preferredVideoSettings: VideoSettings = new VideoSettings({
+    public static override readonly preferredVideoSettings: VideoSettings = new VideoSettings({
         lockedVideoOrientation: -1,
         bitrate: 8000000,
         maxFps: 15,
@@ -27,7 +27,7 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
         sendFrameMeta: false,
     });
 
-    public static isSupported(): boolean {
+    public static override isSupported(): boolean {
         return typeof VideoDecoder === 'function' && typeof VideoDecoder.isConfigSupported === 'function';
     }
 
@@ -57,7 +57,7 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
         return { codec, width, height };
     }
 
-    public readonly supportsScreenshot = true;
+    public override readonly supportsScreenshot = true;
     private context: CanvasRenderingContext2D;
     private decoder: VideoDecoder;
     private configData?: Uint8Array;
@@ -299,11 +299,11 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
     }
 
     /** Legacy decode path — not used with v3.x demuxer. */
-    protected decode(_data: Uint8Array): void {
+    protected override decode(_data: Uint8Array): void {
         // No-op: v3.x uses pushVideoFrame() instead
     }
 
-    protected drawDecoded = (): void => {
+    protected override drawDecoded = (): void => {
         if (this.receivedFirstFrame) {
             const data = this.decodedFrames.shift();
             if (data) {
@@ -327,27 +327,27 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
         }
     };
 
-    protected dropFrame(frame: VideoFrame): void {
+    protected override dropFrame(frame: VideoFrame): void {
         frame.close();
     }
 
-    public getFitToScreenStatus(): boolean {
+    public override getFitToScreenStatus(): boolean {
         return false;
     }
 
-    public getPreferredVideoSetting(): VideoSettings {
+    public override getPreferredVideoSetting(): VideoSettings {
         return WebCodecsPlayer.preferredVideoSettings;
     }
 
-    public loadVideoSettings(): VideoSettings {
+    public override loadVideoSettings(): VideoSettings {
         return WebCodecsPlayer.loadVideoSettings(this.udid, this.displayInfo);
     }
 
-    protected needScreenInfoBeforePlay(): boolean {
+    protected override needScreenInfoBeforePlay(): boolean {
         return false;
     }
 
-    public stop(): void {
+    public override stop(): void {
         super.stop();
         if (this.decoder.state === 'configured') {
             this.decoder.close();

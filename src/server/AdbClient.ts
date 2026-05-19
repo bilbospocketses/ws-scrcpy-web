@@ -29,7 +29,7 @@ export class AdbExecError extends Error {
         public readonly kind: AdbExecErrorKind,
         public readonly adbPath: string,
         public readonly args: readonly string[],
-        public readonly cause?: unknown,
+        public override readonly cause?: unknown,
     ) {
         const argsPreview = args.join(' ');
         const causeMsg = cause instanceof Error ? cause.message : cause !== undefined ? String(cause) : '';

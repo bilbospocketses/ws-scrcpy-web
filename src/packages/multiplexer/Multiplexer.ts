@@ -350,7 +350,7 @@ export class Multiplexer extends TypedEmitter<MultiplexerEvents> implements WebS
         return this.nextId;
     }
 
-    public dispatchEvent(event: Event): boolean {
+    public override dispatchEvent(event: Event): boolean {
         if (event.type === 'close' && typeof this.onclose === 'function') {
             Reflect.apply(this.onclose, this, [event]);
         }

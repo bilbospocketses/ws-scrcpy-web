@@ -209,7 +209,7 @@ export class FeaturedInteractionHandler extends InteractionHandler {
         this.clearCanvas();
     };
 
-    public release(): void {
+    public override release(): void {
         super.release();
         this.tag.removeEventListener('mouseleave', this.onMouseLeave);
         this.tag.removeEventListener('mouseenter', this.onMouseEnter);

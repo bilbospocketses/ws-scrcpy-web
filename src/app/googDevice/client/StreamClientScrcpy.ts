@@ -213,7 +213,7 @@ export class StreamClientScrcpy
         this.startStream({ udid, player, playerName, fitToScreen: fitToScreen ?? params.fitToScreen, videoSettings, deviceKind });
     }
 
-    public static parseParameters(params: URLSearchParams): ParamsStreamScrcpy {
+    public static override parseParameters(params: URLSearchParams): ParamsStreamScrcpy {
         const typedParams = super.parseParameters(params);
         const { action } = typedParams;
         if (action !== ACTION.STREAM_SCRCPY) {

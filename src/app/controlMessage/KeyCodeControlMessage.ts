@@ -23,7 +23,7 @@ export class KeyCodeControlMessage extends ControlMessage {
     /**
      * @override
      */
-    public toUint8Array(): Uint8Array {
+    public override toUint8Array(): Uint8Array {
         return new BinaryWriter(KeyCodeControlMessage.PAYLOAD_LENGTH + 1)
             .writeInt8(this.type)
             .writeInt8(this.action)
@@ -33,11 +33,11 @@ export class KeyCodeControlMessage extends ControlMessage {
             .toUint8Array();
     }
 
-    public toString(): string {
+    public override toString(): string {
         return `KeyCodeControlMessage{action=${this.action}, keycode=${this.keycode}, metaState=${this.metaState}}`;
     }
 
-    public toJSON(): KeyCodeControlMessageInterface {
+    public override toJSON(): KeyCodeControlMessageInterface {
         return {
             type: this.type,
             action: this.action,

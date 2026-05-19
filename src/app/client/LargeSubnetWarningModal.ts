@@ -45,7 +45,7 @@ export class LargeSubnetWarningModal extends Modal {
         container.appendChild(advice);
     }
 
-    protected buildFooter(): HTMLElement | null {
+    protected override buildFooter(): HTMLElement | null {
         const footer = document.createElement('div');
         const cancel = document.createElement('button');
         cancel.textContent = 'cancel';

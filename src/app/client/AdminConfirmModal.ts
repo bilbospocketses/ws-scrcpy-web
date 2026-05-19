@@ -52,7 +52,7 @@ export class AdminConfirmModal extends Modal {
         container.appendChild(question);
     }
 
-    protected buildFooter(): HTMLElement | null {
+    protected override buildFooter(): HTMLElement | null {
         const footer = document.createElement('div');
         footer.style.cssText = 'display: flex; gap: 8px; justify-content: flex-end;';
 
@@ -73,15 +73,15 @@ export class AdminConfirmModal extends Modal {
         return footer;
     }
 
-    protected onEscapeKey(_event: Event): void {
+    protected override onEscapeKey(_event: Event): void {
         this.resolveAndClose(false);
     }
 
-    protected onBackdropClick(_event: MouseEvent): void {
+    protected override onBackdropClick(_event: MouseEvent): void {
         this.resolveAndClose(false);
     }
 
-    protected onCloseButtonClick(): void {
+    protected override onCloseButtonClick(): void {
         this.resolveAndClose(false);
     }
 

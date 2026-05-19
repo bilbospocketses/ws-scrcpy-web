@@ -191,14 +191,14 @@ export class CommandControlMessage extends ControlMessage {
 
     private buffer?: Uint8Array;
 
-    constructor(readonly type: number) {
+    constructor(override readonly type: number) {
         super(type);
     }
 
     /**
      * @override
      */
-    public toUint8Array(): Uint8Array {
+    public override toUint8Array(): Uint8Array {
         if (!this.buffer) {
             this.buffer = new BinaryWriter(CommandControlMessage.PAYLOAD_LENGTH + 1)
                 .writeUInt8(this.type)
@@ -207,7 +207,7 @@ export class CommandControlMessage extends ControlMessage {
         return this.buffer;
     }
 
-    public toString(): string {
+    public override toString(): string {
         const buffer = this.buffer ? `, buffer=[${Array.from(this.buffer).join(',')}]` : '';
         return `CommandControlMessage{action=${this.type}${buffer}}`;
     }
