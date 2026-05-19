@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.25-beta.8] - 2026-05-19
+
 ### Security
 
 - **`DependencyManager.extractZip` — system-PATH `powershell` + `unzip` shellouts replaced with launcher `--unzip` subcommand. CLAUDE.md Local-Dependencies-Only compliance.** §30 scrubbed PowerShell from the service-elevation path but missed the dependency-manager's zip-extraction path: `installNodejs` / `installAdb` on Windows shelled out to `execFileAsync('powershell', ['-NoProfile', '-Command', 'Expand-Archive ...'])`; the Linux branch shelled out to `execFileAsync('unzip', [...])`. Both resolved binaries via system PATH — same compliance violation, different code path. This change replaces both with a single cross-platform `execFileAsync(launcherPath, ['--unzip', src, dest], ...)` call. The launcher binary is SHA-pinned-to-release and ships in `current/` alongside the Node process; same compliance posture the §30 `--request-uac` path established.
