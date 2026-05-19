@@ -289,6 +289,14 @@ export class NetworkDiscoveryPanel {
         resultEl.setAttribute('hidden', '');
         resultEl.textContent = '';
         resultEl.classList.remove('error', 'success');
+        // §25b — using-declaration replaces the prior try/finally restoring
+        // the manual-connect button. Captures `btn`.
+        using _restoreBtn = {
+            [Symbol.dispose](): void {
+                btn.disabled = false;
+                btn.textContent = 'connect';
+            },
+        };
 
         try {
             const res = await fetch('/api/devices/connect', {
@@ -305,9 +313,6 @@ export class NetworkDiscoveryPanel {
             }
         } catch (err: any) {
             this.showManualResult(err?.message || 'Request failed', 'error');
-        } finally {
-            btn.disabled = false;
-            btn.textContent = 'connect';
         }
     }
 

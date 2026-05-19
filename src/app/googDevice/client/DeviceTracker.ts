@@ -255,6 +255,14 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
             sleepBtn.addEventListener('click', async () => {
                 const isAwake = sleepBtn.dataset.awake === 'true';
                 sleepBtn.disabled = true;
+                // §25b — using-declaration replaces the prior try/finally that
+                // re-enabled the button on every exit path. Captures sleepBtn
+                // lexically; dispose fires on return or throw from the fetch.
+                using _restoreBtn = {
+                    [Symbol.dispose](): void {
+                        sleepBtn.disabled = false;
+                    },
+                };
                 try {
                     const res = await fetch('/api/devices/sleep-wake', {
                         method: 'POST',
@@ -269,8 +277,6 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
                     sleepBtn.dataset.awake = String(isAwake);
                     sleepBtn.textContent = isAwake ? 'turn off' : 'turn on';
                     sleepBtn.className = `sleep-wake-btn ${isAwake ? 'state-on' : 'state-off'}`;
-                } finally {
-                    sleepBtn.disabled = false;
                 }
             });
             wrapper.appendChild(sleepBtn);

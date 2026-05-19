@@ -212,6 +212,15 @@ export class SettingsModal extends Modal {
         }
         this.serverSaveBtn.disabled = true;
         this.setServerStatus('saving…', false);
+        // §25b — using-declaration replaces the prior try/finally re-enabling
+        // serverSaveBtn. Captures `this` so the dispose also handles the
+        // early-return inside the try (where the prior code had a manual
+        // re-enable line that is now redundant — kept for symmetry, see below).
+        using _restoreBtn = {
+            [Symbol.dispose]: (): void => {
+                this.serverSaveBtn.disabled = false;
+            },
+        };
         try {
             const r = await fetch('/api/config', {
                 method: 'PATCH',
@@ -220,7 +229,9 @@ export class SettingsModal extends Modal {
             });
             if (!r.ok) {
                 this.setServerStatus(`save failed (${r.status})`, true);
-                this.serverSaveBtn.disabled = false;
+                // Early-return path: using-dispose above re-enables the button.
+                // Redundant explicit re-enable removed (was duplicating the
+                // finally cleanup).
                 return;
             }
             const data = (await r.json()) as AppConfigPatchResponse;
@@ -240,8 +251,6 @@ export class SettingsModal extends Modal {
             }
         } catch {
             this.setServerStatus("couldn't reach server", true);
-        } finally {
-            this.serverSaveBtn.disabled = false;
         }
     }
 
@@ -657,6 +666,22 @@ export class SettingsModal extends Modal {
             this.updatesStatusEl.textContent = 'checking for updates…';
             this.updatesStatusEl.classList.remove('settings-status-error');
         }
+        // §25b — using-declaration replaces the prior try/finally. Captures
+        // `this`, `btn`, and `prev`; dispose restores text + conditionally
+        // re-enables the button (only when not actively checking/downloading,
+        // matching the original conditional re-enable logic).
+        using _restoreBtn = {
+            [Symbol.dispose]: (): void => {
+                btn.textContent = prev;
+                if (
+                    this.updatesLastStatus &&
+                    this.updatesLastStatus.status !== 'checking' &&
+                    this.updatesLastStatus.status !== 'downloading'
+                ) {
+                    btn.disabled = false;
+                }
+            },
+        };
         try {
             const r = await fetch('/api/updates/check', { method: 'POST' });
             if (!r.ok) {
@@ -675,15 +700,6 @@ export class SettingsModal extends Modal {
             if (this.updatesStatusEl) {
                 this.updatesStatusEl.textContent = "couldn't reach server";
                 this.updatesStatusEl.classList.add('settings-status-error');
-            }
-        } finally {
-            btn.textContent = prev;
-            if (
-                this.updatesLastStatus &&
-                this.updatesLastStatus.status !== 'checking' &&
-                this.updatesLastStatus.status !== 'downloading'
-            ) {
-                btn.disabled = false;
             }
         }
     }
@@ -816,6 +832,14 @@ export class SettingsModal extends Modal {
         btn.disabled = true;
         const prevText = btn.textContent;
         btn.textContent = 'installing…';
+        // §25b — using-declaration replaces the prior try/finally restoring
+        // btn state on every exit path.
+        using _restoreBtn = {
+            [Symbol.dispose](): void {
+                btn.disabled = false;
+                btn.textContent = prevText;
+            },
+        };
         const requestBody: { scope?: 'user' | 'system' } = {};
         if (this.serviceScopeSystemRadio) {
             requestBody.scope = this.serviceScopeSystemRadio.checked ? 'system' : 'user';
@@ -844,9 +868,6 @@ export class SettingsModal extends Modal {
             await this.refreshService();
         } catch {
             this.renderServiceError("couldn't reach server", () => void this.refreshService());
-        } finally {
-            btn.disabled = false;
-            btn.textContent = prevText;
         }
     }
 
@@ -864,6 +885,16 @@ export class SettingsModal extends Modal {
         const stillWaitingTimeout = setTimeout(() => {
             btn.textContent = 'still waiting for user session…';
         }, 5000);
+        // §25b — using-declaration replaces the prior try/finally clearing
+        // the 5s "still waiting" timer + restoring btn state. Declared AFTER
+        // the setTimeout so `stillWaitingTimeout` is captured by value.
+        using _restoreBtn = {
+            [Symbol.dispose](): void {
+                clearTimeout(stillWaitingTimeout);
+                btn.disabled = false;
+                btn.textContent = prevText;
+            },
+        };
 
         try {
             const r = await fetch('/api/service/uninstall', { method: 'POST' });
@@ -885,10 +916,6 @@ export class SettingsModal extends Modal {
             await this.refreshService();
         } catch {
             this.renderServiceError("couldn't reach server", () => void this.refreshService());
-        } finally {
-            clearTimeout(stillWaitingTimeout);
-            btn.disabled = false;
-            btn.textContent = prevText;
         }
     }
 

@@ -78,16 +78,21 @@ export class DependencyPanel {
         btn.disabled = true;
         btn.textContent = 'Checking...';
         this.busy = true;
+        // §25b — using-declaration replaces the prior try/finally restoring
+        // instance busy-flag + button state. Captures `this` and `btn`.
+        using _restore = {
+            [Symbol.dispose]: (): void => {
+                this.busy = false;
+                btn.disabled = false;
+                btn.textContent = 'check for updates';
+            },
+        };
         try {
             const res = await fetch('/api/dependencies/check', { method: 'POST' });
             const deps: DependencyInfo[] = await res.json();
             this.render(deps);
         } catch {
             this.renderError('Check failed');
-        } finally {
-            this.busy = false;
-            btn.disabled = false;
-            btn.textContent = 'check for updates';
         }
     }
 
@@ -98,6 +103,15 @@ export class DependencyPanel {
             btn.textContent = 'Updating...';
         }
         this.busy = true;
+        // §25b — using-declaration replaces the prior try/finally clearing
+        // the busy flag. Inline because the only cleanup is a single instance
+        // field reset; no button state to capture here (the per-dep button
+        // is left in 'Updating...' state on success — the row re-renders).
+        using _restoreBusy = {
+            [Symbol.dispose]: (): void => {
+                this.busy = false;
+            },
+        };
         try {
             const res = await fetch(`/api/dependencies/${name}/update`, { method: 'POST' });
             const result: UpdateResult = await res.json();
@@ -113,8 +127,6 @@ export class DependencyPanel {
         } catch {
             alert('Update request failed');
             await this.load();
-        } finally {
-            this.busy = false;
         }
     }
 

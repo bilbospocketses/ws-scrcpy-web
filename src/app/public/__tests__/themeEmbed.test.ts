@@ -144,12 +144,15 @@ describe('notifyThemeReady', () => {
         const parentMock = { postMessage: vi.fn() };
         const originalParent = window.parent;
         Object.defineProperty(window, 'parent', { value: parentMock, configurable: true });
-        try {
-            notifyThemeReady();
-            expect(parentMock.postMessage).toHaveBeenCalled();
-        } finally {
-            Object.defineProperty(window, 'parent', { value: originalParent, configurable: true });
-        }
+        // §25b — using-declaration replaces the prior try/finally that
+        // restored window.parent after the test mutation.
+        using _restoreParent = {
+            [Symbol.dispose](): void {
+                Object.defineProperty(window, 'parent', { value: originalParent, configurable: true });
+            },
+        };
+        notifyThemeReady();
+        expect(parentMock.postMessage).toHaveBeenCalled();
     });
 
     it('is a no-op when target equals window (not embedded)', () => {
@@ -189,12 +192,15 @@ describe('notifyThemeChanged', () => {
         const parentMock = { postMessage: vi.fn() };
         const originalParent = window.parent;
         Object.defineProperty(window, 'parent', { value: parentMock, configurable: true });
-        try {
-            notifyThemeChanged();
-            expect(parentMock.postMessage).toHaveBeenCalled();
-        } finally {
-            Object.defineProperty(window, 'parent', { value: originalParent, configurable: true });
-        }
+        // §25b — using-declaration replaces the prior try/finally that
+        // restored window.parent after the test mutation.
+        using _restoreParent = {
+            [Symbol.dispose](): void {
+                Object.defineProperty(window, 'parent', { value: originalParent, configurable: true });
+            },
+        };
+        notifyThemeChanged();
+        expect(parentMock.postMessage).toHaveBeenCalled();
     });
 
     it('is a no-op when target equals window (not embedded)', () => {
