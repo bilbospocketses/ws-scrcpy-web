@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.25-beta.11] - 2026-05-19
+
 ### Fixed
 
 - **Service-mode in-app upgrade: `--veloapp-updated` hook no longer synchronously calls `servy-cli restart` — instead spawns a detached `--deferred-servy-restart` subcommand that sleeps 8 seconds before invoking servy.** §32 follow-up fix caught by v0.1.25-beta.9 → v0.1.25-beta.10 manual VM smoke. The previous synchronous-hook design had Servy spawn the new SERVICE LAUNCHER while Update.exe was still alive (Update.exe is the parent of the hook process — it waits for the hook to exit before completing its own cleanup + exit). Update.exe's open file handles on `<installRoot>\current\` killed the new Node child via file-sharing-violation before it could reach even the first Logger init line (`[Config] adbPath=...` was missing from `server.log` for the Servy-spawned Node — confirming the kill happened sub-second after spawn). Servy then waited ~60 seconds for its `--recoveryDelay` to time out, then restarted the launcher — by which point Update.exe was gone and Node could initialize cleanly. Net effect: ~75-second window where the service appeared Stopped + app was unreachable, even though Servy/SCM eventually recovered without a reboot.
