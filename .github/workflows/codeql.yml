@@ -13,15 +13,22 @@
 #   - rust (ubuntu-latest) — launcher/tray/common cross-platform + cfg(unix) paths
 #   - rust (windows-latest) — launcher/tray/common cfg(windows) paths
 #
-# Rust uses build-mode: autobuild — CodeQL invokes `cargo build` on the
-# workspace. dtolnay/rust-toolchain@stable is installed first to ensure a
-# current toolchain (the GitHub-hosted runner's default Rust may lag).
+# Rust uses build-mode: none — CodeQL Rust extractor reads source directly
+# without invoking cargo build. Verified empirically 2026-05-18 LATE: the
+# autobuild mode returns "Rust does not support the autobuild build mode.
+# Please try using one of the following build modes instead: none." So `none`
+# is the ONLY valid mode for Rust today (per CodeQL 2.25.4). No rust-toolchain
+# install step is needed since no compilation happens.
 #
 # The two-OS Rust matrix exists because launcher + tray code is heavily
 # `cfg(windows)`-gated (14 cfg blocks in launcher/src alone) and the tray
 # crate's `windows` dep is unconditional in the dep tree but only compiles
-# meaningful code on Windows targets. Single-OS Rust scanning would miss the
-# bulk of the security-relevant code.
+# meaningful code on Windows targets. With build-mode: none, CodeQL extracts
+# all source files regardless of cfg gates, so technically both OS legs may
+# see the same source. We keep both for now because:
+#   (a) future CodeQL versions may add per-target extraction, and
+#   (b) cost is small — extraction without build is fast.
+# Revisit when CodeQL ships proper Rust autobuild + target-platform support.
 
 name: CodeQL
 
@@ -60,12 +67,12 @@ jobs:
             os-label: ''
             category-suffix: ''
           - language: rust
-            build-mode: autobuild
+            build-mode: none
             os: ubuntu-latest
             os-label: 'ubuntu-latest'
             category-suffix: '-linux'
           - language: rust
-            build-mode: autobuild
+            build-mode: none
             os: windows-latest
             os-label: 'windows-latest'
             category-suffix: '-windows'
@@ -73,10 +80,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
-
-      - name: Setup Rust toolchain
-        if: matrix.language == 'rust'
-        uses: dtolnay/rust-toolchain@stable
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@458d36d7d4f47d0dd16ca424c1d3cda0060f1360  # v3
