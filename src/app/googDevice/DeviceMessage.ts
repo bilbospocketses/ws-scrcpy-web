@@ -16,12 +16,12 @@ export default class DeviceMessage {
     public static fromBuffer(data: ArrayBuffer): DeviceMessage {
         const magicSize = this.MAGIC_BYTES_MESSAGE.length;
         const slice = new Uint8Array(data, magicSize, data.byteLength - magicSize);
-        const type = slice[0];
+        const type = slice[0]!;
         return new DeviceMessage(type, slice);
     }
 
     public static fromRaw(data: Uint8Array): DeviceMessage {
-        const type = data[0];
+        const type = data[0]!;
         return new DeviceMessage(type, data);
     }
 

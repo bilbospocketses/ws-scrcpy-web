@@ -176,7 +176,7 @@ export class ScanNetworkModal extends Modal {
         const r = parseSubnetInput(raw);
         if ('reason' in r) return; // Already validated by AddSubnetModal.
         this.rows[idx] = {
-            ...this.rows[idx],
+            ...this.rows[idx]!,
             raw,
             normalized: r.normalized,
             hostCount: r.hostCount,

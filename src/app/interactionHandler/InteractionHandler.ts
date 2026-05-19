@@ -312,7 +312,7 @@ export abstract class InteractionHandler {
     }
 
     public static mapTypeToAction(type: string): number {
-        return this.EVENT_ACTION_MAP[type];
+        return this.EVENT_ACTION_MAP[type] ?? 0;
     }
 
     protected getTouch(
@@ -424,8 +424,8 @@ export abstract class InteractionHandler {
             this.dirtyPlace.push(topLeft, bottomRight);
             return;
         }
-        const currentTopLeft = this.dirtyPlace[0];
-        const currentBottomRight = this.dirtyPlace[1];
+        const currentTopLeft = this.dirtyPlace[0]!;
+        const currentBottomRight = this.dirtyPlace[1]!;
         const newTopLeft = new Point(Math.min(currentTopLeft.x, topLeft.x), Math.min(currentTopLeft.y, topLeft.y));
         const newBottomRight = new Point(
             Math.max(currentBottomRight.x, bottomRight.x),
@@ -439,8 +439,8 @@ export abstract class InteractionHandler {
         const { clientWidth, clientHeight } = this.tag;
         const ctx = this.ctx;
         if (ctx && this.dirtyPlace.length) {
-            const topLeft = this.dirtyPlace[0];
-            const bottomRight = this.dirtyPlace[1];
+            const topLeft = this.dirtyPlace[0]!;
+            const bottomRight = this.dirtyPlace[1]!;
             this.dirtyPlace.length = 0;
             const x = Math.max(topLeft.x, 0);
             const y = Math.max(topLeft.y, 0);
@@ -461,7 +461,7 @@ export abstract class InteractionHandler {
         const touches = e.changedTouches;
         if (touches && touches.length) {
             for (let i = 0, l = touches.length; i < l; i++) {
-                const touch = touches[i];
+                const touch = touches[i]!;
                 const pointerId = InteractionHandler.getPointerId(e.type, touch.identifier);
                 if (touch.target !== this.tag) {
                     continue;

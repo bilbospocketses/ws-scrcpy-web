@@ -337,7 +337,7 @@ export class Config {
             // Advanced multi-server config: still honour PORT env override on first server
             const servers = fileConfig.server.map((item) => Config.parseServerItem(item));
             if (envPort) {
-                servers[0].port = port;
+                servers[0]!.port = port;
             }
             return servers;
         }

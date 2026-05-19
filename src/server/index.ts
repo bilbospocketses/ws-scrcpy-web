@@ -76,7 +76,7 @@ async function reconcileWebPort(): Promise<void> {
         Logger.for('Server').info(`webPort ${desired} busy; auto-shifted to ${found}`);
         // Mutate the first server entry so HttpServer binds to the new port.
         if (config.servers.length > 0) {
-            config.servers[0].port = found;
+            config.servers[0]!.port = found;
         }
     }
 }

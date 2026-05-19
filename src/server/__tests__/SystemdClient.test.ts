@@ -136,16 +136,16 @@ describe('SystemdClient', () => {
             expect(unitWrites).toHaveLength(1);
             // path.join uses backslashes on Windows host; normalize for the
             // assertion since the runtime target is Linux.
-            expect(String(unitWrites[0][0]).replace(/\\/g, '/')).toBe(
+            expect(String(unitWrites[0]![0]).replace(/\\/g, '/')).toBe(
                 '/home/jamie/.config/systemd/user/WsScrcpyWeb.service',
             );
-            expect(unitWrites[0][2]).toEqual({ mode: 0o644 });
+            expect(unitWrites[0]![2]).toEqual({ mode: 0o644 });
 
             // systemctl --user daemon-reload + enable --now
             const sysCalls = execFileSyncMock.mock.calls.filter((c) => c[0] === 'systemctl');
             expect(sysCalls).toHaveLength(2);
-            expect(sysCalls[0][1]).toEqual(['--user', 'daemon-reload']);
-            expect(sysCalls[1][1]).toEqual([
+            expect(sysCalls[0]![1]).toEqual(['--user', 'daemon-reload']);
+            expect(sysCalls[1]![1]).toEqual([
                 '--user',
                 'enable',
                 '--now',
@@ -157,18 +157,18 @@ describe('SystemdClient', () => {
                 (c) => c[0] === 'loginctl',
             );
             expect(loginctlCalls).toHaveLength(1);
-            expect(loginctlCalls[0][1]).toEqual(['enable-linger', 'jamie']);
+            expect(loginctlCalls[0]![1]).toEqual(['enable-linger', 'jamie']);
 
             // Tray autostart .desktop written
             const desktopWrites = writeFileSyncMock.mock.calls.filter((c) =>
                 String(c[0]).endsWith('ws-scrcpy-web-tray.desktop'),
             );
             expect(desktopWrites).toHaveLength(1);
-            expect(String(desktopWrites[0][0]).replace(/\\/g, '/')).toBe(
+            expect(String(desktopWrites[0]![0]).replace(/\\/g, '/')).toBe(
                 '/home/jamie/.config/autostart/ws-scrcpy-web-tray.desktop',
             );
-            expect(String(desktopWrites[0][1])).toContain('[Desktop Entry]');
-            expect(String(desktopWrites[0][1])).toContain('Exec=ws-scrcpy-web-tray');
+            expect(String(desktopWrites[0]![1])).toContain('[Desktop Entry]');
+            expect(String(desktopWrites[0]![1])).toContain('Exec=ws-scrcpy-web-tray');
         });
 
         it('user scope: still succeeds when loginctl throws', async () => {
@@ -192,14 +192,14 @@ describe('SystemdClient', () => {
             );
             expect(unitWrites).toHaveLength(1);
             // path.join on win32 dev hosts produces backslashes; normalize.
-            expect(String(unitWrites[0][0]).replace(/\\/g, '/')).toBe(
+            expect(String(unitWrites[0]![0]).replace(/\\/g, '/')).toBe(
                 '/etc/systemd/system/WsScrcpyWeb.service',
             );
 
             const sysCalls = execFileSyncMock.mock.calls.filter((c) => c[0] === 'systemctl');
             expect(sysCalls).toHaveLength(2);
-            expect(sysCalls[0][1]).toEqual(['daemon-reload']);
-            expect(sysCalls[1][1]).toEqual(['enable', '--now', 'WsScrcpyWeb.service']);
+            expect(sysCalls[0]![1]).toEqual(['daemon-reload']);
+            expect(sysCalls[1]![1]).toEqual(['enable', '--now', 'WsScrcpyWeb.service']);
 
             const loginctlCalls = execFileSyncMock.mock.calls.filter(
                 (c) => c[0] === 'loginctl',
@@ -239,7 +239,7 @@ describe('SystemdClient', () => {
             execFileSyncMock.mockReturnValue('active\n');
             const client = new SystemdClient();
             await expect(client.status('WsScrcpyWeb')).resolves.toBe('running');
-            expect(execFileSyncMock.mock.calls[0][1]).toEqual([
+            expect(execFileSyncMock.mock.calls[0]![1]).toEqual([
                 '--user',
                 'is-active',
                 'WsScrcpyWeb.service',
@@ -274,7 +274,7 @@ describe('SystemdClient', () => {
             execFileSyncMock.mockReturnValue('active\n');
             const client = new SystemdClient();
             await expect(client.status('WsScrcpyWeb')).resolves.toBe('running');
-            expect(execFileSyncMock.mock.calls[0][1]).toEqual([
+            expect(execFileSyncMock.mock.calls[0]![1]).toEqual([
                 'is-active',
                 'WsScrcpyWeb.service',
             ]);
@@ -298,13 +298,13 @@ describe('SystemdClient', () => {
             await client.uninstall('WsScrcpyWeb');
 
             const sysCalls = execFileSyncMock.mock.calls.filter((c) => c[0] === 'systemctl');
-            expect(sysCalls[0][1]).toEqual([
+            expect(sysCalls[0]![1]).toEqual([
                 '--user',
                 'disable',
                 '--now',
                 'WsScrcpyWeb.service',
             ]);
-            expect(sysCalls[1][1]).toEqual(['--user', 'daemon-reload']);
+            expect(sysCalls[1]![1]).toEqual(['--user', 'daemon-reload']);
 
             // Unit file unlinked + autostart .desktop unlinked. Normalize
             // backslashes since path.join on Windows host uses them.
@@ -369,7 +369,7 @@ describe('SystemdClient', () => {
             );
             const client = new SystemdClient();
             await client.restart('WsScrcpyWeb');
-            expect(execFileSyncMock.mock.calls[0][1]).toEqual([
+            expect(execFileSyncMock.mock.calls[0]![1]).toEqual([
                 '--user',
                 'restart',
                 'WsScrcpyWeb.service',

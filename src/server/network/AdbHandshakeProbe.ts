@@ -35,7 +35,7 @@ const HOST_BANNER = Buffer.from(
 function adbChecksum(payload: Buffer): number {
     let sum = 0;
     for (let i = 0; i < payload.length; i++) {
-        sum = (sum + payload[i]) >>> 0;
+        sum = (sum + payload[i]!) >>> 0;
     }
     return sum;
 }

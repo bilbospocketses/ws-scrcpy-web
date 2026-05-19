@@ -166,7 +166,7 @@ function isValidIp(s: string): boolean {
 
 function ipToInt(ip: string): number {
     const parts = ip.split('.').map((p) => Number.parseInt(p, 10));
-    return ((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0;
+    return ((parts[0]! << 24) | (parts[1]! << 16) | (parts[2]! << 8) | parts[3]!) >>> 0;
 }
 
 function intToIp(n: number): string {

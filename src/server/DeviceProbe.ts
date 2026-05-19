@@ -133,6 +133,7 @@ export class DeviceProbe extends Mw {
         let match: RegExpExecArray | null;
         while ((match = regex.exec(output)) !== null) {
             const name = match[1];
+            if (name === undefined) continue;
             if (videoCodecs.some((c) => name.includes(`.${c}.`))) videoEncoders.push(name);
             else if (audioCodecs.some((c) => name.includes(`.${c}.`))) audioEncoders.push(name);
         }

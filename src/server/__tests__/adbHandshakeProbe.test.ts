@@ -8,7 +8,7 @@ const HEADER_SIZE = 24;
 
 function adbChecksum(buf: Buffer): number {
     let sum = 0;
-    for (let i = 0; i < buf.length; i++) sum = (sum + buf[i]) >>> 0;
+    for (let i = 0; i < buf.length; i++) sum = (sum + buf[i]!) >>> 0;
     return sum;
 }
 

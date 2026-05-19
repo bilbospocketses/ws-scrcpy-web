@@ -70,7 +70,7 @@ export default class Util {
             return undefined;
         }
         if (Array.isArray(input)) {
-            input = input[input.length - 1];
+            input = input[input.length - 1] ?? '';
         }
         return input === '1' || input.toLowerCase() === 'true';
     }
@@ -92,7 +92,7 @@ export default class Util {
             return undefined;
         }
         if (Array.isArray(input)) {
-            input = input[input.length - 1];
+            input = input[input.length - 1] ?? '';
         }
         const int = Number.parseInt(input, 10);
         if (isNaN(int)) {

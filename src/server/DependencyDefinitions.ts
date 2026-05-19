@@ -42,7 +42,7 @@ export const NODE_LTS_ABI: Record<number, string> = {
 /** Parses the leading major number from a Node version string like "v24.14.1". */
 export function parseNodeMajor(version: string): number {
     const m = version.match(/^v?(\d+)\./);
-    return m ? Number.parseInt(m[1], 10) : Number.NaN;
+    return m ? Number.parseInt(m[1]!, 10) : Number.NaN;
 }
 
 export interface DependencyDefinition {
@@ -60,7 +60,7 @@ async function runVersionCommand(exe: string, args: string[], pattern: RegExp): 
     try {
         const { stdout } = await execFileAsync(exe, args, { timeout: 5000 });
         const match = stdout.match(pattern);
-        return match ? match[1] : null;
+        return match?.[1] ?? null;
     } catch {
         return null;
     }
@@ -91,7 +91,7 @@ export function getDependencyDefinitions(depsPath: string): DependencyDefinition
                 const manifest = await loadManifest(depsPath);
                 if (!manifest) {
                     log.warn('Prebuilt manifest unavailable; Node update gating skipped');
-                    return ltsReleases[0].version.replace(/^v/, '');
+                    return ltsReleases[0]!.version.replace(/^v/, '');
                 }
 
                 const covered = new Set(manifest.coveredAbis);
@@ -102,8 +102,8 @@ export function getDependencyDefinitions(depsPath: string): DependencyDefinition
                 });
                 if (candidates.length === 0) return null;
 
-                const filteredLatest = candidates[0];
-                const unfilteredLatest = ltsReleases[0];
+                const filteredLatest = candidates[0]!;
+                const unfilteredLatest = ltsReleases[0]!;
                 if (filteredLatest.version !== unfilteredLatest.version) {
                     log.warn(
                         `Node ${unfilteredLatest.version.replace(/^v/, '')} available but no matching ` +

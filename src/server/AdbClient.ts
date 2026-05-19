@@ -59,7 +59,7 @@ export function parseMdnsOutput(output: string): MdnsDevice[] {
     for (const line of output.split('\n')) {
         const parts = line.split('\t');
         if (parts.length < 3) continue;
-        const [name, service, addressPort] = parts;
+        const [name, service, addressPort] = parts as [string, string, string];
         const colonIdx = addressPort.lastIndexOf(':');
         if (colonIdx === -1) continue;
         const address = addressPort.substring(0, colonIdx);
@@ -157,7 +157,7 @@ export class AdbClient {
             .slice(1) // skip "List of devices attached" header
             .filter((line) => line.trim().length > 0)
             .map((line) => {
-                const [serial, state] = line.trim().split(/\s+/);
+                const [serial = '', state = ''] = line.trim().split(/\s+/);
                 return { serial, state };
             });
     }
@@ -189,7 +189,7 @@ export class AdbClient {
             .split('\n')
             .filter((line) => line.trim().length > 0)
             .map((line) => {
-                const [serial, local, remote] = line.trim().split(/\s+/);
+                const [serial = '', local = '', remote = ''] = line.trim().split(/\s+/);
                 return { serial, local, remote };
             });
     }
@@ -212,7 +212,9 @@ export class AdbClient {
         const regex = /\[(.+?)\]: \[(.*)]/g;
         let match;
         while ((match = regex.exec(output)) !== null) {
-            props[match[1]] = match[2];
+            if (match[1] !== undefined && match[2] !== undefined) {
+                props[match[1]] = match[2];
+            }
         }
         return props;
     }

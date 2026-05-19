@@ -146,7 +146,7 @@ export class AudioPlayer {
             for (let ch = 0; ch < channelCount; ch++) {
                 const sampleIndex = i * channelCount + ch;
                 const int16 = view.getInt16(sampleIndex * 2, true);
-                channels[ch][i] = int16 / 32768;
+                channels[ch]![i] = int16 / 32768;
             }
         }
 

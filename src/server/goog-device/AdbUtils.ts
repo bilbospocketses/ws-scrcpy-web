@@ -31,9 +31,9 @@ export class AdbUtils {
         );
         const parts = output.trim().split(/\s+/);
         if (parts.length >= 3) {
-            const mode = Number.parseInt(parts[0], 16) || Number.parseInt(parts[0], 8) || 0;
-            const size = Number.parseInt(parts[1], 10) || 0;
-            const mtime = Number.parseInt(parts[2], 10) || 0;
+            const mode = Number.parseInt(parts[0]!, 16) || Number.parseInt(parts[0]!, 8) || 0;
+            const size = Number.parseInt(parts[1]!, 10) || 0;
+            const mtime = Number.parseInt(parts[2]!, 10) || 0;
             return { mode, size, mtime };
         }
         throw new Error(`Failed to stat "${pathString}"`);
@@ -49,8 +49,9 @@ export class AdbUtils {
             // Parse ls -la output: permissions links owner group size date time name
             const parts = trimmed.split(/\s+/);
             if (parts.length < 7) continue;
-            const permissions = parts[0];
-            const size = Number.parseInt(parts[3], 10) || 0;
+            const permissions = parts[0]!;
+            // parts.length >= 7 gate confirms parts[3] also exists
+            const size = Number.parseInt(parts[3]!, 10) || 0;
             const name = parts.slice(6).join(' ');
             if (name === '.' || name === '..') continue;
             const isDir = permissions.startsWith('d') ? 1 : 0;

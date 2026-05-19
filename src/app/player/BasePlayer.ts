@@ -79,7 +79,7 @@ export abstract class BasePlayer extends TypedEmitter<PlayerEvents> {
     };
     private totalStatsCounter = 0;
     private dirtyStatsWidth = 0;
-    private state: number = BasePlayer.STATE['STOPPED'];
+    private state: number = BasePlayer.STATE['STOPPED']!;
     private qualityAnimationId?: number | undefined;
     private showQualityStats = BasePlayer.DEFAULT_SHOW_QUALITY_STATS;
     protected receivedFirstFrame = false;
@@ -169,7 +169,7 @@ export abstract class BasePlayer extends TypedEmitter<PlayerEvents> {
         // 1.3.  Network Abstraction Layer Unit Types
         // https://www.itu.int/rec/T-REC-H.264-201906-I/en
         // Table 7-1 – NAL unit type codes, syntax element categories, and NAL unit type classes
-        return frame && frame.length > 4 && (frame[4] & 31) === 5;
+        return frame && frame.length > 4 && (frame[4]! & 31) === 5;
     }
 
     private static getStorageKey(storageKeyPrefix: string, udid: string): string {
@@ -311,15 +311,15 @@ export abstract class BasePlayer extends TypedEmitter<PlayerEvents> {
         if (this.needScreenInfoBeforePlay() && !this.screenInfo) {
             return;
         }
-        this.state = BasePlayer.STATE['PLAYING'];
+        this.state = BasePlayer.STATE['PLAYING']!;
     }
 
     public pause(): void {
-        this.state = BasePlayer.STATE['PAUSED'];
+        this.state = BasePlayer.STATE['PAUSED']!;
     }
 
     public stop(): void {
-        this.state = BasePlayer.STATE['STOPPED'];
+        this.state = BasePlayer.STATE['STOPPED']!;
     }
 
     public getState(): number {
@@ -445,7 +445,7 @@ export abstract class BasePlayer extends TypedEmitter<PlayerEvents> {
             this.totalStatsCounter++;
         }
         this.drawStats();
-        if (this.state !== BasePlayer.STATE['STOPPED']) {
+        if (this.state !== BasePlayer.STATE['STOPPED']!) {
             this.qualityAnimationId = requestAnimationFrame(this.updateQualityStats);
         }
     };

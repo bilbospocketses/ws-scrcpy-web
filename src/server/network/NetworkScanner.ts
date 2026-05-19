@@ -217,7 +217,7 @@ export class NetworkScanner {
         const nextHost = (): string | null => {
             if (this.cancelFlag) return null;
             if (cursor >= hostList.length) return null;
-            return hostList[cursor++];
+            return hostList[cursor++] ?? null;
         };
 
         const probeOne = async (host: string): Promise<void> => {

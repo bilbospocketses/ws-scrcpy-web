@@ -221,7 +221,7 @@ export class ConfigureScrcpy extends Modal {
         if (previousValue && options.includes(previousValue)) {
             this.encoderSelectElement.value = previousValue;
         } else if (matching.length > 0) {
-            this.encoderSelectElement.value = matching[0];
+            this.encoderSelectElement.value = matching[0]!;
         }
     }
 
@@ -448,7 +448,7 @@ export class ConfigureScrcpy extends Modal {
 
     private getValueFromSelect(name: string): string {
         const select = document.getElementById(`${name}_${this.escapedUdid}`) as HTMLSelectElement;
-        return select.options[select.selectedIndex].value;
+        return select.options[select.selectedIndex]!.value;
     }
 
     private buildVideoSettings(): VideoSettings | null {

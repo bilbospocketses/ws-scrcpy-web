@@ -46,7 +46,7 @@ export class BitStream {
             throw new Error('no bytes available');
         }
         const offset = offsetBits % 8;
-        const byte = this.data[(offsetBits / 8) | 0] & (0xff >>> offset);
+        const byte = this.data[(offsetBits / 8) | 0]! & (0xff >>> offset);
         const bits = 8 - offset;
         if (bits >= size) {
             if (moveIndex) {

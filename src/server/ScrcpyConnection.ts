@@ -138,9 +138,9 @@ export class ScrcpyConnection extends Mw {
         const sockets = useTunnelForward
             ? await this.startWithForwardTunnel(options)
             : await this.startWithReverseTunnel(options);
-        this.videoSocket = sockets[0];
-        this.audioSocket = sockets[1];
-        this.controlSocket = sockets[2];
+        this.videoSocket = sockets[0]!;
+        this.audioSocket = sockets[1]!;
+        this.controlSocket = sockets[2]!;
 
         // 3. Parse initial metadata
         log.info(`Parsing stream metadata for ${this.serial}`);
@@ -250,7 +250,7 @@ export class ScrcpyConnection extends Mw {
             try {
                 sock = await this.connectLocal(port, 2000);
                 const byte = await this.readExactWithTimeout(sock, 1, 2000);
-                log.info(`Received handshake byte 0x${byte[0].toString(16).padStart(2, '0')} on ${this.serial}`);
+                log.info(`Received handshake byte 0x${byte[0]!.toString(16).padStart(2, '0')} on ${this.serial}`);
                 return sock;
             } catch (e) {
                 lastErr = e as Error;

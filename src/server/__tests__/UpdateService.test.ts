@@ -412,7 +412,7 @@ describe('UpdateService', () => {
         // failures are swallowed so the test still drives waitExitThenApplyUpdate.
         await svc.applyUpdate();
         expect(applyFn).toHaveBeenCalledTimes(1);
-        const args = applyFn.mock.calls[0];
+        const args = applyFn.mock.calls[0]!;
         expect(args[0]).toBe(info);
         expect(args[1]).toBe(true);
         expect(args[2]).toBe(true);
@@ -445,7 +445,7 @@ describe('UpdateService', () => {
         svc.init();
         await svc.reconfigure('beta', 'forky');
         expect(factory).toHaveBeenCalledTimes(2);
-        const secondCall = factory.mock.calls[1];
+        const secondCall = factory.mock.calls[1]!;
         expect(secondCall[0]).toBe('https://github.com/forky/ws-scrcpy-web');
         expect(secondCall[1].ExplicitChannel).toBe('beta');
         expect(newCheckFn).toHaveBeenCalled();
@@ -523,7 +523,7 @@ describe('UpdateService', () => {
         svc.restartTimer(60, true);
         expect(clearFn).toHaveBeenCalledTimes(1); // cleared the init timer
         expect(setFn).toHaveBeenCalledTimes(1);
-        const ms = setFn.mock.calls[0][1];
+        const ms = setFn.mock.calls[0]![1];
         expect(ms).toBe(60 * 60 * 1000);
     });
 

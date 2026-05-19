@@ -146,9 +146,9 @@ export class Device extends TypedEmitter<DeviceEvents> {
         const lines = output.split('\n').filter((i: string) => !!i);
         lines.forEach((value: string) => {
             const temp = value.split(' ').filter((i: string) => !!i);
-            const name = temp[1];
-            const ipAndMask = temp[3];
-            const ipv4 = ipAndMask.split('/')[0];
+            const name = temp[1]!;
+            const ipAndMask = temp[3]!;
+            const ipv4 = ipAndMask.split('/')[0]!;
             list.push({ name, ipv4 });
         });
         return list.sort(this.interfacesSort);
@@ -176,7 +176,7 @@ export class Device extends TypedEmitter<DeviceEvents> {
                 .split(' ')
                 .filter((item) => item.length);
             if (cols[cols.length - 1] === processName) {
-                const pid = Number.parseInt(cols[1], 10);
+                const pid = Number.parseInt(cols[1]!, 10);
                 if (!isNaN(pid)) {
                     list.push(pid);
                 }
@@ -216,7 +216,7 @@ export class Device extends TypedEmitter<DeviceEvents> {
             const trim = line.trim();
             const m = trim.match(re);
             if (m) {
-                list.push(Number.parseInt(m[1], 10));
+                list.push(Number.parseInt(m[1]!, 10));
             }
         });
         return list;
@@ -252,8 +252,8 @@ export class Device extends TypedEmitter<DeviceEvents> {
                 if (pids.length < 2) {
                     return false;
                 }
-                const parentPid = pids[0].replaceAll('\r', '');
-                const list = pids[1].split(' ');
+                const parentPid = pids[0]!.replaceAll('\r', '');
+                const list = pids[1]!.split(' ');
                 if (list.includes(parentPid)) {
                     return false;
                 }
@@ -392,7 +392,7 @@ export class Device extends TypedEmitter<DeviceEvents> {
                 changed = true;
             } else {
                 old.forEach((value, idx) => {
-                    if (value.name !== interfaces[idx].name || value.ipv4 !== interfaces[idx].ipv4) {
+                    if (value.name !== interfaces[idx]!.name || value.ipv4 !== interfaces[idx]!.ipv4) {
                         changed = true;
                     }
                 });

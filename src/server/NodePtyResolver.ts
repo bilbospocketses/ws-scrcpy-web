@@ -260,7 +260,7 @@ export async function downloadAndOverlayPtyNode(
         const sumsText = await sumsRes.text();
         const sumLine = sumsText.split('\n').find((l) => l.includes(`${key}.tar.gz`));
         if (!sumLine) { log.info(`no checksum entry for ${key}.tar.gz`); return false; }
-        const expectedSha = sumLine.split(/\s+/)[0].toLowerCase();
+        const expectedSha = sumLine.split(/\s+/)[0]!.toLowerCase();
 
         const tarRes = await fetch(tarUrl, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
         if (!tarRes.ok) { log.info(`tarball fetch failed: ${tarRes.status}`); return false; }

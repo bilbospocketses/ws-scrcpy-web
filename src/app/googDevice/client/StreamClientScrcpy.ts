@@ -105,7 +105,7 @@ async function detectBestCodecAndEncoder(
     // 2. For each codec in preference order, check device has encoder AND browser can decode
     const joined = videoEncoders.join(' ').toLowerCase();
     for (const codec of ['h265', 'h264', 'av1'] as const) {
-        const pattern = CODEC_ENCODER_PATTERN[codec];
+        const pattern = CODEC_ENCODER_PATTERN[codec]!;
         if (!joined.includes(pattern)) continue;
         if (!(await browserSupportsCodec(codec))) {
             console.log(TAG, `Device has ${codec} encoder but browser cannot decode it`);

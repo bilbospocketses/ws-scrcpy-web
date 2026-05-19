@@ -16,7 +16,7 @@ export class UhidInputMessage extends ControlMessage {
         report[0] = modifier;
         report[1] = 0; // reserved
         for (let i = 0; i < Math.min(keycodes.length, 6); i++) {
-            report[2 + i] = keycodes[i];
+            report[2 + i] = keycodes[i]!;
         }
         return new UhidInputMessage(id, report);
     }

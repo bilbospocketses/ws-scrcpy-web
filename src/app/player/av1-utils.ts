@@ -25,14 +25,14 @@ export interface Av1CodecInfo {
  */
 export function parseAv1ConfigRecord(data: Uint8Array): { codec: string } | null {
     if (data.length < 4) return null;
-    const marker = (data[0] >> 7) & 1;
+    const marker = (data[0]! >> 7) & 1;
     if (marker !== 1) return null; // Not a valid AV1 config record
 
-    const seqProfile = (data[1] >> 5) & 0x7;
-    const seqLevelIdx = data[1] & 0x1f;
-    const seqTier = (data[2] >> 7) & 1;
-    const highBitDepth = (data[2] >> 6) & 1;
-    const twelveBit = (data[2] >> 5) & 1;
+    const seqProfile = (data[1]! >> 5) & 0x7;
+    const seqLevelIdx = data[1]! & 0x1f;
+    const seqTier = (data[2]! >> 7) & 1;
+    const highBitDepth = (data[2]! >> 6) & 1;
+    const twelveBit = (data[2]! >> 5) & 1;
 
     let bitDepth = 8;
     if (seqProfile === 2 && highBitDepth) {
@@ -53,7 +53,7 @@ export function parseAv1SequenceHeader(data: Uint8Array): Av1CodecInfo {
     let pos = 0;
 
     // OBU header
-    const headerByte = data[pos++];
+    const headerByte = data[pos++]!;
     const hasExtension = (headerByte >> 2) & 1;
     const hasSizeField = (headerByte >> 1) & 1;
 
@@ -173,7 +173,7 @@ function readLeb128(data: Uint8Array, pos: number): { value: number; newPos: num
     let i = 0;
     let byte: number;
     do {
-        byte = data[pos++];
+        byte = data[pos++]!;
         value |= (byte & 0x7f) << (i * 7);
         i++;
     } while (byte & 0x80 && i < 8);
@@ -194,7 +194,7 @@ class Av1BitReader {
         for (let i = 0; i < n; i++) {
             const byteIdx = this.bitPos >> 3;
             const bitIdx = 7 - (this.bitPos & 7);
-            value = (value << 1) | ((this.data[byteIdx] >> bitIdx) & 1);
+            value = (value << 1) | ((this.data[byteIdx]! >> bitIdx) & 1);
             this.bitPos++;
         }
         return value;

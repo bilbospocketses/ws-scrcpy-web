@@ -124,7 +124,7 @@ export class GoogToolBox extends ToolBox {
             { off: SvgImage.Icon.DPAD, on: SvgImage.Icon.TOUCH_HAND },
             `input_mode_${udid}_${playerName}`,
         );
-        const inputModeLabel = inputMode.getAllElements()[1];
+        const inputModeLabel = inputMode.getAllElements()[1]!;
 
         // Seed default from deviceKind: phone/tablet → Touch; tv/undefined → D-pad.
         const startInTouch = deviceKind === 'phone' || deviceKind === 'tablet';

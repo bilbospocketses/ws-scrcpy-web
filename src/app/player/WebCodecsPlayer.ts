@@ -191,7 +191,7 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
                 } else {
                     continue;
                 }
-                if (offset < data.length && (data[offset] & 0x1f) === naluType) {
+                if (offset < data.length && (data[offset]! & 0x1f) === naluType) {
                     return offset;
                 }
             }
@@ -203,7 +203,7 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
         // Try Annex B start code detection (H.264/H.265)
         const naluOffset = this.findStartCode(data);
         if (naluOffset >= 0) {
-            const firstByte = data[naluOffset];
+            const firstByte = data[naluOffset]!;
             const h265Type = hevcNalType(firstByte);
 
             if (h265Type === HEVC_NAL_TYPE.VPS || h265Type === HEVC_NAL_TYPE.SPS) {
@@ -234,7 +234,7 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
                 return { ...configRecord, width: 0, height: 0 };
             }
             // Try raw OBU Sequence Header
-            if (obuType(data[0]) === OBU_TYPE.SEQUENCE_HEADER) {
+            if (obuType(data[0]!) === OBU_TYPE.SEQUENCE_HEADER) {
                 this.detectedCodec = 'av1';
                 return parseAv1SequenceHeader(data);
             }
@@ -264,7 +264,7 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
                 } else {
                     continue;
                 }
-                if (offset < data.length && hevcNalType(data[offset]) === nalType) {
+                if (offset < data.length && hevcNalType(data[offset]!) === nalType) {
                     return offset;
                 }
             }

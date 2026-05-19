@@ -207,7 +207,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         let upload = this.uploads.get(fileName);
         if (!upload || document.getElementById(upload.anchor.id) !== upload.anchor) {
             const row = this.findOrCreateEntryRow(fileName);
-            const anchor = row.getElementsByTagName('a')[0];
+            const anchor = row.getElementsByTagName('a')[0]!;
             if (!anchor.id) {
                 anchor.id = `upload_${fileName}`;
             }
@@ -215,7 +215,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             upload = { row, progressEl, anchor, timeout: null };
             this.uploads.set(fileName, upload);
         }
-        const { row, progressEl, anchor } = upload;
+        const { row, progressEl, anchor } = upload!;
         if (error) {
             this.uploads.delete(fileName);
             progressEl.style.width = '100%';
@@ -224,8 +224,8 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                 anchor.classList.add('error');
                 anchor.innerText = `${fileName}. ${message}`;
             }
-            if (!upload.timeout) {
-                upload.timeout = window.setTimeout(() => {
+            if (!upload!.timeout) {
+                upload!.timeout = window.setTimeout(() => {
                     const parent = row.parentElement;
                     if (parent) {
                         parent.removeChild(row);

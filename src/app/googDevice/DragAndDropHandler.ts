@@ -15,8 +15,8 @@ export class DragAndDropHandler {
         const files: File[] = [];
         if (ev.dataTransfer.items) {
             for (let i = 0; i < ev.dataTransfer.items.length; i++) {
-                if (ev.dataTransfer.items[i].kind === 'file') {
-                    const file = ev.dataTransfer.items[i].getAsFile();
+                if (ev.dataTransfer.items[i]!.kind === 'file') {
+                    const file = ev.dataTransfer.items[i]!.getAsFile();
 
                     if (file) {
                         files.push(file);
@@ -25,7 +25,7 @@ export class DragAndDropHandler {
             }
         } else {
             for (let i = 0; i < ev.dataTransfer.files.length; i++) {
-                files.push(ev.dataTransfer.files[i]);
+                files.push(ev.dataTransfer.files[i]!);
             }
         }
         let handled = false;

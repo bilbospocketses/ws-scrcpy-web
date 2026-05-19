@@ -47,7 +47,7 @@ export function parseWindowsArp(output: string, ip: string): string | null {
         const parts = trimmed.split(/\s+/);
         if (parts.length < 2) continue;
         if (parts[0] !== ip) continue;
-        const mac = parts[1];
+        const mac = parts[1]!;
         if (isMacString(mac)) {
             return normalizeMac(mac);
         }
@@ -58,7 +58,7 @@ export function parseWindowsArp(output: string, ip: string): string | null {
 export function parseLinuxIpNeigh(output: string): string | null {
     // Expected: "192.168.86.231 dev eth0 lladdr aa:bb:cc:dd:ee:ff REACHABLE"
     const match = output.match(/lladdr\s+([0-9a-f]{2}(?::[0-9a-f]{2}){5})/i);
-    return match ? normalizeMac(match[1]) : null;
+    return match ? normalizeMac(match[1]!) : null;
 }
 
 function isMacString(s: string): boolean {

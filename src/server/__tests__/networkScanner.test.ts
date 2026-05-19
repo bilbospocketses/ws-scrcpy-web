@@ -39,7 +39,7 @@ describe('NetworkScanner — lifecycle', () => {
         const scanner = new NetworkScanner(baseDeps());
         const { ws, messages } = makeWs();
         await scanner.start([makeSubnet([])], ws);
-        expect(messages[0].type).toBe('scan.started');
+        expect(messages[0]!.type).toBe('scan.started');
         expect(messages.at(-1)?.type).toBe('scan.complete');
     });
 
@@ -101,7 +101,7 @@ describe('NetworkScanner — failure surfacing', () => {
         }));
         const { ws, messages } = makeWs();
         await scanner.start([makeSubnet(['10.0.0.1'])], ws);
-        expect(messages[0].type).toBe('scan.started');
+        expect(messages[0]!.type).toBe('scan.started');
         expect(messages.at(-1)?.type).toBe('scan.error');
     });
 

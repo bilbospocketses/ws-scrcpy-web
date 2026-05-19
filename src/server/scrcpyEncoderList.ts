@@ -25,8 +25,8 @@ export function parseScrcpyEncoderList(output: string): ScrcpyEncoders {
     const audioRegex = /--audio-encoder=(\S+)/g;
     let m: RegExpExecArray | null;
     // biome-ignore lint/suspicious/noAssignInExpressions: idiomatic regex loop
-    while ((m = videoRegex.exec(output)) !== null) videoEncoders.push(m[1]);
+    while ((m = videoRegex.exec(output)) !== null) videoEncoders.push(m[1]!);
     // biome-ignore lint/suspicious/noAssignInExpressions: idiomatic regex loop
-    while ((m = audioRegex.exec(output)) !== null) audioEncoders.push(m[1]);
+    while ((m = audioRegex.exec(output)) !== null) audioEncoders.push(m[1]!);
     return { videoEncoders, audioEncoders };
 }

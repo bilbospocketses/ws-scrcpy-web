@@ -62,7 +62,7 @@ describe('ServerShutdownApi', () => {
         await api.handle(req, res);
 
         expect(schedule).toHaveBeenCalledTimes(1);
-        const [cb, delay] = schedule.mock.calls[0];
+        const [cb, delay] = schedule.mock.calls[0]!;
         expect(typeof cb).toBe('function');
         expect(delay).toBe(100);
 

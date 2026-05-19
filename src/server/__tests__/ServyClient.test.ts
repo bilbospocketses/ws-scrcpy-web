@@ -64,7 +64,7 @@ describe('ServyClient', () => {
             logPath: 'C:\\app\\service.log',
         });
         expect(runElevatedMock).toHaveBeenCalledTimes(1);
-        const [command, args] = runElevatedMock.mock.calls[0];
+        const [command, args] = runElevatedMock.mock.calls[0]!;
         expect(command).toBe('install-service');
         // args are passed in camelCase; runElevated converts to snake_case
         // before writing the JSON file. We assert the camelCase shape here
@@ -148,7 +148,7 @@ describe('ServyClient', () => {
             envVars: {},
             logPath: 'l',
         });
-        const [, args] = runElevatedMock.mock.calls[0];
+        const [, args] = runElevatedMock.mock.calls[0]!;
         expect((args as { trayHelperPath?: string }).trayHelperPath).toMatch(/ws-scrcpy-web-tray\.exe$/);
     });
 
@@ -166,7 +166,7 @@ describe('ServyClient', () => {
             envVars: {},
             logPath: 'l',
         });
-        const [, args] = runElevatedMock.mock.calls[0];
+        const [, args] = runElevatedMock.mock.calls[0]!;
         expect((args as { trayHelperPath?: string }).trayHelperPath).toBeUndefined();
     });
 
@@ -174,7 +174,7 @@ describe('ServyClient', () => {
         const client = new ServyClient('servy.exe');
         await client.uninstall('WsScrcpyWeb');
         expect(runElevatedMock).toHaveBeenCalledTimes(1);
-        const [command, args] = runElevatedMock.mock.calls[0];
+        const [command, args] = runElevatedMock.mock.calls[0]!;
         expect(command).toBe('uninstall-service');
         expect(args).toEqual({ servyPath: 'servy.exe', name: 'WsScrcpyWeb' });
     });
@@ -201,7 +201,7 @@ describe('ServyClient', () => {
         const client = new ServyClient('servy.exe');
         const status = await client.status('WsScrcpyWeb');
         expect(status).toBe('running');
-        const [cmd, args] = execFileSyncMock.mock.calls[0];
+        const [cmd, args] = execFileSyncMock.mock.calls[0]!;
         expect(cmd).toBe('sc.exe');
         expect(args).toEqual(['query', 'WsScrcpyWeb']);
     });

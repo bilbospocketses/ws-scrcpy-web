@@ -152,7 +152,7 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
             this.created = true;
         } else {
             while (el.children.length) {
-                el.removeChild(el.children[0]);
+                el.removeChild(el.children[0]!);
             }
         }
         this.setNameValue(el, controlCenterName);

@@ -30,8 +30,8 @@ describe('parseMdnsOutput', () => {
             'adb-SERIAL1\t_adb-tls-pairing._tcp.\t192.168.86.43:37485',
         ].join('\n');
         const result = parseMdnsOutput(output);
-        expect(result[0].service).toBe('_adb-tls-pairing._tcp.');
-        expect(result[0].port).toBe(37485);
+        expect(result[0]!.service).toBe('_adb-tls-pairing._tcp.');
+        expect(result[0]!.port).toBe(37485);
     });
 
     it('ignores malformed lines', () => {

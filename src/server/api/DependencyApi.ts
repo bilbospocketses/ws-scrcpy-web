@@ -34,7 +34,7 @@ export class DependencyApi {
             // POST /api/dependencies/:name/update — update specific dependency
             const updateMatch = url.match(/^\/api\/dependencies\/([a-z-]+)\/update$/);
             if (req.method === 'POST' && updateMatch) {
-                const name = updateMatch[1];
+                const name = updateMatch[1]!;
                 const result = await this.manager.update(name);
                 res.writeHead(result.success ? 200 : 500);
                 res.end(JSON.stringify(result));

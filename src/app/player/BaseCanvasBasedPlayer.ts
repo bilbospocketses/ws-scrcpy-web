@@ -28,7 +28,7 @@ export abstract class BaseCanvasBasedPlayer extends BasePlayer {
         let gl: any = null;
         while (!gl && index++ < validContextNames.length) {
             try {
-                gl = testCanvas.getContext(validContextNames[index]);
+                gl = testCanvas.getContext(validContextNames[index]!);
             } catch (error: any) {
                 gl = null;
             }
@@ -122,10 +122,10 @@ export abstract class BaseCanvasBasedPlayer extends BasePlayer {
         const timestamp = Date.now();
         const oneSecondBefore = timestamp - 1000;
 
-        while (this.videoStats.length && this.videoStats[0].timestamp < oneSecondBefore) {
+        while (this.videoStats.length && this.videoStats[0]!.timestamp < oneSecondBefore) {
             this.videoStats.shift();
         }
-        while (this.inputBytes.length && this.inputBytes[0].timestamp < oneSecondBefore) {
+        while (this.inputBytes.length && this.inputBytes[0]!.timestamp < oneSecondBefore) {
             this.inputBytes.shift();
         }
         let decodedFrames = 0;

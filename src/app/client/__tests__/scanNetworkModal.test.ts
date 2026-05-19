@@ -122,7 +122,7 @@ describe('ScanNetworkModal — row editing', () => {
         const rowsAfter = modal['rows'];
         // Same position, new value
         const positionBefore = rowsBefore.findIndex((r) => r.raw === '10.0.0.0/24');
-        expect(rowsAfter[positionBefore].raw).toBe('192.168.99.0/24');
+        expect(rowsAfter[positionBefore]!.raw).toBe('192.168.99.0/24');
         expect(rowsAfter.length).toBe(rowsBefore.length);
         // localStorage persists the new list
         const persisted = JSON.parse(localStorage.getItem('ws-scrcpy-web:scan-subnets')!);

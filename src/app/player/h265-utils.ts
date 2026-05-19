@@ -29,7 +29,7 @@ function stripEmulationPrevention(data: Uint8Array): Uint8Array {
             out.push(0, 0);
             i += 3; // skip the 0x03 byte
         } else {
-            out.push(data[i]);
+            out.push(data[i]!);
             i++;
         }
     }

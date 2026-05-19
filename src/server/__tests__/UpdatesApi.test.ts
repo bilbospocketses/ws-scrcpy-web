@@ -245,7 +245,7 @@ describe('UpdatesApi', () => {
         expect(body.ok).toBe(true);
         expect(svc.applyUpdate).toHaveBeenCalledTimes(1);
         expect(schedule).toHaveBeenCalledTimes(1);
-        const [cb, ms] = schedule.mock.calls[0];
+        const [cb, ms] = schedule.mock.calls[0]!;
         expect(typeof cb).toBe('function');
         expect(ms).toBe(100);
         // Drive the deferred callback to verify exit hook wires up.
@@ -366,7 +366,7 @@ describe('UpdatesApi', () => {
         expect((res as any).getStatus()).toBe(200);
         expect(svc.reconfigure).toHaveBeenCalledTimes(1);
         // Should pass current values from after the persist.
-        const args = svc.reconfigure.mock.calls[0];
+        const args = svc.reconfigure.mock.calls[0]!;
         expect(args[0]).toBe('beta');
         expect(svc.restartTimer).not.toHaveBeenCalled();
     });
@@ -382,7 +382,7 @@ describe('UpdatesApi', () => {
         await api.handle(req, res);
         expect((res as any).getStatus()).toBe(200);
         expect(svc.restartTimer).toHaveBeenCalledTimes(1);
-        const args = svc.restartTimer.mock.calls[0];
+        const args = svc.restartTimer.mock.calls[0]!;
         expect(args[0]).toBe(120);
         expect(svc.reconfigure).not.toHaveBeenCalled();
     });
