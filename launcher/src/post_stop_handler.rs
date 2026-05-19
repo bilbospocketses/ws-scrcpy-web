@@ -39,7 +39,7 @@
 //   3 = marker present but sc.exe spawn failed
 //   4 = sc.exe ran but returned non-zero
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 use std::thread;
 use std::time::Duration;
@@ -146,7 +146,7 @@ fn resolve_data_root() -> Option<PathBuf> {
 /// silent change to APPLY_UPDATE_PENDING_FILENAME or CONTROL_DIR fails the
 /// test before it ships).
 #[cfg(test)]
-fn marker_path(data_root: &Path) -> PathBuf {
+fn marker_path(data_root: &std::path::Path) -> PathBuf {
     data_root
         .join(common::control_marker::CONTROL_DIR)
         .join(APPLY_UPDATE_PENDING_FILENAME)
@@ -195,7 +195,7 @@ mod tests {
 
     #[test]
     fn marker_path_is_under_control_dir() {
-        let data_root = Path::new("C:\\fake\\data");
+        let data_root = std::path::Path::new("C:\\fake\\data");
         let path = marker_path(data_root);
         assert!(path.ends_with("apply-update-pending"));
         assert!(path.to_string_lossy().contains("control"));
