@@ -93,6 +93,17 @@ export class NetworkScanner {
             (ws as any).once('close', () => this.spectators.delete(ws));
         }
 
+        // §25 — using-declaration replaces the prior try/finally that restored
+        // scanner state on every exit. Captures `this` lexically so the dispose
+        // resets the class invariants (state + cancelFlag) regardless of
+        // whether the scan path returns, throws, or hits an early-return below.
+        using _scanStateReset = {
+            [Symbol.dispose]: (): void => {
+                this.state = 'idle';
+                this.cancelFlag = false;
+            },
+        };
+
         try {
             // Pre-warm the adb daemon before workers fire. Without this, the
             // first batch of parallel adb probes against a cold daemon race
@@ -157,9 +168,6 @@ export class NetworkScanner {
             // Surface the failure so the chip / info box displays a real reason.
             const reason = err instanceof Error ? err.message : String(err);
             this.emit({ type: 'scan.error', reason });
-        } finally {
-            this.state = 'idle';
-            this.cancelFlag = false;
         }
     }
 

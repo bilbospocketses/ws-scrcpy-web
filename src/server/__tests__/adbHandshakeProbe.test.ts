@@ -199,13 +199,13 @@ describe('probeAdb (integration)', () => {
         });
         await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
         const port = (server.address() as net.AddressInfo).port;
-        try {
-            const result = await probeAdb('127.0.0.1', port, 500, 2000);
-            expect(result.isAdb).toBe(true);
-            expect(result.model).toBe('SM-T550');
-        } finally {
-            await closeServer(server, sockets);
-        }
+        // §25 — await-using replaces the prior try/finally closeServer pair.
+        await using _server = {
+            [Symbol.asyncDispose]: () => closeServer(server, sockets),
+        };
+        const result = await probeAdb('127.0.0.1', port, 500, 2000);
+        expect(result.isAdb).toBe(true);
+        expect(result.model).toBe('SM-T550');
     });
 
     it('returns isAdb=false on connection refused', async () => {
@@ -221,12 +221,12 @@ describe('probeAdb (integration)', () => {
         });
         await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
         const port = (server.address() as net.AddressInfo).port;
-        try {
-            const result = await probeAdb('127.0.0.1', port, 500, 2000);
-            expect(result.isAdb).toBe(false);
-        } finally {
-            await closeServer(server, sockets);
-        }
+        // §25 — await-using replaces the prior try/finally closeServer pair.
+        await using _server = {
+            [Symbol.asyncDispose]: () => closeServer(server, sockets),
+        };
+        const result = await probeAdb('127.0.0.1', port, 500, 2000);
+        expect(result.isAdb).toBe(false);
     });
 
     it('returns isAdb=false when server accepts but never replies (timeout)', async () => {
@@ -235,11 +235,11 @@ describe('probeAdb (integration)', () => {
         });
         await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
         const port = (server.address() as net.AddressInfo).port;
-        try {
-            const result = await probeAdb('127.0.0.1', port, 500, 200);
-            expect(result.isAdb).toBe(false);
-        } finally {
-            await closeServer(server, sockets);
-        }
+        // §25 — await-using replaces the prior try/finally closeServer pair.
+        await using _server = {
+            [Symbol.asyncDispose]: () => closeServer(server, sockets),
+        };
+        const result = await probeAdb('127.0.0.1', port, 500, 200);
+        expect(result.isAdb).toBe(false);
     });
 });

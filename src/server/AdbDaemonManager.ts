@@ -98,11 +98,16 @@ export class AdbDaemonManager {
                 ));
             }, opts.waitMs);
         });
-        try {
-            await Promise.race([inflight, timeoutPromise]);
-        } finally {
-            if (timer) clearTimeout(timer);
-        }
+        // §25 — using-declaration replaces the prior try/finally clearTimeout.
+        // Captures `timer` by reference; the setTimeout callback above assigns
+        // it synchronously inside the Promise executor (executors run sync),
+        // so dispose sees the populated handle on every exit path.
+        using _timerCleanup = {
+            [Symbol.dispose](): void {
+                if (timer) clearTimeout(timer);
+            },
+        };
+        await Promise.race([inflight, timeoutPromise]);
     }
 
     /**

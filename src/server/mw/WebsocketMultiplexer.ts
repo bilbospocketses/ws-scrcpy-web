@@ -49,20 +49,21 @@ export class WebsocketMultiplexer extends Mw {
     protected onChannel({ channel, data }: { channel: Multiplexer; data: ArrayBuffer }): void {
         let processed = false;
         for (const mwFactory of WebsocketMultiplexer.mwFactories.values()) {
-            try {
-                const code = new TextDecoder().decode(Buffer.from(data).slice(0, 4));
-                const buffer = data.byteLength > 4 ? data.slice(4) : undefined;
-                const mw = mwFactory.processChannel(channel, code, buffer);
-                if (mw) {
-                    processed = true;
-                    // this.mw.add(mw);
-                    // const remove = () => {
-                    //     this.mw.delete(mw);
-                    // };
-                    // channel.addEventListener('close', remove);
-                    // channel.addEventListener('error', remove);
-                }
-            } finally {
+            // §25 — removed degenerate try { ... } finally { } wrapper. The
+            // commented-out cleanup (this.mw.add/remove on channel close/error
+            // events) is the intended-future-feature placeholder, not active
+            // cleanup. No resource to dispose here today.
+            const code = new TextDecoder().decode(Buffer.from(data).slice(0, 4));
+            const buffer = data.byteLength > 4 ? data.slice(4) : undefined;
+            const mw = mwFactory.processChannel(channel, code, buffer);
+            if (mw) {
+                processed = true;
+                // this.mw.add(mw);
+                // const remove = () => {
+                //     this.mw.delete(mw);
+                // };
+                // channel.addEventListener('close', remove);
+                // channel.addEventListener('error', remove);
             }
         }
         if (!processed) {

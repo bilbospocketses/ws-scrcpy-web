@@ -191,15 +191,20 @@ describe('nodejs.checkLatest (Option D gating)', () => {
     it('ignores Node majors not in NODE_LTS_ABI (skips unknown)', async () => {
         const original = { ...NODE_LTS_ABI };
         delete (NODE_LTS_ABI as Record<number, string>)[26];
-        try {
-            manifestSpy = vi.spyOn(NodePtyResolver, 'loadManifest').mockResolvedValue({
-                upstreamVersion: '1.1.0',
-                coveredAbis: ['115', '127', '137'],
-            });
-            const def = getNodejsDef();
-            expect(await def.checkLatest()).toBe('24.14.1');
-        } finally {
-            Object.assign(NODE_LTS_ABI, original);
-        }
+        // §25 — using-declaration replaces the prior try/finally that restored
+        // the mutated NODE_LTS_ABI global. Closes over `original` by value
+        // (spread above) so the restore is independent of any further test-
+        // body mutations.
+        using _restoreNodeLtsAbi = {
+            [Symbol.dispose](): void {
+                Object.assign(NODE_LTS_ABI, original);
+            },
+        };
+        manifestSpy = vi.spyOn(NodePtyResolver, 'loadManifest').mockResolvedValue({
+            upstreamVersion: '1.1.0',
+            coveredAbis: ['115', '127', '137'],
+        });
+        const def = getNodejsDef();
+        expect(await def.checkLatest()).toBe('24.14.1');
     });
 });
