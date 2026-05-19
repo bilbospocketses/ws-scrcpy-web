@@ -219,7 +219,7 @@ export class ServyClient implements ServiceClient {
         }
     }
 
-    public async restart(name: string): Promise<void> {
+    public async restart(_name: string): Promise<void> {
         // restart = stop + start, but Servy's `restart` is one round-trip.
         // Routes through elevation since it touches SCM control.
         if (!fs.existsSync(resolveLauncherPath())) {
@@ -239,7 +239,7 @@ export class ServyClient implements ServiceClient {
         );
     }
 
-    public async stop(name: string): Promise<void> {
+    public async stop(_name: string): Promise<void> {
         // Stop is part of uninstall, but a standalone stop also requires
         // SCM control. Same pattern as restart — not yet exposed because
         // no UI calls it today (UninstallService stops as part of its

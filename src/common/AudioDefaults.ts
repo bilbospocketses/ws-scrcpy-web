@@ -13,8 +13,7 @@ export type AudioSource = 'playback' | 'output' | 'mic';
  * The `kind` parameter is preserved for forward-compat in case a future device
  * class needs a different default.
  */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-export function audioEnabledDefault(kind: DeviceKind | undefined): boolean {
+export function audioEnabledDefault(_kind: DeviceKind | undefined): boolean {
     return true;
 }
 
@@ -42,7 +41,6 @@ export function audioDupSupported(sdkInt: number): boolean {
  * Accepts `sdkInt` for forward-compat in case we ever want to re-tier
  * (e.g. a future SDK that only supports a particular source).
  */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-export function defaultAudioSourceForSdk(sdkInt: number): AudioSource {
+export function defaultAudioSourceForSdk(_sdkInt: number): AudioSource {
     return DEFAULT_AUDIO_SOURCE;
 }

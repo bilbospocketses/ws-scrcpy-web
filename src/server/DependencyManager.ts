@@ -296,7 +296,7 @@ export class DependencyManager {
 
     private async install(
         name: string,
-        def: DependencyDefinition,
+        _def: DependencyDefinition,
         downloadPath: string,
         version: string,
         tmpDir: string,
@@ -320,7 +320,7 @@ export class DependencyManager {
 
     private async installNodejs(
         downloadPath: string,
-        version: string,
+        _version: string,
         tmpDir: string,
         platform: 'win32' | 'linux',
     ): Promise<void> {
