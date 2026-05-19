@@ -13,6 +13,7 @@ mod spawn;
 mod supervisor;
 mod tray;
 mod uac_requester;
+mod unzip_handler;
 #[cfg(windows)]
 mod user_session_spawn;
 
@@ -65,6 +66,16 @@ fn main() {
     // result-file polling stays unchanged.
     if let Some(code) = uac_requester::handle(&args) {
         log::info(&format!("request-uac exiting with code {code}"));
+        std::process::exit(code);
+    }
+
+    // Unzip dispatch — replaces the Node side's PowerShell Expand-Archive +
+    // linux `unzip` shellouts in DependencyManager.installNodejs /
+    // installAdb. Same Local-Dependencies-Only rationale as the §30
+    // PowerShell scrub: keep all platform-specific binary work inside
+    // the SHA-pinned launcher instead of resolving via system PATH.
+    if let Some(code) = unzip_handler::handle(&args) {
+        log::info(&format!("unzip exiting with code {code}"));
         std::process::exit(code);
     }
 

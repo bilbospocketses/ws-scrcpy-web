@@ -18,6 +18,7 @@ import type { DependencyDefinition } from './DependencyDefinitions';
 import { getDependencyDefinitions, getPlatform } from './DependencyDefinitions';
 import { Logger } from './Logger';
 import { writeInstalledScrcpyServerVersion } from './scrcpyServerVersion';
+import { launcherIsAvailable, resolveLauncherPath } from './service/elevatedRunner';
 
 const log = Logger.for('DependencyManager');
 const execFileAsync = promisify(execFile);
@@ -405,16 +406,27 @@ export class DependencyManager {
         writeInstalledScrcpyServerVersion(this.depsPath, version);
     }
 
-    private async extractZip(zipPath: string, destDir: string, platform: 'win32' | 'linux'): Promise<void> {
-        if (platform === 'win32') {
-            await execFileAsync('powershell', [
-                '-NoProfile',
-                '-Command',
-                `Expand-Archive -Path '${zipPath}' -DestinationPath '${destDir}' -Force`,
-            ]);
-        } else {
-            await execFileAsync('unzip', ['-o', zipPath, '-d', destDir]);
+    private async extractZip(zipPath: string, destDir: string, _platform: 'win32' | 'linux'): Promise<void> {
+        // Cross-platform: shell out to the launcher's --unzip subcommand
+        // (pure-Rust zip crate). Replaces the prior PowerShell Expand-Archive
+        // (win32) + system `unzip` (linux) shellouts that resolved binaries
+        // via system PATH — CLAUDE.md Local-Dependencies-Only violations
+        // that §30 missed because §30's scope was the elevation path only.
+        // The launcher binary is SHA-pinned-to-release and ships in
+        // `current/` alongside this Node process, so no external binary
+        // discovery is needed.
+        if (!launcherIsAvailable()) {
+            throw new Error(
+                `extractZip requires the packaged launcher binary at ${resolveLauncherPath()}. ` +
+                    `Dev mode should populate dependencies/ via scripts/fetch-node.mjs (Node) or ` +
+                    `by pre-seeding from a prior install; the dependency-manager's autoInstall ` +
+                    `extractZip path is intended for Velopack-installed deployments only.`,
+            );
         }
+        await execFileAsync(resolveLauncherPath(), ['--unzip', zipPath, destDir], {
+            windowsHide: true,
+            maxBuffer: 1024 * 1024,
+        });
     }
 
     private copyDirContents(src: string, dest: string): void {

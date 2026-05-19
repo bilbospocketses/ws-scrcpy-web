@@ -4,10 +4,15 @@
 // %LocalAppData%, no admin needed for normal operation). But Servy's CLI
 // needs admin to register a service with SCM, so when the user clicks
 // "yes install service" the Node server spawns this launcher binary in
-// `--elevate-and-run` mode via PowerShell `Start-Process -Verb RunAs`.
-// PowerShell shows the UAC prompt; the user accepts; this helper runs
-// elevated; it executes servy-cli + reg.exe + tray spawn directly; it
-// writes a result JSON to a known temp path; it exits.
+// `--request-uac` mode (see uac_requester.rs); that mode calls
+// `ShellExecuteExW(verb="runas")` on this same binary to fire the UAC
+// prompt and re-spawn elevated with `--elevate-and-run`. This handler
+// is the elevated-side receiver. It executes servy-cli + reg.exe + tray
+// spawn directly; it writes a result JSON to a known temp path; it
+// exits. (Pre-§30 the UAC prompt was fired by `powershell.exe
+// Start-Process -Verb RunAs`; §30 replaced PowerShell with the
+// launcher's own ShellExecuteExW call for Local-Dependencies-Only
+// compliance.)
 //
 // Argv shape:
 //   ws-scrcpy-web-launcher.exe --elevate-and-run <command> <args-json-path> <result-json-path>
