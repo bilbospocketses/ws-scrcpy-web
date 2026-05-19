@@ -128,6 +128,18 @@ export class DependencyManager {
         info.status = DependencyStatus.Updating;
         const fromVersion = info.installedVersion ?? 'not installed';
         const tmpDir = path.join(os.tmpdir(), 'ws-scrcpy-web', `update-${name}-${Date.now()}`);
+        // §25 — TS6 using-declaration replaces the prior try/finally cleanup.
+        // The dispose fires on every scope exit (return / throw / fall-through)
+        // and rmSync with force:true is safe even if mkdirSync below never ran.
+        using _tmpDirCleanup = {
+            [Symbol.dispose](): void {
+                try {
+                    fs.rmSync(tmpDir, { recursive: true, force: true });
+                } catch {
+                    // Best-effort
+                }
+            },
+        };
 
         try {
             // Ensure latest version is known
@@ -175,13 +187,6 @@ export class DependencyManager {
                 errorMessage: info.errorMessage,
                 requiresRestart: def.requiresRestart,
             };
-        } finally {
-            // Clean up temp directory
-            try {
-                fs.rmSync(tmpDir, { recursive: true, force: true });
-            } catch {
-                // Best effort cleanup
-            }
         }
     }
 

@@ -153,16 +153,26 @@ export class FilePushReader {
                     });
                     this.writeStream = undefined;
                 }
-                // Push temp file to device
-                try {
-                    await this.adbClient.push(this.serial, this.tempFilePath, this.fileName);
-                    this.sendResponse(FilePushResponseStatus.NO_ERROR);
-                } catch (error: any) {
-                    Logger.for('FilePushReader').error(`Push error (${this.serial} | ${this.fileName}):`, error.message);
-                    this.closeWithError(FilePushResponseStatus.ERROR_OTHER, error.message);
-                    return;
-                } finally {
-                    this.cleanupTempFile();
+                // Push temp file to device. §25 — using-declaration replaces
+                // the prior try/finally cleanupTempFile. Inline because
+                // cleanupTempFile is an existing instance method we don't
+                // want to surface as a public Disposable on the reader; the
+                // dispose fires on every exit path including the early
+                // `return` inside the catch.
+                {
+                    using _tempFileCleanup = {
+                        [Symbol.dispose]: (): void => {
+                            this.cleanupTempFile();
+                        },
+                    };
+                    try {
+                        await this.adbClient.push(this.serial, this.tempFilePath, this.fileName);
+                        this.sendResponse(FilePushResponseStatus.NO_ERROR);
+                    } catch (error: any) {
+                        Logger.for('FilePushReader').error(`Push error (${this.serial} | ${this.fileName}):`, error.message);
+                        this.closeWithError(FilePushResponseStatus.ERROR_OTHER, error.message);
+                        return;
+                    }
                 }
                 this.release();
                 break;

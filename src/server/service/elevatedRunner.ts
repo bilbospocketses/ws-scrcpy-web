@@ -32,10 +32,10 @@
 // biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import { execFile, spawn } from 'child_process';
 import * as fs from 'node:fs';
-import * as os from 'node:os';
 import * as path from 'node:path';
 import { promisify } from 'util';
 import { Logger } from '../Logger';
+import { tempDir } from '../util/disposable';
 
 const execFileAsync = promisify(execFile);
 
@@ -145,9 +145,9 @@ export async function runElevated(
     // Convert camelCase JS field names to snake_case for the Rust side.
     const wireArgs = toSnakeCase(args as unknown as Record<string, unknown>);
 
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-scrcpy-elev-'));
-    const argsPath = path.join(tmpDir, 'args.json');
-    const resultPath = path.join(tmpDir, 'result.json');
+    using td = tempDir('ws-scrcpy-elev-');
+    const argsPath = path.join(td.path, 'args.json');
+    const resultPath = path.join(td.path, 'result.json');
 
     // The `spawn-user-launcher` command is only invoked from the
     // SERVICE-instance Node process, which is already running as Local
@@ -157,107 +157,99 @@ export async function runElevated(
     // entirely for this command and direct-spawn the launcher.
     const useDirect = command === 'spawn-user-launcher';
 
-    try {
-        fs.writeFileSync(argsPath, JSON.stringify(wireArgs, null, 2), 'utf8');
+    fs.writeFileSync(argsPath, JSON.stringify(wireArgs, null, 2), 'utf8');
 
-        // v0.1.8: switched from `Start-Process -Wait -PassThru` to a
-        // result-file polling pattern. The previous design hung in
-        // production: PowerShell's -Wait is unreliable for
-        // -Verb RunAs because the elevated process runs in a different
-        // logon session and -Wait can't always track cross-session
-        // children.
-        log.info(
-            `runElevated(${command}) launching ${launcherPath} (direct=${useDirect}, file-poll)`,
-        );
+    // v0.1.8: switched from `Start-Process -Wait -PassThru` to a
+    // result-file polling pattern. The previous design hung in
+    // production: PowerShell's -Wait is unreliable for
+    // -Verb RunAs because the elevated process runs in a different
+    // logon session and -Wait can't always track cross-session
+    // children.
+    log.info(
+        `runElevated(${command}) launching ${launcherPath} (direct=${useDirect}, file-poll)`,
+    );
 
-        if (useDirect) {
-            // Direct spawn — caller is already privileged (Local
-            // System service-instance invoking spawn-user-launcher).
-            // No UAC needed. We don't await the child; we just kick
-            // it off and rely on the result-file polling for sync.
-            try {
-                const child = spawn(
-                    launcherPath,
-                    ['--elevate-and-run', command, argsPath, resultPath],
-                    { detached: true, stdio: 'ignore', windowsHide: true },
-                );
-                child.unref();
-            } catch (err) {
-                return {
-                    ok: false,
-                    exitCode: -1,
-                    stdout: '',
-                    stderr: (err as Error).message ?? '',
-                    errorMessage: `direct elevated spawn failed: ${(err as Error).message ?? ''}`,
-                };
-            }
-        } else {
-            // Standard PowerShell elevation path — fires UAC for the
-            // user to accept. Used for install-service and
-            // uninstall-service from the user-session local launcher.
-            const psScript = buildPsRunAsCommand({
+    if (useDirect) {
+        // Direct spawn — caller is already privileged (Local
+        // System service-instance invoking spawn-user-launcher).
+        // No UAC needed. We don't await the child; we just kick
+        // it off and rely on the result-file polling for sync.
+        try {
+            const child = spawn(
                 launcherPath,
-                command,
-                argsPath,
-                resultPath,
-            });
-            let psFailed = false;
-            let psErrorMessage = '';
-            try {
-                await execFileAsync(
-                    'powershell.exe',
-                    [
-                        '-NoProfile',
-                        '-NonInteractive',
-                        '-ExecutionPolicy', 'Bypass',
-                        '-Command', psScript,
-                    ],
-                    { windowsHide: true, maxBuffer: 1024 * 1024 },
-                );
-            } catch (err) {
-                // PS exits non-zero only when Start-Process itself
-                // failed — usually UAC declined (Windows
-                // ERROR_CANCELLED 1223).
-                psFailed = true;
-                psErrorMessage = (err as Error).message ?? '(no message)';
-                log.warn(`runElevated PowerShell start failed: ${psErrorMessage}`);
-            }
-
-            if (psFailed) {
-                return {
-                    ok: false,
-                    exitCode: -1,
-                    stdout: '',
-                    stderr: psErrorMessage,
-                    errorMessage:
-                        'user declined elevation. Service install requires Administrator privileges; ' +
-                        'click Yes on the UAC prompt to continue.',
-                };
-            }
-        }
-
-        const result = await pollForResultFile(resultPath, ELEVATION_TIMEOUT_MS);
-        if (result === null) {
+                ['--elevate-and-run', command, argsPath, resultPath],
+                { detached: true, stdio: 'ignore', windowsHide: true },
+            );
+            child.unref();
+        } catch (err) {
             return {
                 ok: false,
                 exitCode: -1,
                 stdout: '',
-                stderr: '',
-                errorMessage:
-                    `elevated helper did not complete within ${ELEVATION_TIMEOUT_MS / 1000}s. ` +
-                    'The UAC prompt may have been dismissed without action, or the helper may have crashed.',
+                stderr: (err as Error).message ?? '',
+                errorMessage: `direct elevated spawn failed: ${(err as Error).message ?? ''}`,
             };
         }
-        return result;
-    } finally {
-        // Best-effort cleanup. Leaving temp files around isn't dangerous
-        // (we use a fresh dir per call), but it's sloppy.
+    } else {
+        // Standard PowerShell elevation path — fires UAC for the
+        // user to accept. Used for install-service and
+        // uninstall-service from the user-session local launcher.
+        const psScript = buildPsRunAsCommand({
+            launcherPath,
+            command,
+            argsPath,
+            resultPath,
+        });
+        let psFailed = false;
+        let psErrorMessage = '';
         try {
-            fs.rmSync(tmpDir, { recursive: true, force: true });
-        } catch {
-            /* ignore */
+            await execFileAsync(
+                'powershell.exe',
+                [
+                    '-NoProfile',
+                    '-NonInteractive',
+                    '-ExecutionPolicy', 'Bypass',
+                    '-Command', psScript,
+                ],
+                { windowsHide: true, maxBuffer: 1024 * 1024 },
+            );
+        } catch (err) {
+            // PS exits non-zero only when Start-Process itself
+            // failed — usually UAC declined (Windows
+            // ERROR_CANCELLED 1223).
+            psFailed = true;
+            psErrorMessage = (err as Error).message ?? '(no message)';
+            log.warn(`runElevated PowerShell start failed: ${psErrorMessage}`);
+        }
+
+        if (psFailed) {
+            return {
+                ok: false,
+                exitCode: -1,
+                stdout: '',
+                stderr: psErrorMessage,
+                errorMessage:
+                    'user declined elevation. Service install requires Administrator privileges; ' +
+                    'click Yes on the UAC prompt to continue.',
+            };
         }
     }
+
+    const result = await pollForResultFile(resultPath, ELEVATION_TIMEOUT_MS);
+    if (result === null) {
+        return {
+            ok: false,
+            exitCode: -1,
+            stdout: '',
+            stderr: '',
+            errorMessage:
+                `elevated helper did not complete within ${ELEVATION_TIMEOUT_MS / 1000}s. ` +
+                'The UAC prompt may have been dismissed without action, or the helper may have crashed.',
+        };
+    }
+    // `using td = tempDir(...)` above disposes the temp dir on scope exit
+    // (return or throw) — replaces the prior try/finally + fs.rmSync pair.
+    return result;
 }
 
 /** 5 minutes — UAC dialog can legitimately stay up this long. */

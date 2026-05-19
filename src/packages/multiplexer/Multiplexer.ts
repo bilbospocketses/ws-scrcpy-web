@@ -146,10 +146,17 @@ export class Multiplexer extends TypedEmitter<MultiplexerEvents> implements WebS
                     if (data) {
                         const { channel } = data;
                         channel.readyState = channel.CLOSING;
-                        try {
+                        // §25 — using-declaration replaces the prior try/finally
+                        // that drove the CLOSING→CLOSED state transition. Captures
+                        // `channel` lexically; dispose fires on scope exit
+                        // (normal or throw from the dispatchEvent call).
+                        {
+                            using _closingState = {
+                                [Symbol.dispose](): void {
+                                    channel.readyState = channel.CLOSED;
+                                },
+                            };
                             channel.dispatchEvent(message.toCloseEvent());
-                        } finally {
-                            channel.readyState = channel.CLOSED;
                         }
                     } else {
                         console.error(`Channel with id (${message.channelId}) not found`);
@@ -237,17 +244,22 @@ export class Multiplexer extends TypedEmitter<MultiplexerEvents> implements WebS
         if (this._id) {
             this.readyState = this.CLOSING;
 
-            try {
-                const message = Message.fromCloseEvent(this._id, code, reason).toBuffer();
-                if (this.ws instanceof Multiplexer) {
-                    this.ws.sendData(message);
-                } else {
-                    this.ws.send(message);
-                }
-                this.emit('close', new CloseEvent('close', { code, reason }));
-            } finally {
-                this.readyState = this.CLOSED;
+            // §25 — using-declaration replaces the prior try/finally that
+            // drove the CLOSING→CLOSED state transition. Captures `this`
+            // lexically; dispose fires on scope exit, including throws from
+            // sendData / send / emit.
+            using _closingState = {
+                [Symbol.dispose]: (): void => {
+                    this.readyState = this.CLOSED;
+                },
+            };
+            const message = Message.fromCloseEvent(this._id, code, reason).toBuffer();
+            if (this.ws instanceof Multiplexer) {
+                this.ws.sendData(message);
+            } else {
+                this.ws.send(message);
             }
+            this.emit('close', new CloseEvent('close', { code, reason }));
         } else {
             this.ws.close(code, reason);
         }

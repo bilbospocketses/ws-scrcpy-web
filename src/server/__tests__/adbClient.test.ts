@@ -3,6 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AdbClient, AdbExecError, parseMdnsOutput, parseSerialFromMdnsName } from '../AdbClient';
+import { tempDir } from '../util/disposable';
 
 describe('parseMdnsOutput', () => {
     it('parses mdns services output with IPs and ports', () => {
@@ -110,8 +111,8 @@ describe('AdbClient — error surfacing', () => {
         // will reject — but we override args via mdnsServices to inject our
         // own script. Simpler: use a tiny shim file we can target with the
         // real `devices` invocation that ignores args and just exits.
-        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'adb-test-'));
-        const shim = path.join(tmpDir, 'shim.js');
+        using td = tempDir('adb-test-');
+        const shim = path.join(td.path, 'shim.js');
         fs.writeFileSync(shim, 'process.exit(2);\n');
         // Make the shim itself the "binary" by spawning node with its path.
         // But AdbClient.devices passes ['devices'] as args, so we need a
@@ -136,9 +137,8 @@ describe('AdbClient — error surfacing', () => {
             // Node fails to load 'devices' as a script and exits with code 1.
             expect((err as AdbExecError).kind).toBe('exit');
             expect((err as AdbExecError).adbPath).toBe(process.execPath);
-        } finally {
-            fs.rmSync(tmpDir, { recursive: true, force: true });
         }
+        // §25 — temp dir disposed by `using td = tempDir(...)` above.
     });
 
     // mdnsServices "no longer swallows errors" was previously tested by passing
