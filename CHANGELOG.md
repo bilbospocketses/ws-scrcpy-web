@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **§29(a) — SHA-pinned five remaining moving-tag action references across `.github/workflows/`.** Prerequisite to enabling repo-level `sha_pinning_required` enforcement to match Control Menu's hardening baseline.
+  - **`dtolnay/rust-toolchain@stable` → `@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable`** at three sites: `ci.yml:21` (build-and-test, `with: components: clippy`), `release.yml:61` (build-windows), `release.yml:172` (build-linux, `with: targets: x86_64-unknown-linux-musl`). The `stable` branch on `dtolnay/rust-toolchain` advances every Rust release; Dependabot keys on the trailing `# stable` comment for branch-tracking (parallel convention to `# v1.2.3` semver tracking for tagged actions — both supported by the `github-actions` ecosystem entry in `.github/dependabot.yml`).
+  - **`docker/login-action@v3` → `@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0`** at `docker-publish.yml.disabled:15`. Latest v3 release (2026-01-28); a newer v4 major exists (v4.1.0) but the workflow is currently disabled — preserve the existing v3 semantic for now, let Dependabot propose a major bump if/when the workflow is re-enabled.
+  - **`docker/build-push-action@v5` → `@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5.4.0`** at `docker-publish.yml.disabled:21`. Latest v5 release (2024-06-10); v7.1.0 is the current major but again, disabled workflow → preserve v5 semantic.
+  - Verification: `grep -r "uses:" .github/workflows/` returns every action reference now ending with either `# vX.Y.Z` (semver) or `# stable` (branch) — zero moving-tag refs remain.
+
 ### Added
 
 - **`.github/workflows/node-pty-prebuilds.yml` — paired `close-issue-on-success` job that auto-closes stale `prebuild-failure` issues when a subsequent matrix run completes successfully end-to-end.** Symmetric to the existing `open-issue-on-failure` job (which files an issue with labels `prebuild-failure` + `ci` whenever the matrix or publish fails — issue #6 was the first real-world firing, fired on the 2026-05-18 scheduled main run that hit the VS 2026 / node-gyp regression on the windows-latest x64 prior leg, and was closed manually after `d42de9e0` shipped the npm 11.14.1 fix). With this job in place, future failure → fix cycles self-heal on the next green run rather than leaving behind a manually-curated trail of resolved bot issues.
