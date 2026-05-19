@@ -139,9 +139,14 @@ fn resolve_data_root() -> Option<PathBuf> {
     common::config::data_root_from_env()
 }
 
-/// Public helper for UpdateService (Node-side) and supervisor-startup
-/// cleanup: where to write the apply-update-pending marker.
-pub fn marker_path(data_root: &Path) -> PathBuf {
+/// Test-only helper that documents the canonical marker path. The Node
+/// side owns its own source of truth at `Config.applyUpdatePendingMarkerPath`;
+/// keeping this helper test-only gated avoids `dead_code` warnings on prod
+/// builds while still letting unit tests assert the path shape (so any
+/// silent change to APPLY_UPDATE_PENDING_FILENAME or CONTROL_DIR fails the
+/// test before it ships).
+#[cfg(test)]
+fn marker_path(data_root: &Path) -> PathBuf {
     data_root
         .join(common::control_marker::CONTROL_DIR)
         .join(APPLY_UPDATE_PENDING_FILENAME)
