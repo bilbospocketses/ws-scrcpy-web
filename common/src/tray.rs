@@ -756,6 +756,7 @@ mod linux_stub_tests {
             "title",
             "body",
             Box::new(|| "http://localhost:8000".to_string()),
+            None,
         )
         .expect("stub must not error");
         assert_eq!(action, TrayAction::Cancelled);
