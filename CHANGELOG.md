@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.25-beta.20] - 2026-05-20
+
 ### Changed
 
 - **Tray lifecycle moved to launcher-owned polling.** §32 Part 5 — caught by v0.1.25-beta.18 → beta.19 smoke. Replaces the previous architecture (HKLM\Run auto-start at user logon + post-stop bat respawn flag) with a single owner: the launcher's new `tray_supervisor` background thread polls every 10 seconds, locates the active interactive user session via `WTSEnumerateSessionsW`, checks for `ws-scrcpy-web-tray.exe` in that session via `WTSEnumerateProcessesExW`, and spawns it via `user_session_spawn` if missing. The tray's per-session single-instance mutex handles dedup safely. Spawning passes `--launcher-spawn` argv, which signals the tray to surface a balloon notification on start: **"ws-scrcpy-web tray — tray started by launcher. to clear the tray, stop the ws-scrcpy-web service via Settings."** Sets correct expectation that the tray is intrinsic to service-mode operation.
