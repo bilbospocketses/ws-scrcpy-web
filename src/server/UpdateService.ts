@@ -341,18 +341,50 @@ export class UpdateService {
         //     Velopack relaunches the user-mode launcher post-swap. Unchanged
         //     behavior from v0.1.x stable.
         //   - service mode (installMode in {'user-service', 'system-service'}): restart=false.
-        //     The launcher's --veloapp-updated hook (launcher/src/hooks.rs:312) calls
-        //     `servy-cli restart` which brings the service back under SCM/Servy
-        //     supervision. Letting Velopack ALSO relaunch spawns a parallel LocalSystem
-        //     launcher outside Servy: it inherits the LocalSystem token from
-        //     Update.exe's parent chain, grabs the single-instance mutex, and starves
-        //     out Servy's --recoveryAction=RestartProcess attempts — SCM ends up
-        //     reporting the service as Stopped until reboot, even though HTTP is
-        //     still being served by the ghost LocalSystem launcher. v0.1.25-beta.8
-        //     smoke A.2 caught this; see §32 in todo_ws_scrcpy_web.md.
+        //     Velopack's stub-relaunch would spawn a parallel LocalSystem launcher
+        //     outside Servy (inherits the LocalSystem token from Update.exe's parent
+        //     chain, grabs the single-instance mutex, starves out Servy's recovery
+        //     attempts). Instead we rely on Servy's --postStopPath mechanism: we
+        //     write an apply-update-pending marker here, then exit. Servy detects
+        //     the launcher's clean exit and fires the post-stop handler, which sees
+        //     the marker, sleeps long enough for Update.exe to release file handles
+        //     on current/, and invokes `sc start WsScrcpyWeb`. SCM then asks Servy
+        //     to launch a fresh launcher — by which point Velopack is long gone.
+        //     v0.1.25-beta.8 / beta.10 / beta.11 smokes caught the prior approaches;
+        //     see §32 Part 3 in todo_ws_scrcpy_web.md.
         const installMode = Config.getInstance().getAppConfig().installMode;
         const isServiceMode = installMode === 'user-service' || installMode === 'system-service';
+        if (isServiceMode) {
+            await this.writeApplyUpdatePendingMarker();
+        }
         this.mgr.waitExitThenApplyUpdate(this.state.pendingUpdate, true, !isServiceMode);
+    }
+
+    /**
+     * Write the apply-update-pending marker that signals the launcher's
+     * post-stop handler to restart the service after Velopack finishes its
+     * swap. Best-effort: log + continue on failure. If the marker doesn't
+     * get written, the post-stop handler sees no marker and no-ops (the
+     * user has to manually restart the service), which is a worse-but-not-
+     * fatal degradation. The Velopack apply itself still proceeds.
+     *
+     * Path matches `launcher/src/post_stop_handler.rs::marker_path` and
+     * `Config.applyUpdatePendingMarkerPath` (single source of truth on the
+     * Node side). Content is intentionally empty — the post-stop handler
+     * only checks for presence, not content.
+     */
+    private async writeApplyUpdatePendingMarker(): Promise<void> {
+        const markerPath = Config.getInstance().applyUpdatePendingMarkerPath;
+        try {
+            await fs.promises.mkdir(path.dirname(markerPath), { recursive: true });
+            await fs.promises.writeFile(markerPath, '', 'utf8');
+            log.info(`applyUpdate: wrote apply-update-pending marker at ${markerPath}`);
+        } catch (err) {
+            log.warn(
+                `applyUpdate: failed to write apply-update-pending marker at ${markerPath}: ${(err as Error).message} ` +
+                    `— service will not auto-restart after Velopack swap; user must restart manually.`,
+            );
+        }
     }
 
     /**

@@ -1,6 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod deferred_servy_restart;
 mod elevated_runner;
 mod hooks;
 #[cfg(windows)]
@@ -9,6 +8,7 @@ mod install_acl;
 mod job_object;
 mod log;
 mod paths;
+mod post_stop_handler;
 mod single_instance;
 mod spawn;
 mod supervisor;
@@ -80,17 +80,15 @@ fn main() {
         std::process::exit(code);
     }
 
-    // Deferred-servy-restart dispatch — §32 follow-up. The
-    // --veloapp-updated hook spawns this subcommand DETACHED so it can
-    // sleep until Update.exe has had time to exit + release file handles
-    // on current/ before invoking `servy-cli restart`. Synchronously
-    // calling servy-cli from inside the hook had Servy start a new
-    // SERVICE LAUNCHER while Update.exe was still alive, and the new
-    // Node child was killed by file-sharing-violation on current/dist/
-    // before reaching Logger init. See deferred_servy_restart.rs module
-    // comment for the full rationale.
-    if let Some(code) = deferred_servy_restart::handle(&args) {
-        log::info(&format!("deferred-servy-restart exiting with code {code}"));
+    // Post-stop handler dispatch — §32 Part 3. Servy invokes this
+    // subcommand via --postStopPath every time the supervised launcher
+    // exits. We check for an apply-update-pending marker and either no-op
+    // (user-initiated stop) or sleep + sc start (in-app updater stop).
+    // The Part 2 deferred-spawn-from-hook approach was killed by
+    // Velopack's Job Object cleanup; the post-stop process is spawned by
+    // Servy (outside Velopack's process tree) and survives any cleanup.
+    if let Some(code) = post_stop_handler::handle(&args) {
+        log::info(&format!("post-stop-handler exiting with code {code}"));
         std::process::exit(code);
     }
 
