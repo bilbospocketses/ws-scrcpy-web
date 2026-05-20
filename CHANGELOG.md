@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.25-beta.13] - 2026-05-20
+
+### Notes
+
+- **No code changes vs v0.1.25-beta.12.** This release exists solely as the destination version for the proper §32 Part 3 smoke validation. The beta.9 → beta.12 bridge smoke (2026-05-19 LATE+++) confirmed that the bridge upgrade still requires a reboot — expected migration cost, because beta.9's Servy install lacks `--postStopPath` so beta.12's `--veloapp-updated` hook falls back to the synchronous `servy-cli restart` path (same race that beta.10 hit). beta.13's purpose is the FOLLOW-UP smoke: install v0.1.25-beta.12 MSI first (Servy is now installed WITH `--postStopPath` argument wired), then upgrade to v0.1.25-beta.13. Expected behavior: launcher exits clean post-Velopack-swap → Servy's post-stop handler fires (in Servy's process tree, outside Velopack) → handler sees the apply-update-pending marker → sleeps 12s → `sc.exe start WsScrcpyWeb` → service comes back in <15s, no reboot required, no SCM RestartProcess RecoveryAction involvement.
+
 ## [0.1.25-beta.12] - 2026-05-19
 
 ### Fixed
