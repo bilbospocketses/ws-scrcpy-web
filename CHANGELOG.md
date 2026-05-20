@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Standalone tray helper now respawns automatically after an in-app upgrade.** Previously, Velopack's swap of `current/` killed the running `ws-scrcpy-web-tray.exe` (file lock on `current/ws-scrcpy-web-tray.exe`) and the tray didn't come back until the user's next logon (HKLM\Run auto-start). Now: the post-stop bat writes `<dataRoot>/control/respawn-tray-after-upgrade` before `sc start`; the newly-spawned supervised launcher reads the flag in `supervisor::run` and uses the existing `user_session_spawn::spawn_in_active_user_session` machinery (the same WTSEnumerateSessions + WTSQueryUserToken + CreateProcessAsUserW dance from the v0.1.8 uninstall handoff) to land a fresh tray exe in the active interactive user's session. Best-effort: if no active user session is found (headless boot before any logon), the flag is left in place so a future launcher restart can retry. If spawn succeeds, the flag is deleted.
+- **Browser-side server-reachability overlay during in-app upgrades.** Replaces the OS-level "this site can't be reached" page with a branded "ws-scrcpy-web is updating — reconnecting…" overlay. Polls `/api/config` every 5s normally, every 2s when in recovery mode. Overlay appears after 2 consecutive failures (avoids false positives from network jitter). On recovery, reloads the page so the UI re-evaluates against post-restart state. Lives in `src/app/client/ServerReachabilityOverlay.ts` + `src/style/server-reachability.css`. Bootstrapped from `index.ts` at the end of `window.onload`.
+
 ## [0.1.25-beta.17] - 2026-05-20
 
 ## [0.1.25-beta.16] - 2026-05-20

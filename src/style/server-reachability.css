@@ -1,0 +1,73 @@
+/*
+ * Server-reachability overlay (ServerReachabilityOverlay.ts).
+ * Shown during an in-app upgrade window when the server is briefly
+ * unreachable. Replaces the OS-level "can't be reached" page with a
+ * branded "updating, reconnecting…" experience.
+ */
+
+.server-reachability-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 18, 26, 0.85);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    z-index: 99998;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-mono, ui-monospace, monospace);
+    color: #f4f6fa;
+    padding: 2rem;
+    animation: server-reachability-fadein 0.18s ease-out;
+}
+
+@keyframes server-reachability-fadein {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+.server-reachability-card {
+    max-width: 480px;
+    text-align: center;
+    background: rgba(31, 38, 52, 0.72);
+    border: 1px solid rgba(91, 154, 255, 0.35);
+    border-radius: 10px;
+    padding: 2rem 2.5rem;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
+}
+
+.server-reachability-heading {
+    font-size: 1.25rem;
+    font-weight: 600;
+    margin-bottom: 0.75rem;
+    color: #5b9aff;
+}
+
+.server-reachability-detail {
+    font-size: 1rem;
+    margin-bottom: 1.25rem;
+    color: #f4f6fa;
+}
+
+.server-reachability-detail::after {
+    /* Inline three-dot animation so we don't pull in an icon dep. */
+    content: '';
+    display: inline-block;
+    width: 1em;
+    text-align: left;
+    animation: server-reachability-dots 1.4s steps(4, end) infinite;
+}
+
+@keyframes server-reachability-dots {
+    0%   { content: ''; }
+    25%  { content: '.'; }
+    50%  { content: '..'; }
+    75%  { content: '...'; }
+    100% { content: ''; }
+}
+
+.server-reachability-note {
+    font-size: 0.85rem;
+    color: rgba(244, 246, 250, 0.65);
+    font-style: italic;
+}

@@ -587,6 +587,19 @@ fn write_post_stop_bat(
     // Bat-file logic with paths and service name baked in at install time.
     // %~dp0 / %~1 are not needed — everything is interpolated. The bat is
     // self-contained and idempotent.
+    // §32 Part 4 follow-up: before `sc start`, drop a respawn-tray flag
+    // file. The supervised launcher reads it at startup (in supervisor::run)
+    // and uses user_session_spawn to land the standalone tray exe back in
+    // the user's interactive session. Without this, the tray was killed by
+    // Velopack's swap and didn't return until the user's next logon
+    // (HKLM\Run auto-start). User confirmed this gap on the v0.1.25-beta.16
+    // → beta.17 smoke; flag write here + supervisor pickup makes the tray
+    // self-heal across upgrades.
+    let respawn_tray_flag = data_root
+        .join("control")
+        .join("respawn-tray-after-upgrade");
+    let respawn_tray_flag_str = respawn_tray_flag.to_string_lossy();
+
     let bat = format!(
         "@echo off\r\n\
          REM ws-scrcpy-web post-stop handler (§32 Part 4).\r\n\
@@ -597,11 +610,15 @@ fn write_post_stop_bat(
          timeout /t {sleep} /nobreak >nul\r\n\
          if exist \"{marker}\" (\r\n\
          \x20\x20\x20\x20del \"{marker}\"\r\n\
+         \x20\x20\x20\x20REM Flag for the new supervised launcher to respawn the standalone tray helper\r\n\
+         \x20\x20\x20\x20REM in the active user session (Velopack killed the prior tray during swap).\r\n\
+         \x20\x20\x20\x20type nul > \"{tray_flag}\"\r\n\
          \x20\x20\x20\x20sc start {service}\r\n\
          )\r\n\
          exit /b 0\r\n",
         sleep = POST_STOP_SLEEP_SECS,
         marker = marker_path_str,
+        tray_flag = respawn_tray_flag_str,
         service = service_name,
     );
 

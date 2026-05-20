@@ -2,10 +2,12 @@ import '../style/app.css';
 import '../style/dependencies.css';
 import '../style/first-run-banner.css';
 import '../style/home.css';
+import '../style/server-reachability.css';
 import { DependencyPanel } from './client/DependencyPanel';
 import { FirstRunBanner } from './client/FirstRunBanner';
 import { HostTracker } from './client/HostTracker';
 import { NetworkDiscoveryPanel } from './client/NetworkDiscoveryPanel';
+import { startServerReachabilityWatchdog } from './client/ServerReachabilityOverlay';
 import { createSettingsHeader } from './client/SettingsHeader';
 import { createThemeToggle, initTheme } from './client/ThemeToggle';
 import { installThemeEmbedListener, notifyThemeReady } from './public/themeEmbed';
@@ -228,4 +230,11 @@ window.onload = async (): Promise<void> => {
     });
 
     HostTracker.start();
+
+    // Start the reachability watchdog AFTER the page is fully bootstrapped.
+    // When the server briefly goes unreachable (in-app upgrade window —
+    // §32 Part 4 has the server back in ~12-15s), the overlay covers the
+    // gap so the user doesn't see the OS-level "can't be reached" page.
+    // Auto-reloads on recovery.
+    startServerReachabilityWatchdog();
 };

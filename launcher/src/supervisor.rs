@@ -68,6 +68,20 @@ pub fn run() -> Result<i32> {
                 Ok(()) => log::info("supervisor: tray HKLM migration check complete"),
                 Err(e) => log::error(&format!("supervisor: tray HKLM migration: {e}")),
             }
+            // §32 Part 4 follow-up: respawn tray after upgrade. The
+            // post-stop bat writes a flag at <dataRoot>/control/
+            // respawn-tray-after-upgrade BEFORE sc start; this is the
+            // first thing the new service-mode launcher reads. If
+            // present, spawn the standalone tray helper into the active
+            // user session via the existing user_session_spawn machinery.
+            // Without this, the tray was killed by Velopack's current/ swap
+            // and didn't return until the user's next logon (HKLM\Run
+            // auto-start). The flag is deleted after spawn so subsequent
+            // startups don't double-spawn; if no active user session is
+            // found (e.g., headless boot before any logon), the flag stays
+            // and a later launcher restart will retry.
+            #[cfg(windows)]
+            try_respawn_tray_after_upgrade(&paths.install_root, &paths.data_root);
         }
     }
 
@@ -132,6 +146,71 @@ fn cleanup_stale_marker(marker: &Path) {
             Ok(()) => log::info(&format!("supervisor: removed stale marker {marker:?}")),
             Err(e) => log::error(&format!("supervisor: could not remove stale marker {marker:?}: {e}")),
         }
+    }
+}
+
+/// §32 Part 4 follow-up — respawn the standalone tray helper into the
+/// active user session if the post-stop bat wrote the
+/// `respawn-tray-after-upgrade` flag. Velopack's swap of `current/` kills
+/// the running tray (file lock on `current/ws-scrcpy-web-tray.exe`), and
+/// HKLM\Run only fires at user logon — so without explicit respawn here,
+/// the user has no tray icon until they log out + back in.
+///
+/// Best-effort: failures are logged but never block supervisor startup.
+/// If no active user session is found (e.g., headless boot before any
+/// interactive logon), the flag is LEFT IN PLACE so a future launcher
+/// restart can retry once a user session exists. If spawn succeeds, the
+/// flag is deleted so subsequent startups don't double-spawn.
+#[cfg(windows)]
+fn try_respawn_tray_after_upgrade(install_root: &Path, data_root: &Path) {
+    use crate::user_session_spawn::{spawn_in_active_user_session, SpawnUserLauncherArgs};
+
+    let flag = data_root.join("control").join("respawn-tray-after-upgrade");
+    if !flag.exists() {
+        return;
+    }
+
+    let tray_exe = install_root.join("current").join("ws-scrcpy-web-tray.exe");
+    if !tray_exe.exists() {
+        log::error(&format!(
+            "supervisor: respawn-tray flag present but tray helper missing at {tray_exe:?}; leaving flag for later retry"
+        ));
+        return;
+    }
+
+    let tray_path_str = match tray_exe.to_str() {
+        Some(s) => s.to_string(),
+        None => {
+            log::error(&format!(
+                "supervisor: tray path not valid UTF-8: {tray_exe:?}; leaving respawn flag"
+            ));
+            return;
+        }
+    };
+
+    log::info(&format!(
+        "supervisor: respawn-tray flag present — attempting cross-session spawn of {tray_path_str}"
+    ));
+    let r = spawn_in_active_user_session(&SpawnUserLauncherArgs {
+        launcher_path: tray_path_str,
+        launcher_args: vec![],
+    });
+    if r.ok {
+        log::info(&format!(
+            "supervisor: tray respawned in session {} (pid {}); clearing flag",
+            r.session_id, r.pid
+        ));
+        match std::fs::remove_file(&flag) {
+            Ok(()) => {}
+            Err(e) => log::error(&format!(
+                "supervisor: tray respawn succeeded but could not delete flag {flag:?}: {e} — may double-spawn on next launcher start"
+            )),
+        }
+    } else {
+        log::error(&format!(
+            "supervisor: tray respawn failed: {} — leaving flag for retry on next launcher start",
+            r.error_message.unwrap_or_default()
+        ));
     }
 }
 
