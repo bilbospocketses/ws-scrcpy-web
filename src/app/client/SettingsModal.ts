@@ -660,19 +660,24 @@ export class SettingsModal extends Modal {
         if (!this.updatesCheckNowBtn) return;
         const btn = this.updatesCheckNowBtn;
         btn.disabled = true;
-        const prev = btn.textContent;
         btn.textContent = 'checking…';
         if (this.updatesStatusEl) {
             this.updatesStatusEl.textContent = 'checking for updates…';
             this.updatesStatusEl.classList.remove('settings-status-error');
         }
-        // §25b — using-declaration replaces the prior try/finally. Captures
-        // `this`, `btn`, and `prev`; dispose restores text + conditionally
-        // re-enables the button (only when not actively checking/downloading,
-        // matching the original conditional re-enable logic).
+        // §25b using-declaration replaces the prior try/finally. The dispose
+        // ONLY re-enables the button (when appropriate) — it deliberately
+        // does NOT restore textContent. The success path runs
+        // applyActionButtonState which sets the correct final label
+        // ("apply v{X}" when ready, "check for updates now" otherwise),
+        // and the failure paths set their own labels below. Prior code
+        // captured `prev` before the fetch and restored it in dispose,
+        // which clobbered the correct "apply v{X}" label that
+        // applyActionButtonState had just set — visible as a button with
+        // green-ready styling but stale "check for updates now" text
+        // (caught by v0.1.25-beta.15 smoke 2026-05-20).
         using _restoreBtn = {
             [Symbol.dispose]: (): void => {
-                btn.textContent = prev;
                 if (
                     this.updatesLastStatus &&
                     this.updatesLastStatus.status !== 'checking' &&
@@ -689,6 +694,7 @@ export class SettingsModal extends Modal {
                     this.updatesStatusEl.textContent = `check failed (${r.status})`;
                     this.updatesStatusEl.classList.add('settings-status-error');
                 }
+                btn.textContent = 'check for updates now';
                 return;
             }
             const s = (await r.json()) as UpdatesStatusResponse;
@@ -701,6 +707,7 @@ export class SettingsModal extends Modal {
                 this.updatesStatusEl.textContent = "couldn't reach server";
                 this.updatesStatusEl.classList.add('settings-status-error');
             }
+            btn.textContent = 'check for updates now';
         }
     }
 
