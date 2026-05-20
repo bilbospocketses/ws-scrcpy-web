@@ -12,8 +12,10 @@ mod single_instance;
 mod spawn;
 mod supervisor;
 mod tray;
+mod tray_supervisor;
 mod uac_requester;
 mod unzip_handler;
+mod upgrade_server;
 #[cfg(windows)]
 mod user_session_spawn;
 
@@ -76,6 +78,18 @@ fn main() {
     // the SHA-pinned launcher instead of resolving via system PATH.
     if let Some(code) = unzip_handler::handle(&args) {
         log::info(&format!("unzip exiting with code {code}"));
+        std::process::exit(code);
+    }
+
+    // §32 Part 5 — upgrade-server dispatch. Post-stop bat spawns this
+    // subcommand AFTER Node exits but BEFORE sc start, so the port stays
+    // covered by SOMETHING during the upgrade window. Serves a static
+    // "updating, please wait…" HTML page. Self-exits on stop marker
+    // (written by the new supervised launcher before spawning Node) or
+    // 30s safety cap. Replaces the in-browser ServerReachabilityOverlay
+    // approach with a fully server-side mechanism per user request.
+    if let Some(code) = upgrade_server::handle(&args) {
+        log::info(&format!("upgrade-server exiting with code {code}"));
         std::process::exit(code);
     }
 

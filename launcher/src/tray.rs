@@ -60,6 +60,7 @@ fn run_tray() {
         "Exit ws-scrcpy-web?",
         "Stop the server and quit?",
         url_provider,
+        None,
     ) {
         Ok(common::tray::TrayAction::ConfirmedExit) => {
             log::info("tray: user confirmed exit; terminating process");

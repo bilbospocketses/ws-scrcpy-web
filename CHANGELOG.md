@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Tray lifecycle moved to launcher-owned polling.** §32 Part 5 — caught by v0.1.25-beta.18 → beta.19 smoke. Replaces the previous architecture (HKLM\Run auto-start at user logon + post-stop bat respawn flag) with a single owner: the launcher's new `tray_supervisor` background thread polls every 10 seconds, locates the active interactive user session via `WTSEnumerateSessionsW`, checks for `ws-scrcpy-web-tray.exe` in that session via `WTSEnumerateProcessesExW`, and spawns it via `user_session_spawn` if missing. The tray's per-session single-instance mutex handles dedup safely. Spawning passes `--launcher-spawn` argv, which signals the tray to surface a balloon notification on start: **"ws-scrcpy-web tray — tray started by launcher. to clear the tray, stop the ws-scrcpy-web service via Settings."** Sets correct expectation that the tray is intrinsic to service-mode operation.
+  - **`launcher/src/elevated_runner.rs::install_service`** no longer registers `HKLM\Software\Microsoft\Windows\CurrentVersion\Run\WsScrcpyWebTray`. On (re)install, it now also deletes any existing entry from beta.18-and-earlier installs.
+  - **`launcher/src/supervisor.rs`** drops `try_respawn_tray_after_upgrade` (the Part 4 flag-based mechanism). Replaced by `tray_supervisor::start_background()` which handles post-upgrade, post-logon, and user-killed cases uniformly.
+  - **Post-stop bat** drops the `respawn-tray-after-upgrade` flag write — no longer needed.
+  - **`common/src/tray.rs::run`** gains a `startup_balloon: Option<(&str, &str)>` parameter that, when Some, fires a `Shell_NotifyIconW(NIM_MODIFY, NIF_INFO)` balloon notification right after the tray icon registration. Reused for the launcher-spawn explanation; could be reused for future contexts.
+  - **`tray/src/main.rs`** parses `--launcher-spawn` argv, conditionally passes the balloon to `common::tray::run`.
+
+- **In-app upgrade now serves a static "updating, please wait..." page on the same port during the upgrade window.** §32 Part 5 — replaces the in-browser `ServerReachabilityOverlay` approach which couldn't survive browser auto-navigation on graceful socket close.
+  - **New `launcher/src/upgrade_server.rs`** + new `launcher/assets/upgrade-server-page.html`. Subcommand `<launcher> --upgrade-server` reads `<dataRoot>/config.json` for the web port, binds it, serves the embedded HTML on root + 503 JSON on `/api/*` paths (sentinel header `X-WsScrcpyWeb-Upgrade-Server: 1`). Self-exits on `<dataRoot>/control/upgrade-server-stop` marker or 30s safety cap.
+  - **Post-stop bat** spawns `<launcher> --upgrade-server` via `start "" /b` BEFORE `timeout` + `sc start`, so the port stays covered the entire upgrade window.
+  - **`launcher/src/supervisor.rs`** writes the stop marker + waits for the port to free (`wait_for_port_free`, 5s timeout) before spawning Node, so the new Node binds cleanly without racing the upgrade-server.
+  - **Static page** has inline JS that polls `/api/config` every 1s and checks for absence of the sentinel header to detect "real app is back" → reloads the page. Survives refreshes, new tabs, fresh visits during the upgrade window — anything that hits the URL is served the updating page until the real Node binds the port.
+  - **Dropped: `src/app/client/ServerReachabilityOverlay.ts` + `src/style/server-reachability.css`** + the registration call from `src/app/index.ts`. The launcher upgrade-server is the canonical mechanism going forward; no browser-side machinery needed.
+
+Vitest 688/688 unchanged (no test count delta; new code is launcher Rust + cross-process behaviors not in unit-test coverage). tsc --noEmit clean.
+
 ## [0.1.25-beta.19] - 2026-05-20
 
 ## [0.1.25-beta.18] - 2026-05-20

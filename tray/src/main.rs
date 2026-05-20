@@ -113,12 +113,28 @@ fn run_tray() -> Result<()> {
         }
     }
 
+    // §32 Part 5: when launched by the launcher's tray_supervisor poller
+    // (--launcher-spawn arg), show a one-time balloon explaining that the
+    // launcher owns the tray lifecycle so the user understands why it
+    // keeps coming back if they try to close it.
+    let argv: Vec<String> = std::env::args().collect();
+    let show_launcher_balloon = argv.iter().any(|a| a == "--launcher-spawn");
+    let balloon: Option<(&str, &str)> = if show_launcher_balloon {
+        Some((
+            "ws-scrcpy-web tray",
+            "tray started by launcher. to clear the tray, stop the ws-scrcpy-web service via Settings.",
+        ))
+    } else {
+        None
+    };
+
     let action = common::tray::run(
         ICON_BYTES,
         "ws-scrcpy-web (service)",
         "Exit ws-scrcpy-web?",
         "Stop the service and quit?",
         url_provider,
+        balloon,
     )
     .context("tray loop")?;
 

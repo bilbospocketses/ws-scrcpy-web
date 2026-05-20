@@ -56,32 +56,60 @@ pub fn run() -> Result<i32> {
     // previous crash from triggering an immediate respawn loop.
     cleanup_stale_marker(&paths.restart_marker);
 
-    // Service-mode tray Run-key migration. Idempotent — fast-paths when
-    // already correct. LocalSystem token (the privilege context Servy
-    // runs the launcher under) has the rights to write HKLM without UAC.
-    // In local mode this is a no-op: HKLM\Run is only used for the
-    // standalone tray helper which only exists in service mode.
+    // §32 Part 5 — launcher-owned tray lifecycle in service mode. Drops
+    // HKLM\Run (no longer registered at install_service) + the Part 4
+    // respawn-tray-after-upgrade flag mechanism. Replaced by a background
+    // poller that spawns the tray helper into the active interactive
+    // user session whenever it's missing. Tray's per-session
+    // single-instance mutex handles dedup safely.
+    //
+    // The tray HKLM cleanup is now also handled here (one-time per
+    // launcher start) to remove the legacy registry entry from
+    // beta.18-and-earlier installs. The cleanup is idempotent — best-
+    // effort delete, no error if absent.
     {
         let cfg = common::config::AppConfig::load(&paths.data_root);
         if cfg.is_service_mode() {
-            match crate::elevated_runner::migrate_tray_run_key_for_service(&paths.install_root) {
-                Ok(()) => log::info("supervisor: tray HKLM migration check complete"),
-                Err(e) => log::error(&format!("supervisor: tray HKLM migration: {e}")),
+            // One-time legacy cleanup (drops HKLM\Run\WsScrcpyWebTray
+            // left over from beta.18 and earlier installs that registered
+            // it at install_service time).
+            if let Err(e) = crate::elevated_runner::unregister_tray_run_key() {
+                log::error(&format!("supervisor: legacy HKLM\\Run cleanup: {e}"));
             }
-            // §32 Part 4 follow-up: respawn tray after upgrade. The
-            // post-stop bat writes a flag at <dataRoot>/control/
-            // respawn-tray-after-upgrade BEFORE sc start; this is the
-            // first thing the new service-mode launcher reads. If
-            // present, spawn the standalone tray helper into the active
-            // user session via the existing user_session_spawn machinery.
-            // Without this, the tray was killed by Velopack's current/ swap
-            // and didn't return until the user's next logon (HKLM\Run
-            // auto-start). The flag is deleted after spawn so subsequent
-            // startups don't double-spawn; if no active user session is
-            // found (e.g., headless boot before any logon), the flag stays
-            // and a later launcher restart will retry.
+
+            // Spawn the tray-supervisor background thread. Polls every
+            // 10s and ensures a tray exists in the active interactive
+            // user session. Runs for the lifetime of the launcher.
             #[cfg(windows)]
-            try_respawn_tray_after_upgrade(&paths.install_root, &paths.data_root);
+            {
+                let _stop = crate::tray_supervisor::start_background(&paths.install_root);
+                // We intentionally drop `_stop` — the thread runs for
+                // the lifetime of the process. If we ever need clean
+                // shutdown, keep the handle and signal it.
+                log::info("supervisor: tray-supervisor background thread started");
+            }
+        }
+
+        // §32 Part 5 — coordinate with any in-flight upgrade-server. If
+        // the post-stop bat spawned a `<launcher> --upgrade-server` to
+        // serve the updating page, it's bound to the port we're about to
+        // ask Node to bind. Write the stop marker + wait for the port to
+        // free up. Idempotent — if no upgrade-server is running, marker
+        // write is a no-op + port check returns immediately.
+        if cfg.is_service_mode() {
+            let port = cfg.web_port.unwrap_or(8000);
+            if let Err(e) = crate::upgrade_server::write_stop_marker(&paths.data_root) {
+                log::error(&format!(
+                    "supervisor: could not write upgrade-server stop marker (non-fatal): {e}"
+                ));
+            }
+            crate::upgrade_server::wait_for_port_free(
+                port,
+                std::time::Duration::from_secs(5),
+            );
+            log::info(&format!(
+                "supervisor: port {port} verified free, proceeding to spawn Node"
+            ));
         }
     }
 
@@ -149,70 +177,11 @@ fn cleanup_stale_marker(marker: &Path) {
     }
 }
 
-/// §32 Part 4 follow-up — respawn the standalone tray helper into the
-/// active user session if the post-stop bat wrote the
-/// `respawn-tray-after-upgrade` flag. Velopack's swap of `current/` kills
-/// the running tray (file lock on `current/ws-scrcpy-web-tray.exe`), and
-/// HKLM\Run only fires at user logon — so without explicit respawn here,
-/// the user has no tray icon until they log out + back in.
-///
-/// Best-effort: failures are logged but never block supervisor startup.
-/// If no active user session is found (e.g., headless boot before any
-/// interactive logon), the flag is LEFT IN PLACE so a future launcher
-/// restart can retry once a user session exists. If spawn succeeds, the
-/// flag is deleted so subsequent startups don't double-spawn.
-#[cfg(windows)]
-fn try_respawn_tray_after_upgrade(install_root: &Path, data_root: &Path) {
-    use crate::user_session_spawn::{spawn_in_active_user_session, SpawnUserLauncherArgs};
-
-    let flag = data_root.join("control").join("respawn-tray-after-upgrade");
-    if !flag.exists() {
-        return;
-    }
-
-    let tray_exe = install_root.join("current").join("ws-scrcpy-web-tray.exe");
-    if !tray_exe.exists() {
-        log::error(&format!(
-            "supervisor: respawn-tray flag present but tray helper missing at {tray_exe:?}; leaving flag for later retry"
-        ));
-        return;
-    }
-
-    let tray_path_str = match tray_exe.to_str() {
-        Some(s) => s.to_string(),
-        None => {
-            log::error(&format!(
-                "supervisor: tray path not valid UTF-8: {tray_exe:?}; leaving respawn flag"
-            ));
-            return;
-        }
-    };
-
-    log::info(&format!(
-        "supervisor: respawn-tray flag present — attempting cross-session spawn of {tray_path_str}"
-    ));
-    let r = spawn_in_active_user_session(&SpawnUserLauncherArgs {
-        launcher_path: tray_path_str,
-        launcher_args: vec![],
-    });
-    if r.ok {
-        log::info(&format!(
-            "supervisor: tray respawned in session {} (pid {}); clearing flag",
-            r.session_id, r.pid
-        ));
-        match std::fs::remove_file(&flag) {
-            Ok(()) => {}
-            Err(e) => log::error(&format!(
-                "supervisor: tray respawn succeeded but could not delete flag {flag:?}: {e} — may double-spawn on next launcher start"
-            )),
-        }
-    } else {
-        log::error(&format!(
-            "supervisor: tray respawn failed: {} — leaving flag for retry on next launcher start",
-            r.error_message.unwrap_or_default()
-        ));
-    }
-}
+// §32 Part 4 follow-up — `try_respawn_tray_after_upgrade` removed.
+// Replaced by `tray_supervisor::start_background` which polls every 10s
+// and ensures a tray exists regardless of why it went missing (post-
+// upgrade, user-killed, never-spawned-on-first-logon). See
+// `launcher/src/tray_supervisor.rs`.
 
 fn cleanup_old_node(old: &Path) {
     if old.exists() {

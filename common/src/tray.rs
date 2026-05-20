@@ -81,7 +81,8 @@ use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 #[cfg(windows)]
 use windows::Win32::UI::Shell::{
-    Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW,
+    Shell_NotifyIconW, NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_TIP, NIIF_INFO, NIM_ADD, NIM_DELETE,
+    NIM_MODIFY, NOTIFYICONDATAW,
 };
 #[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -167,6 +168,7 @@ pub fn run(
     confirm_title: &str,
     confirm_body: &str,
     open_url_provider: Box<dyn Fn() -> String>,
+    startup_balloon: Option<(&str, &str)>,
 ) -> Result<TrayAction> {
     // SAFETY: GetModuleHandleW(NULL) returns the HMODULE for the calling
     // process's executable; always safe to call.
@@ -294,6 +296,32 @@ pub fn run(
         return Err(anyhow!("Shell_NotifyIconW(NIM_ADD) returned FALSE"));
     }
     _guard.nid_added.set(true);
+
+    // 7b. Optional startup balloon notification. Uses NIM_MODIFY with the
+    // NIF_INFO flag on the same icon — the balloon hangs off the existing
+    // tray icon for a few seconds and dismisses itself. Used to surface
+    // "ws-scrcpy-web tray started by launcher; close ws-scrcpy-web to
+    // remove" when the launcher spawns the tray automatically in service
+    // mode. Failure is logged + ignored — the tray icon itself is the
+    // critical UX, the balloon is informational.
+    if let Some((balloon_title, balloon_body)) = startup_balloon {
+        let mut balloon_nid: NOTIFYICONDATAW = unsafe { std::mem::zeroed() };
+        balloon_nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
+        balloon_nid.hWnd = hwnd;
+        balloon_nid.uID = TRAY_ICON_UID;
+        balloon_nid.uFlags = NIF_INFO;
+        let info_w = to_wide(balloon_body);
+        let title_w = to_wide(balloon_title);
+        let info_len = info_w.len().min(balloon_nid.szInfo.len() - 1);
+        balloon_nid.szInfo[..info_len].copy_from_slice(&info_w[..info_len]);
+        let title_len = title_w.len().min(balloon_nid.szInfoTitle.len() - 1);
+        balloon_nid.szInfoTitle[..title_len].copy_from_slice(&title_w[..title_len]);
+        balloon_nid.Anonymous.uTimeout = 10_000; // hint only; Windows controls actual duration
+        balloon_nid.dwInfoFlags = NIIF_INFO;
+        // SAFETY: balloon_nid is fully initialized; only NIF_INFO + dwInfoFlags
+        // are honored on NIM_MODIFY. Failure to display the balloon is benign.
+        let _ = unsafe { Shell_NotifyIconW(NIM_MODIFY, &balloon_nid) };
+    }
 
     // 8. Pump messages until WM_QUIT (posted by the WndProc).
     pump_messages();
@@ -707,6 +735,7 @@ pub fn run(
     _confirm_title: &str,
     _confirm_body: &str,
     _open_url_provider: Box<dyn Fn() -> String>,
+    _startup_balloon: Option<(&str, &str)>,
 ) -> anyhow::Result<TrayAction> {
     Ok(TrayAction::Cancelled)
 }

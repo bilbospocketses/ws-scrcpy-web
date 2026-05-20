@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ws-scrcpy-web — updating</title>
+<style>
+:root {
+  color-scheme: dark light;
+  --bg: #0f121a;
+  --card: rgba(31, 38, 52, 0.72);
+  --border: rgba(91, 154, 255, 0.35);
+  --accent: #5b9aff;
+  --text: #f4f6fa;
+  --muted: rgba(244, 246, 250, 0.65);
+}
+html, body { margin: 0; padding: 0; height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  box-sizing: border-box;
+}
+.card {
+  max-width: 480px;
+  width: 100%;
+  text-align: center;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 2rem 2.5rem;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
+}
+h1 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin: 0 0 0.75rem 0;
+  color: var(--accent);
+}
+.detail {
+  font-size: 1rem;
+  margin-bottom: 1.25rem;
+  color: var(--text);
+}
+.detail::after {
+  content: '';
+  display: inline-block;
+  width: 1em;
+  text-align: left;
+  animation: dots 1.4s steps(4, end) infinite;
+}
+@keyframes dots {
+  0%   { content: ''; }
+  25%  { content: '.'; }
+  50%  { content: '..'; }
+  75%  { content: '...'; }
+  100% { content: ''; }
+}
+.note {
+  font-size: 0.85rem;
+  color: var(--muted);
+  font-style: italic;
+}
+</style>
+</head>
+<body>
+<div class="card">
+<h1>ws-scrcpy-web is updating</h1>
+<div class="detail" id="detail">reconnecting</div>
+<div class="note">the page will reload automatically when the server is back</div>
+</div>
+<script>
+(function () {
+  // Poll the real /api/config endpoint. While upgrade-server is up, it
+  // responds 503 with X-WsScrcpyWeb-Upgrade-Server: 1. Once the real Node
+  // takes over the port, the response is 200 JSON (no sentinel header).
+  // We discriminate on response.ok + sentinel header.
+  var POLL_MS = 1000;
+  var attempts = 0;
+  var detail = document.getElementById('detail');
+
+  function poll() {
+    attempts += 1;
+    fetch('/api/config', { cache: 'no-store' })
+      .then(function (r) {
+        if (r.ok && r.headers.get('X-WsScrcpyWeb-Upgrade-Server') !== '1') {
+          // Real app is back. Reload to drop the upgrade page.
+          if (detail) detail.textContent = 'reconnected — reloading';
+          setTimeout(function () { location.reload(); }, 250);
+          return;
+        }
+        // Still upgrade-server (503 with sentinel) or unexpected; keep polling.
+        setTimeout(poll, POLL_MS);
+      })
+      .catch(function () {
+        // Connection refused — happens briefly between upgrade-server
+        // exit and new Node bind. Keep polling.
+        setTimeout(poll, POLL_MS);
+      });
+  }
+
+  setTimeout(poll, POLL_MS);
+})();
+</script>
+</body>
+</html>
