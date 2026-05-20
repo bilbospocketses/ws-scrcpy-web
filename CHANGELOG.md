@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.25-beta.12] - 2026-05-19
+
 ### Fixed
 
 - **Service-mode in-app upgrade: replaced the Part 2 hook-side detached spawn (beta.11) with a Servy-native `--postStopPath` post-stop handler.** §32 Part 3 — caught by v0.1.25-beta.9 → v0.1.25-beta.11 manual VM smoke. The deferred-spawn helper from Part 2 was killed by Velopack's Job Object cleanup during its 8-second sleep (launcher.log showed "sleeping 8000ms" but never "invoking servy-cli restart" — confirming kill mid-sleep). And worse than Part 1's behavior, the clean-exit + dead-helper combo meant SCM's `RestartProcess` RecoveryAction never fired (clean exits don't trigger recovery), so the service stayed Stopped indefinitely until reboot. Part 3 routes around the entire process-tree problem by using **Servy's `--postStopPath` mechanism**: a fire-and-forget executable that Servy itself spawns after the supervised process and all its children have exited. The post-stop process is in Servy's process tree (descended from SCM), completely independent of Velopack's Update.exe — no Job Object cleanup can touch it.
