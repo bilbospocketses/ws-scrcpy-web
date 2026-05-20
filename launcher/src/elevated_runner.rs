@@ -460,82 +460,15 @@ fn reg_delete_value_best_effort(key: &str, value: &str) -> Result<(), String> {
     classify_reg_delete_outcome(out.status.code(), &out.stderr)
 }
 
-fn register_tray_run_key(tray_path: &str) -> Result<(), String> {
-    let out = Command::new("reg.exe")
-        .args(["add", TRAY_RUN_KEY, "/v", TRAY_RUN_VALUE, "/t", "REG_SZ", "/d", tray_path, "/f"])
-        .output()
-        .map_err(|e| e.to_string())?;
-    if !out.status.success() {
-        return Err(String::from_utf8_lossy(&out.stderr).into_owned());
-    }
-    Ok(())
-}
-
-/// Service-mode startup migration: ensure HKLM\...\Run\WsScrcpyWebTray
-/// points at the tray helper exe. Idempotent — fast-paths when the value
-/// is already correct, only writes when missing or pointing at a wrong
-/// path.
-///
-/// Called from `supervisor::run` when the launcher is starting in service
-/// mode. The launcher under Servy runs as LocalSystem, which can write
-/// HKLM with no UAC prompt.
-///
-/// `install_root` is the resolved installation root; the tray helper
-/// is expected at `<install_root>/current/ws-scrcpy-web-tray.exe`.
-///
-/// Returns `Ok(())` on success or "no migration needed" (already correct);
-/// returns `Err` only on actual failure. Caller should log + proceed
-/// rather than fail service start.
-pub fn migrate_tray_run_key_for_service(install_root: &std::path::Path) -> Result<(), String> {
-    let tray_path = install_root
-        .join("current")
-        .join("ws-scrcpy-web-tray.exe");
-    if !tray_path.exists() {
-        return Err(format!(
-            "tray helper not found at expected path {tray_path:?}; skipping HKLM migration"
-        ));
-    }
-    let tray_path_str = tray_path
-        .to_str()
-        .ok_or_else(|| format!("tray path {tray_path:?} is not valid UTF-8"))?;
-
-    // Fast path: read the current value via reg.exe query and short-circuit
-    // when it's already correct. Avoids log noise on every service start.
-    let query = Command::new("reg.exe")
-        .args([
-            "query",
-            TRAY_RUN_KEY,
-            "/v",
-            TRAY_RUN_VALUE,
-        ])
-        .output()
-        .map_err(|e| format!("reg.exe query failed to spawn: {e}"))?;
-
-    if query.status.success() {
-        let stdout = String::from_utf8_lossy(&query.stdout);
-        if is_hklm_already_migrated(&stdout, tray_path_str) {
-            return Ok(());
-        }
-        // Value present but path differs — fall through to overwrite.
-    }
-    // Either the value wasn't present (query exit != 0) or the path differs —
-    // either way, write it.
-    register_tray_run_key(tray_path_str)
-}
-
-/// Pure predicate: does `reg.exe query` stdout indicate the HKLM tray Run-key
-/// value already points at the expected tray exe path?
-///
-/// `reg.exe query` stdout when present looks like:
-///   HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion\Run
-///       WsScrcpyWebTray    REG_SZ    C:\...\ws-scrcpy-web-tray.exe
-///
-/// The tray exe path is the only meaningful payload — the registry-key
-/// header line and the value name are fixed strings the tray path can't
-/// collide with. A `contains()` check is sufficient.
-fn is_hklm_already_migrated(query_stdout: &str, expected_tray_path: &str) -> bool {
-    query_stdout.contains(expected_tray_path)
-}
+// §32 Part 5: HKLM\Run registration removed entirely (replaced by
+// launcher-owned tray polling via tray_supervisor). The following
+// functions were dropped along with that architecture:
+//   - register_tray_run_key (HKLM\Run add)
+//   - migrate_tray_run_key_for_service (startup self-heal)
+//   - is_hklm_already_migrated (helper for the above)
+// Only `unregister_tray_run_key` remains, used at supervisor::run start +
+// install_service time to clean up legacy entries from beta.18-and-earlier
+// installs.
 
 /// Unregister the tray from the HKLM Run key. Exit code 1 (value not found)
 /// is treated as success — the desired post-state is that the value is absent.
@@ -756,24 +689,7 @@ mod tests {
         assert!(result.unwrap_err().contains("killed"));
     }
 
-    #[test]
-    fn is_hklm_already_migrated_returns_true_when_path_matches() {
-        // Realistic reg.exe query output where the value points at the expected exe.
-        let stdout = "\n\
-            HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\n    \
-                WsScrcpyWebTray    REG_SZ    C:\\Program Files\\WsScrcpyWeb\\current\\ws-scrcpy-web-tray.exe\n";
-        let expected = r"C:\Program Files\WsScrcpyWeb\current\ws-scrcpy-web-tray.exe";
-        assert!(is_hklm_already_migrated(stdout, expected));
-    }
-
-    #[test]
-    fn is_hklm_already_migrated_returns_false_when_path_differs() {
-        // Value is present but points at a different (e.g., older) exe path —
-        // migration must overwrite it rather than skip.
-        let stdout = "\n\
-            HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\n    \
-                WsScrcpyWebTray    REG_SZ    C:\\Old\\Path\\ws-scrcpy-web-tray.exe\n";
-        let expected = r"C:\Program Files\WsScrcpyWeb\current\ws-scrcpy-web-tray.exe";
-        assert!(!is_hklm_already_migrated(stdout, expected));
-    }
+    // §32 Part 5: `is_hklm_already_migrated_*` tests removed along with the
+    // `is_hklm_already_migrated` function (HKLM\Run registration architecture
+    // replaced by launcher-owned tray polling).
 }
