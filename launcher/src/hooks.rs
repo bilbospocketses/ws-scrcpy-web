@@ -316,24 +316,32 @@ fn on_updated(install_root: &Path, data_root: &Path) -> i32 {
         return 0;
     }
 
-    // §32 Part 3: the post-stop handler (registered as Servy's
-    // --postStopPath at install time) is now the primary recovery
-    // mechanism. UpdateService wrote an apply-update-pending marker
-    // before exit; when the SOURCE launcher exited cleanly post-swap,
-    // Servy fired the post-stop handler, which is sleeping and will
-    // call `sc start` once Velopack is done. We don't need to do anything
-    // here for that path.
+    // §32 Part 4 — the post-stop bat file at <dataRoot>/post-stop/post-stop.bat
+    // (written at install_service time, invoked by Servy via --postStopPath
+    // through cmd.exe) IS the recovery mechanism. If the bat is present,
+    // Servy will fire it after the supervised launcher exits and the bat
+    // will handle sleeping + sc start; the hook is a no-op.
     //
-    // The synchronous `servy-cli restart` call below is the BRIDGE path
-    // for upgrades FROM a version whose install predates --postStopPath
-    // wiring (i.e., beta.9 → beta.12 specifically). On those installs
-    // Servy has no post-stop hook, so we fall back to firing servy-cli
-    // restart directly here. SCM's RestartProcess RecoveryAction
-    // handles the race with Update.exe — the first Node child will be
-    // killed by file-sharing-violation on current/, SCM retries after
-    // its recovery delay (~60s), the retry succeeds. Same one-time-bumpy
-    // upgrade behavior as beta.10. Future upgrades (beta.12 → beta.13+)
-    // have the post-stop handler in place and don't traverse this path.
+    // If the bat is absent — i.e., an upgrade from an install that predates
+    // Part 4's bat wiring (legacy beta.9 / beta.12-beta.15 installs) — we
+    // fall back to the synchronous bridge `servy-cli restart`. The bridge
+    // races Update.exe and the new Node child usually dies; SCM's
+    // RestartProcess RecoveryAction recovers after ~60-75 seconds. Same
+    // one-time bumpy behavior we accepted for the beta.9 → beta.12 bridge.
+    // For users on Part 4-era installs (where the bat file is present), the
+    // bat is the clean path and the bridge MUST NOT fire (Part 3 smoke
+    // showed the bridge actively races the post-stop and breaks recovery).
+    let post_stop_bat = data_root.join("post-stop").join("post-stop.bat");
+    if post_stop_bat.exists() {
+        log::info(&format!(
+            "hook(updated): post-stop bat present at {post_stop_bat:?} — Servy will handle recovery via --postStopPath; hook is a no-op"
+        ));
+        return 0;
+    }
+
+    log::info(&format!(
+        "hook(updated): post-stop bat absent at {post_stop_bat:?} — firing legacy synchronous servy-cli restart bridge"
+    ));
     run_servy(install_root, &["restart", "--name", "WsScrcpyWeb"], "updated")
 }
 

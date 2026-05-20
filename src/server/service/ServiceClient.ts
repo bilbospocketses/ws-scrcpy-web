@@ -58,6 +58,13 @@ export interface ServiceInstallOptions {
     /** Absolute path used for the service log file. */
     logPath: string;
     /**
+     * Writable data root for the install (Windows: typically `C:\ProgramData\WsScrcpyWeb`).
+     * Used by ServyClient to write the §32 Part 4 post-stop bat file at
+     * `<dataRoot>/post-stop/post-stop.bat`. Omit on Linux (SystemdClient
+     * doesn't use it).
+     */
+    dataRoot?: string | undefined;
+    /**
      * Linux-only systemd scope selector.
      *
      *   - `'user'`   → unit at `~/.config/systemd/user/<name>.service`,

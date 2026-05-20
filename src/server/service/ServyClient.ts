@@ -138,6 +138,9 @@ export class ServyClient implements ServiceClient {
             envVars: formatEnvVars(opts.envVars),
             logPath: opts.logPath,
             trayHelperPath,
+            // §32 Part 4: elevated installer writes <dataRoot>/post-stop/post-stop.bat
+            // and registers it as Servy's --postStopPath via cmd.exe.
+            dataRoot: opts.dataRoot,
         });
         if (!result.ok) {
             throw new ServiceInstallError(

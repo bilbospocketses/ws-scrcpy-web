@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Service-mode in-app upgrade: post-stop handler relocated from launcher binary (in `current/`) to a bat file in `<dataRoot>/post-stop/`, invoked via `cmd.exe`.** §32 Part 4 — caught by v0.1.25-beta.15 smoke 2026-05-20. Part 3 used `current/ws-scrcpy-web-launcher.exe --post-stop-handler` as the post-stop process, but that binary lives in Velopack's swap zone. When Velopack swapped `current/` during the upgrade window, the running post-stop process was stranded mid-sleep (launcher.log showed `sleeping 12s` at 19:28:32 but no follow-up log lines — confirmed killed/stranded). The recovery never fired, the service stayed Stopped until reboot.
+  - **`launcher/src/elevated_runner.rs::install_service`** now writes `<dataRoot>/post-stop/post-stop.bat` at install time with the marker path + service name interpolated. The bat does: `timeout 12 → if exist marker (del marker + sc start) → exit`. Servy registration uses `--postStopPath=C:\Windows\System32\cmd.exe` and `--postStopParams=/c "<bat path>"`. **cmd.exe is at the fixed Windows OS location (never moves), bat file is in `<dataRoot>` (Velopack-untouchable).** Verified `sc qc WsScrcpyWeb` on a beta.14 install — Servy itself is registered at `C:\ProgramData\Servy\Servy.Service.CLI.exe` which is also Velopack-untouchable, so the whole recovery chain runs entirely outside `current/`.
+  - **`launcher/src/hooks.rs::on_updated`** now checks for the post-stop bat file. If present → no-op (Servy will fire the bat via --postStopPath). If absent → fire the legacy synchronous `servy-cli restart` bridge as fallback (for upgrades from beta.9-era installs that predate post-stop wiring; same one-time-bumpy behavior we already accepted for the beta.9 → beta.12 bridge). This eliminates the race we observed in beta.15 smoke where the synchronous bridge fired CONCURRENTLY with the post-stop handler, racing each other to nothing.
+  - **`launcher/src/post_stop_handler.rs` deleted.** No longer needed — the bat file owns the post-stop logic entirely. Module unregistered from `launcher/src/main.rs` dispatch chain.
+  - **`launcher/src/elevated_runner.rs::InstallServiceArgs`** adds `data_root: Option<String>` field. Node side (ServiceApi → ServyClient → elevatedRunner) threads `Config.getInstance().dataRoot` through. Optional with `#[serde(default)]` for backward compatibility — legacy callers without dataRoot just skip post-stop wiring and rely on the bridge.
+  - **`src/server/service/ServiceClient.ts::ServiceInstallOptions`** + `src/server/service/elevatedRunner.ts::InstallServiceArgs` mirror the Rust-side `data_root` field as `dataRoot?: string | undefined` (exactOptionalPropertyTypes compatible).
+  - **Servy's existing `C:\ProgramData\Servy\` install** verified via `sc qc WsScrcpyWeb` on the beta.14 smoke — `BINARY_PATH_NAME` is `"C:\ProgramData\Servy\Servy.Service.CLI.exe" "WsScrcpyWeb"`, confirming Servy's wrapper lives outside `current/`. The Part 4 architecture leverages this stable location: Servy fires `--postStopPath` (cmd.exe) which runs the bat (in dataRoot) which calls `sc.exe start`. Zero touch on `current/` during recovery.
+  - Vitest 688/688 unchanged (no test-count delta; Node-side changes are pass-through threading; the new behavior is exercised at install-service time and not in unit-test coverage). cargo check / cargo test on launcher: validated in CI. tsc --noEmit clean (Node side).
+
 ## [0.1.25-beta.15] - 2026-05-20
 
 ## [0.1.25-beta.14] - 2026-05-20

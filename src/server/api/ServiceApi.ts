@@ -270,6 +270,11 @@ export class ServiceApi {
                 maxRestartAttempts: 3,
                 envVars,
                 logPath,
+                // §32 Part 4: pass dataRoot so the elevated installer can write
+                // <dataRoot>/post-stop/post-stop.bat and register it as Servy's
+                // --postStopPath via cmd.exe (Velopack-untouchable location).
+                // Linux SystemdClient ignores this field.
+                dataRoot: Config.getInstance().dataRoot ?? undefined,
                 // Linux SystemdClient consumes scope; Windows ServyClient ignores it.
                 scope,
             });

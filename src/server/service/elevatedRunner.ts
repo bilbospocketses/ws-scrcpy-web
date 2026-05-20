@@ -75,6 +75,16 @@ export interface InstallServiceArgs {
     logPath: string;
     /** Optional tray helper exe; null/undefined when not present. */
     trayHelperPath?: string;
+    /**
+     * Writable data root for the install (e.g., C:\ProgramData\WsScrcpyWeb).
+     * The elevated installer uses this to write the post-stop bat file at
+     * `<dataRoot>/post-stop/post-stop.bat` (§32 Part 4 architecture —
+     * post-stop runs from a Velopack-untouchable location via cmd.exe).
+     * Omitting this skips post-stop wiring; Servy then has no post-stop
+     * hook and the synchronous --veloapp-updated bridge handles recovery
+     * (the legacy path, less reliable).
+     */
+    dataRoot?: string | undefined;
 }
 
 export interface UninstallServiceArgs {

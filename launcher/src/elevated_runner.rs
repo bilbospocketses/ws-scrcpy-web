@@ -79,6 +79,12 @@ pub struct InstallServiceArgs {
     /// tray at logon) and spawn the tray detached for the installing
     /// admin's session.
     pub tray_helper_path: Option<String>,
+    /// Writable data root for the install (e.g., C:\ProgramData\WsScrcpyWeb).
+    /// Used to compute the post-stop bat file location (outside Velopack's
+    /// reach) — §32 Part 4 architecture. Optional only so legacy callers
+    /// don't error; modern installs MUST pass this to wire post-stop.
+    #[serde(default)]
+    pub data_root: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -175,18 +181,44 @@ fn fail(code: i32, msg: &str) -> ElevatedResult {
 fn install_service(args: &InstallServiceArgs) -> ElevatedResult {
     log::info(&format!("install-service: name={}", args.name));
 
-    // §32 Part 3: register `--postStopPath` pointing at the launcher
-    // itself with `--post-stop-handler` as its only param. Servy fires
-    // this every time the supervised launcher exits. For user-initiated
-    // stops (sc stop, services.msc), the handler exits 0 immediately
-    // because no marker is present. For Velopack apply-update flows, the
-    // handler sees the marker that UpdateService wrote pre-exit, sleeps
-    // long enough for Update.exe to release file handles on current/,
-    // then `sc start`s the service. The post-stop process is fire-and-
-    // forget per Servy docs — it doesn't block service shutdown and is
-    // outside Velopack's process tree, so it survives any Job-Object
-    // cleanup that killed our prior Part 1/Part 2 attempts.
-    let servy_args = vec![
+    // §32 Part 4 — post-stop handler lives at <dataRoot>/post-stop/post-stop.bat
+    // and is invoked via cmd.exe. Replaces the Part 3 launcher-binary-with-flag
+    // approach, which used `current/ws-scrcpy-web-launcher.exe` as the post-stop
+    // process — putting the recovery binary IN Velopack's swap zone. v0.1.25-beta.15
+    // smoke (2026-05-20) showed post-stop #1 dying mid-sleep at 19:28:32, almost
+    // certainly because Velopack's swap of `current/` between 19:28:32-33 left the
+    // post-stop process stranded.
+    //
+    // The new architecture:
+    //   - postStopPath: C:\Windows\System32\cmd.exe (OS-stable, never moves)
+    //   - postStopParams: /c "<dataRoot>\post-stop\post-stop.bat"
+    //   - bat lives in <dataRoot> (Velopack-untouchable)
+    //   - bat content: timeout 12 → check marker → del marker → sc start
+    //   - Servy is registered at C:\ProgramData\Servy\ (also Velopack-untouchable);
+    //     verified via `sc qc WsScrcpyWeb` on a beta.14 install.
+    //
+    // If data_root wasn't provided (legacy caller), fall back to NOT wiring post-stop
+    // and the synchronous --veloapp-updated hook bridge handles recovery.
+    let post_stop_bat: Option<std::path::PathBuf> = match args.data_root.as_deref() {
+        Some(dr) => match write_post_stop_bat(std::path::Path::new(dr), &args.name, &args.bin_path) {
+            Ok(path) => {
+                log::info(&format!("install-service: wrote post-stop bat at {path:?}"));
+                Some(path)
+            }
+            Err(e) => {
+                log::error(&format!(
+                    "install-service: failed to write post-stop bat: {e} — proceeding without postStopPath (legacy bridge path will handle recovery)"
+                ));
+                None
+            }
+        },
+        None => {
+            log::info("install-service: data_root not provided — skipping post-stop wiring (legacy bridge path will handle recovery)");
+            None
+        }
+    };
+
+    let mut servy_args = vec![
         "install".to_string(),
         "--name".to_string(),
         args.name.clone(),
@@ -210,19 +242,26 @@ fn install_service(args: &InstallServiceArgs) -> ElevatedResult {
         args.log_path.clone(),
         "--stderr".to_string(),
         args.log_path.clone(),
-        "--postStopPath".to_string(),
-        args.bin_path.clone(),
-        // §32 Part 3 follow-up — caught by v0.1.25-beta.12 fresh-install
-        // smoke (2026-05-20): Servy's CommandLineParser rejects values
-        // that start with `--` as separate args ("Option 'post-stop-handler'
-        // is unknown" + exit 1). Use the `--flag=value` form to keep the
-        // value bound to its flag through the parser. Confirmed via local
-        // servy-cli probe — without the `=` form, the install fails before
-        // touching SCM at all.
-        "--postStopParams=--post-stop-handler".to_string(),
-        "--postStopStartupDir".to_string(),
-        args.startup_dir.clone(),
     ];
+
+    if let Some(bat_path) = &post_stop_bat {
+        let bat_path_str = bat_path.to_string_lossy().into_owned();
+        // cmd.exe is at the fixed Windows OS location; cannot be affected by
+        // Velopack or any other update.
+        servy_args.push("--postStopPath".to_string());
+        servy_args.push(r"C:\Windows\System32\cmd.exe".to_string());
+        // Two-token form parses cleanly per local servy-cli probe (the issue
+        // we hit with the launcher-flag approach was values starting with `--`).
+        servy_args.push("--postStopParams".to_string());
+        servy_args.push(format!("/c \"{bat_path_str}\""));
+        servy_args.push("--postStopStartupDir".to_string());
+        servy_args.push(
+            bat_path
+                .parent()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|| args.startup_dir.clone()),
+        );
+    }
 
     let install_out = match run_capture(&args.servy_path, &servy_args) {
         Ok(out) => out,
@@ -505,6 +544,73 @@ pub fn unregister_tray_run_key() -> Result<(), String> {
 /// during install to clean up upgrades from the HKCU era. Exit code 1
 /// (value not found) is treated as success — fresh installs have nothing
 /// to clean up, and that's the expected post-state.
+/// §32 Part 4 — write the post-stop bat file at `<data_root>/post-stop/post-stop.bat`.
+/// This bat is invoked by Servy via `--postStopPath` every time the supervised
+/// launcher exits. The bat:
+///   1. Sleeps DEFERRED_RESTART_DELAY_SECS to let Update.exe finish its swap.
+///   2. Checks for the apply-update-pending marker at <data_root>/control/.
+///   3. If present → del marker + sc start the service (Velopack apply path).
+///   4. If absent → exit (user-initiated stop, e.g., services.msc).
+///
+/// Why a bat instead of our own launcher binary: in Part 3 (PR #48) we used
+/// `<current>/ws-scrcpy-web-launcher.exe --post-stop-handler` as the post-stop
+/// process. That binary lives in Velopack's swap zone (`current/`), so the
+/// running post-stop got stranded mid-sleep when Velopack swapped `current/`
+/// during the upgrade (caught by v0.1.25-beta.15 smoke 2026-05-20). The bat
+/// file lives in `<data_root>` (Velopack-untouchable) and is invoked by
+/// `C:\Windows\System32\cmd.exe` (OS-stable). Paths are interpolated at
+/// install time — no arg-passing needed at run time.
+///
+/// Returns the full path of the written bat on success.
+fn write_post_stop_bat(
+    data_root: &std::path::Path,
+    service_name: &str,
+    _launcher_bin_path: &str,
+) -> Result<std::path::PathBuf, String> {
+    use std::fs;
+
+    let post_stop_dir = data_root.join("post-stop");
+    fs::create_dir_all(&post_stop_dir).map_err(|e| {
+        format!("create_dir_all {post_stop_dir:?} failed: {e}")
+    })?;
+
+    let bat_path = post_stop_dir.join("post-stop.bat");
+    let marker_path = data_root.join("control").join("apply-update-pending");
+    let marker_path_str = marker_path.to_string_lossy();
+
+    // 12 seconds: empirical buffer above the observed Update.exe lifetime.
+    // v0.1.25-beta.10 smoke A.2 logs showed Update.exe holding file handles
+    // ~5s into its post-apply window. 12s gives Update.exe time to exit and
+    // release handles before sc.exe asks SCM to start the service again.
+    const POST_STOP_SLEEP_SECS: u32 = 12;
+
+    // Bat-file logic with paths and service name baked in at install time.
+    // %~dp0 / %~1 are not needed — everything is interpolated. The bat is
+    // self-contained and idempotent.
+    let bat = format!(
+        "@echo off\r\n\
+         REM ws-scrcpy-web post-stop handler (§32 Part 4).\r\n\
+         REM Generated by elevated_runner.rs:write_post_stop_bat at install_service time.\r\n\
+         REM Invoked by Servy via --postStopPath after the supervised launcher exits.\r\n\
+         REM Marker presence is the discriminator between Velopack-apply stop (restart)\r\n\
+         REM and user-initiated stop (do not restart).\r\n\
+         timeout /t {sleep} /nobreak >nul\r\n\
+         if exist \"{marker}\" (\r\n\
+         \x20\x20\x20\x20del \"{marker}\"\r\n\
+         \x20\x20\x20\x20sc start {service}\r\n\
+         )\r\n\
+         exit /b 0\r\n",
+        sleep = POST_STOP_SLEEP_SECS,
+        marker = marker_path_str,
+        service = service_name,
+    );
+
+    fs::write(&bat_path, bat.as_bytes()).map_err(|e| {
+        format!("write {bat_path:?} failed: {e}")
+    })?;
+    Ok(bat_path)
+}
+
 fn cleanup_stale_hkcu_tray_run_key() -> Result<(), String> {
     reg_delete_value_best_effort(STALE_HKCU_TRAY_RUN_KEY, TRAY_RUN_VALUE)
 }

@@ -8,7 +8,6 @@ mod install_acl;
 mod job_object;
 mod log;
 mod paths;
-mod post_stop_handler;
 mod single_instance;
 mod spawn;
 mod supervisor;
@@ -80,17 +79,13 @@ fn main() {
         std::process::exit(code);
     }
 
-    // Post-stop handler dispatch — §32 Part 3. Servy invokes this
-    // subcommand via --postStopPath every time the supervised launcher
-    // exits. We check for an apply-update-pending marker and either no-op
-    // (user-initiated stop) or sleep + sc start (in-app updater stop).
-    // The Part 2 deferred-spawn-from-hook approach was killed by
-    // Velopack's Job Object cleanup; the post-stop process is spawned by
-    // Servy (outside Velopack's process tree) and survives any cleanup.
-    if let Some(code) = post_stop_handler::handle(&args) {
-        log::info(&format!("post-stop-handler exiting with code {code}"));
-        std::process::exit(code);
-    }
+    // §32 Part 4 — post-stop dispatch removed. The post-stop handler is
+    // now a cmd.exe-invoked bat file at <dataRoot>/post-stop/post-stop.bat
+    // (written by elevated_runner::install_service). cmd.exe lives in
+    // C:\Windows\System32\ (OS-stable); the bat is in dataRoot
+    // (Velopack-untouchable). Part 3's launcher-as-post-stop approach
+    // got the launcher process killed mid-sleep when Velopack swapped
+    // current/. The new architecture has no in-launcher post-stop code.
 
     // Elevate-and-run dispatch comes BEFORE Velopack hooks because the
     // helper is invoked through a UAC prompt and is a single-shot
