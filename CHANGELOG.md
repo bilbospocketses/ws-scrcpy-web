@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.25-beta.16] - 2026-05-20
+
 ### Fixed
 
 - **Service-mode in-app upgrade: post-stop handler relocated from launcher binary (in `current/`) to a bat file in `<dataRoot>/post-stop/`, invoked via `cmd.exe`.** §32 Part 4 — caught by v0.1.25-beta.15 smoke 2026-05-20. Part 3 used `current/ws-scrcpy-web-launcher.exe --post-stop-handler` as the post-stop process, but that binary lives in Velopack's swap zone. When Velopack swapped `current/` during the upgrade window, the running post-stop process was stranded mid-sleep (launcher.log showed `sleeping 12s` at 19:28:32 but no follow-up log lines — confirmed killed/stranded). The recovery never fired, the service stayed Stopped until reboot.
