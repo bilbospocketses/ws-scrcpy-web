@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.25-beta.14] - 2026-05-20
+
+### Fixed
+
+- **`servy-cli install` no longer fails with `Option 'post-stop-handler' is unknown` on fresh installs.** §32 Part 3 (in beta.12) added `--postStopParams` followed by `--post-stop-handler` as two separate argv tokens, but Servy's CommandLineParser interprets the leading `--` as a new flag declaration rather than the value for `--postStopParams`. Fresh installs of beta.12 / beta.13 failed at the "Install service" step with `servy-cli install exited with code Some(1)`. The fix uses the `--flag=value` equals form (`--postStopParams=--post-stop-handler`) which keeps the value bound to its flag through the parser. Validated locally with the bundled servy-cli.exe before shipping. **This is the first beta where fresh installs can register the service correctly with the post-stop handler wired** — proper Part 3 smoke validation requires beta.14 (or later) installed FRESH on a clean VM, then upgrading to beta.15+ (or any later version).
+
 ## [0.1.25-beta.13] - 2026-05-20
 
 ### Notes
