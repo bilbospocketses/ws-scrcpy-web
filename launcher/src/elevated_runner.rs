@@ -212,8 +212,14 @@ fn install_service(args: &InstallServiceArgs) -> ElevatedResult {
         args.log_path.clone(),
         "--postStopPath".to_string(),
         args.bin_path.clone(),
-        "--postStopParams".to_string(),
-        "--post-stop-handler".to_string(),
+        // §32 Part 3 follow-up — caught by v0.1.25-beta.12 fresh-install
+        // smoke (2026-05-20): Servy's CommandLineParser rejects values
+        // that start with `--` as separate args ("Option 'post-stop-handler'
+        // is unknown" + exit 1). Use the `--flag=value` form to keep the
+        // value bound to its flag through the parser. Confirmed via local
+        // servy-cli probe — without the `=` form, the install fails before
+        // touching SCM at all.
+        "--postStopParams=--post-stop-handler".to_string(),
         "--postStopStartupDir".to_string(),
         args.startup_dir.clone(),
     ];
