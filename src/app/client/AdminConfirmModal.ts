@@ -21,9 +21,24 @@ export class AdminConfirmModal extends Modal {
 
     public static confirm(opts: AdminConfirmOptions): Promise<boolean> {
         return new Promise((resolve) => {
-            const modal = new AdminConfirmModal(opts, resolve);
-            document.body.appendChild((modal as unknown as { dialog: HTMLDialogElement }).dialog);
-            (modal as unknown as { dialog: HTMLDialogElement }).dialog.showModal();
+            // The Modal base-class constructor (src/app/ui/Modal.ts) already
+            // appends the dialog to document.body AND calls .showModal()
+            // during construction. Calling them again here throws
+            // InvalidStateError per HTML spec ("dialog already has 'open'
+            // attribute"). That throw rejects this Promise — which then
+            // silently breaks the Continue/Cancel handlers because
+            // resolveAndClose() calls resolve() on an already-rejected
+            // Promise (no-op). The dialog from the first showModal is still
+            // visible, so the user sees the modal but Continue does nothing.
+            //
+            // Asymmetry diagnosed via user-report 2026-05-21: only the
+            // Settings install/uninstall paths (which use this method) were
+            // broken; the Welcome modal's install path bypasses
+            // AdminConfirmModal and calls /api/service/install directly, so
+            // it always worked. The test stub for showModal didn't throw on
+            // double-call, so unit tests stayed green while the real browser
+            // throw broke production. Test stub is now spec-realistic.
+            new AdminConfirmModal(opts, resolve);
         });
     }
 
