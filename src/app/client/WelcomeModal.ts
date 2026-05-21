@@ -139,7 +139,7 @@ export class WelcomeModal extends Modal {
 
         const later = document.createElement('p');
         later.style.cssText = 'margin: 0 0 16px; color: var(--text-color-light); font-size: 13px;';
-        later.textContent = 'you can change this later in settings.';
+        later.textContent = 'you can install/uninstall the service later in settings.';
         container.appendChild(later);
 
         // v0.1.9 bookmark hint. ws-scrcpy-web is a web app served from

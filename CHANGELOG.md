@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **`tray/src/main.rs`** — tuple grew from 4 to 5 elements to carry a mode-aware `balloon_title` (service: `"ws-scrcpy-web (service) tray"` mirroring the tooltip suffix; local: `"ws-scrcpy-web tray"` unchanged). Service-mode body now matches local-mode body verbatim: `"tray started by launcher. to clear the tray, use the exit option from the tray menu."`. Body literal duplicated across both branches intentionally (preserves if/else symmetry; can diverge later if needed). The "tray menu is the only exit" comment moved from inside the local-mode branch to above the if/else, since the rationale now applies to both modes.
   - **`launcher/src/tray_supervisor.rs`** — user-killed-tray comment block rewritten: dropped the verbatim quote of the old body and the "intrinsic to service-mode" framing, replaced with a mode-neutral description of the respawn-on-death contract + the actual Settings-can-uninstall-but-not-stop reality.
 
+- **Welcome modal "change later" hint made specific.** Below the "run as a service?" yes/no buttons, the hint previously read `"you can change this later in settings."` — `"this"` was ambiguous (port? service decision? scope?). Now reads `"you can install/uninstall the service later in settings."`, which names the actual reversible decision and matches the Settings UI vocabulary. The port-config hint at the top of the modal (line 81) is unchanged.
+
 ## [0.1.25-beta.35] - 2026-05-21
 
 ## [0.1.25-beta.34] - 2026-05-21
