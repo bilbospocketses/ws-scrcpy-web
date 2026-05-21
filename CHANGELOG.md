@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.25-beta.26] - 2026-05-21
+
 ### Fixed
 
 - **Service-mode in-app upgrade: "updating, please wait…" page now actually appears in the browser during the upgrade window.** §32 Part 5e — caught by v0.1.25-beta.24 → beta.25 smoke 2026-05-21. The fix for §32 Part 5c (config.json port persistence) confirmed Bug A was solved, but the smoke also revealed Bug B was independent: the launcher's `--upgrade-server` correctly bound `0.0.0.0:8001` at `41.260`, logged ZERO `connection from …` lines, and logged no clean-exit message — Velopack's `Update.exe` terminated it within ~1s of bind because the process loaded `<installRoot>/current/ws-scrcpy-web-launcher.exe` as its image, and Velopack's apply phase needs to swap `current/`.
