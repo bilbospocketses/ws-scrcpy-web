@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.25-beta.32] - 2026-05-21
+
 ### Changed
 
 - **Tray architecture unified across local + service modes (§32 Part 5h).** Pre-Part-5h the tray ran differently per mode: service mode used a standalone `ws-scrcpy-web-tray.exe` process supervised by the launcher's `tray_supervisor.rs` poller (every 10s, cross-session WTS spawn from LocalSystem into the active user session); local mode used an in-process thread inside the launcher (`tray.rs::spawn`). The in-process thread had two failure modes with no recovery: (a) after a service install→uninstall handoff the new local launcher fires with `--local-takeover`, spawns its own tray thread, but a competing standalone tray.exe is still in the process of exiting → mutex/icon-registration collision, in-process thread silently dies, no recovery path; (b) double-clicking the desktop shortcut after the launcher exits and restarts can hit Windows Shell timing such that the tray icon never registers → no recovery. User-reported on beta.31 smoke 2026-05-21.
