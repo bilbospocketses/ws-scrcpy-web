@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.25-beta.30] - 2026-05-21
+
 ### Fixed
 
 - **Settings → Install Service / Uninstall Service now works.** Pre-existing bug across many recent versions, surfaced by user-report 2026-05-21 while regression-testing §32 Part 5f: clicking "install service" in the Settings modal opened the "Administrative Privileges Required" confirmation dialog UNDERNEATH the Settings modal (couldn't reach without closing Settings), and clicking Continue did nothing. The Welcome modal's install path was unaffected because it bypasses `AdminConfirmModal` and calls `/api/service/install` directly.
