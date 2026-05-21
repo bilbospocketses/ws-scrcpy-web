@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.25-beta.34] - 2026-05-21
+
 ### Fixed
 
 - **Tray text now updates when installMode changes mid-session (§32 Part 5i).** Surfaced by beta.32 smoke 2026-05-21: opting into service mode from a fresh local-mode install left the tray text + balloon copy stuck at the local-mode values ("ws-scrcpy-web" / "Stop the server and quit?") even though the launcher and config.json had transitioned to service mode. Root cause was Part 5h reading `installMode` ONCE at `tray/src/main.rs` startup and baking the text into the static `common::tray::run` call. The URL provider was already mode-tracking (re-reads `config.json` per click), but tooltip + exit prompt + balloon text were frozen at spawn-time.
