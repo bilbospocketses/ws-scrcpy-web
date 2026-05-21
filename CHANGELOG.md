@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Service-mode in-app upgrade: "updating, please wait…" page now actually appears in the browser during the upgrade window.** §32 Part 5e — caught by v0.1.25-beta.24 → beta.25 smoke 2026-05-21. The fix for §32 Part 5c (config.json port persistence) confirmed Bug A was solved, but the smoke also revealed Bug B was independent: the launcher's `--upgrade-server` correctly bound `0.0.0.0:8001` at `41.260`, logged ZERO `connection from …` lines, and logged no clean-exit message — Velopack's `Update.exe` terminated it within ~1s of bind because the process loaded `<installRoot>/current/ws-scrcpy-web-launcher.exe` as its image, and Velopack's apply phase needs to swap `current/`.
+  - **Architecture change: upgrade-server is now spawned from Servy, not from Node.** Velopack only does the file swap; everything else is Servy's domain (matching the post-stop bat + dataRoot pattern already in use). The pre-exit spawn from `UpdateService.applyUpdate` (introduced in Part 5b to close a 180ms dead window) put the upgrade-server inside Velopack's process tree, where the swap killed it. Part 5e moves the spawn back into the post-stop bat (Servy invokes it `FireAndForget`; Servy does not wrap supervised processes in a Job Object — verified by reading the servy fork source) AND sources the spawn from a launcher copy outside `current/`.
+  - **`launcher/src/upgrade_server.rs`** — new `refresh_helper_binary(data_root)` function copies the running launcher binary to `<dataRoot>/upgrade-server/ws-scrcpy-web-launcher.exe`. New `helper_path_for(data_root)` returns the same path without performing the copy. Single source of truth for the helper layout.
+  - **`launcher/src/supervisor.rs`** — calls `refresh_helper_binary` on every supervisor startup in service mode, so the helper tracks the currently-installed launcher version. Best-effort; log + continue on failure.
+  - **`launcher/src/elevated_runner.rs::write_post_stop_bat`** — restores the `start "" /b "<helper>" --upgrade-server` spawn line inside the apply-update-marker-gated block, pointing at the dataRoot helper path (resolved via `upgrade_server::helper_path_for` at install time). Bat sequence on apply-update path: del marker → `start "" /b <helper> --upgrade-server` (fire-and-forget, bat continues immediately) → `timeout /t 12` (Velopack's Update.exe finishes the swap in parallel) → `sc start`.
+  - **`src/server/UpdateService.ts`** — removed `spawnUpgradeServer`, the `SpawnFn`/`SpawnedChild` type exports, the `spawnFn` injection point, and the spawn import. `applyUpdate` in service mode now writes the apply-update-pending marker and calls `waitExitThenApplyUpdate` and nothing else; the post-stop bat owns the upgrade-server lifecycle.
+  - **`src/server/__tests__/UpdateService.test.ts`** — replaced two `it.each` blocks (service-mode-spawns, local-mode-doesnt-spawn) with one `it.each` block covering all four installModes asserting applyUpdate spawns nothing from Node. Other applyUpdate tests had no-op `spawnFn` injections dropped.
+  - **Trade-off:** the ~25ms close of the dead window that Part 5b's pre-exit spawn provided is restored to ~200ms (launcher exit → Servy fires bat → bat spawns helper → helper binds). The upgrade-server now SURVIVES the entire upgrade window instead of dying after ~1s, so even if the browser misses the initial reconnect, any subsequent retry (browser auto-retry, manual refresh) hits the updating page. The wind-down + port-shift discovery mechanism (already in place since Part 5b) handles the handoff to the new Node.
+
+### Surfaced for follow-up
+
+- **`src/server/UpdateService.ts::preApplyHygiene`** uses `execFileAsync('taskkill', ['/F', '/IM', 'adb.exe', '/T'], ...)` — resolves `taskkill` via the system PATH. Per CLAUDE.md's Local-Dependencies-Only rule, this should be `C:\Windows\System32\taskkill.exe` (the same pattern the post-stop bat uses for `cmd.exe`). Pre-existing; flagging here rather than silently fixing.
+
+Vitest 694/694 unchanged (-4 obsolete service/local spawn tests, +4 combined `it.each` no-spawn tests). `tsc --noEmit` clean. `cargo check` validated in CI (local `link.exe` broken on dev box, per the standing repo note).
+
 ## [0.1.25-beta.25] - 2026-05-20
 
 ## [0.1.25-beta.24] - 2026-05-20

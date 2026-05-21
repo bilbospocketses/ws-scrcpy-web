@@ -1,7 +1,5 @@
 // biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
-import { execFile, spawn } from 'child_process';
-// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
-import type { SpawnOptions } from 'child_process';
+import { execFile } from 'child_process';
 // biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import * as fs from 'fs';
 // biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
@@ -42,30 +40,6 @@ export type UpdateManagerFactory = (
     locator?: VelopackLocatorConfig,
 ) => UpdateManagerLike;
 
-/**
- * Minimal subset of `child_process.ChildProcess` that
- * {@link UpdateService#spawnUpgradeServer} actually touches. Lets tests
- * inject a fake without constructing a real ChildProcess instance.
- */
-export interface SpawnedChild {
-    readonly pid?: number | undefined;
-    unref(): void;
-    /**
-     * Optional: real `child_process.ChildProcess` exposes this for catching
-     * async spawn failures (ENOENT, EACCES). Tests don't need to implement
-     * it — missing `on` means no async error handling, which is fine when
-     * the test's spawnFn is a no-op vi.fn().
-     */
-    on?(event: 'error', listener: (err: Error) => void): unknown;
-}
-
-/** Injectable subset of `child_process.spawn` — see {@link SpawnedChild}. */
-export type SpawnFn = (
-    command: string,
-    args: readonly string[],
-    options: SpawnOptions,
-) => SpawnedChild;
-
 export interface UpdateServiceOptions {
     /** Override the install-root path used for sq.version detection. Default: dirname(process.execPath). */
     installRoot?: string;
@@ -79,13 +53,6 @@ export interface UpdateServiceOptions {
     setIntervalFn?: (cb: () => void, ms: number) => NodeJS.Timeout;
     /** Override timer cancellation for tests. */
     clearIntervalFn?: (handle: NodeJS.Timeout) => void;
-    /**
-     * Override child_process.spawn for tests. Used by
-     * {@link UpdateService#spawnUpgradeServer} (§32 Part 5b) to launch
-     * the `--upgrade-server` subcommand pre-exit during a service-mode
-     * apply.
-     */
-    spawnFn?: SpawnFn;
 }
 
 export interface UpdateServiceState {
@@ -128,7 +95,6 @@ export class UpdateService {
     private readonly existsSync: (p: string) => boolean;
     private readonly setIntervalFn: (cb: () => void, ms: number) => NodeJS.Timeout;
     private readonly clearIntervalFn: (handle: NodeJS.Timeout) => void;
-    private readonly spawnFn: SpawnFn;
 
     constructor(opts: UpdateServiceOptions = {}) {
         // v0.1.15: anchor installRoot at the webpack bundle's location, not
@@ -170,7 +136,6 @@ export class UpdateService {
         this.existsSync = opts.existsSync ?? fs.existsSync;
         this.setIntervalFn = opts.setIntervalFn ?? ((cb, ms) => setInterval(cb, ms));
         this.clearIntervalFn = opts.clearIntervalFn ?? ((handle) => clearInterval(handle));
-        this.spawnFn = opts.spawnFn ?? ((cmd, args, options) => spawn(cmd, args, options));
         this.state = { isInstalled: false, currentVersion: '', status: 'idle' };
     }
 
@@ -391,64 +356,22 @@ export class UpdateService {
         const isServiceMode = installMode === 'user-service' || installMode === 'system-service';
         if (isServiceMode) {
             await this.writeApplyUpdatePendingMarker();
-            // §32 Part 5b — spawn the launcher's --upgrade-server subcommand
-            // BEFORE process.exit (i.e., before waitExitThenApplyUpdate's
-            // graceful-exit handshake fires). It retry-binds the web port in
-            // a tight loop and grabs it within ~25ms of Node releasing it,
-            // closing the dead window that left the browser stranded on
-            // "can't be reached" through the entire upgrade window in the
-            // beta.20 smoke. Best-effort: log + continue on spawn failure.
-            this.spawnUpgradeServer();
+            // §32 Part 5e — upgrade-server is no longer spawned from here.
+            // The pre-exit spawn (Part 5b) put the upgrade-server inside
+            // Velopack's process tree, loading
+            // `<installRoot>/current/ws-scrcpy-web-launcher.exe` as its
+            // image; Velopack's apply phase terminated it within ~1s of
+            // bind (v0.1.25-beta.24 → beta.25 smoke 2026-05-21).
+            //
+            // The upgrade-server is now spawned by the post-stop bat (Servy
+            // owns the bat; FireAndForget; no Job Object) from a dataRoot
+            // copy of the launcher at
+            // `<dataRoot>/upgrade-server/ws-scrcpy-web-launcher.exe`, which
+            // Velopack doesn't touch. See `launcher/src/upgrade_server.rs`
+            // (`refresh_helper_binary`, `helper_path_for`) and
+            // `launcher/src/elevated_runner.rs::write_post_stop_bat`.
         }
         this.mgr.waitExitThenApplyUpdate(this.state.pendingUpdate, true, !isServiceMode);
-    }
-
-    /**
-     * Spawn `<installRoot>/current/ws-scrcpy-web-launcher.exe --upgrade-server`
-     * detached, so the launcher subcommand survives this process exiting and
-     * serves the "updating, please wait..." HTML page on the web port for the
-     * upgrade window.
-     *
-     * Windows-only (Servy + service mode are Windows-only; on non-Windows the
-     * call is a no-op).
-     *
-     * Local-Dependencies-Only compliance: the spawn target is the app's OWN
-     * launcher binary inside the install root (`<installRoot>/current/`), NOT
-     * a third-party dependency resolved via PATH or env var. The rule
-     * (CLAUDE.md "CRITICAL ARCHITECTURE — Local Dependencies Only") covers
-     * binaries like adb/ffmpeg/node/scrcpy — not the app invoking its own
-     * helper subcommand from its own install layout.
-     */
-    private spawnUpgradeServer(): void {
-        if (process.platform !== 'win32') {
-            log.info('applyUpdate: spawnUpgradeServer skipped (not on Windows)');
-            return;
-        }
-        const launcherPath = path.join(this.installRoot, 'current', 'ws-scrcpy-web-launcher.exe');
-        try {
-            const child = this.spawnFn(launcherPath, ['--upgrade-server'], {
-                detached: true,
-                stdio: 'ignore',
-                windowsHide: true,
-            });
-            // child_process emits spawn failures (ENOENT, EACCES) asynchronously
-            // on the 'error' event — sync try/catch doesn't catch them, and an
-            // unhandled 'error' event will throw and crash the server. Attach a
-            // best-effort handler that just logs.
-            if (typeof child.on === 'function') {
-                child.on('error', (err) => {
-                    log.warn(
-                        `applyUpdate: spawnUpgradeServer async error (continuing without updating page): ${err.message}`,
-                    );
-                });
-            }
-            child.unref();
-            log.info(`applyUpdate: spawned upgrade-server (pid ${child.pid ?? 'unknown'})`);
-        } catch (err) {
-            log.warn(
-                `applyUpdate: spawnUpgradeServer failed (continuing without updating page): ${(err as Error).message}`,
-            );
-        }
     }
 
     /**

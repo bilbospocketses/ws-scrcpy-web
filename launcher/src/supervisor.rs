@@ -90,6 +90,24 @@ pub fn run() -> Result<i32> {
             }
         }
 
+        // §32 Part 5e — refresh the dataRoot copy of this launcher binary
+        // that the post-stop bat uses to spawn the upgrade-server. Copying
+        // outside `current/` lets the upgrade-server survive Velopack's
+        // swap of `current/` (Velopack terminated the pre-Part-5e in-
+        // current upgrade-server within ~1s of bind, per the beta.24 →
+        // beta.25 smoke). Refresh on every supervisor start so the helper
+        // tracks the installed launcher version. Best-effort.
+        if cfg.is_service_mode() {
+            match crate::upgrade_server::refresh_helper_binary(&paths.data_root) {
+                Ok(p) => log::info(&format!(
+                    "supervisor: refreshed upgrade-server helper at {p:?}"
+                )),
+                Err(e) => log::error(&format!(
+                    "supervisor: could not refresh upgrade-server helper (post-stop bat will spawn stale or fail): {e}"
+                )),
+            }
+        }
+
         // §32 Part 5 — coordinate with any in-flight upgrade-server. If
         // the post-stop bat spawned a `<launcher> --upgrade-server` to
         // serve the updating page, it's bound to the port we're about to

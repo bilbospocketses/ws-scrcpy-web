@@ -422,6 +422,39 @@ pub fn write_stop_marker(data_root: &Path) -> std::io::Result<PathBuf> {
     Ok(marker)
 }
 
+/// §32 Part 5e — refresh the dataRoot copy of the launcher binary that
+/// the post-stop bat spawns as the upgrade-server.
+///
+/// Why a copy outside `current/`: the upgrade-server is the launcher
+/// binary invoked with `--upgrade-server`. When spawned from
+/// `<installRoot>/current/ws-scrcpy-web-launcher.exe`, the process
+/// holds that file as its loaded image. Velopack's apply phase needs
+/// to swap `<installRoot>/current/`, and it terminates processes
+/// holding files inside it — killing the upgrade-server within ~1s of
+/// bind (caught by v0.1.25-beta.24 → beta.25 smoke 2026-05-21). Moving
+/// the helper to `<dataRoot>/upgrade-server/` (Velopack-untouchable,
+/// same pattern as the post-stop bat) lets the upgrade-server survive
+/// the full upgrade window.
+///
+/// Refreshed on every supervisor startup so the helper tracks the
+/// currently-installed launcher version. Best-effort — caller logs +
+/// continues on failure. Returns the helper path on success.
+pub fn refresh_helper_binary(data_root: &Path) -> std::io::Result<PathBuf> {
+    let helper_dir = data_root.join("upgrade-server");
+    std::fs::create_dir_all(&helper_dir)?;
+    let helper_path = helper_dir.join("ws-scrcpy-web-launcher.exe");
+    let current = std::env::current_exe()?;
+    std::fs::copy(&current, &helper_path)?;
+    Ok(helper_path)
+}
+
+/// Resolve the helper path without performing the copy. Used by the
+/// post-stop bat writer to interpolate the same path the supervisor
+/// refreshes at startup. Single source of truth for the helper layout.
+pub fn helper_path_for(data_root: &Path) -> PathBuf {
+    data_root.join("upgrade-server").join("ws-scrcpy-web-launcher.exe")
+}
+
 /// Wait for the given TCP port to become bindable (i.e., the previous
 /// holder has released it). Polls `set_nonblocking` connects, NOT bind
 /// attempts (bind succeeds even if a previous bind is in TIME_WAIT). A
