@@ -75,10 +75,24 @@ h1 {
 </div>
 <script>
 (function () {
-  // Poll the real /api/config endpoint. While upgrade-server is up, it
-  // responds 503 with X-WsScrcpyWeb-Upgrade-Server: 1. Once the real Node
-  // takes over the port, the response is 200 JSON (no sentinel header).
-  // We discriminate on response.ok + sentinel header.
+  // Poll the real /api/config endpoint. Three response shapes:
+  //
+  //   1. Real Node is back on this same port:
+  //        200 OK, no X-WsScrcpyWeb-Upgrade-Server header
+  //      → reload to drop the upgrade page and load the real app.
+  //
+  //   2. Upgrade-server's wind-down probe found the real Node on a
+  //      DIFFERENT port (port-shift case — new Node lost the port race
+  //      with upgrade-server and auto-shifted to e.g. config_port+1):
+  //        200 OK, X-WsScrcpyWeb-Upgrade-Server: 1, body has `redirect`
+  //      → navigate to body.redirect (real-Node URL on the new port).
+  //
+  //   3. Still upgrading (probe hasn't found real Node yet):
+  //        503 Service Unavailable, X-WsScrcpyWeb-Upgrade-Server: 1
+  //      → keep polling.
+  //
+  //   4. Connection refused / network error → keep polling (transient
+  //      gap between upgrade-server exit and new Node accept).
   var POLL_MS = 1000;
   var attempts = 0;
   var detail = document.getElementById('detail');
@@ -87,18 +101,36 @@ h1 {
     attempts += 1;
     fetch('/api/config', { cache: 'no-store' })
       .then(function (r) {
-        if (r.ok && r.headers.get('X-WsScrcpyWeb-Upgrade-Server') !== '1') {
-          // Real app is back. Reload to drop the upgrade page.
+        var sentinel = r.headers.get('X-WsScrcpyWeb-Upgrade-Server') === '1';
+        if (r.ok && !sentinel) {
+          // Case 1: real app is back on this port. Reload.
           if (detail) detail.textContent = 'reconnected — reloading';
           setTimeout(function () { location.reload(); }, 250);
           return;
         }
-        // Still upgrade-server (503 with sentinel) or unexpected; keep polling.
+        if (r.ok && sentinel) {
+          // Case 2: upgrade-server has found the real Node on a different
+          // port and is handing us a redirect. Parse body + navigate.
+          r.json()
+            .then(function (body) {
+              if (body && typeof body.redirect === 'string' && body.redirect) {
+                if (detail) detail.textContent = 'redirecting';
+                setTimeout(function () { location.href = body.redirect; }, 250);
+                return;
+              }
+              // 200 + sentinel but no redirect field — unexpected; keep polling.
+              setTimeout(poll, POLL_MS);
+            })
+            .catch(function () {
+              setTimeout(poll, POLL_MS);
+            });
+          return;
+        }
+        // Case 3: still upgrading (503 with sentinel) or unexpected status.
         setTimeout(poll, POLL_MS);
       })
       .catch(function () {
-        // Connection refused — happens briefly between upgrade-server
-        // exit and new Node bind. Keep polling.
+        // Case 4: connection refused. Keep polling.
         setTimeout(poll, POLL_MS);
       });
   }

@@ -445,6 +445,11 @@ describe('UpdateService', () => {
             updateManagerFactory: () => mgr,
             setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
             clearIntervalFn: () => undefined,
+            // §32 Part 5b: service-mode applyUpdate also spawns the launcher's
+            // --upgrade-server subcommand pre-exit. Inject a no-op spawnFn so
+            // the test doesn't fire a real spawn against the fake install root
+            // (which would surface as an unhandled async ENOENT).
+            spawnFn: vi.fn().mockReturnValue({ pid: 0, unref: vi.fn() }),
         });
         svc.init();
         await svc.checkForUpdates();
@@ -485,6 +490,88 @@ describe('UpdateService', () => {
         expect(applyFn).toHaveBeenCalledTimes(1);
         const args = applyFn.mock.calls[0]!;
         expect(args[2]).toBe(true);
+    });
+
+    // §32 Part 5b: service-mode apply MUST spawn `<launcher> --upgrade-server`
+    // pre-exit so the launcher's retry-binding upgrade-server grabs the web
+    // port within ~25ms of Node releasing it. Without the pre-exit spawn the
+    // browser sees connection-refused through the full upgrade window (caught
+    // by the beta.20 → beta.21 smoke 2026-05-20 — upgrade-server was bound
+    // 180ms post-Node-exit but the browser's WS-reconnect attempt had already
+    // hit the gap and given up). spawnUpgradeServer is a Windows-only side
+    // effect; on non-Windows it early-returns without invoking spawnFn.
+    it.each([
+        ['user-service' as const],
+        ['system-service' as const],
+    ])('applyUpdate (%s): spawns launcher --upgrade-server pre-exit', async (installMode) => {
+        Config.getInstance().updateAppConfig({ autoUpdate: false, installMode });
+        const info = fakeUpdateInfo('0.2.0');
+        const applyFn = vi.fn();
+        const spawnFn = vi.fn().mockReturnValue({ pid: 12345, unref: vi.fn() });
+        const mgr = fakeMgr({
+            checkForUpdatesAsync: async () => info,
+            waitExitThenApplyUpdate: applyFn,
+        });
+        const svc = new UpdateService({
+            installRoot: '/fake-install-root',
+            existsSync: () => true,
+            updateManagerFactory: () => mgr,
+            setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
+            clearIntervalFn: () => undefined,
+            spawnFn,
+        });
+        svc.init();
+        await svc.checkForUpdates();
+        await svc.applyUpdate();
+        if (process.platform === 'win32') {
+            expect(spawnFn).toHaveBeenCalledTimes(1);
+            const [cmd, args, opts] = spawnFn.mock.calls[0]!;
+            expect(cmd).toBe(path.join('/fake-install-root', 'current', 'ws-scrcpy-web-launcher.exe'));
+            expect(args).toEqual(['--upgrade-server']);
+            expect(opts.detached).toBe(true);
+            expect(opts.stdio).toBe('ignore');
+            expect(opts.windowsHide).toBe(true);
+        } else {
+            // Non-Windows: spawnUpgradeServer early-returns; spawnFn never invoked.
+            expect(spawnFn).not.toHaveBeenCalled();
+        }
+        // Pre-exit ordering: spawn must happen BEFORE waitExitThenApplyUpdate
+        // (so the upgrade-server can start retry-binding while Node still
+        // holds the port). Both must have fired by the time applyUpdate
+        // resolves; both fired exactly once.
+        expect(applyFn).toHaveBeenCalledTimes(1);
+    });
+
+    // Symmetry check: local-mode applies must NOT spawn the upgrade-server.
+    // The updating page only makes sense when the service supervisor is
+    // restarting the app post-Velopack-swap; in local mode Velopack itself
+    // relaunches the user-mode launcher (restart=true) so there's no upgrade
+    // window to paper over.
+    it.each([
+        ['user' as const],
+        ['system' as const],
+    ])('applyUpdate (%s): does NOT spawn upgrade-server (local mode)', async (installMode) => {
+        Config.getInstance().updateAppConfig({ autoUpdate: false, installMode });
+        const info = fakeUpdateInfo('0.2.0');
+        const applyFn = vi.fn();
+        const spawnFn = vi.fn();
+        const mgr = fakeMgr({
+            checkForUpdatesAsync: async () => info,
+            waitExitThenApplyUpdate: applyFn,
+        });
+        const svc = new UpdateService({
+            installRoot: '/fake',
+            existsSync: () => true,
+            updateManagerFactory: () => mgr,
+            setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
+            clearIntervalFn: () => undefined,
+            spawnFn,
+        });
+        svc.init();
+        await svc.checkForUpdates();
+        await svc.applyUpdate();
+        expect(spawnFn).not.toHaveBeenCalled();
+        expect(applyFn).toHaveBeenCalledTimes(1);
     });
 
     // ── reconfigure ─────────────────────────────────────────────────────
