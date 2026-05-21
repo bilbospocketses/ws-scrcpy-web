@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.25-beta.24] - 2026-05-20
+
 ### Fixed
 
 - **Service-mode opt-in: local Node now syncs its in-memory `webPort` to the actual port the service-Node bound, so subsequent local-Node writes can't clobber `config.json` back to the pre-install port.** §32 Part 5c — caught by v0.1.25-beta.22 → beta.23 smoke 2026-05-21. The user's clean-VM smoke installed beta.22 in local mode (port 8000), opted into service mode, and confirmed the browser correctly redirected to the new service-Node port (8001 after the install-time port shift). Two regressions followed from the same root cause:
