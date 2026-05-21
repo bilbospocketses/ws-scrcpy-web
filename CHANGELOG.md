@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Tray text now updates when installMode changes mid-session (§32 Part 5i).** Surfaced by beta.32 smoke 2026-05-21: opting into service mode from a fresh local-mode install left the tray text + balloon copy stuck at the local-mode values ("ws-scrcpy-web" / "Stop the server and quit?") even though the launcher and config.json had transitioned to service mode. Root cause was Part 5h reading `installMode` ONCE at `tray/src/main.rs` startup and baking the text into the static `common::tray::run` call. The URL provider was already mode-tracking (re-reads `config.json` per click), but tooltip + exit prompt + balloon text were frozen at spawn-time.
+  - **`tray/src/main.rs`** — new 5s-poll thread watches `config.json::installMode` for changes from the spawn-time value. On change, `std::process::exit(0)`; the launcher's tray-supervisor respawns within ~10s with mode-aware text picked up from the (now-current) config. Decision intentionally co-located with the tray process so the supervisor stays stateless.
+  - Brief icon-flicker on mode change (tray exits, supervisor respawns ~10s later) — same UX as the validated "kill tray.exe → 10s respawn" path from §32 Part 5h smoke.
+
+- **Local-mode tray balloon: dropped misleading "or Settings" clause.** Pre-2026-05-21 the local-mode launcher-spawn balloon read `"tray started by launcher. to clear the tray, stop the ws-scrcpy-web server via the tray exit or Settings."` — but local-mode Settings has no "stop server" affordance (only the service install/uninstall buttons). The tray menu's own exit option is the only intended path. Balloon now reads `"tray started by launcher. to clear the tray, use the exit option from the tray menu."`. Service-mode balloon unchanged (Settings DOES expose service stop there).
+
+### Known open issue (logging needed)
+
+- **Service uninstall fails after service-mode goes offline and back up** (reboot, in-app upgrade, any restart that recycles the service process). Pre-restart: 4-for-4 install/uninstall cycles succeed. Post-restart: uninstall fails, service stuck stopped-but-installed, tray doesn't respawn. Manual recovery via launching app → Settings → "stopped — uninstall?" works. Likely difference: tray.exe spawned via WTS cross-session post-restart vs Command::new same-session pre-restart — handoff polling thread / marker access / session token may differ. Triage pending logs from a failing flow.
+
+Vitest 695/695 unchanged. `tsc --noEmit` clean. `cargo check --workspace` clean.
+
 ## [0.1.25-beta.33] - 2026-05-21
 
 ## [0.1.25-beta.32] - 2026-05-21

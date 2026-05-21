@@ -143,7 +143,10 @@ fn run_tray() -> Result<()> {
                 "ws-scrcpy-web",
                 "Exit ws-scrcpy-web?",
                 "Stop the server and quit?",
-                "tray started by launcher. to clear the tray, stop the ws-scrcpy-web server via the tray exit or Settings.",
+                // Local mode has no "stop server" affordance in Settings —
+                // only the service install/uninstall buttons. The only
+                // intended exit path is the tray's own context menu.
+                "tray started by launcher. to clear the tray, use the exit option from the tray menu.",
             )
         };
 
@@ -152,6 +155,38 @@ fn run_tray() -> Result<()> {
     } else {
         None
     };
+
+    // §32 Part 5i — mode-change detection thread. Watches config.json's
+    // installMode for changes from the spawn-time value (e.g., user opts
+    // INTO service mode from local, or uninstalls service while tray is
+    // alive). On change, exit the tray; the launcher's tray-supervisor
+    // respawns within ~10s with mode-aware text. Without this, the tray
+    // text + balloon stay frozen at the spawn-time mode (URL provider
+    // already re-reads per-click so the navigation target was already
+    // mode-tracking; this only fixes the static text).
+    //
+    // Polling intentionally lives in the tray process (not the launcher
+    // supervisor) so the supervisor stays stateless — the decision is
+    // co-located with the value being checked. 5s gives a snappy
+    // transition without spamming disk I/O.
+    {
+        let data_root_for_mode = config_dir.clone();
+        let initial_service_mode = is_service_mode_at_start;
+        std::thread::spawn(move || {
+            const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
+            loop {
+                std::thread::sleep(POLL_INTERVAL);
+                let current = common::config::AppConfig::load(&data_root_for_mode).is_service_mode();
+                if current != initial_service_mode {
+                    eprintln!(
+                        "tray: installMode changed (was service={}, is service={}); exiting for tray-supervisor respawn with mode-aware text",
+                        initial_service_mode, current,
+                    );
+                    std::process::exit(0);
+                }
+            }
+        });
+    }
 
     let action = common::tray::run(
         ICON_BYTES,
