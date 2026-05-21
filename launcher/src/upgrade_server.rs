@@ -455,6 +455,73 @@ pub fn helper_path_for(data_root: &Path) -> PathBuf {
     data_root.join("upgrade-server").join("ws-scrcpy-web-launcher.exe")
 }
 
+/// §32 Part 5f — spawn the dataRoot upgrade-server helper as a detached
+/// background process. Called by the launcher's supervisor on clean Node
+/// exit when an apply-update-pending marker is present (local mode). In
+/// service mode the post-stop bat handles the same spawn — both paths
+/// converge on the same helper binary + same wind-down handoff. Gating
+/// to local-mode-only at the call site keeps the two architectures from
+/// racing for the bind.
+///
+/// Best-effort: logs failure and returns. If the spawn fails (helper
+/// missing, permissions denied, etc.), the apply-update degrades to a
+/// brief "can't reach" gap during the upgrade window — the pre-Part-5f
+/// local-mode behavior. Stdio is explicitly null'd so the child doesn't
+/// inherit the launcher's handles (which become invalid after launcher
+/// exits).
+///
+/// Windows-only — on non-Windows the call is a no-op log line.
+pub fn spawn_detached_helper(data_root: &Path) {
+    let helper = helper_path_for(data_root);
+    if !helper.exists() {
+        log::error(&format!(
+            "upgrade-server: helper not present at {helper:?}, skipping spawn"
+        ));
+        return;
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        use std::process::Stdio;
+        // DETACHED_PROCESS: child does not inherit calling process's console.
+        // CREATE_NO_WINDOW: child runs without console window (windows-subsystem
+        //   binary already has none, but belt-and-braces for parity with the
+        //   post-stop bat's `start "" /b` behavior).
+        const DETACHED_PROCESS: u32 = 0x00000008;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        match std::process::Command::new(&helper)
+            .arg("--upgrade-server")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(DETACHED_PROCESS | CREATE_NO_WINDOW)
+            .spawn()
+        {
+            Ok(child) => log::info(&format!(
+                "upgrade-server: spawned helper (pid {})",
+                child.id()
+            )),
+            Err(e) => log::error(&format!("upgrade-server: spawn failed: {e}")),
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = data_root; // silence unused-variable warning
+        log::info("upgrade-server: spawn_detached_helper skipped (non-Windows)");
+    }
+}
+
+/// Path of the apply-update-pending marker the launcher's supervisor
+/// reads on clean Node exit to decide whether to spawn the upgrade-
+/// server (local mode) before exiting. Same path the post-stop bat
+/// gates its spawn on (service mode). Written by Node's
+/// `UpdateService.applyUpdate` in both modes via
+/// `Config.applyUpdatePendingMarkerPath`.
+pub fn apply_update_pending_marker(data_root: &Path) -> PathBuf {
+    data_root.join("control").join("apply-update-pending")
+}
+
 /// Wait for the given TCP port to become bindable (i.e., the previous
 /// holder has released it). Polls `set_nonblocking` connects, NOT bind
 /// attempts (bind succeeds even if a previous bind is in TIME_WAIT). A

@@ -487,50 +487,86 @@ describe('UpdateService', () => {
         expect(args[2]).toBe(true);
     });
 
-    // §32 Part 5e: the upgrade-server is no longer spawned from Node. Part 5b
-    // tried a pre-exit spawn from `<installRoot>/current/ws-scrcpy-web-launcher.exe`
-    // to close the dead window between Node port-release and upgrade-server
-    // bind — but the upgrade-server loaded current/launcher.exe as its image,
-    // and Velopack's apply phase terminated it within ~1s (caught by v0.1.25-
-    // beta.24 → beta.25 smoke 2026-05-21). The upgrade-server is now spawned
-    // by Servy's --postStopPath bat from a dataRoot copy of the launcher,
-    // entirely outside Velopack's reach. applyUpdate's only side effects on
-    // Node side in service mode are: write the apply-update-pending marker
-    // and call waitExitThenApplyUpdate. Both code paths (local + service)
-    // share this assertion since neither spawns from Node now.
+    // §32 Part 5e/5f: the upgrade-server is no longer spawned from Node.
+    // Part 5b tried a pre-exit spawn from
+    // `<installRoot>/current/ws-scrcpy-web-launcher.exe` to close the dead
+    // window between Node port-release and upgrade-server bind — but the
+    // upgrade-server loaded current/launcher.exe as its image, and
+    // Velopack's apply phase terminated it within ~1s (caught by
+    // v0.1.25-beta.24 → beta.25 smoke 2026-05-21). The upgrade-server is
+    // now spawned by Servy's --postStopPath bat (Part 5e, service mode) or
+    // by the launcher's supervisor on clean Node exit (Part 5f, local
+    // mode), both sourcing from a dataRoot copy of the launcher entirely
+    // outside Velopack's reach.
+    //
+    // §32 Part 5f extends the apply-update-pending marker write to BOTH
+    // modes (was service-mode-only in Part 5e). Both the launcher
+    // supervisor (local) and the post-stop bat (service) use the marker
+    // as the discriminator between apply-update and user-initiated stop.
+    //
+    // applyUpdate's only side effects on Node side are: write the
+    // apply-update-pending marker (in BOTH modes) and call
+    // waitExitThenApplyUpdate. The marker-write spy below also locks in
+    // the Part 5f behavior — without it, local-mode would never get an
+    // upgrade page.
     it.each([
         ['user-service' as const],
         ['system-service' as const],
         ['user' as const],
         ['system' as const],
-    ])('applyUpdate (%s): does NOT spawn anything from Node (§32 Part 5e)', async (installMode) => {
+    ])('applyUpdate (%s): writes marker + does NOT spawn anything from Node (§32 Part 5f)', async (installMode) => {
         Config.getInstance().updateAppConfig({ autoUpdate: false, installMode });
-        const info = fakeUpdateInfo('0.2.0');
-        const applyFn = vi.fn();
-        const mgr = fakeMgr({
-            checkForUpdatesAsync: async () => info,
-            waitExitThenApplyUpdate: applyFn,
-        });
-        const svc = new UpdateService({
-            installRoot: '/fake-install-root',
-            existsSync: () => true,
-            updateManagerFactory: () => mgr,
-            setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
-            clearIntervalFn: () => undefined,
-        });
-        svc.init();
-        await svc.checkForUpdates();
-        await svc.applyUpdate();
-        // UpdateService no longer exposes a spawnFn injection point;
-        // structurally, this is enforced by the TypeScript type system —
-        // UpdateServiceOptions has no `spawnFn` field. The behavioral
-        // assertion is that applyUpdate completes cleanly, the marker has
-        // been written (in service-mode), and waitExitThenApplyUpdate was
-        // invoked exactly once.
-        expect(applyFn).toHaveBeenCalledTimes(1);
-        const isServiceMode = installMode === 'user-service' || installMode === 'system-service';
-        // restart=false in service mode, true in local mode.
-        expect(applyFn.mock.calls[0]![2]).toBe(!isServiceMode);
+        // Spy on fs.promises.writeFile + mkdir to capture the marker write
+        // without polluting real ProgramData. Mock as no-ops since we only
+        // care about the call shape, not the effect on disk.
+        const writeFileSpy = vi
+            .spyOn(fs.promises, 'writeFile')
+            .mockResolvedValue(undefined);
+        const mkdirSpy = vi
+            .spyOn(fs.promises, 'mkdir')
+            .mockResolvedValue(undefined);
+        try {
+            const info = fakeUpdateInfo('0.2.0');
+            const applyFn = vi.fn();
+            const mgr = fakeMgr({
+                checkForUpdatesAsync: async () => info,
+                waitExitThenApplyUpdate: applyFn,
+            });
+            const svc = new UpdateService({
+                installRoot: '/fake-install-root',
+                existsSync: () => true,
+                updateManagerFactory: () => mgr,
+                setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
+                clearIntervalFn: () => undefined,
+            });
+            svc.init();
+            await svc.checkForUpdates();
+            await svc.applyUpdate();
+            // UpdateService no longer exposes a spawnFn injection point;
+            // structurally, this is enforced by the TypeScript type
+            // system — UpdateServiceOptions has no `spawnFn` field.
+            expect(applyFn).toHaveBeenCalledTimes(1);
+            const isServiceMode =
+                installMode === 'user-service' || installMode === 'system-service';
+            // restart=false in service mode, true in local mode.
+            expect(applyFn.mock.calls[0]![2]).toBe(!isServiceMode);
+
+            // §32 Part 5f — marker MUST be written in all four modes.
+            // Pre-Part-5f this was service-mode-only and local-mode
+            // launcher couldn't tell apply-update from user-initiated stop.
+            const markerCalls = writeFileSpy.mock.calls.filter(
+                (c) =>
+                    typeof c[0] === 'string' &&
+                    (c[0] as string).endsWith('apply-update-pending'),
+            );
+            expect(markerCalls).toHaveLength(1);
+            // mkdir should have been called for the marker's parent
+            // directory at least once.
+            expect(mkdirSpy).toHaveBeenCalled();
+        } finally {
+            writeFileSpy.mockRestore();
+            mkdirSpy.mockRestore();
+        }
     });
 
     // ── reconfigure ─────────────────────────────────────────────────────

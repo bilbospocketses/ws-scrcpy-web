@@ -91,30 +91,37 @@ pub fn run() -> Result<i32> {
         }
 
         // §32 Part 5e — refresh the dataRoot copy of this launcher binary
-        // that the post-stop bat uses to spawn the upgrade-server. Copying
-        // outside `current/` lets the upgrade-server survive Velopack's
-        // swap of `current/` (Velopack terminated the pre-Part-5e in-
-        // current upgrade-server within ~1s of bind, per the beta.24 →
-        // beta.25 smoke). Refresh on every supervisor start so the helper
-        // tracks the installed launcher version. Best-effort.
-        if cfg.is_service_mode() {
-            match crate::upgrade_server::refresh_helper_binary(&paths.data_root) {
-                Ok(p) => log::info(&format!(
-                    "supervisor: refreshed upgrade-server helper at {p:?}"
-                )),
-                Err(e) => log::error(&format!(
-                    "supervisor: could not refresh upgrade-server helper (post-stop bat will spawn stale or fail): {e}"
-                )),
-            }
+        // that the upgrade-server is spawned from. Copying outside
+        // `current/` lets the upgrade-server survive Velopack's swap of
+        // `current/` (Velopack terminated the pre-Part-5e in-current
+        // upgrade-server within ~1s of bind, per the beta.24 → beta.25
+        // smoke). Refresh on every supervisor start so the helper tracks
+        // the installed launcher version. Best-effort.
+        //
+        // §32 Part 5f — refresh unconditionally (not just in service
+        // mode). Local-mode launcher also spawns the helper on apply-
+        // update path, so the helper must be current there too.
+        match crate::upgrade_server::refresh_helper_binary(&paths.data_root) {
+            Ok(p) => log::info(&format!(
+                "supervisor: refreshed upgrade-server helper at {p:?}"
+            )),
+            Err(e) => log::error(&format!(
+                "supervisor: could not refresh upgrade-server helper (upgrade-server spawn will use stale binary or fail): {e}"
+            )),
         }
 
         // §32 Part 5 — coordinate with any in-flight upgrade-server. If
-        // the post-stop bat spawned a `<launcher> --upgrade-server` to
-        // serve the updating page, it's bound to the port we're about to
-        // ask Node to bind. Write the stop marker + wait for the port to
-        // free up. Idempotent — if no upgrade-server is running, marker
-        // write is a no-op + port check returns immediately.
-        if cfg.is_service_mode() {
+        // an upgrade-server is currently bound to the port we're about
+        // to ask Node to bind (either spawned by service-mode post-stop
+        // bat OR by local-mode launcher on apply-update path), write
+        // the stop marker + wait for the port to free up. Idempotent —
+        // if no upgrade-server is running, marker write is a no-op and
+        // port check returns immediately.
+        //
+        // §32 Part 5f — runs unconditionally now (not just in service
+        // mode). Local-mode launcher restart-on-apply needs to coordinate
+        // with the upgrade-server its previous incarnation spawned.
+        {
             let port = cfg.web_port.unwrap_or(8000);
             if let Err(e) = crate::upgrade_server::write_stop_marker(&paths.data_root) {
                 log::error(&format!(
@@ -171,6 +178,42 @@ pub fn run() -> Result<i32> {
         match reason {
             None => {
                 log::info("supervisor: clean exit; not restarting");
+
+                // §32 Part 5f — local-mode upgrade page. If apply-update-
+                // pending marker is present AND we're in local mode, spawn
+                // the upgrade-server from the dataRoot helper before
+                // exiting. Velopack's restart=true (set by UpdateService
+                // for non-service-mode applyUpdate) will relaunch this
+                // launcher post-swap; the upgrade-server serves the
+                // updating page through that ~3-8s gap.
+                //
+                // In service mode the post-stop bat handles this same
+                // spawn — gating to local-mode-only here keeps the two
+                // architectures from racing for the bind. The marker is
+                // the discriminator between apply-update and user-
+                // initiated stop in BOTH modes; it's written by Node's
+                // UpdateService.applyUpdate (Part 5f drops the previous
+                // service-mode-only gate on the marker write).
+                let cfg_now = common::config::AppConfig::load(&paths.data_root);
+                if !cfg_now.is_service_mode() {
+                    let marker = crate::upgrade_server::apply_update_pending_marker(
+                        &paths.data_root,
+                    );
+                    if marker.exists() {
+                        log::info(
+                            "supervisor: apply-update-pending marker present (local mode); spawning upgrade-server before exit",
+                        );
+                        // Delete marker FIRST so a subsequent restart that
+                        // observes a stale marker doesn't re-spawn.
+                        if let Err(e) = std::fs::remove_file(&marker) {
+                            log::error(&format!(
+                                "supervisor: could not delete apply-update-pending marker (non-fatal): {e}"
+                            ));
+                        }
+                        crate::upgrade_server::spawn_detached_helper(&paths.data_root);
+                    }
+                }
+
                 return Ok(code);
             }
             Some(RestartReason::RestartMarker) => {

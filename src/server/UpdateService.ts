@@ -354,23 +354,26 @@ export class UpdateService {
         //     see §32 Part 3 in todo_ws_scrcpy_web.md.
         const installMode = Config.getInstance().getAppConfig().installMode;
         const isServiceMode = installMode === 'user-service' || installMode === 'system-service';
-        if (isServiceMode) {
-            await this.writeApplyUpdatePendingMarker();
-            // §32 Part 5e — upgrade-server is no longer spawned from here.
-            // The pre-exit spawn (Part 5b) put the upgrade-server inside
-            // Velopack's process tree, loading
-            // `<installRoot>/current/ws-scrcpy-web-launcher.exe` as its
-            // image; Velopack's apply phase terminated it within ~1s of
-            // bind (v0.1.25-beta.24 → beta.25 smoke 2026-05-21).
-            //
-            // The upgrade-server is now spawned by the post-stop bat (Servy
-            // owns the bat; FireAndForget; no Job Object) from a dataRoot
-            // copy of the launcher at
-            // `<dataRoot>/upgrade-server/ws-scrcpy-web-launcher.exe`, which
-            // Velopack doesn't touch. See `launcher/src/upgrade_server.rs`
-            // (`refresh_helper_binary`, `helper_path_for`) and
-            // `launcher/src/elevated_runner.rs::write_post_stop_bat`.
-        }
+        // §32 Part 5e/5f — upgrade-server is no longer spawned from Node.
+        // The pre-exit spawn (Part 5b) put the upgrade-server inside
+        // Velopack's process tree, loading
+        // `<installRoot>/current/ws-scrcpy-web-launcher.exe` as its
+        // image; Velopack's apply phase terminated it within ~1s of
+        // bind (v0.1.25-beta.24 → beta.25 smoke 2026-05-21). The
+        // upgrade-server is now spawned by the launcher (Part 5f, local
+        // mode, on supervisor clean-exit path) or by the post-stop bat
+        // (Part 5e, service mode), both sourcing from
+        // `<dataRoot>/upgrade-server/ws-scrcpy-web-launcher.exe` which
+        // Velopack doesn't touch.
+        //
+        // §32 Part 5f — write the apply-update-pending marker in BOTH
+        // modes (was service-mode-only in Part 5e). The marker is the
+        // discriminator both the launcher's supervisor (local) and the
+        // post-stop bat (service) use on clean Node exit to decide
+        // whether to spawn the upgrade-server. Without the marker,
+        // neither side can tell apply-update from a user-initiated
+        // stop (Ctrl+C, services.msc Stop, etc.) and would over-spawn.
+        await this.writeApplyUpdatePendingMarker();
         this.mgr.waitExitThenApplyUpdate(this.state.pendingUpdate, true, !isServiceMode);
     }
 

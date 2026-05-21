@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Local-mode in-app upgrade: "updating, please wait…" page now appears during the upgrade window too.** §32 Part 5f — extends the Part 5e upgrade-server architecture to local mode (when `installMode` is `null`/`'user'`/`'system'`, i.e., no Servy supervision). Part 5e fixed the page for service mode by spawning the upgrade-server from Servy's `--postStopPath` bat; local mode had no equivalent and the browser saw "this site can't be reached" for the ~3-8s Velopack-restart window. Part 5f extends the same dataRoot-helper + wind-down mechanism to local mode by spawning the upgrade-server from the launcher's own supervisor on clean Node exit.
+  - **`launcher/src/upgrade_server.rs`** — new `spawn_detached_helper(data_root)` function spawns `<dataRoot>/upgrade-server/ws-scrcpy-web-launcher.exe --upgrade-server` as a detached Windows process (DETACHED_PROCESS | CREATE_NO_WINDOW, stdio null'd). New `apply_update_pending_marker(data_root)` returns the canonical marker path so the supervisor and Node-side `Config.applyUpdatePendingMarkerPath` stay in sync.
+  - **`launcher/src/supervisor.rs`** — on Node clean exit (`decide_restart` returns None), if `apply_update_pending_marker` exists AND we're in local mode, delete the marker (so subsequent restart doesn't re-spawn on a stale marker) then call `spawn_detached_helper` before returning. Velopack's `restart=true` then relaunches the launcher; the next supervisor invocation writes the stop marker (now unconditional, was service-mode-only) and the upgrade-server's wind-down + port-shift discovery hands off cleanly. Service mode is gated OUT of this spawn path — the post-stop bat handles that, and racing the two would create bind contention.
+  - **`launcher/src/supervisor.rs`** — also drops the `is_service_mode()` gate on `refresh_helper_binary` at startup and on the upgrade-server stop-marker-write + `wait_for_port_free` block. Local mode launcher restart-on-apply needs all three to coordinate with the upgrade-server its previous incarnation spawned.
+  - **`src/server/UpdateService.ts::applyUpdate`** — moves `writeApplyUpdatePendingMarker()` out of the `if (isServiceMode)` block. Marker is now written in BOTH modes; it's the discriminator both the launcher supervisor (local) and the post-stop bat (service) use to tell apply-update from user-initiated stop (Ctrl+C, services.msc Stop, etc.).
+  - **`src/server/__tests__/UpdateService.test.ts`** — the existing Part 5e `applyUpdate (%s): does NOT spawn anything from Node` `it.each` (4 cases) now also asserts marker is written. Spy on `fs.promises.writeFile` + `mkdir` mocked as no-ops to avoid polluting real ProgramData. Renamed to `writes marker + does NOT spawn anything from Node (§32 Part 5f)`.
+
+Vitest 694/694 unchanged (test counts net zero — same `it.each` 4 cases, just gained additional assertions). `tsc --noEmit` clean. `cargo check --workspace` clean locally (now that VS 2026 Community + C++ workload is installed; Rust auto-detected MSVC via registry probing).
+
 ## [0.1.25-beta.27] - 2026-05-21
 
 ## [0.1.25-beta.26] - 2026-05-21
