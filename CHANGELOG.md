@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Tray architecture unified across local + service modes (§32 Part 5h).** Pre-Part-5h the tray ran differently per mode: service mode used a standalone `ws-scrcpy-web-tray.exe` process supervised by the launcher's `tray_supervisor.rs` poller (every 10s, cross-session WTS spawn from LocalSystem into the active user session); local mode used an in-process thread inside the launcher (`tray.rs::spawn`). The in-process thread had two failure modes with no recovery: (a) after a service install→uninstall handoff the new local launcher fires with `--local-takeover`, spawns its own tray thread, but a competing standalone tray.exe is still in the process of exiting → mutex/icon-registration collision, in-process thread silently dies, no recovery path; (b) double-clicking the desktop shortcut after the launcher exits and restarts can hit Windows Shell timing such that the tray icon never registers → no recovery. User-reported on beta.31 smoke 2026-05-21.
+  - **Local mode now uses the same standalone `ws-scrcpy-web-tray.exe` process as service mode**, supervised by the same `tray_supervisor::start_background` poller. Mode-aware spawn dispatch inside the supervisor: service mode keeps the WTS cross-session spawn (`spawn_in_active_user_session`); local mode uses a simple `Command::new(tray).arg("--launcher-spawn").spawn()` with `DETACHED_PROCESS | CREATE_NO_WINDOW` + null stdio (launcher already in the user session, no privilege elevation needed).
+  - **`launcher/src/tray_supervisor.rs`** — `start_background(install_root, is_service_mode)` gained the mode parameter. New `ensure_tray_in_current_session` does the local-mode simple-spawn path. New `current_session_id()` resolves THIS process's WTS session via `ProcessIdToSessionId(GetCurrentProcessId())` for the local-mode "is tray already running in MY session?" check.
+  - **`launcher/src/supervisor.rs`** — dropped the `if cfg.is_service_mode()` gate on the tray-supervisor block; runs in both modes now. The `--local-takeover` override (previously in `main.rs`) moved here so the tray-supervisor mode decision sees it at the right scope.
+  - **`launcher/src/main.rs`** — removed `mod tray;`, removed `let _tray_handle = tray::spawn(is_service_mode);` and the now-unused `is_service_mode` computation. Tray spawn is entirely owned by the supervisor.
+  - **`launcher/src/tray.rs`** — **deleted**. In-process thread tray retired.
+  - **`tray/src/main.rs`** — tooltip + exit-confirmation copy is now mode-aware. Service mode: `"ws-scrcpy-web (service)"` / `"Stop the service and quit?"`. Local mode: `"ws-scrcpy-web"` / `"Stop the server and quit?"`. Balloon text adjusted similarly. Mode read from `config.json::installMode` at startup; URL provider re-reads on every click so the tray naturally tracks mode swaps mid-session.
+
+- **Welcome modal: dropped the auto-shift port verbosity.** Pre-2026-05-21 the welcome modal showed `default port 8000 was in use; we auto-picked 8002. change anytime in settings.` in the auto-shifted branch — duplicating the URL already shown in the intro line above. Both branches (auto-shifted and not) now render the same brief `you can change the port anytime in settings.` hint. `src/app/client/WelcomeModal.ts:73-85`.
+
+Vitest 695/695 unchanged (no test count delta). `tsc --noEmit` clean. `cargo check --workspace` clean (cross-compile validated in CI).
+
 ## [0.1.25-beta.31] - 2026-05-21
 
 ## [0.1.25-beta.30] - 2026-05-21

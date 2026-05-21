@@ -70,19 +70,16 @@ export class WelcomeModal extends Modal {
         intro.appendChild(link);
         container.appendChild(intro);
 
-        if (this.opts.portWasAutoShifted) {
-            const shifted = document.createElement('p');
-            shifted.style.cssText = 'margin: 0 0 8px; color: var(--text-color-light); font-size: 13px;';
-            shifted.textContent =
-                `default port 8000 was in use; we auto-picked ${this.opts.webPort}. ` +
-                'change anytime in settings.';
-            container.appendChild(shifted);
-        } else {
-            const note = document.createElement('p');
-            note.style.cssText = 'margin: 0 0 8px; color: var(--text-color-light); font-size: 13px;';
-            note.textContent = 'you can change the port anytime in settings.';
-            container.appendChild(note);
-        }
+        // The intro line above already shows the actual bound URL
+        // (including any auto-shifted port). Pre-2026-05-21 the
+        // auto-shifted path also rendered a verbose "default port 8000 was
+        // in use; we auto-picked NNNN" sentence, which duplicated info the
+        // intro already conveyed. Now both code paths render the same
+        // brief hint about where to change the port later.
+        const note = document.createElement('p');
+        note.style.cssText = 'margin: 0 0 8px; color: var(--text-color-light); font-size: 13px;';
+        note.textContent = 'you can change the port anytime in settings.';
+        container.appendChild(note);
 
         const divider = document.createElement('hr');
         divider.style.cssText =

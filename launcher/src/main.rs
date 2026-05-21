@@ -11,7 +11,10 @@ mod paths;
 mod single_instance;
 mod spawn;
 mod supervisor;
-mod tray;
+// §32 Part 5h — local-mode tray is no longer a thread inside the launcher;
+// the tray-supervisor (mod below) now spawns the standalone
+// ws-scrcpy-web-tray.exe in BOTH modes. `mod tray;` was deleted; the in-
+// process thread variant in tray.rs is gone.
 mod tray_supervisor;
 mod uac_requester;
 mod unzip_handler;
@@ -219,27 +222,22 @@ fn main() {
     };
     let data_root = common::config::data_root_from_env();
 
-    let config_dir = data_root.or(install_root);
-    let mut is_service_mode = config_dir
-        .as_deref()
-        .map(common::config::AppConfig::load)
-        .map(|cfg| cfg.is_service_mode())
-        .unwrap_or(false);
-
-    // v0.1.23 §1c bug 1.c: `--local-takeover` flag forces local-mode tray
-    // spawn even when config.json still says installMode='user-service' /
-    // 'system-service'. Set by ServiceApi.handoffUninstallToUserSession
-    // when it spawns a user-session launcher to perform the uninstall —
-    // at spawn time config still reflects the OUTGOING service mode (the
-    // resume flow updates it post-uninstall). Without this hint, the
-    // freshly spawned local launcher reads is_service_mode=true → skips
-    // tray spawn → user is left with no tray after the service goes away.
-    if args.iter().any(|a| a == "--local-takeover") && is_service_mode {
-        log::info("--local-takeover override: forcing is_service_mode=false (post-uninstall handoff)");
-        is_service_mode = false;
-    }
-
-    let _tray_handle = tray::spawn(is_service_mode);
+    // §32 Part 5h — tray spawn (BOTH local and service mode) is now owned
+    // by `supervisor::run` -> `tray_supervisor::start_background`. The
+    // previous in-process thread tray (tray.rs::spawn) for local mode is
+    // retired; both modes converge on the standalone
+    // `ws-scrcpy-web-tray.exe` process so the local-mode tray survives
+    // launcher crashes / restarts / post-uninstall handoffs the way
+    // service mode already did. The `--local-takeover` override that
+    // forced local-mode tray spawn (per v0.1.23 §1c bug 1.c) is now read
+    // inside supervisor.rs where the tray-supervisor mode decision is
+    // made.
+    // (Pre-Part-5h this block computed is_service_mode + applied the
+    // --local-takeover override, then passed the flag to tray::spawn.
+    // tray::spawn is gone; the install_root / data_root resolutions above
+    // are still used elsewhere in this function below if needed.)
+    let _ = data_root; // keep the load above visible to the compiler; supervisor reads its own env probe
+    let _ = install_root;
 
     let exit_code = match supervisor::run() {
         Ok(code) => code,

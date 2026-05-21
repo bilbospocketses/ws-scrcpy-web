@@ -48,12 +48,22 @@ use crate::user_session_spawn::{spawn_in_active_user_session, SpawnUserLauncherA
 const TRAY_POLL_INTERVAL_SECS: u64 = 10;
 const TRAY_PROCESS_NAME: &str = "ws-scrcpy-web-tray.exe";
 
-/// Start a background thread that ensures a tray exists in the active
-/// interactive user session at all times. Returns immediately. The thread
-/// runs for the lifetime of the launcher process and ends when the
-/// process exits (no explicit stop signal — `Arc<AtomicBool>` is exposed
-/// for future use if we want a clean shutdown).
-pub fn start_background(install_root: &Path) -> Arc<AtomicBool> {
+/// Start a background thread that ensures a tray exists in the user
+/// session at all times. Returns immediately. The thread runs for the
+/// lifetime of the launcher process and ends when the process exits (no
+/// explicit stop signal — `Arc<AtomicBool>` is exposed for future use if
+/// we want a clean shutdown).
+///
+/// Mode-aware spawn:
+///   - **Service mode** (`is_service_mode=true`): launcher is running as
+///     LocalSystem in session 0. Cross-session WTS spawn into the active
+///     interactive user session via `spawn_in_active_user_session`. Requires
+///     SeTcbPrivilege + SeAssignPrimaryTokenPrivilege + SeIncreaseQuotaPrivilege
+///     which LocalSystem has by default.
+///   - **Local mode** (`is_service_mode=false`): launcher is already in
+///     the user session. Simple `Command::new(tray).spawn()` with detached
+///     + no-console flags. No privilege elevation needed.
+pub fn start_background(install_root: &Path, is_service_mode: bool) -> Arc<AtomicBool> {
     let stop_flag = Arc::new(AtomicBool::new(false));
     let stop_flag_clone = stop_flag.clone();
     let install_root_clone = install_root.to_path_buf();
@@ -61,15 +71,16 @@ pub fn start_background(install_root: &Path) -> Arc<AtomicBool> {
     thread::Builder::new()
         .name("ws-tray-supervisor".to_string())
         .spawn(move || {
-            tray_supervisor_loop(install_root_clone, stop_flag_clone);
+            tray_supervisor_loop(install_root_clone, stop_flag_clone, is_service_mode);
         })
         .ok();
     stop_flag
 }
 
-fn tray_supervisor_loop(install_root: PathBuf, stop_flag: Arc<AtomicBool>) {
+fn tray_supervisor_loop(install_root: PathBuf, stop_flag: Arc<AtomicBool>, is_service_mode: bool) {
     log::info(&format!(
-        "tray-supervisor: starting (poll every {TRAY_POLL_INTERVAL_SECS}s)"
+        "tray-supervisor: starting (poll every {TRAY_POLL_INTERVAL_SECS}s, mode={})",
+        if is_service_mode { "service" } else { "local" },
     ));
 
     let tray_exe = install_root.join("current").join(TRAY_PROCESS_NAME);
@@ -88,7 +99,13 @@ fn tray_supervisor_loop(install_root: PathBuf, stop_flag: Arc<AtomicBool>) {
             continue;
         }
 
-        match ensure_tray_in_active_session(&tray_exe) {
+        let outcome = if is_service_mode {
+            ensure_tray_in_active_session(&tray_exe)
+        } else {
+            ensure_tray_in_current_session(&tray_exe)
+        };
+
+        match outcome {
             EnsureOutcome::AlreadyRunning => {
                 // Common case after the first iteration. No log spam.
             }
@@ -123,6 +140,8 @@ enum EnsureOutcome {
     SpawnFailed(String),
 }
 
+/// Service-mode path. LocalSystem launcher uses WTS to reach into the
+/// active interactive user session.
 fn ensure_tray_in_active_session(tray_exe: &Path) -> EnsureOutcome {
     // Find the active interactive session.
     let session_id = match find_active_user_session() {
@@ -155,6 +174,64 @@ fn ensure_tray_in_active_session(tray_exe: &Path) -> EnsureOutcome {
         }
     } else {
         EnsureOutcome::SpawnFailed(result.error_message.unwrap_or_default())
+    }
+}
+
+/// Local-mode path. Launcher is already in the user session — simple
+/// `Command::new(tray)` spawn, no privilege elevation. Detached +
+/// no-console so the tray survives launcher exit (matches service-mode
+/// independence) and doesn't pop a console window.
+fn ensure_tray_in_current_session(tray_exe: &Path) -> EnsureOutcome {
+    let session_id = current_session_id();
+    if is_tray_running_in_session(session_id) {
+        return EnsureOutcome::AlreadyRunning;
+    }
+
+    use std::os::windows::process::CommandExt;
+    use std::process::Stdio;
+    // Same flag set as upgrade_server's spawn_detached_helper: child runs
+    // detached from this process's console (DETACHED_PROCESS) and never
+    // opens its own console window (CREATE_NO_WINDOW). Tray binary is
+    // windows-subsystem so it'd be windowless either way, but the flags
+    // also break the parent-process exit kill-chain for cleaner detach.
+    const DETACHED_PROCESS: u32 = 0x00000008;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    match std::process::Command::new(tray_exe)
+        .arg("--launcher-spawn")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .creation_flags(DETACHED_PROCESS | CREATE_NO_WINDOW)
+        .spawn()
+    {
+        Ok(child) => EnsureOutcome::Spawned {
+            pid: child.id(),
+            session: session_id,
+        },
+        Err(e) => EnsureOutcome::SpawnFailed(format!("Command::new(tray).spawn(): {e}")),
+    }
+}
+
+/// Resolve THIS process's WTS session id. Used by local-mode launcher to
+/// confirm "is the tray already running in MY session?" without the WTS
+/// session-enumeration that service-mode uses to cross sessions.
+fn current_session_id() -> u32 {
+    use windows::Win32::System::RemoteDesktop::ProcessIdToSessionId;
+    use windows::Win32::System::Threading::GetCurrentProcessId;
+
+    let pid = unsafe { GetCurrentProcessId() };
+    let mut session_id: u32 = 0;
+    // SAFETY: ProcessIdToSessionId has no preconditions other than a valid
+    // process id; GetCurrentProcessId always returns our own valid pid.
+    if unsafe { ProcessIdToSessionId(pid, &mut session_id) }.is_ok() {
+        session_id
+    } else {
+        // Should never happen for the current process; fall back to 0
+        // (which is the LocalSystem session — if `is_tray_running_in_session`
+        // filters on that, no false-positives expected since the launcher
+        // shouldn't be in session 0 when this branch is taken).
+        log::error("tray-supervisor: ProcessIdToSessionId failed for own pid; using 0 as fallback");
+        0
     }
 }
 

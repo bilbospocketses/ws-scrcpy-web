@@ -69,25 +69,53 @@ pub fn run() -> Result<i32> {
     // effort delete, no error if absent.
     {
         let cfg = common::config::AppConfig::load(&paths.data_root);
-        if cfg.is_service_mode() {
+        // --local-takeover override (was in main.rs pre-Part-5h, now lives
+        // here where the tray-supervisor decision is made). Set by
+        // ServiceApi.handoffUninstallToUserSession when spawning a
+        // user-session launcher to perform a service uninstall. At spawn
+        // time config.json still reflects the OUTGOING service mode; the
+        // resume flow updates it post-uninstall. Without this hint the
+        // freshly spawned local launcher would read is_service_mode=true
+        // and try a cross-session WTS spawn from a non-privileged user
+        // token (which fails) — user left with no tray after the service
+        // goes away.
+        let local_takeover_override = std::env::args().any(|a| a == "--local-takeover");
+        let is_service_mode = cfg.is_service_mode() && !local_takeover_override;
+        if local_takeover_override && cfg.is_service_mode() {
+            log::info(
+                "supervisor: --local-takeover override; forcing is_service_mode=false for tray-supervisor",
+            );
+        }
+
+        if is_service_mode {
             // One-time legacy cleanup (drops HKLM\Run\WsScrcpyWebTray
             // left over from beta.18 and earlier installs that registered
-            // it at install_service time).
+            // it at install_service time). Service-mode-only because
+            // that's where the legacy Run entry was registered.
             if let Err(e) = crate::elevated_runner::unregister_tray_run_key() {
                 log::error(&format!("supervisor: legacy HKLM\\Run cleanup: {e}"));
             }
+        }
 
-            // Spawn the tray-supervisor background thread. Polls every
-            // 10s and ensures a tray exists in the active interactive
-            // user session. Runs for the lifetime of the launcher.
-            #[cfg(windows)]
-            {
-                let _stop = crate::tray_supervisor::start_background(&paths.install_root);
-                // We intentionally drop `_stop` — the thread runs for
-                // the lifetime of the process. If we ever need clean
-                // shutdown, keep the handle and signal it.
-                log::info("supervisor: tray-supervisor background thread started");
-            }
+        // §32 Part 5h — tray-supervisor runs in BOTH modes (was service-
+        // mode-only pre-Part-5h). Mode-aware spawn dispatch inside the
+        // supervisor: WTS cross-session for service mode (LocalSystem ->
+        // user session), simple Command::new for local mode (already in
+        // user session). Both modes converge on the standalone
+        // ws-scrcpy-web-tray.exe process so the local-mode tray now
+        // survives launcher crashes, post-service-uninstall handoff, and
+        // any other event that previously killed the in-process thread
+        // tray with no recovery. Polls every 10s and respawns if missing.
+        #[cfg(windows)]
+        {
+            let _stop = crate::tray_supervisor::start_background(
+                &paths.install_root,
+                is_service_mode,
+            );
+            // We intentionally drop `_stop` — the thread runs for the
+            // lifetime of the process. If we ever need clean shutdown,
+            // keep the handle and signal it.
+            log::info("supervisor: tray-supervisor background thread started");
         }
 
         // §32 Part 5e — refresh the dataRoot copy of this launcher binary

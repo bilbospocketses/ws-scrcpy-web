@@ -117,22 +117,47 @@ fn run_tray() -> Result<()> {
     // (--launcher-spawn arg), show a one-time balloon explaining that the
     // launcher owns the tray lifecycle so the user understands why it
     // keeps coming back if they try to close it.
+    //
+    // §32 Part 5h: tooltip + exit-confirmation copy is now mode-aware.
+    // Pre-Part-5h the standalone tray was only spawned in service mode
+    // and the copy was hardcoded "service" / "Stop the service". Now the
+    // tray runs in BOTH modes (local-mode launcher's in-process thread
+    // tray was retired in favor of the standalone). Mode is read from
+    // config.json's installMode field; the URL provider re-reads on
+    // every click so the tray naturally tracks mode swaps mid-session.
     let argv: Vec<String> = std::env::args().collect();
     let show_launcher_balloon = argv.iter().any(|a| a == "--launcher-spawn");
+
+    let is_service_mode_at_start =
+        common::config::AppConfig::load(&config_dir).is_service_mode();
+    let (tooltip, exit_title, exit_msg, balloon_text): (&str, &str, &str, &str) =
+        if is_service_mode_at_start {
+            (
+                "ws-scrcpy-web (service)",
+                "Exit ws-scrcpy-web?",
+                "Stop the service and quit?",
+                "tray started by launcher. to clear the tray, stop the ws-scrcpy-web service via Settings.",
+            )
+        } else {
+            (
+                "ws-scrcpy-web",
+                "Exit ws-scrcpy-web?",
+                "Stop the server and quit?",
+                "tray started by launcher. to clear the tray, stop the ws-scrcpy-web server via the tray exit or Settings.",
+            )
+        };
+
     let balloon: Option<(&str, &str)> = if show_launcher_balloon {
-        Some((
-            "ws-scrcpy-web tray",
-            "tray started by launcher. to clear the tray, stop the ws-scrcpy-web service via Settings.",
-        ))
+        Some(("ws-scrcpy-web tray", balloon_text))
     } else {
         None
     };
 
     let action = common::tray::run(
         ICON_BYTES,
-        "ws-scrcpy-web (service)",
-        "Exit ws-scrcpy-web?",
-        "Stop the service and quit?",
+        tooltip,
+        exit_title,
+        exit_msg,
         url_provider,
         balloon,
     )
