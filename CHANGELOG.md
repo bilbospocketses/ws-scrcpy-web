@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.25-beta.22] - 2026-05-20
+
 ### Fixed
 
 - **Service-mode in-app upgrade: "updating, please wait…" page now actually appears in the browser during the upgrade window, and survives the port-shift case where the new Node lands on a different port than the upgrade-server held.** §32 Part 5b — caught by v0.1.25-beta.20 → beta.21 smoke 2026-05-20. Two intertwined fixes:
