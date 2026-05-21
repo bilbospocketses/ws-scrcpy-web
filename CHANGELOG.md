@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Settings → Install Service / Uninstall Service now works.** Pre-existing bug across many recent versions, surfaced by user-report 2026-05-21 while regression-testing §32 Part 5f: clicking "install service" in the Settings modal opened the "Administrative Privileges Required" confirmation dialog UNDERNEATH the Settings modal (couldn't reach without closing Settings), and clicking Continue did nothing. The Welcome modal's install path was unaffected because it bypasses `AdminConfirmModal` and calls `/api/service/install` directly.
+  - **Root cause:** `src/app/client/AdminConfirmModal.ts::confirm()` was calling `document.body.appendChild(dialog)` + `dialog.showModal()` **after** `new AdminConfirmModal(...)` — but the `Modal` base-class constructor (`src/app/ui/Modal.ts:84-85`) already appends + showModals during construction. The second `showModal()` on an already-`open` dialog throws `InvalidStateError` per HTML spec. That throw inside the Promise executor rejected the returned Promise; the user-visible dialog (rendered by the FIRST `showModal()`) appeared but Continue/Cancel handlers' `resolveAndClose()` called `resolve()` on an already-rejected Promise → no-op. Layering glitch was a side effect of the throw perturbing top-layer state.
+  - **Fix:** removed the redundant `appendChild` + `showModal` from `confirm()`. The base-class constructor handles both.
+  - **Why tests didn't catch it:** `src/app/client/__tests__/AdminConfirmModal.test.ts` stubbed `HTMLDialogElement.prototype.showModal` to just set the `open` attribute without throwing on double-call. Stub was too permissive vs the HTML spec. Updated the stub to throw `InvalidStateError` on already-`open` dialogs (spec-realistic) and added a regression test asserting `confirm()` calls `showModal` exactly once.
+
+Vitest 694/694 → 695/695 (+1 regression test: `calls showModal exactly once (no double-show throw)`). `tsc --noEmit` clean.
+
 ## [0.1.25-beta.29] - 2026-05-21
 
 ## [0.1.25-beta.28] - 2026-05-21

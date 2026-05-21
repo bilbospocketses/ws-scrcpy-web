@@ -3,9 +3,24 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { AdminConfirmModal } from '../AdminConfirmModal';
 
-// JSDOM doesn't implement HTMLDialogElement.showModal() by default; stub it.
+// JSDOM doesn't implement HTMLDialogElement.showModal() by default; stub
+// it WITH the spec's InvalidStateError throw when called on a dialog that
+// already has the `open` attribute. Pre-2026-05-21 the stub silently
+// no-op'd the second call, which masked a real-browser bug:
+// AdminConfirmModal.confirm() used to fire showModal() twice (once via
+// the Modal base-class constructor, once explicitly afterwards). In a
+// real browser the second call threw, the Promise rejected, and the
+// Continue/Cancel handlers silently no-op'd (calling resolve() on an
+// already-rejected promise). Spec link:
+//   https://html.spec.whatwg.org/multipage/interactive-elements.html#dom-dialog-showmodal
 beforeEach(() => {
     HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) {
+        if (this.hasAttribute('open')) {
+            throw new DOMException(
+                "Failed to execute 'showModal' on 'HTMLDialogElement': The element already has an 'open' attribute, and therefore cannot be opened modally.",
+                'InvalidStateError',
+            );
+        }
         this.setAttribute('open', '');
     });
     HTMLDialogElement.prototype.close = vi.fn(function (this: HTMLDialogElement) {
@@ -87,5 +102,23 @@ describe('AdminConfirmModal.confirm', () => {
         // Resolve so the test cleans up.
         getButton('cancel').click();
         await promise;
+    });
+
+    // Regression for the 2026-05-21 fix: confirm() must call showModal()
+    // exactly ONCE. Pre-fix the method invoked showModal() twice (once via
+    // the Modal base-class constructor, once explicitly), which threw
+    // InvalidStateError on the second call in real browsers, rejecting the
+    // Promise and silently breaking the Continue/Cancel handlers. Settings →
+    // install was broken; Welcome modal worked because it bypasses
+    // AdminConfirmModal and calls /api/service/install directly.
+    it('calls showModal exactly once (no double-show throw)', async () => {
+        const spy = vi.spyOn(HTMLDialogElement.prototype, 'showModal');
+        const promise = AdminConfirmModal.confirm({ action: 'install service' });
+        await Promise.resolve();
+        expect(spy).toHaveBeenCalledTimes(1);
+        // The Promise must still resolve normally on Continue.
+        getButton('continue').click();
+        await expect(promise).resolves.toBe(true);
+        spy.mockRestore();
     });
 });
