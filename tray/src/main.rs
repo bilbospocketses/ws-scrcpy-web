@@ -130,28 +130,33 @@ fn run_tray() -> Result<()> {
 
     let is_service_mode_at_start =
         common::config::AppConfig::load(&config_dir).is_service_mode();
-    let (tooltip, exit_title, exit_msg, balloon_text): (&str, &str, &str, &str) =
+    // The tray menu's exit option is the only intended path to clear the
+    // tray in either mode. Service-mode Settings exposes uninstall (which
+    // tears down service + tray) but no "stop service" action; local-mode
+    // Settings has no server-lifecycle affordances at all. The balloon
+    // body is identical for both modes for this reason; the title carries
+    // the service suffix to mirror the tooltip.
+    let (tooltip, exit_title, exit_msg, balloon_title, balloon_text): (&str, &str, &str, &str, &str) =
         if is_service_mode_at_start {
             (
                 "ws-scrcpy-web (service)",
                 "Exit ws-scrcpy-web?",
                 "Stop the service and quit?",
-                "tray started by launcher. to clear the tray, stop the ws-scrcpy-web service via Settings.",
+                "ws-scrcpy-web (service) tray",
+                "tray started by launcher. to clear the tray, use the exit option from the tray menu.",
             )
         } else {
             (
                 "ws-scrcpy-web",
                 "Exit ws-scrcpy-web?",
                 "Stop the server and quit?",
-                // Local mode has no "stop server" affordance in Settings —
-                // only the service install/uninstall buttons. The only
-                // intended exit path is the tray's own context menu.
+                "ws-scrcpy-web tray",
                 "tray started by launcher. to clear the tray, use the exit option from the tray menu.",
             )
         };
 
     let balloon: Option<(&str, &str)> = if show_launcher_balloon {
-        Some(("ws-scrcpy-web tray", balloon_text))
+        Some((balloon_title, balloon_text))
     } else {
         None
     };

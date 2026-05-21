@@ -29,10 +29,12 @@
 //   - The tray helper does NOT have a "user-suppress" marker. If the user
 //     kills the tray (e.g., via Task Manager), the launcher polls within
 //     TRAY_POLL_INTERVAL_SECS and respawns it WITH the balloon notification
-//     explaining "to clear the tray, stop the ws-scrcpy-web service via
-//     Settings." This matches the user's design intent: the tray is
-//     intrinsic to service-mode operation; closing it requires stopping
-//     the service.
+//     directing users to the tray's own exit menu. The tray is the only
+//     user-facing handle on the launcher in both modes (service mode runs
+//     windowless under Servy; local mode hides its console), so closing
+//     it requires the explicit tray-menu exit path. Settings can uninstall
+//     the service (which tears down both service and tray) but has no
+//     "stop service" or "stop server" action.
 
 #![cfg(windows)]
 
