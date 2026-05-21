@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Service-mode opt-in: local Node now syncs its in-memory `webPort` to the actual port the service-Node bound, so subsequent local-Node writes can't clobber `config.json` back to the pre-install port.** §32 Part 5c — caught by v0.1.25-beta.22 → beta.23 smoke 2026-05-21. The user's clean-VM smoke installed beta.22 in local mode (port 8000), opted into service mode, and confirmed the browser correctly redirected to the new service-Node port (8001 after the install-time port shift). Two regressions followed from the same root cause:
+  - **Tray icon opened the wrong port.** After install, the tray re-read `config.json` on click (per `tray/src/main.rs:68-72` it does this every invocation) and got `webPort:8000`. Clicking opened `http://localhost:8000` — a dead address now that the service-Node was on 8001.
+  - **In-app upgrade "updating, please wait…" page never appeared.** During the apply-update window, the launcher's `--upgrade-server` subcommand (spawned pre-exit by §32 Part 5b) read `config.json` for its bind port (`launcher/src/upgrade_server.rs:107-109`) and got `webPort:8000`. It happily bound 8000 — but the browser was on 8001, so the browser's WebSocket-reconnect attempt hit ECONNREFUSED on 8001 for the entire upgrade window and never landed on the launcher's static page. The 25ms retry-bind loop and wind-down port-shift discovery from Part 5b worked correctly; they just couldn't help when the upgrade-server was bound to the wrong port to begin with.
+  - **Root cause: race write back to `config.json` from local Node's stale in-memory state.** During the ~5s window between `ServiceApi.handleInstall`'s redirect response and the scheduled `process.exit(0)`, local Node's `Config` singleton still had the pre-install `webPort:8000` in memory. Service-Node's `reconcileWebPort` had correctly written `webPort:8001` to disk, but any local-Node write during that window (browser-driven PATCH on a stale connection, periodic timer, etc.) used local Node's stale in-memory state and clobbered disk back to 8000.
+  - **Fix: `src/server/api/ServiceApi.ts:handleInstall`** now calls `cfg.setActualWebPort(parsedPort)` immediately after `discoverServicePort` returns a non-null URL — parses the port from `new URL(found).port`, validates the integer range [1024, 65535], updates local Node's in-memory `webPort` and writes `config.json` atomically via the existing `setActualWebPort` path. Any subsequent local-Node write now carries the correct port. Parse failures (host-only URL, etc.) log + continue without aborting the install response.
+
+Vitest 692/692 → 694/694 across 61 files (+2 from new `POST /install syncs local in-memory webPort to the service-Node port discovered on handoff (§32 Part 5c)` and `POST /install skips webPort sync when discovered URL has no parseable port` cases in `ServiceApi.test.ts`). `tsc --noEmit` clean.
+
 ## [0.1.25-beta.23] - 2026-05-20
 
 ## [0.1.25-beta.22] - 2026-05-20

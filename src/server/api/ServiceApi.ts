@@ -325,6 +325,30 @@ export class ServiceApi {
                 });
                 if (found) {
                     redirectTo = found;
+                    // §32 Part 5c — sync local Node's in-memory webPort to
+                    // the actual port the service-Node bound. Without this,
+                    // any local-Node write between now and process.exit
+                    // (e.g., a browser PATCH /api/config or /api/updater
+                    // fired during the redirect window) carries the stale
+                    // pre-install webPort in memory and clobbers the
+                    // correct value that service-Node already persisted
+                    // via reconcileWebPort. The clobbered config.json then
+                    // breaks BOTH the tray (re-reads stale port → opens a
+                    // dead address) AND the launcher's --upgrade-server
+                    // (binds stale port, browser sees ECONNREFUSED through
+                    // the entire upgrade window). Diagnosed via v0.1.25-
+                    // beta.22 → beta.23 smoke 2026-05-21.
+                    try {
+                        const parsedPort = Number.parseInt(new URL(found).port, 10);
+                        if (Number.isInteger(parsedPort) && parsedPort >= 1024 && parsedPort <= 65535) {
+                            cfg.setActualWebPort(parsedPort);
+                            log.info(`install-flow: synced local in-memory webPort to actual service port ${parsedPort}`);
+                        } else {
+                            log.warn(`install-flow: could not parse port from discovered URL ${found}; webPort sync skipped`);
+                        }
+                    } catch (err) {
+                        log.warn(`install-flow: webPort sync failed (continuing without it): ${(err as Error).message}`);
+                    }
                     // Schedule our own shutdown shortly after the
                     // response goes out. The user's browser will have
                     // navigated to `redirectTo` by then; killing this
