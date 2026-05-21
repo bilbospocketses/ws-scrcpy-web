@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.25-beta.28] - 2026-05-21
+
 ### Added
 
 - **Local-mode in-app upgrade: "updating, please wait…" page now appears during the upgrade window too.** §32 Part 5f — extends the Part 5e upgrade-server architecture to local mode (when `installMode` is `null`/`'user'`/`'system'`, i.e., no Servy supervision). Part 5e fixed the page for service mode by spawning the upgrade-server from Servy's `--postStopPath` bat; local mode had no equivalent and the browser saw "this site can't be reached" for the ~3-8s Velopack-restart window. Part 5f extends the same dataRoot-helper + wind-down mechanism to local mode by spawning the upgrade-server from the launcher's own supervisor on clean Node exit.
