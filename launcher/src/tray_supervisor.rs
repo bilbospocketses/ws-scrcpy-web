@@ -65,27 +65,43 @@ const TRAY_PROCESS_NAME: &str = "ws-scrcpy-web-tray.exe";
 ///   - **Local mode** (`is_service_mode=false`): launcher is already in
 ///     the user session. Simple `Command::new(tray).spawn()` with detached
 ///     + no-console flags. No privilege elevation needed.
-pub fn start_background(install_root: &Path, is_service_mode: bool) -> Arc<AtomicBool> {
+pub fn start_background(
+    install_root: &Path,
+    data_root: &Path,
+    is_service_mode: bool,
+) -> Arc<AtomicBool> {
     let stop_flag = Arc::new(AtomicBool::new(false));
     let stop_flag_clone = stop_flag.clone();
     let install_root_clone = install_root.to_path_buf();
+    let data_root_clone = data_root.to_path_buf();
 
     thread::Builder::new()
         .name("ws-tray-supervisor".to_string())
         .spawn(move || {
-            tray_supervisor_loop(install_root_clone, stop_flag_clone, is_service_mode);
+            tray_supervisor_loop(
+                install_root_clone,
+                data_root_clone,
+                stop_flag_clone,
+                is_service_mode,
+            );
         })
         .ok();
     stop_flag
 }
 
-fn tray_supervisor_loop(install_root: PathBuf, stop_flag: Arc<AtomicBool>, is_service_mode: bool) {
+fn tray_supervisor_loop(
+    install_root: PathBuf,
+    data_root: PathBuf,
+    stop_flag: Arc<AtomicBool>,
+    is_service_mode: bool,
+) {
     log::info(&format!(
         "tray-supervisor: starting (poll every {TRAY_POLL_INTERVAL_SECS}s, mode={})",
         if is_service_mode { "service" } else { "local" },
     ));
 
     let tray_exe = install_root.join("current").join(TRAY_PROCESS_NAME);
+    let mode_marker = data_root.join("control").join("tray-mode.txt");
 
     loop {
         if stop_flag.load(Ordering::SeqCst) {
@@ -101,6 +117,37 @@ fn tray_supervisor_loop(install_root: PathBuf, stop_flag: Arc<AtomicBool>, is_se
             continue;
         }
 
+        // §33 Bug A fix — detect "stale tray running with previous-mode
+        // text" via persisted marker. Compare current config.json
+        // installMode against the marker written when the live tray was
+        // last spawned; on mismatch, taskkill the tray so the next
+        // ensure_tray below spawns fresh with the new mode's text.
+        //
+        // Pre-2026-05-22 this detection lived inside tray.exe as a 5s-
+        // poll thread that called `std::process::exit(0)`. That race-
+        // killed the Theory D handoff polling thread mid-uninstall —
+        // see todo §33 Bug A. Detection is supervisor-mediated now;
+        // taskkill is sequenced before respawn so handoff threads aren't
+        // running in the stale tray when it dies.
+        let cfg_install_mode = common::config::AppConfig::load(&data_root).is_service_mode();
+        if let Some(persisted_mode) = read_persisted_tray_mode(&mode_marker) {
+            if persisted_mode != cfg_install_mode {
+                log::info(&format!(
+                    "tray-supervisor: persisted tray-mode ({}) != current installMode ({}); killing stale tray for respawn",
+                    if persisted_mode { "service" } else { "local" },
+                    if cfg_install_mode { "service" } else { "local" },
+                ));
+                let _ = std::process::Command::new("taskkill")
+                    .args(["/F", "/IM", TRAY_PROCESS_NAME])
+                    .output();
+            }
+        }
+
+        // Dispatch path uses the supervisor's `is_service_mode` parameter
+        // (set at launcher start; preserves --local-takeover override
+        // semantics). The TRAY itself bakes text from config.json at its
+        // spawn time, so the kill above + respawn below produces a tray
+        // whose text matches `cfg_install_mode`.
         let outcome = if is_service_mode {
             ensure_tray_in_active_session(&tray_exe)
         } else {
@@ -115,6 +162,11 @@ fn tray_supervisor_loop(install_root: PathBuf, stop_flag: Arc<AtomicBool>, is_se
                 log::info(&format!(
                     "tray-supervisor: spawned tray in session {session} (pid {pid})"
                 ));
+                // Persist the mode this tray was effectively spawned with
+                // so the next supervisor iteration (or a fresh supervisor
+                // on launcher restart) can detect a stale tray after mode
+                // change.
+                write_persisted_tray_mode(&mode_marker, cfg_install_mode);
             }
             EnsureOutcome::NoActiveSession => {
                 // No interactive user logged in (e.g., post-boot before
@@ -131,6 +183,26 @@ fn tray_supervisor_loop(install_root: PathBuf, stop_flag: Arc<AtomicBool>, is_se
     }
 }
 
+/// Read the persisted spawn-time mode of the live tray. Returns `None`
+/// on any I/O or parse error (marker missing, corrupt, etc.) — treated
+/// as "no claim about previous mode," so no kill fires.
+fn read_persisted_tray_mode(path: &Path) -> Option<bool> {
+    std::fs::read_to_string(path).ok().and_then(|s| match s.trim() {
+        "service" => Some(true),
+        "local" => Some(false),
+        _ => None,
+    })
+}
+
+/// Persist the spawn-time mode of the live tray. Best-effort — write
+/// failure is non-fatal (next supervisor cycle will retry on next spawn).
+fn write_persisted_tray_mode(path: &Path, is_service: bool) {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(path, if is_service { "service" } else { "local" });
+}
+
 enum EnsureOutcome {
     /// Tray process already exists in the active user session.
     AlreadyRunning,
@@ -145,8 +217,13 @@ enum EnsureOutcome {
 /// Service-mode path. LocalSystem launcher uses WTS to reach into the
 /// active interactive user session.
 fn ensure_tray_in_active_session(tray_exe: &Path) -> EnsureOutcome {
-    // Find the active interactive session.
-    let session_id = match find_active_user_session() {
+    // Find the active interactive session via the canonical
+    // WTSEnumerateSessionsW resolver in `common::session`. Pre-2026-05-22
+    // this branch had its own local copy of the resolver; the duplicate
+    // is gone now — see todo §33 Bug B for why consolidation matters
+    // (Node-side and tray-side must use the SAME resolver for the
+    // uninstall handoff marker session-ID check to align).
+    let session_id = match common::session::active_interactive_session() {
         Some(id) => id,
         None => return EnsureOutcome::NoActiveSession,
     };
@@ -234,74 +311,6 @@ fn current_session_id() -> u32 {
         // shouldn't be in session 0 when this branch is taken).
         log::error("tray-supervisor: ProcessIdToSessionId failed for own pid; using 0 as fallback");
         0
-    }
-}
-
-/// Find the first active interactive user session (i.e., WTSActive +
-/// non-empty username). Returns None if no such session exists.
-///
-/// Duplicates a subset of user_session_spawn::find_active_user_session_id
-/// but uses windows-rs directly so we can check session presence without
-/// triggering the full privilege-enable side-effects of the spawn path.
-fn find_active_user_session() -> Option<u32> {
-    use windows::Win32::Foundation::HANDLE;
-    use windows::Win32::System::RemoteDesktop::{
-        WTSActive, WTSEnumerateSessionsW, WTSFreeMemory, WTSGetActiveConsoleSessionId,
-        WTSQuerySessionInformationW, WTSUserName, WTS_SESSION_INFOW,
-    };
-
-    unsafe {
-        let mut sessions_ptr: *mut WTS_SESSION_INFOW = std::ptr::null_mut();
-        let mut count: u32 = 0;
-        let enum_ok = WTSEnumerateSessionsW(
-            HANDLE(std::ptr::null_mut()),
-            0,
-            1,
-            &mut sessions_ptr,
-            &mut count,
-        )
-        .is_ok();
-
-        let mut found: Option<u32> = None;
-        if enum_ok && !sessions_ptr.is_null() {
-            let sessions = std::slice::from_raw_parts(sessions_ptr, count as usize);
-            for s in sessions {
-                if s.State != WTSActive {
-                    continue;
-                }
-                let mut buf_ptr: windows::core::PWSTR = windows::core::PWSTR::null();
-                let mut bytes: u32 = 0;
-                let q = WTSQuerySessionInformationW(
-                    HANDLE(std::ptr::null_mut()),
-                    s.SessionId,
-                    WTSUserName,
-                    &mut buf_ptr,
-                    &mut bytes,
-                );
-                if q.is_err() || buf_ptr.is_null() {
-                    continue;
-                }
-                let username_len = (bytes as usize / 2).saturating_sub(1);
-                if username_len > 0 {
-                    found = Some(s.SessionId);
-                    WTSFreeMemory(buf_ptr.as_ptr() as *mut _);
-                    break;
-                }
-                WTSFreeMemory(buf_ptr.as_ptr() as *mut _);
-            }
-            WTSFreeMemory(sessions_ptr as *mut _);
-        }
-
-        if found.is_some() {
-            return found;
-        }
-
-        let console = WTSGetActiveConsoleSessionId();
-        if console == 0xFFFF_FFFF {
-            None
-        } else {
-            Some(console)
-        }
     }
 }
 

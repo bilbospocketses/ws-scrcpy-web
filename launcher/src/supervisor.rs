@@ -110,6 +110,7 @@ pub fn run() -> Result<i32> {
         {
             let _stop = crate::tray_supervisor::start_background(
                 &paths.install_root,
+                &paths.data_root,
                 is_service_mode,
             );
             // We intentionally drop `_stop` — the thread runs for the

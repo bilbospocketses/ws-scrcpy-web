@@ -80,84 +80,6 @@ pub struct SpawnResult {
     pub error_message: Option<String>,
 }
 
-/// Walk all WTS sessions and return the ID of the first session with
-/// `State == WTSActive` AND a non-empty username. This is the active
-/// interactive user session — the one we want to spawn a process into.
-///
-/// Falls back to `WTSGetActiveConsoleSessionId()` if enumeration finds
-/// no matching session — preserves existing behavior on bare-metal
-/// single-user installs where the physical console IS the user
-/// session. Returns `None` if both strategies fail.
-fn find_active_user_session_id() -> Option<u32> {
-    use windows::Win32::Foundation::HANDLE;
-    use windows::Win32::System::RemoteDesktop::{
-        WTSActive, WTSEnumerateSessionsW, WTSFreeMemory, WTSGetActiveConsoleSessionId,
-        WTSQuerySessionInformationW, WTSUserName, WTS_SESSION_INFOW,
-    };
-
-    unsafe {
-        let mut sessions_ptr: *mut WTS_SESSION_INFOW = std::ptr::null_mut();
-        let mut count: u32 = 0;
-        // First arg HANDLE(0) == WTS_CURRENT_SERVER_HANDLE (local machine).
-        let enum_ok = WTSEnumerateSessionsW(
-            HANDLE(std::ptr::null_mut()),
-            0,
-            1,
-            &mut sessions_ptr,
-            &mut count,
-        )
-        .is_ok();
-
-        let mut found: Option<u32> = None;
-        if enum_ok && !sessions_ptr.is_null() {
-            let sessions = std::slice::from_raw_parts(sessions_ptr, count as usize);
-            for s in sessions {
-                if s.State != WTSActive {
-                    continue;
-                }
-                // Query the session's username. WTSUserName returns a
-                // PWSTR (UTF-16) that must be freed with WTSFreeMemory.
-                let mut buf_ptr: windows::core::PWSTR = windows::core::PWSTR::null();
-                let mut bytes: u32 = 0;
-                let q = WTSQuerySessionInformationW(
-                    HANDLE(std::ptr::null_mut()),
-                    s.SessionId,
-                    WTSUserName,
-                    &mut buf_ptr,
-                    &mut bytes,
-                );
-                if q.is_err() || buf_ptr.is_null() {
-                    continue;
-                }
-                // bytes includes the null terminator; convert to chars.
-                // An empty username means no logged-on user (e.g.,
-                // services session, listener session).
-                let username_len = (bytes as usize / 2).saturating_sub(1);
-                if username_len > 0 {
-                    found = Some(s.SessionId);
-                    WTSFreeMemory(buf_ptr.as_ptr() as *mut _);
-                    break;
-                }
-                WTSFreeMemory(buf_ptr.as_ptr() as *mut _);
-            }
-            WTSFreeMemory(sessions_ptr as *mut _);
-        }
-
-        if found.is_some() {
-            return found;
-        }
-
-        // Fallback: bare-metal single-user case. On a non-RDP / non-
-        // Enhanced-Session machine the console IS the user session.
-        let console = WTSGetActiveConsoleSessionId();
-        if console == 0xFFFF_FFFF {
-            None
-        } else {
-            Some(console)
-        }
-    }
-}
-
 /// Enable a single privilege on the current process token. Required
 /// for various WTS / CreateProcessAsUserW APIs on hardened service
 /// hosts (Servy, NSSM, etc.) where LocalSystem's token holds the
@@ -287,7 +209,7 @@ pub fn spawn_in_active_user_session(args: &SpawnUserLauncherArgs) -> SpawnResult
     // remaining two privileges were the cause. See module-level docs.
     enable_cross_session_spawn_privileges();
 
-    let session_id = match find_active_user_session_id() {
+    let session_id = match common::session::active_interactive_session() {
         Some(id) => id,
         None => {
             return SpawnResult {
