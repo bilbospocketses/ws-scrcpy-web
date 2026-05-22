@@ -86,30 +86,36 @@ fn run_tray() -> Result<()> {
     //     console flicker expected.
     {
         let data_root = config_dir.clone();
-        // SAFETY: WTSGetActiveConsoleSessionId has no preconditions on
-        // Windows; on non-Windows we don't compile this branch.
-        #[cfg(windows)]
-        let own_session = unsafe {
-            windows::Win32::System::RemoteDesktop::WTSGetActiveConsoleSessionId()
-        };
-        #[cfg(not(windows))]
-        let own_session: u32 = 0;
-        if own_session == u32::MAX {
-            // 0xFFFFFFFF means no session attached to the physical console.
-            // Skip spawning the poller — we'd silently mis-route any marker
-            // that targets a real session.
-            eprintln!("tray: WTSGetActiveConsoleSessionId returned 0xFFFFFFFF; control-marker poller not started");
-        } else {
-            // Thread killed at process exit is safe: if a spawn-without-delete
-            // window leaves a stale marker on disk, cleanup_stale on next tray
-            // startup (60s threshold) reaps it before the poll loop resumes.
-            std::thread::spawn(move || {
-                common::control_marker::poll_for_handoff(
-                    &data_root,
-                    own_session,
-                    std::time::Duration::from_millis(750),
+        // Use the canonical WTSEnumerateSessionsW resolver in
+        // `common::session`. Pre-2026-05-22 this called
+        // `WTSGetActiveConsoleSessionId` directly, returning the
+        // *physical console* session which on VM / RDP / Hyper-V Enhanced
+        // Session diverged from the actual user session and broke the
+        // marker check at `common/src/control_marker.rs:110-113`.
+        // See todo §33 Bug B.
+        match common::session::active_interactive_session() {
+            Some(own_session) => {
+                // Thread killed at process exit is safe: if a spawn-
+                // without-delete window leaves a stale marker on disk,
+                // cleanup_stale on next tray startup (60s threshold)
+                // reaps it before the poll loop resumes.
+                std::thread::spawn(move || {
+                    common::control_marker::poll_for_handoff(
+                        &data_root,
+                        own_session,
+                        std::time::Duration::from_millis(750),
+                    );
+                });
+            }
+            None => {
+                // No active interactive session resolvable (e.g., post-
+                // boot before any logon, fully headless install). Skip
+                // the poller — we'd silently mis-route any marker that
+                // targets a real session.
+                eprintln!(
+                    "tray: no active interactive session resolvable; control-marker poller not started"
                 );
-            });
+            }
         }
     }
 
@@ -161,37 +167,14 @@ fn run_tray() -> Result<()> {
         None
     };
 
-    // §32 Part 5i — mode-change detection thread. Watches config.json's
-    // installMode for changes from the spawn-time value (e.g., user opts
-    // INTO service mode from local, or uninstalls service while tray is
-    // alive). On change, exit the tray; the launcher's tray-supervisor
-    // respawns within ~10s with mode-aware text. Without this, the tray
-    // text + balloon stay frozen at the spawn-time mode (URL provider
-    // already re-reads per-click so the navigation target was already
-    // mode-tracking; this only fixes the static text).
-    //
-    // Polling intentionally lives in the tray process (not the launcher
-    // supervisor) so the supervisor stays stateless — the decision is
-    // co-located with the value being checked. 5s gives a snappy
-    // transition without spamming disk I/O.
-    {
-        let data_root_for_mode = config_dir.clone();
-        let initial_service_mode = is_service_mode_at_start;
-        std::thread::spawn(move || {
-            const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
-            loop {
-                std::thread::sleep(POLL_INTERVAL);
-                let current = common::config::AppConfig::load(&data_root_for_mode).is_service_mode();
-                if current != initial_service_mode {
-                    eprintln!(
-                        "tray: installMode changed (was service={}, is service={}); exiting for tray-supervisor respawn with mode-aware text",
-                        initial_service_mode, current,
-                    );
-                    std::process::exit(0);
-                }
-            }
-        });
-    }
+    // §33 Bug A fix — the §32 Part 5i 5s-poll mode-detection thread was
+    // removed here. It called `std::process::exit(0)` on installMode
+    // change, which race-killed the Theory D handoff polling thread mid-
+    // uninstall (kills ALL threads in the process). Mode-change detection
+    // now lives in `launcher/src/tray_supervisor.rs` where the kill is
+    // supervisor-mediated (taskkill) so the handoff thread isn't running
+    // in the doomed tray when it dies. Trade-off: ~10s detection latency
+    // (supervisor poll cadence) vs ~5s previously — acceptable.
 
     let action = common::tray::run(
         ICON_BYTES,

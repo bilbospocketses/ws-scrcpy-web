@@ -13,4 +13,5 @@
 
 pub mod config;
 pub mod control_marker;
+pub mod session;
 pub mod tray;

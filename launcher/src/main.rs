@@ -28,25 +28,25 @@ fn main() {
     // before writing a control marker. Must fire BEFORE any logging or
     // supervisor init — it's a pure stdout query that exits immediately.
     // (Checked first so service polls don't generate launcher-start log noise.)
+    //
+    // Uses `common::session::active_interactive_session()` which walks
+    // `WTSEnumerateSessionsW` for an active session with a non-empty
+    // username, falling back to `WTSGetActiveConsoleSessionId` only when
+    // enumeration finds nothing. Pre-2026-05-22 this handler called
+    // `WTSGetActiveConsoleSessionId` directly — that returned stale
+    // "physical console" session IDs on VM / RDP / Hyper-V Enhanced Session,
+    // mismatched the tray's session check, and silently broke the uninstall
+    // handoff every time. See todo §33 Bug B.
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "--print-active-session") {
-        #[cfg(windows)]
-        {
-            use windows::Win32::System::RemoteDesktop::WTSGetActiveConsoleSessionId;
-            // SAFETY: WTSGetActiveConsoleSessionId has no preconditions and is
-            // safe to call from any context. Returns 0xFFFFFFFF when no session
-            // is attached to the physical console.
-            let session = unsafe { WTSGetActiveConsoleSessionId() };
-            println!("{}", session);
-            std::process::exit(0);
+        if let Some(id) = common::session::active_interactive_session() {
+            println!("{}", id);
         }
-        #[cfg(not(windows))]
-        {
-            // Non-Windows: service-mode is Windows-only; we shouldn't be
-            // invoked here, but exit cleanly anyway.
-            println!("0");
-            std::process::exit(0);
-        }
+        // No active interactive session resolvable (None): print nothing.
+        // Node-side `active-session.ts` treats non-numeric stdout as
+        // `ok: false` and writes the marker WITHOUT a session filter
+        // ("marker accepts any tray helper") — the safest fallback.
+        std::process::exit(0);
     }
 
     log::info(&format!(
