@@ -107,18 +107,38 @@ where
     F: FnMut(&Path, &[String]) -> io::Result<()>,
 {
     let Ok(Some(marker)) = read(data_root) else { return PollOutcome::Idle };
+    // §33 beta.38 diagnostic logging — every non-Idle outcome (marker
+    // present) is logged so we can correlate tray-side handoff decisions
+    // with the service-Node's "marker written" and "did not become
+    // reachable" log lines. Idle is intentionally NOT logged (750ms
+    // cadence = spam).
     if let Some(target) = marker.target_session_id {
         if target != own_session {
+            crate::log::info(&format!(
+                "control_marker::poll_once: WrongSession marker_target={target} own_session={own_session} (marker left for the right tray)"
+            ));
             return PollOutcome::WrongSession;
         }
     }
     // Convert Vec<String> args into &[String] for the spawn callback.
+    crate::log::info(&format!(
+        "control_marker::poll_once: marker matched, invoking spawn launcher_path={:?} launcher_args={:?} verb={:?}",
+        marker.launcher_path, marker.launcher_args, marker.verb
+    ));
     match spawn(&marker.launcher_path, &marker.launcher_args) {
         Ok(()) => {
             let _ = delete(data_root);
+            crate::log::info(
+                "control_marker::poll_once: Spawned — marker deleted, child detached (returning success without waiting for bind)",
+            );
             PollOutcome::Spawned
         }
-        Err(_) => PollOutcome::SpawnFailed,
+        Err(e) => {
+            crate::log::error(&format!(
+                "control_marker::poll_once: SpawnFailed — marker NOT deleted (next tick retries): {e:?}"
+            ));
+            PollOutcome::SpawnFailed
+        }
     }
 }
 

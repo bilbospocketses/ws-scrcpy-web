@@ -347,14 +347,51 @@ fn spawn_user_launcher_command(args: &SpawnUserLauncherArgs) -> ElevatedResult {
 fn uninstall_service(args: &UninstallServiceArgs) -> ElevatedResult {
     log::info(&format!("uninstall-service: name={}", args.name));
 
-    // Stop first (best-effort — service may already be stopped).
-    let _ = run_capture(&args.servy_path, &["stop", "--name", &args.name]);
+    // §33 beta.38 diagnostic logging — each servy-cli step's exit code +
+    // stdout/stderr summary is logged so we can pinpoint exactly which
+    // step the "ONE servy-cli window then Failed to fetch" symptom
+    // breaks at. Pre-§33-beta.38 the stop result was discarded silently
+    // and only failure cases logged.
 
+    // Stop first (best-effort — service may already be stopped).
+    log::info(&format!(
+        "uninstall-service: invoking servy-cli stop (servy_path={:?})",
+        args.servy_path
+    ));
+    match run_capture(&args.servy_path, &["stop", "--name", &args.name]) {
+        Ok(out) => log::info(&format!(
+            "uninstall-service: servy-cli stop result success={} code={:?} stdout_len={} stderr_len={}",
+            out.success, out.code, out.stdout.len(), out.stderr.len()
+        )),
+        Err(e) => log::error(&format!(
+            "uninstall-service: servy-cli stop spawn failed (continuing to uninstall anyway, stop is best-effort): {e}"
+        )),
+    }
+
+    log::info(&format!(
+        "uninstall-service: invoking servy-cli uninstall (servy_path={:?})",
+        args.servy_path
+    ));
     let uninstall_out = match run_capture(&args.servy_path, &["uninstall", "--name", &args.name]) {
-        Ok(out) => out,
-        Err(e) => return fail(4, &format!("servy-cli uninstall spawn failed: {e}")),
+        Ok(out) => {
+            log::info(&format!(
+                "uninstall-service: servy-cli uninstall result success={} code={:?} stdout_len={} stderr_len={}",
+                out.success, out.code, out.stdout.len(), out.stderr.len()
+            ));
+            out
+        }
+        Err(e) => {
+            log::error(&format!(
+                "uninstall-service: servy-cli uninstall spawn failed: {e}"
+            ));
+            return fail(4, &format!("servy-cli uninstall spawn failed: {e}"));
+        }
     };
     if !uninstall_out.success {
+        log::error(&format!(
+            "uninstall-service: servy-cli uninstall exited non-zero, returning failure (code={:?} stdout={:?} stderr={:?})",
+            uninstall_out.code, uninstall_out.stdout, uninstall_out.stderr
+        ));
         return ElevatedResult {
             ok: false,
             exit_code: 4,
@@ -368,7 +405,13 @@ fn uninstall_service(args: &UninstallServiceArgs) -> ElevatedResult {
     }
 
     // Tray Run-key cleanup — best-effort.
-    let _ = unregister_tray_run_key();
+    log::info("uninstall-service: invoking unregister_tray_run_key (HKLM\\Run cleanup)");
+    match unregister_tray_run_key() {
+        Ok(()) => log::info("uninstall-service: unregister_tray_run_key result Ok"),
+        Err(e) => log::error(&format!(
+            "uninstall-service: unregister_tray_run_key result Err (non-fatal): {e}"
+        )),
+    }
 
     // v0.1.8: also kill the running tray helper process if any. The
     // Run-key removal above only prevents auto-start on next login;
@@ -377,10 +420,21 @@ fn uninstall_service(args: &UninstallServiceArgs) -> ElevatedResult {
     // hits both elevated and non-elevated tray instances in the
     // current session. Best-effort — no tray process means no kill,
     // not an error.
-    let _ = Command::new("taskkill")
+    log::info("uninstall-service: invoking taskkill /F /IM ws-scrcpy-web-tray.exe");
+    match Command::new("taskkill")
         .args(["/F", "/IM", "ws-scrcpy-web-tray.exe"])
-        .output();
+        .output()
+    {
+        Ok(out) => log::info(&format!(
+            "uninstall-service: taskkill result exit={:?} (128 = process-not-found, fine)",
+            out.status.code()
+        )),
+        Err(e) => log::error(&format!(
+            "uninstall-service: taskkill spawn failed (non-fatal): {e}"
+        )),
+    }
 
+    log::info("uninstall-service: returning success");
     ElevatedResult {
         ok: true,
         exit_code: 0,

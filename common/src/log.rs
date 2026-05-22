@@ -1,0 +1,168 @@
+//! Minimal file logger shared by all ws-scrcpy-web Rust binaries.
+//!
+//! Promoted from `launcher/src/log.rs` 2026-05-22 (todo §33 beta.38
+//! diagnostic-logging cut) so the `tray` crate + the `common` crate
+//! itself (notably `control_marker::poll_once`) can write to disk too.
+//! Pre-promotion the tray's `eprintln!` calls went to NUL because the
+//! tray runs `windows_subsystem = "windows"` (no attached console),
+//! making tray-side diagnostics invisible. Same problem for
+//! `poll_for_handoff` running on the tray thread.
+//!
+//! ## Per-binary log file naming
+//!
+//! Each binary should call [`init`] once at startup with its name —
+//! "launcher", "tray", etc. The logger writes to
+//! `<dataRoot>/logs/<name>.log` (Windows) or `<exe_dir>/<name>.log`
+//! (non-Windows / pre-dataRoot-init fallback). If [`init`] is never
+//! called the default name is "launcher" for backward compatibility
+//! with the pre-promotion launcher.log path (so all existing
+//! `crate::log::info(...)` call sites in the launcher continue
+//! writing to the same file as before).
+//!
+//! ## Timestamp format
+//!
+//! Every line is prefixed with a UTC timestamp in
+//! `YYYY-MM-DD HH:MM:SS.fff` format. Without this, after-the-fact log
+//! review can't tell whether two adjacent entries were a few seconds
+//! apart or hours — which made v0.1.6 service-mode debugging slower
+//! than it should have been.
+
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+use std::path::PathBuf;
+use std::sync::OnceLock;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+static LOG_NAME: OnceLock<String> = OnceLock::new();
+
+/// Set the log file basename for this process. Should be called once
+/// at startup, before any [`info`]/[`error`] calls, with the binary's
+/// short name (e.g., "launcher", "tray"). The resulting log path is
+/// `<dataRoot>/logs/<name>.log`.
+///
+/// Idempotent — second call is silently ignored (OnceLock semantics).
+/// If never called, the default name is "launcher" for backward
+/// compatibility with the pre-promotion launcher.log path.
+pub fn init(name: &str) {
+    let _ = LOG_NAME.set(name.to_string());
+}
+
+fn log_basename() -> &'static str {
+    LOG_NAME.get().map(|s| s.as_str()).unwrap_or("launcher")
+}
+
+fn log_path() -> Option<PathBuf> {
+    let filename = format!("{}.log", log_basename());
+    if let Some(data_root) = crate::config::data_root_from_env() {
+        let logs_dir = data_root.join("logs");
+        // Best-effort directory create — if we can't create it (e.g.
+        // ACL not yet set on a fresh install), fall back to exe_dir
+        // below so we still get *some* logging.
+        let _ = fs::create_dir_all(&logs_dir);
+        if logs_dir.exists() {
+            return Some(logs_dir.join(&filename));
+        }
+    }
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+    Some(dir.join(&filename))
+}
+
+/// Format the current SystemTime as `YYYY-MM-DD HH:MM:SS.fff` (UTC).
+///
+/// Date math done by hand instead of via `chrono`/`time` to keep the
+/// crate dependency-light. UTC epoch seconds → calendar date is a
+/// closed-form computation; civil_from_days is the standard algorithm
+/// (Howard Hinnant). Tested against several known timestamps below.
+pub fn format_timestamp_utc(now: SystemTime) -> String {
+    let dur = now.duration_since(UNIX_EPOCH).unwrap_or_default();
+    let total_secs = dur.as_secs() as i64;
+    let millis = dur.subsec_millis();
+
+    let days = total_secs.div_euclid(86_400);
+    let secs_of_day = total_secs.rem_euclid(86_400);
+    let hour = (secs_of_day / 3_600) as u32;
+    let minute = ((secs_of_day % 3_600) / 60) as u32;
+    let second = (secs_of_day % 60) as u32;
+
+    let (year, month, day) = civil_from_days(days);
+    format!(
+        "{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{second:02}.{millis:03}"
+    )
+}
+
+/// Howard Hinnant's algorithm: convert days-since-1970-01-01 to (year, month, day).
+fn civil_from_days(z: i64) -> (i32, u32, u32) {
+    let z = z + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u32; // [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
+    let y = yoe as i32 + (era as i32) * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let d = doy - (153 * mp + 2) / 5 + 1; // [1, 31]
+    let m = if mp < 10 { mp + 3 } else { mp - 9 }; // [1, 12]
+    let year = if m <= 2 { y + 1 } else { y };
+    (year, m, d)
+}
+
+fn append(prefix: &str, msg: &str) {
+    let ts = format_timestamp_utc(SystemTime::now());
+    if let Some(path) = log_path() {
+        if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&path) {
+            let _ = writeln!(f, "{ts} [{prefix}] {msg}");
+        }
+    }
+    eprintln!("{ts} [{prefix}] {msg}");
+}
+
+pub fn info(msg: &str) {
+    append("INFO", msg);
+}
+
+pub fn error(msg: &str) {
+    append("ERROR", msg);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn timestamp_format_for_known_epoch() {
+        // 0 unix epoch = 1970-01-01 00:00:00.000
+        let t = UNIX_EPOCH;
+        assert_eq!(format_timestamp_utc(t), "1970-01-01 00:00:00.000");
+    }
+
+    #[test]
+    fn timestamp_format_for_y2k() {
+        // 2000-01-01 00:00:00 UTC = 946684800 unix
+        let t = UNIX_EPOCH + Duration::from_secs(946_684_800);
+        assert_eq!(format_timestamp_utc(t), "2000-01-01 00:00:00.000");
+    }
+
+    #[test]
+    fn timestamp_includes_milliseconds() {
+        let t = UNIX_EPOCH + Duration::from_millis(1_700_000_000_123);
+        assert!(format_timestamp_utc(t).ends_with(".123"));
+    }
+
+    #[test]
+    fn civil_from_days_round_trip_known_dates() {
+        // Days from 1970-01-01:
+        //   2024-02-29 = 19782 (leap day)
+        //   2026-04-28 = 20571
+        assert_eq!(civil_from_days(19_782), (2024, 2, 29));
+        assert_eq!(civil_from_days(20_571), (2026, 4, 28));
+    }
+
+    #[test]
+    fn log_basename_defaults_to_launcher_when_init_not_called() {
+        // OnceLock starts unset in a fresh test invocation. Note: this
+        // test must run before any init() in the same test binary; the
+        // common test process never calls init() so this is safe.
+        assert_eq!(log_basename(), "launcher");
+    }
+}

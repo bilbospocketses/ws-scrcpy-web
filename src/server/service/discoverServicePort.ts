@@ -37,8 +37,16 @@ export async function discoverServicePort(
     const intervalMs = options.intervalMs ?? 250;
 
     const deadline = Date.now() + timeoutMs;
+    const startTs = Date.now();
+    let iteration = 0;
 
+    // §33 beta.38 diagnostic logging — per-iteration progress so we can
+    // tell whether discover() was actively polling but missing the new
+    // launcher (iterations > 0, no match) vs. immediately bailing out
+    // (iterations == 0, timeout sub-100ms). Iteration log is throttled
+    // (every 4 iterations) to avoid spam on the 250ms intervalMs cadence.
     while (Date.now() < deadline) {
+        iteration++;
         for (let port = startPort; port < startPort + range; port++) {
             // Skip our own port — we know we're on it, so any response
             // there is us, not the new service.
@@ -47,14 +55,23 @@ export async function discoverServicePort(
             }
             const found = await probePort(port, ownPid);
             if (found) {
-                log.info(`port-discovery: matched service instance at port ${port}`);
+                log.info(
+                    `port-discovery: matched service instance at port ${port} on iteration ${iteration} (elapsed=${Date.now() - startTs}ms)`,
+                );
                 return `http://localhost:${port}`;
             }
+        }
+        if (iteration === 1 || iteration % 4 === 0) {
+            log.info(
+                `port-discovery: iteration ${iteration} elapsed=${Date.now() - startTs}ms, probed ports ${startPort}..${startPort + range - 1}, no match`,
+            );
         }
         await new Promise((r) => setTimeout(r, intervalMs));
     }
 
-    log.warn(`port-discovery: timed out after ${timeoutMs}ms; no service instance found`);
+    log.warn(
+        `port-discovery: timed out after ${timeoutMs}ms across ${iteration} iterations; no service instance found`,
+    );
     return null;
 }
 
