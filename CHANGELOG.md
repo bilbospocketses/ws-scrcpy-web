@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.25-beta.36] - 2026-05-22
+
 ### Changed
 
 - **Service-mode tray balloon title + body corrected.** The service-mode launcher-spawn balloon previously read `title: "ws-scrcpy-web tray"` / `body: "tray started by launcher. to clear the tray, stop the ws-scrcpy-web service via Settings."` — but Settings only exposes uninstall, not stop, so the body directed users to a UI action that doesn't exist. The tray menu's own exit option is the only intended exit path in both modes.
