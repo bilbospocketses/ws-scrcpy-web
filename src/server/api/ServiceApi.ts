@@ -544,21 +544,44 @@ export class ServiceApi {
             log.warn(`uninstall handoff: marker write failed: ${writeResult.errorMessage}`);
             return false;
         }
-        log.info(`uninstall handoff: marker written (targetSessionId=${targetSessionId ?? 'any'})`);
+        log.info(`uninstall handoff: marker written (targetSessionId=${targetSessionId ?? 'any'}) at ${dataRoot}/control/uninstall-handoff.json — tray should pick up within ~750ms; awaiting new local launcher`);
+
+        // §33 beta.38 diagnostic logging — heartbeat the discover() wait
+        // so we can tell at-a-glance whether the timeout is "discover
+        // never started" vs. "discover ran the full 30s but found
+        // nothing". Per-iteration detail lives in discoverServicePort
+        // itself; this is the caller-side perspective.
+        const handoffStart = Date.now();
+        const heartbeat = setInterval(() => {
+            const elapsed = Math.floor((Date.now() - handoffStart) / 1000);
+            log.info(
+                `uninstall handoff: still waiting for new local launcher (elapsed=${elapsed}s)`,
+            );
+        }, 5000);
 
         // Poll for the new launcher's port. Ports start at 8000; the
         // service is on whichever port we currently bind. The new
         // local launcher will auto-shift to a free one.
-        const found = await this.discover({
-            ownPid: process.pid,
-            startPort: 8000,
-            range: 100,
-            timeoutMs: 30_000,
-        });
+        let found: string | null;
+        try {
+            found = await this.discover({
+                ownPid: process.pid,
+                startPort: 8000,
+                range: 100,
+                timeoutMs: 30_000,
+            });
+        } finally {
+            clearInterval(heartbeat);
+        }
         if (!found) {
-            log.warn('uninstall handoff: new local launcher did not become reachable within 30s');
+            log.warn(
+                `uninstall handoff: new local launcher did not become reachable within 30s (handoff elapsed=${Date.now() - handoffStart}ms)`,
+            );
             return false;
         }
+        log.info(
+            `uninstall handoff: new local launcher reachable at ${found} (handoff elapsed=${Date.now() - handoffStart}ms); issuing resume token`,
+        );
 
         const token = issueToken(installRoot, 'uninstall-service');
         const redirectTo = `${found}/?resume=uninstall-service&token=${encodeURIComponent(token)}`;

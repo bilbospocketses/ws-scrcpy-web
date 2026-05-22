@@ -25,6 +25,13 @@ const ICON_BYTES: &[u8] = include_bytes!("../../assets/tray-icon.ico");
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn main() -> Result<()> {
+    // Initialize the file logger BEFORE the single-instance gate so that
+    // duplicate-tray exits + acquire failures still write to tray.log if
+    // they hit info/error. OnceLock set is side-effect-free until first
+    // actual log call. Pre-§33-beta.38 the tray used eprintln! which went
+    // to NUL (windowless subsystem). See common/src/log.rs module docs.
+    common::log::init("tray");
+
     // Per-session single-instance gate. If another tray helper is already
     // running in this logon session, exit silently. This handles the
     // transitional state where both HKLM\Run (new) and HKCU\Run (stale
@@ -33,7 +40,9 @@ fn main() -> Result<()> {
         Ok(Some(guard)) => Some(guard),
         Ok(None) => return Ok(()), // duplicate; exit silently
         Err(e) => {
-            eprintln!("tray: single-instance acquire failed: {e:?}; continuing without guard");
+            common::log::error(&format!(
+                "tray: single-instance acquire failed: {e:?}; continuing without guard"
+            ));
             None
         }
     };
@@ -44,13 +53,29 @@ fn main() -> Result<()> {
     // else this is a no-op (reg.exe exits 1 on value-not-found, treated as
     // success).
     if let Err(e) = cleanup_stale_hkcu_run_value() {
-        eprintln!("tray: HKCU\\Run cleanup failed (non-fatal): {e:?}");
+        common::log::error(&format!(
+            "tray: HKCU\\Run cleanup failed (non-fatal): {e:?}"
+        ));
     }
 
     run_tray()
 }
 
 fn run_tray() -> Result<()> {
+    // §33 beta.38 diagnostic logging — capture process state on startup
+    // so we can correlate tray-side events with launcher.log and
+    // ws-scrcpy-web.log post-failure. Pre-§33-beta.38 this was eprintln!
+    // to NUL (tray runs windows_subsystem = "windows" in release →
+    // stderr goes nowhere).
+    let pid = std::process::id();
+    let argv: Vec<String> = std::env::args().collect();
+    let cwd = std::env::current_dir()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|e| format!("<unresolvable: {e}>"));
+    common::log::info(&format!(
+        "tray: starting pid={pid} cwd={cwd:?} argv={argv:?}"
+    ));
+
     // Phase 1 of the Program Files migration: config.json lives under
     // <dataRoot> (PROGRAMDATA-rooted on Windows). Fall back to the
     // pre-Phase-1 install_root location on non-Windows or if data_root
@@ -59,6 +84,10 @@ fn run_tray() -> Result<()> {
         Some(p) => p,
         None => install_root_from_exe().context("resolve install root")?,
     };
+    common::log::info(&format!(
+        "tray: config_dir={cd:?}",
+        cd = config_dir.display()
+    ));
     // Build a URL provider closure that re-reads config.json on every
     // invocation. Necessary because the user may flip between local and
     // service modes during the tray helper's lifetime — each mode binds a
@@ -95,6 +124,9 @@ fn run_tray() -> Result<()> {
         // See todo §33 Bug B.
         match common::session::active_interactive_session() {
             Some(own_session) => {
+                common::log::info(&format!(
+                    "tray: control-marker poller starting (own_session={own_session}, cadence=750ms)"
+                ));
                 // Thread killed at process exit is safe: if a spawn-
                 // without-delete window leaves a stale marker on disk,
                 // cleanup_stale on next tray startup (60s threshold)
@@ -112,8 +144,8 @@ fn run_tray() -> Result<()> {
                 // boot before any logon, fully headless install). Skip
                 // the poller — we'd silently mis-route any marker that
                 // targets a real session.
-                eprintln!(
-                    "tray: no active interactive session resolvable; control-marker poller not started"
+                common::log::error(
+                    "tray: no active interactive session resolvable; control-marker poller not started",
                 );
             }
         }
@@ -136,6 +168,9 @@ fn run_tray() -> Result<()> {
 
     let is_service_mode_at_start =
         common::config::AppConfig::load(&config_dir).is_service_mode();
+    common::log::info(&format!(
+        "tray: is_service_mode_at_start={is_service_mode_at_start} show_launcher_balloon={show_launcher_balloon}"
+    ));
     // The tray menu's exit option is the only intended path to clear the
     // tray in either mode. Service-mode Settings exposes uninstall (which
     // tears down service + tray) but no "stop service" action; local-mode

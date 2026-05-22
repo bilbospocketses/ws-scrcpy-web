@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.25-beta.38] - 2026-05-22
+
+### Changed
+
+- **Diagnostic logging cut — no behavior change beyond extra log lines.** Beta.36's §33 fix landed but the user-visible service-uninstall failure shapes were unchanged in VM smoke (Bug A non-deterministic pre-reboot fail and Bug B deterministic post-restart fail). Only the side-effect (every-10s tray-supervisor spawn churn) was resolved. Beta.38 adds targeted logging to pinpoint where the actual handoff flow is breaking — no speculative code fixes, just observability.
+  - **`launcher/src/log.rs` → `common/src/log.rs` promotion.** The file logger module moved from launcher-private into the shared `common` crate so the `tray` crate + `common::control_marker::poll_once` can write to disk. `launcher/src/log.rs` is now a thin `pub use common::log::*;` shim — all existing `crate::log::info(...)` call sites in the launcher continue working unchanged. New `common::log::init(name: &str)` lets each binary set its own log file basename via `OnceLock<String>`; default is `"launcher"` for backward compatibility.
+  - **`tray/src/main.rs`** — calls `common::log::init("tray")` at process entry. `<dataRoot>/logs/tray.log` is now populated. Pre-§33-beta.38 the tray's `eprintln!` calls vanished into NUL (release builds run `windows_subsystem = "windows"` — no stderr destination). Added startup state log line capturing pid + cwd + argv + resolved `config_dir`, plus `is_service_mode_at_start` + `show_launcher_balloon` log line for the mode determination. Existing `eprintln!` sites for single-instance-acquire failure + HKCU\Run cleanup error + no-active-session-resolvable now use `common::log::{info,error}`.
+  - **`common/src/control_marker.rs::poll_once`** — every non-Idle `PollOutcome` is now logged: `WrongSession` (with `target` vs `own_session`), `Spawned` (with launcher path + args + verb), `SpawnFailed` (with error). `Idle` deliberately not logged (750ms cadence = spam). Lets us distinguish "tray never saw the marker" from "tray saw marker but spawn failed" from "tray spawned launcher but launcher never bound a port."
+  - **`launcher/src/elevated_runner.rs::uninstall_service`** — step-by-step logging for the elevated uninstall sequence: `servy-cli stop` invocation + result, `servy-cli uninstall` invocation + result, `unregister_tray_run_key` result, `taskkill` result. Critical for the "ONE servy-cli window then Failed to fetch" symptom — pre-fix, the `stop` result was discarded silently and intermediate steps had no log entries, so we couldn't tell where execution actually stopped.
+  - **`src/server/service/discoverServicePort.ts`** — per-iteration progress log (throttled to every 4 iterations on the 250ms cadence). Captures elapsed time + iteration count + port range scanned + match-or-not. Lets us tell "discover never started" from "discover ran the full 30s, scanned 100 ports per iteration, found nothing."
+  - **`src/server/api/ServiceApi.ts::handoffUninstallToUserSession`** — 5-second heartbeat log during the `discover()` wait. Marker-write log line extended with the marker file path + tray-poll-cadence hint. Success path log line gained elapsed-time metric.
+
+### Diagnostic capture target
+
+- New file: `<dataRoot>/logs/tray.log` (populated by the tray helper)
+- Existing files gain new entries: `<dataRoot>/logs/launcher.log` (control_marker + elevated_runner) and `<dataRoot>/logs/ws-scrcpy-web.log` (handoff heartbeat + discover iterations)
+- VM smoke: install beta.38, reproduce the failing uninstall flow (pre-reboot non-deterministic OR post-reboot+idle deterministic), grab all four log files
+
+### Verification
+
+`cargo check --workspace` clean. `cargo test --workspace` clean. `tsc --noEmit` clean. `vitest run` — 695/695 across 61 files unchanged (no test changes; pure observation adds).
+
 ## [0.1.25-beta.37] - 2026-05-22
 
 ## [0.1.25-beta.36] - 2026-05-22
