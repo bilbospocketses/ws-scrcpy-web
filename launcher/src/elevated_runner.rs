@@ -785,9 +785,16 @@ mod tests {
         let tmp = tempdir().unwrap();
         let bat_path = super::write_post_stop_bat(tmp.path(), "WsScrcpyWeb").expect("write");
         let content = std::fs::read_to_string(&bat_path).expect("read");
+        // The bat is Windows-only at runtime but the test runs on both
+        // Windows and Linux CI. Use the platform's separator so we match
+        // the actual bat content on each (helper_path_str is derived via
+        // PathBuf::to_string_lossy which yields `\` on Windows, `/` on Linux).
+        let expected_suffix = std::path::Path::new("operation-server")
+            .join("ws-scrcpy-web-launcher.exe");
+        let expected_suffix = expected_suffix.to_string_lossy();
         assert!(
-            content.contains(r"operation-server\ws-scrcpy-web-launcher.exe"),
-            "bat helper path should be under operation-server/: {content}"
+            content.contains(expected_suffix.as_ref()),
+            "bat helper path should be under operation-server/ (expected suffix {expected_suffix:?}): {content}"
         );
     }
 }

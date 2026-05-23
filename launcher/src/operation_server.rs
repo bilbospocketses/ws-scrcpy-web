@@ -631,18 +631,21 @@ mod tests {
     #[test]
     fn helper_path_for_returns_operation_server_path() {
         let p = super::helper_path_for(std::path::Path::new(r"C:\ProgramData\WsScrcpyWeb"));
-        let expected = std::path::PathBuf::from(
-            r"C:\ProgramData\WsScrcpyWeb\operation-server\ws-scrcpy-web-launcher.exe",
-        );
+        // Construct expected with Path::join so the test passes on both
+        // Windows (`\` separator) and Linux CI (`/` separator) — production
+        // callers are Windows-only but cargo test runs on both.
+        let expected = std::path::Path::new(r"C:\ProgramData\WsScrcpyWeb")
+            .join("operation-server")
+            .join("ws-scrcpy-web-launcher.exe");
         assert_eq!(p, expected);
     }
 
     #[test]
     fn legacy_helper_path_for_returns_upgrade_server_path() {
         let p = super::legacy_helper_path_for(std::path::Path::new(r"C:\ProgramData\WsScrcpyWeb"));
-        let expected = std::path::PathBuf::from(
-            r"C:\ProgramData\WsScrcpyWeb\upgrade-server\ws-scrcpy-web-launcher.exe",
-        );
+        let expected = std::path::Path::new(r"C:\ProgramData\WsScrcpyWeb")
+            .join("upgrade-server")
+            .join("ws-scrcpy-web-launcher.exe");
         assert_eq!(p, expected);
     }
 
