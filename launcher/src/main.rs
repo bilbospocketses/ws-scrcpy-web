@@ -84,6 +84,17 @@ fn main() {
         std::process::exit(code);
     }
 
+    // Cross-session user-launcher spawn dispatch. Invoked from post-stop.bat
+    // after `servy-cli uninstall` completes, to drop a fresh user-session
+    // launcher so the user lands on local-mode UI post-uninstall. Wraps
+    // user_session_spawn::spawn_in_active_user_session. See spec
+    // docs/superpowers/specs/2026-05-23-operation-server-rearchitecture-design.md.
+    #[cfg(windows)]
+    if let Some(code) = user_session_spawn::spawn_user_launcher_handle(&args) {
+        log::info(&format!("spawn-user-launcher exiting with code {code}"));
+        std::process::exit(code);
+    }
+
     // §32 Part 5 — upgrade-server dispatch. Post-stop bat spawns this
     // subcommand AFTER Node exits but BEFORE sc start, so the port stays
     // covered by SOMETHING during the upgrade window. Serves a static
