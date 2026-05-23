@@ -351,6 +351,71 @@ pub fn spawn_in_active_user_session(args: &SpawnUserLauncherArgs) -> SpawnResult
     }
 }
 
+/// Public entry: if argv contains `--spawn-user-launcher`, parse the
+/// `--launcher-path <path>` argument and dispatch to
+/// `spawn_in_active_user_session`. Returns `Some(exit_code)` if the flag
+/// matched; `None` to let main.rs proceed to normal launch.
+///
+/// Argv shape:
+///   ws-scrcpy-web-launcher.exe --spawn-user-launcher --launcher-path <abs-path>
+///
+/// Exit codes:
+///   0 — spawn succeeded
+///   2 — malformed argv (missing --launcher-path)
+///   4 — spawn failed (WTS error, launcher binary not found, etc.)
+///   5 — no active interactive session resolvable
+///
+/// Used by post-stop.bat after `servy-cli uninstall` completes, to drop a
+/// fresh user-session launcher so the user lands on the local-mode UI
+/// post-uninstall. See `docs/superpowers/specs/2026-05-23-operation-server-rearchitecture-design.md`
+/// section "Cross-session user-session spawn (Q4)".
+pub fn spawn_user_launcher_handle(args: &[String]) -> Option<i32> {
+    if !args.iter().any(|a| a == "--spawn-user-launcher") {
+        return None;
+    }
+    let launcher_path = match args
+        .iter()
+        .position(|a| a == "--launcher-path")
+        .and_then(|i| args.get(i + 1))
+    {
+        Some(p) => p.clone(),
+        None => {
+            log::error("spawn-user-launcher: missing --launcher-path argument");
+            return Some(2);
+        }
+    };
+
+    let spawn_args = SpawnUserLauncherArgs {
+        launcher_path: launcher_path.clone(),
+        launcher_args: vec![],
+    };
+    let result = spawn_in_active_user_session(&spawn_args);
+    if result.ok {
+        log::info(&format!(
+            "spawn-user-launcher: spawned pid {} in session {}",
+            result.pid, result.session_id
+        ));
+        Some(0)
+    } else {
+        log::error(&format!(
+            "spawn-user-launcher: spawn failed: {:?}",
+            result.error_message
+        ));
+        // Distinguish "no active interactive session" (5) from other spawn
+        // failures (4). Mode-string match against the canonical error
+        // message from spawn_in_active_user_session; if that string ever
+        // changes, this branch falls through to code 4 — that's an
+        // acceptable degradation (post-stop.bat treats any non-zero as a
+        // failed spawn and proceeds to exit).
+        let is_no_session = result
+            .error_message
+            .as_deref()
+            .map(|m| m.contains("no active") || m.contains("no interactive"))
+            .unwrap_or(false);
+        if is_no_session { Some(5) } else { Some(4) }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -364,5 +429,39 @@ mod tests {
         let r = spawn_in_active_user_session(&args);
         assert!(!r.ok);
         assert!(r.error_message.unwrap().contains("launcher not found"));
+    }
+
+    #[test]
+    fn spawn_user_launcher_handle_returns_none_when_flag_absent() {
+        let args = vec!["launcher.exe".to_string(), "--unrelated".to_string()];
+        assert!(spawn_user_launcher_handle(&args).is_none());
+    }
+
+    #[test]
+    fn spawn_user_launcher_handle_returns_exit_code_2_when_launcher_path_missing() {
+        let args = vec![
+            "launcher.exe".to_string(),
+            "--spawn-user-launcher".to_string(),
+        ];
+        let result = spawn_user_launcher_handle(&args);
+        assert!(result.is_some(), "flag matched");
+        assert_eq!(result.unwrap(), 2, "missing --launcher-path → exit code 2");
+    }
+
+    #[test]
+    fn spawn_user_launcher_handle_parses_launcher_path_arg() {
+        let args = vec![
+            "launcher.exe".to_string(),
+            "--spawn-user-launcher".to_string(),
+            "--launcher-path".to_string(),
+            r"C:\nonexistent\launcher.exe".to_string(),
+        ];
+        let result = spawn_user_launcher_handle(&args);
+        assert!(result.is_some(), "flag matched");
+        // Path doesn't exist + no active interactive session in test env →
+        // runtime spawn failure (code 4 or 5). Either is acceptable — assert
+        // it's non-zero non-2 (so we got past argv parsing).
+        let code = result.unwrap();
+        assert!(code != 0 && code != 2, "expected runtime failure code (not argv error or success), got {code}");
     }
 }
