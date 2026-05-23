@@ -18,7 +18,7 @@ mod supervisor;
 mod tray_supervisor;
 mod uac_requester;
 mod unzip_handler;
-mod upgrade_server;
+mod operation_server;
 #[cfg(windows)]
 mod user_session_spawn;
 
@@ -91,8 +91,8 @@ fn main() {
     // (written by the new supervised launcher before spawning Node) or
     // 30s safety cap. Replaces the in-browser ServerReachabilityOverlay
     // approach with a fully server-side mechanism per user request.
-    if let Some(code) = upgrade_server::handle(&args) {
-        log::info(&format!("upgrade-server exiting with code {code}"));
+    if let Some(code) = operation_server::handle(&args) {
+        log::info(&format!("operation-server exiting with code {code}"));
         std::process::exit(code);
     }
 
