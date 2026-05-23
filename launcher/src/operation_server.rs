@@ -54,7 +54,15 @@ use crate::log;
 const MAX_LIFETIME_SECS: u64 = 30;
 const STOP_MARKER_POLL_MS: u64 = 200;
 const ACCEPT_TIMEOUT_MS: u64 = 200;
-const STOP_MARKER_FILENAME: &str = "upgrade-server-stop";
+const STOP_MARKER_FILENAME: &str = "operation-server-stop";
+
+/// Legacy stop-marker filename. Kept as a read-time fallback for ~2 release
+/// cycles so an operation-server spawned by an OLD post-stop.bat (written by
+/// pre-Phase-1 installs that still call `--upgrade-server` and write the
+/// legacy marker) still exits when the new launcher signals it. Writers
+/// (`write_stop_marker`) always use the canonical name. Removed in a
+/// follow-up PR ~2 release cycles after Phase 1 ships.
+const LEGACY_STOP_MARKER_FILENAME: &str = "upgrade-server-stop";
 
 // §32 Part 5b — the upgrade-server is now spawned BEFORE Node exits (from
 // UpdateService.applyUpdate in service mode). Node still holds the port at
@@ -104,6 +112,16 @@ fn is_operation_server_flag(args: &[String]) -> bool {
         .any(|a| a == "--operation-server" || a == "--upgrade-server")
 }
 
+/// Returns true if either the canonical or legacy stop marker is present
+/// under `<data_root>/control/`. Pure function — no I/O side effects beyond
+/// the existence checks. Extracted from `run()`'s polling loop for unit-
+/// testability + dual-name support per Phase 1 of the operation-server
+/// rearchitecture.
+pub fn should_exit_for_stop_marker(data_root: &Path) -> bool {
+    let dir = data_root.join("control");
+    dir.join(STOP_MARKER_FILENAME).exists() || dir.join(LEGACY_STOP_MARKER_FILENAME).exists()
+}
+
 fn run() -> i32 {
     log::info("upgrade-server: starting");
 
@@ -119,9 +137,11 @@ fn run() -> i32 {
     let port = cfg.web_port.unwrap_or(8000);
     log::info(&format!("upgrade-server: data_root={data_root:?} port={port}"));
 
-    let stop_marker = data_root.join("control").join(STOP_MARKER_FILENAME);
-    // Clean any stale marker from a prior upgrade so we don't insta-exit.
-    let _ = std::fs::remove_file(&stop_marker);
+    let control_dir = data_root.join("control");
+    // Clean any stale markers (both canonical + legacy filenames) from a
+    // prior operation so we don't insta-exit.
+    let _ = std::fs::remove_file(control_dir.join(STOP_MARKER_FILENAME));
+    let _ = std::fs::remove_file(control_dir.join(LEGACY_STOP_MARKER_FILENAME));
 
     let listener = {
         let bind_start = Instant::now();
@@ -179,11 +199,17 @@ fn run() -> i32 {
             log::info("upgrade-server: stop_flag observed, exiting");
             return 0;
         }
-        if stop_marker.exists() {
+        if should_exit_for_stop_marker(&data_root) {
             log::info(&format!(
-                "upgrade-server: stop marker present at {stop_marker:?}, entering wind-down"
+                "operation-server: stop marker present under {:?}/control/, entering wind-down",
+                data_root
             ));
-            let _ = std::fs::remove_file(&stop_marker);
+            // Clean up BOTH possible marker filenames so a residual legacy
+            // marker doesn't immediately re-trigger wind-down on the next
+            // operation-server instance.
+            let cleanup_dir = data_root.join("control");
+            let _ = std::fs::remove_file(cleanup_dir.join(STOP_MARKER_FILENAME));
+            let _ = std::fs::remove_file(cleanup_dir.join(LEGACY_STOP_MARKER_FILENAME));
             return wind_down(listener, redirect_state, port);
         }
         if started_at.elapsed() >= Duration::from_secs(MAX_LIFETIME_SECS) {
@@ -634,5 +660,39 @@ mod tests {
             assert!(new_path.exists(), "operation-server/launcher.exe should be written");
             assert!(legacy_path.exists(), "upgrade-server/launcher.exe should also be written (dual-write compat)");
         }
+    }
+
+    #[test]
+    fn should_exit_for_stop_marker_returns_false_when_absent() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        assert!(!super::should_exit_for_stop_marker(tmp.path()));
+    }
+
+    #[test]
+    fn should_exit_for_stop_marker_returns_true_when_canonical_present() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dir = tmp.path().join("control");
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        std::fs::write(dir.join("operation-server-stop"), b"stop").expect("write");
+        assert!(super::should_exit_for_stop_marker(tmp.path()));
+    }
+
+    #[test]
+    fn should_exit_for_stop_marker_returns_true_when_legacy_upgrade_server_stop_present() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dir = tmp.path().join("control");
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        std::fs::write(dir.join("upgrade-server-stop"), b"stop").expect("write");
+        assert!(super::should_exit_for_stop_marker(tmp.path()));
+    }
+
+    #[test]
+    fn write_stop_marker_uses_canonical_filename() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let marker = super::write_stop_marker(tmp.path()).expect("write");
+        assert!(
+            marker.ends_with("operation-server-stop"),
+            "marker file should be operation-server-stop, got: {marker:?}"
+        );
     }
 }
