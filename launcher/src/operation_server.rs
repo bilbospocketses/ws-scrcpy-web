@@ -84,13 +84,24 @@ const PROBE_REQUEST_TIMEOUT_MS: u64 = 2000;
 
 const OPERATION_PAGE: &str = include_str!("../assets/operation-server-page.html");
 
-/// Public entry: if argv contains `--upgrade-server`, handle it and return
-/// `Some(exit_code)`. Otherwise return None (caller proceeds to normal launch).
+/// Public entry: if argv contains `--operation-server` (or the legacy alias
+/// `--upgrade-server`), handle it and return `Some(exit_code)`. Otherwise
+/// return None (caller proceeds to normal launch).
 pub fn handle(args: &[String]) -> Option<i32> {
-    if !args.iter().any(|a| a == "--upgrade-server") {
+    if !is_operation_server_flag(args) {
         return None;
     }
     Some(run())
+}
+
+/// Returns true if argv contains either the canonical `--operation-server`
+/// flag OR the legacy `--upgrade-server` alias (kept for ~2 release cycles
+/// so existing installs' post-stop.bat files keep working until they're
+/// rewritten by a fresh install). Pure function — testable without binding
+/// any port.
+fn is_operation_server_flag(args: &[String]) -> bool {
+    args.iter()
+        .any(|a| a == "--operation-server" || a == "--upgrade-server")
 }
 
 fn run() -> i32 {
@@ -544,5 +555,28 @@ pub fn wait_for_port_free(port: u16, timeout: Duration) {
                 return;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn is_operation_server_flag_recognizes_canonical_flag() {
+        let args = vec!["launcher.exe".to_string(), "--operation-server".to_string()];
+        assert!(super::is_operation_server_flag(&args));
+    }
+
+    #[test]
+    fn is_operation_server_flag_recognizes_legacy_upgrade_server_alias() {
+        let args = vec!["launcher.exe".to_string(), "--upgrade-server".to_string()];
+        assert!(super::is_operation_server_flag(&args));
+    }
+
+    #[test]
+    fn is_operation_server_flag_rejects_unrelated_args() {
+        let args = vec!["launcher.exe".to_string(), "--unrelated".to_string()];
+        assert!(!super::is_operation_server_flag(&args));
     }
 }
