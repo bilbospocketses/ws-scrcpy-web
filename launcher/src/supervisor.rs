@@ -132,10 +132,10 @@ pub fn run() -> Result<i32> {
         // update path, so the helper must be current there too.
         match crate::operation_server::refresh_helper_binary(&paths.data_root) {
             Ok(p) => log::info(&format!(
-                "supervisor: refreshed upgrade-server helper at {p:?}"
+                "supervisor: refreshed operation-server helper at {p:?}"
             )),
             Err(e) => log::error(&format!(
-                "supervisor: could not refresh upgrade-server helper (upgrade-server spawn will use stale binary or fail): {e}"
+                "supervisor: could not refresh operation-server helper (operation-server spawn will use stale binary or fail): {e}"
             )),
         }
 
@@ -154,7 +154,7 @@ pub fn run() -> Result<i32> {
             let port = cfg.web_port.unwrap_or(8000);
             if let Err(e) = crate::operation_server::write_stop_marker(&paths.data_root) {
                 log::error(&format!(
-                    "supervisor: could not write upgrade-server stop marker (non-fatal): {e}"
+                    "supervisor: could not write operation-server stop marker (non-fatal): {e}"
                 ));
             }
             crate::operation_server::wait_for_port_free(
@@ -230,7 +230,7 @@ pub fn run() -> Result<i32> {
                     );
                     if marker.exists() {
                         log::info(
-                            "supervisor: apply-update-pending marker present (local mode); spawning upgrade-server before exit",
+                            "supervisor: apply-update-pending marker present (local mode); spawning operation-server before exit",
                         );
                         // Delete marker FIRST so a subsequent restart that
                         // observes a stale marker doesn't re-spawn.

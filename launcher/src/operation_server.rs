@@ -1,6 +1,11 @@
 // §32 Part 5 — launcher-served "updating, please wait…" page during the
 // in-app upgrade window.
 //
+// (Phase 1 rearchitecture renamed this subsystem `upgrade-server` →
+// `operation-server` to reflect its broader role; the legacy
+// `--upgrade-server` CLI flag is kept as a read-time alias for ~2 release
+// cycles so existing post-stop.bat files keep working.)
+//
 // Background: §32 Part 4 (the cmd.exe + bat post-stop architecture) closed
 // the service-restart race so that the new Node binds the port reliably
 // within ~15s of clicking Apply. But during that ~15s window, browsers
@@ -14,16 +19,17 @@
 // one — user explicitly rejected Service Workers as fragile.
 //
 // Architecture:
-//   1. Post-stop bat spawns `<launcher> --upgrade-server` AFTER Node
+//   1. Post-stop bat spawns `<launcher> --operation-server` AFTER Node
 //      exits but BEFORE `sc start`. The bat fire-and-forget-spawns, then
 //      continues to its `timeout` + `sc start` sequence.
-//   2. Upgrade-server reads the web port from config.json, binds it,
+//   2. Operation-server reads the web port from config.json, binds it,
 //      serves a static "updating" HTML page on all paths (200 for root,
 //      503 for /api/*). HTML page has inline JS that polls /api/config
 //      every 1s, reloads the page when real app responds with 200 JSON.
-//   3. Upgrade-server self-exits on either:
-//      - <dataRoot>/control/upgrade-server-stop marker present (the new
-//        supervised launcher writes this before spawning Node)
+//   3. Operation-server self-exits on either:
+//      - <dataRoot>/control/operation-server-stop marker present (the new
+//        supervised launcher writes this before spawning Node) — legacy
+//        `upgrade-server-stop` marker also honored at read time.
 //      - 30 seconds elapsed (safety cap; if Node isn't up by then, the
 //        user is hitting a deeper problem the upgrade page can't paper
 //        over)
@@ -31,7 +37,8 @@
 //      Connection count during a typical upgrade is single-digit;
 //      no need for async.
 //
-// Subcommand argv: `<launcher> --upgrade-server`
+// Subcommand argv: `<launcher> --operation-server` (canonical;
+// `--upgrade-server` accepted as legacy alias)
 //   - No positional args (port resolved from config.json)
 //   - Self-exits cleanly; no shutdown handshake required from caller
 //
@@ -556,7 +563,7 @@ pub fn spawn_detached_helper(data_root: &Path) {
         const DETACHED_PROCESS: u32 = 0x00000008;
         const CREATE_NO_WINDOW: u32 = 0x08000000;
         match std::process::Command::new(&helper)
-            .arg("--upgrade-server")
+            .arg("--operation-server")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
