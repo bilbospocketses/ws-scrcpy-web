@@ -123,19 +123,19 @@ pub fn should_exit_for_stop_marker(data_root: &Path) -> bool {
 }
 
 fn run() -> i32 {
-    log::info("upgrade-server: starting");
+    log::info("operation-server: starting");
 
     let data_root = match common::config::data_root_from_env() {
         Some(p) => p,
         None => {
-            log::error("upgrade-server: cannot resolve data_root");
+            log::error("operation-server: cannot resolve data_root");
             return 5;
         }
     };
 
     let cfg = common::config::AppConfig::load(&data_root);
     let port = cfg.web_port.unwrap_or(8000);
-    log::info(&format!("upgrade-server: data_root={data_root:?} port={port}"));
+    log::info(&format!("operation-server: data_root={data_root:?} port={port}"));
 
     let control_dir = data_root.join("control");
     // Clean any stale markers (both canonical + legacy filenames) from a
@@ -155,13 +155,13 @@ fn run() -> i32 {
                     // Subsequent failures are silent to avoid log spam.
                     if !first_busy_logged {
                         log::info(&format!(
-                            "upgrade-server: bind 0.0.0.0:{port} busy ({e}), retrying every {BIND_RETRY_INTERVAL_MS}ms until port is free (timeout {BIND_RETRY_TIMEOUT_SECS}s)"
+                            "operation-server: bind 0.0.0.0:{port} busy ({e}), retrying every {BIND_RETRY_INTERVAL_MS}ms until port is free (timeout {BIND_RETRY_TIMEOUT_SECS}s)"
                         ));
                         first_busy_logged = true;
                     }
                     if bind_start.elapsed() >= Duration::from_secs(BIND_RETRY_TIMEOUT_SECS) {
                         log::error(&format!(
-                            "upgrade-server: bind 0.0.0.0:{port} failed after {BIND_RETRY_TIMEOUT_SECS}s of retries: {e} — giving up"
+                            "operation-server: bind 0.0.0.0:{port} failed after {BIND_RETRY_TIMEOUT_SECS}s of retries: {e} — giving up"
                         ));
                         return 3;
                     }
@@ -175,12 +175,12 @@ fn run() -> i32 {
     // marker + lifetime cap without blocking forever.
     if let Err(e) = listener.set_nonblocking(true) {
         log::error(&format!(
-            "upgrade-server: set_nonblocking failed (non-fatal): {e}"
+            "operation-server: set_nonblocking failed (non-fatal): {e}"
         ));
     }
 
     log::info(&format!(
-        "upgrade-server: bound 0.0.0.0:{port}, serving updating page (max lifetime {MAX_LIFETIME_SECS}s)"
+        "operation-server: bound 0.0.0.0:{port}, serving updating page (max lifetime {MAX_LIFETIME_SECS}s)"
     ));
 
     let stop_flag = Arc::new(AtomicBool::new(false));
@@ -196,7 +196,7 @@ fn run() -> i32 {
     // the listener open while probing for the new Node's port.
     loop {
         if stop_flag.load(Ordering::SeqCst) {
-            log::info("upgrade-server: stop_flag observed, exiting");
+            log::info("operation-server: stop_flag observed, exiting");
             return 0;
         }
         if should_exit_for_stop_marker(&data_root) {
@@ -214,7 +214,7 @@ fn run() -> i32 {
         }
         if started_at.elapsed() >= Duration::from_secs(MAX_LIFETIME_SECS) {
             log::info(&format!(
-                "upgrade-server: max lifetime {MAX_LIFETIME_SECS}s elapsed, exiting"
+                "operation-server: max lifetime {MAX_LIFETIME_SECS}s elapsed, exiting"
             ));
             return 0;
         }
@@ -238,7 +238,7 @@ fn wind_down(listener: TcpListener, redirect_state: Arc<Mutex<Option<String>>>, 
     loop {
         if wind_down_start.elapsed() >= Duration::from_secs(WIND_DOWN_TOTAL_SECS) {
             log::info(&format!(
-                "upgrade-server: wind-down window ({WIND_DOWN_TOTAL_SECS}s) elapsed, exiting"
+                "operation-server: wind-down window ({WIND_DOWN_TOTAL_SECS}s) elapsed, exiting"
             ));
             return 0;
         }
@@ -252,7 +252,7 @@ fn wind_down(listener: TcpListener, redirect_state: Arc<Mutex<Option<String>>>, 
 fn accept_one(listener: &TcpListener, redirect_state: &Arc<Mutex<Option<String>>>) {
     match listener.accept() {
         Ok((stream, peer)) => {
-            log::info(&format!("upgrade-server: connection from {peer}"));
+            log::info(&format!("operation-server: connection from {peer}"));
             let state_clone = redirect_state.clone();
             // Spawn a thread per connection. Short-lived; we don't track
             // JoinHandles. Connection count during an upgrade window is
@@ -267,7 +267,7 @@ fn accept_one(listener: &TcpListener, redirect_state: &Arc<Mutex<Option<String>>
             thread::sleep(Duration::from_millis(ACCEPT_TIMEOUT_MS.max(STOP_MARKER_POLL_MS)));
         }
         Err(e) => {
-            log::error(&format!("upgrade-server: accept error: {e}"));
+            log::error(&format!("operation-server: accept error: {e}"));
             thread::sleep(Duration::from_millis(500));
         }
     }
@@ -281,13 +281,13 @@ fn accept_one(listener: &TcpListener, redirect_state: &Arc<Mutex<Option<String>>
 /// spawned by wind_down().
 fn probe_for_real_node_and_publish(config_port: u16, redirect_state: Arc<Mutex<Option<String>>>) {
     log::info(&format!(
-        "upgrade-server: probe starting (sweeping ports {config_port}..={}, every {PROBE_INTERVAL_MS}ms)",
+        "operation-server: probe starting (sweeping ports {config_port}..={}, every {PROBE_INTERVAL_MS}ms)",
         config_port.saturating_add(PROBE_MAX_OFFSET)
     ));
     let probe_start = Instant::now();
     loop {
         if probe_start.elapsed() >= Duration::from_secs(WIND_DOWN_TOTAL_SECS) {
-            log::info("upgrade-server: probe gave up — no real Node found in any neighboring port within wind-down window");
+            log::info("operation-server: probe gave up — no real Node found in any neighboring port within wind-down window");
             return;
         }
         for offset in 0..=PROBE_MAX_OFFSET {
@@ -300,7 +300,7 @@ fn probe_for_real_node_and_publish(config_port: u16, redirect_state: Arc<Mutex<O
             if is_real_node_at_port(probe_port) {
                 let url = format!("http://localhost:{probe_port}/");
                 log::info(&format!(
-                    "upgrade-server: probe found real Node on port {probe_port} (offset +{offset}) — publishing redirect {url}"
+                    "operation-server: probe found real Node on port {probe_port} (offset +{offset}) — publishing redirect {url}"
                 ));
                 if let Ok(mut guard) = redirect_state.lock() {
                     *guard = Some(url);
@@ -534,7 +534,7 @@ pub fn spawn_detached_helper(data_root: &Path) {
     let helper = helper_path_for(data_root);
     if !helper.exists() {
         log::error(&format!(
-            "upgrade-server: helper not present at {helper:?}, skipping spawn"
+            "operation-server: helper not present at {helper:?}, skipping spawn"
         ));
         return;
     }
@@ -558,16 +558,16 @@ pub fn spawn_detached_helper(data_root: &Path) {
             .spawn()
         {
             Ok(child) => log::info(&format!(
-                "upgrade-server: spawned helper (pid {})",
+                "operation-server: spawned helper (pid {})",
                 child.id()
             )),
-            Err(e) => log::error(&format!("upgrade-server: spawn failed: {e}")),
+            Err(e) => log::error(&format!("operation-server: spawn failed: {e}")),
         }
     }
     #[cfg(not(windows))]
     {
         let _ = data_root; // silence unused-variable warning
-        log::info("upgrade-server: spawn_detached_helper skipped (non-Windows)");
+        log::info("operation-server: spawn_detached_helper skipped (non-Windows)");
     }
 }
 
