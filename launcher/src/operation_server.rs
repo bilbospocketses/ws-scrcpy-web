@@ -510,6 +510,12 @@ pub fn helper_path_for(data_root: &Path) -> PathBuf {
 /// reference this path) keep finding a launcher binary. New code should
 /// use `helper_path_for`. Removed in a follow-up PR ~2 release cycles
 /// after Phase 1 ships.
+///
+/// No in-process callers in Phase 1 — the function exists purely as a
+/// documented API surface for the dual-write story (the path the legacy
+/// post-stop.bat reads). `#[allow(dead_code)]` keeps clippy `-D warnings`
+/// happy across the transitional window.
+#[allow(dead_code)]
 pub fn legacy_helper_path_for(data_root: &Path) -> PathBuf {
     data_root.join("upgrade-server").join("ws-scrcpy-web-launcher.exe")
 }
@@ -608,7 +614,10 @@ pub fn wait_for_port_free(port: u16, timeout: Duration) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    // Tests reference parent-module items via explicit `super::` prefix
+    // (preserved from the plan's verbatim test source — makes the
+    // module-boundary clear at each call site). No `use super::*;` is
+    // needed; adding one would trip clippy's `-D unused-imports`.
 
     #[test]
     fn is_operation_server_flag_recognizes_canonical_flag() {
