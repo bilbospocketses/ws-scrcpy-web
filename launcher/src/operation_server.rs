@@ -82,7 +82,7 @@ const PROBE_INTERVAL_MS: u64 = 100;
 const PROBE_CONNECT_TIMEOUT_MS: u64 = 500;
 const PROBE_REQUEST_TIMEOUT_MS: u64 = 2000;
 
-const UPGRADING_PAGE: &str = include_str!("../assets/upgrade-server-page.html");
+const OPERATION_PAGE: &str = include_str!("../assets/operation-server-page.html");
 
 /// Public entry: if argv contains `--upgrade-server`, handle it and return
 /// `Some(exit_code)`. Otherwise return None (caller proceeds to normal launch).
@@ -395,7 +395,7 @@ fn build_response(path: &str, redirect: Option<&str>) -> String {
     }
 
     // Default: serve the upgrading page on root and any other path.
-    let body = UPGRADING_PAGE;
+    let body = OPERATION_PAGE;
     format!(
         "HTTP/1.1 200 OK\r\n\
          Content-Type: text/html; charset=utf-8\r\n\
