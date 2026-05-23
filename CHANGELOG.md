@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.25-beta.40] - 2026-05-23
+
 ### Added
 
 - **Launcher uninstall capability via operation-server (dormant)** — Phase 2 of the operation-server rearchitecture per `docs/superpowers/specs/2026-05-23-operation-server-rearchitecture-design.md`. `--spawn-user-launcher` subcommand wraps existing WTS cross-session spawn (`spawn_in_active_user_session`). post-stop.bat broadened from two-state (apply-update / no-op) to three-state (apply-update / uninstall / no-op) using marker discriminators in `<dataRoot>/control/` — `apply-update-pending` (existing) and `uninstall-pending` (new). Operation-server detects variant at spawn time via `detect_operation_variant` and serves per-variant page text via `render_operation_page` (template-token substitution: `__OPERATION_TITLE__` + `__OPERATION_BODY__` in the HTML asset). **No user-visible behavior change** — no Node-side marker writer for uninstall yet (Phase 4 activates the user-visible flip).
