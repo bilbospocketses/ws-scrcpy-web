@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Renamed `upgrade-server` → `operation-server` internals** (Phase 1 of the operation-server rearchitecture per `docs/superpowers/specs/2026-05-23-operation-server-rearchitecture-design.md`). Pure mechanical rename + dual-write backwards compat:
+  - `launcher/src/upgrade_server.rs` → `launcher/src/operation_server.rs`
+  - `launcher/assets/upgrade-server-page.html` → `launcher/assets/operation-server-page.html`
+  - CLI flag `--upgrade-server` kept as alias for new `--operation-server`
+  - Helper binary dual-written to both `<dataRoot>/operation-server/` and `<dataRoot>/upgrade-server/`
+  - Stop marker `operation-server-stop` (canonical) with legacy `upgrade-server-stop` honored at read time
+  - post-stop.bat (newly-generated) uses the new flag + path
+  - No behavior change for users; existing installs continue to work via the alias + dual-write
+
 ## [0.1.25-beta.38] - 2026-05-22
 
 ### Changed
