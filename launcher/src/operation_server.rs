@@ -99,6 +99,50 @@ const PROBE_REQUEST_TIMEOUT_MS: u64 = 2000;
 
 const OPERATION_PAGE: &str = include_str!("../assets/operation-server-page.html");
 
+/// Which operation triggered this operation-server instance? Drives the
+/// wait-page text variant served to the browser. Detected once at spawn
+/// time by checking which marker file exists under `<data_root>/control/`;
+/// the bat that spawned us deletes the marker AFTER spawning, so on the
+/// happy path the marker is still present at our startup. If both markers
+/// are present (defensive edge case — would indicate a bug elsewhere),
+/// ApplyUpdate wins per the bat's branch order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OperationVariant {
+    ApplyUpdate,
+    Uninstall,
+}
+
+pub fn detect_operation_variant(data_root: &Path) -> OperationVariant {
+    let control = data_root.join("control");
+    if control.join("apply-update-pending").exists() {
+        return OperationVariant::ApplyUpdate;
+    }
+    if control.join("uninstall-pending").exists() {
+        return OperationVariant::Uninstall;
+    }
+    OperationVariant::ApplyUpdate
+}
+
+/// Render the operation-server page with per-variant title + body text.
+/// Uses two-token substitution on the static HTML asset:
+///   __OPERATION_TITLE__ → wait-page title text
+///   __OPERATION_BODY__  → brief explanatory paragraph
+pub fn render_operation_page(variant: OperationVariant) -> String {
+    let (title, body) = match variant {
+        OperationVariant::ApplyUpdate => (
+            "Updating app, please wait...",
+            "ws-scrcpy-web is applying an update. The page will reload automatically when the new version is ready.",
+        ),
+        OperationVariant::Uninstall => (
+            "Uninstalling service, please wait...",
+            "ws-scrcpy-web is uninstalling its service. The page will reload automatically once the local-mode app is back up.",
+        ),
+    };
+    OPERATION_PAGE
+        .replace("__OPERATION_TITLE__", title)
+        .replace("__OPERATION_BODY__", body)
+}
+
 /// Public entry: if argv contains `--operation-server` (or the legacy alias
 /// `--upgrade-server`), handle it and return `Some(exit_code)`. Otherwise
 /// return None (caller proceeds to normal launch).
@@ -139,6 +183,9 @@ fn run() -> i32 {
             return 5;
         }
     };
+
+    let variant = detect_operation_variant(&data_root);
+    log::info(&format!("operation-server: variant={variant:?}"));
 
     let cfg = common::config::AppConfig::load(&data_root);
     let port = cfg.web_port.unwrap_or(8000);
@@ -217,7 +264,7 @@ fn run() -> i32 {
             let cleanup_dir = data_root.join("control");
             let _ = std::fs::remove_file(cleanup_dir.join(STOP_MARKER_FILENAME));
             let _ = std::fs::remove_file(cleanup_dir.join(LEGACY_STOP_MARKER_FILENAME));
-            return wind_down(listener, redirect_state, port);
+            return wind_down(listener, redirect_state, port, variant);
         }
         if started_at.elapsed() >= Duration::from_secs(MAX_LIFETIME_SECS) {
             log::info(&format!(
@@ -226,7 +273,7 @@ fn run() -> i32 {
             return 0;
         }
 
-        accept_one(&listener, &redirect_state);
+        accept_one(&listener, &redirect_state, variant);
     }
 }
 
@@ -235,7 +282,7 @@ fn run() -> i32 {
 /// (handles the case where Node lost the port race and auto-shifted to
 /// e.g. config_port+1), and keeps serving connections so the polling page
 /// can pick up the resulting redirect.
-fn wind_down(listener: TcpListener, redirect_state: Arc<Mutex<Option<String>>>, config_port: u16) -> i32 {
+fn wind_down(listener: TcpListener, redirect_state: Arc<Mutex<Option<String>>>, config_port: u16, variant: OperationVariant) -> i32 {
     let probe_state = redirect_state.clone();
     thread::spawn(move || {
         probe_for_real_node_and_publish(config_port, probe_state);
@@ -249,23 +296,26 @@ fn wind_down(listener: TcpListener, redirect_state: Arc<Mutex<Option<String>>>, 
             ));
             return 0;
         }
-        accept_one(&listener, &redirect_state);
+        accept_one(&listener, &redirect_state, variant);
     }
 }
 
 /// One iteration of the non-blocking accept loop. Spawns a thread per
 /// accepted connection. Shared between the normal-serving loop and the
 /// wind-down loop so connection handling stays uniform.
-fn accept_one(listener: &TcpListener, redirect_state: &Arc<Mutex<Option<String>>>) {
+fn accept_one(listener: &TcpListener, redirect_state: &Arc<Mutex<Option<String>>>, variant: OperationVariant) {
     match listener.accept() {
         Ok((stream, peer)) => {
             log::info(&format!("operation-server: connection from {peer}"));
             let state_clone = redirect_state.clone();
+            // Variant is Copy, so capture-by-value into the thread closure
+            // alongside the cloned state Arc.
+            let v = variant;
             // Spawn a thread per connection. Short-lived; we don't track
             // JoinHandles. Connection count during an upgrade window is
             // single-digit.
             thread::spawn(move || {
-                handle_connection(stream, state_clone);
+                handle_connection(stream, state_clone, v);
             });
         }
         Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -352,7 +402,7 @@ fn is_real_node_at_port(port: u16) -> bool {
     is_200 && !has_sentinel
 }
 
-fn handle_connection(mut stream: TcpStream, redirect_state: Arc<Mutex<Option<String>>>) {
+fn handle_connection(mut stream: TcpStream, redirect_state: Arc<Mutex<Option<String>>>, variant: OperationVariant) {
     // Read just the request line + headers (we don't need a body for GETs).
     // Set a short read timeout so a stalled client doesn't tie up a thread.
     let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
@@ -385,14 +435,14 @@ fn handle_connection(mut stream: TcpStream, redirect_state: Arc<Mutex<Option<Str
         .lock()
         .ok()
         .and_then(|guard| guard.clone());
-    let response = build_response(path, redirect.as_deref());
+    let response = build_response(path, redirect.as_deref(), variant);
     let _ = stream.write_all(response.as_bytes());
     let _ = stream.flush();
     // Best-effort shutdown to release the socket promptly.
     let _ = stream.shutdown(std::net::Shutdown::Both);
 }
 
-fn build_response(path: &str, redirect: Option<&str>) -> String {
+fn build_response(path: &str, redirect: Option<&str>, variant: OperationVariant) -> String {
     // Discrimination strategy: the static HTML page (served on root)
     // polls /api/config every 1s. Two response shapes for /api/*:
     //   - `redirect=None` (still upgrading, no real Node found yet) → 503
@@ -439,7 +489,7 @@ fn build_response(path: &str, redirect: Option<&str>) -> String {
     }
 
     // Default: serve the upgrading page on root and any other path.
-    let body = OPERATION_PAGE;
+    let body = render_operation_page(variant);
     format!(
         "HTTP/1.1 200 OK\r\n\
          Content-Type: text/html; charset=utf-8\r\n\
@@ -713,5 +763,47 @@ mod tests {
             marker.ends_with("operation-server-stop"),
             "marker file should be operation-server-stop, got: {marker:?}"
         );
+    }
+
+    #[test]
+    fn detect_operation_variant_returns_apply_update_when_marker_present() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dir = tmp.path().join("control");
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        std::fs::write(dir.join("apply-update-pending"), b"").expect("write");
+        assert_eq!(super::detect_operation_variant(tmp.path()), super::OperationVariant::ApplyUpdate);
+    }
+
+    #[test]
+    fn detect_operation_variant_returns_uninstall_when_marker_present() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dir = tmp.path().join("control");
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        std::fs::write(dir.join("uninstall-pending"), b"").expect("write");
+        assert_eq!(super::detect_operation_variant(tmp.path()), super::OperationVariant::Uninstall);
+    }
+
+    #[test]
+    fn detect_operation_variant_defaults_to_apply_update_when_no_marker() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        // Defensive default: matches the bat's branch order (apply-update wins
+        // if both markers somehow present). Also preserves the pre-Phase-2
+        // single-operation behavior for any code path that spawns the
+        // operation-server without writing a marker.
+        assert_eq!(super::detect_operation_variant(tmp.path()), super::OperationVariant::ApplyUpdate);
+    }
+
+    #[test]
+    fn render_operation_page_substitutes_apply_update_text() {
+        let html = super::render_operation_page(super::OperationVariant::ApplyUpdate);
+        assert!(html.contains("Updating app, please wait"), "apply-update title present: {html}");
+        assert!(!html.contains("__OPERATION_TITLE__"), "template token replaced");
+    }
+
+    #[test]
+    fn render_operation_page_substitutes_uninstall_text() {
+        let html = super::render_operation_page(super::OperationVariant::Uninstall);
+        assert!(html.contains("Uninstalling service, please wait"), "uninstall title present: {html}");
+        assert!(!html.contains("__OPERATION_TITLE__"), "template token replaced");
     }
 }
