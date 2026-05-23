@@ -130,7 +130,7 @@ pub fn run() -> Result<i32> {
         // §32 Part 5f — refresh unconditionally (not just in service
         // mode). Local-mode launcher also spawns the helper on apply-
         // update path, so the helper must be current there too.
-        match crate::upgrade_server::refresh_helper_binary(&paths.data_root) {
+        match crate::operation_server::refresh_helper_binary(&paths.data_root) {
             Ok(p) => log::info(&format!(
                 "supervisor: refreshed upgrade-server helper at {p:?}"
             )),
@@ -152,12 +152,12 @@ pub fn run() -> Result<i32> {
         // with the upgrade-server its previous incarnation spawned.
         {
             let port = cfg.web_port.unwrap_or(8000);
-            if let Err(e) = crate::upgrade_server::write_stop_marker(&paths.data_root) {
+            if let Err(e) = crate::operation_server::write_stop_marker(&paths.data_root) {
                 log::error(&format!(
                     "supervisor: could not write upgrade-server stop marker (non-fatal): {e}"
                 ));
             }
-            crate::upgrade_server::wait_for_port_free(
+            crate::operation_server::wait_for_port_free(
                 port,
                 std::time::Duration::from_secs(5),
             );
@@ -225,7 +225,7 @@ pub fn run() -> Result<i32> {
                 // service-mode-only gate on the marker write).
                 let cfg_now = common::config::AppConfig::load(&paths.data_root);
                 if !cfg_now.is_service_mode() {
-                    let marker = crate::upgrade_server::apply_update_pending_marker(
+                    let marker = crate::operation_server::apply_update_pending_marker(
                         &paths.data_root,
                     );
                     if marker.exists() {
@@ -239,7 +239,7 @@ pub fn run() -> Result<i32> {
                                 "supervisor: could not delete apply-update-pending marker (non-fatal): {e}"
                             ));
                         }
-                        crate::upgrade_server::spawn_detached_helper(&paths.data_root);
+                        crate::operation_server::spawn_detached_helper(&paths.data_root);
                     }
                 }
 
