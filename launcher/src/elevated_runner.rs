@@ -620,7 +620,7 @@ fn write_post_stop_bat(
          if exist \"{marker}\" (\r\n\
          \x20\x20\x20\x20del \"{marker}\"\r\n\
          \x20\x20\x20\x20if exist \"{helper}\" (\r\n\
-         \x20\x20\x20\x20\x20\x20\x20\x20start \"\" /b \"{helper}\" --upgrade-server\r\n\
+         \x20\x20\x20\x20\x20\x20\x20\x20start \"\" /b \"{helper}\" --operation-server\r\n\
          \x20\x20\x20\x20)\r\n\
          \x20\x20\x20\x20timeout /t {sleep} /nobreak >nul\r\n\
          \x20\x20\x20\x20sc start {service}\r\n\
@@ -764,4 +764,30 @@ mod tests {
     // §32 Part 5: `is_hklm_already_migrated_*` tests removed along with the
     // `is_hklm_already_migrated` function (HKLM\Run registration architecture
     // replaced by launcher-owned tray polling).
+
+    #[test]
+    fn write_post_stop_bat_uses_operation_server_flag() {
+        let tmp = tempdir().unwrap();
+        let bat_path = super::write_post_stop_bat(tmp.path(), "WsScrcpyWeb").expect("write");
+        let content = std::fs::read_to_string(&bat_path).expect("read");
+        assert!(
+            content.contains("--operation-server"),
+            "bat should use --operation-server flag: {content}"
+        );
+        assert!(
+            !content.contains("--upgrade-server"),
+            "bat should NOT use legacy --upgrade-server flag in newly-generated content: {content}"
+        );
+    }
+
+    #[test]
+    fn write_post_stop_bat_uses_operation_server_helper_path() {
+        let tmp = tempdir().unwrap();
+        let bat_path = super::write_post_stop_bat(tmp.path(), "WsScrcpyWeb").expect("write");
+        let content = std::fs::read_to_string(&bat_path).expect("read");
+        assert!(
+            content.contains(r"operation-server\ws-scrcpy-web-launcher.exe"),
+            "bat helper path should be under operation-server/: {content}"
+        );
+    }
 }
