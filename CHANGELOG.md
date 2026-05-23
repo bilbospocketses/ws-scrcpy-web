@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.25-beta.39] - 2026-05-23
+
 ### Changed
 
 - **Renamed `upgrade-server` → `operation-server` internals** (Phase 1 of the operation-server rearchitecture per `docs/superpowers/specs/2026-05-23-operation-server-rearchitecture-design.md`). Pure mechanical rename + dual-write backwards compat:
