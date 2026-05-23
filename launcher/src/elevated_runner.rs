@@ -570,7 +570,7 @@ fn write_post_stop_bat(
     // Single source of truth in upgrade_server::helper_path_for so the
     // supervisor's refresh-on-startup and this install-time bat
     // interpolation can't drift apart.
-    let helper_path = crate::upgrade_server::helper_path_for(data_root);
+    let helper_path = crate::operation_server::helper_path_for(data_root);
     let helper_path_str = helper_path.to_string_lossy();
 
     // 12 seconds: empirical buffer above the observed Update.exe lifetime.
