@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.25-beta.41] - 2026-05-24
+
 ### Fixed
 
 - **Dev mode no longer crashes on Update Node click.** Per-dep `requiresLauncher` flag gates the in-app dep updater. In dev mode, `nodejs` and `adb` show a disabled "update (dev)" button with a tooltip pointing at `scripts/fetch-node.mjs`. `scrcpy-server` remains updatable in dev (no launcher needed). `POST /api/dependencies/:name/update` returns HTTP 503 with `reason: 'launcher-required'` for the dev-mode refusal. `autoInstallMissing` skips launcher-required deps when launcher unavailable, breaking the restart loop that occurred after a failed manual update left `node.exe` renamed to `node.exe.old`.
