@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.25-beta.43] - 2026-05-24
 
+### Fixed
+
+- **Post-stop bat migration on update.** `hook(updated)` now regenerates `post-stop.bat` at the new `<dataRoot>/control/post-stop/` path when it detects the bat only exists at the pre-consolidation `<dataRoot>/post-stop/` path. Also copies the regenerated bat back to the old path so Servy (whose `--postStopPath` config still references the old path) runs current content (new helper paths + diagnostic logging). Cleans up old `<dataRoot>/operation-server/` and `<dataRoot>/upgrade-server/` directories (supervisor already refreshes to `control/` paths on every startup). `write_post_stop_bat` promoted to `pub(crate)` for cross-module access.
+
 ## [0.1.25-beta.42] - 2026-05-24
 
 ## [0.1.25-beta.41] - 2026-05-24
