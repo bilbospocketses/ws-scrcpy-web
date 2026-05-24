@@ -133,6 +133,16 @@ export class DependencyManager {
         if (!def || !info) {
             return { success: false, errorMessage: `Unknown dependency: ${name}`, requiresRestart: false };
         }
+        if (def.requiresLauncher && !launcherIsAvailable()) {
+            return {
+                success: false,
+                reason: 'launcher-required',
+                errorMessage:
+                    `${def.displayName} updates require an installed build. ` +
+                    `In dev mode, populate dependencies/ via scripts/fetch-node.mjs.`,
+                requiresRestart: false,
+            };
+        }
 
         info.status = DependencyStatus.Updating;
         const fromVersion = info.installedVersion ?? 'not installed';

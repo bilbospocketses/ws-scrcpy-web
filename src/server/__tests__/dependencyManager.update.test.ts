@@ -70,3 +70,63 @@ describe('DependencyManager.update("scrcpy-server") — loop fix', () => {
         expect(mgr.getByName('scrcpy-server')!.installedVersion).toBe('4.0');
     });
 });
+
+describe('DependencyManager.update() launcher-required gate', () => {
+    afterEach(() => {
+        vi.doUnmock('../service/elevatedRunner');
+    });
+
+    it('returns reason=launcher-required for nodejs when launcher is unavailable', async () => {
+        vi.doMock('../service/elevatedRunner', () => ({
+            launcherIsAvailable: () => false,
+            resolveLauncherPath: () => '/fake/launcher.exe',
+        }));
+        const { DependencyManager: Mgr } = await import('../DependencyManager');
+        const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wsscrcpy-gate-'));
+        try {
+            const mgr = new Mgr(tmp);
+            const result = await mgr.update('nodejs');
+            expect(result.success).toBe(false);
+            expect(result.reason).toBe('launcher-required');
+            expect(result.errorMessage).toMatch(/installed build/);
+            expect(result.requiresRestart).toBe(false);
+            // Status MUST remain UpdateAvailable / Unknown — NOT transition to Updating or Error.
+            const info = mgr.getByName('nodejs')!;
+            expect(info.status).not.toBe(DependencyStatus.Updating);
+            expect(info.status).not.toBe(DependencyStatus.Error);
+        } finally {
+            fs.rmSync(tmp, { recursive: true, force: true });
+        }
+    });
+
+    it('does not gate scrcpy-server (no launcher needed)', async () => {
+        vi.doMock('../service/elevatedRunner', () => ({
+            launcherIsAvailable: () => false,
+            resolveLauncherPath: () => '/fake/launcher.exe',
+        }));
+        const { DependencyManager: Mgr } = await import('../DependencyManager');
+        const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wsscrcpy-gate-scrcpy-'));
+        const fetchSpy = vi.spyOn(global, 'fetch').mockImplementation(async (input) => {
+            const url = typeof input === 'string' ? input : input.toString();
+            if (url.includes('api.github.com')) {
+                return new Response(JSON.stringify({ tag_name: 'v4.0' }), {
+                    status: 200,
+                    headers: { 'content-type': 'application/json' },
+                });
+            }
+            return new Response('fake-jar-bytes', { status: 200 });
+        });
+        try {
+            const mgr = new Mgr(tmp);
+            const info = mgr.getByName('scrcpy-server')!;
+            info.installedVersion = '3.3.4';
+            info.latestVersion = '4.0';
+            const result = await mgr.update('scrcpy-server');
+            expect(result.success).toBe(true);
+            expect(result.reason).toBeUndefined();
+        } finally {
+            fetchSpy.mockRestore();
+            fs.rmSync(tmp, { recursive: true, force: true });
+        }
+    });
+});
