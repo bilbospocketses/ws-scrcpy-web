@@ -594,6 +594,9 @@ fn write_post_stop_bat(
     //
     // See spec: docs/superpowers/specs/2026-05-23-operation-server-rearchitecture-design.md
 
+    let log_dir = data_root.join("logs");
+    let log_dir_str = log_dir.to_string_lossy();
+
     let bat = format!(
         "@echo off\r\n\
          REM ws-scrcpy-web post-stop handler (operation-server era).\r\n\
@@ -602,7 +605,10 @@ fn write_post_stop_bat(
          REM Helper is in <dataRoot>/operation-server/ (Velopack-untouchable).\r\n\
          REM See spec: docs/superpowers/specs/2026-05-23-operation-server-rearchitecture-design.md\r\n\
          \r\n\
+         if not exist \"{log_dir}\" mkdir \"{log_dir}\"\r\n\
+         \r\n\
          if exist \"{apply_marker}\" (\r\n\
+         \x20\x20\x20\x20echo %date% %time% [post-stop] apply-update-pending marker found, firing apply-update branch >> \"{log_dir}\\post-stop.log\"\r\n\
          \x20\x20\x20\x20del \"{apply_marker}\"\r\n\
          \x20\x20\x20\x20if exist \"{helper}\" (\r\n\
          \x20\x20\x20\x20\x20\x20\x20\x20start \"\" /b \"{helper}\" --operation-server\r\n\
@@ -613,6 +619,7 @@ fn write_post_stop_bat(
          )\r\n\
          \r\n\
          if exist \"{uninstall_marker}\" (\r\n\
+         \x20\x20\x20\x20echo %date% %time% [post-stop] uninstall-pending marker found, firing uninstall branch >> \"{log_dir}\\post-stop.log\"\r\n\
          \x20\x20\x20\x20del \"{uninstall_marker}\"\r\n\
          \x20\x20\x20\x20if exist \"{helper}\" (\r\n\
          \x20\x20\x20\x20\x20\x20\x20\x20start \"\" /b \"{helper}\" --operation-server\r\n\
@@ -623,6 +630,7 @@ fn write_post_stop_bat(
          )\r\n\
          \r\n\
          REM Neither marker — user-initiated stop (services.msc, sc stop). No-op.\r\n\
+         echo %date% %time% [post-stop] no marker found, user-initiated stop, exiting cleanly >> \"{log_dir}\\post-stop.log\"\r\n\
          exit /b 0\r\n",
         sleep = POST_STOP_SLEEP_SECS,
         apply_marker = apply_marker_str,
@@ -631,6 +639,7 @@ fn write_post_stop_bat(
         service = service_name,
         servy_path = servy_path,
         current_launcher = current_launcher_path,
+        log_dir = log_dir_str,
     );
 
     fs::write(&bat_path, bat.as_bytes()).map_err(|e| {
@@ -838,6 +847,22 @@ mod tests {
         assert!(content.contains("uninstall --name WsScrcpyWeb"), "uninstall branch invokes servy-cli uninstall: {content}");
         assert!(content.contains("--spawn-user-launcher"), "uninstall branch spawns fresh user-session launcher: {content}");
         assert!(content.contains(r"--launcher-path"), "uninstall branch passes --launcher-path: {content}");
+    }
+
+    #[test]
+    fn write_post_stop_bat_logs_each_branch_to_post_stop_log() {
+        let tmp = tempdir().unwrap();
+        let bat_path = super::write_post_stop_bat(
+            tmp.path(),
+            "WsScrcpyWeb",
+            r"C:\dependencies\servy\servy-cli.exe",
+            r"C:\Program Files\WsScrcpyWeb\current\ws-scrcpy-web-launcher.exe",
+        ).expect("write");
+        let content = std::fs::read_to_string(&bat_path).expect("read");
+        assert!(content.contains("post-stop.log"), "bat should log to post-stop.log: {content}");
+        assert!(content.contains("[post-stop] apply-update-pending marker found"), "apply-update branch logged: {content}");
+        assert!(content.contains("[post-stop] uninstall-pending marker found"), "uninstall branch logged: {content}");
+        assert!(content.contains("[post-stop] no marker found"), "no-op branch logged: {content}");
     }
 
     #[test]
