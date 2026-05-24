@@ -51,6 +51,7 @@ export interface DependencyDefinition {
     description: string;
     requiresRestart: boolean;
     pairedWith?: string;
+    requiresLauncher: boolean;
     checkInstalled: (depsPath: string) => Promise<string | null>;
     checkLatest: () => Promise<string | null>;
     getDownloadUrl: (version: string) => string;
@@ -77,6 +78,7 @@ export function getDependencyDefinitions(depsPath: string): DependencyDefinition
             description: 'JavaScript runtime that runs the ws-scrcpy-web server',
             requiresRestart: true,
             pairedWith: 'node-pty',
+            requiresLauncher: true,
             checkInstalled: async (depsPath) => {
                 const ext = platform === 'win32' ? '.exe' : '';
                 const exe = path.join(depsPath, 'node', `node${ext}`);
@@ -124,6 +126,7 @@ export function getDependencyDefinitions(depsPath: string): DependencyDefinition
             displayName: 'ADB (Android Debug Bridge)',
             description: 'Communicates with Android devices (push, shell, tunnel)',
             requiresRestart: false,
+            requiresLauncher: true,
             checkInstalled: async (depsPath) => {
                 const ext = platform === 'win32' ? '.exe' : '';
                 const exe = path.join(depsPath, 'adb', `adb${ext}`);
@@ -149,6 +152,7 @@ export function getDependencyDefinitions(depsPath: string): DependencyDefinition
             displayName: 'scrcpy-server',
             description: 'Runs on Android device to capture screen, audio, and accept input',
             requiresRestart: false,
+            requiresLauncher: false,
             checkInstalled: async (depsPath) => {
                 // The JAR file presence gates "installed at all"; the actual version
                 // comes from the .version marker (or SERVER_VERSION as fallback for

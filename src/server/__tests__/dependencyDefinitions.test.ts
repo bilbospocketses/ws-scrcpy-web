@@ -48,6 +48,16 @@ describe('getDependencyDefinitions', () => {
         const scrcpy = defs.find((d) => d.name === 'scrcpy-server');
         expect(scrcpy?.requiresRestart).toBe(false);
     });
+
+    it('nodejs and adb require the launcher (extractZip path); scrcpy-server does not', () => {
+        const defs = getDependencyDefinitions('/tmp/test-deps');
+        const node = defs.find((d) => d.name === 'nodejs');
+        const adb = defs.find((d) => d.name === 'adb');
+        const scrcpy = defs.find((d) => d.name === 'scrcpy-server');
+        expect(node?.requiresLauncher).toBe(true);
+        expect(adb?.requiresLauncher).toBe(true);
+        expect(scrcpy?.requiresLauncher).toBe(false);
+    });
 });
 
 describe('scrcpy-server.checkInstalled (v0.1.10 regression fix)', () => {
