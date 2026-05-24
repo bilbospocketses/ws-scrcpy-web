@@ -130,3 +130,133 @@ describe('DependencyManager.update() launcher-required gate', () => {
         }
     });
 });
+
+describe('DependencyManager.installNodejs rollback', () => {
+    let tmpDir: string;
+
+    beforeEach(() => {
+        tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wsscrcpy-nodeinstall-'));
+    });
+
+    afterEach(() => {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+        vi.restoreAllMocks();
+    });
+
+    async function callInstallNodejs(
+        mgr: DependencyManager,
+        downloadPath: string,
+        version: string,
+        installTmp: string,
+        platform: 'win32' | 'linux',
+    ): Promise<void> {
+        // installNodejs is private — invoke via a typed cast for the test only.
+        // biome-ignore lint/suspicious/noExplicitAny: invoke private method
+        await (mgr as any).installNodejs(downloadPath, version, installTmp, platform);
+    }
+
+    it('win32: extract failure leaves destDir untouched (original node.exe intact)', async () => {
+        const mgr = new DependencyManager(tmpDir);
+        const destDir = path.join(tmpDir, 'node');
+        fs.mkdirSync(destDir, { recursive: true });
+        const originalNodeExe = path.join(destDir, 'node.exe');
+        fs.writeFileSync(originalNodeExe, 'ORIGINAL-NODE-BYTES');
+
+        const extractTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wsscrcpy-extract-'));
+
+        // Mock extractZip to throw
+        // biome-ignore lint/suspicious/noExplicitAny: private method spy
+        vi.spyOn(mgr as any, 'extractZip').mockRejectedValue(new Error('mock extract fail'));
+
+        await expect(
+            callInstallNodejs(mgr, '/fake/download.zip', '24.15.0', extractTmp, 'win32'),
+        ).rejects.toThrow('mock extract fail');
+
+        // Original node.exe must be intact; no .old created.
+        expect(fs.readFileSync(originalNodeExe, 'utf8')).toBe('ORIGINAL-NODE-BYTES');
+        expect(fs.existsSync(path.join(destDir, 'node.exe.old'))).toBe(false);
+
+        fs.rmSync(extractTmp, { recursive: true, force: true });
+    });
+
+    it('win32: copy failure restores .old back to .exe (rollback)', async () => {
+        const mgr = new DependencyManager(tmpDir);
+        const destDir = path.join(tmpDir, 'node');
+        fs.mkdirSync(destDir, { recursive: true });
+        const originalNodeExe = path.join(destDir, 'node.exe');
+        fs.writeFileSync(originalNodeExe, 'ORIGINAL-NODE-BYTES');
+
+        const extractTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wsscrcpy-extract-'));
+        // Simulate a successful extract: write the expected archive layout.
+        const archiveRoot = path.join(extractTmp, 'node-v24.15.0-win-x64');
+        fs.mkdirSync(archiveRoot, { recursive: true });
+        fs.writeFileSync(path.join(archiveRoot, 'node.exe'), 'NEW-NODE-BYTES');
+
+        // extractZip mock succeeds (no-op — the layout is pre-populated).
+        // biome-ignore lint/suspicious/noExplicitAny: private method spy
+        vi.spyOn(mgr as any, 'extractZip').mockResolvedValue(undefined);
+        // copyDirContents mock throws partway.
+        // biome-ignore lint/suspicious/noExplicitAny: private method spy
+        vi.spyOn(mgr as any, 'copyDirContents').mockImplementation(() => {
+            throw new Error('mock copy fail');
+        });
+
+        await expect(
+            callInstallNodejs(mgr, '/fake/download.zip', '24.15.0', extractTmp, 'win32'),
+        ).rejects.toThrow('mock copy fail');
+
+        // node.exe must be restored from .old; .old must no longer exist after restore.
+        expect(fs.existsSync(originalNodeExe)).toBe(true);
+        expect(fs.readFileSync(originalNodeExe, 'utf8')).toBe('ORIGINAL-NODE-BYTES');
+        expect(fs.existsSync(path.join(destDir, 'node.exe.old'))).toBe(false);
+
+        fs.rmSync(extractTmp, { recursive: true, force: true });
+    });
+
+    it('win32: full success replaces node.exe (and leaves node.exe.old per current behavior)', async () => {
+        const mgr = new DependencyManager(tmpDir);
+        const destDir = path.join(tmpDir, 'node');
+        fs.mkdirSync(destDir, { recursive: true });
+        const originalNodeExe = path.join(destDir, 'node.exe');
+        fs.writeFileSync(originalNodeExe, 'ORIGINAL-NODE-BYTES');
+
+        const extractTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wsscrcpy-extract-'));
+        const archiveRoot = path.join(extractTmp, 'node-v24.15.0-win-x64');
+        fs.mkdirSync(archiveRoot, { recursive: true });
+        fs.writeFileSync(path.join(archiveRoot, 'node.exe'), 'NEW-NODE-BYTES');
+        fs.writeFileSync(path.join(archiveRoot, 'npm.cmd'), 'NPM-CMD-BYTES');
+
+        // biome-ignore lint/suspicious/noExplicitAny: private method spy
+        vi.spyOn(mgr as any, 'extractZip').mockResolvedValue(undefined);
+        // Don't mock copyDirContents — let it run for real on the pre-populated archive.
+
+        await callInstallNodejs(mgr, '/fake/download.zip', '24.15.0', extractTmp, 'win32');
+
+        expect(fs.readFileSync(originalNodeExe, 'utf8')).toBe('NEW-NODE-BYTES');
+        expect(fs.readFileSync(path.join(destDir, 'npm.cmd'), 'utf8')).toBe('NPM-CMD-BYTES');
+        // Current behavior: node.exe.old lingers post-success (cleanup is a separate non-goal).
+        expect(fs.existsSync(path.join(destDir, 'node.exe.old'))).toBe(true);
+
+        fs.rmSync(extractTmp, { recursive: true, force: true });
+    });
+
+    it('linux: extract failure leaves destDir untouched', async () => {
+        const mgr = new DependencyManager(tmpDir);
+        const destDir = path.join(tmpDir, 'node');
+        fs.mkdirSync(destDir, { recursive: true });
+        const originalNode = path.join(destDir, 'node');
+        fs.writeFileSync(originalNode, 'ORIGINAL-LINUX-NODE');
+
+        // Point download at a non-existent file so tar will fail.
+        const extractTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wsscrcpy-extract-linux-'));
+
+        await expect(
+            callInstallNodejs(mgr, '/does/not/exist.tar.gz', '24.15.0', extractTmp, 'linux'),
+        ).rejects.toThrow();
+
+        // Linux destDir state unchanged.
+        expect(fs.readFileSync(originalNode, 'utf8')).toBe('ORIGINAL-LINUX-NODE');
+
+        fs.rmSync(extractTmp, { recursive: true, force: true });
+    });
+});
