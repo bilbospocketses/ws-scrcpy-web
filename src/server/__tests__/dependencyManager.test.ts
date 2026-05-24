@@ -38,6 +38,39 @@ describe('DependencyManager', () => {
     });
 });
 
+describe('DependencyManager.getAll() canUpdate', () => {
+    it('reports canUpdate=true for all deps when launcher is available', async () => {
+        vi.resetModules();
+        vi.doMock('../service/elevatedRunner', () => ({
+            launcherIsAvailable: () => true,
+            resolveLauncherPath: () => '/fake/launcher.exe',
+        }));
+        // Re-import after mock to pick up the stubbed module
+        const { DependencyManager: Mgr } = await import('../DependencyManager');
+        const mgr = new Mgr('/tmp/test-deps-canupdate-yes');
+        const deps = mgr.getAll();
+        for (const dep of deps) {
+            expect(dep.canUpdate).toBe(true);
+        }
+        vi.resetModules();
+    });
+
+    it('reports canUpdate=false for launcher-required deps when launcher is unavailable', async () => {
+        vi.resetModules();
+        vi.doMock('../service/elevatedRunner', () => ({
+            launcherIsAvailable: () => false,
+            resolveLauncherPath: () => '/fake/launcher.exe',
+        }));
+        const { DependencyManager: Mgr } = await import('../DependencyManager');
+        const mgr = new Mgr('/tmp/test-deps-canupdate-no');
+        const byName = Object.fromEntries(mgr.getAll().map((d) => [d.name, d]));
+        expect(byName['nodejs']?.canUpdate).toBe(false);
+        expect(byName['adb']?.canUpdate).toBe(false);
+        expect(byName['scrcpy-server']?.canUpdate).toBe(true);
+        vi.resetModules();
+    });
+});
+
 describe('DependencyManager.requestRestart', () => {
     let tmpDir: string;
     let exitSpy: ReturnType<typeof vi.spyOn>;

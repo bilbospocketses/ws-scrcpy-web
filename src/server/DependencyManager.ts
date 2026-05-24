@@ -56,6 +56,13 @@ export class DependencyManager {
     }
 
     public getAll(): DependencyInfo[] {
+        const launcherAvail = launcherIsAvailable();
+        // In-place mutation: callers (incl. getByName) hold references to state
+        // entries and mutate them; spread copies would orphan those mutations.
+        for (const info of this.state.values()) {
+            const def = this.definitions.find((d) => d.name === info.name);
+            info.canUpdate = !def?.requiresLauncher || launcherAvail;
+        }
         return Array.from(this.state.values());
     }
 
