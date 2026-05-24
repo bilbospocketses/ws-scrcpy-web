@@ -735,3 +735,28 @@ dialog.settings-modal .settings-scope-fieldset legend {
     font-size: 13px;
     color: var(--text-color-light, #888);
 }
+
+/* --- Service operation modal (Phase 3) --- */
+
+dialog.service-operation-modal .modal-header-controls {
+    display: none;
+}
+
+dialog.service-operation-modal .modal-body {
+    text-align: center;
+    padding: 1rem 0;
+}
+
+.service-operation-spinner {
+    width: 32px;
+    height: 32px;
+    border: 3px solid var(--border-muted, rgba(255, 255, 255, 0.2));
+    border-top-color: var(--accent, #5b9aff);
+    border-radius: 50%;
+    margin: 0 auto 1rem;
+    animation: service-op-spin 0.8s linear infinite;
+}
+
+@keyframes service-op-spin {
+    to { transform: rotate(360deg); }
+}
