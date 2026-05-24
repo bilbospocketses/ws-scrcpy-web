@@ -217,10 +217,16 @@ export class DependencyPanel {
 
     private actionButton(dep: DependencyInfo): string {
         if (dep.status === 'update-available') {
-            return `<button class="dep-btn dep-update" data-update="${dep.name}">Update</button>`;
+            if (!dep.canUpdate) {
+                const tooltip = 'In-app updates require an installed build. ' +
+                    'In dev mode, populate dependencies/ via scripts/fetch-node.mjs.';
+                return `<button class="dep-btn dep-update" disabled title="${tooltip}">` +
+                    `update (dev)</button>`;
+            }
+            return `<button class="dep-btn dep-update" data-update="${dep.name}">update</button>`;
         }
         if (dep.status === 'updating') {
-            return '<button class="dep-btn" disabled>Updating...</button>';
+            return '<button class="dep-btn" disabled>updating...</button>';
         }
         return '';
     }
