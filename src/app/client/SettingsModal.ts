@@ -906,6 +906,8 @@ export class SettingsModal extends Modal {
             },
         };
 
+        const modal = new ServiceOperationModal({ operation: 'uninstall' });
+        using _closeModal = { [Symbol.dispose](): void { modal.close(); } };
         try {
             const r = await fetch('/api/service/uninstall', { method: 'POST' });
             const data = (await r.json().catch(() => null)) as ServiceUninstallResponse | null;
