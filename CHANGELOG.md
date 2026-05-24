@@ -15,6 +15,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Tests: vitest 708/708 (was 695/695 pre-fix; +13 new tests across dependencyDefinitions, dependencyManager, dependencyManager.update, dependencyManager.autoInstallMissing, dependencyApi.update suites).
 
+### Added
+
+- **post-stop.bat diagnostic logging.** Each branch of the three-state bat now appends a timestamped log line to `<dataRoot>/logs/post-stop.log`: apply-update, uninstall, or no-op (user-initiated stop). Previously the bat ran in its own `cmd.exe` process with no trace — the "neither marker" branch was invisible. Log directory created defensively; follows the existing `<dataRoot>/logs/` convention alongside `launcher.log` and `tray.log`. (+1 cargo test: `write_post_stop_bat_logs_each_branch_to_post_stop_log`.)
+
+### Changed
+
+- **Consolidated `operation-server/`, `upgrade-server/`, `post-stop/` under `<dataRoot>/control/`.** All service-lifecycle artifacts (markers, helper binary, legacy dual-write, post-stop bat) now live under one directory. Migration is implicit — next service reinstall writes to new paths; old directories become dead artifacts for Phase 5 dead-code sweep.
+
+Tests: cargo 130/130 (was 129/129; +1 post-stop logging test). vitest 708/708 unchanged.
+
 ## [0.1.25-beta.40] - 2026-05-23
 
 ### Added
