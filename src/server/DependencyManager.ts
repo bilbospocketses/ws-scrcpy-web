@@ -224,8 +224,14 @@ export class DependencyManager {
             log.warn(`seed-promote scrcpy-server failed: ${(err as Error).message}`);
         }
 
+        const launcherAvail = launcherIsAvailable();
         for (const info of this.state.values()) {
             if (info.installedVersion === null && info.latestVersion !== null) {
+                const def = this.definitions.find((d) => d.name === info.name);
+                if (def?.requiresLauncher && !launcherAvail) {
+                    log.info(`Skipping auto-install of ${info.name} in dev mode (no launcher)`);
+                    continue;
+                }
                 log.info(`First-run: auto-installing ${info.name}`);
                 await this.update(info.name);
             }

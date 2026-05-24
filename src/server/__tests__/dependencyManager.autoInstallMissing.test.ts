@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DependencyStatus } from '../../common/DependencyTypes';
+import * as elevatedRunnerModule from '../service/elevatedRunner';
 import { DependencyManager } from '../DependencyManager';
+
+vi.mock('../service/elevatedRunner', () => ({
+    launcherIsAvailable: vi.fn(() => true),
+    resolveLauncherPath: () => '/fake/launcher.exe',
+}));
 
 describe('DependencyManager.autoInstallMissing', () => {
     let mgr: DependencyManager;
@@ -77,5 +83,26 @@ describe('DependencyManager.autoInstallMissing', () => {
         expect(updateSpy).toHaveBeenCalledTimes(2);
         expect(updateSpy).toHaveBeenCalledWith('adb');
         expect(updateSpy).toHaveBeenCalledWith('scrcpy-server');
+    });
+
+    it('skips launcher-required deps in dev mode (no launcher available)', async () => {
+        vi.mocked(elevatedRunnerModule.launcherIsAvailable).mockReturnValue(false);
+
+        const nodejs = mgr.getByName('nodejs')!;
+        nodejs.installedVersion = null;
+        nodejs.latestVersion = '24.15.0';
+
+        const scrcpy = mgr.getByName('scrcpy-server')!;
+        scrcpy.installedVersion = null;
+        scrcpy.latestVersion = '4.0';
+
+        await mgr.autoInstallMissing();
+
+        // nodejs is skipped (requiresLauncher && !launcherIsAvailable)
+        expect(updateSpy).not.toHaveBeenCalledWith('nodejs');
+        // scrcpy-server still gets installed (no launcher needed)
+        expect(updateSpy).toHaveBeenCalledWith('scrcpy-server');
+
+        vi.mocked(elevatedRunnerModule.launcherIsAvailable).mockReturnValue(true);
     });
 });
