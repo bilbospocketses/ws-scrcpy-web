@@ -1,6 +1,7 @@
 import { Modal } from '../ui/Modal';
 import { resetAllDismissals } from './firstRunGate';
 import { AdminConfirmModal } from './AdminConfirmModal';
+import { ServiceOperationModal } from './ServiceOperationModal';
 import type { AppConfigEnvelope, AppConfigPatchResponse, UpdateChannel } from '../../common/ConfigEvents';
 import type {
     ServiceStatusResponse,
@@ -851,6 +852,8 @@ export class SettingsModal extends Modal {
         if (this.serviceScopeSystemRadio) {
             requestBody.scope = this.serviceScopeSystemRadio.checked ? 'system' : 'user';
         }
+        const modal = new ServiceOperationModal({ operation: 'install' });
+        using _closeModal = { [Symbol.dispose](): void { modal.close(); } };
         try {
             const r = await fetch('/api/service/install', {
                 method: 'POST',
@@ -903,6 +906,8 @@ export class SettingsModal extends Modal {
             },
         };
 
+        const modal = new ServiceOperationModal({ operation: 'uninstall' });
+        using _closeModal = { [Symbol.dispose](): void { modal.close(); } };
         try {
             const r = await fetch('/api/service/uninstall', { method: 'POST' });
             const data = (await r.json().catch(() => null)) as ServiceUninstallResponse | null;

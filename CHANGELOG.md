@@ -17,6 +17,8 @@ Tests: vitest 708/708 (was 695/695 pre-fix; +13 new tests across dependencyDefin
 
 ### Added
 
+- **Service install/uninstall interstitial modals (Phase 3).** New `ServiceOperationModal extends Modal` renders "installing service, please wait..." or "uninstalling service, please wait..." during pending API state. Mounted on click, closed via `using` dispose declaration on every exit path. Three wire-in points: Settings install + Settings uninstall + Welcome install. Non-dismissible (escape / backdrop / close button overridden as no-ops). Visual parity with the launcher-served operation-server page. DOM constructed via createElement + textContent (no innerHTML). (+6 vitest tests in serviceOperationModal.test.ts.)
+
 - **post-stop.bat diagnostic logging.** Each branch of the three-state bat now appends a timestamped log line to `<dataRoot>/logs/post-stop.log`: apply-update, uninstall, or no-op (user-initiated stop). Previously the bat ran in its own `cmd.exe` process with no trace — the "neither marker" branch was invisible. Log directory created defensively; follows the existing `<dataRoot>/logs/` convention alongside `launcher.log` and `tray.log`. (+1 cargo test: `write_post_stop_bat_logs_each_branch_to_post_stop_log`.)
 
 ### Changed

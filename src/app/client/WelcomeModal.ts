@@ -1,6 +1,7 @@
 import { Modal } from '../ui/Modal';
 import type { ServiceStatusResponse, ServiceInstallResponse } from '../../common/ServiceEvents';
 import { setBookmarkDismissedPort, setWelcomeDismissed } from './firstRunGate';
+import { ServiceOperationModal } from './ServiceOperationModal';
 
 export type WelcomeChoice = 'service' | 'on-demand';
 
@@ -316,6 +317,8 @@ export class WelcomeModal extends Modal {
         if (statusResp.platform === 'linux') {
             requestBody.scope = this.scopeSystemRadio?.checked ? 'system' : 'user';
         }
+        const modal = new ServiceOperationModal({ operation: 'install' });
+        using _closeModal = { [Symbol.dispose](): void { modal.close(); } };
         try {
             const r = await fetch('/api/service/install', {
                 method: 'POST',
