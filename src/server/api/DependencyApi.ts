@@ -36,7 +36,11 @@ export class DependencyApi {
             if (req.method === 'POST' && updateMatch) {
                 const name = updateMatch[1]!;
                 const result = await this.manager.update(name);
-                res.writeHead(result.success ? 200 : 500);
+                if (result.reason === 'launcher-required') {
+                    res.writeHead(503);
+                } else {
+                    res.writeHead(result.success ? 200 : 500);
+                }
                 res.end(JSON.stringify(result));
                 return true;
             }
