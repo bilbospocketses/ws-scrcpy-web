@@ -557,7 +557,7 @@ pub fn unregister_tray_run_key() -> Result<(), String> {
 /// install time — no arg-passing needed at run time.
 ///
 /// Returns the full path of the written bat on success.
-fn write_post_stop_bat(
+pub(crate) fn write_post_stop_bat(
     data_root: &std::path::Path,
     service_name: &str,
     servy_path: &str,

@@ -339,6 +339,55 @@ fn on_updated(install_root: &Path, data_root: &Path) -> i32 {
         return 0;
     }
 
+    // Migration: bat exists at pre-consolidation path but not at the new
+    // control/ path. Regenerate at BOTH paths — new path so this check passes
+    // on subsequent updates, old path because Servy's postStopPath config
+    // (set at the original install_service time) still references it.
+    let old_post_stop_bat = data_root.join("post-stop").join("post-stop.bat");
+    if old_post_stop_bat.exists() {
+        let servy_path = install_root.join("current").join("servy-cli.exe");
+        let launcher_path = install_root.join("current").join("ws-scrcpy-web-launcher.exe");
+        match crate::elevated_runner::write_post_stop_bat(
+            data_root,
+            "WsScrcpyWeb",
+            &servy_path.to_string_lossy(),
+            &launcher_path.to_string_lossy(),
+        ) {
+            Ok(new_bat_path) => {
+                log::info(&format!(
+                    "hook(updated): migrated post-stop bat to {new_bat_path:?}"
+                ));
+                if let Err(e) = std::fs::copy(&new_bat_path, &old_post_stop_bat) {
+                    log::error(&format!(
+                        "hook(updated): could not copy bat to legacy path {old_post_stop_bat:?}: {e}"
+                    ));
+                }
+                // Clean up old pre-consolidation helper dirs (supervisor already
+                // refreshes to control/ paths on every startup).
+                for old_dir in ["operation-server", "upgrade-server"] {
+                    let old_path = data_root.join(old_dir);
+                    let new_path = data_root.join("control").join(old_dir);
+                    if old_path.exists() && new_path.exists() {
+                        match std::fs::remove_dir_all(&old_path) {
+                            Ok(()) => log::info(&format!(
+                                "hook(updated): removed legacy {old_path:?}"
+                            )),
+                            Err(e) => log::error(&format!(
+                                "hook(updated): could not remove legacy {old_path:?}: {e}"
+                            )),
+                        }
+                    }
+                }
+                return 0;
+            }
+            Err(e) => {
+                log::error(&format!(
+                    "hook(updated): post-stop bat migration failed: {e} — falling through to legacy bridge"
+                ));
+            }
+        }
+    }
+
     log::info(&format!(
         "hook(updated): post-stop bat absent at {post_stop_bat:?} — firing legacy synchronous servy-cli restart bridge"
     ));
