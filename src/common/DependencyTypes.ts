@@ -17,6 +17,7 @@ export interface DependencyInfo {
     errorMessage?: string | undefined;
     requiresRestart: boolean;
     pairedWith?: string | undefined;
+    canUpdate: boolean;
 }
 
 export interface UpdateResult {
@@ -24,6 +25,7 @@ export interface UpdateResult {
     newVersion?: string | undefined;
     errorMessage?: string | undefined;
     requiresRestart: boolean;
+    reason?: 'launcher-required' | undefined;
 }
 
 export function compareVersions(a: string | null, b: string | null): number {

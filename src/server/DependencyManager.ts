@@ -50,6 +50,7 @@ export class DependencyManager {
                 description: def.description,
                 requiresRestart: def.requiresRestart,
                 pairedWith: def.pairedWith,
+                canUpdate: false,
             });
         }
     }
