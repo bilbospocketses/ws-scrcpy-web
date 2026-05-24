@@ -537,7 +537,7 @@ pub fn refresh_helper_binary(data_root: &Path) -> std::io::Result<PathBuf> {
     let current = std::env::current_exe()?;
 
     // Canonical (new) location.
-    let new_dir = data_root.join("operation-server");
+    let new_dir = data_root.join("control").join("operation-server");
     std::fs::create_dir_all(&new_dir)?;
     let new_path = new_dir.join("ws-scrcpy-web-launcher.exe");
     std::fs::copy(&current, &new_path)?;
@@ -546,7 +546,7 @@ pub fn refresh_helper_binary(data_root: &Path) -> std::io::Result<PathBuf> {
     // (referencing <dataRoot>/upgrade-server/launcher.exe) keep working
     // through the transitional period. Best-effort; legacy write
     // failure does not propagate.
-    let legacy_dir = data_root.join("upgrade-server");
+    let legacy_dir = data_root.join("control").join("upgrade-server");
     let _ = std::fs::create_dir_all(&legacy_dir);
     let legacy_path = legacy_dir.join("ws-scrcpy-web-launcher.exe");
     let _ = std::fs::copy(&current, &legacy_path);
@@ -554,15 +554,15 @@ pub fn refresh_helper_binary(data_root: &Path) -> std::io::Result<PathBuf> {
     Ok(new_path)
 }
 
-/// Resolve the canonical helper path under `<dataRoot>/operation-server/`.
+/// Resolve the canonical helper path under `<dataRoot>/control/operation-server/`.
 /// Used by the post-stop bat writer to interpolate the same path the
 /// supervisor refreshes at startup. Single source of truth for the helper
 /// layout.
 pub fn helper_path_for(data_root: &Path) -> PathBuf {
-    data_root.join("operation-server").join("ws-scrcpy-web-launcher.exe")
+    data_root.join("control").join("operation-server").join("ws-scrcpy-web-launcher.exe")
 }
 
-/// Legacy helper path under `<dataRoot>/upgrade-server/`. Kept for ~2
+/// Legacy helper path under `<dataRoot>/control/upgrade-server/`. Kept for ~2
 /// release cycles so existing installs' post-stop.bat files (which
 /// reference this path) keep finding a launcher binary. New code should
 /// use `helper_path_for`. Removed in a follow-up PR ~2 release cycles
@@ -574,7 +574,7 @@ pub fn helper_path_for(data_root: &Path) -> PathBuf {
 /// happy across the transitional window.
 #[allow(dead_code)]
 pub fn legacy_helper_path_for(data_root: &Path) -> PathBuf {
-    data_root.join("upgrade-server").join("ws-scrcpy-web-launcher.exe")
+    data_root.join("control").join("upgrade-server").join("ws-scrcpy-web-launcher.exe")
 }
 
 /// §32 Part 5f — spawn the dataRoot upgrade-server helper as a detached
@@ -701,6 +701,7 @@ mod tests {
         // Windows (`\` separator) and Linux CI (`/` separator) — production
         // callers are Windows-only but cargo test runs on both.
         let expected = std::path::Path::new(r"C:\ProgramData\WsScrcpyWeb")
+            .join("control")
             .join("operation-server")
             .join("ws-scrcpy-web-launcher.exe");
         assert_eq!(p, expected);
@@ -710,6 +711,7 @@ mod tests {
     fn legacy_helper_path_for_returns_upgrade_server_path() {
         let p = super::legacy_helper_path_for(std::path::Path::new(r"C:\ProgramData\WsScrcpyWeb"));
         let expected = std::path::Path::new(r"C:\ProgramData\WsScrcpyWeb")
+            .join("control")
             .join("upgrade-server")
             .join("ws-scrcpy-web-launcher.exe");
         assert_eq!(p, expected);
@@ -724,8 +726,8 @@ mod tests {
         // context that's the test runner. The Ok branch is the assertion-
         // bearing branch — we only verify dual-write on success.
         if super::refresh_helper_binary(data_root).is_ok() {
-            let new_path = data_root.join("operation-server").join("ws-scrcpy-web-launcher.exe");
-            let legacy_path = data_root.join("upgrade-server").join("ws-scrcpy-web-launcher.exe");
+            let new_path = data_root.join("control").join("operation-server").join("ws-scrcpy-web-launcher.exe");
+            let legacy_path = data_root.join("control").join("upgrade-server").join("ws-scrcpy-web-launcher.exe");
             assert!(new_path.exists(), "operation-server/launcher.exe should be written");
             assert!(legacy_path.exists(), "upgrade-server/launcher.exe should also be written (dual-write compat)");
         }

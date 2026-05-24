@@ -331,7 +331,7 @@ fn on_updated(install_root: &Path, data_root: &Path) -> i32 {
     // For users on Part 4-era installs (where the bat file is present), the
     // bat is the clean path and the bridge MUST NOT fire (Part 3 smoke
     // showed the bridge actively races the post-stop and breaks recovery).
-    let post_stop_bat = data_root.join("post-stop").join("post-stop.bat");
+    let post_stop_bat = data_root.join("control").join("post-stop").join("post-stop.bat");
     if post_stop_bat.exists() {
         log::info(&format!(
             "hook(updated): post-stop bat present at {post_stop_bat:?} — Servy will handle recovery via --postStopPath; hook is a no-op"
