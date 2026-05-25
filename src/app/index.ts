@@ -107,6 +107,12 @@ function maybeShowWelcomeModal(): void {
             // Only one modal at a time — bookmark modal yields to either
             // first-run modal so we don't pile dialogs on first contact.
             const gate = await import('./client/firstRunGate');
+            if (config.firstRunComplete && !gate.isWelcomeDismissed()) {
+                gate.setWelcomeDismissed();
+            }
+            if (config.serviceFirstRunSeen && !gate.isServiceFirstRunDismissed()) {
+                gate.setServiceFirstRunDismissed();
+            }
             if (isServiceInstance) {
                 if (!gate.isServiceFirstRunDismissed()) {
                     void import('./client/ServiceFirstRunModal').then(({ ServiceFirstRunModal }) => {
