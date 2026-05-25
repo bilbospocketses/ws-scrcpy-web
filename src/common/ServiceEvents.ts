@@ -25,6 +25,10 @@ export interface ServiceStatusResponse {
     platform: NodeJS.Platform;
     status?: ServiceStatus | undefined;
     unsupportedReason?: string | undefined;
+    /** webPort read fresh from config.json on disk (not in-memory cache). Present when supported=true. */
+    diskWebPort?: number | undefined;
+    /** config.json filesystem mtime in epoch milliseconds. Present when supported=true. */
+    configMtime?: number | undefined;
 }
 
 /** Success response shape for /api/service/install and /api/service/uninstall. */
@@ -54,6 +58,10 @@ export interface ServiceActionSuccess {
      * validates it, and auto-fires the uninstall click.
      */
     resumeToken?: string;
+    /** config.json mtime snapshot at response time (epoch ms). Frontend uses as baseline for polling. */
+    configMtime?: number;
+    /** webPort from config.json on disk at response time. */
+    diskWebPort?: number;
 }
 
 /**

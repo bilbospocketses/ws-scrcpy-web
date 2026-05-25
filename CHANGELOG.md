@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.25-beta.66] - 2026-05-25
+
+### Changed
+
+- replaced 30s blocking `discoverServicePort` port sweep with mtime-based config.json discovery for both install and uninstall flows; frontend polls until config.json mtime changes (new process wrote its bound port), then navigates — eliminates the dead-port-spin bug on uninstall (beta.65 repro)
+- operation-server gains `/api/discover` endpoint for the uninstall transition window
+- `/api/service/status` now returns `diskWebPort` + `configMtime` from disk on every call
+
+### Removed
+
+- `src/server/service/discoverServicePort.ts` — dead code after §39
+
 ## [0.1.25-beta.65] - 2026-05-25
 
 ## [0.1.25-beta.64] - 2026-05-25

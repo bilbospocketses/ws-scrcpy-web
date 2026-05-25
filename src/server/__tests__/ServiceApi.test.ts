@@ -145,12 +145,33 @@ describe('ServiceApi', () => {
         const { req, res } = makeReqRes('/api/service/status');
         await api.handle(req, res);
         expect((res as any).getStatus()).toBe(200);
-        expect(JSON.parse((res as any).getBody())).toEqual({
+        const body = JSON.parse((res as any).getBody());
+        expect(body.supported).toBe(true);
+        expect(body.platform).toBe('win32');
+        expect(body.status).toBe('running');
+        // configMtime is present because config.json exists on disk (written by beforeEach)
+        expect(typeof body.configMtime).toBe('number');
+        expect(client.status).toHaveBeenCalledWith('WsScrcpyWeb');
+    });
+
+    it('GET /status includes diskWebPort and configMtime from disk when supported', async () => {
+        const cfg = Config.getInstance();
+        cfg.updateAppConfig({ webPort: 9001 });
+
+        const client = fakeClient({ status: vi.fn(async () => 'running' as const) });
+        const factoryResult: ServiceClientFactoryResult = {
+            client,
             supported: true,
             platform: 'win32',
-            status: 'running',
-        });
-        expect(client.status).toHaveBeenCalledWith('WsScrcpyWeb');
+        };
+        const api = new ServiceApi(() => factoryResult, () => 'user');
+        const { req, res } = makeReqRes('/api/service/status');
+        await api.handle(req, res);
+        const body = JSON.parse((res as any).getBody());
+        expect(body.supported).toBe(true);
+        expect(body.diskWebPort).toBe(9001);
+        expect(typeof body.configMtime).toBe('number');
+        expect(body.configMtime).toBeGreaterThan(0);
     });
 
     it('POST /install returns 501 with unsupportedReason on unsupported platforms', async () => {
@@ -190,9 +211,6 @@ describe('ServiceApi', () => {
             () => factoryResult,
             () => 'user',
             () => true,
-            // discover stub: short-circuit port discovery so tests
-            // don't actually probe localhost ports for 30s.
-            async () => null,
         );
         const { req, res } = makeReqRes('/api/service/install', 'POST');
         await api.handle(req, res);
@@ -232,7 +250,6 @@ describe('ServiceApi', () => {
             () => factoryResult,
             () => 'system',
             () => true,
-            async () => null,
         );
         const { req, res } = makeReqRes('/api/service/install', 'POST');
         await api.handle(req, res);
@@ -241,27 +258,10 @@ describe('ServiceApi', () => {
         expect((installFn.mock.calls[0]?.[0] as { account?: unknown }).account).toBeUndefined();
     });
 
-    it('POST /install syncs local in-memory webPort to the service-Node port discovered on handoff (§32 Part 5c)', async () => {
-        // Regression for the v0.1.25-beta.22 → beta.23 smoke (2026-05-21):
-        // after a successful service install, local Node's in-memory
-        // webPort stayed at the pre-install value (8000) while the
-        // service-Node bound 8001 and persisted that to disk via
-        // reconcileWebPort. Any subsequent local-Node write (e.g., a
-        // browser-driven PATCH /api/config or /api/updater fired during
-        // the redirect window) would clobber config.json back to 8000,
-        // breaking both the tray icon (re-reads config.json on every
-        // click → opens dead 8000) AND the launcher's --upgrade-server
-        // (also reads config.json → binds 8000 while browser is on 8001
-        // → ECONNREFUSED for the entire upgrade window).
-        //
-        // The fix in ServiceApi.handleInstall calls cfg.setActualWebPort
-        // with the parsed port from the discovered URL right after
-        // discoverServicePort returns success. That synchronously
-        // updates in-memory webPort AND writes config.json, so any
-        // later local-Node write carries the correct port.
+    it('POST /install on win32 returns configMtime + diskWebPort (no redirectTo, no discover)', async () => {
         const client = fakeClient({
-            install: vi.fn(async () => undefined),
             status: vi.fn(async () => 'running' as const),
+            install: vi.fn(async () => undefined),
         });
         const factoryResult: ServiceClientFactoryResult = {
             client,
@@ -272,59 +272,15 @@ describe('ServiceApi', () => {
             () => factoryResult,
             () => 'user',
             () => true,
-            // discover stub: return a non-null URL on the first poll
-            // cycle so handleInstall takes the redirectTo +
-            // setActualWebPort path.
-            async () => 'http://localhost:8001',
         );
-        const { req, res } = makeReqRes('/api/service/install', 'POST');
+        const { req, res } = makeReqRes('/api/service/install', 'POST', '{}');
         await api.handle(req, res);
-
-        expect((res as any).getStatus()).toBe(200);
         const body = JSON.parse((res as any).getBody());
         expect(body.ok).toBe(true);
-        expect(body.redirectTo).toBe('http://localhost:8001');
-
-        // The crucial assertion. Without the fix, local Node's
-        // in-memory webPort would still be APP_CONFIG_DEFAULTS.webPort
-        // (8000) and any subsequent updateAppConfig / setActualWebPort
-        // call would write 8000 to disk.
-        expect(Config.getInstance().getAppConfig().webPort).toBe(8001);
-    });
-
-    it('POST /install skips webPort sync when discovered URL has no parseable port', async () => {
-        // Defensive coverage for the parse path in the §32 Part 5c sync.
-        // If discoverServicePort ever returns a URL whose port portion
-        // doesn't parse (host-only, weird scheme, etc.), the handler
-        // logs a warning and continues — it must NOT throw and abort
-        // the install response. We can't directly assert "no throw"
-        // beyond reaching the assertions below, but we DO assert that
-        // the response was still 200 and webPort stayed at the default.
-        const client = fakeClient({
-            install: vi.fn(async () => undefined),
-            status: vi.fn(async () => 'running' as const),
-        });
-        const factoryResult: ServiceClientFactoryResult = {
-            client,
-            supported: true,
-            platform: 'win32',
-        };
-        const api = new ServiceApi(
-            () => factoryResult,
-            () => 'user',
-            () => true,
-            // Host-only URL; new URL(...).port is '' which parses to NaN.
-            async () => 'http://localhost',
-        );
-        const { req, res } = makeReqRes('/api/service/install', 'POST');
-        await api.handle(req, res);
-
-        expect((res as any).getStatus()).toBe(200);
-        const body = JSON.parse((res as any).getBody());
-        expect(body.ok).toBe(true);
-        expect(body.redirectTo).toBe('http://localhost');
-        // No sync attempted → in-memory webPort stays at the default.
-        expect(Config.getInstance().getAppConfig().webPort).toBe(8000);
+        expect(body.redirectTo).toBeUndefined();
+        expect(typeof body.configMtime).toBe('number');
+        expect(body.configMtime).toBeGreaterThan(0);
+        expect(typeof body.diskWebPort).toBe('number');
     });
 
     it('POST /install returns 403 when ServyClient throws ServiceInstallError with isUacDeclined=true', async () => {
@@ -357,9 +313,6 @@ describe('ServiceApi', () => {
             () => factoryResult,
             () => 'user',
             () => true,
-            // discover stub: short-circuit port discovery so tests
-            // don't actually probe localhost ports for 30s.
-            async () => null,
         );
         const { req, res } = makeReqRes('/api/service/install', 'POST');
         await api.handle(req, res);
@@ -407,9 +360,6 @@ describe('ServiceApi', () => {
             () => factoryResult,
             () => 'user',
             () => true,
-            // discover stub: short-circuit port discovery so tests
-            // don't actually probe localhost ports for 30s.
-            async () => null,
         );
         const { req, res } = makeReqRes('/api/service/install', 'POST');
         await api.handle(req, res);
@@ -888,6 +838,38 @@ describe('ServiceApi', () => {
 
             const cfg = Config.getInstance();
             expect(fs.existsSync(cfg.uninstallPendingMarkerPath)).toBe(false);
+        });
+
+        it('POST /uninstall (service context, LocalSystem) includes configMtime in shutting-down response', async () => {
+            const cfg = Config.getInstance();
+            cfg.updateAppConfig({ installMode: 'system-service', webPort: 8003 });
+
+            const client = fakeClient({ status: vi.fn(async () => 'running' as const) });
+            const factoryResult: ServiceClientFactoryResult = {
+                client,
+                supported: true,
+                platform: 'win32',
+            };
+
+            const api = new ServiceApi(
+                () => factoryResult,
+                () => 'system',
+                () => true,
+            );
+            vi.spyOn(
+                api as unknown as { isLikelyLocalSystem: () => boolean },
+                'isLikelyLocalSystem',
+            ).mockReturnValue(true);
+
+            const { req, res } = makeReqRes('/api/service/uninstall', 'POST');
+            await api.handle(req, res);
+            const body = JSON.parse((res as any).getBody());
+            expect(body.ok).toBe(true);
+            expect(body.status).toBe('shutting-down');
+            expect(typeof body.configMtime).toBe('number');
+            expect(body.configMtime).toBeGreaterThan(0);
+
+            vi.restoreAllMocks();
         });
     });
 });
