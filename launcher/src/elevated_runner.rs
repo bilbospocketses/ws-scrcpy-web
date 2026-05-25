@@ -672,7 +672,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn write_post_stop_bat_uses_operation_server_flag() {
         let tmp = tempdir().unwrap();
         let bat_path = super::write_post_stop_bat(

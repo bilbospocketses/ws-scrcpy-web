@@ -80,7 +80,6 @@ pub fn run() -> Result<i32> {
         // token (which fails) — user left with no tray after the service
         // goes away.
         let local_takeover_override = std::env::args().any(|a| a == "--local-takeover");
-        let is_service_mode = cfg.is_service_mode() && !local_takeover_override;
         if local_takeover_override && cfg.is_service_mode() {
             log::info(
                 "supervisor: --local-takeover override; forcing is_service_mode=false for tray-supervisor",
@@ -98,6 +97,7 @@ pub fn run() -> Result<i32> {
         // tray with no recovery. Polls every 10s and respawns if missing.
         #[cfg(windows)]
         {
+            let is_service_mode = cfg.is_service_mode() && !local_takeover_override;
             let _stop = crate::tray_supervisor::start_background(
                 &paths.install_root,
                 &paths.data_root,
