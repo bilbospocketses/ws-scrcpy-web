@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.26] - 2026-05-25
+
+Stable release rolling up 67 beta iterations (v0.1.25-beta.1 through beta.67). Headline: **service mode completely rearchitected** — installs and uninstalls are now seamless, no UAC prompt on uninstall, no 30s port-sweep delays, no stuck modals, and the tray helper is unified across both modes.
+
+### Changed
+
+- **Service uninstall rearchitected (operation-server pattern).** Replaces the Theory D cross-session handoff dance. The service-Node writes an uninstall marker, spawns a lightweight Rust operation-server to hold the port, and exits. Servy's post-stop bat completes the uninstall + spawns a fresh user-session launcher. The browser stays on a spinner page throughout — no "this site can't be reached", no UAC prompt, no stuck fetch. Completes in ~5-10s.
+- **Service install: mtime-based port discovery (eliminates 30s delay).** Instead of sweeping 100 ports for the new service-Node's `/api/whoami`, the frontend now polls `/api/service/status` until config.json's mtime changes (meaning the new process wrote its port), then navigates. Instantaneous once the service starts.
+- **Tray architecture unified.** Both local and service modes now use a standalone `ws-scrcpy-web-tray.exe` supervised by the launcher's 10s poll loop. Eliminates the dual-code-path (in-process thread vs standalone exe) that caused icon-registration collisions and no-recovery states. Mode-aware text updates automatically on install/uninstall.
+- **In-app upgrade page.** A Rust-based upgrade-server binds the app port before Node exits, serves a static "updating, please wait..." page for the entire Velopack swap window (~3-8s). Wind-down probe detects when the new Node is ready and navigates the browser there — including across port shifts.
+- **All console window flashes eliminated.** Every `Command::new` in the launcher now uses `CREATE_NO_WINDOW` via `silent_command`. No cmd.exe black-rectangle flicker during install, uninstall, or tray operations.
+- **TS6 compliance.** Every `try/finally` cleanup site across `src/` converted to `using`/`await using` declarations. Zero `} finally {` blocks remain.
+
+### Fixed
+
+- **Session-ID inconsistency (§33).** Two Win32 APIs were answering "which session?" differently — `WTSGetActiveConsoleSessionId` (unstable on VM/RDP/idle) vs `WTSEnumerateSessionsW` (correct). All callers consolidated on the latter via `common::session::active_interactive_session()`. Fixes the deterministic "uninstall fails after reboot" bug and the non-deterministic "tray 5s-poll kills handoff mid-flight" bug.
+- **Service-mode port persistence (§32 Part 5c).** Local Node's in-memory `webPort` now syncs to the actual service port immediately after install, preventing stale writes from clobbering config.json.
+- **AdminConfirmModal double-showModal.** Settings → Install/Uninstall Service now works (was silently broken by a redundant `showModal()` call).
+- **Dev-mode dep update safety.** In-app Node/ADB updates gated behind launcher presence; `installNodejs` uses extract-then-rename with rollback on failure.
+- **First-run modal dismissal survives port shifts.** Moved from localStorage to config.json (port-independent).
+
+### Added
+
+- Operation-server `/api/discover` endpoint (config.json disk-read for uninstall transition)
+- Service operation interstitial modals (spinner during install/uninstall)
+- Post-stop bat diagnostic logging
+- Local-deps compliance audit report (`docs/audits/2026-05-25-local-deps-compliance.md`)
+
+### Removed
+
+- `src/server/service/discoverServicePort.ts` (replaced by mtime-based discovery)
+- `src/app/client/ServerReachabilityOverlay.ts` (replaced by upgrade-server)
+- Theory D handoff dead code (`handoffUninstallToUserSession` + helpers)
+- In-process tray thread (`launcher/src/tray.rs`)
+- HKLM\Run tray auto-start (replaced by supervisor-owned spawn)
+
+### Security
+
+- CodeQL advanced setup with Rust scanning (actions + javascript-typescript + rust)
+- All GitHub Actions SHA-pinned with `sha_pinning_required: true` enforced
+- Sigstore SLSA Provenance attestations on Windows MSI + Linux AppImage
+- Dependabot for npm + github-actions ecosystems
+
+### Migration
+
+v0.1.24 and v0.1.25-beta.* users can in-app update to v0.1.26 normally. The operation-server pattern activates automatically; old post-stop bats from earlier betas are regenerated on first service operation. No fresh install required.
+
 ## [0.1.25-beta.67] - 2026-05-25
 
 ## [0.1.25-beta.66] - 2026-05-25
