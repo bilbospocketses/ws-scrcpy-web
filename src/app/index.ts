@@ -92,29 +92,15 @@ function maybeShowWelcomeModal(): void {
             const isServiceInstance =
                 config.installMode === 'user-service' || config.installMode === 'system-service';
 
-            // v0.1.10: gate on localStorage flags, not server-side config.
-            // Pre-v0.1.10 used serviceFirstRunSeen / firstRunComplete from
-            // config.json — which got reset by service uninstall/reinstall
-            // cycles, re-firing the modal even after the user had dismissed
-            // it before. localStorage survives mode flips; flags only set
-            // when the user explicitly checks "don't show again".
-            //
-            // Routing:
-            //   - service instance + not dismissed → ServiceFirstRunModal
-            //   - non-service + first-run + not dismissed → WelcomeModal
-            //   - else → maybe show port-change bookmark reminder
-            //
-            // Only one modal at a time — bookmark modal yields to either
-            // first-run modal so we don't pile dialogs on first contact.
-            const gate = await import('./client/firstRunGate');
-            if (config.firstRunComplete && !gate.isWelcomeDismissed()) {
-                gate.setWelcomeDismissed();
-            }
-            if (config.serviceFirstRunSeen && !gate.isServiceFirstRunDismissed()) {
-                gate.setServiceFirstRunDismissed();
-            }
+            // Gate on server-side config flags (config.json), not
+            // localStorage. The modals PATCH these flags when dismissed;
+            // config.json survives port shifts (localStorage is per-origin
+            // and gets lost when the port changes). v0.1.10-v0.1.25-beta.53
+            // used localStorage; reverted to config.json gating because
+            // install/uninstall cycles no longer reset these flags (Phase 4
+            // only reverts installMode, not firstRunComplete/serviceFirstRunSeen).
             if (isServiceInstance) {
-                if (!gate.isServiceFirstRunDismissed()) {
+                if (!config.serviceFirstRunSeen) {
                     void import('./client/ServiceFirstRunModal').then(({ ServiceFirstRunModal }) => {
                         new ServiceFirstRunModal({ webPort: runtime.webPort });
                     });
@@ -124,16 +110,7 @@ function maybeShowWelcomeModal(): void {
                 return;
             }
 
-            // v0.1.14: drop the `firstRunComplete === false` short-circuit.
-            // localStorage's welcomeDismissed flag is the only source of
-            // truth for "user has accepted the welcome modal." Pre-v0.1.14
-            // the gate ANDed firstRunComplete (server-side) with the flag,
-            // so dismissing the modal WITHOUT the checkbox flipped
-            // firstRunComplete=true and suppressed the modal forever even
-            // though the user hadn't opted out — port modal then fired
-            // instead. Now: gate purely on the localStorage flag, redisplay
-            // until the user explicitly checks "don't show again."
-            if (!gate.isWelcomeDismissed()) {
+            if (!config.firstRunComplete) {
                 new WelcomeModal({
                     webPort: runtime.webPort,
                     portWasAutoShifted: runtime.portWasAutoShifted,
