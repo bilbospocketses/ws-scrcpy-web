@@ -320,7 +320,6 @@ export class WelcomeModal extends Modal {
             requestBody.scope = this.scopeSystemRadio?.checked ? 'system' : 'user';
         }
         const modal = new ServiceOperationModal({ operation: 'install' });
-        using _closeModal = { [Symbol.dispose](): void { modal.close(); } };
         try {
             const r = await fetch('/api/service/install', {
                 method: 'POST',
@@ -341,23 +340,44 @@ export class WelcomeModal extends Modal {
                 await this.patchConfig({ firstRunComplete: true });
             }
 
-            // v0.1.8: if the server discovered a new service-instance
-            // port and asked us to redirect, hand off cleanly. The
-            // local instance will exit shortly after responding to us;
-            // the user's browser ends up on the service instance with
-            // no double-tray confusion.
-            if (data.redirectTo) {
-                this.setStatus('service mode active. switching you over…');
-                // Brief delay so the status text is actually visible and
-                // the local instance has time to flush its response.
-                setTimeout(() => {
-                    window.location.href = data.redirectTo!;
-                }, 500);
-                return;
-            }
-
-            this.opts.onDecision('service');
-            this.close();
+            // §39: mtime-based discovery.
+            const baselineMtime = data.configMtime ?? 0;
+            const pollInterval = 2000;
+            const maxIterations = 30;
+            let iterations = 0;
+            this.setStatus('service installed. waiting for it to start…');
+            const poll = setInterval(async () => {
+                iterations++;
+                if (iterations > maxIterations) {
+                    clearInterval(poll);
+                    modal.close();
+                    this.setStatus('service is running but port discovery timed out. reload at your usual address.', true);
+                    this.setBusy(false);
+                    return;
+                }
+                try {
+                    const statusResp = await fetch('/api/service/status', { signal: AbortSignal.timeout(5000) });
+                    if (!statusResp.ok) return;
+                    const statusData = await statusResp.json() as { configMtime?: number; diskWebPort?: number };
+                    if (
+                        statusData.configMtime != null &&
+                        statusData.configMtime !== baselineMtime &&
+                        statusData.diskWebPort != null
+                    ) {
+                        clearInterval(poll);
+                        modal.close();
+                        this.setStatus('service mode active. switching you over…');
+                        setTimeout(() => {
+                            window.location.href = `http://localhost:${statusData.diskWebPort}/`;
+                        }, 500);
+                    }
+                } catch {
+                    clearInterval(poll);
+                    modal.close();
+                    this.setStatus('lost connection during handoff. reload at the service port.', true);
+                    this.setBusy(false);
+                }
+            }, pollInterval);
         } catch {
             this.setStatus("couldn't reach server. try again?", true);
             this.setBusy(false);
