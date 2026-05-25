@@ -426,7 +426,7 @@ fn uninstall_service(args: &UninstallServiceArgs) -> ElevatedResult {
     // current session. Best-effort — no tray process means no kill,
     // not an error.
     log::info("uninstall-service: invoking taskkill /F /IM ws-scrcpy-web-tray.exe");
-    match Command::new("taskkill")
+    match silent_command("taskkill")
         .args(["/F", "/IM", "ws-scrcpy-web-tray.exe"])
         .output()
     {
@@ -467,8 +467,21 @@ impl CapturedOutput {
     }
 }
 
+#[cfg(windows)]
+fn silent_command(exe: &str) -> Command {
+    use std::os::windows::process::CommandExt;
+    let mut cmd = Command::new(exe);
+    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    cmd
+}
+
+#[cfg(not(windows))]
+fn silent_command(exe: &str) -> Command {
+    Command::new(exe)
+}
+
 fn run_capture(exe: &str, args: &[impl AsRef<std::ffi::OsStr>]) -> Result<CapturedOutput, String> {
-    let output = Command::new(exe)
+    let output = silent_command(exe)
         .args(args)
         .output()
         .map_err(|e| e.to_string())?;
@@ -512,7 +525,7 @@ fn classify_reg_delete_outcome(status_code: Option<i32>, stderr: &[u8]) -> Resul
 /// caveats around what exit 1 actually means). Other non-zero exits are
 /// propagated with stderr in the error payload.
 fn reg_delete_value_best_effort(key: &str, value: &str) -> Result<(), String> {
-    let out = Command::new("reg.exe")
+    let out = silent_command("reg.exe")
         .args(["delete", key, "/v", value, "/f"])
         .output()
         .map_err(|e| e.to_string())?;
