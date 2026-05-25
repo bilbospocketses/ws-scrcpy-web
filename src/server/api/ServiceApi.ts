@@ -16,7 +16,6 @@ import {
 import { Config } from '../Config';
 import { detectInstallScope } from '../InstallScope';
 import { Logger } from '../Logger';
-import { discoverServicePort } from '../service/discoverServicePort';
 import { consumeToken } from '../service/resumeToken';
 import { ServiceInstallError } from '../service/ServyClient';
 import {
@@ -52,13 +51,6 @@ export class ServiceApi {
         private readonly factory: () => ServiceClientFactoryResult = () => getServiceClient(),
         private readonly scope: () => 'user' | 'system' = () => detectInstallScope(),
         private readonly existsCheck: (p: string) => boolean = (p: string) => fs.existsSync(p),
-        // v0.1.8: injection points for the install + uninstall handoff
-        // helpers. Tests stub these to short-circuit slow real network
-        // probing and elevation. Production callers omit and the API
-        // uses the real implementations.
-        private readonly discover: (
-            opts: { ownPid: number; startPort: number; range: number; timeoutMs: number },
-        ) => Promise<string | null> = discoverServicePort,
     ) {}
 
     public async handle(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
@@ -325,69 +317,25 @@ export class ServiceApi {
         }
 
         const status = await result.client.status(WS_SCRCPY_SERVICE_NAME);
+        const disk = this.readDiskConfig();
 
-        // v0.1.8 install-flow auto-redirect (Windows only — Linux
-        // SystemdClient already runs the service in the user session,
-        // no port-shift, no handoff needed). Discover the new
-        // service-instance's port by polling localhost:8000..8099 for
-        // the /api/whoami endpoint that returns a pid != ours.
-        let redirectTo: string | undefined;
+        // Schedule local-Node exit. This instance is useless once the service
+        // is running. The frontend navigates to the service port once it
+        // detects config.json mtime change — this timer is a safety cap, not
+        // a timing mechanism.
         if (result.platform === 'win32') {
-            try {
-                const ownPort = cfg.servers[0]?.port ?? 8000;
-                const found = await this.discover({
-                    ownPid: process.pid,
-                    startPort: ownPort,
-                    range: 100,
-                    timeoutMs: 30_000,
-                });
-                if (found) {
-                    redirectTo = found;
-                    // §32 Part 5c — sync local Node's in-memory webPort to
-                    // the actual port the service-Node bound. Without this,
-                    // any local-Node write between now and process.exit
-                    // (e.g., a browser PATCH /api/config or /api/updater
-                    // fired during the redirect window) carries the stale
-                    // pre-install webPort in memory and clobbers the
-                    // correct value that service-Node already persisted
-                    // via reconcileWebPort. The clobbered config.json then
-                    // breaks BOTH the tray (re-reads stale port → opens a
-                    // dead address) AND the launcher's --upgrade-server
-                    // (binds stale port, browser sees ECONNREFUSED through
-                    // the entire upgrade window). Diagnosed via v0.1.25-
-                    // beta.22 → beta.23 smoke 2026-05-21.
-                    try {
-                        const parsedPort = Number.parseInt(new URL(found).port, 10);
-                        if (Number.isInteger(parsedPort) && parsedPort >= 1024 && parsedPort <= 65535) {
-                            cfg.setActualWebPort(parsedPort);
-                            log.info(`install-flow: synced local in-memory webPort to actual service port ${parsedPort}`);
-                        } else {
-                            log.warn(`install-flow: could not parse port from discovered URL ${found}; webPort sync skipped`);
-                        }
-                    } catch (err) {
-                        log.warn(`install-flow: webPort sync failed (continuing without it): ${(err as Error).message}`);
-                    }
-                    // Schedule our own shutdown shortly after the
-                    // response goes out. The user's browser will have
-                    // navigated to `redirectTo` by then; killing this
-                    // local instance avoids two app instances + two
-                    // tray icons. 5s is enough for the 200 response to
-                    // flush and the browser to load the new port.
-                    setTimeout(() => {
-                        log.info('install-flow handoff complete; local instance exiting');
-                        process.exit(0);
-                    }, 5000).unref();
-                }
-            } catch (err) {
-                log.warn(`port-discovery for redirectTo failed: ${(err as Error).message}`);
-            }
+            setTimeout(() => {
+                log.info('install-flow: local instance exiting (service is running)');
+                process.exit(0);
+            }, 15_000).unref();
         }
 
         const body: ServiceActionSuccess = {
             ok: true,
             status,
             installMode: newInstallMode,
-            ...(redirectTo ? { redirectTo } : {}),
+            ...(disk.configMtime != null ? { configMtime: disk.configMtime } : {}),
+            ...(disk.diskWebPort != null ? { diskWebPort: disk.diskWebPort } : {}),
         };
         res.writeHead(200);
         res.end(JSON.stringify(body));
