@@ -90,6 +90,23 @@ export class ServiceApi {
         }
     }
 
+    /**
+     * Read config.json from disk and return the current webPort + file mtime.
+     * Returns null fields on any read/parse/stat failure (caller treats as "not ready").
+     */
+    private readDiskConfig(): { diskWebPort: number | null; configMtime: number | null } {
+        try {
+            const cfgPath = Config.getInstance().getConfigFilePath();
+            const stat = fs.statSync(cfgPath);
+            const raw = fs.readFileSync(cfgPath, 'utf-8');
+            const parsed = JSON.parse(raw) as { webPort?: unknown };
+            const port = typeof parsed.webPort === 'number' ? parsed.webPort : null;
+            return { diskWebPort: port, configMtime: stat.mtimeMs };
+        } catch {
+            return { diskWebPort: null, configMtime: null };
+        }
+    }
+
     private async handleStatus(res: ServerResponse): Promise<boolean> {
         const result = this.factory();
         if (!result.supported) {
@@ -103,10 +120,13 @@ export class ServiceApi {
             return true;
         }
         const status = await result.client.status(WS_SCRCPY_SERVICE_NAME);
+        const disk = this.readDiskConfig();
         const body: ServiceStatusResponse = {
             supported: true,
             platform: result.platform,
             status,
+            ...(disk.diskWebPort != null ? { diskWebPort: disk.diskWebPort } : {}),
+            ...(disk.configMtime != null ? { configMtime: disk.configMtime } : {}),
         };
         res.writeHead(200);
         res.end(JSON.stringify(body));

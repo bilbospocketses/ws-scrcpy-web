@@ -145,12 +145,33 @@ describe('ServiceApi', () => {
         const { req, res } = makeReqRes('/api/service/status');
         await api.handle(req, res);
         expect((res as any).getStatus()).toBe(200);
-        expect(JSON.parse((res as any).getBody())).toEqual({
+        const body = JSON.parse((res as any).getBody());
+        expect(body.supported).toBe(true);
+        expect(body.platform).toBe('win32');
+        expect(body.status).toBe('running');
+        // configMtime is present because config.json exists on disk (written by beforeEach)
+        expect(typeof body.configMtime).toBe('number');
+        expect(client.status).toHaveBeenCalledWith('WsScrcpyWeb');
+    });
+
+    it('GET /status includes diskWebPort and configMtime from disk when supported', async () => {
+        const cfg = Config.getInstance();
+        cfg.updateAppConfig({ webPort: 9001 });
+
+        const client = fakeClient({ status: vi.fn(async () => 'running' as const) });
+        const factoryResult: ServiceClientFactoryResult = {
+            client,
             supported: true,
             platform: 'win32',
-            status: 'running',
-        });
-        expect(client.status).toHaveBeenCalledWith('WsScrcpyWeb');
+        };
+        const api = new ServiceApi(() => factoryResult, () => 'user');
+        const { req, res } = makeReqRes('/api/service/status');
+        await api.handle(req, res);
+        const body = JSON.parse((res as any).getBody());
+        expect(body.supported).toBe(true);
+        expect(body.diskWebPort).toBe(9001);
+        expect(typeof body.configMtime).toBe('number');
+        expect(body.configMtime).toBeGreaterThan(0);
     });
 
     it('POST /install returns 501 with unsupportedReason on unsupported platforms', async () => {
