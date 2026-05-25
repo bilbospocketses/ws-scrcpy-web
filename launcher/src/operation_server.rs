@@ -442,6 +442,43 @@ fn handle_connection(mut stream: TcpStream, redirect_state: Arc<Mutex<Option<Str
     let _ = stream.shutdown(std::net::Shutdown::Both);
 }
 
+/// Build the HTTP response for GET /api/discover.
+/// Reads config.json from disk, extracts webPort + file mtime.
+/// Returns JSON with null fields on any failure (frontend keeps polling).
+fn build_discover_response(config_path: &Path) -> String {
+    let (web_port, mtime_ms) = match std::fs::metadata(config_path) {
+        Ok(meta) => {
+            let mtime = meta.modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_millis() as u64);
+            let port = std::fs::read_to_string(config_path)
+                .ok()
+                .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+                .and_then(|v| v.get("webPort")?.as_u64())
+                .map(|p| p as u16);
+            (port, mtime)
+        }
+        Err(_) => (None, None),
+    };
+
+    let port_str = match web_port {
+        Some(p) => format!("{p}"),
+        None => "null".to_string(),
+    };
+    let mtime_str = match mtime_ms {
+        Some(m) => format!("{m}"),
+        None => "null".to_string(),
+    };
+    let body = format!(r#"{{"webPort":{port_str},"configMtime":{mtime_str}}}"#);
+
+    format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nCache-Control: no-store\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n{}",
+        body.len(),
+        body
+    )
+}
+
 fn build_response(path: &str, redirect: Option<&str>, variant: OperationVariant) -> String {
     // Discrimination strategy: the static HTML page (served on root)
     // polls /api/config every 1s. Two response shapes for /api/*:
@@ -455,6 +492,17 @@ fn build_response(path: &str, redirect: Option<&str>, variant: OperationVariant)
     // sends the sentinel; its `r.headers.get(...) !== '1'` branch is the
     // existing "real app is back, reload" path).
     if path.starts_with("/api/") {
+        if path == "/api/discover" {
+            let config_path = std::env::var("WS_SCRCPY_DATA_ROOT")
+                .map(|dr| PathBuf::from(dr).join("config.json"))
+                .unwrap_or_else(|_| {
+                    common::config::data_root_from_env()
+                        .unwrap_or_else(|| PathBuf::from("."))
+                        .join("config.json")
+                });
+            return build_discover_response(&config_path);
+        }
+
         if let Some(url) = redirect {
             // Naive JSON string encoding — port-only URLs (http://localhost:NNNN/)
             // contain no characters that need escaping. If the redirect ever
@@ -807,5 +855,42 @@ mod tests {
         let html = super::render_operation_page(super::OperationVariant::Uninstall);
         assert!(html.contains("Uninstalling service, please wait"), "uninstall title present: {html}");
         assert!(!html.contains("__OPERATION_TITLE__"), "template token replaced");
+    }
+
+    #[test]
+    fn build_discover_response_with_valid_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.json");
+        std::fs::write(&config_path, r#"{"webPort":8003,"installMode":"user"}"#).unwrap();
+
+        let response = super::build_discover_response(&config_path);
+        assert!(response.contains("200 OK"));
+        assert!(response.contains(r#""webPort":8003"#));
+        assert!(response.contains(r#""configMtime":"#));
+    }
+
+    #[test]
+    fn build_discover_response_with_missing_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.json");
+
+        let response = super::build_discover_response(&config_path);
+        assert!(response.contains("200 OK"));
+        assert!(response.contains(r#""webPort":null"#));
+        assert!(response.contains(r#""configMtime":null"#));
+    }
+
+    #[test]
+    fn build_discover_response_with_malformed_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.json");
+        std::fs::write(&config_path, "not json at all").unwrap();
+
+        let response = super::build_discover_response(&config_path);
+        assert!(response.contains("200 OK"));
+        assert!(response.contains(r#""webPort":null"#));
+        // configMtime should still be present since the file exists
+        assert!(response.contains(r#""configMtime":"#));
+        assert!(!response.contains(r#""configMtime":null"#));
     }
 }
