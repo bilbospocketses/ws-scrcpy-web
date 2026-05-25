@@ -9,7 +9,7 @@
  * ServyClient, SystemdClient) and `src/server/api/ServiceApi.ts`.
  */
 
-export type ServiceStatus = 'running' | 'stopped' | 'not-installed';
+export type ServiceStatus = 'running' | 'stopped' | 'not-installed' | 'shutting-down';
 
 /**
  * Response shape for `GET /api/service/status`.
