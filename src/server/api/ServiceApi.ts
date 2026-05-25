@@ -423,6 +423,22 @@ export class ServiceApi {
             const isWindows = result.platform === 'win32';
 
             if (isWindows && runningAsService && this.isLikelyLocalSystem()) {
+                // Revert installMode BEFORE exiting so the freshly spawned
+                // launcher (from --spawn-user-launcher in post-stop.bat)
+                // reads local mode from config.json, not the stale service
+                // mode. Without this, the fresh launcher enters service mode,
+                // its tray supervisor tries WTSQueryUserToken (needs
+                // SeTcbPrivilege), but the launcher runs as the regular user
+                // → tray spawn fails forever with 0x80070522.
+                let newMode: InstallMode = 'user';
+                if (installMode === 'system-service') newMode = 'system';
+                try {
+                    cfg.updateAppConfig({ installMode: newMode });
+                    log.info(`uninstall: reverted installMode ${installMode} → ${newMode}`);
+                } catch (err) {
+                    log.warn(`uninstall: installMode revert failed (continuing): ${(err as Error).message}`);
+                }
+
                 try {
                     await fs.promises.mkdir(path.dirname(cfg.uninstallPendingMarkerPath), { recursive: true });
                     await fs.promises.writeFile(cfg.uninstallPendingMarkerPath, '', 'utf8');
@@ -467,7 +483,7 @@ export class ServiceApi {
                 const body: ServiceActionSuccess = {
                     ok: true,
                     status: 'shutting-down',
-                    installMode,
+                    installMode: newMode,
                 };
                 res.writeHead(200);
                 res.end(JSON.stringify(body));

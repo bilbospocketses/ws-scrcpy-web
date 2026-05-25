@@ -809,7 +809,7 @@ describe('ServiceApi', () => {
             const body = JSON.parse((res as any).getBody());
             expect(body.ok).toBe(true);
             expect(body.status).toBe('shutting-down');
-            expect(body.installMode).toBe('system-service');
+            expect(body.installMode).toBe('system');
             expect(body.redirectTo).toBeUndefined();
         });
 
