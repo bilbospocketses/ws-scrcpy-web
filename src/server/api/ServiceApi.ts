@@ -17,10 +17,7 @@ import { Config } from '../Config';
 import { detectInstallScope } from '../InstallScope';
 import { Logger } from '../Logger';
 import { discoverServicePort } from '../service/discoverServicePort';
-import { resolveLauncherPath as resolveLauncherPathForElevation } from '../service/elevatedRunner';
-import { consumeToken, issueToken } from '../service/resumeToken';
-import { writeUninstallHandoffMarker } from '../util/control-marker';
-import { resolveActiveSessionId } from '../util/active-session';
+import { consumeToken } from '../service/resumeToken';
 import { ServiceInstallError } from '../service/ServyClient';
 import {
     getServiceClient,
@@ -548,100 +545,5 @@ export class ServiceApi {
         } catch {
             return false;
         }
-    }
-
-    /**
-     * Theory D handoff — DEAD CODE after Phase 4. Kept for Phase 5
-     * sweep; no callers remain. Delete the entire method + its imports
-     * (`consumeToken`, `issueToken`, `writeUninstallHandoffMarker`,
-     * `resolveActiveSessionId`, `resolveLauncherPathForElevation`) in
-     * the Phase 5 dead-code PR.
-     */
-    // @ts-ignore TS6133 — intentional dead code, Phase 5 deletes this
-    private async handoffUninstallToUserSession(
-        installRoot: string,
-        res: ServerResponse,
-    ): Promise<boolean> {
-        const launcherPath = resolveLauncherPathForElevation();
-        // Theory D: write a control marker that the user-session tray helper
-        // polls — replaces the WTS cross-session spawn that was failing with
-        // ERROR_ACCESS_DENIED in v0.1.24-beta.{1,2,3}.
-        const sessionResult = await resolveActiveSessionId(launcherPath);
-        const targetSessionId = sessionResult.ok ? sessionResult.sessionId : null;
-        if (!sessionResult.ok) {
-            log.warn(`uninstall handoff: could not resolve active session, marker will accept any tray helper: ${sessionResult.errorMessage}`);
-        }
-        // dataRoot is the parent of the dependenciesPath that was passed in as
-        // installRoot (same derivation as the logsDir path in handleInstall).
-        const dataRoot = path.dirname(installRoot);
-        // --local-takeover is load-bearing: it forces the spawned launcher to
-        // override its is_service_mode decision and start the local-mode tray.
-        // config.json still reads installMode='user-service' at spawn time;
-        // only after the resume-flow uninstall completes does it flip to 'user'.
-        // Without this flag the new launcher would boot tray-less and the user
-        // would be stranded post-uninstall.
-        const writeResult = await writeUninstallHandoffMarker(dataRoot, {
-            targetSessionId,
-            launcherPath,
-            launcherArgs: ['--local-takeover'],
-        });
-        if (!writeResult.ok) {
-            log.warn(`uninstall handoff: marker write failed: ${writeResult.errorMessage}`);
-            return false;
-        }
-        log.info(`uninstall handoff: marker written (targetSessionId=${targetSessionId ?? 'any'}) at ${dataRoot}/control/uninstall-handoff.json — tray should pick up within ~750ms; awaiting new local launcher`);
-
-        // §33 beta.38 diagnostic logging — heartbeat the discover() wait
-        // so we can tell at-a-glance whether the timeout is "discover
-        // never started" vs. "discover ran the full 30s but found
-        // nothing". Per-iteration detail lives in discoverServicePort
-        // itself; this is the caller-side perspective.
-        const handoffStart = Date.now();
-        const heartbeat = setInterval(() => {
-            const elapsed = Math.floor((Date.now() - handoffStart) / 1000);
-            log.info(
-                `uninstall handoff: still waiting for new local launcher (elapsed=${elapsed}s)`,
-            );
-        }, 5000);
-
-        // Poll for the new launcher's port. Ports start at 8000; the
-        // service is on whichever port we currently bind. The new
-        // local launcher will auto-shift to a free one.
-        let found: string | null;
-        try {
-            found = await this.discover({
-                ownPid: process.pid,
-                startPort: 8000,
-                range: 100,
-                timeoutMs: 30_000,
-            });
-        } finally {
-            clearInterval(heartbeat);
-        }
-        if (!found) {
-            log.warn(
-                `uninstall handoff: new local launcher did not become reachable within 30s (handoff elapsed=${Date.now() - handoffStart}ms)`,
-            );
-            return false;
-        }
-        log.info(
-            `uninstall handoff: new local launcher reachable at ${found} (handoff elapsed=${Date.now() - handoffStart}ms); issuing resume token`,
-        );
-
-        const token = issueToken(installRoot, 'uninstall-service');
-        const redirectTo = `${found}/?resume=uninstall-service&token=${encodeURIComponent(token)}`;
-
-        const body: ServiceActionSuccess = {
-            ok: true,
-            // Service is still running at this point — the local
-            // launcher will do the actual uninstall.
-            status: 'running',
-            installMode: 'user-service',
-            redirectTo,
-            resumeToken: token,
-        };
-        res.writeHead(200);
-        res.end(JSON.stringify(body));
-        return true;
     }
 }
