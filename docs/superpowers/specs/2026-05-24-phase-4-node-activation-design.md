@@ -187,7 +187,7 @@ New code:
         const body: ServiceActionSuccess = {
             ok: true,
             status: 'shutting-down',
-            installMode: 'user-service',
+            installMode,
         };
         res.writeHead(200);
         res.end(JSON.stringify(body));
