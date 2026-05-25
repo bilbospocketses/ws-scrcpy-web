@@ -299,7 +299,9 @@ export class WelcomeModal extends Modal {
                 statusResp.unsupportedReason ||
                 'service mode is not supported on this platform.';
             this.setStatus(`${reason} falling back to on-demand mode…`);
-            const ok = await this.patchConfig({ installMode: 'user', firstRunComplete: true });
+            const patch: Record<string, unknown> = { installMode: 'user' };
+            if (this.dontShowCheckbox.checked) patch['firstRunComplete'] = true;
+            const ok = await this.patchConfig(patch);
             if (!ok) {
                 this.setStatus("couldn't save preference. try again?", true);
                 this.setBusy(false);
@@ -335,11 +337,9 @@ export class WelcomeModal extends Modal {
                 this.setBusy(false);
                 return;
             }
-            // Server has updated installMode on success. Defensively also PATCH
-            // firstRunComplete so the welcome modal does not re-appear on next
-            // load even if the backend's /install handler omits that flag.
-            // Failure here is non-fatal — install itself succeeded.
-            await this.patchConfig({ firstRunComplete: true });
+            if (this.dontShowCheckbox.checked) {
+                await this.patchConfig({ firstRunComplete: true });
+            }
 
             // v0.1.8: if the server discovered a new service-instance
             // port and asked us to redirect, hand off cleanly. The
@@ -368,7 +368,9 @@ export class WelcomeModal extends Modal {
     private async onNo(): Promise<void> {
         this.setBusy(true);
         this.setStatus('saving…');
-        const ok = await this.patchConfig({ installMode: 'user', firstRunComplete: true });
+        const patch: Record<string, unknown> = { installMode: 'user' };
+        if (this.dontShowCheckbox.checked) patch['firstRunComplete'] = true;
+        const ok = await this.patchConfig(patch);
         if (!ok) {
             this.setStatus("couldn't save preference. try again?", true);
             this.setBusy(false);

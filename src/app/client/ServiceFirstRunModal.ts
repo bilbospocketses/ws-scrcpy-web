@@ -118,15 +118,15 @@ export class ServiceFirstRunModal extends Modal {
         if (this.dismissBtn) this.dismissBtn.disabled = true;
         if (this.dontShowCheckbox?.checked) {
             setBookmarkDismissedPort(this.opts.webPort);
-        }
-        try {
-            await fetch('/api/config', {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ serviceFirstRunSeen: true }),
-            });
-        } catch {
-            /* fall-through: still close */
+            try {
+                await fetch('/api/config', {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ serviceFirstRunSeen: true }),
+                });
+            } catch {
+                /* fall-through: still close */
+            }
         }
         this.opts.onDismissed?.();
         this.close();
