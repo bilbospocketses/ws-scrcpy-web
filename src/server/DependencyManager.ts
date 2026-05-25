@@ -409,16 +409,41 @@ export class DependencyManager {
             }
         }
 
-        // Extract zip (ADB is always a zip on both platforms)
+        // 1. Non-destructive: extract to tmpDir.
         await this.extractZip(downloadPath, tmpDir, platform);
 
-        // ADB archives contain a platform-tools/ subfolder
         const platformToolsDir = path.join(tmpDir, 'platform-tools');
         if (!fs.existsSync(platformToolsDir)) {
             throw new Error('Could not find platform-tools directory in extracted archive');
         }
 
-        this.copyDirContents(platformToolsDir, destDir);
+        // 2. Destructive (Windows only): rename + copy with rollback.
+        if (platform === 'win32') {
+            const oldExe = path.join(destDir, 'adb.exe.old');
+            let renamed = false;
+            if (fs.existsSync(adbExe)) {
+                try {
+                    fs.renameSync(adbExe, oldExe);
+                    renamed = true;
+                } catch {
+                    // May fail if adb server didn't fully stop — proceed without rollback safety net.
+                }
+            }
+            try {
+                this.copyDirContents(platformToolsDir, destDir);
+            } catch (err) {
+                if (renamed && !fs.existsSync(adbExe)) {
+                    try {
+                        fs.renameSync(oldExe, adbExe);
+                    } catch {
+                        // Best-effort rollback.
+                    }
+                }
+                throw err;
+            }
+        } else {
+            this.copyDirContents(platformToolsDir, destDir);
+        }
     }
 
     private async installScrcpyServer(downloadPath: string, version: string): Promise<void> {
