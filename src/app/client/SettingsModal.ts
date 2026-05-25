@@ -987,10 +987,9 @@ export class SettingsModal extends Modal {
 
         const confirmText = document.createElement('p');
         confirmText.textContent =
-            'this clears the localStorage flags that suppress the welcome modal, ' +
-            'service-mode modal, and per-port bookmark reminder. the page will reload ' +
-            'so the appropriate modal can re-fire. it does not affect server settings, ' +
-            'install mode, audio preferences, or scan history.';
+            'this resets the welcome modal, service-mode modal, and per-port bookmark ' +
+            'reminder. the page will reload so the appropriate modal can re-fire. ' +
+            'it does not affect install mode, audio preferences, or scan history.';
         confirmPanel.appendChild(confirmText);
 
         const confirmButtons = document.createElement('div');
@@ -1011,7 +1010,13 @@ export class SettingsModal extends Modal {
         confirmBtn.textContent = 'confirm reset';
         confirmBtn.addEventListener('click', () => {
             resetAllDismissals();
-            window.location.reload();
+            fetch('/api/config', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ firstRunComplete: false, serviceFirstRunSeen: false }),
+            }).finally(() => {
+                window.location.reload();
+            });
         });
         confirmButtons.appendChild(confirmBtn);
 
