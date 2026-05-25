@@ -445,10 +445,12 @@ export class ServiceApi {
                     process.exit(0);
                 }, 5000).unref();
 
+                const disk = this.readDiskConfig();
                 const body: ServiceActionSuccess = {
                     ok: true,
                     status: 'shutting-down',
                     installMode: newMode,
+                    ...(disk.configMtime != null ? { configMtime: disk.configMtime } : {}),
                 };
                 res.writeHead(200);
                 res.end(JSON.stringify(body));

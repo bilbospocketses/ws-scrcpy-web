@@ -839,5 +839,37 @@ describe('ServiceApi', () => {
             const cfg = Config.getInstance();
             expect(fs.existsSync(cfg.uninstallPendingMarkerPath)).toBe(false);
         });
+
+        it('POST /uninstall (service context, LocalSystem) includes configMtime in shutting-down response', async () => {
+            const cfg = Config.getInstance();
+            cfg.updateAppConfig({ installMode: 'system-service', webPort: 8003 });
+
+            const client = fakeClient({ status: vi.fn(async () => 'running' as const) });
+            const factoryResult: ServiceClientFactoryResult = {
+                client,
+                supported: true,
+                platform: 'win32',
+            };
+
+            const api = new ServiceApi(
+                () => factoryResult,
+                () => 'system',
+                () => true,
+            );
+            vi.spyOn(
+                api as unknown as { isLikelyLocalSystem: () => boolean },
+                'isLikelyLocalSystem',
+            ).mockReturnValue(true);
+
+            const { req, res } = makeReqRes('/api/service/uninstall', 'POST');
+            await api.handle(req, res);
+            const body = JSON.parse((res as any).getBody());
+            expect(body.ok).toBe(true);
+            expect(body.status).toBe('shutting-down');
+            expect(typeof body.configMtime).toBe('number');
+            expect(body.configMtime).toBeGreaterThan(0);
+
+            vi.restoreAllMocks();
+        });
     });
 });
