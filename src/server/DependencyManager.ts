@@ -389,6 +389,9 @@ export class DependencyManager {
                 }
                 throw err;
             }
+            if (renamed) {
+                try { fs.unlinkSync(oldExe); } catch { /* best-effort cleanup */ }
+            }
         } else {
             this.copyDirContents(extractedPath, destDir);
         }
@@ -440,6 +443,9 @@ export class DependencyManager {
                     }
                 }
                 throw err;
+            }
+            if (renamed) {
+                try { fs.unlinkSync(oldExe); } catch { /* best-effort cleanup */ }
             }
         } else {
             this.copyDirContents(platformToolsDir, destDir);

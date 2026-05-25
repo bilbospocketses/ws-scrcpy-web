@@ -234,8 +234,7 @@ describe('DependencyManager.installNodejs rollback', () => {
 
         expect(fs.readFileSync(originalNodeExe, 'utf8')).toBe('NEW-NODE-BYTES');
         expect(fs.readFileSync(path.join(destDir, 'npm.cmd'), 'utf8')).toBe('NPM-CMD-BYTES');
-        // Current behavior: node.exe.old lingers post-success (cleanup is a separate non-goal).
-        expect(fs.existsSync(path.join(destDir, 'node.exe.old'))).toBe(true);
+        expect(fs.existsSync(path.join(destDir, 'node.exe.old'))).toBe(false);
 
         fs.rmSync(extractTmp, { recursive: true, force: true });
     });
