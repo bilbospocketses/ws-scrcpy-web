@@ -921,6 +921,9 @@ export class SettingsModal extends Modal {
             }
             if (data.status === 'shutting-down') {
                 keepModalOpen = true;
+                setTimeout(() => {
+                    window.location.reload();
+                }, 8000);
                 return;
             }
             if (data.redirectTo) {
