@@ -1,6 +1,6 @@
 import { Modal } from '../ui/Modal';
 import type { ServiceStatusResponse, ServiceInstallResponse } from '../../common/ServiceEvents';
-import { setBookmarkDismissedPort, setWelcomeDismissed } from './firstRunGate';
+import { setBookmarkDismissedPort } from './firstRunGate';
 import { ServiceOperationModal } from './ServiceOperationModal';
 
 export type WelcomeChoice = 'service' | 'on-demand';
@@ -374,19 +374,7 @@ export class WelcomeModal extends Modal {
             this.setBusy(false);
             return;
         }
-        // v0.1.10: only suppress future first-run modal when the user
-        // explicitly opts out via the checkbox. Without this gate the
-        // modal would still keep firing because firstRunComplete server
-        // state alone was load-bearing-but-broken across uninstall cycles
-        // — the localStorage flag is the new authority.
         if (this.dontShowCheckbox.checked) {
-            setWelcomeDismissed();
-            // v0.1.11: WelcomeModal already shows bookmark copy in its
-            // info-callout, so dismissing it with the checkbox legitimately
-            // covers the bookmark prompt for this port too. Without this,
-            // PortChangeModal fired on the very next page load even though
-            // the user had just acknowledged a bookmark hint two seconds
-            // earlier — redundant noise.
             setBookmarkDismissedPort(this.opts.webPort);
         }
         this.opts.onDecision('on-demand');
