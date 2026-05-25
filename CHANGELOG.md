@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.25-beta.52] - 2026-05-25
+
 ### Fixed
 
 - **All console window flashes eliminated.** Full audit of every `Command::new` in the launcher: `silent_command` (with `CREATE_NO_WINDOW`) now covers icacls (×2 in hooks.rs), taskkill (hooks.rs + tray_supervisor.rs), servy-cli (hooks.rs run_servy), and the tray spawn in elevated_runner. `silent_command` promoted to `pub(crate)` and signature widened to `impl AsRef<OsStr>`.
