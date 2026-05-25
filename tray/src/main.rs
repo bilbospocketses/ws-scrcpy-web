@@ -47,17 +47,6 @@ fn main() -> Result<()> {
         }
     };
 
-    // Best-effort cleanup of the pre-v0.1.25 HKCU\...\Run\WsScrcpyWebTray
-    // value for the current user. v0.1.24 wrote this from elevated install
-    // context, so only the original installing admin had it. For everyone
-    // else this is a no-op (reg.exe exits 1 on value-not-found, treated as
-    // success).
-    if let Err(e) = cleanup_stale_hkcu_run_value() {
-        common::log::error(&format!(
-            "tray: HKCU\\Run cleanup failed (non-fatal): {e:?}"
-        ));
-    }
-
     run_tray()
 }
 
@@ -254,52 +243,6 @@ fn install_root_from_exe() -> Result<PathBuf> {
     } else {
         Ok(parent)
     }
-}
-
-/// Best-effort delete of the pre-v0.1.25 HKCU\...\Run\WsScrcpyWebTray value
-/// for the current user. v0.1.24 wrote this from elevated install context,
-/// which only landed in the installing admin's hive — so for non-admin users
-/// this is always a no-op. For the original installing admin, this removes
-/// the stale registration that would otherwise spawn a duplicate tray
-/// alongside the new HKLM-Run-spawned one.
-///
-/// Returns Ok on exit code 0 (deleted) AND exit code 1 (not present, or
-/// other recoverable failure). Same exit-code-classification pattern as
-/// `classify_reg_delete_outcome` in `launcher/src/elevated_runner.rs`,
-/// inlined here rather than shared because the tray crate doesn't depend
-/// on launcher (different process boundaries, different ownership). Other
-/// exit codes return Err so the caller can log; they should not abort
-/// startup.
-#[cfg(windows)]
-fn cleanup_stale_hkcu_run_value() -> Result<()> {
-    use std::process::Command;
-
-    let out = Command::new("reg.exe")
-        .args([
-            "delete",
-            r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
-            "/v",
-            "WsScrcpyWebTray",
-            "/f",
-        ])
-        .output()
-        .context("reg.exe delete HKCU Run-key")?;
-
-    match out.status.code() {
-        Some(0) | Some(1) => Ok(()),
-        _ => {
-            anyhow::bail!(
-                "reg.exe exited with {:?}; stderr: {}",
-                out.status.code(),
-                String::from_utf8_lossy(&out.stderr)
-            );
-        }
-    }
-}
-
-#[cfg(not(windows))]
-fn cleanup_stale_hkcu_run_value() -> Result<()> {
-    Ok(())
 }
 
 /// Fire-and-forget POST to the server's shutdown endpoint.
