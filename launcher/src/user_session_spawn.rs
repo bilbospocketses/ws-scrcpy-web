@@ -181,8 +181,8 @@ pub fn spawn_in_active_user_session(args: &SpawnUserLauncherArgs) -> SpawnResult
     };
     use windows::Win32::System::RemoteDesktop::WTSQueryUserToken;
     use windows::Win32::System::Threading::{
-        CreateProcessAsUserW, CREATE_UNICODE_ENVIRONMENT, NORMAL_PRIORITY_CLASS,
-        PROCESS_INFORMATION, STARTUPINFOW,
+        CREATE_NO_WINDOW, CreateProcessAsUserW, CREATE_UNICODE_ENVIRONMENT,
+        NORMAL_PRIORITY_CLASS, PROCESS_INFORMATION, STARTUPINFOW,
     };
     use windows::core::PWSTR;
 
@@ -313,7 +313,7 @@ pub fn spawn_in_active_user_session(args: &SpawnUserLauncherArgs) -> SpawnResult
             // CreateEnvironmentBlock (which always returns UTF-16).
             // Without it, CreateProcessAsUserW would interpret the
             // block as ANSI and produce garbage env vars.
-            NORMAL_PRIORITY_CLASS | CREATE_UNICODE_ENVIRONMENT,
+            NORMAL_PRIORITY_CLASS | CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW,
             if env_built { Some(env_block) } else { None },
             cwd_pcwstr,
             &si,
