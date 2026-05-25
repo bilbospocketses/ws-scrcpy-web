@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Service uninstall now uses operation-server pattern (Phase 4 user-visible flip).** Replaces the Theory D handoff dance. New flow: service-Node writes `uninstall-pending` marker, spawns operation-server (detached), returns `shutting-down` status, exits; post-stop.bat runs `servy-cli uninstall` + spawns fresh user-session launcher; operation-server serves "Uninstalling service, please wait..." page throughout. Frontend `ServiceOperationModal` stays open during transition. **No more UAC prompt during uninstall.** `handoffUninstallToUserSession` function body remains as dead code; deletion in Phase 5.
+- **Console window flashes eliminated during service install/uninstall.** `silent_command` helper in `elevated_runner.rs` sets `CREATE_NO_WINDOW` on servy-cli, taskkill, and reg.exe spawns.
+
 ## [0.1.25-beta.43] - 2026-05-24
 
 ### Fixed
