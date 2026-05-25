@@ -296,7 +296,7 @@ fn install_service(args: &InstallServiceArgs) -> ElevatedResult {
     // dedup via the per-session single-instance mutex.
     if let Some(tray) = &args.tray_helper_path {
         if std::path::Path::new(tray).exists() {
-            let _ = Command::new(tray).spawn();
+            let _ = silent_command(tray).spawn();
         }
     }
 
@@ -450,7 +450,7 @@ impl CapturedOutput {
 }
 
 #[cfg(windows)]
-fn silent_command(exe: &str) -> Command {
+pub(crate) fn silent_command(exe: impl AsRef<std::ffi::OsStr>) -> Command {
     use std::os::windows::process::CommandExt;
     let mut cmd = Command::new(exe);
     cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
@@ -458,7 +458,7 @@ fn silent_command(exe: &str) -> Command {
 }
 
 #[cfg(not(windows))]
-fn silent_command(exe: &str) -> Command {
+pub(crate) fn silent_command(exe: impl AsRef<std::ffi::OsStr>) -> Command {
     Command::new(exe)
 }
 

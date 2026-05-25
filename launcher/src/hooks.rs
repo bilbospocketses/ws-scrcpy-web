@@ -16,7 +16,7 @@
 // missing servy-cli would block the update from completing.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
+
 
 use common::config::AppConfig;
 
@@ -229,7 +229,7 @@ fn grant_data_root_acl(data_root: &Path) {
     // /C = continue on per-file errors (defensive).
     // /Q = suppress success spam.
     let target = data_root.as_os_str();
-    let result = Command::new("icacls")
+    let result = crate::elevated_runner::silent_command("icacls")
         .arg(target)
         .args(["/grant", "*S-1-5-11:(OI)(CI)M", "/T", "/C", "/Q"])
         // Suppress icacls's "Successfully processed N files" chatter —
@@ -277,7 +277,7 @@ fn grant_data_root_acl(_data_root: &Path) {
 #[cfg(windows)]
 fn grant_install_root_acl(install_root: &Path) {
     let target = install_root.as_os_str();
-    let result = Command::new("icacls")
+    let result = crate::elevated_runner::silent_command("icacls")
         .arg(target)
         .args(["/grant", "*S-1-5-11:(OI)(CI)M", "/T", "/C", "/Q"])
         .stdout(std::process::Stdio::null())
@@ -432,7 +432,7 @@ fn on_uninstall(install_root: &Path, data_root: &Path) -> i32 {
     //     renamed file).
     //   - leaves an HKCU\...\Run\WsScrcpyWebTray entry pointing at a
     //     non-existent path, which is benign on next login but messy.
-    let _ = std::process::Command::new("taskkill")
+    let _ = crate::elevated_runner::silent_command("taskkill")
         .args(["/F", "/IM", "ws-scrcpy-web-tray.exe"])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -453,7 +453,7 @@ fn run_servy(install_root: &Path, args: &[&str], tag: &str) -> i32 {
         return 0;
     }
     log::info(&format!("hook({tag}): invoking {servy:?} {args:?}"));
-    match Command::new(&servy).args(args).status() {
+    match crate::elevated_runner::silent_command(&servy).args(args).status() {
         Ok(status) => {
             let code = status.code().unwrap_or(1);
             log::info(&format!("hook({tag}): servy exited with {code}"));

@@ -137,7 +137,7 @@ fn tray_supervisor_loop(
                     if persisted_mode { "service" } else { "local" },
                     if cfg_install_mode { "service" } else { "local" },
                 ));
-                let _ = std::process::Command::new("taskkill")
+                let _ = crate::elevated_runner::silent_command("taskkill")
                     .args(["/F", "/IM", TRAY_PROCESS_NAME])
                     .output();
             }
