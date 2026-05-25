@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **Dead Theory D handoff code (Phase 5 sweep).** Deleted `handoffUninstallToUserSession` method + `issueToken`, `writeUninstallHandoffMarker`, `resolveActiveSessionId`, `resolveLauncherPathForElevation` imports from `ServiceApi.ts` (-99 lines). `consumeToken` retained (still referenced by the resume-token validation block). No behavior change.
+
 ## [0.1.25-beta.51] - 2026-05-25
 
 ## [0.1.25-beta.50] - 2026-05-25
