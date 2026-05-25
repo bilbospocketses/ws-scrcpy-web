@@ -840,20 +840,12 @@ export class SettingsModal extends Modal {
         btn.disabled = true;
         const prevText = btn.textContent;
         btn.textContent = 'installing…';
-        // §25b — using-declaration replaces the prior try/finally restoring
-        // btn state on every exit path.
-        using _restoreBtn = {
-            [Symbol.dispose](): void {
-                btn.disabled = false;
-                btn.textContent = prevText;
-            },
-        };
+
         const requestBody: { scope?: 'user' | 'system' } = {};
         if (this.serviceScopeSystemRadio) {
             requestBody.scope = this.serviceScopeSystemRadio.checked ? 'system' : 'user';
         }
         const modal = new ServiceOperationModal({ operation: 'install' });
-        using _closeModal = { [Symbol.dispose](): void { modal.close(); } };
         try {
             const r = await fetch('/api/service/install', {
                 method: 'POST',
@@ -865,18 +857,59 @@ export class SettingsModal extends Modal {
                 const errMsg = data && data.ok === false
                     ? SettingsModal.reasonToUserMessage(data.reason, data.error)
                     : `install failed (${r.status})`;
+                modal.close();
+                btn.disabled = false;
+                btn.textContent = prevText;
                 this.renderServiceError(errMsg, () => void this.refreshService());
                 return;
             }
-            if (data.redirectTo) {
-                btn.textContent = '→ service mode (install)…';
-                setTimeout(() => {
-                    window.location.href = data.redirectTo!;
-                }, 500);
-                return;
-            }
-            await this.refreshService();
+
+            // §39: mtime-based discovery. Poll /api/service/status until
+            // config.json mtime changes (service-Node wrote its bound port).
+            const baselineMtime = data.configMtime ?? 0;
+            const pollInterval = 2000;
+            const maxIterations = 30;
+            let iterations = 0;
+            const poll = setInterval(async () => {
+                iterations++;
+                if (iterations > maxIterations) {
+                    clearInterval(poll);
+                    modal.close();
+                    btn.disabled = false;
+                    btn.textContent = prevText;
+                    this.renderServiceError(
+                        'service is running but port discovery timed out. reload the page at your usual address.',
+                        () => void this.refreshService(),
+                    );
+                    return;
+                }
+                try {
+                    const statusResp = await fetch('/api/service/status', { signal: AbortSignal.timeout(5000) });
+                    if (!statusResp.ok) return;
+                    const statusData = await statusResp.json() as { configMtime?: number; diskWebPort?: number };
+                    if (
+                        statusData.configMtime != null &&
+                        statusData.configMtime !== baselineMtime &&
+                        statusData.diskWebPort != null
+                    ) {
+                        clearInterval(poll);
+                        window.location.href = `http://localhost:${statusData.diskWebPort}/`;
+                    }
+                } catch {
+                    clearInterval(poll);
+                    modal.close();
+                    btn.disabled = false;
+                    btn.textContent = prevText;
+                    this.renderServiceError(
+                        'lost connection to local server during handoff. reload the page at the service port.',
+                        () => void this.refreshService(),
+                    );
+                }
+            }, pollInterval);
         } catch {
+            modal.close();
+            btn.disabled = false;
+            btn.textContent = prevText;
             this.renderServiceError("couldn't reach server", () => void this.refreshService());
         }
     }
