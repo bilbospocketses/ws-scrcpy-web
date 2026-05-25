@@ -290,14 +290,6 @@ fn install_service(args: &InstallServiceArgs) -> ElevatedResult {
     let start_out = run_capture(&args.servy_path, &["start", "--name", &args.name])
         .unwrap_or_else(|e| CapturedOutput::error_only(&format!("servy-cli start spawn failed: {e}")));
 
-    // §32 Part 5: HKLM\Run registration removed — launcher owns tray
-    // lifecycle now via the tray_supervisor background poller (runs every
-    // 10s, spawns into active interactive user session as needed).
-    // Cleanup of ANY existing HKLM\Run\WsScrcpyWebTray entry happens
-    // here AND at supervisor startup (defensive for legacy installs).
-    let _ = unregister_tray_run_key();
-    let _ = cleanup_stale_hkcu_tray_run_key();
-
     // Spawn the tray detached so the installing admin immediately gets
     // a tray icon for their session. The tray_supervisor polling thread
     // will also start firing from the now-running service launcher;
@@ -409,17 +401,7 @@ fn uninstall_service(args: &UninstallServiceArgs) -> ElevatedResult {
         };
     }
 
-    // Tray Run-key cleanup — best-effort.
-    log::info("uninstall-service: invoking unregister_tray_run_key (HKLM\\Run cleanup)");
-    match unregister_tray_run_key() {
-        Ok(()) => log::info("uninstall-service: unregister_tray_run_key result Ok"),
-        Err(e) => log::error(&format!(
-            "uninstall-service: unregister_tray_run_key result Err (non-fatal): {e}"
-        )),
-    }
-
     // v0.1.8: also kill the running tray helper process if any. The
-    // Run-key removal above only prevents auto-start on next login;
     // the currently-running tray icon would otherwise sit there
     // pointing at a service that no longer exists. taskkill /F /IM
     // hits both elevated and non-elevated tray instances in the
@@ -493,65 +475,16 @@ fn run_capture(exe: &str, args: &[impl AsRef<std::ffi::OsStr>]) -> Result<Captur
     })
 }
 
-const TRAY_RUN_KEY: &str = r"HKLM\Software\Microsoft\Windows\CurrentVersion\Run";
-const TRAY_RUN_VALUE: &str = "WsScrcpyWebTray";
-
-/// Pre-v0.1.25 the tray was registered under HKCU\...\Run from the
-/// elevated install context, which only wrote to the installing admin's
-/// hive. We keep this path constant so install upgrades can clean up
-/// that stale value. Other users' hives never had it written, so the
-/// cleanup is intentionally limited to the elevated user's HKCU.
-const STALE_HKCU_TRAY_RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
-
-/// Classify the outcome of a `reg.exe delete` command based on its exit code.
-/// Exit code 0 = clean success. Exit code 1 = generic non-fatal failure (value
-/// not found is the dominant case here, but reg.exe also returns 1 for some
-/// other recoverable conditions like access-denied on a key the caller can't
-/// write — the actual reason is in stderr, which is locale-dependent).
-/// We accept exit 1 as no-op success because (a) the previous English-only
-/// stderr substring match was strictly worse on non-English Windows, and
-/// (b) callers wrap this in `let _ =` for best-effort cleanup, so a swallowed
-/// access-denied here would be swallowed under the old logic too. Other
-/// codes = real errors; stderr propagated for the caller to log.
-fn classify_reg_delete_outcome(status_code: Option<i32>, stderr: &[u8]) -> Result<(), String> {
-    match status_code {
-        Some(0) | Some(1) => Ok(()),
-        _ => Err(String::from_utf8_lossy(stderr).into_owned()),
-    }
-}
-
-/// Run `reg.exe delete <key> /v <value> /f` for a best-effort cleanup. Treats
-/// exit code 1 as no-op success (see `classify_reg_delete_outcome` for the
-/// caveats around what exit 1 actually means). Other non-zero exits are
-/// propagated with stderr in the error payload.
-fn reg_delete_value_best_effort(key: &str, value: &str) -> Result<(), String> {
-    let out = silent_command("reg.exe")
-        .args(["delete", key, "/v", value, "/f"])
-        .output()
-        .map_err(|e| e.to_string())?;
-    classify_reg_delete_outcome(out.status.code(), &out.stderr)
-}
-
-// §32 Part 5: HKLM\Run registration removed entirely (replaced by
-// launcher-owned tray polling via tray_supervisor). The following
-// functions were dropped along with that architecture:
-//   - register_tray_run_key (HKLM\Run add)
-//   - migrate_tray_run_key_for_service (startup self-heal)
-//   - is_hklm_already_migrated (helper for the above)
-// Only `unregister_tray_run_key` remains, used at supervisor::run start +
-// install_service time to clean up legacy entries from beta.18-and-earlier
-// installs.
-
-/// Unregister the tray from the HKLM Run key. Exit code 1 (value not found)
-/// is treated as success — the desired post-state is that the value is absent.
-pub fn unregister_tray_run_key() -> Result<(), String> {
-    reg_delete_value_best_effort(TRAY_RUN_KEY, TRAY_RUN_VALUE)
-}
-
-/// Best-effort delete of the pre-v0.1.25 HKCU tray Run-key value, run
-/// during install to clean up upgrades from the HKCU era. Exit code 1
-/// (value not found) is treated as success — fresh installs have nothing
-/// to clean up, and that's the expected post-state.
+// §32 Part 5 / Phase 4: HKLM\Run + HKCU\Run tray registration removed
+// entirely. Tray lifecycle is now owned by the tray_supervisor background
+// poller. The following legacy cleanup functions were dropped:
+//   - register_tray_run_key, migrate_tray_run_key_for_service,
+//     is_hklm_already_migrated (dropped in §32 Part 5)
+//   - unregister_tray_run_key, cleanup_stale_hkcu_tray_run_key,
+//     reg_delete_value_best_effort, classify_reg_delete_outcome,
+//     TRAY_RUN_KEY, TRAY_RUN_VALUE, STALE_HKCU_TRAY_RUN_KEY
+//     (dropped in Phase 4 — 30+ betas with tray_supervisor means any
+//     stale Run-key entries have already been cleaned up)
 /// §32 Part 4 — write the post-stop bat file at `<data_root>/post-stop/post-stop.bat`.
 /// This bat is invoked by Servy via `--postStopPath` every time the supervised
 /// launcher exits. The bat:
@@ -661,10 +594,6 @@ pub(crate) fn write_post_stop_bat(
     Ok(bat_path)
 }
 
-fn cleanup_stale_hkcu_tray_run_key() -> Result<(), String> {
-    reg_delete_value_best_effort(STALE_HKCU_TRAY_RUN_KEY, TRAY_RUN_VALUE)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -743,51 +672,6 @@ mod tests {
     }
 
     #[test]
-    fn tray_run_key_targets_hklm() {
-        // Auto-start for the service-mode tray must be machine-wide so
-        // every user (not only the installing admin) gets a tray at logon.
-        // See docs/superpowers/specs/2026-04-30-tray-autostart-machine-wide-design.md.
-        assert!(
-            TRAY_RUN_KEY.starts_with(r"HKLM\"),
-            "TRAY_RUN_KEY must target HKLM, got: {TRAY_RUN_KEY}"
-        );
-    }
-
-    #[test]
-    fn classify_reg_delete_outcome_success_status_returns_ok() {
-        let result = classify_reg_delete_outcome(Some(0), b"");
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn classify_reg_delete_outcome_value_not_found_status_returns_ok() {
-        // Exit code 1 is the locale-stable "value not found" path;
-        // this is the bug fix — replacing English-only stderr matching.
-        let result = classify_reg_delete_outcome(Some(1), b"any stderr");
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn classify_reg_delete_outcome_other_failure_propagates_stderr() {
-        let stderr_text = b"some error message";
-        let result = classify_reg_delete_outcome(Some(5), stderr_text);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("some error message"));
-    }
-
-    #[test]
-    fn classify_reg_delete_outcome_killed_by_signal_propagates_stderr() {
-        // None from status.code() means the process was killed by a signal.
-        let stderr_text = b"killed";
-        let result = classify_reg_delete_outcome(None, stderr_text);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("killed"));
-    }
-
-    // §32 Part 5: `is_hklm_already_migrated_*` tests removed along with the
-    // `is_hklm_already_migrated` function (HKLM\Run registration architecture
-    // replaced by launcher-owned tray polling).
-
     #[test]
     fn write_post_stop_bat_uses_operation_server_flag() {
         let tmp = tempdir().unwrap();

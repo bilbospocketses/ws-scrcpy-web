@@ -432,13 +432,6 @@ fn on_uninstall(install_root: &Path, data_root: &Path) -> i32 {
     //     renamed file).
     //   - leaves an HKCU\...\Run\WsScrcpyWebTray entry pointing at a
     //     non-existent path, which is benign on next login but messy.
-    // Best-effort, unconditional within service mode (the only path that
-    // ever registered a standalone tray helper in the first place).
-    if let Err(e) = crate::elevated_runner::unregister_tray_run_key() {
-        log::error(&format!("hook(uninstall): tray Run-key cleanup: {e}"));
-    } else {
-        log::info("hook(uninstall): tray Run-key cleared");
-    }
     let _ = std::process::Command::new("taskkill")
         .args(["/F", "/IM", "ws-scrcpy-web-tray.exe"])
         .stdout(std::process::Stdio::null())

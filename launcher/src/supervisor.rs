@@ -87,16 +87,6 @@ pub fn run() -> Result<i32> {
             );
         }
 
-        if is_service_mode {
-            // One-time legacy cleanup (drops HKLM\Run\WsScrcpyWebTray
-            // left over from beta.18 and earlier installs that registered
-            // it at install_service time). Service-mode-only because
-            // that's where the legacy Run entry was registered.
-            if let Err(e) = crate::elevated_runner::unregister_tray_run_key() {
-                log::error(&format!("supervisor: legacy HKLM\\Run cleanup: {e}"));
-            }
-        }
-
         // §32 Part 5h — tray-supervisor runs in BOTH modes (was service-
         // mode-only pre-Part-5h). Mode-aware spawn dispatch inside the
         // supervisor: WTS cross-session for service mode (LocalSystem ->
