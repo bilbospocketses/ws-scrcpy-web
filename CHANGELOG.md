@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`installAdb` rollback parity.** Applied the same rename-before-copy + rollback pattern from `installNodejs` (PR #98). On Windows, `adb.exe` is now renamed to `adb.exe.old` before `copyDirContents`; if copy fails, `adb.exe` is restored. Prevents a partial-update state where `adb.exe` is missing after a failed ADB update.
+
 ### Removed
 
 - **Dead Theory D handoff code (Phase 5 sweep).** Deleted `handoffUninstallToUserSession` method + `issueToken`, `writeUninstallHandoffMarker`, `resolveActiveSessionId`, `resolveLauncherPathForElevation` imports from `ServiceApi.ts` (-99 lines). `consumeToken` retained (still referenced by the resume-token validation block). No behavior change.
