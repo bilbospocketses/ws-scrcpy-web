@@ -150,4 +150,13 @@ describe('Config — AppConfig extension', () => {
         const cfg = Config.getInstance();
         expect(() => cfg.updateAppConfig({ installMode: 'bogus' as 'user' })).toThrow(ConfigValidationError);
     });
+
+    it('uninstallPendingMarkerPath returns <base>/control/uninstall-pending', () => {
+        setup({});
+        const cfg = Config.getInstance();
+        const base = cfg.dataRoot ?? path.dirname(cfg.dependenciesPath);
+        expect(cfg.uninstallPendingMarkerPath).toBe(
+            path.join(base, 'control', 'uninstall-pending'),
+        );
+    });
 });

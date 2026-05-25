@@ -530,6 +530,13 @@ export class Config {
         return path.join(base, 'control', 'apply-update-pending');
     }
 
+    public get uninstallPendingMarkerPath(): string {
+        const base = this._dataRoot !== null
+            ? this._dataRoot
+            : path.dirname(this._dependenciesPath);
+        return path.join(base, 'control', 'uninstall-pending');
+    }
+
     public get scanConcurrency(): number { return this._scanConcurrency; }
     public get scanTcpTimeoutMs(): number { return this._scanTcpTimeoutMs; }
     public get scanAdbConnectTimeoutMs(): number { return this._scanAdbConnectTimeoutMs; }
