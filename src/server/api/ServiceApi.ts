@@ -1,5 +1,6 @@
 // biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import type { IncomingMessage, ServerResponse } from 'http';
+import { spawn } from 'child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { InstallMode } from '../../common/ConfigEvents';
@@ -417,29 +418,58 @@ export class ServiceApi {
             // instance from the service-context handoff. Proceed
             // directly with the uninstall (no second handoff).
         } else {
-            // No resume token → could be a direct click from the
-            // local UI, OR could be a click from the service UI that
-            // hasn't been redirected yet. Detect the service-context
-            // case and do the handoff.
             const installMode = cfg.getAppConfig().installMode;
             const runningAsService = installMode === 'user-service' || installMode === 'system-service';
             const isWindows = result.platform === 'win32';
 
             if (isWindows && runningAsService && this.isLikelyLocalSystem()) {
-                const handoff = await this.handoffUninstallToUserSession(cfg.dependenciesPath, res);
-                if (handoff) return true;
-                // Handoff failed AND we're running as LocalSystem. We CANNOT fall
-                // through to direct runElevated() here — PowerShell Start-Process
-                // -Verb RunAs from LocalSystem has no interactive desktop to show
-                // the UAC prompt on, so it silently fails. Return a clear error
-                // and let the user retry (per spec
-                // docs/superpowers/specs/2026-04-30-service-mode-admin-uac-ux-design.md).
-                const body: ServiceActionFailure = {
-                    ok: false,
-                    error: "Couldn't reach the user session to relay the uninstall request. Make sure ws-scrcpy-web is running for your user, then try again.",
-                    reason: 'handoff-timeout',
+                try {
+                    await fs.promises.mkdir(path.dirname(cfg.uninstallPendingMarkerPath), { recursive: true });
+                    await fs.promises.writeFile(cfg.uninstallPendingMarkerPath, '', 'utf8');
+                    log.info(`uninstall: wrote uninstall-pending marker at ${cfg.uninstallPendingMarkerPath}`);
+                } catch (err) {
+                    log.error(`uninstall: failed to write uninstall-pending marker: ${(err as Error).message}`);
+                    const body: ServiceActionFailure = {
+                        ok: false,
+                        error: `failed to write uninstall-pending marker: ${(err as Error).message}`,
+                        reason: 'unknown',
+                    };
+                    res.writeHead(500);
+                    res.end(JSON.stringify(body));
+                    return true;
+                }
+
+                const dataRoot = cfg.dataRoot ?? path.dirname(cfg.dependenciesPath);
+                const helperPath = path.join(dataRoot, 'control', 'operation-server', 'ws-scrcpy-web-launcher.exe');
+                try {
+                    const child = spawn(helperPath, ['--operation-server'], {
+                        detached: true,
+                        stdio: 'ignore',
+                        windowsHide: true,
+                        env: { ...process.env, WS_SCRCPY_DATA_ROOT: dataRoot },
+                    });
+                    // Absorb the async 'error' event (e.g. ENOENT when the helper
+                    // isn't yet on disk) so it doesn't become an unhandled rejection.
+                    child.on('error', (err) => {
+                        log.warn(`uninstall: operation-server child error (bat will handle it): ${err.message}`);
+                    });
+                    child.unref();
+                    log.info(`uninstall: spawned operation-server at ${helperPath}`);
+                } catch (err) {
+                    log.warn(`uninstall: failed to spawn operation-server (bat will handle it): ${(err as Error).message}`);
+                }
+
+                setTimeout(() => {
+                    log.info('uninstall: scheduled exit firing (post-stop.bat takes over)');
+                    process.exit(0);
+                }, 5000).unref();
+
+                const body: ServiceActionSuccess = {
+                    ok: true,
+                    status: 'shutting-down',
+                    installMode,
                 };
-                res.writeHead(503);
+                res.writeHead(200);
                 res.end(JSON.stringify(body));
                 return true;
             }

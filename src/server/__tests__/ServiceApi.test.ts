@@ -85,6 +85,10 @@ describe('ServiceApi', () => {
     });
 
     afterEach(() => {
+        // Capture paths that need cleanup BEFORE resetting the Config singleton.
+        let uninstallMarkerPath: string | undefined;
+        try { uninstallMarkerPath = Config.getInstance().uninstallPendingMarkerPath; } catch { /* no singleton */ }
+
         Config._resetForTest();
         if (savedEnv.CONFIG === undefined) delete process.env[EnvName.CONFIG_PATH];
         else process.env[EnvName.CONFIG_PATH] = savedEnv.CONFIG;
@@ -97,6 +101,11 @@ describe('ServiceApi', () => {
             } catch {
                 /* best-effort */
             }
+        }
+        // Clean up the uninstall-pending marker (may live outside tmpDirs on
+        // Windows when dataRoot resolves to ProgramData rather than the tmp dir).
+        if (uninstallMarkerPath) {
+            try { fs.rmSync(uninstallMarkerPath, { force: true }); } catch { /* best-effort */ }
         }
     });
 
@@ -642,7 +651,7 @@ describe('ServiceApi', () => {
 
     // ── reason discriminator + no-direct-uninstall guard (v0.1.25) ──────────
 
-    it('returns 503 with reason=handoff-timeout when LocalSystem handoff fails (does NOT direct-uninstall)', async () => {
+    it('service+LocalSystem uninstall writes marker and returns shutting-down (Phase 4 replaces handoff)', async () => {
         const uninstallSpy = vi.fn(async () => undefined);
         const client = fakeClient({
             uninstall: uninstallSpy,
@@ -654,27 +663,19 @@ describe('ServiceApi', () => {
             platform: 'win32',
         };
         const api = new ServiceApi(() => factoryResult, () => 'user');
-        // Force isLikelyLocalSystem() to return true.
         vi.spyOn(
             api as unknown as { isLikelyLocalSystem: () => boolean },
             'isLikelyLocalSystem',
         ).mockReturnValue(true);
-        // Force the handoff to fail (resolve false synchronously).
-        vi.spyOn(
-            api as unknown as { handoffUninstallToUserSession: (...args: unknown[]) => Promise<boolean> },
-            'handoffUninstallToUserSession',
-        ).mockResolvedValue(false);
-        // Set installMode to 'system-service' so the running-as-service branch fires.
         Config.getInstance().updateAppConfig({ installMode: 'system-service' });
 
         const { req, res } = makeReqRes('/api/service/uninstall', 'POST');
         await api.handle(req, res);
 
-        expect((res as any).getStatus()).toBe(503);
+        expect((res as any).getStatus()).toBe(200);
         const body = JSON.parse((res as any).getBody());
-        expect(body.ok).toBe(false);
-        expect(body.reason).toBe('handoff-timeout');
-        // Critical: the direct uninstall path must NOT have been attempted.
+        expect(body.ok).toBe(true);
+        expect(body.status).toBe('shutting-down');
         expect(uninstallSpy).not.toHaveBeenCalled();
     });
 
@@ -763,5 +764,130 @@ describe('ServiceApi', () => {
         const body = JSON.parse((res as any).getBody());
         expect(body.ok).toBe(false);
         expect(body.reason).toBe('servy-failure');
+    });
+
+    describe('handleUninstall — operation-server flow (Phase 4)', () => {
+        it('writes uninstall-pending marker when service+LocalSystem on Windows', async () => {
+            const client = fakeClient({ status: vi.fn(async () => 'running' as const) });
+            const factoryResult: ServiceClientFactoryResult = {
+                client,
+                supported: true,
+                platform: 'win32',
+            };
+            const api = new ServiceApi(() => factoryResult, () => 'user');
+            vi.spyOn(
+                api as unknown as { isLikelyLocalSystem: () => boolean },
+                'isLikelyLocalSystem',
+            ).mockReturnValue(true);
+            Config.getInstance().updateAppConfig({ installMode: 'user-service' });
+
+            const { req, res } = makeReqRes('/api/service/uninstall', 'POST');
+            await api.handle(req, res);
+
+            const cfg = Config.getInstance();
+            expect(fs.existsSync(cfg.uninstallPendingMarkerPath)).toBe(true);
+        });
+
+        it('returns 200 with status=shutting-down and no redirectTo', async () => {
+            const client = fakeClient({ status: vi.fn(async () => 'running' as const) });
+            const factoryResult: ServiceClientFactoryResult = {
+                client,
+                supported: true,
+                platform: 'win32',
+            };
+            const api = new ServiceApi(() => factoryResult, () => 'user');
+            vi.spyOn(
+                api as unknown as { isLikelyLocalSystem: () => boolean },
+                'isLikelyLocalSystem',
+            ).mockReturnValue(true);
+            Config.getInstance().updateAppConfig({ installMode: 'system-service' });
+
+            const { req, res } = makeReqRes('/api/service/uninstall', 'POST');
+            await api.handle(req, res);
+
+            expect((res as any).getStatus()).toBe(200);
+            const body = JSON.parse((res as any).getBody());
+            expect(body.ok).toBe(true);
+            expect(body.status).toBe('shutting-down');
+            expect(body.installMode).toBe('system-service');
+            expect(body.redirectTo).toBeUndefined();
+        });
+
+        it('schedules process.exit(0) after 5s', async () => {
+            vi.useFakeTimers();
+            const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
+            try {
+                const client = fakeClient({ status: vi.fn(async () => 'running' as const) });
+                const factoryResult: ServiceClientFactoryResult = {
+                    client,
+                    supported: true,
+                    platform: 'win32',
+                };
+                const api = new ServiceApi(() => factoryResult, () => 'user');
+                vi.spyOn(
+                    api as unknown as { isLikelyLocalSystem: () => boolean },
+                    'isLikelyLocalSystem',
+                ).mockReturnValue(true);
+                Config.getInstance().updateAppConfig({ installMode: 'user-service' });
+
+                const { req, res } = makeReqRes('/api/service/uninstall', 'POST');
+                await api.handle(req, res);
+
+                expect(exitSpy).not.toHaveBeenCalled();
+                vi.advanceTimersByTime(5000);
+                expect(exitSpy).toHaveBeenCalledWith(0);
+            } finally {
+                exitSpy.mockRestore();
+                vi.useRealTimers();
+            }
+        });
+
+        it('does NOT write marker in local mode', async () => {
+            const client = fakeClient({
+                uninstall: vi.fn(async () => undefined),
+                status: vi.fn(async () => 'not-installed' as const),
+            });
+            const factoryResult: ServiceClientFactoryResult = {
+                client,
+                supported: true,
+                platform: 'win32',
+            };
+            const api = new ServiceApi(() => factoryResult, () => 'user');
+            vi.spyOn(
+                api as unknown as { isLikelyLocalSystem: () => boolean },
+                'isLikelyLocalSystem',
+            ).mockReturnValue(false);
+            Config.getInstance().updateAppConfig({ installMode: 'user' });
+
+            const { req, res } = makeReqRes('/api/service/uninstall', 'POST');
+            await api.handle(req, res);
+
+            const cfg = Config.getInstance();
+            expect(fs.existsSync(cfg.uninstallPendingMarkerPath)).toBe(false);
+        });
+
+        it('does NOT write marker when isLikelyLocalSystem is false in service mode', async () => {
+            const client = fakeClient({
+                uninstall: vi.fn(async () => undefined),
+                status: vi.fn(async () => 'not-installed' as const),
+            });
+            const factoryResult: ServiceClientFactoryResult = {
+                client,
+                supported: true,
+                platform: 'win32',
+            };
+            const api = new ServiceApi(() => factoryResult, () => 'user');
+            vi.spyOn(
+                api as unknown as { isLikelyLocalSystem: () => boolean },
+                'isLikelyLocalSystem',
+            ).mockReturnValue(false);
+            Config.getInstance().updateAppConfig({ installMode: 'user-service' });
+
+            const { req, res } = makeReqRes('/api/service/uninstall', 'POST');
+            await api.handle(req, res);
+
+            const cfg = Config.getInstance();
+            expect(fs.existsSync(cfg.uninstallPendingMarkerPath)).toBe(false);
+        });
     });
 });
