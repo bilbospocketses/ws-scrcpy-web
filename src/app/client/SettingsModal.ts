@@ -906,8 +906,9 @@ export class SettingsModal extends Modal {
             },
         };
 
+        let keepModalOpen = false;
         const modal = new ServiceOperationModal({ operation: 'uninstall' });
-        using _closeModal = { [Symbol.dispose](): void { modal.close(); } };
+        using _closeModal = { [Symbol.dispose](): void { if (!keepModalOpen) modal.close(); } };
         try {
             const r = await fetch('/api/service/uninstall', { method: 'POST' });
             const data = (await r.json().catch(() => null)) as ServiceUninstallResponse | null;
@@ -916,6 +917,10 @@ export class SettingsModal extends Modal {
                     ? SettingsModal.reasonToUserMessage(data.reason, data.error)
                     : `uninstall failed (${r.status})`;
                 this.renderServiceError(errMsg, () => void this.refreshService());
+                return;
+            }
+            if (data.status === 'shutting-down') {
+                keepModalOpen = true;
                 return;
             }
             if (data.redirectTo) {
