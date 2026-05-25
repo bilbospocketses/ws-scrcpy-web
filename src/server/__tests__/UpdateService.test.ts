@@ -525,48 +525,36 @@ describe('UpdateService', () => {
         const mkdirSpy = vi
             .spyOn(fs.promises, 'mkdir')
             .mockResolvedValue(undefined);
-        try {
-            const info = fakeUpdateInfo('0.2.0');
-            const applyFn = vi.fn();
-            const mgr = fakeMgr({
-                checkForUpdatesAsync: async () => info,
-                waitExitThenApplyUpdate: applyFn,
-            });
-            const svc = new UpdateService({
-                installRoot: '/fake-install-root',
-                existsSync: () => true,
-                updateManagerFactory: () => mgr,
-                setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
-                clearIntervalFn: () => undefined,
-            });
-            svc.init();
-            await svc.checkForUpdates();
-            await svc.applyUpdate();
-            // UpdateService no longer exposes a spawnFn injection point;
-            // structurally, this is enforced by the TypeScript type
-            // system — UpdateServiceOptions has no `spawnFn` field.
-            expect(applyFn).toHaveBeenCalledTimes(1);
-            const isServiceMode =
-                installMode === 'user-service' || installMode === 'system-service';
-            // restart=false in service mode, true in local mode.
-            expect(applyFn.mock.calls[0]![2]).toBe(!isServiceMode);
+        using _restore = { [Symbol.dispose]() { writeFileSpy.mockRestore(); mkdirSpy.mockRestore(); } };
 
-            // §32 Part 5f — marker MUST be written in all four modes.
-            // Pre-Part-5f this was service-mode-only and local-mode
-            // launcher couldn't tell apply-update from user-initiated stop.
-            const markerCalls = writeFileSpy.mock.calls.filter(
-                (c) =>
-                    typeof c[0] === 'string' &&
-                    (c[0] as string).endsWith('apply-update-pending'),
-            );
-            expect(markerCalls).toHaveLength(1);
-            // mkdir should have been called for the marker's parent
-            // directory at least once.
-            expect(mkdirSpy).toHaveBeenCalled();
-        } finally {
-            writeFileSpy.mockRestore();
-            mkdirSpy.mockRestore();
-        }
+        const info = fakeUpdateInfo('0.2.0');
+        const applyFn = vi.fn();
+        const mgr = fakeMgr({
+            checkForUpdatesAsync: async () => info,
+            waitExitThenApplyUpdate: applyFn,
+        });
+        const svc = new UpdateService({
+            installRoot: '/fake-install-root',
+            existsSync: () => true,
+            updateManagerFactory: () => mgr,
+            setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
+            clearIntervalFn: () => undefined,
+        });
+        svc.init();
+        await svc.checkForUpdates();
+        await svc.applyUpdate();
+        expect(applyFn).toHaveBeenCalledTimes(1);
+        const isServiceMode =
+            installMode === 'user-service' || installMode === 'system-service';
+        expect(applyFn.mock.calls[0]![2]).toBe(!isServiceMode);
+
+        const markerCalls = writeFileSpy.mock.calls.filter(
+            (c) =>
+                typeof c[0] === 'string' &&
+                (c[0] as string).endsWith('apply-update-pending'),
+        );
+        expect(markerCalls).toHaveLength(1);
+        expect(mkdirSpy).toHaveBeenCalled();
     });
 
     // ── reconfigure ─────────────────────────────────────────────────────

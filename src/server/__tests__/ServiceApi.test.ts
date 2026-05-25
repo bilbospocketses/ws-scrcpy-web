@@ -766,30 +766,27 @@ describe('ServiceApi', () => {
         it('schedules process.exit(0) after 5s', async () => {
             vi.useFakeTimers();
             const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
-            try {
-                const client = fakeClient({ status: vi.fn(async () => 'running' as const) });
-                const factoryResult: ServiceClientFactoryResult = {
-                    client,
-                    supported: true,
-                    platform: 'win32',
-                };
-                const api = new ServiceApi(() => factoryResult, () => 'user');
-                vi.spyOn(
-                    api as unknown as { isLikelyLocalSystem: () => boolean },
-                    'isLikelyLocalSystem',
-                ).mockReturnValue(true);
-                Config.getInstance().updateAppConfig({ installMode: 'user-service' });
+            using _restore = { [Symbol.dispose]() { exitSpy.mockRestore(); vi.useRealTimers(); } };
 
-                const { req, res } = makeReqRes('/api/service/uninstall', 'POST');
-                await api.handle(req, res);
+            const client = fakeClient({ status: vi.fn(async () => 'running' as const) });
+            const factoryResult: ServiceClientFactoryResult = {
+                client,
+                supported: true,
+                platform: 'win32',
+            };
+            const api = new ServiceApi(() => factoryResult, () => 'user');
+            vi.spyOn(
+                api as unknown as { isLikelyLocalSystem: () => boolean },
+                'isLikelyLocalSystem',
+            ).mockReturnValue(true);
+            Config.getInstance().updateAppConfig({ installMode: 'user-service' });
 
-                expect(exitSpy).not.toHaveBeenCalled();
-                vi.advanceTimersByTime(5000);
-                expect(exitSpy).toHaveBeenCalledWith(0);
-            } finally {
-                exitSpy.mockRestore();
-                vi.useRealTimers();
-            }
+            const { req, res } = makeReqRes('/api/service/uninstall', 'POST');
+            await api.handle(req, res);
+
+            expect(exitSpy).not.toHaveBeenCalled();
+            vi.advanceTimersByTime(5000);
+            expect(exitSpy).toHaveBeenCalledWith(0);
         });
 
         it('does NOT write marker in local mode', async () => {
