@@ -921,9 +921,18 @@ export class SettingsModal extends Modal {
             }
             if (data.status === 'shutting-down') {
                 keepModalOpen = true;
-                setTimeout(() => {
-                    window.location.reload();
-                }, 8000);
+                let serviceDied = false;
+                const poll = setInterval(async () => {
+                    try {
+                        await fetch('/api/service/status', { signal: AbortSignal.timeout(2000) });
+                        if (serviceDied) {
+                            clearInterval(poll);
+                            window.location.reload();
+                        }
+                    } catch {
+                        serviceDied = true;
+                    }
+                }, 1000);
                 return;
             }
             if (data.redirectTo) {

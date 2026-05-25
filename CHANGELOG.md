@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Uninstall modal-to-operation-server transition.** Replaced the blind 8s `window.location.reload()` with a poll loop that detects when the service dies, then waits for the operation-server to bind the port before reloading. Modal stays visible throughout; transition is as fast as the operation-server starts.
 - **`installAdb` rollback parity.** Applied the same rename-before-copy + rollback pattern from `installNodejs` (PR #98). On Windows, `adb.exe` is now renamed to `adb.exe.old` before `copyDirContents`; if copy fails, `adb.exe` is restored. Prevents a partial-update state where `adb.exe` is missing after a failed ADB update.
 
 ### Removed
