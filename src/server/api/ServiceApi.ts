@@ -535,14 +535,13 @@ export class ServiceApi {
     }
 
     /**
-     * Theory D handoff: write a control marker that the user-session
-     * tray helper polls; the helper spawns the local launcher in its
-     * own session natively (no cross-session WTS APIs). Then poll for
-     * the new launcher's port, issue a resume token, and return the
-     * redirect response. Returns `true` if the handoff succeeded and
-     * the response was sent; `false` if any step failed (caller falls
-     * back to direct uninstall).
+     * Theory D handoff — DEAD CODE after Phase 4. Kept for Phase 5
+     * sweep; no callers remain. Delete the entire method + its imports
+     * (`consumeToken`, `issueToken`, `writeUninstallHandoffMarker`,
+     * `resolveActiveSessionId`, `resolveLauncherPathForElevation`) in
+     * the Phase 5 dead-code PR.
      */
+    // @ts-ignore TS6133 — intentional dead code, Phase 5 deletes this
     private async handoffUninstallToUserSession(
         installRoot: string,
         res: ServerResponse,
