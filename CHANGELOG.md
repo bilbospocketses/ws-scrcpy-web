@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Stale `.old` files cleaned up after successful Node/ADB updates.** `node.exe.old` and `adb.exe.old` (created by the rename-before-copy rollback pattern) are now deleted after `copyDirContents` succeeds. Previously they lingered indefinitely.
 - **`installAdb` rollback parity.** Applied the same rename-before-copy + rollback pattern from `installNodejs` (PR #98). On Windows, `adb.exe` is now renamed to `adb.exe.old` before `copyDirContents`; if copy fails, `adb.exe` is restored. Prevents a partial-update state where `adb.exe` is missing after a failed ADB update.
 
 ### Removed
