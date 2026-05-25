@@ -431,7 +431,7 @@ export class UpdateService {
 
         if (process.platform === 'win32') {
             try {
-                await execFileAsync('taskkill', ['/F', '/IM', 'adb.exe', '/T'], { timeout: 5_000 });
+                await execFileAsync('C:\\Windows\\System32\\taskkill.exe', ['/F', '/IM', 'adb.exe', '/T'], { timeout: 5_000 });
                 log.info('preApply: taskkill /F /IM adb.exe ok');
             } catch {
                 // taskkill exits non-zero when no matching process; treat as success.
