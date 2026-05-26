@@ -162,7 +162,6 @@ export class FeaturedInteractionHandler extends InteractionHandler {
                 this.lastPosition = event;
             }
         } else if (window['TouchEvent'] && event instanceof TouchEvent) {
-            // TODO: Research drag from out of the target inside it
             if (event.target !== this.tag) {
                 return;
             }
