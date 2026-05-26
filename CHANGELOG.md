@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Local-mode update redesign (§40).** Operation-server now binds `config_port + 1` (probing upward) instead of competing with Node for `config_port`. Eliminates the IPv4-dead / dual-stack corruption bug where `127.0.0.1:8000` became unreachable after updates while `[::1]:8000` worked. Three stacked bugs fixed: port conflict (separate port), stale helper binary (neutralized — old code fails gracefully), Node resolution (`spawn_server` now resolves from `dependencies/node/` before falling back to `seed/node/`). Browser redirect flow: Node spawns operation-server → poll-reads port file → serves redirect to browser → operation-server probes for new Node → redirects browser back.
+
+### Changed
+
+- **`resolve_node_with` relaxed.** When `deps_path` is set but the node binary isn't there yet (first-run bootstrap), resolution now falls through to `seed/node/node.exe` instead of hard-failing. `spawn_server` passes `deps_path` directly instead of reading `DEPS_PATH` from process env.
+- **Supervisor §40 path simplified.** `wait_for_port_free` + stop-marker coordination is now service-mode only. Node spawns the operation-server directly (moved from supervisor). Supervisor's clean-exit path no longer needs to detect the apply-update marker.
+- **Updating page JS rewritten.** Polls `/api/discover` on the operation-server's own port (was `/api/config` on the shared port). 60-second timeout with error message.
+
 ## [0.1.28-beta.16] - 2026-05-26
 
 ## [0.1.28-beta.15] - 2026-05-26
