@@ -18,42 +18,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`resolve_node_with` relaxed.** When `deps_path` is set but the node binary isn't there yet (first-run bootstrap), resolution now falls through to `seed/node/node.exe` instead of hard-failing. `spawn_server` passes `deps_path` directly instead of reading `DEPS_PATH` from process env.
 - **Supervisor §40 path simplified.** `wait_for_port_free` + stop-marker coordination is now service-mode only. Node spawns the operation-server directly (moved from supervisor). Supervisor's clean-exit path no longer needs to detect the apply-update marker.
 - **Updating page JS rewritten.** Polls `/api/discover` on the operation-server's own port (was `/api/config` on the shared port). 60-second timeout with error message.
+- **Releases page sort fix.** `make_latest: 'legacy'` in release.yml so GitHub uses SemVer-aware sorting instead of each beta forcibly stealing the Latest badge.
+
+### Removed
+
+- **v0.1.28-beta.1 through beta.14 releases deleted.** All were iterations on the §40 local-mode update bug — none produced a working local-mode update flow. beta.15 and beta.16 are the last two pre-redesign betas retained for reference. Orphaned git tags remain (tag protection ruleset blocks deletion); they point to valid commits on main but have no associated GitHub Release.
 
 ## [0.1.28-beta.16] - 2026-05-26
 
 ## [0.1.28-beta.15] - 2026-05-26
 
-## [0.1.28-beta.14] - 2026-05-26
-
-## [0.1.28-beta.13] - 2026-05-26
-
-## [0.1.28-beta.12] - 2026-05-26
-
-## [0.1.28-beta.11] - 2026-05-26
-
-## [0.1.28-beta.10] - 2026-05-26
-
-## [0.1.28-beta.9] - 2026-05-26
-
-## [0.1.28-beta.8] - 2026-05-26
-
-## [0.1.28-beta.7] - 2026-05-26
-
-## [0.1.28-beta.6] - 2026-05-26
-
-## [0.1.28-beta.5] - 2026-05-26
-
-## [0.1.28-beta.4] - 2026-05-26
-
-## [0.1.28-beta.3] - 2026-05-26
-
-## [0.1.28-beta.2] - 2026-05-25
-
-## [0.1.28-beta.1] - 2026-05-25
-
-### Fixed
-
-- **Local-mode in-app updates now work.** Velopack's `restart=true` silently failed under non-elevated user identity — `current/` swapped but the app was never relaunched. Fix: `restart=false` for all modes + a local-post-stop.bat (sleeps 12s for Velopack swap, then launches the new launcher). Mirrors the proven service-mode post-stop.bat pattern.
+## [0.1.28-beta.16] and [0.1.28-beta.15] are the last pre-redesign betas.
+## beta.1 through beta.14 were §40 iteration artifacts — releases deleted,
+## orphaned tags remain in git. See beta.17's Removed section for context.
 
 ## [0.1.27] - 2026-05-25
 
