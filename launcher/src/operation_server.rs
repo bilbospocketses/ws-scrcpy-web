@@ -97,6 +97,8 @@ const PROBE_INTERVAL_MS: u64 = 100;
 const PROBE_CONNECT_TIMEOUT_MS: u64 = 500;
 const PROBE_REQUEST_TIMEOUT_MS: u64 = 2000;
 
+const PORT_FILE_NAME: &str = "operation-server-port";
+
 const OPERATION_PAGE: &str = include_str!("../assets/operation-server-page.html");
 
 /// Which operation triggered this operation-server instance? Drives the
@@ -141,6 +143,75 @@ pub fn render_operation_page(variant: OperationVariant) -> String {
     OPERATION_PAGE
         .replace("__OPERATION_TITLE__", title)
         .replace("__OPERATION_BODY__", body)
+}
+
+pub fn write_port_file(data_root: &Path, port: u16) -> std::io::Result<PathBuf> {
+    let dir = data_root.join("control");
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join(PORT_FILE_NAME);
+    std::fs::write(&path, port.to_string())?;
+    Ok(path)
+}
+
+pub fn read_port_file(data_root: &Path) -> Option<u16> {
+    let path = data_root.join("control").join(PORT_FILE_NAME);
+    std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| s.trim().parse::<u16>().ok())
+}
+
+pub fn delete_port_file(data_root: &Path) {
+    let path = data_root.join("control").join(PORT_FILE_NAME);
+    let _ = std::fs::remove_file(&path);
+}
+
+pub fn bind_with_probe(
+    start_port: u16,
+    max_offset: u16,
+    retry_timeout: Duration,
+) -> Result<(TcpListener, u16), i32> {
+    for offset in 0..=max_offset {
+        let port = match start_port.checked_add(offset) {
+            Some(p) => p,
+            None => break,
+        };
+        let bind_start = Instant::now();
+        loop {
+            match TcpListener::bind(("0.0.0.0", port)) {
+                Ok(listener) => return Ok((listener, port)),
+                Err(e) => {
+                    let is_in_use = e.kind() == std::io::ErrorKind::AddrInUse;
+                    if is_in_use {
+                        if offset < max_offset {
+                            log::info(&format!(
+                                "operation-server: port {port} in use, trying next"
+                            ));
+                            break; // try next port
+                        }
+                    }
+                    if bind_start.elapsed() >= retry_timeout {
+                        if is_in_use {
+                            log::error(&format!(
+                                "operation-server: all ports {start_port}..={} in use after {retry_timeout:?}",
+                                start_port.saturating_add(max_offset)
+                            ));
+                            return Err(3);
+                        }
+                        log::error(&format!(
+                            "operation-server: bind 0.0.0.0:{port} failed after {retry_timeout:?}: {e}"
+                        ));
+                        return Err(3);
+                    }
+                    thread::sleep(Duration::from_millis(BIND_RETRY_INTERVAL_MS));
+                }
+            }
+        }
+    }
+    log::error(&format!(
+        "operation-server: no bindable port in range {start_port}..={}",
+        start_port.saturating_add(max_offset)
+    ));
+    Err(3)
 }
 
 /// Public entry: if argv contains `--operation-server` (or the legacy alias
@@ -1027,5 +1098,44 @@ mod tests {
         // configMtime should still be present since the file exists
         assert!(response.contains(r#""configMtime":"#));
         assert!(!response.contains(r#""configMtime":null"#));
+    }
+
+    #[test]
+    fn write_and_read_port_file_round_trip() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = super::write_port_file(tmp.path(), 8001).expect("write");
+        assert!(path.exists());
+        assert_eq!(super::read_port_file(tmp.path()), Some(8001));
+    }
+
+    #[test]
+    fn read_port_file_returns_none_when_absent() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        assert_eq!(super::read_port_file(tmp.path()), None);
+    }
+
+    #[test]
+    fn delete_port_file_removes_file() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        super::write_port_file(tmp.path(), 9999).expect("write");
+        super::delete_port_file(tmp.path());
+        assert_eq!(super::read_port_file(tmp.path()), None);
+    }
+
+    #[test]
+    fn bind_with_probe_skips_occupied_port() {
+        // bind_with_probe uses 0.0.0.0, so the blocker must also use 0.0.0.0
+        // to actually occupy the port on the same address.
+        let blocker = std::net::TcpListener::bind(("0.0.0.0", 0)).expect("bind blocker");
+        let blocked_port = blocker.local_addr().expect("addr").port();
+        let result = super::bind_with_probe(
+            blocked_port,
+            5,
+            std::time::Duration::from_secs(1),
+        );
+        match result {
+            Ok((_listener, port)) => assert!(port > blocked_port, "should have skipped to a higher port"),
+            Err(_) => panic!("bind_with_probe should have found a free port"),
+        }
     }
 }
