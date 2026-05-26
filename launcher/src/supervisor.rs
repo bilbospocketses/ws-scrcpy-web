@@ -233,7 +233,7 @@ pub fn run() -> Result<i32> {
                         // the new current/launcher.exe.
                         let bat_dir = paths.data_root.join("control");
                         let bat_path = bat_dir.join("local-post-stop.bat");
-                        let bat_content = build_local_post_stop_bat(&paths.install_root);
+                        let bat_content = build_local_post_stop_bat(&paths.install_root, &paths.data_root);
                         match std::fs::write(&bat_path, &bat_content) {
                             Ok(()) => {
                                 log::info(&format!(
@@ -285,15 +285,17 @@ pub fn run() -> Result<i32> {
     }
 }
 
-fn build_local_post_stop_bat(install_root: &Path) -> String {
+fn build_local_post_stop_bat(install_root: &Path, data_root: &Path) -> String {
     let update_exe = install_root.join("Update.exe");
     let update_str = update_exe.to_string_lossy();
     let launcher = install_root.join("current").join("ws-scrcpy-web-launcher.exe");
     let launcher_str = launcher.to_string_lossy();
+    let log_path = data_root.join("logs").join("update-apply.log");
+    let log_str = log_path.to_string_lossy();
     format!(
         "@echo off\r\n\
          timeout /t 5 /nobreak >nul\r\n\
-         \"{update_str}\" apply --silent\r\n\
+         \"{update_str}\" apply --silent --norestart --log \"{log_str}\"\r\n\
          timeout /t 2 /nobreak >nul\r\n\
          start \"\" \"{launcher_str}\"\r\n\
          exit /b 0\r\n"
@@ -380,10 +382,12 @@ mod tests {
     #[cfg(windows)]
     fn local_post_stop_bat_contains_update_exe_and_launcher() {
         let install_root = std::path::Path::new(r"C:\Program Files\WsScrcpyWeb");
-        let bat = build_local_post_stop_bat(install_root);
+        let data_root = std::path::Path::new(r"C:\ProgramData\WsScrcpyWeb");
+        let bat = build_local_post_stop_bat(install_root, data_root);
         assert!(bat.contains("timeout /t 5 /nobreak"));
         assert!(bat.contains(r"Update.exe"));
-        assert!(bat.contains("apply --silent"));
+        assert!(bat.contains("apply --silent --norestart"));
+        assert!(bat.contains("update-apply.log"));
         assert!(bat.contains(r"C:\Program Files\WsScrcpyWeb\current\ws-scrcpy-web-launcher.exe"));
         assert!(bat.contains("exit /b 0"));
     }
