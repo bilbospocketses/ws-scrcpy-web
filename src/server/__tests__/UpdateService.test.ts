@@ -413,12 +413,9 @@ describe('UpdateService', () => {
         // (adb kill-server + Windows taskkill + 250ms settle). Hygiene
         // failures are swallowed so the test still drives waitExitThenApplyUpdate.
         await svc.applyUpdate();
-        expect(applyFn).toHaveBeenCalledTimes(1);
-        const args = applyFn.mock.calls[0]!;
-        expect(args[0]).toBe(info);
-        expect(args[1]).toBe(true);
-        // restart=false in all modes — launcher supervisor handles relaunch.
-        expect(args[2]).toBe(false);
+        // §40: local mode does NOT call waitExitThenApplyUpdate — the
+        // supervisor's local-post-stop.bat calls Update.exe apply directly.
+        expect(applyFn).not.toHaveBeenCalled();
     });
 
     // v0.1.25-beta.8 smoke A.2 regression: when installMode is a service mode,
@@ -458,12 +455,12 @@ describe('UpdateService', () => {
         expect(args[2]).toBe(false);
     });
 
-    // Symmetry check: local-mode variants other than the default null should also
-    // get restart=false. All modes use restart=false — we own the relaunch.
+    // §40: local-mode variants (user/system) also skip waitExitThenApplyUpdate.
+    // The supervisor's local-post-stop.bat calls Update.exe apply directly.
     it.each([
         ['user' as const],
         ['system' as const],
-    ])('applyUpdate (%s): waitExitThenApplyUpdate called with restart=false', async (installMode) => {
+    ])('applyUpdate (%s): does NOT call waitExitThenApplyUpdate (local mode)', async (installMode) => {
         Config.getInstance().updateAppConfig({ autoUpdate: false, installMode });
         const info = fakeUpdateInfo('0.2.0');
         const applyFn = vi.fn();
@@ -482,9 +479,7 @@ describe('UpdateService', () => {
         await svc.checkForUpdates();
         expect(svc.getStatus().status).toBe('ready');
         await svc.applyUpdate();
-        expect(applyFn).toHaveBeenCalledTimes(1);
-        const args = applyFn.mock.calls[0]!;
-        expect(args[2]).toBe(false);
+        expect(applyFn).not.toHaveBeenCalled();
     });
 
     // §32 Part 5e/5f: the upgrade-server is no longer spawned from Node.
@@ -543,8 +538,13 @@ describe('UpdateService', () => {
         svc.init();
         await svc.checkForUpdates();
         await svc.applyUpdate();
-        expect(applyFn).toHaveBeenCalledTimes(1);
-        expect(applyFn.mock.calls[0]![2]).toBe(false);
+        const isServiceMode = installMode === 'user-service' || installMode === 'system-service';
+        if (isServiceMode) {
+            expect(applyFn).toHaveBeenCalledTimes(1);
+            expect(applyFn.mock.calls[0]![2]).toBe(false);
+        } else {
+            expect(applyFn).not.toHaveBeenCalled();
+        }
 
         const markerCalls = writeFileSpy.mock.calls.filter(
             (c) =>

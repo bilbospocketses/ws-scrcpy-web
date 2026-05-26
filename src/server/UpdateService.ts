@@ -352,6 +352,9 @@ export class UpdateService {
         //     to launch a fresh launcher — by which point Velopack is long gone.
         //     v0.1.25-beta.8 / beta.10 / beta.11 smokes caught the prior approaches;
         //     see §32 Part 3 in todo_ws_scrcpy_web.md.
+        const installMode = Config.getInstance().getAppConfig().installMode;
+        const isServiceMode = installMode === 'user-service' || installMode === 'system-service';
+
         // §32 Part 5e/5f — upgrade-server is no longer spawned from Node.
         // The pre-exit spawn (Part 5b) put the upgrade-server inside
         // Velopack's process tree, loading
@@ -372,7 +375,18 @@ export class UpdateService {
         // neither side can tell apply-update from a user-initiated
         // stop (Ctrl+C, services.msc Stop, etc.) and would over-spawn.
         await this.writeApplyUpdatePendingMarker();
-        this.mgr.waitExitThenApplyUpdate(this.state.pendingUpdate, true, false);
+
+        if (isServiceMode) {
+            // Service mode: Velopack applies under LocalSystem via Servy's
+            // post-stop.bat which calls sc start after the swap.
+            this.mgr.waitExitThenApplyUpdate(this.state.pendingUpdate, true, false);
+        }
+        // Local mode: do NOT call waitExitThenApplyUpdate. That spawns
+        // Update.exe watching our PID, which kills the launcher's process
+        // tree before the supervisor can spawn the operation-server + bat.
+        // Instead: write the marker, exit cleanly. The supervisor's
+        // local-post-stop.bat calls Update.exe apply --silent after
+        // everything has exited.
     }
 
     /**
