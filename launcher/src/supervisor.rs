@@ -129,18 +129,12 @@ pub fn run() -> Result<i32> {
             )),
         }
 
-        // §32 Part 5 — coordinate with any in-flight upgrade-server. If
-        // an upgrade-server is currently bound to the port we're about
-        // to ask Node to bind (either spawned by service-mode post-stop
-        // bat OR by local-mode launcher on apply-update path), write
-        // the stop marker + wait for the port to free up. Idempotent —
-        // if no upgrade-server is running, marker write is a no-op and
-        // port check returns immediately.
-        //
-        // §32 Part 5f — runs unconditionally now (not just in service
-        // mode). Local-mode launcher restart-on-apply needs to coordinate
-        // with the upgrade-server its previous incarnation spawned.
-        {
+        // §32 Part 5 — coordinate with any in-flight operation-server.
+        // In service-mode, the operation-server binds the SAME port as
+        // Node (config_port), so we need the stop-marker + port-wait
+        // dance. In §40 local-mode, the operation-server binds a
+        // DIFFERENT port (config_port+1), so no coordination needed.
+        if cfg.is_service_mode() {
             let port = cfg.web_port.unwrap_or(8000);
             if let Err(e) = crate::operation_server::write_stop_marker(&paths.data_root) {
                 log::error(&format!(
