@@ -1,3 +1,33 @@
+/* ── Foreground overlays (error, connection lost, drop target) ── */
+.foreground {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    pointer-events: none;
+}
+
+.foreground.drop-target {
+    background: rgba(30, 60, 120, 0.85);
+}
+
+.foreground.connect {
+    background: rgba(40, 40, 40, 0.9);
+}
+
+.foreground.error {
+    background: rgba(80, 20, 20, 0.9);
+}
+
+.foreground-message {
+    color: #fff;
+    font-size: 1.25rem;
+    text-align: center;
+    padding: 1rem 2rem;
+}
+
 /* ── Icon sizing via CSS custom property ── */
 .list-files-modal .file-icon {
     display: inline-flex;

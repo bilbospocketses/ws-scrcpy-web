@@ -40,11 +40,13 @@ type Upload = { row: HTMLElement; progressEl: HTMLElement; anchor: HTMLElement; 
 enum Foreground {
     Drop = 'drop-target',
     Connect = 'connect',
+    Error = 'error',
 }
 
 const Message: Record<Foreground, string> = {
     [Foreground.Drop]: 'Drop files here',
     [Foreground.Connect]: 'Connection lost',
+    [Foreground.Error]: 'An error occurred',
 };
 
 export class FileListingClient extends ManagerClient<ParamsFileListing, never> implements DragAndPushListener {
@@ -104,6 +106,15 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         this.path = this.params.path;
         this.openNewConnection();
         this.setBodyClass('file-listing');
+        window.addEventListener('hashchange', () => {
+            const hash = location.hash.replace(/#!/, '');
+            const params = new URLSearchParams(hash);
+            if (params.get('action') !== ACTION.FILE_LISTING) return;
+            const hashPath = params.get('path');
+            if (hashPath && hashPath !== this.path) {
+                this.loadContent(hashPath);
+            }
+        });
         this.name = `${TAG} [${this.serial}]`;
         this.tableBodyId = `${Util.escapeUdid(this.serial)}_list`;
         this.wrapperId = `wrapper_${this.tableBodyId}`;
@@ -243,7 +254,10 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         }
     }
     public onError(error: string | Error): void {
-        console.error(this.name, 'FIXME: implement', error);
+        const msg = typeof error === 'string' ? error : error.message;
+        console.error(this.name, msg);
+        this.removeForeground(Foreground.Error);
+        this.addForeground(Foreground.Error);
     }
 
     private addForeground(type: Foreground): void {
@@ -350,7 +364,6 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         }
         this.toggleQuickLinks(this.path);
 
-        // FIXME: should do over way around: load content on hash change
         const hash = location.hash.replace(/#!/, '');
         const params = new URLSearchParams(hash);
         if (params.get('action') === ACTION.FILE_LISTING) {
@@ -411,9 +424,10 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                 const mtime = statView.getUint32(8, true);
                 const nameString = basename(download.path);
                 if (mode === 0) {
-                    console.error('FIXME: show error in UI');
-                    console.error(`Error: no entity "${download.path}"`);
+                    console.error(this.name, `no entity "${download.path}"`);
                     this.channels.delete(channel);
+                    this.removeForeground(Foreground.Error);
+                    this.addForeground(Foreground.Error);
                     this.loadContent(tempPath);
                     return;
                 }
