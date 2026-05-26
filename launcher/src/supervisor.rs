@@ -373,6 +373,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
     fn local_post_stop_bat_contains_launcher_path_and_sleep() {
         let install_root = std::path::Path::new(r"C:\Program Files\WsScrcpyWeb");
         let bat = build_local_post_stop_bat(install_root);
