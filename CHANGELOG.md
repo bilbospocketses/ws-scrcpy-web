@@ -24,15 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- **v0.1.28-beta.1 through beta.14 releases deleted.** All were iterations on the §40 local-mode update bug — none produced a working local-mode update flow. beta.15 and beta.16 are the last two pre-redesign betas retained for reference. Orphaned git tags remain (tag protection ruleset blocks deletion); they point to valid commits on main but have no associated GitHub Release.
-
-## [0.1.28-beta.16] - 2026-05-26
-
-## [0.1.28-beta.15] - 2026-05-26
-
-## [0.1.28-beta.16] and [0.1.28-beta.15] are the last pre-redesign betas.
-## beta.1 through beta.14 were §40 iteration artifacts — releases deleted,
-## orphaned tags remain in git. See beta.17's Removed section for context.
+- **Iterative bug-test releases cleaned from GitHub Releases.** This project uses GitHub's CI pipeline (build, clippy, vitest, CodeQL, Scorecard) as a secondary vetting backstop — every commit to main triggers a full pipeline run, and tagged releases exercise the complete build-sign-attest-publish chain. This means we ship more releases during active development than a project relying solely on local testing would, because each CI-validated iteration IS the test. The trade-off: the Releases page accumulates artifacts that were never intended as user-facing installs. We periodically prune these to keep the page navigable. Orphaned git tags remain (tag protection ruleset blocks deletion); they point to valid commits on main and preserve the full development history for archaeology. Deleted releases:
+  - **v0.1.28-beta.1 through beta.16** (16 releases) — §40 local-mode update iterations. None produced a working local-mode update flow. beta.17 is the redesign that fixes the root cause.
+  - **v0.1.25-beta.3 through beta.67** (8 remaining releases after earlier cleanup) — service-mode rearchitecture + tray unification + upgrade-server iterations. All rolled into v0.1.26 stable.
+  - **v0.1.5 through v0.1.23** (19 releases) — rapid daily iteration chain covering adb path hardening, service install, node-pty resolution, first-run modals, dependency manager, and packaging. v0.1.4 (local-deps-only milestone) and v0.1.24 (first clean stable) bookend the range; everything between was iterative bug-test artifacts.
 
 ## [0.1.27] - 2026-05-25
 
