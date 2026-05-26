@@ -247,6 +247,7 @@ pub fn run() -> Result<i32> {
                                     const CREATE_NO_WINDOW: u32 = 0x08000000;
                                     match std::process::Command::new(r"C:\Windows\System32\cmd.exe")
                                         .args(["/c", &bat_path.to_string_lossy()])
+                                        .current_dir(&paths.data_root)
                                         .creation_flags(DETACHED_PROCESS | CREATE_NO_WINDOW)
                                         .stdin(Stdio::null())
                                         .stdout(Stdio::null())

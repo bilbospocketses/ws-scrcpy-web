@@ -662,6 +662,7 @@ pub fn spawn_detached_helper(data_root: &Path) {
         const CREATE_NO_WINDOW: u32 = 0x08000000;
         match std::process::Command::new(&helper)
             .arg("--operation-server")
+            .current_dir(data_root)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
