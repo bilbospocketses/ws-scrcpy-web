@@ -1,11 +1,10 @@
 // Node child-process spawn for the launcher.
 //
-// Resolves the Node executable using a strict priority chain:
-//   1. `DEPS_PATH` env var → `<DEPS_PATH>/node/node.exe` (per SP2b strict
-//      semantics — if DEPS_PATH is set but missing, hard fail; do NOT fall
-//      through to seed/).
-//   2. Otherwise, `<exe_dir>/seed/node/node.exe` (bundled fallback for
-//      first-run before dependencies/ is populated).
+// Resolves the Node executable using a best-effort priority chain:
+//   1. `deps_path` parameter → `<deps_path>/node/node.exe` (preferred;
+//      populated after first-run bootstrap installs Node into dependencies/).
+//   2. `<exe_dir>/seed/node/node.exe` (bundled fallback for first-run
+//      before dependencies/ is populated, or if deps node is missing).
 //   3. Otherwise, error.
 //
 // Server entry is `<exe_dir>/dist/index.js`.
@@ -29,12 +28,8 @@ pub fn resolve_node_with(deps_path: Option<&str>, exe_dir: &Path) -> Result<Path
         if candidate.exists() {
             return Ok(candidate);
         }
-        // Strict mode — DEPS_PATH was set, so we MUST use it. No fallback.
-        bail!(
-            "DEPS_PATH is set to {:?} but Node not found at {:?}",
-            deps,
-            candidate
-        );
+        // deps_path set but node not there yet (first-run bootstrap) — fall
+        // through to seed instead of hard-failing.
     }
 
     let seed = exe_dir.join("seed").join("node").join("node.exe");
@@ -114,10 +109,11 @@ fn open_server_log(data_root: &Path) -> Option<std::fs::File> {
 pub fn spawn_server(deps_path: &Path, data_root: &Path) -> Result<Child> {
     use std::os::windows::process::CommandExt;
 
-    let node = resolve_node()?;
-    let entry = resolve_server_entry()?;
     let exe = std::env::current_exe()?;
     let work_dir = exe.parent().context("exe has no parent dir")?.to_path_buf();
+    let deps_str = deps_path.to_str().context("deps_path is not valid UTF-8")?;
+    let node = resolve_node_with(Some(deps_str), &work_dir)?;
+    let entry = resolve_server_entry_with(&work_dir)?;
 
     let mut cmd = Command::new(&node);
     cmd.arg(&entry)
@@ -155,10 +151,11 @@ pub fn spawn_server(deps_path: &Path, data_root: &Path) -> Result<Child> {
 
 #[cfg(not(windows))]
 pub fn spawn_server(deps_path: &Path, data_root: &Path) -> Result<Child> {
-    let node = resolve_node()?;
-    let entry = resolve_server_entry()?;
     let exe = std::env::current_exe()?;
     let work_dir = exe.parent().context("exe has no parent dir")?.to_path_buf();
+    let deps_str = deps_path.to_str().context("deps_path is not valid UTF-8")?;
+    let node = resolve_node_with(Some(deps_str), &work_dir)?;
+    let entry = resolve_server_entry_with(&work_dir)?;
 
     let mut cmd = Command::new(&node);
     cmd.arg(&entry)
@@ -208,14 +205,29 @@ mod tests {
     }
 
     #[test]
-    fn resolve_node_strict_fails_when_deps_path_missing() {
+    fn resolve_node_falls_back_to_seed_when_deps_path_set_but_node_missing() {
+        let dir = tempdir().unwrap();
+        let exe_dir = dir.path().join("exe");
+        let seed = exe_dir.join("seed").join("node").join("node.exe");
+        touch(&seed);
+
+        // deps_path points to an empty directory — node binary not there yet.
+        let bogus = dir.path().join("nope");
+        fs::create_dir_all(&bogus).unwrap();
+        let resolved =
+            resolve_node_with(Some(bogus.to_str().unwrap()), &exe_dir).unwrap();
+        assert_eq!(resolved, seed);
+    }
+
+    #[test]
+    fn resolve_node_errors_when_deps_and_seed_both_missing() {
         let dir = tempdir().unwrap();
         let exe_dir = dir.path().join("exe");
         fs::create_dir_all(&exe_dir).unwrap();
 
         let bogus = dir.path().join("nope");
         let err = resolve_node_with(Some(bogus.to_str().unwrap()), &exe_dir).unwrap_err();
-        assert!(err.to_string().contains("DEPS_PATH is set"));
+        assert!(err.to_string().contains("Node not found"));
     }
 
     #[test]

@@ -167,13 +167,11 @@ pub fn run() -> Result<i32> {
         log::error(&format!("could not install Ctrl+C handler: {e}"));
     }
 
-    // NOTE: do NOT set DEPS_PATH on the launcher's process env. spawn::resolve_node
-    // reads DEPS_PATH and enforces strict mode (no seed/ fallback) when it's set
-    // — which would defeat the first-run bootstrap (deps/ not yet populated, only
-    // seed/ exists). DEPS_PATH is instead passed to the Node CHILD's env directly
-    // via spawn::spawn_server(deps_path). The launcher's resolve_node only sees
-    // DEPS_PATH when the user explicitly set it (e.g., shared-deps install) —
-    // strict mode kicks in only there, as SP2b intended.
+    // spawn_server now passes deps_path directly to resolve_node_with, which
+    // tries <deps_path>/node/node.exe first and falls back to seed/node/node.exe
+    // when deps node is absent (first-run bootstrap). DEPS_PATH is also set on
+    // the Node CHILD's env so the backend DependencyManager knows where to
+    // install Node / ADB / scrcpy-server.
     log::info(&format!("supervisor: deps_path resolved to {:?} (passed to Node child)", paths.deps_path));
 
     loop {
