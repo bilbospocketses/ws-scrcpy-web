@@ -198,21 +198,18 @@ pub fn run() -> Result<i32> {
             None => {
                 log::info("supervisor: clean exit; not restarting");
 
-                // §32 Part 5f — local-mode upgrade page. If apply-update-
-                // pending marker is present AND we're in local mode, spawn
-                // the upgrade-server from the dataRoot helper before
-                // exiting. Velopack's restart=true (set by UpdateService
-                // for non-service-mode applyUpdate) will relaunch this
-                // launcher post-swap; the upgrade-server serves the
-                // updating page through that ~3-8s gap.
+                // §40 — local-mode update relaunch. If apply-update-pending
+                // marker is present AND we're in local mode:
+                //   1. Spawn operation-server (serves "updating" page)
+                //   2. Write + spawn local-post-stop.bat (sleeps 12s, then
+                //      launches the new current/launcher.exe post-swap)
+                //   3. Exit — Velopack Update.exe swaps current/ (restart=false,
+                //      we own the relaunch via the bat)
                 //
-                // In service mode the post-stop bat handles this same
-                // spawn — gating to local-mode-only here keeps the two
-                // architectures from racing for the bind. The marker is
-                // the discriminator between apply-update and user-
-                // initiated stop in BOTH modes; it's written by Node's
-                // UpdateService.applyUpdate (Part 5f drops the previous
-                // service-mode-only gate on the marker write).
+                // In service mode, Servy's post-stop.bat handles both the
+                // operation-server spawn and the sc start relaunch — gating
+                // to local-mode-only here keeps the two architectures from
+                // racing.
                 let cfg_now = common::config::AppConfig::load(&paths.data_root);
                 if !cfg_now.is_service_mode() {
                     let marker = crate::operation_server::apply_update_pending_marker(
@@ -230,6 +227,46 @@ pub fn run() -> Result<i32> {
                             ));
                         }
                         crate::operation_server::spawn_detached_helper(&paths.data_root);
+
+                        // §40 — local-mode relaunch. Write + spawn a bat that
+                        // sleeps through the Velopack swap window, then launches
+                        // the new current/launcher.exe.
+                        let bat_dir = paths.data_root.join("control");
+                        let bat_path = bat_dir.join("local-post-stop.bat");
+                        let bat_content = build_local_post_stop_bat(&paths.install_root);
+                        match std::fs::write(&bat_path, &bat_content) {
+                            Ok(()) => {
+                                log::info(&format!(
+                                    "supervisor: wrote local-post-stop.bat at {bat_path:?}"
+                                ));
+                                #[cfg(windows)]
+                                {
+                                    use std::os::windows::process::CommandExt;
+                                    use std::process::Stdio;
+                                    const DETACHED_PROCESS: u32 = 0x00000008;
+                                    const CREATE_NO_WINDOW: u32 = 0x08000000;
+                                    match std::process::Command::new(r"C:\Windows\System32\cmd.exe")
+                                        .args(["/c", &bat_path.to_string_lossy()])
+                                        .creation_flags(DETACHED_PROCESS | CREATE_NO_WINDOW)
+                                        .stdin(Stdio::null())
+                                        .stdout(Stdio::null())
+                                        .stderr(Stdio::null())
+                                        .spawn()
+                                    {
+                                        Ok(child) => log::info(&format!(
+                                            "supervisor: spawned local-post-stop.bat (pid {})",
+                                            child.id()
+                                        )),
+                                        Err(e) => log::error(&format!(
+                                            "supervisor: failed to spawn local-post-stop.bat: {e}"
+                                        )),
+                                    }
+                                }
+                            }
+                            Err(e) => log::error(&format!(
+                                "supervisor: failed to write local-post-stop.bat: {e}"
+                            )),
+                        }
                     }
                 }
 
@@ -246,6 +283,17 @@ pub fn run() -> Result<i32> {
 
         thread::sleep(RESTART_DELAY);
     }
+}
+
+fn build_local_post_stop_bat(install_root: &Path) -> String {
+    let launcher = install_root.join("current").join("ws-scrcpy-web-launcher.exe");
+    let launcher_str = launcher.to_string_lossy();
+    format!(
+        "@echo off\r\n\
+         timeout /t 12 /nobreak >nul\r\n\
+         start \"\" \"{launcher_str}\"\r\n\
+         exit /b 0\r\n"
+    )
 }
 
 fn cleanup_stale_marker(marker: &Path) {
@@ -322,5 +370,14 @@ mod tests {
         // If both signals are present, marker wins (matches start.cmd's
         // ordering — marker checked before exit code).
         assert_eq!(decide_restart(75, true), Some(RestartReason::RestartMarker));
+    }
+
+    #[test]
+    fn local_post_stop_bat_contains_launcher_path_and_sleep() {
+        let install_root = std::path::Path::new(r"C:\Program Files\WsScrcpyWeb");
+        let bat = build_local_post_stop_bat(install_root);
+        assert!(bat.contains("timeout /t 12 /nobreak"));
+        assert!(bat.contains(r"C:\Program Files\WsScrcpyWeb\current\ws-scrcpy-web-launcher.exe"));
+        assert!(bat.contains("exit /b 0"));
     }
 }
