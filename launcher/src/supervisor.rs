@@ -219,55 +219,15 @@ pub fn run() -> Result<i32> {
                         log::info(
                             "supervisor: apply-update-pending marker present (local mode); spawning operation-server before exit",
                         );
-                        // Delete marker FIRST so a subsequent restart that
-                        // observes a stale marker doesn't re-spawn.
                         if let Err(e) = std::fs::remove_file(&marker) {
                             log::error(&format!(
                                 "supervisor: could not delete apply-update-pending marker (non-fatal): {e}"
                             ));
                         }
+                        // §40 — pass install_root so the operation-server
+                        // can extract the nupkg into current/ and relaunch.
+                        std::env::set_var("WS_SCRCPY_INSTALL_ROOT", &paths.install_root);
                         crate::operation_server::spawn_detached_helper(&paths.data_root);
-
-                        // §40 — local-mode relaunch. Write + spawn a bat that
-                        // sleeps through the Velopack swap window, then launches
-                        // the new current/launcher.exe.
-                        let bat_dir = paths.data_root.join("control");
-                        let bat_path = bat_dir.join("local-post-stop.bat");
-                        let bat_content = build_local_post_stop_bat(&paths.install_root, &paths.data_root);
-                        match std::fs::write(&bat_path, &bat_content) {
-                            Ok(()) => {
-                                log::info(&format!(
-                                    "supervisor: wrote local-post-stop.bat at {bat_path:?}"
-                                ));
-                                #[cfg(windows)]
-                                {
-                                    use std::os::windows::process::CommandExt;
-                                    use std::process::Stdio;
-                                    const DETACHED_PROCESS: u32 = 0x00000008;
-                                    const CREATE_NO_WINDOW: u32 = 0x08000000;
-                                    match std::process::Command::new(r"C:\Windows\System32\cmd.exe")
-                                        .args(["/c", &bat_path.to_string_lossy()])
-                                        .current_dir(&paths.data_root)
-                                        .creation_flags(DETACHED_PROCESS | CREATE_NO_WINDOW)
-                                        .stdin(Stdio::null())
-                                        .stdout(Stdio::null())
-                                        .stderr(Stdio::null())
-                                        .spawn()
-                                    {
-                                        Ok(child) => log::info(&format!(
-                                            "supervisor: spawned local-post-stop.bat (pid {})",
-                                            child.id()
-                                        )),
-                                        Err(e) => log::error(&format!(
-                                            "supervisor: failed to spawn local-post-stop.bat: {e}"
-                                        )),
-                                    }
-                                }
-                            }
-                            Err(e) => log::error(&format!(
-                                "supervisor: failed to write local-post-stop.bat: {e}"
-                            )),
-                        }
                     }
                 }
 
@@ -284,28 +244,6 @@ pub fn run() -> Result<i32> {
 
         thread::sleep(RESTART_DELAY);
     }
-}
-
-fn build_local_post_stop_bat(install_root: &Path, data_root: &Path) -> String {
-    let update_exe = install_root.join("Update.exe");
-    let update_str = update_exe.to_string_lossy();
-    let launcher = install_root.join("current").join("ws-scrcpy-web-launcher.exe");
-    let launcher_str = launcher.to_string_lossy();
-    let log_path = data_root.join("logs").join("update-apply.log");
-    let log_str = log_path.to_string_lossy();
-    // ping loopback is the classic silent-wait trick for bat files.
-    // timeout.exe shows a visible countdown window even under
-    // CREATE_NO_WINDOW; ping -n N waits (N-1) seconds silently.
-    format!(
-        "@echo off\r\n\
-         ping -n 6 127.0.0.1 >nul\r\n\
-         C:\\Windows\\System32\\taskkill.exe /F /IM ws-scrcpy-web-tray.exe /T >nul 2>&1\r\n\
-         ping -n 4 127.0.0.1 >nul\r\n\
-         \"{update_str}\" apply --silent --norestart --log \"{log_str}\"\r\n\
-         ping -n 3 127.0.0.1 >nul\r\n\
-         start \"\" \"{launcher_str}\"\r\n\
-         exit /b 0\r\n"
-    )
 }
 
 fn cleanup_stale_marker(marker: &Path) {
@@ -384,19 +322,4 @@ mod tests {
         assert_eq!(decide_restart(75, true), Some(RestartReason::RestartMarker));
     }
 
-    #[test]
-    #[cfg(windows)]
-    fn local_post_stop_bat_contains_update_exe_and_launcher() {
-        let install_root = std::path::Path::new(r"C:\Program Files\WsScrcpyWeb");
-        let data_root = std::path::Path::new(r"C:\ProgramData\WsScrcpyWeb");
-        let bat = build_local_post_stop_bat(install_root, data_root);
-        assert!(bat.contains("ping -n 6 127.0.0.1"));
-        assert!(bat.contains("taskkill.exe /F /IM ws-scrcpy-web-tray.exe"));
-        assert!(bat.contains("ping -n 4 127.0.0.1"));
-        assert!(bat.contains(r"Update.exe"));
-        assert!(bat.contains("apply --silent --norestart"));
-        assert!(bat.contains("update-apply.log"));
-        assert!(bat.contains(r"C:\Program Files\WsScrcpyWeb\current\ws-scrcpy-web-launcher.exe"));
-        assert!(bat.contains("exit /b 0"));
-    }
 }

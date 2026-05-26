@@ -173,6 +173,70 @@ pub fn should_exit_for_stop_marker(data_root: &Path) -> bool {
     dir.join(STOP_MARKER_FILENAME).exists() || dir.join(LEGACY_STOP_MARKER_FILENAME).exists()
 }
 
+/// Find the latest full nupkg in `packages_dir` and extract its `lib/app/`
+/// contents into `current_dir` (overwrite). Returns the version string on
+/// success. This replaces Update.exe for local-mode updates — no rename
+/// dance, no process-tree scanning, no CWD handle locks.
+fn find_and_extract_nupkg(packages_dir: &Path, current_dir: &Path) -> Result<String, String> {
+    let entry = std::fs::read_dir(packages_dir)
+        .map_err(|e| format!("cannot read packages dir: {e}"))?
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            let name = e.file_name();
+            let s = name.to_string_lossy();
+            s.ends_with("-full.nupkg")
+        })
+        .max_by_key(|e| e.file_name());
+
+    let nupkg_path = entry
+        .ok_or_else(|| "no *-full.nupkg found in packages dir".to_string())?
+        .path();
+
+    let version = nupkg_path
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+
+    log::info(&format!("operation-server: extracting {nupkg_path:?}"));
+
+    let file = std::fs::File::open(&nupkg_path)
+        .map_err(|e| format!("cannot open nupkg: {e}"))?;
+    let mut archive = zip::ZipArchive::new(file)
+        .map_err(|e| format!("cannot read nupkg as zip: {e}"))?;
+
+    let prefix = "lib/app/";
+    let mut extracted = 0u32;
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i)
+            .map_err(|e| format!("zip entry {i}: {e}"))?;
+        let raw_name = entry.name().to_string();
+        if !raw_name.starts_with(prefix) {
+            continue;
+        }
+        let relative = &raw_name[prefix.len()..];
+        if relative.is_empty() {
+            continue;
+        }
+        let dest = current_dir.join(relative);
+        if raw_name.ends_with('/') {
+            let _ = std::fs::create_dir_all(&dest);
+        } else {
+            if let Some(parent) = dest.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let mut out = std::fs::File::create(&dest)
+                .map_err(|e| format!("cannot create {dest:?}: {e}"))?;
+            std::io::copy(&mut entry, &mut out)
+                .map_err(|e| format!("cannot write {dest:?}: {e}"))?;
+            extracted += 1;
+        }
+    }
+
+    log::info(&format!("operation-server: extracted {extracted} files"));
+    Ok(version)
+}
+
 fn run() -> i32 {
     log::info("operation-server: starting");
 
@@ -237,17 +301,78 @@ fn run() -> i32 {
         "operation-server: bound 0.0.0.0:{port}, serving updating page (max lifetime {MAX_LIFETIME_SECS}s)"
     ));
 
+    // §40 — local-mode update: extract nupkg + relaunch, all from this
+    // process (no Update.exe, no bat). Triggered by WS_SCRCPY_INSTALL_ROOT
+    // env var set by the supervisor for local-mode apply-update only.
+    if variant == OperationVariant::ApplyUpdate {
+        if let Ok(install_root) = std::env::var("WS_SCRCPY_INSTALL_ROOT") {
+            let install_root = PathBuf::from(install_root);
+            // Serve the page on a background thread while we do the apply.
+            let bg_listener = listener.try_clone().expect("clone listener");
+            let bg_redirect: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+            let bg_redirect2 = bg_redirect.clone();
+            let page_thread = thread::spawn(move || {
+                loop {
+                    accept_one(&bg_listener, &bg_redirect2, OperationVariant::ApplyUpdate);
+                }
+            });
+
+            log::info("operation-server: local-mode apply — killing tray");
+            #[cfg(windows)]
+            {
+                let _ = std::process::Command::new(r"C:\Windows\System32\taskkill.exe")
+                    .args(["/F", "/IM", "ws-scrcpy-web-tray.exe", "/T"])
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status();
+            }
+            thread::sleep(Duration::from_secs(3));
+
+            let packages_dir = install_root.join("packages");
+            let current_dir = install_root.join("current");
+            match find_and_extract_nupkg(&packages_dir, &current_dir) {
+                Ok(ver) => log::info(&format!("operation-server: extracted {ver} into current/")),
+                Err(e) => {
+                    log::error(&format!("operation-server: nupkg extraction failed: {e}"));
+                    return 4;
+                }
+            }
+
+            thread::sleep(Duration::from_secs(1));
+            log::info("operation-server: launching new launcher");
+            let launcher = current_dir.join("ws-scrcpy-web-launcher.exe");
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                const DETACHED_PROCESS: u32 = 0x00000008;
+                const CREATE_NO_WINDOW: u32 = 0x08000000;
+                match std::process::Command::new(&launcher)
+                    .current_dir(&install_root)
+                    .creation_flags(DETACHED_PROCESS | CREATE_NO_WINDOW)
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()
+                {
+                    Ok(child) => log::info(&format!(
+                        "operation-server: launched new launcher (pid {})", child.id()
+                    )),
+                    Err(e) => log::error(&format!(
+                        "operation-server: failed to launch new launcher: {e}"
+                    )),
+                }
+            }
+            // Fall through to normal stop-marker loop — new launcher will
+            // write it, triggering wind-down + browser redirect.
+            drop(page_thread);
+        }
+    }
+
     let stop_flag = Arc::new(AtomicBool::new(false));
-    // Shared redirect state — populated by the wind-down probe thread when
-    // the real Node is found on a different port than the upgrade-server is
-    // holding. Connection handlers check it on every request and switch
-    // /api/config from 503 (still upgrading) to 200 + redirect JSON when set.
     let redirect_state: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
     let started_at = Instant::now();
 
-    // Normal serving phase — runs until stop marker observed or max lifetime
-    // hits. After stop marker, control transfers to wind_down() which keeps
-    // the listener open while probing for the new Node's port.
     loop {
         if stop_flag.load(Ordering::SeqCst) {
             log::info("operation-server: stop_flag observed, exiting");
