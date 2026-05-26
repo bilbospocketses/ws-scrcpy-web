@@ -469,7 +469,7 @@ export class DependencyManager {
         // Cross-platform: shell out to the launcher's --unzip subcommand
         // (pure-Rust zip crate). Replaces the prior PowerShell Expand-Archive
         // (win32) + system `unzip` (linux) shellouts that resolved binaries
-        // via system PATH — CLAUDE.md Local-Dependencies-Only violations
+        // via system PATH — local-dependencies-only violations
         // that §30 missed because §30's scope was the elevation path only.
         // The launcher binary is SHA-pinned-to-release and ships in
         // `current/` alongside this Node process, so no external binary
