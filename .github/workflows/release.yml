@@ -279,6 +279,14 @@ jobs:
           # channel won't see beta releases because their feed file lists
           # only stable assets. See feedback_velopack_permachine_lessons.md
           # Gotcha 5 for the full diagnosis.
+          #
+          # make_latest: 'legacy' lets GitHub determine Latest via its
+          # own SemVer + creation-date algorithm instead of every new
+          # release forcibly stealing the badge. Fixes the releases page
+          # sort order (betas were appearing in the middle instead of at
+          # the top because each publish force-set Latest and GitHub
+          # sorted non-Latest entries by commit date not publish date).
+          make_latest: 'legacy'
           body_path: release-notes.md
           files: |
             artifacts/windows-final/*.msi
