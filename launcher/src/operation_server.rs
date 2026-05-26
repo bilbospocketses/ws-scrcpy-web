@@ -153,6 +153,7 @@ pub fn write_port_file(data_root: &Path, port: u16) -> std::io::Result<PathBuf> 
     Ok(path)
 }
 
+#[allow(dead_code)]
 pub fn read_port_file(data_root: &Path) -> Option<u16> {
     let path = data_root.join("control").join(PORT_FILE_NAME);
     std::fs::read_to_string(&path)
@@ -181,13 +182,11 @@ pub fn bind_with_probe(
                 Ok(listener) => return Ok((listener, port)),
                 Err(e) => {
                     let is_in_use = e.kind() == std::io::ErrorKind::AddrInUse;
-                    if is_in_use {
-                        if offset < max_offset {
-                            log::info(&format!(
-                                "operation-server: port {port} in use, trying next"
-                            ));
-                            break; // try next port
-                        }
+                    if is_in_use && offset < max_offset {
+                        log::info(&format!(
+                            "operation-server: port {port} in use, trying next"
+                        ));
+                        break; // try next port
                     }
                     if bind_start.elapsed() >= retry_timeout {
                         if is_in_use {
@@ -684,43 +683,6 @@ fn handle_connection(mut stream: TcpStream, redirect_state: Arc<Mutex<Option<Str
     let _ = stream.shutdown(std::net::Shutdown::Both);
 }
 
-/// Build the HTTP response for GET /api/discover.
-/// Reads config.json from disk, extracts webPort + file mtime.
-/// Returns JSON with null fields on any failure (frontend keeps polling).
-fn build_discover_response(config_path: &Path) -> String {
-    let (web_port, mtime_ms) = match std::fs::metadata(config_path) {
-        Ok(meta) => {
-            let mtime = meta.modified()
-                .ok()
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|d| d.as_millis() as u64);
-            let port = std::fs::read_to_string(config_path)
-                .ok()
-                .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
-                .and_then(|v| v.get("webPort")?.as_u64())
-                .map(|p| p as u16);
-            (port, mtime)
-        }
-        Err(_) => (None, None),
-    };
-
-    let port_str = match web_port {
-        Some(p) => format!("{p}"),
-        None => "null".to_string(),
-    };
-    let mtime_str = match mtime_ms {
-        Some(m) => format!("{m}"),
-        None => "null".to_string(),
-    };
-    let body = format!(r#"{{"webPort":{port_str},"configMtime":{mtime_str}}}"#);
-
-    format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nCache-Control: no-store\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n{}",
-        body.len(),
-        body
-    )
-}
-
 fn build_response(path: &str, redirect: Option<&str>, variant: OperationVariant) -> String {
     // Discrimination strategy: the static HTML page (served on root)
     // polls /api/config every 1s. Two response shapes for /api/*:
@@ -895,66 +857,6 @@ pub fn legacy_helper_path_for(data_root: &Path) -> PathBuf {
 /// to local-mode-only at the call site keeps the two architectures from
 /// racing for the bind.
 ///
-/// Best-effort: logs failure and returns. If the spawn fails (helper
-/// missing, permissions denied, etc.), the apply-update degrades to a
-/// brief "can't reach" gap during the upgrade window — the pre-Part-5f
-/// local-mode behavior. Stdio is explicitly null'd so the child doesn't
-/// inherit the launcher's handles (which become invalid after launcher
-/// exits).
-///
-/// Windows-only — on non-Windows the call is a no-op log line.
-pub fn spawn_detached_helper(data_root: &Path) {
-    let helper = helper_path_for(data_root);
-    if !helper.exists() {
-        log::error(&format!(
-            "operation-server: helper not present at {helper:?}, skipping spawn"
-        ));
-        return;
-    }
-
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        use std::process::Stdio;
-        // DETACHED_PROCESS: child does not inherit calling process's console.
-        // CREATE_NO_WINDOW: child runs without console window (windows-subsystem
-        //   binary already has none, but belt-and-braces for parity with the
-        //   post-stop bat's `start "" /b` behavior).
-        const DETACHED_PROCESS: u32 = 0x00000008;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        match std::process::Command::new(&helper)
-            .arg("--operation-server")
-            .current_dir(data_root)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .creation_flags(DETACHED_PROCESS | CREATE_NO_WINDOW)
-            .spawn()
-        {
-            Ok(child) => log::info(&format!(
-                "operation-server: spawned helper (pid {})",
-                child.id()
-            )),
-            Err(e) => log::error(&format!("operation-server: spawn failed: {e}")),
-        }
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = data_root; // silence unused-variable warning
-        log::info("operation-server: spawn_detached_helper skipped (non-Windows)");
-    }
-}
-
-/// Path of the apply-update-pending marker the launcher's supervisor
-/// reads on clean Node exit to decide whether to spawn the upgrade-
-/// server (local mode) before exiting. Same path the post-stop bat
-/// gates its spawn on (service mode). Written by Node's
-/// `UpdateService.applyUpdate` in both modes via
-/// `Config.applyUpdatePendingMarkerPath`.
-pub fn apply_update_pending_marker(data_root: &Path) -> PathBuf {
-    data_root.join("control").join("apply-update-pending")
-}
-
 /// Wait for the given TCP port to become bindable (i.e., the previous
 /// holder has released it). Polls `set_nonblocking` connects, NOT bind
 /// attempts (bind succeeds even if a previous bind is in TIME_WAIT). A
@@ -1118,43 +1020,6 @@ mod tests {
         let html = super::render_operation_page(super::OperationVariant::Uninstall);
         assert!(html.contains("Uninstalling service, please wait"), "uninstall title present: {html}");
         assert!(!html.contains("__OPERATION_TITLE__"), "template token replaced");
-    }
-
-    #[test]
-    fn build_discover_response_with_valid_config() {
-        let dir = tempfile::tempdir().unwrap();
-        let config_path = dir.path().join("config.json");
-        std::fs::write(&config_path, r#"{"webPort":8003,"installMode":"user"}"#).unwrap();
-
-        let response = super::build_discover_response(&config_path);
-        assert!(response.contains("200 OK"));
-        assert!(response.contains(r#""webPort":8003"#));
-        assert!(response.contains(r#""configMtime":"#));
-    }
-
-    #[test]
-    fn build_discover_response_with_missing_config() {
-        let dir = tempfile::tempdir().unwrap();
-        let config_path = dir.path().join("config.json");
-
-        let response = super::build_discover_response(&config_path);
-        assert!(response.contains("200 OK"));
-        assert!(response.contains(r#""webPort":null"#));
-        assert!(response.contains(r#""configMtime":null"#));
-    }
-
-    #[test]
-    fn build_discover_response_with_malformed_json() {
-        let dir = tempfile::tempdir().unwrap();
-        let config_path = dir.path().join("config.json");
-        std::fs::write(&config_path, "not json at all").unwrap();
-
-        let response = super::build_discover_response(&config_path);
-        assert!(response.contains("200 OK"));
-        assert!(response.contains(r#""webPort":null"#));
-        // configMtime should still be present since the file exists
-        assert!(response.contains(r#""configMtime":"#));
-        assert!(!response.contains(r#""configMtime":null"#));
     }
 
     #[test]

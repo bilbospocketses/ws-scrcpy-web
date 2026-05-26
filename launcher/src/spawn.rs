@@ -43,14 +43,6 @@ pub fn resolve_node_with(deps_path: Option<&str>, exe_dir: &Path) -> Result<Path
     )
 }
 
-/// Resolve Node using process env + current exe path.
-pub fn resolve_node() -> Result<PathBuf> {
-    let deps = std::env::var("DEPS_PATH").ok();
-    let exe = std::env::current_exe().context("could not determine current exe path")?;
-    let exe_dir = exe.parent().context("exe has no parent dir")?;
-    resolve_node_with(deps.as_deref(), exe_dir)
-}
-
 /// Pure resolution for the server entry point.
 pub fn resolve_server_entry_with(exe_dir: &Path) -> Result<PathBuf> {
     let entry = exe_dir.join("dist").join("index.js");
@@ -59,12 +51,6 @@ pub fn resolve_server_entry_with(exe_dir: &Path) -> Result<PathBuf> {
     } else {
         bail!("Server entry not found at {:?}", entry)
     }
-}
-
-pub fn resolve_server_entry() -> Result<PathBuf> {
-    let exe = std::env::current_exe().context("could not determine current exe path")?;
-    let exe_dir = exe.parent().context("exe has no parent dir")?;
-    resolve_server_entry_with(exe_dir)
 }
 
 /// Open the server.log file in append mode for stdout/stderr redirection.
