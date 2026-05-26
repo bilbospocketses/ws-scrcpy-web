@@ -341,9 +341,9 @@ fn run() -> i32 {
 
             thread::sleep(Duration::from_secs(1));
             log::info("operation-server: launching new launcher");
-            let launcher = current_dir.join("ws-scrcpy-web-launcher.exe");
             #[cfg(windows)]
             {
+                let launcher = current_dir.join("ws-scrcpy-web-launcher.exe");
                 use std::os::windows::process::CommandExt;
                 const DETACHED_PROCESS: u32 = 0x00000008;
                 const CREATE_NO_WINDOW: u32 = 0x08000000;
