@@ -206,8 +206,8 @@ export async function runElevated(
         // itself to fire the UAC prompt + re-spawn elevated with
         // `--elevate-and-run`. Replaces the prior
         // `powershell.exe Start-Process -Verb RunAs` path that resolved
-        // PowerShell via system PATH (Local-Dependencies-Only violation,
-        // per CLAUDE.md). The launcher binary is SHA-pinned-to-release
+        // PowerShell via system PATH (local-dependencies-only violation).
+        // The launcher binary is SHA-pinned-to-release
         // and lives in `current/` alongside this Node process, so no
         // external binary discovery is needed.
         //

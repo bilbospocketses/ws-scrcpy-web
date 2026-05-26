@@ -23,6 +23,7 @@ import {
 
 interface Capabilities {
     shell: boolean;
+    shellReason?: string;
 }
 
 let capabilitiesCache: Capabilities | undefined;
@@ -46,14 +47,25 @@ function getCapabilities(): Promise<Capabilities> {
     return capabilitiesPromise;
 }
 
-function applyShellCapability(link: HTMLAnchorElement, available: boolean): void {
+function shellReasonTooltip(reason?: string): string {
+    switch (reason) {
+        case 'no-seed-package':
+        case 'seed-stage-failed':
+            return 'shell unavailable — node-pty seed not staged. reinstall the app or check server logs.';
+        case 'download-failed':
+        case 'load-failed-after-download':
+            return 'shell unavailable — no node-pty prebuilt matches your Node version. update Node in the dependencies panel or wait for the next prebuild release.';
+        default:
+            return 'shell unavailable. see server logs for details.';
+    }
+}
+
+function applyShellCapability(link: HTMLAnchorElement, available: boolean, reason?: string): void {
     if (available) return; // default state is enabled — nothing to do
     // Visually disable: pointer-events off, muted opacity, tooltip explaining why
     link.style.pointerEvents = 'none';
     link.style.opacity = '0.4';
-    link.title =
-        'Shell unavailable — no node-pty prebuilt matches your Node version. ' +
-        'Update Node in the Dependencies panel or wait for the next prebuild release.';
+    link.title = shellReasonTooltip(reason);
     // Belt-and-suspenders: also block keyboard activation
     link.setAttribute('aria-disabled', 'true');
     link.setAttribute('tabindex', '-1');
@@ -357,9 +369,9 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
             // If capabilities are already cached, apply immediately (no flash).
             // Otherwise patch once the in-flight fetch resolves.
             if (capabilitiesCache !== undefined) {
-                applyShellCapability(shellLink, capabilitiesCache.shell);
+                applyShellCapability(shellLink, capabilitiesCache.shell, capabilitiesCache.shellReason);
             } else {
-                getCapabilities().then((caps) => applyShellCapability(shellLink, caps.shell));
+                getCapabilities().then((caps) => applyShellCapability(shellLink, caps.shell, caps.shellReason));
             }
         }
 

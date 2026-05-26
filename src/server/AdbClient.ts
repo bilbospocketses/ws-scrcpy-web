@@ -93,7 +93,7 @@ export class AdbClient {
      * persistent file handle across multiple apply attempts. Daemon
      * inherited cwd from Node, which inherited from launcher, which ran
      * from current/. The bundled adb directory is `<dataRoot>\dependencies\adb\`
-     * (per CLAUDE.md Local-Dependencies-Only) — not under install root —
+     * (local-dependencies-only architecture) — not under install root —
      * so anchoring the daemon there decouples its CWD lock from the swap
      * target.
      */
