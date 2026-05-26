@@ -303,6 +303,8 @@ Almost all configuration is managed through the in-app **Settings** panel (gear 
 | `channel` | `stable` | Settings → Updates → Channel |
 | `githubOwner` | `bilbospocketses` | Settings → Updates → GitHub owner (override for forks) |
 
+**Update channels are baked into the installation.** Velopack tracks the channel (stable or beta) at the package level — it's part of the installed identity, not just a config preference. Changing the `channel` setting changes which feed the updater *queries*, but the in-app updater cannot cross from one channel to another. A beta installation will not successfully apply a stable update (or vice versa), even if the updater detects and downloads it. **To switch channels, uninstall the current version and fresh-install the desired channel's MSI/AppImage.** This is a Velopack platform constraint, not a ws-scrcpy-web limitation.
+
 A few advanced switches are only available via environment variables:
 
 | Variable | Purpose |
