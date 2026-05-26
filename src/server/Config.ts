@@ -530,6 +530,13 @@ export class Config {
         return path.join(base, 'control', 'apply-update-pending');
     }
 
+    public get operationServerPortFilePath(): string {
+        const base = this._dataRoot !== null
+            ? this._dataRoot
+            : path.dirname(this._dependenciesPath);
+        return path.join(base, 'control', 'operation-server-port');
+    }
+
     public get uninstallPendingMarkerPath(): string {
         const base = this._dataRoot !== null
             ? this._dataRoot

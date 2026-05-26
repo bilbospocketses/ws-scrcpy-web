@@ -135,14 +135,10 @@ export class UpdatesApi {
             return true;
         }
 
+        let redirectPort: number | null = null;
         try {
-            // v0.1.23-beta.13: applyUpdate is now async because it runs
-            // pre-apply hygiene (adb daemon kill + Windows taskkill +
-            // settle delay) before kicking off Velopack's wait-then-apply.
-            // We block the HTTP response until hygiene completes so the
-            // chained process.exit timer below doesn't fire before
-            // Velopack actually has Update.exe spawned.
-            await this.svc.applyUpdate();
+            const result = await this.svc.applyUpdate();
+            redirectPort = result.redirectPort;
         } catch (err) {
             const body: UpdatesErrorResponse = { ok: false, error: (err as Error).message };
             res.writeHead(500);
@@ -150,11 +146,21 @@ export class UpdatesApi {
             return true;
         }
 
-        const body: UpdatesApplyResponse = { ok: true };
-        res.writeHead(200);
-        res.end(JSON.stringify(body));
+        if (redirectPort !== null) {
+            const redirectUrl = `http://localhost:${redirectPort}/`;
+            const html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>updating</title></head>
+<body><p>redirecting to update page...</p>
+<script>window.location.href=${JSON.stringify(redirectUrl)};</script>
+</body></html>`;
+            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+            res.end(html);
+        } else {
+            const body: UpdatesApplyResponse = { ok: true };
+            res.writeHead(200);
+            res.end(JSON.stringify(body));
+        }
 
-        // Mirror ServerShutdownApi: defer exit so the response flushes first.
         this.schedule(() => {
             log.info('exiting (process.exit 0) after applyUpdate');
             this.exit(0);

@@ -1,5 +1,5 @@
 // biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
-import { execFile } from 'child_process';
+import { execFile, spawn } from 'child_process';
 // biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import * as fs from 'fs';
 // biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
@@ -328,65 +328,56 @@ export class UpdateService {
      * → beta.12 VM test (2026-04-29) — adb.exe held a persistent file handle
      * on `current\` across multiple apply attempts.
      */
-    public async applyUpdate(): Promise<void> {
+    public async applyUpdate(): Promise<{ redirectPort: number | null }> {
         if (!this.mgr || !this.state.pendingUpdate || this.state.status !== 'ready') {
             throw new Error(`apply not allowed in current state: ${this.state.status}`);
         }
         log.info(`applying update v${this.state.availableVersion}`);
         await this.preApplyHygiene();
-        // silent=true (no UI from Velopack updater).
-        //
-        // restart semantics depend on install mode:
-        //   - local mode: restart=false. Supervisor writes + spawns a
-        //     Velopack relaunches the user-mode launcher post-swap. Unchanged
-        //     behavior from v0.1.x stable.
-        //   - service mode: restart=false. Servy's post-stop.bat handles sc start.
-        //     Velopack's stub-relaunch would spawn a parallel LocalSystem launcher
-        //     outside Servy (inherits the LocalSystem token from Update.exe's parent
-        //     chain, grabs the single-instance mutex, starves out Servy's recovery
-        //     attempts). Instead we rely on Servy's --postStopPath mechanism: we
-        //     write an apply-update-pending marker here, then exit. Servy detects
-        //     the launcher's clean exit and fires the post-stop handler, which sees
-        //     the marker, sleeps long enough for Update.exe to release file handles
-        //     on current/, and invokes `sc start WsScrcpyWeb`. SCM then asks Servy
-        //     to launch a fresh launcher — by which point Velopack is long gone.
-        //     v0.1.25-beta.8 / beta.10 / beta.11 smokes caught the prior approaches;
-        //     see §32 Part 3 in todo_ws_scrcpy_web.md.
+
         const installMode = Config.getInstance().getAppConfig().installMode;
         const isServiceMode = installMode === 'user-service' || installMode === 'system-service';
 
-        // §32 Part 5e/5f — upgrade-server is no longer spawned from Node.
-        // The pre-exit spawn (Part 5b) put the upgrade-server inside
-        // Velopack's process tree, loading
-        // `<installRoot>/current/ws-scrcpy-web-launcher.exe` as its
-        // image; Velopack's apply phase terminated it within ~1s of
-        // bind (v0.1.25-beta.24 → beta.25 smoke 2026-05-21). The
-        // upgrade-server is now spawned by the launcher (Part 5f, local
-        // mode, on supervisor clean-exit path) or by the post-stop bat
-        // (Part 5e, service mode), both sourcing from
-        // `<dataRoot>/upgrade-server/ws-scrcpy-web-launcher.exe` which
-        // Velopack doesn't touch.
-        //
-        // §32 Part 5f — write the apply-update-pending marker in BOTH
-        // modes (was service-mode-only in Part 5e). The marker is the
-        // discriminator both the launcher's supervisor (local) and the
-        // post-stop bat (service) use on clean Node exit to decide
-        // whether to spawn the upgrade-server. Without the marker,
-        // neither side can tell apply-update from a user-initiated
-        // stop (Ctrl+C, services.msc Stop, etc.) and would over-spawn.
         await this.writeApplyUpdatePendingMarker();
 
         if (isServiceMode) {
-            // Service mode: Velopack applies under LocalSystem via Servy's
-            // post-stop.bat which calls sc start after the swap.
             this.mgr.waitExitThenApplyUpdate(this.state.pendingUpdate, true, false);
+            return { redirectPort: null };
         }
-        // Local mode: do NOT call waitExitThenApplyUpdate. That spawns
-        // Update.exe watching our PID, which kills the launcher's process
-        // tree before the supervisor can spawn the operation-server + bat.
-        // Instead: write the marker, exit cleanly. The supervisor's
-        // local-post-stop.bat calls Update.exe apply --silent after
-        // everything has exited.
+
+        const cfg = Config.getInstance();
+        const dataRoot = cfg.dataRoot ?? path.dirname(cfg.dependenciesPath);
+        const helperPath = path.join(
+            dataRoot,
+            'control', 'operation-server', 'ws-scrcpy-web-launcher.exe',
+        );
+        const installRoot = path.resolve(__dirname, '..', '..');
+
+        try {
+            const child = spawn(helperPath, ['--operation-server'], {
+                cwd: dataRoot,
+                detached: true,
+                stdio: 'ignore',
+                env: {
+                    ...process.env,
+                    WS_SCRCPY_INSTALL_ROOT: installRoot,
+                },
+            });
+            child.unref();
+            log.info(`applyUpdate: spawned operation-server (pid ${child.pid})`);
+        } catch (err) {
+            log.error(`applyUpdate: failed to spawn operation-server: ${(err as Error).message}`);
+            return { redirectPort: null };
+        }
+
+        const port = await this.pollOperationServerPort();
+        if (port !== null) {
+            log.info(`applyUpdate: operation-server ready on port ${port}`);
+        } else {
+            log.warn('applyUpdate: operation-server port file not found within timeout');
+        }
+
+        return { redirectPort: port };
     }
 
     /**
@@ -414,6 +405,24 @@ export class UpdateService {
                     `— service will not auto-restart after Velopack swap; user must restart manually.`,
             );
         }
+    }
+
+    private async pollOperationServerPort(timeoutMs = 5000, intervalMs = 100): Promise<number | null> {
+        const portFilePath = Config.getInstance().operationServerPortFilePath;
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline) {
+            try {
+                const content = await fs.promises.readFile(portFilePath, 'utf8');
+                const port = parseInt(content.trim(), 10);
+                if (!isNaN(port) && port > 0 && port <= 65535) {
+                    return port;
+                }
+            } catch {
+                // file doesn't exist yet
+            }
+            await new Promise((resolve) => setTimeout(resolve, intervalMs));
+        }
+        return null;
     }
 
     /**

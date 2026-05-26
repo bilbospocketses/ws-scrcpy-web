@@ -189,40 +189,6 @@ pub fn run() -> Result<i32> {
         match reason {
             None => {
                 log::info("supervisor: clean exit; not restarting");
-
-                // §40 — local-mode update relaunch. If apply-update-pending
-                // marker is present AND we're in local mode:
-                //   1. Spawn operation-server (serves "updating" page)
-                //   2. Write + spawn local-post-stop.bat (sleeps 12s, then
-                //      launches the new current/launcher.exe post-swap)
-                //   3. Exit — Velopack Update.exe swaps current/ (restart=false,
-                //      we own the relaunch via the bat)
-                //
-                // In service mode, Servy's post-stop.bat handles both the
-                // operation-server spawn and the sc start relaunch — gating
-                // to local-mode-only here keeps the two architectures from
-                // racing.
-                let cfg_now = common::config::AppConfig::load(&paths.data_root);
-                if !cfg_now.is_service_mode() {
-                    let marker = crate::operation_server::apply_update_pending_marker(
-                        &paths.data_root,
-                    );
-                    if marker.exists() {
-                        log::info(
-                            "supervisor: apply-update-pending marker present (local mode); spawning operation-server before exit",
-                        );
-                        if let Err(e) = std::fs::remove_file(&marker) {
-                            log::error(&format!(
-                                "supervisor: could not delete apply-update-pending marker (non-fatal): {e}"
-                            ));
-                        }
-                        // §40 — pass install_root so the operation-server
-                        // can extract the nupkg into current/ and relaunch.
-                        std::env::set_var("WS_SCRCPY_INSTALL_ROOT", &paths.install_root);
-                        crate::operation_server::spawn_detached_helper(&paths.data_root);
-                    }
-                }
-
                 return Ok(code);
             }
             Some(RestartReason::RestartMarker) => {

@@ -1,4 +1,6 @@
 // biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
+import * as child_process from 'child_process';
+// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import * as fs from 'fs';
 // biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import * as os from 'os';
@@ -9,6 +11,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Config } from '../Config';
 import { EnvName } from '../EnvName';
 import { type UpdateManagerLike, UpdateService } from '../UpdateService';
+
+// Mock child_process.spawn so local-mode applyUpdate doesn't try to exec
+// the real operation-server helper binary (which doesn't exist in test).
+vi.mock('child_process', async (importOriginal) => {
+    const real = await importOriginal<typeof child_process>();
+    return {
+        ...real,
+        spawn: vi.fn(() => ({ pid: 12345, unref: vi.fn() })),
+    };
+});
 
 // ──────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -53,6 +65,10 @@ describe('UpdateService', () => {
         FEED: process.env['VELOPACK_FEED_URL'],
     };
 
+    // Intercept fs.promises.readFile so pollOperationServerPort returns
+    // instantly in local-mode tests instead of waiting 5s for a real file.
+    let readFileSpy: ReturnType<typeof vi.spyOn> | undefined;
+
     beforeEach(() => {
         const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-update-svc-'));
         tmpDirs.push(tmpRoot);
@@ -62,9 +78,20 @@ describe('UpdateService', () => {
         process.env['DEPS_PATH'] = path.join(tmpRoot, 'deps');
         delete process.env['VELOPACK_FEED_URL'];
         Config._resetForTest();
+
+        const realReadFile = fs.promises.readFile.bind(fs.promises);
+        readFileSpy = vi.spyOn(fs.promises, 'readFile').mockImplementation(
+            ((...args: Parameters<typeof fs.promises.readFile>) => {
+                if (typeof args[0] === 'string' && args[0].includes('operation-server-port')) {
+                    return Promise.resolve('9999');
+                }
+                return realReadFile(...args);
+            }) as typeof fs.promises.readFile,
+        );
     });
 
     afterEach(() => {
+        readFileSpy?.mockRestore();
         Config._resetForTest();
         if (savedEnv.CONFIG === undefined) delete process.env[EnvName.CONFIG_PATH];
         else process.env[EnvName.CONFIG_PATH] = savedEnv.CONFIG;
@@ -482,34 +509,16 @@ describe('UpdateService', () => {
         expect(applyFn).not.toHaveBeenCalled();
     });
 
-    // §32 Part 5e/5f: the upgrade-server is no longer spawned from Node.
-    // Part 5b tried a pre-exit spawn from
-    // `<installRoot>/current/ws-scrcpy-web-launcher.exe` to close the dead
-    // window between Node port-release and upgrade-server bind — but the
-    // upgrade-server loaded current/launcher.exe as its image, and
-    // Velopack's apply phase terminated it within ~1s (caught by
-    // v0.1.25-beta.24 → beta.25 smoke 2026-05-21). The upgrade-server is
-    // now spawned by Servy's --postStopPath bat (Part 5e, service mode) or
-    // by the launcher's supervisor on clean Node exit (Part 5f, local
-    // mode), both sourcing from a dataRoot copy of the launcher entirely
-    // outside Velopack's reach.
-    //
-    // §32 Part 5f extends the apply-update-pending marker write to BOTH
-    // modes (was service-mode-only in Part 5e). Both the launcher
-    // supervisor (local) and the post-stop bat (service) use the marker
-    // as the discriminator between apply-update and user-initiated stop.
-    //
-    // applyUpdate's only side effects on Node side are: write the
-    // apply-update-pending marker (in BOTH modes) and call
-    // waitExitThenApplyUpdate. The marker-write spy below also locks in
-    // the Part 5f behavior — without it, local-mode would never get an
-    // upgrade page.
+    // §40: applyUpdate writes the apply-update-pending marker in ALL modes.
+    // In local mode, Node also spawns the operation-server helper and polls
+    // for its port file (spawn is module-mocked via vi.mock('child_process')).
+    // In service mode, Servy's post-stop bat handles the operation-server.
     it.each([
         ['user-service' as const],
         ['system-service' as const],
         ['user' as const],
         ['system' as const],
-    ])('applyUpdate (%s): writes marker + does NOT spawn anything from Node (§32 Part 5f)', async (installMode) => {
+    ])('applyUpdate (%s): writes marker (§40)', async (installMode) => {
         Config.getInstance().updateAppConfig({ autoUpdate: false, installMode });
         // Spy on fs.promises.writeFile + mkdir to capture the marker write
         // without polluting real ProgramData. Mock as no-ops since we only

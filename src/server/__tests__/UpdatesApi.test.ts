@@ -64,7 +64,7 @@ function fakeService(state: Partial<UpdateServiceState> = {}) {
         ...state,
     };
     const checkForUpdates = vi.fn(async () => fullState);
-    const applyUpdate = vi.fn();
+    const applyUpdate = vi.fn(async () => ({ redirectPort: null }));
     const reconfigure = vi.fn(async (_c: 'stable' | 'beta', _o: string) => undefined);
     const restartTimer = vi.fn();
     const downloadIfNeeded = vi.fn(async () => undefined);
