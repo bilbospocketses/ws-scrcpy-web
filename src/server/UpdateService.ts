@@ -337,10 +337,10 @@ export class UpdateService {
         // silent=true (no UI from Velopack updater).
         //
         // restart semantics depend on install mode:
-        //   - local mode (installMode in {null, 'user', 'system'}): restart=true so
+        //   - local mode: restart=false. Supervisor writes + spawns a
         //     Velopack relaunches the user-mode launcher post-swap. Unchanged
         //     behavior from v0.1.x stable.
-        //   - service mode (installMode in {'user-service', 'system-service'}): restart=false.
+        //   - service mode: restart=false. Servy's post-stop.bat handles sc start.
         //     Velopack's stub-relaunch would spawn a parallel LocalSystem launcher
         //     outside Servy (inherits the LocalSystem token from Update.exe's parent
         //     chain, grabs the single-instance mutex, starves out Servy's recovery
@@ -352,8 +352,6 @@ export class UpdateService {
         //     to launch a fresh launcher — by which point Velopack is long gone.
         //     v0.1.25-beta.8 / beta.10 / beta.11 smokes caught the prior approaches;
         //     see §32 Part 3 in todo_ws_scrcpy_web.md.
-        const installMode = Config.getInstance().getAppConfig().installMode;
-        const isServiceMode = installMode === 'user-service' || installMode === 'system-service';
         // §32 Part 5e/5f — upgrade-server is no longer spawned from Node.
         // The pre-exit spawn (Part 5b) put the upgrade-server inside
         // Velopack's process tree, loading
@@ -374,7 +372,7 @@ export class UpdateService {
         // neither side can tell apply-update from a user-initiated
         // stop (Ctrl+C, services.msc Stop, etc.) and would over-spawn.
         await this.writeApplyUpdatePendingMarker();
-        this.mgr.waitExitThenApplyUpdate(this.state.pendingUpdate, true, !isServiceMode);
+        this.mgr.waitExitThenApplyUpdate(this.state.pendingUpdate, true, false);
     }
 
     /**

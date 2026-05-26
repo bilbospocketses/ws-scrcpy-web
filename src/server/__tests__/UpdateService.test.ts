@@ -389,9 +389,9 @@ describe('UpdateService', () => {
         await expect(svc.applyUpdate()).rejects.toThrow(/apply not allowed in current state/);
     });
 
-    it('applyUpdate (local mode): waitExitThenApplyUpdate called with restart=true', async () => {
+    it('applyUpdate (local mode): waitExitThenApplyUpdate called with restart=false', async () => {
         // Default installMode is null after Config._resetForTest + empty config.json,
-        // which is treated as local mode (Velopack relaunches the user-mode launcher).
+        // which is treated as local mode. restart=false — we own the relaunch.
         Config.getInstance().updateAppConfig({ autoUpdate: false });
         const info = fakeUpdateInfo('0.2.0');
         const applyFn = vi.fn();
@@ -417,8 +417,8 @@ describe('UpdateService', () => {
         const args = applyFn.mock.calls[0]!;
         expect(args[0]).toBe(info);
         expect(args[1]).toBe(true);
-        // restart=true in local mode (Velopack relaunches us post-swap).
-        expect(args[2]).toBe(true);
+        // restart=false in all modes — launcher supervisor handles relaunch.
+        expect(args[2]).toBe(false);
     });
 
     // v0.1.25-beta.8 smoke A.2 regression: when installMode is a service mode,
@@ -459,11 +459,11 @@ describe('UpdateService', () => {
     });
 
     // Symmetry check: local-mode variants other than the default null should also
-    // get restart=true. Keeps the boolean wiring honest if someone widens InstallMode later.
+    // get restart=false. All modes use restart=false — we own the relaunch.
     it.each([
         ['user' as const],
         ['system' as const],
-    ])('applyUpdate (%s): waitExitThenApplyUpdate called with restart=true', async (installMode) => {
+    ])('applyUpdate (%s): waitExitThenApplyUpdate called with restart=false', async (installMode) => {
         Config.getInstance().updateAppConfig({ autoUpdate: false, installMode });
         const info = fakeUpdateInfo('0.2.0');
         const applyFn = vi.fn();
@@ -484,7 +484,7 @@ describe('UpdateService', () => {
         await svc.applyUpdate();
         expect(applyFn).toHaveBeenCalledTimes(1);
         const args = applyFn.mock.calls[0]!;
-        expect(args[2]).toBe(true);
+        expect(args[2]).toBe(false);
     });
 
     // §32 Part 5e/5f: the upgrade-server is no longer spawned from Node.
@@ -544,9 +544,7 @@ describe('UpdateService', () => {
         await svc.checkForUpdates();
         await svc.applyUpdate();
         expect(applyFn).toHaveBeenCalledTimes(1);
-        const isServiceMode =
-            installMode === 'user-service' || installMode === 'system-service';
-        expect(applyFn.mock.calls[0]![2]).toBe(!isServiceMode);
+        expect(applyFn.mock.calls[0]![2]).toBe(false);
 
         const markerCalls = writeFileSpy.mock.calls.filter(
             (c) =>
