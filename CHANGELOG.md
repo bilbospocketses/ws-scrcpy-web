@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.28-beta.17] - 2026-05-26
+
 ### Fixed
 
 - **Local-mode update redesign (§40).** Operation-server now binds `config_port + 1` (probing upward) instead of competing with Node for `config_port`. Eliminates the IPv4-dead / dual-stack corruption bug where `127.0.0.1:8000` became unreachable after updates while `[::1]:8000` worked. Three stacked bugs fixed: port conflict (separate port), stale helper binary (neutralized — old code fails gracefully), Node resolution (`spawn_server` now resolves from `dependencies/node/` before falling back to `seed/node/`). Browser redirect flow: Node spawns operation-server → poll-reads port file → serves redirect to browser → operation-server probes for new Node → redirects browser back.
