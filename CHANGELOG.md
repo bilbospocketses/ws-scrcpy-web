@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.28-beta.1] - 2026-05-25
+
 ### Fixed
 
 - **Local-mode in-app updates now work.** Velopack's `restart=true` silently failed under non-elevated user identity — `current/` swapped but the app was never relaunched. Fix: `restart=false` for all modes + a local-post-stop.bat (sleeps 12s for Velopack swap, then launches the new launcher). Mirrors the proven service-mode post-stop.bat pattern.
