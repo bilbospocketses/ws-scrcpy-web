@@ -40,8 +40,12 @@ Input flows back as mouse, UHID keyboard, i16-fixed-point scroll, and a D-pad/To
 - **Dark/light theme** -- toggle between dark (default) and light modes, preference saved to localStorage
 - **Responsive layout** -- centered page container scales from mobile to 4K (up to 5 device cards)
 - **In-app dependency updater** -- check and update Node.js, ADB, and scrcpy-server from the home page
+- **System tray helper** -- shows connection status, quick-open browser, mode-aware text (local vs. service); auto-spawns and auto-recovers via the launcher's supervisor
 - **Server logging** -- all server output logged to `ws-scrcpy-web.log` with timestamps, tag prefixes, and 5MB rotation
-- Docker support (Dockerfile included)
+
+## Service Mode
+
+ws-scrcpy-web can run as a Windows service (via Servy) or a Linux systemd unit, starting at boot and surviving logouts. Install/uninstall is handled from the browser UI. Service install requires a single UAC prompt; uninstall requires none -- the service-mode Node hands off to a Rust operation-server that serves a "please wait" transition page while `post-stop.bat` runs `servy-cli uninstall` and spawns a fresh user-session launcher. The browser auto-navigates to the new instance when it is ready. No 30-second port sweep, no manual relaunch.
 
 ## Embedding
 
@@ -142,7 +146,7 @@ Get the latest release from the [Releases page](https://github.com/bilbospockets
 
 **Upgrading from v0.1.21, v0.1.22, or v0.1.23-beta.{1..6}:** the in-app updater on those builds is broken at varying severity (multiple compounding bugs across Velopack PerMachine + ACL + Job Object + auto-apply paths — see CHANGELOG entries v0.1.23-beta.1 through beta.13 for the full diagnosis chain). Clicking "apply update" from those versions either hangs, loops, or silently no-ops. **You must uninstall via Settings → Apps and fresh-install the v0.1.23+ MSI to escape the broken-updater chain.** Once on v0.1.23-beta.7 or newer, the in-app updater is fully functional and subsequent updates apply with a single first-launch UAC prompt.
 
-Release artifacts are currently **unsigned** — code-signing is under evaluation. Each release ships a `SHA256SUMS` file you can verify against in the meantime.
+Release artifacts are currently **unsigned** (no Authenticode / codesign) — code-signing is under evaluation. Each release ships a `SHA256SUMS` file and [Sigstore SLSA Provenance](https://slsa.dev/) attestations for supply-chain verification.
 
 For data-handling details, see our [Privacy Policy](PRIVACY.md).
 
@@ -242,15 +246,16 @@ These dependencies are compiled into the `dist/` output during the build process
 
 ### How the Launcher Works
 
-The launcher scripts (`start.cmd` / `start.sh`) solve a specific problem: on Windows, you cannot replace a running executable. When the in-app updater downloads a new Node.js binary:
+Production installs (MSI/AppImage) use a compiled Rust launcher (`ws-scrcpy-web-launcher.exe`) that supervises Node.js and manages the full application lifecycle:
 
-1. The server renames the running `node.exe` to `node.exe.old`
-2. The server copies the new `node.exe` into place
-3. The server writes a `.restart` marker file and exits
-4. The launcher detects the marker, cleans up the old binary, and relaunches
-5. The browser automatically reconnects when the server comes back
+1. **Supervisor loop** -- spawns Node as a child process, monitors its exit code. Exit code 75 or a `.restart` marker triggers a respawn (used by the dependency updater after Node.js updates). Normal exit shuts down cleanly.
+2. **Tray supervisor** -- spawns the standalone tray helper and polls every 10 seconds; respawns it automatically if it crashes or is killed by the user.
+3. **UAC elevation** -- uses `ShellExecuteExW` with the `runas` verb for privileged operations (service install, update apply). No PowerShell intermediary.
+4. **Operation-server** -- during service uninstall or app update, spawns a minimal Rust HTTP server on the same port to serve a "please wait" transition page. The operation-server detects when the new instance is ready and winds down.
+5. **Job object** -- all child processes (Node, tray, operation-server) are assigned to a Windows Job Object with `KILL_ON_JOB_CLOSE`, so nothing orphans if the launcher is killed.
+6. **Single-instance mutex** -- prevents duplicate launcher instances.
 
-On Linux, file locking is not an issue (running binaries can be overwritten), but the launcher still handles the restart loop for consistency.
+In dev mode, `start.cmd` / `start.sh` provide a simpler restart loop for the same purpose.
 
 ### Linux install (AppImage)
 
@@ -323,12 +328,7 @@ See `docs/TECHNICAL_GUIDE.md` section 15 for details on the Logger utility and a
 
 ## Docker
 
-```bash
-docker build -t ws-scrcpy-web .
-docker run -p 8000:8000 ws-scrcpy-web
-```
-
-Note: The container needs ADB access to Android devices. For network ADB (wireless), the devices must be reachable from the container network.
+A legacy `Dockerfile` exists in the repo but is not actively maintained and targets an older Node version. Docker-based deployment is planned but has not shipped yet. For now, use the MSI, AppImage, or portable ZIP.
 
 ## Acknowledgments
 
