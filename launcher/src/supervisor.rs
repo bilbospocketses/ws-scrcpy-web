@@ -292,11 +292,16 @@ fn build_local_post_stop_bat(install_root: &Path, data_root: &Path) -> String {
     let launcher_str = launcher.to_string_lossy();
     let log_path = data_root.join("logs").join("update-apply.log");
     let log_str = log_path.to_string_lossy();
+    // ping loopback is the classic silent-wait trick for bat files.
+    // timeout.exe shows a visible countdown window even under
+    // CREATE_NO_WINDOW; ping -n N waits (N-1) seconds silently.
     format!(
         "@echo off\r\n\
-         timeout /t 5 /nobreak >nul\r\n\
+         ping -n 6 127.0.0.1 >nul\r\n\
+         C:\\Windows\\System32\\taskkill.exe /F /IM ws-scrcpy-web-tray.exe /T >nul 2>&1\r\n\
+         ping -n 4 127.0.0.1 >nul\r\n\
          \"{update_str}\" apply --silent --norestart --log \"{log_str}\"\r\n\
-         timeout /t 2 /nobreak >nul\r\n\
+         ping -n 3 127.0.0.1 >nul\r\n\
          start \"\" \"{launcher_str}\"\r\n\
          exit /b 0\r\n"
     )
@@ -384,7 +389,9 @@ mod tests {
         let install_root = std::path::Path::new(r"C:\Program Files\WsScrcpyWeb");
         let data_root = std::path::Path::new(r"C:\ProgramData\WsScrcpyWeb");
         let bat = build_local_post_stop_bat(install_root, data_root);
-        assert!(bat.contains("timeout /t 5 /nobreak"));
+        assert!(bat.contains("ping -n 6 127.0.0.1"));
+        assert!(bat.contains("taskkill.exe /F /IM ws-scrcpy-web-tray.exe"));
+        assert!(bat.contains("ping -n 4 127.0.0.1"));
         assert!(bat.contains(r"Update.exe"));
         assert!(bat.contains("apply --silent --norestart"));
         assert!(bat.contains("update-apply.log"));
