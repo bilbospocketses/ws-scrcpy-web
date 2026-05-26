@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.27] - 2026-05-25
+
+### Fixed
+
+- shell-disabled tooltip now shows per-reason wording from `/api/capabilities` instead of hardcoded Node-ABI message
+- file browser error overlay (was `console.error` only, now shows visual overlay)
+- file browser hashchange navigation (back/forward buttons now drive content load)
+- scrubbed 3 private CLAUDE.md citations from public source comments
+
+### Changed
+
+- TECHNICAL_GUIDE refreshed with 5 new architecture sections (§19-23) + README updated for v0.1.26
+- removed stale TODO comments (drag-from-outside, HostTracker binary rewrite)
+
 ## [0.1.26] - 2026-05-25
 
 Stable release rolling up 67 beta iterations (v0.1.25-beta.1 through beta.67). Headline: **service mode completely rearchitected** — installs and uninstalls are now seamless, no UAC prompt on uninstall, no 30s port-sweep delays, no stuck modals, and the tray helper is unified across both modes.
