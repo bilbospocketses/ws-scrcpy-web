@@ -311,7 +311,7 @@ fn run() -> i32 {
             let bg_listener = listener.try_clone().expect("clone listener");
             let bg_redirect: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
             let bg_redirect2 = bg_redirect.clone();
-            let page_thread = thread::spawn(move || {
+            let _page_thread = thread::spawn(move || {
                 loop {
                     accept_one(&bg_listener, &bg_redirect2, OperationVariant::ApplyUpdate);
                 }
@@ -366,9 +366,15 @@ fn run() -> i32 {
                     )),
                 }
             }
-            // Fall through to normal stop-marker loop — new launcher will
-            // write it, triggering wind-down + browser redirect.
-            drop(page_thread);
+            // Exit immediately so the new launcher gets a clean port
+            // bind. The wind-down + probe redirect loop is for the
+            // service-mode bat case; in §40 the operation-server owns
+            // the whole update and its job is done once the new launcher
+            // is spawned. Holding the port through wind-down causes
+            // Node to bind IPv6-only (dual-stack conflict with our
+            // IPv4 listener), leaving 127.0.0.1 unreachable.
+            log::info("operation-server: local-mode apply complete, exiting");
+            return 0;
         }
     }
 
