@@ -320,8 +320,11 @@ fn run() -> i32 {
             log::info("operation-server: local-mode apply — killing tray");
             #[cfg(windows)]
             {
+                use std::os::windows::process::CommandExt;
+                const CREATE_NO_WINDOW: u32 = 0x08000000;
                 let _ = std::process::Command::new(r"C:\Windows\System32\taskkill.exe")
                     .args(["/F", "/IM", "ws-scrcpy-web-tray.exe", "/T"])
+                    .creation_flags(CREATE_NO_WINDOW)
                     .stdin(std::process::Stdio::null())
                     .stdout(std::process::Stdio::null())
                     .stderr(std::process::Stdio::null())
