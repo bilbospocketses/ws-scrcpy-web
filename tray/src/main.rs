@@ -211,11 +211,13 @@ fn run_tray() -> Result<()> {
     .context("tray loop")?;
 
     if matches!(action, common::tray::TrayAction::ConfirmedExit) {
-        // Re-read config to get the CURRENT port — may have changed since
-        // the tray started (mode swap mid-session).
-        let shutdown_port = common::config::AppConfig::load(&config_dir)
-            .web_port
-            .unwrap_or(8000);
+        let cfg = common::config::AppConfig::load(&config_dir);
+        let shutdown_port = cfg.web_port.unwrap_or(8000);
+        common::log::info(&format!(
+            "tray: confirmed exit — config_dir={:?} web_port={:?} resolved_port={shutdown_port}",
+            config_dir.display(),
+            cfg.web_port,
+        ));
         request_server_shutdown(shutdown_port);
     }
     Ok(())
@@ -252,11 +254,23 @@ fn install_root_from_exe() -> Result<PathBuf> {
 /// means there's nothing to ask. We exit successfully either way.
 fn request_server_shutdown(port: u16) {
     let url = format!("http://127.0.0.1:{port}/api/server/shutdown");
+    common::log::info(&format!("tray: shutdown POST to {url}"));
     let agent = ureq::AgentBuilder::new()
         .timeout_connect(SHUTDOWN_TIMEOUT)
         .timeout(SHUTDOWN_TIMEOUT)
         .build();
-    let _ = agent.post(&url).send_string("");
+    match agent.post(&url).send_string("") {
+        Ok(resp) => {
+            common::log::info(&format!(
+                "tray: shutdown POST got {} {}",
+                resp.status(),
+                resp.status_text()
+            ));
+        }
+        Err(e) => {
+            common::log::error(&format!("tray: shutdown POST failed: {e}"));
+        }
+    }
 }
 
 #[cfg(test)]
