@@ -332,6 +332,120 @@ fn run() -> i32 {
     let _ = std::fs::remove_file(control_dir.join(STOP_MARKER_FILENAME));
     let _ = std::fs::remove_file(control_dir.join(LEGACY_STOP_MARKER_FILENAME));
 
+    // §40 — local-mode update path. Binds config_port + 1 (probing upward)
+    // to avoid port conflict with Node (which still holds config_port).
+    if variant == OperationVariant::ApplyUpdate {
+        if let Ok(install_root) = std::env::var("WS_SCRCPY_INSTALL_ROOT") {
+            let install_root = PathBuf::from(install_root);
+            let op_port_start = port.saturating_add(1);
+
+            let (listener, bound_port) = match bind_with_probe(
+                op_port_start,
+                PROBE_MAX_OFFSET,
+                Duration::from_secs(BIND_RETRY_TIMEOUT_SECS),
+            ) {
+                Ok(pair) => pair,
+                Err(code) => return code,
+            };
+
+            if let Err(e) = listener.set_nonblocking(true) {
+                log::error(&format!(
+                    "operation-server: set_nonblocking failed (non-fatal): {e}"
+                ));
+            }
+
+            log::info(&format!(
+                "operation-server: §40 bound 0.0.0.0:{bound_port} (app port={port})"
+            ));
+
+            if let Err(e) = write_port_file(&data_root, bound_port) {
+                log::error(&format!(
+                    "operation-server: failed to write port file: {e}"
+                ));
+            }
+
+            let bg_stop = Arc::new(AtomicBool::new(false));
+            let bg_stop2 = bg_stop.clone();
+            let bg_listener = listener.try_clone().expect("clone listener");
+            let bg_redirect: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+            let bg_redirect2 = bg_redirect.clone();
+            let _page_thread = thread::spawn(move || {
+                while !bg_stop2.load(Ordering::SeqCst) {
+                    accept_one(&bg_listener, &bg_redirect2, OperationVariant::ApplyUpdate);
+                }
+            });
+
+            log::info("operation-server: §40 killing tray");
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                const CREATE_NO_WINDOW_FLAG: u32 = 0x08000000;
+                let _ = std::process::Command::new(r"C:\Windows\System32\taskkill.exe")
+                    .args(["/F", "/IM", "ws-scrcpy-web-tray.exe", "/T"])
+                    .creation_flags(CREATE_NO_WINDOW_FLAG)
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status();
+            }
+            thread::sleep(Duration::from_secs(3));
+
+            let packages_dir = install_root.join("packages");
+            let current_dir = install_root.join("current");
+            match find_and_extract_nupkg(&packages_dir, &current_dir) {
+                Ok(ver) => log::info(&format!("operation-server: extracted {ver} into current/")),
+                Err(e) => {
+                    log::error(&format!("operation-server: nupkg extraction failed: {e}"));
+                    bg_stop.store(true, Ordering::SeqCst);
+                    delete_port_file(&data_root);
+                    return 4;
+                }
+            }
+
+            thread::sleep(Duration::from_secs(1));
+            log::info("operation-server: launching new launcher");
+            #[cfg(windows)]
+            {
+                let launcher_path = current_dir.join("ws-scrcpy-web-launcher.exe");
+                use std::os::windows::process::CommandExt;
+                const DETACHED_PROCESS: u32 = 0x00000008;
+                const CREATE_NO_WINDOW_FLAG: u32 = 0x08000000;
+                match std::process::Command::new(&launcher_path)
+                    .current_dir(&install_root)
+                    .creation_flags(DETACHED_PROCESS | CREATE_NO_WINDOW_FLAG)
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()
+                {
+                    Ok(child) => log::info(&format!(
+                        "operation-server: launched new launcher (pid {})", child.id()
+                    )),
+                    Err(e) => log::error(&format!(
+                        "operation-server: failed to launch new launcher: {e}"
+                    )),
+                }
+            }
+
+            // Phase 3: Handoff — probe for the new Node on config_port..+10.
+            let probe_redirect = bg_redirect.clone();
+            thread::spawn(move || {
+                probe_for_real_node_and_publish(port, probe_redirect);
+            });
+
+            let started_at = Instant::now();
+            while started_at.elapsed() < Duration::from_secs(MAX_LIFETIME_SECS) {
+                accept_one(&listener, &bg_redirect, OperationVariant::ApplyUpdate);
+            }
+
+            log::info("operation-server: §40 max lifetime elapsed, cleaning up");
+            bg_stop.store(true, Ordering::SeqCst);
+            delete_port_file(&data_root);
+            return 0;
+        }
+    }
+
+    // --- Service-mode / uninstall path (unchanged from here down) ---
     let listener = {
         let bind_start = Instant::now();
         let mut first_busy_logged = false;
@@ -371,83 +485,6 @@ fn run() -> i32 {
     log::info(&format!(
         "operation-server: bound 0.0.0.0:{port}, serving updating page (max lifetime {MAX_LIFETIME_SECS}s)"
     ));
-
-    // §40 — local-mode update: extract nupkg + relaunch, all from this
-    // process (no Update.exe, no bat). Triggered by WS_SCRCPY_INSTALL_ROOT
-    // env var set by the supervisor for local-mode apply-update only.
-    if variant == OperationVariant::ApplyUpdate {
-        if let Ok(install_root) = std::env::var("WS_SCRCPY_INSTALL_ROOT") {
-            let install_root = PathBuf::from(install_root);
-            // Serve the page on a background thread while we do the apply.
-            let bg_listener = listener.try_clone().expect("clone listener");
-            let bg_redirect: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
-            let bg_redirect2 = bg_redirect.clone();
-            let _page_thread = thread::spawn(move || {
-                loop {
-                    accept_one(&bg_listener, &bg_redirect2, OperationVariant::ApplyUpdate);
-                }
-            });
-
-            log::info("operation-server: local-mode apply — killing tray");
-            #[cfg(windows)]
-            {
-                use std::os::windows::process::CommandExt;
-                const CREATE_NO_WINDOW: u32 = 0x08000000;
-                let _ = std::process::Command::new(r"C:\Windows\System32\taskkill.exe")
-                    .args(["/F", "/IM", "ws-scrcpy-web-tray.exe", "/T"])
-                    .creation_flags(CREATE_NO_WINDOW)
-                    .stdin(std::process::Stdio::null())
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status();
-            }
-            thread::sleep(Duration::from_secs(3));
-
-            let packages_dir = install_root.join("packages");
-            let current_dir = install_root.join("current");
-            match find_and_extract_nupkg(&packages_dir, &current_dir) {
-                Ok(ver) => log::info(&format!("operation-server: extracted {ver} into current/")),
-                Err(e) => {
-                    log::error(&format!("operation-server: nupkg extraction failed: {e}"));
-                    return 4;
-                }
-            }
-
-            thread::sleep(Duration::from_secs(1));
-            log::info("operation-server: launching new launcher");
-            #[cfg(windows)]
-            {
-                let launcher = current_dir.join("ws-scrcpy-web-launcher.exe");
-                use std::os::windows::process::CommandExt;
-                const DETACHED_PROCESS: u32 = 0x00000008;
-                const CREATE_NO_WINDOW: u32 = 0x08000000;
-                match std::process::Command::new(&launcher)
-                    .current_dir(&install_root)
-                    .creation_flags(DETACHED_PROCESS | CREATE_NO_WINDOW)
-                    .stdin(std::process::Stdio::null())
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .spawn()
-                {
-                    Ok(child) => log::info(&format!(
-                        "operation-server: launched new launcher (pid {})", child.id()
-                    )),
-                    Err(e) => log::error(&format!(
-                        "operation-server: failed to launch new launcher: {e}"
-                    )),
-                }
-            }
-            // Exit immediately so the new launcher gets a clean port
-            // bind. The wind-down + probe redirect loop is for the
-            // service-mode bat case; in §40 the operation-server owns
-            // the whole update and its job is done once the new launcher
-            // is spawned. Holding the port through wind-down causes
-            // Node to bind IPv6-only (dual-stack conflict with our
-            // IPv4 listener), leaving 127.0.0.1 unreachable.
-            log::info("operation-server: local-mode apply complete, exiting");
-            return 0;
-        }
-    }
 
     let stop_flag = Arc::new(AtomicBool::new(false));
     let redirect_state: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
@@ -698,14 +735,34 @@ fn build_response(path: &str, redirect: Option<&str>, variant: OperationVariant)
     // existing "real app is back, reload" path).
     if path.starts_with("/api/") {
         if path == "/api/discover" {
-            let config_path = std::env::var("WS_SCRCPY_DATA_ROOT")
-                .map(|dr| PathBuf::from(dr).join("config.json"))
-                .unwrap_or_else(|_| {
-                    common::config::data_root_from_env()
-                        .unwrap_or_else(|| PathBuf::from("."))
-                        .join("config.json")
-                });
-            return build_discover_response(&config_path);
+            if let Some(url) = redirect {
+                let body = format!(r#"{{"status":"ready","redirect":"{url}"}}"#);
+                return format!(
+                    "HTTP/1.1 200 OK\r\n\
+                     Content-Type: application/json\r\n\
+                     Content-Length: {}\r\n\
+                     Cache-Control: no-store\r\n\
+                     X-WsScrcpyWeb-Upgrade-Server: 1\r\n\
+                     Connection: close\r\n\
+                     \r\n\
+                     {}",
+                    body.len(),
+                    body
+                );
+            }
+            let body = r#"{"status":"updating"}"#;
+            return format!(
+                "HTTP/1.1 200 OK\r\n\
+                 Content-Type: application/json\r\n\
+                 Content-Length: {}\r\n\
+                 Cache-Control: no-store\r\n\
+                 X-WsScrcpyWeb-Upgrade-Server: 1\r\n\
+                 Connection: close\r\n\
+                 \r\n\
+                 {}",
+                body.len(),
+                body
+            );
         }
 
         if let Some(url) = redirect {
