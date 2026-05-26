@@ -1,6 +1,6 @@
 {
   "name": "ws-scrcpy-web",
-  "version": "0.1.28-beta.17",
+  "version": "0.1.28-beta.18",
   "description": "Browser-based Android screen mirroring and control, powered by scrcpy",
   "license": "GPL-3.0-only",
   "author": "bilbospocketses",
