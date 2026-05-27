@@ -7,27 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.1.28-beta.18] - 2026-05-26
+## [0.1.28] - 2026-05-27
 
-## [0.1.28-beta.17] - 2026-05-26
+Stable release rolling up the v0.1.28-beta.17/18 series. Headline: **local-mode in-app updates now work reliably** — the operation-server binds a separate port so it never fights Node for the socket, eliminating the IPv4-dead dual-stack bug that plagued the entire beta chain.
 
 ### Fixed
 
 - **Local-mode update redesign (§40).** Operation-server now binds `config_port + 1` (probing upward) instead of competing with Node for `config_port`. Eliminates the IPv4-dead / dual-stack corruption bug where `127.0.0.1:8000` became unreachable after updates while `[::1]:8000` worked. Three stacked bugs fixed: port conflict (separate port), stale helper binary (neutralized — old code fails gracefully), Node resolution (`spawn_server` now resolves from `dependencies/node/` before falling back to `seed/node/`). Browser redirect flow: Node spawns operation-server → poll-reads port file → serves redirect to browser → operation-server probes for new Node → redirects browser back.
+- **Welcome modal "No" without checkbox no longer writes to config.** Clicking "No, run on demand" without checking "don't show again" previously PATCHed `installMode: 'user'` to config.json (showing a misleading "saving..." flash). Now only writes when the checkbox is checked. Modal re-fires on next page load as expected.
 
 ### Changed
 
 - **`resolve_node_with` relaxed.** When `deps_path` is set but the node binary isn't there yet (first-run bootstrap), resolution now falls through to `seed/node/node.exe` instead of hard-failing. `spawn_server` passes `deps_path` directly instead of reading `DEPS_PATH` from process env.
-- **Supervisor §40 path simplified.** `wait_for_port_free` + stop-marker coordination is now service-mode only. Node spawns the operation-server directly (moved from supervisor). Supervisor's clean-exit path no longer needs to detect the apply-update marker.
+- **Supervisor §40 path simplified.** `wait_for_port_free` + stop-marker coordination is now service-mode only. Node spawns the operation-server directly (moved from supervisor).
 - **Updating page JS rewritten.** Polls `/api/discover` on the operation-server's own port (was `/api/config` on the shared port). 60-second timeout with error message.
 - **Releases page sort fix.** `make_latest: 'legacy'` in release.yml so GitHub uses SemVer-aware sorting instead of each beta forcibly stealing the Latest badge.
 
 ### Removed
 
-- **Iterative bug-test releases cleaned from GitHub Releases.** This project uses GitHub's CI pipeline (build, clippy, vitest, CodeQL, Scorecard) as a secondary vetting backstop — every commit to main triggers a full pipeline run, and tagged releases exercise the complete build-sign-attest-publish chain. This means we ship more releases during active development than a project relying solely on local testing would, because each CI-validated iteration IS the test. The trade-off: the Releases page accumulates artifacts that were never intended as user-facing installs. We periodically prune these to keep the page navigable. Orphaned git tags remain (tag protection ruleset blocks deletion); they point to valid commits on main and preserve the full development history for archaeology. Deleted releases:
-  - **v0.1.28-beta.1 through beta.16** (16 releases) — §40 local-mode update iterations. None produced a working local-mode update flow. beta.17 is the redesign that fixes the root cause.
-  - **v0.1.25-beta.3 through beta.67** (8 remaining releases after earlier cleanup) — service-mode rearchitecture + tray unification + upgrade-server iterations. All rolled into v0.1.26 stable.
-  - **v0.1.5 through v0.1.23** (19 releases) — rapid daily iteration chain covering adb path hardening, service install, node-pty resolution, first-run modals, dependency manager, and packaging. v0.1.4 (local-deps-only milestone) and v0.1.24 (first clean stable) bookend the range; everything between was iterative bug-test artifacts.
+- **Iterative bug-test releases cleaned from GitHub Releases.** This project uses GitHub's CI pipeline as a secondary vetting backstop — each CI-validated iteration IS the test. The Releases page accumulates artifacts not intended as user-facing installs. Periodically pruned to keep the page navigable. Orphaned git tags remain (tag protection ruleset). Deleted: v0.1.28-beta.1-16 (§40 iterations), v0.1.25-beta.* (service rearchitecture, rolled into v0.1.26), v0.1.5-v0.1.23 (rapid iteration chain).
+
+### Migration
+
+v0.1.27 and v0.1.26 users can in-app update to v0.1.28 normally. The separate-port operation-server activates automatically. No fresh install required.
 
 ## [0.1.27] - 2026-05-25
 
