@@ -125,24 +125,18 @@ jobs:
           # Run bump script locally to generate new file contents
           node scripts/bump-version.mjs "$VERSION"
 
-          # Read the bumped files as base64 for the GitHub API
-          PKG_B64=$(base64 -w0 package.json)
-          CARGO_B64=$(base64 -w0 Cargo.toml)
-          CL_B64=$(base64 -w0 CHANGELOG.md)
-
-          # Get the current main HEAD SHA
+          # Get the current main HEAD SHA and tree
           MAIN_SHA=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')
-
-          # Get the tree SHA of the current main HEAD
           TREE_SHA=$(gh api "repos/$GITHUB_REPOSITORY/git/commits/$MAIN_SHA" --jq '.tree.sha')
 
-          # Create blobs for each changed file
-          PKG_BLOB=$(gh api "repos/$GITHUB_REPOSITORY/git/blobs" \
-            -f content="$PKG_B64" -f encoding="base64" --jq '.sha')
-          CARGO_BLOB=$(gh api "repos/$GITHUB_REPOSITORY/git/blobs" \
-            -f content="$CARGO_B64" -f encoding="base64" --jq '.sha')
-          CL_BLOB=$(gh api "repos/$GITHUB_REPOSITORY/git/blobs" \
-            -f content="$CL_B64" -f encoding="base64" --jq '.sha')
+          # Create blobs via stdin (avoids ARG_MAX for large files like CHANGELOG.md)
+          create_blob() {
+            jq -Rsc '{ content: ., encoding: "utf-8" }' "$1" \
+              | gh api "repos/$GITHUB_REPOSITORY/git/blobs" --input - --jq '.sha'
+          }
+          PKG_BLOB=$(create_blob package.json)
+          CARGO_BLOB=$(create_blob Cargo.toml)
+          CL_BLOB=$(create_blob CHANGELOG.md)
 
           # Create a new tree with the three updated files
           NEW_TREE=$(gh api "repos/$GITHUB_REPOSITORY/git/trees" \
