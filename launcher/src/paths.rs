@@ -13,12 +13,12 @@
 //     ws-scrcpy-web-launcher.log
 //     dependencies/                       (DEPS_PATH target — was at install_root pre-Phase-1)
 //
-// On Windows, dataRoot defaults to %PROGRAMDATA%\WsScrcpyWeb. On non-Windows
-// (Linux AppImage), dataRoot collapses to install_root for now — there is no
-// migration target until/unless a Linux Program-Files-equivalent flow is
-// designed. The DEPS_PATH env var continues to override deps_path absolutely
-// when set (used by tests, shared-deps installs, and the service-install
-// envVars block in ServiceApi.handleInstall).
+// On Windows, dataRoot defaults to %PROGRAMDATA%\WsScrcpyWeb. On Linux,
+// dataRoot is $XDG_DATA_HOME/WsScrcpyWeb, falling back to
+// $HOME/.local/share/WsScrcpyWeb when XDG_DATA_HOME is unset. The DEPS_PATH
+// env var continues to override deps_path absolutely when set (used by tests,
+// shared-deps installs, and the service-install envVars block in
+// ServiceApi.handleInstall).
 //
 // Dev layout (target/debug or target/release):
 //   target/debug/ws-scrcpy-web-launcher.exe    <-- exe_dir
@@ -30,7 +30,7 @@ use std::path::{Path, PathBuf};
 pub struct Paths {
     pub install_root: PathBuf,
     /// Writable state root — `<PROGRAMDATA>\WsScrcpyWeb` on Windows,
-    /// equal to `install_root` on non-Windows (no migration there).
+    /// `$XDG_DATA_HOME/WsScrcpyWeb` (or `~/.local/share/WsScrcpyWeb`) on Linux.
     pub data_root: PathBuf,
     pub deps_path: PathBuf,
     pub restart_marker: PathBuf,
@@ -44,8 +44,8 @@ impl Paths {
     /// Windows ProgramData path without mutating process env.
     ///
     /// On non-Windows hosts the `programdata_override` is ignored and
-    /// `data_root` collapses to `install_root` — Phase 1 doesn't migrate
-    /// Linux paths.
+    /// `data_root` is resolved via XDG: `$XDG_DATA_HOME/WsScrcpyWeb` or
+    /// `$HOME/.local/share/WsScrcpyWeb` when `XDG_DATA_HOME` is unset.
     pub fn compute(
         exe_dir: &Path,
         deps_override: Option<&str>,
@@ -59,7 +59,9 @@ impl Paths {
         let data_root = if cfg!(windows) {
             common::config::data_root_for_windows(programdata_override)
         } else {
-            install_root.clone()
+            let xdg = std::env::var("XDG_DATA_HOME").ok();
+            let home = std::env::var("HOME").ok();
+            common::config::data_root_for_linux(xdg.as_deref(), home.as_deref())
         };
 
         let deps_path = match deps_override {
@@ -130,20 +132,24 @@ mod tests {
 
     #[test]
     #[cfg(not(windows))]
-    fn compute_collapses_data_root_to_install_root_on_non_windows() {
+    fn compute_uses_xdg_data_root_on_non_windows() {
         let dir = tempdir().unwrap();
         let install_root = dir.path();
         let exe_dir = install_root.join("current");
         std::fs::create_dir_all(&exe_dir).unwrap();
 
-        let paths = Paths::compute(&exe_dir, None, None).unwrap();
-        assert_eq!(paths.install_root, install_root);
-        assert_eq!(paths.data_root, install_root);
-        assert_eq!(paths.deps_path, install_root.join("dependencies"));
-        assert_eq!(
-            paths.restart_marker,
-            install_root.join(".restart")
-        );
+        // Set XDG_DATA_HOME to a temp dir so the test is self-contained.
+        let xdg_dir = dir.path().join("xdg-data");
+        std::fs::create_dir_all(&xdg_dir).unwrap();
+        std::env::set_var("XDG_DATA_HOME", &xdg_dir);
+        let paths = Paths::compute(&exe_dir, None, None);
+        std::env::remove_var("XDG_DATA_HOME");
+
+        let paths = paths.unwrap();
+        let expected_data_root = xdg_dir.join("WsScrcpyWeb");
+        assert_eq!(paths.data_root, expected_data_root);
+        assert_eq!(paths.deps_path, expected_data_root.join("dependencies"));
+        assert_eq!(paths.restart_marker, expected_data_root.join(".restart"));
     }
 
     #[test]
