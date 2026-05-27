@@ -1,10 +1,12 @@
 // Node child-process spawn for the launcher.
 //
 // Resolves the Node executable using a best-effort priority chain:
-//   1. `deps_path` parameter → `<deps_path>/node/node.exe` (preferred;
+//   1. `deps_path` parameter → `<deps_path>/node/<node-binary>` (preferred;
 //      populated after first-run bootstrap installs Node into dependencies/).
-//   2. `<exe_dir>/seed/node/node.exe` (bundled fallback for first-run
+//   2. `<exe_dir>/seed/node/<node-binary>` (bundled fallback for first-run
 //      before dependencies/ is populated, or if deps node is missing).
+//
+// Binary name is platform-conditional: `node.exe` on Windows, `node` on Linux.
 //   3. Otherwise, error.
 //
 // Server entry is `<exe_dir>/dist/index.js`.
@@ -13,6 +15,11 @@ use anyhow::{Context, Result, bail};
 use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
+
+#[cfg(windows)]
+const NODE_BIN: &str = "node.exe";
+#[cfg(not(windows))]
+const NODE_BIN: &str = "node";
 
 // CREATE_NO_WINDOW = 0x08000000. Defined here as a literal so we don't need
 // to thread the windows crate through pure-logic functions / tests on
@@ -24,7 +31,7 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 /// return the Node binary path or an error.
 pub fn resolve_node_with(deps_path: Option<&str>, exe_dir: &Path) -> Result<PathBuf> {
     if let Some(deps) = deps_path {
-        let candidate = Path::new(deps).join("node").join("node.exe");
+        let candidate = Path::new(deps).join("node").join(NODE_BIN);
         if candidate.exists() {
             return Ok(candidate);
         }
@@ -32,7 +39,7 @@ pub fn resolve_node_with(deps_path: Option<&str>, exe_dir: &Path) -> Result<Path
         // through to seed instead of hard-failing.
     }
 
-    let seed = exe_dir.join("seed").join("node").join("node.exe");
+    let seed = exe_dir.join("seed").join("node").join(NODE_BIN);
     if seed.exists() {
         return Ok(seed);
     }
@@ -180,7 +187,7 @@ mod tests {
     fn resolve_node_uses_deps_path_when_present() {
         let dir = tempdir().unwrap();
         let deps = dir.path().join("deps");
-        let node = deps.join("node").join("node.exe");
+        let node = deps.join("node").join(NODE_BIN);
         touch(&node);
 
         let exe_dir = dir.path().join("exe");
@@ -194,7 +201,7 @@ mod tests {
     fn resolve_node_falls_back_to_seed_when_deps_path_set_but_node_missing() {
         let dir = tempdir().unwrap();
         let exe_dir = dir.path().join("exe");
-        let seed = exe_dir.join("seed").join("node").join("node.exe");
+        let seed = exe_dir.join("seed").join("node").join(NODE_BIN);
         touch(&seed);
 
         // deps_path points to an empty directory — node binary not there yet.
@@ -220,7 +227,7 @@ mod tests {
     fn resolve_node_falls_back_to_seed_when_deps_path_unset() {
         let dir = tempdir().unwrap();
         let exe_dir = dir.path().join("exe");
-        let seed = exe_dir.join("seed").join("node").join("node.exe");
+        let seed = exe_dir.join("seed").join("node").join(NODE_BIN);
         touch(&seed);
 
         let resolved = resolve_node_with(None, &exe_dir).unwrap();

@@ -4,7 +4,7 @@
 //   1. Stale marker cleanup (delete `.restart` if left over from prior crash)
 //   2. Install Ctrl+C handler that signals shutdown intent
 //   3. Loop:
-//      a. Clean up `node.exe.old` (Node auto-update artifact)
+//      a. Clean up stale node binary (Node auto-update artifact)
 //      b. Spawn Node child via spawn::spawn_server
 //      c. Wait for child OR Ctrl+C (poll-based, 100ms granularity)
 //      d. Decide restart based on (exit code == 75) || marker present
@@ -162,7 +162,7 @@ pub fn run() -> Result<i32> {
     }
 
     // spawn_server now passes deps_path directly to resolve_node_with, which
-    // tries <deps_path>/node/node.exe first and falls back to seed/node/node.exe
+    // tries <deps_path>/node/<node-binary> first and falls back to seed/node/<node-binary>
     // when deps node is absent (first-run bootstrap). DEPS_PATH is also set on
     // the Node CHILD's env so the backend DependencyManager knows where to
     // install Node / ADB / scrcpy-server.

@@ -68,7 +68,8 @@ impl Paths {
         };
 
         let restart_marker = data_root.join(".restart");
-        let old_node = deps_path.join("node").join("node.exe.old");
+        let node_bin_old = if cfg!(windows) { "node.exe.old" } else { "node.old" };
+        let old_node = deps_path.join("node").join(node_bin_old);
 
         Ok(Self {
             install_root,
