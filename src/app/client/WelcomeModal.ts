@@ -384,19 +384,20 @@ export class WelcomeModal extends Modal {
         }
     }
 
-    /** "No, run on demand" — PATCH config to lock in user mode + complete first-run. */
+    /** "No, run on demand" — dismiss without persisting unless checkbox is checked. */
     private async onNo(): Promise<void> {
-        this.setBusy(true);
-        this.setStatus('saving…');
-        const patch: Record<string, unknown> = { installMode: 'user' };
-        if (this.dontShowCheckbox.checked) patch['firstRunComplete'] = true;
-        const ok = await this.patchConfig(patch);
-        if (!ok) {
-            this.setStatus("couldn't save preference. try again?", true);
-            this.setBusy(false);
-            return;
-        }
         if (this.dontShowCheckbox.checked) {
+            this.setBusy(true);
+            this.setStatus('saving…');
+            const ok = await this.patchConfig({
+                installMode: 'user',
+                firstRunComplete: true,
+            });
+            if (!ok) {
+                this.setStatus("couldn't save preference. try again?", true);
+                this.setBusy(false);
+                return;
+            }
             setBookmarkDismissedPort(this.opts.webPort);
         }
         this.opts.onDecision('on-demand');
