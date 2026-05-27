@@ -112,6 +112,7 @@ pub fn spawn_server(deps_path: &Path, data_root: &Path) -> Result<Child> {
     cmd.arg(&entry)
         .current_dir(&work_dir)
         .env("DEPS_PATH", deps_path)
+        .env("DATA_ROOT", data_root)
         .creation_flags(CREATE_NO_WINDOW);
 
     // Plumb the child's stdout AND stderr into <deps>/server.log so a
@@ -153,7 +154,8 @@ pub fn spawn_server(deps_path: &Path, data_root: &Path) -> Result<Child> {
     let mut cmd = Command::new(&node);
     cmd.arg(&entry)
         .current_dir(&work_dir)
-        .env("DEPS_PATH", deps_path);
+        .env("DEPS_PATH", deps_path)
+        .env("DATA_ROOT", data_root);
 
     if let Some(log) = open_server_log(data_root) {
         let log_clone = log.try_clone().ok();
