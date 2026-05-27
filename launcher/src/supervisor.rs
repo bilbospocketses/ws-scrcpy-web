@@ -183,6 +183,76 @@ pub fn run() -> Result<i32> {
             return Ok(code);
         }
 
+        // Launcher-driven service uninstall. When the uninstall-pending marker
+        // exists, the Node server requested a service removal (Settings →
+        // Uninstall). Instead of relying on Servy's fire-and-forget post-stop
+        // hook (which races against Servy's recovery timer), the launcher
+        // handles the uninstall directly:
+        //   1. Spawn a detached process that calls servy-cli stop + uninstall
+        //   2. Block here until Servy's stop signal arrives (no recovery fires
+        //      because servy-cli stop puts Servy in "stopping" state)
+        //   3. The detached process then removes the service and spawns the
+        //      local-mode launcher in the user's session
+        #[cfg(windows)]
+        {
+            let uninstall_marker = paths.data_root.join("control").join("uninstall-pending");
+            if uninstall_marker.exists() {
+                log::info("supervisor: uninstall-pending marker found; handling service uninstall");
+
+                match std::fs::remove_file(&uninstall_marker) {
+                    Ok(()) => log::info("supervisor: deleted uninstall-pending marker"),
+                    Err(e) => log::error(&format!(
+                        "supervisor: could not delete uninstall-pending marker: {e}"
+                    )),
+                }
+
+                let servy_path = paths.install_root.join("current").join("servy-cli.exe");
+                let launcher_path =
+                    paths.install_root.join("current").join("ws-scrcpy-web-launcher.exe");
+
+                let script = format!(
+                    "\"{}\" stop --name WsScrcpyWeb -q & \"{}\" uninstall --name WsScrcpyWeb -q & \"{}\" --spawn-user-launcher --launcher-path \"{}\"",
+                    servy_path.display(),
+                    servy_path.display(),
+                    launcher_path.display(),
+                    launcher_path.display(),
+                );
+
+                use std::os::windows::process::CommandExt;
+                const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+                const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+                match std::process::Command::new("C:\\Windows\\System32\\cmd.exe")
+                    .args(["/c", &script])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW)
+                    .spawn()
+                {
+                    Ok(child) => {
+                        log::info(&format!(
+                            "supervisor: spawned detached uninstall process (pid {}); blocking until stop signal",
+                            child.id()
+                        ));
+                    }
+                    Err(e) => {
+                        log::error(&format!(
+                            "supervisor: failed to spawn uninstall process: {e}; exiting (post-stop.bat is fallback)"
+                        ));
+                        return Ok(code);
+                    }
+                }
+
+                loop {
+                    if stop.load(Ordering::SeqCst) {
+                        log::info("supervisor: stop signal received during uninstall; exiting cleanly");
+                        return Ok(0);
+                    }
+                    thread::sleep(POLL_INTERVAL);
+                }
+            }
+        }
+
         let marker_exists = paths.restart_marker.exists();
         let reason = decide_restart(code, marker_exists);
 

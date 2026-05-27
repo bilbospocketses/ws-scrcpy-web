@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Service uninstall no longer races Servy's recovery timer.** Replaced the fire-and-forget `post-stop.bat` uninstall path with a launcher-driven approach: when the `uninstall-pending` marker is present after Node exits, the launcher spawns a detached process that calls `servy-cli stop` (putting Servy in stopping state, which disables recovery) followed by `servy-cli uninstall` and local-mode launcher spawn. The launcher blocks until Servy's stop signal arrives, eliminating the timing dependency that caused the uninstall to hang indefinitely.
+
 ## [0.1.29-beta.1] - 2026-05-27
 
 ### Changed
