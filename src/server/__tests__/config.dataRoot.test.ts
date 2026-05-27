@@ -25,15 +25,41 @@ describe('resolveDataRoot', () => {
         });
     });
 
-    describe('on non-win32', () => {
-        it('returns null on linux (no migration target on non-Windows)', () => {
-            const result = resolveDataRoot({}, 'linux');
-            expect(result).toBeNull();
+    describe('on linux', () => {
+        it('returns DATA_ROOT when DATA_ROOT env is set', () => {
+            const result = resolveDataRoot({ DATA_ROOT: '/custom/data/WsScrcpyWeb' }, 'linux');
+            expect(result).toBe('/custom/data/WsScrcpyWeb');
         });
 
-        it('returns null on darwin', () => {
-            const result = resolveDataRoot({}, 'darwin');
-            expect(result).toBeNull();
+        it('returns XDG_DATA_HOME/WsScrcpyWeb when XDG_DATA_HOME is set', () => {
+            const result = resolveDataRoot({ XDG_DATA_HOME: '/custom/xdg', HOME: '/home/user' }, 'linux');
+            expect(result).toBe(path.join('/custom/xdg', 'WsScrcpyWeb'));
+        });
+
+        it('falls back to ~/.local/share/WsScrcpyWeb when no XDG var set', () => {
+            const result = resolveDataRoot({ HOME: '/home/user' }, 'linux');
+            expect(result).toBe(path.join('/home/user', '.local', 'share', 'WsScrcpyWeb'));
+        });
+
+        it('DATA_ROOT takes precedence over XDG_DATA_HOME', () => {
+            const result = resolveDataRoot({
+                DATA_ROOT: '/launcher/provided/WsScrcpyWeb',
+                XDG_DATA_HOME: '/should/not/use',
+                HOME: '/home/user',
+            }, 'linux');
+            expect(result).toBe('/launcher/provided/WsScrcpyWeb');
+        });
+
+        it('ignores empty XDG_DATA_HOME and falls back to HOME', () => {
+            const result = resolveDataRoot({ XDG_DATA_HOME: '', HOME: '/home/user' }, 'linux');
+            expect(result).toBe(path.join('/home/user', '.local', 'share', 'WsScrcpyWeb'));
+        });
+    });
+
+    describe('on darwin', () => {
+        it('returns XDG-based path on darwin (same as linux)', () => {
+            const result = resolveDataRoot({ HOME: '/Users/jamie' }, 'darwin');
+            expect(result).toBe(path.join('/Users/jamie', '.local', 'share', 'WsScrcpyWeb'));
         });
     });
 });
