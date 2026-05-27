@@ -84,8 +84,8 @@ export class ShellModal extends Modal {
         overlay.className = 'shell-close-confirm';
         overlay.style.cssText =
             'border: 1px solid var(--modal-border, rgba(255,255,255,0.15)); border-radius: 8px; ' +
-            'padding: 20px; background: var(--modal-bg, #1e1e2e); color: var(--text-primary, #cdd6f4); ' +
-            'max-width: 340px; text-align: center;';
+            'padding: 32px 40px; background: var(--modal-bg, #1e1e2e); color: var(--text-primary, #cdd6f4); ' +
+            'min-width: 420px; text-align: center;';
 
         const msg = document.createElement('p');
         msg.style.cssText = 'margin: 0 0 16px;';
