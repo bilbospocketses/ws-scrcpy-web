@@ -73,13 +73,60 @@ export class ShellModal extends Modal {
 
     protected override onCloseButtonClick(): void {
         if (!this.shellStarted) {
-            // Terminal hasn't connected yet — close directly
             this.close();
             return;
         }
-        if (confirm('End the shell session?')) {
+        this.showCloseConfirm();
+    }
+
+    private showCloseConfirm(): void {
+        const overlay = document.createElement('dialog');
+        overlay.className = 'shell-close-confirm';
+        overlay.style.cssText =
+            'border: 1px solid var(--modal-border, rgba(255,255,255,0.15)); border-radius: 8px; ' +
+            'padding: 20px; background: var(--modal-bg, #1e1e2e); color: var(--text-primary, #cdd6f4); ' +
+            'max-width: 340px; text-align: center;';
+
+        const msg = document.createElement('p');
+        msg.style.cssText = 'margin: 0 0 16px;';
+        msg.textContent = 'end the shell session?';
+        overlay.appendChild(msg);
+
+        const buttons = document.createElement('div');
+        buttons.style.cssText = 'display: flex; gap: 8px; justify-content: center;';
+
+        const cancelBtn = document.createElement('button');
+        cancelBtn.type = 'button';
+        cancelBtn.className = 'settings-btn';
+        cancelBtn.textContent = 'cancel';
+        cancelBtn.addEventListener('click', () => {
+            overlay.close();
+            overlay.remove();
+        });
+        buttons.appendChild(cancelBtn);
+
+        const okBtn = document.createElement('button');
+        okBtn.type = 'button';
+        okBtn.className = 'settings-btn settings-btn-primary';
+        okBtn.textContent = 'ok';
+        okBtn.addEventListener('click', () => {
+            overlay.close();
+            overlay.remove();
             this.close();
-        }
+        });
+        buttons.appendChild(okBtn);
+
+        overlay.appendChild(buttons);
+
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) {
+                overlay.close();
+                overlay.remove();
+            }
+        });
+
+        document.body.appendChild(overlay);
+        overlay.showModal();
     }
 
     protected override onBeforeClose(): void {
