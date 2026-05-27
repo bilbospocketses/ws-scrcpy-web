@@ -7,6 +7,7 @@ import { ChannelCode } from '../../../common/ChannelCode';
 import type { MessageXtermClient } from '../../../types/MessageXtermClient';
 import { Multiplexer } from '../../../packages/multiplexer/Multiplexer';
 import { ManagerClient } from '../../client/ManagerClient';
+import { ShellCloseConfirmModal } from '../../client/ShellCloseConfirmModal';
 import { Modal } from '../../ui/Modal';
 
 const TAG = '[ShellModal]';
@@ -76,57 +77,9 @@ export class ShellModal extends Modal {
             this.close();
             return;
         }
-        this.showCloseConfirm();
-    }
-
-    private showCloseConfirm(): void {
-        const overlay = document.createElement('dialog');
-        overlay.className = 'shell-close-confirm';
-        overlay.style.cssText =
-            'border: 1px solid var(--modal-border, rgba(255,255,255,0.15)); border-radius: 8px; ' +
-            'padding: 32px 40px; background: var(--modal-bg, #1e1e2e); color: var(--text-primary, #cdd6f4); ' +
-            'width: clamp(360px, 40vw, 520px); text-align: center;';
-
-        const msg = document.createElement('p');
-        msg.style.cssText = 'margin: 0 0 16px; line-height: 1.5;';
-        msg.textContent = 'ending the shell session loses any active work in the shell. close anyway?';
-        overlay.appendChild(msg);
-
-        const buttons = document.createElement('div');
-        buttons.style.cssText = 'display: flex; gap: 8px; justify-content: center;';
-
-        const cancelBtn = document.createElement('button');
-        cancelBtn.type = 'button';
-        cancelBtn.className = 'settings-btn';
-        cancelBtn.textContent = 'cancel';
-        cancelBtn.addEventListener('click', () => {
-            overlay.close();
-            overlay.remove();
+        ShellCloseConfirmModal.confirm().then((confirmed) => {
+            if (confirmed) this.close();
         });
-        buttons.appendChild(cancelBtn);
-
-        const okBtn = document.createElement('button');
-        okBtn.type = 'button';
-        okBtn.className = 'settings-btn settings-btn-primary';
-        okBtn.textContent = 'ok';
-        okBtn.addEventListener('click', () => {
-            overlay.close();
-            overlay.remove();
-            this.close();
-        });
-        buttons.appendChild(okBtn);
-
-        overlay.appendChild(buttons);
-
-        overlay.addEventListener('click', (e) => {
-            if (e.target === overlay) {
-                overlay.close();
-                overlay.remove();
-            }
-        });
-
-        document.body.appendChild(overlay);
-        overlay.showModal();
     }
 
     protected override onBeforeClose(): void {
