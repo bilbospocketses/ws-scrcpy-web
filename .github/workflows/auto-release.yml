@@ -1,0 +1,154 @@
+# Automated release pipeline. Fires on every push to main.
+#
+# Mode 1 (labeled-PR merge): Detects release:beta or release:stable
+# label on the merged PR, computes the next version, creates a bump PR.
+#
+# Mode 2 (bump-commit merge): Detects the bump PR's squash-merge
+# commit, pushes the version tag to trigger release.yml.
+#
+# Mode 3 (neither): Exits. No release for unlabeled merges.
+
+name: Auto Release
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: auto-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  auto-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24.x
+
+      - name: Detect mode
+        id: detect
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          COMMIT_MSG=$(git log -1 --format=%s)
+
+          # Mode 2: bump commit -> tag only
+          if [[ "$COMMIT_MSG" =~ ^"chore: bump to v" ]]; then
+            VERSION="${COMMIT_MSG#chore: bump to v}"
+            # Strip PR number suffix that GitHub appends on squash-merge
+            VERSION="${VERSION%% (#*}"
+            echo "mode=tag" >> "$GITHUB_OUTPUT"
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+            echo "Detected bump commit -> tagging v${VERSION}"
+            exit 0
+          fi
+
+          # Mode 1: check merged PR for release label
+          PR_NUMBER=$(gh pr list --repo "$GITHUB_REPOSITORY" \
+            --search "$GITHUB_SHA" --state merged \
+            --json number --jq '.[0].number // empty')
+
+          if [ -z "$PR_NUMBER" ]; then
+            echo "mode=skip" >> "$GITHUB_OUTPUT"
+            echo "No merged PR found for $GITHUB_SHA -> skip"
+            exit 0
+          fi
+
+          LABEL=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" \
+            --json labels --jq '
+            .labels[].name
+            | select(. == "release:beta" or . == "release:stable")
+          ' | head -1)
+
+          if [ -z "$LABEL" ]; then
+            echo "mode=skip" >> "$GITHUB_OUTPUT"
+            echo "PR #${PR_NUMBER} has no release label -> skip"
+            exit 0
+          fi
+
+          echo "mode=bump" >> "$GITHUB_OUTPUT"
+          echo "label=$LABEL" >> "$GITHUB_OUTPUT"
+          echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "Detected PR #${PR_NUMBER} with label ${LABEL} -> bump"
+
+      - name: Compute next version
+        if: steps.detect.outputs.mode == 'bump'
+        id: version
+        run: |
+          CURRENT=$(node -p "require('./package.json').version")
+          LABEL="${{ steps.detect.outputs.label }}"
+
+          if [ "$LABEL" = "release:beta" ]; then
+            if [[ "$CURRENT" =~ -beta\.([0-9]+)$ ]]; then
+              BASE="${CURRENT%-beta.*}"
+              NEXT_BETA=$((${BASH_REMATCH[1]} + 1))
+              VERSION="${BASE}-beta.${NEXT_BETA}"
+            else
+              IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+              VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))-beta.1"
+            fi
+          elif [ "$LABEL" = "release:stable" ]; then
+            if [[ "$CURRENT" =~ -beta\. ]]; then
+              VERSION="${CURRENT%-beta.*}"
+            else
+              IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+              VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
+            fi
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Computed next version: ${CURRENT} -> ${VERSION} (${LABEL})"
+
+      - name: Create bump PR
+        if: steps.detect.outputs.mode == 'bump'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          BRANCH="auto-release/v${VERSION}"
+
+          git config user.name "ws-scrcpy-web-release-bot[bot]"
+          git config user.email "${{ secrets.RELEASE_APP_ID }}+ws-scrcpy-web-release-bot[bot]@users.noreply.github.com"
+
+          git checkout -b "$BRANCH"
+          node scripts/bump-version.mjs "$VERSION"
+          git add package.json Cargo.toml CHANGELOG.md
+          git commit -m "chore: bump to v${VERSION}"
+          git push origin "$BRANCH"
+
+          gh pr create \
+            --title "chore: bump to v${VERSION}" \
+            --body "Automated version bump to v${VERSION}. Triggered by PR #${{ steps.detect.outputs.pr_number }} (${{ steps.detect.outputs.label }})." \
+            --head "$BRANCH" \
+            --base main
+
+          gh pr merge --auto --squash "$BRANCH"
+          echo "Bump PR created and auto-merge enabled for v${VERSION}"
+
+      - name: Push tag
+        if: steps.detect.outputs.mode == 'tag'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          VERSION="${{ steps.detect.outputs.version }}"
+
+          git config user.name "ws-scrcpy-web-release-bot[bot]"
+          git config user.email "${{ secrets.RELEASE_APP_ID }}+ws-scrcpy-web-release-bot[bot]@users.noreply.github.com"
+
+          git tag -a "v${VERSION}" -m "v${VERSION}"
+          git push origin "v${VERSION}"
+          echo "Pushed tag v${VERSION} -> release.yml will take it from here"
