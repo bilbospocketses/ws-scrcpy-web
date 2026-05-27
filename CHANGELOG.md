@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.29-beta.1] - 2026-05-27
+
 ### Changed
 
 - **Velopack upgraded from prerelease 0.0.1589-ga2c5a97 to stable 1.0.1.** Bumped across all four touchpoints: Rust crate (`Cargo.toml`), npm package (`package.json`), and vpk CLI pin (`release.yml`, both build-windows and build-linux jobs). Zero API changes -- all Rust builder patterns, npm exports, and CLI flags are preserved. The `--msi` flag now produces a true Windows Installer MSI (improved per-machine support, proper installer UI) instead of the older Squirrel-style wrapper.
