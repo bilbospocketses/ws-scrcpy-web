@@ -156,7 +156,9 @@ export function ptyNodePath(packageDir: string): string {
 
 /** True when the dataRoot package looks complete enough to attempt a load. */
 export function packageHasBinary(packageDir: string): boolean {
-    return fs.existsSync(ptyNodePath(packageDir));
+    if (fs.existsSync(ptyNodePath(packageDir))) return true;
+    const prebuildsDir = path.join(packageDir, 'node_modules', 'node-pty', 'prebuilds');
+    return fs.existsSync(prebuildsDir);
 }
 
 /**
