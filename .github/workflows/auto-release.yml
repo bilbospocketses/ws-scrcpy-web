@@ -116,6 +116,7 @@ jobs:
 
       - name: Create bump PR
         if: steps.detect.outputs.mode == 'bump'
+        id: bump-pr
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
@@ -131,14 +132,26 @@ jobs:
           git commit -m "chore: bump to v${VERSION}"
           git push origin "$BRANCH"
 
-          gh pr create \
+          PR_URL=$(gh pr create \
             --title "chore: bump to v${VERSION}" \
             --body "Automated version bump to v${VERSION}. Triggered by PR #${{ steps.detect.outputs.pr_number }} (${{ steps.detect.outputs.label }})." \
             --head "$BRANCH" \
-            --base main
+            --base main)
 
-          gh pr merge --auto --squash "$BRANCH"
-          echo "Bump PR created and auto-merge enabled for v${VERSION}"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "Bump PR created: $PR_URL"
+
+      - name: Wait for CI then merge bump PR
+        if: steps.detect.outputs.mode == 'bump'
+        env:
+          GH_TOKEN: ${{ secrets.ADMIN_PAT }}
+        run: |
+          BRANCH="${{ steps.bump-pr.outputs.branch }}"
+          echo "Waiting for CI on $BRANCH..."
+          gh pr checks "$BRANCH" --repo "$GITHUB_REPOSITORY" --required --watch --fail-fast
+          echo "CI green — merging with ADMIN_PAT"
+          gh pr merge "$BRANCH" --repo "$GITHUB_REPOSITORY" --squash --delete-branch
+          echo "Bump PR merged"
 
       - name: Push tag
         if: steps.detect.outputs.mode == 'tag'
