@@ -114,41 +114,76 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Computed next version: ${CURRENT} -> ${VERSION} (${LABEL})"
 
-      - name: Create bump PR
+      - name: Create bump PR (API-signed commit)
         if: steps.detect.outputs.mode == 'bump'
-        id: bump-pr
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           BRANCH="auto-release/v${VERSION}"
 
-          git config user.name "ws-scrcpy-web-release-bot[bot]"
-          git config user.email "${{ secrets.RELEASE_APP_ID }}+ws-scrcpy-web-release-bot[bot]@users.noreply.github.com"
-
-          git checkout -b "$BRANCH"
+          # Run bump script locally to generate new file contents
           node scripts/bump-version.mjs "$VERSION"
-          git add package.json Cargo.toml CHANGELOG.md
-          git commit -m "chore: bump to v${VERSION}"
-          git push origin "$BRANCH"
 
+          # Read the bumped files as base64 for the GitHub API
+          PKG_B64=$(base64 -w0 package.json)
+          CARGO_B64=$(base64 -w0 Cargo.toml)
+          CL_B64=$(base64 -w0 CHANGELOG.md)
+
+          # Get the current main HEAD SHA
+          MAIN_SHA=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')
+
+          # Get the tree SHA of the current main HEAD
+          TREE_SHA=$(gh api "repos/$GITHUB_REPOSITORY/git/commits/$MAIN_SHA" --jq '.tree.sha')
+
+          # Create blobs for each changed file
+          PKG_BLOB=$(gh api "repos/$GITHUB_REPOSITORY/git/blobs" \
+            -f content="$PKG_B64" -f encoding="base64" --jq '.sha')
+          CARGO_BLOB=$(gh api "repos/$GITHUB_REPOSITORY/git/blobs" \
+            -f content="$CARGO_B64" -f encoding="base64" --jq '.sha')
+          CL_BLOB=$(gh api "repos/$GITHUB_REPOSITORY/git/blobs" \
+            -f content="$CL_B64" -f encoding="base64" --jq '.sha')
+
+          # Create a new tree with the three updated files
+          NEW_TREE=$(gh api "repos/$GITHUB_REPOSITORY/git/trees" \
+            --input - --jq '.sha' <<TREEOF
+          {
+            "base_tree": "$TREE_SHA",
+            "tree": [
+              {"path": "package.json", "mode": "100644", "type": "blob", "sha": "$PKG_BLOB"},
+              {"path": "Cargo.toml", "mode": "100644", "type": "blob", "sha": "$CARGO_BLOB"},
+              {"path": "CHANGELOG.md", "mode": "100644", "type": "blob", "sha": "$CL_BLOB"}
+            ]
+          }
+          TREEOF
+          )
+
+          # Create a commit (GitHub signs it with web-flow key)
+          NEW_COMMIT=$(gh api "repos/$GITHUB_REPOSITORY/git/commits" \
+            -f message="chore: bump to v${VERSION}" \
+            -f tree="$NEW_TREE" \
+            -f "parents[]=$MAIN_SHA" \
+            --jq '.sha')
+
+          echo "Created API-signed commit $NEW_COMMIT"
+
+          # Create the branch ref pointing at the new commit
+          gh api "repos/$GITHUB_REPOSITORY/git/refs" \
+            -f ref="refs/heads/$BRANCH" \
+            -f sha="$NEW_COMMIT" > /dev/null
+
+          # Create the PR
           PR_URL=$(gh pr create \
             --title "chore: bump to v${VERSION}" \
             --body "Automated version bump to v${VERSION}. Triggered by PR #${{ steps.detect.outputs.pr_number }} (${{ steps.detect.outputs.label }})." \
             --head "$BRANCH" \
             --base main)
 
-          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
-          echo "Bump PR created: $PR_URL"
+          # Enable auto-merge (App token — commit is web-flow-signed,
+          # so required_signatures is satisfied)
+          gh pr merge "$BRANCH" --auto --squash --delete-branch
 
-      - name: Enable auto-merge on bump PR
-        if: steps.detect.outputs.mode == 'bump'
-        env:
-          GH_TOKEN: ${{ secrets.ADMIN_PAT }}
-        run: |
-          BRANCH="${{ steps.bump-pr.outputs.branch }}"
-          gh pr merge "$BRANCH" --repo "$GITHUB_REPOSITORY" --auto --squash --delete-branch
-          echo "Auto-merge enabled via ADMIN_PAT for $BRANCH"
+          echo "Bump PR created with API-signed commit: $PR_URL"
 
       - name: Push tag
         if: steps.detect.outputs.mode == 'tag'
