@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.29-beta.6] - 2026-05-27
+
 Upgrade-target beta for smoke testing install/uninstall/upgrade matrix.
 
 ## [0.1.29-beta.5] - 2026-05-27
