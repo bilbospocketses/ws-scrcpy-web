@@ -7,36 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.1.29-beta.10] - 2026-05-27
-
-## [0.1.29-beta.9] - 2026-05-27
-
-## [0.1.29-beta.8] - 2026-05-27
-
-## [0.1.29-beta.7] - 2026-05-27
-
-## [0.1.29-beta.6] - 2026-05-27
-
-Upgrade-target beta for smoke testing install/uninstall/upgrade matrix.
-
-## [0.1.29-beta.5] - 2026-05-27
-
-## [0.1.29-beta.4] - 2026-05-27
-
-## [0.1.29-beta.3] - 2026-05-27
-
-## [0.1.29-beta.2] - 2026-05-27
-
-### Fixed
-
-- **Service uninstall no longer races Servy's recovery timer.** Replaced the fire-and-forget `post-stop.bat` uninstall path with a launcher-driven approach: when the `uninstall-pending` marker is present after Node exits, the launcher spawns a detached process that calls `servy-cli stop` (putting Servy in stopping state, which disables recovery) followed by `servy-cli uninstall` and local-mode launcher spawn. The launcher blocks until Servy's stop signal arrives, eliminating the timing dependency that caused the uninstall to hang indefinitely.
-
-## [0.1.29-beta.1] - 2026-05-27
-
 ### Changed
 
 - **Velopack upgraded from prerelease 0.0.1589-ga2c5a97 to stable 1.0.1.** Bumped across all four touchpoints: Rust crate (`Cargo.toml`), npm package (`package.json`), and vpk CLI pin (`release.yml`, both build-windows and build-linux jobs). Zero API changes -- all Rust builder patterns, npm exports, and CLI flags are preserved. The `--msi` flag now produces a true Windows Installer MSI (improved per-machine support, proper installer UI) instead of the older Squirrel-style wrapper.
 - **Automated release pipeline.** New `auto-release.yml` workflow automates version bump + tag push on labeled PR merges. Add `release:beta` or `release:stable` label to a PR; on merge, the pipeline computes the next version, creates a bump PR, and after CI passes, pushes the tag to trigger the full build + publish.
+
+### Fixed
+
+- **Service uninstall no longer races Servy's recovery timer.** Replaced the fire-and-forget `post-stop.bat` uninstall path with a launcher-driven approach: the launcher spawns a detached process that calls `servy-cli stop` (putting Servy in stopping state, which disables recovery) followed by `servy-cli uninstall` and local-mode launcher spawn. Uses Task Scheduler to escape the Servy job object. The launcher blocks until Servy's stop signal arrives, eliminating the timing dependency that caused the uninstall to hang indefinitely.
+- **Shell close confirmation redesigned.** Replaced the raw inline-styled `<dialog>` with a proper `ShellCloseConfirmModal` extending the Modal base class -- same title bar, theme toggle, glassmorphism frame, and right-aligned footer buttons as the service install/uninstall modal.
+- **Shell button no longer greyed out in service mode.** Node-pty staging guard now correctly detects the prebuilt binary, preventing the shell feature from being disabled when running as a Windows service.
+
+### Removed
+
+- **Iterative bug-test releases cleaned from GitHub Releases.** Deleted: v0.1.29-beta.1 through beta.10 (service uninstall + shell modal + CI pipeline iterations). Orphaned git tags remain (tag protection ruleset).
 
 ## [0.1.28] - 2026-05-27
 
