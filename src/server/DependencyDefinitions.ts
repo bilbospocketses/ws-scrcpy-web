@@ -81,7 +81,10 @@ export function getDependencyDefinitions(depsPath: string): DependencyDefinition
             requiresLauncher: true,
             checkInstalled: async (depsPath) => {
                 const ext = platform === 'win32' ? '.exe' : '';
-                const exe = path.join(depsPath, 'node', `node${ext}`);
+                // Linux tarball extracts with bin/ subdirectory; Windows zip is flat.
+                const binPath = path.join(depsPath, 'node', 'bin', `node${ext}`);
+                const flatPath = path.join(depsPath, 'node', `node${ext}`);
+                const exe = fs.existsSync(binPath) ? binPath : flatPath;
                 return runVersionCommand(exe, ['--version'], /v([\d.]+)/);
             },
             checkLatest: async () => {

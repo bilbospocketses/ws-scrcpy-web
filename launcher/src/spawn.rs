@@ -31,14 +31,21 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 /// return the Node binary path or an error.
 pub fn resolve_node_with(deps_path: Option<&str>, exe_dir: &Path) -> Result<PathBuf> {
     if let Some(deps) = deps_path {
+        // Linux tarball extracts with bin/ subdirectory; Windows zip is flat.
+        let candidate = Path::new(deps).join("node").join("bin").join(NODE_BIN);
+        if candidate.exists() {
+            return Ok(candidate);
+        }
         let candidate = Path::new(deps).join("node").join(NODE_BIN);
         if candidate.exists() {
             return Ok(candidate);
         }
-        // deps_path set but node not there yet (first-run bootstrap) — fall
-        // through to seed instead of hard-failing.
     }
 
+    let seed = exe_dir.join("seed").join("node").join("bin").join(NODE_BIN);
+    if seed.exists() {
+        return Ok(seed);
+    }
     let seed = exe_dir.join("seed").join("node").join(NODE_BIN);
     if seed.exists() {
         return Ok(seed);
@@ -195,6 +202,22 @@ mod tests {
 
         let resolved = resolve_node_with(Some(deps.to_str().unwrap()), &exe_dir).unwrap();
         assert_eq!(resolved, node);
+    }
+
+    #[test]
+    fn resolve_node_prefers_bin_subdirectory() {
+        let dir = tempdir().unwrap();
+        let deps = dir.path().join("deps");
+        let bin_node = deps.join("node").join("bin").join(NODE_BIN);
+        let flat_node = deps.join("node").join(NODE_BIN);
+        touch(&bin_node);
+        touch(&flat_node);
+
+        let exe_dir = dir.path().join("exe");
+        fs::create_dir_all(&exe_dir).unwrap();
+
+        let resolved = resolve_node_with(Some(deps.to_str().unwrap()), &exe_dir).unwrap();
+        assert_eq!(resolved, bin_node);
     }
 
     #[test]
