@@ -209,21 +209,38 @@ pub fn run() -> Result<i32> {
                 let servy_path = paths.install_root.join("current").join("servy-cli.exe");
                 let launcher_path =
                     paths.install_root.join("current").join("ws-scrcpy-web-launcher.exe");
+                let log_dir = paths.data_root.join("logs");
 
-                let script = format!(
-                    "\"{}\" stop --name WsScrcpyWeb -q & \"{}\" uninstall --name WsScrcpyWeb -q & \"{}\" --spawn-user-launcher --launcher-path \"{}\"",
-                    servy_path.display(),
-                    servy_path.display(),
-                    launcher_path.display(),
-                    launcher_path.display(),
+                let bat_path = paths.data_root.join("control").join("uninstall-now.bat");
+                let bat_content = format!(
+                    "@echo off\r\n\
+                     echo %date% %time% [uninstall-now] starting >> \"{log}\\uninstall-now.log\"\r\n\
+                     \"{servy}\" stop --name WsScrcpyWeb -q\r\n\
+                     echo %date% %time% [uninstall-now] stop exit=%errorlevel% >> \"{log}\\uninstall-now.log\"\r\n\
+                     \"{servy}\" uninstall --name WsScrcpyWeb -q\r\n\
+                     echo %date% %time% [uninstall-now] uninstall exit=%errorlevel% >> \"{log}\\uninstall-now.log\"\r\n\
+                     \"{launcher}\" --spawn-user-launcher --launcher-path \"{launcher}\"\r\n\
+                     echo %date% %time% [uninstall-now] spawn-user-launcher exit=%errorlevel% >> \"{log}\\uninstall-now.log\"\r\n\
+                     del \"%~f0\"\r\n",
+                    log = log_dir.display(),
+                    servy = servy_path.display(),
+                    launcher = launcher_path.display(),
                 );
+
+                if let Err(e) = std::fs::write(&bat_path, &bat_content) {
+                    log::error(&format!(
+                        "supervisor: failed to write uninstall bat at {bat_path:?}: {e}; exiting (post-stop.bat is fallback)"
+                    ));
+                    return Ok(code);
+                }
+                log::info(&format!("supervisor: wrote uninstall bat at {bat_path:?}"));
 
                 use std::os::windows::process::CommandExt;
                 const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
                 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
                 match std::process::Command::new("C:\\Windows\\System32\\cmd.exe")
-                    .args(["/c", &script])
+                    .args(["/c", bat_path.to_str().unwrap_or("uninstall-now.bat")])
                     .stdout(std::process::Stdio::null())
                     .stderr(std::process::Stdio::null())
                     .creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW)

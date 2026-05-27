@@ -141,17 +141,14 @@ jobs:
           echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
           echo "Bump PR created: $PR_URL"
 
-      - name: Wait for CI then merge bump PR
+      - name: Enable auto-merge on bump PR
         if: steps.detect.outputs.mode == 'bump'
         env:
           GH_TOKEN: ${{ secrets.ADMIN_PAT }}
         run: |
           BRANCH="${{ steps.bump-pr.outputs.branch }}"
-          echo "Waiting for CI on $BRANCH..."
-          gh pr checks "$BRANCH" --repo "$GITHUB_REPOSITORY" --required --watch --fail-fast
-          echo "CI green — merging with ADMIN_PAT"
-          gh pr merge "$BRANCH" --repo "$GITHUB_REPOSITORY" --squash --delete-branch
-          echo "Bump PR merged"
+          gh pr merge "$BRANCH" --repo "$GITHUB_REPOSITORY" --auto --squash --delete-branch
+          echo "Auto-merge enabled via ADMIN_PAT for $BRANCH"
 
       - name: Push tag
         if: steps.detect.outputs.mode == 'tag'
