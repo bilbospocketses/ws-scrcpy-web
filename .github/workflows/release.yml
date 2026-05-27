@@ -67,14 +67,10 @@ jobs:
         with:
           dotnet-version: 10.x
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
-      # Pin vpk to a known-good prerelease that has --msi / --instLocation.
-      # Stable vpk 0.0.1298 (the default with no --version) does NOT have
-      # those flags — they were added in the 0.0.1500+ prerelease line.
-      # Match the npm `velopack` package version to keep client/server
-      # serialization in sync. Re-verified 2026-04-28 for v0.1.22 cut:
-      # latest stable still 0.0.1298, latest prerelease still
-      # 0.0.1589-ga2c5a97. Pin remains; revisit at v0.1.23.
-      - run: dotnet tool install -g vpk --version 0.0.1589-ga2c5a97
+      # vpk 1.0.1 (stable GA) has --msi / --instLocation and produces
+      # true Windows Installer MSIs. Match the npm `velopack` package
+      # version to keep client/server serialization in sync.
+      - run: dotnet tool install -g vpk --version 1.0.1
       - run: npm ci --omit=dev
       - run: npm run build
       - run: cargo build --release --workspace
@@ -182,14 +178,10 @@ jobs:
           targets: x86_64-unknown-linux-musl
       - name: Install musl-tools (linker for musl target)
         run: sudo apt-get update && sudo apt-get install -y musl-tools
-      # Pin vpk to a known-good prerelease that has --msi / --instLocation.
-      # Stable vpk 0.0.1298 (the default with no --version) does NOT have
-      # those flags — they were added in the 0.0.1500+ prerelease line.
-      # Match the npm `velopack` package version to keep client/server
-      # serialization in sync. Re-verified 2026-04-28 for v0.1.22 cut:
-      # latest stable still 0.0.1298, latest prerelease still
-      # 0.0.1589-ga2c5a97. Pin remains; revisit at v0.1.23.
-      - run: dotnet tool install -g vpk --version 0.0.1589-ga2c5a97
+      # vpk 1.0.1 (stable GA) has --msi / --instLocation and produces
+      # true Windows Installer MSIs. Match the npm `velopack` package
+      # version to keep client/server serialization in sync.
+      - run: dotnet tool install -g vpk --version 1.0.1
       - run: npm ci --omit=dev
       - run: npm run build
       - name: Build launcher (musl-static — no glibc dependency)

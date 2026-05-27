@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Velopack upgraded from prerelease 0.0.1589-ga2c5a97 to stable 1.0.1.** Bumped across all four touchpoints: Rust crate (`Cargo.toml`), npm package (`package.json`), and vpk CLI pin (`release.yml`, both build-windows and build-linux jobs). Zero API changes -- all Rust builder patterns, npm exports, and CLI flags are preserved. The `--msi` flag now produces a true Windows Installer MSI (improved per-machine support, proper installer UI) instead of the older Squirrel-style wrapper.
+
 ## [0.1.28] - 2026-05-27
 
 Stable release rolling up the v0.1.28-beta.17/18 series. Headline: **local-mode in-app updates now work reliably** — the operation-server binds a separate port so it never fights Node for the socket, eliminating the IPv4-dead dual-stack bug that plagued the entire beta chain.
