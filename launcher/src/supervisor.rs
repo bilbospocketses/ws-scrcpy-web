@@ -212,6 +212,7 @@ pub fn run() -> Result<i32> {
                 let log_dir = paths.data_root.join("logs");
 
                 let bat_path = paths.data_root.join("control").join("uninstall-now.bat");
+                let task_name = "WsScrcpyWebUninstall";
                 let bat_content = format!(
                     "@echo off\r\n\
                      echo %date% %time% [uninstall-now] starting >> \"{log}\\uninstall-now.log\"\r\n\
@@ -221,10 +222,12 @@ pub fn run() -> Result<i32> {
                      echo %date% %time% [uninstall-now] uninstall exit=%errorlevel% >> \"{log}\\uninstall-now.log\"\r\n\
                      \"{launcher}\" --spawn-user-launcher --launcher-path \"{launcher}\"\r\n\
                      echo %date% %time% [uninstall-now] spawn-user-launcher exit=%errorlevel% >> \"{log}\\uninstall-now.log\"\r\n\
+                     schtasks /delete /tn \"{task}\" /f >nul 2>&1\r\n\
                      del \"%~f0\"\r\n",
                     log = log_dir.display(),
                     servy = servy_path.display(),
                     launcher = launcher_path.display(),
+                    task = task_name,
                 );
 
                 if let Err(e) = std::fs::write(&bat_path, &bat_content) {
@@ -235,26 +238,59 @@ pub fn run() -> Result<i32> {
                 }
                 log::info(&format!("supervisor: wrote uninstall bat at {bat_path:?}"));
 
-                use std::os::windows::process::CommandExt;
-                const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-                const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+                let bat_str = bat_path.to_str().unwrap_or("uninstall-now.bat");
+                let schtasks = "C:\\Windows\\System32\\schtasks.exe";
 
-                match std::process::Command::new("C:\\Windows\\System32\\cmd.exe")
-                    .args(["/c", bat_path.to_str().unwrap_or("uninstall-now.bat")])
+                let create_result = std::process::Command::new(schtasks)
+                    .args([
+                        "/create", "/tn", task_name,
+                        "/tr", &format!("C:\\Windows\\System32\\cmd.exe /c \"{bat_str}\""),
+                        "/sc", "once", "/st", "00:00",
+                        "/rl", "highest", "/ru", "SYSTEM", "/f",
+                    ])
                     .stdout(std::process::Stdio::null())
                     .stderr(std::process::Stdio::null())
-                    .creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW)
-                    .spawn()
-                {
-                    Ok(child) => {
-                        log::info(&format!(
-                            "supervisor: spawned detached uninstall process (pid {}); blocking until stop signal",
-                            child.id()
+                    .status();
+
+                match create_result {
+                    Ok(s) if s.success() => {
+                        log::info("supervisor: created scheduled task for uninstall");
+                    }
+                    Ok(s) => {
+                        log::error(&format!(
+                            "supervisor: schtasks /create failed (exit {:?}); exiting (post-stop.bat is fallback)",
+                            s.code()
                         ));
+                        return Ok(code);
                     }
                     Err(e) => {
                         log::error(&format!(
-                            "supervisor: failed to spawn uninstall process: {e}; exiting (post-stop.bat is fallback)"
+                            "supervisor: schtasks spawn failed: {e}; exiting (post-stop.bat is fallback)"
+                        ));
+                        return Ok(code);
+                    }
+                }
+
+                let run_result = std::process::Command::new(schtasks)
+                    .args(["/run", "/tn", task_name])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status();
+
+                match run_result {
+                    Ok(s) if s.success() => {
+                        log::info("supervisor: triggered scheduled task; blocking until stop signal");
+                    }
+                    Ok(s) => {
+                        log::error(&format!(
+                            "supervisor: schtasks /run failed (exit {:?}); exiting (post-stop.bat is fallback)",
+                            s.code()
+                        ));
+                        return Ok(code);
+                    }
+                    Err(e) => {
+                        log::error(&format!(
+                            "supervisor: schtasks /run spawn failed: {e}; exiting (post-stop.bat is fallback)"
                         ));
                         return Ok(code);
                     }
