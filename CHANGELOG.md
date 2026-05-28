@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.12] - 2026-05-28
+
+### Changed
+
+- Device card separator spacing equalized: gap above the modal-launch buttons now matches the gap above the action buttons (services `padding-top` 4px → 8px).
+- Action button borders unified with the modal-launch button color (`var(--text-color)`); text colors stay red (disconnect), green (turn on), red (turn off), gray (checking…).
+- Action buttons aligned to the same 2-column grid as the modal-launch buttons: disconnect under the left column (shell / list files), turn-on/off under the right column (connect / config stream).
+
 ## [0.1.30-beta.11] - 2026-05-28
 
 ### Changed
