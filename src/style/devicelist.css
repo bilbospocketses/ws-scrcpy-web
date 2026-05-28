@@ -77,7 +77,6 @@ body.list #device_list_menu {
     padding: 8px;
     background: var(--device-list-default-color);
     transition: border-color 0.15s, box-shadow 0.15s;
-    overflow: hidden;
 }
 
 #devices .device-list div.device:hover {

@@ -231,7 +231,12 @@ export class UpdateService {
      */
     public async reconfigure(channel: UpdateChannel, githubOwner: string): Promise<void> {
         if (!this.state.isInstalled) {
-            // Dev mode — config persisted by caller, but no UpdateManager to swap.
+            return;
+        }
+        if (!this.mgr) {
+            // init() couldn't construct UpdateManager (e.g. Linux AppImage
+            // where Velopack SDK has no Update.exe equivalent). Config is
+            // persisted by the caller; reconfigure can't help here.
             return;
         }
         const feedUrl = this.buildFeedUrl(githubOwner);

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.7] - 2026-05-27
+
+### Fixed
+
+- **Linux updates error on channel change.** `reconfigure()` now skips UpdateManager reconstruction when `mgr` is null (init couldn't construct it on Linux AppImage where Velopack SDK has no `Update.exe` equivalent). Prevents "reconfigure failed" error in Settings > Updates.
+- **Device card clipping.** Remove `overflow:hidden` from device card container -- it was clipping the pencil edit button and the right edge of the "turn off" button.
+
 ## [0.1.30-beta.6] - 2026-05-27
 
 ### Fixed
