@@ -269,7 +269,7 @@ Linux releases ship as a single self-contained AppImage built with [Velopack](ht
 The first-run welcome modal offers to install ws-scrcpy-web as a systemd service. Two scopes are available:
 
 - **just for me (no sudo)** — installs to `~/.config/systemd/user/ws-scrcpy-web.service`. Starts at login. `loginctl enable-linger` is invoked best-effort so the service survives logout.
-- **all users (requires sudo)** — installs to `/etc/systemd/system/ws-scrcpy-web.service`. Starts at boot. Requires the AppImage to be relaunched with `sudo` so the install API can write to `/etc/`.
+- **all users (requires sudo)** — installs to `/etc/systemd/system/ws-scrcpy-web.service`. Starts at boot. The install API triggers a `pkexec` graphical password prompt to acquire root for the single shell command that writes the unit + runs `systemctl daemon-reload` + `systemctl enable --now`. No AppImage relaunch needed. Falls back gracefully if `pkexec` isn't installed: error message tells the user to install polkit (`sudo dnf install polkit` on Fedora) or pick user scope.
 
 You can also install/uninstall the service later from Settings → Service.
 
@@ -285,9 +285,21 @@ AppImage signing is currently under evaluation; releases ship **unsigned** for n
 
 The bundled `node-pty` native binary is built against glibc. Musl-based distros (Alpine and similar) are not supported. Run on glibc-based distros: Ubuntu, Debian, Fedora, Arch, openSUSE, etc. — anything that ships glibc 2.31+ should work.
 
+#### libfuse2 (for in-app updates)
+
+The AppImage runtime in Velopack 1.0.1 (the type-1 AppImageKit runtime) requires `libfuse.so.2` to mount its squashfs filesystem at launch. If your distro doesn't have it installed, the AppImage itself will refuse to start (this is an AppImageKit-level error, before any of our code runs). The in-app updater also relies on libfuse2 to extract update bundles.
+
+If you launch the AppImage successfully but Settings → Updates shows a libfuse2 warning, click **install libfuse2** to invoke `pkexec sudo <pkg-manager> install` for your distro (auto-detected: `dnf`, `apt-get`, or `yum`). Or install manually:
+
+- **Debian/Ubuntu**: `sudo apt-get install libfuse2`
+- **Fedora/RHEL**: `sudo dnf install fuse-libs`
+- **Arch**: `sudo pacman -S fuse2`
+
+When Velopack ships its type-2 runtime (post-1.0.1), this dependency will be embedded in the AppImage and this step will go away.
+
 #### Tray icon
 
-ws-scrcpy-web tries to surface a system tray icon (best-effort) for quick stop/restart. On stock GNOME without the AppIndicator extension, on headless servers, or on minimal Wayland sessions, the tray may not appear — that's expected. Use Settings → Server → Stop Server in the web UI as a fallback.
+ws-scrcpy-web does not currently expose a tray icon on Linux. On Windows the launcher provides a tray for quick stop/restart, but the Linux launcher has no tray surface yet — when one is added it will mirror the Windows behavior. For now use Settings → Server → Stop Server in the web UI to stop the app cleanly.
 
 ## Configuration
 
