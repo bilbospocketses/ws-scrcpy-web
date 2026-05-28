@@ -129,15 +129,14 @@ body.list #device_list_menu {
 }
 
 /* Device action buttons (disconnect + sleep/wake) — sibling row to the
-   device-info table. Table-style grid: 2 button columns separated by a
-   real 1px column (vertical divider). Outer border on left/right/bottom;
+   device-info table. 2-column grid with outer borders on all four sides;
    border-top is the row divider shared with the services grid above.
-   All dividers are real 1px grid tracks so they land on integer pixel
-   positions regardless of card width — no sub-pixel anti-aliasing
-   artifacts. */
+   No inner vertical divider — 1px grid-track dividers render with sub-
+   pixel anti-aliasing artifacts that look thicker/dimmer than the outer
+   borders. */
 #devices .device-list div.device .device-actions {
     display: grid;
-    grid-template-columns: 1fr 1px 1fr;
+    grid-template-columns: 1fr 1fr;
     grid-template-rows: auto;
     gap: 0;
     align-items: center;
@@ -147,18 +146,6 @@ body.list #device_list_menu {
     border-right: 1px solid var(--device-border-color);
     border-bottom: 1px solid var(--device-border-color);
     padding: 0;
-}
-
-#devices .device-list div.device .device-actions::before {
-    content: '';
-    grid-column: 2;
-    grid-row: 1 / -1;
-    background: var(--device-border-color);
-    /* Override parent's justify-items: center / align-items: center
-       which would auto-size the pseudo to its 0-width content and
-       leave the divider invisible. Stretch fills the 1px grid cell. */
-    place-self: stretch;
-    pointer-events: none;
 }
 
 #devices .device-list div.device .device-actions:empty {
@@ -191,7 +178,7 @@ body.list #device_list_menu {
 
 /* Sleep/wake button */
 #devices .device-list .sleep-wake-btn {
-    grid-column: 3;
+    grid-column: 2;
     margin: 8px;
     border-radius: 6px;
     background: transparent;
@@ -233,15 +220,14 @@ body.list #device_list_menu {
 
 /* Modal-launch buttons — 2x2 grid filled column-first:
    left col = [shell][list files], right col = [connect][configure stream].
-   Table-style grid: 2 button columns separated by a real 1px column
-   (vertical divider) and 2 button rows separated by a real 1px row
-   (horizontal divider). Outer border on left/right; border-top is the
-   row divider shared with the device-info table above. All dividers
-   are real grid tracks for pixel-exact rendering (no sub-pixel AA). */
+   Outer borders on left/right; border-top is the row divider shared with
+   the device-info table above. No inner cross dividers — 1px grid-track
+   dividers render with sub-pixel anti-aliasing artifacts that look
+   thicker/dimmer than the outer borders. */
 #devices .device-list div.device .services {
     display: grid;
-    grid-template-columns: 1fr 1px 1fr;
-    grid-template-rows: auto 1px auto;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: auto auto;
     grid-auto-flow: column;
     gap: 0;
     align-items: center;
@@ -252,29 +238,8 @@ body.list #device_list_menu {
     padding: 0;
 }
 
-#devices .device-list div.device .services::before {
-    content: '';
-    grid-column: 2;
-    grid-row: 1 / -1;
-    background: var(--device-border-color);
-    /* See note on .device-actions::before — stretch needed so the
-       pseudo fills its 1px-wide grid cell instead of collapsing to
-       0-width content. */
-    place-self: stretch;
-    pointer-events: none;
-}
-
-#devices .device-list div.device .services::after {
-    content: '';
-    grid-column: 1 / -1;
-    grid-row: 2;
-    background: var(--device-border-color);
-    place-self: stretch;
-    pointer-events: none;
-}
-
 /* Margin around modal buttons gives them breathing room inside the grid
-   cells (container padding is 0 so dividers can span edge-to-edge). */
+   cells (container padding is 0). */
 #devices .device-list div.device .services > .desc-block {
     margin: 8px;
 }

@@ -12,7 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Device card horizontal padding now symmetric (8px 14px); the 3px green/red active-state left border is outside this padding so it doesn't unbalance the content area.
-- Device card button grid dividers (vertical between columns, horizontal between modal-launch rows) are now visible. They were rendering at 0×0 because the pseudo-elements inherited `justify-items: center` / `align-items: center` from the parent grid and auto-sized to their empty content. Added `place-self: stretch` so they fill their 1px grid cells.
+
+### Changed
+
+- Reverted the inner cross dividers (vertical between columns, horizontal between modal-launch rows). 1px grid-track dividers position based on the auto-sized neighbor tracks, which often land on sub-pixel boundaries — the browser then anti-aliases the line across two physical pixels, making it appear thicker and dimmer than the outer borders (which are at element edges, always integer pixels). Outer borders + section dividers remain.
 
 ## [0.1.30-beta.16] - 2026-05-28
 
