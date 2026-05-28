@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.15] - 2026-05-28
+
+> Note: v0.1.30-beta.14 was tagged but its squash-merge silently failed, so the beta.14 release artifacts contain beta.13 content. This release combines everything that was meant for beta.14 plus the table-grid additions below.
+
+### Changed
+
+- `.dep-btn` button border (3 scan-section buttons + "check for updates" button) changed from `var(--text-color)` (white) to `#5b9aff` (matching their blue text).
+- Device card modal-launch + action buttons centered within their grid cells (`justify-items: start` → `center`).
+- Device card button grids redrawn as full table-style grids with both outer (left/right/top/bottom) and inner (vertical between columns, horizontal between modal-launch rows) borders. Dividers implemented as real 1px grid tracks (`grid-template-columns: 1fr 1px 1fr`, `grid-template-rows: auto 1px auto`) so they land on integer pixel positions regardless of card width — fixes the sub-pixel anti-aliasing artifact where the vertical divider appeared thicker/lighter on cards whose width didn't divide evenly into 2.
+
 ## [0.1.30-beta.13] - 2026-05-28
 
 ### Changed

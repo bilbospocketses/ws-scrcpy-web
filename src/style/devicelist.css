@@ -127,19 +127,32 @@ body.list #device_list_menu {
 }
 
 /* Device action buttons (disconnect + sleep/wake) — sibling row to the
-   device-info table. 2-column grid mirroring the .services grid above:
-   disconnect aligns under the left modal column (shell/list files);
-   turn-on/off aligns under the right modal column (connect/config stream).
-   Kept outside the device-info table so wider-mono-font platforms (Linux)
-   don't squeeze the table layout. */
+   device-info table. Table-style grid: 2 button columns separated by a
+   real 1px column (vertical divider). Outer border on left/right/bottom;
+   border-top is the row divider shared with the services grid above.
+   All dividers are real 1px grid tracks so they land on integer pixel
+   positions regardless of card width — no sub-pixel anti-aliasing
+   artifacts. */
 #devices .device-list div.device .device-actions {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 6px;
+    grid-template-columns: 1fr 1px 1fr;
+    grid-template-rows: auto;
+    gap: 0;
     align-items: center;
-    justify-items: start;
+    justify-items: center;
     border-top: 1px solid var(--device-border-color);
-    padding: 8px 0;
+    border-left: 1px solid var(--device-border-color);
+    border-right: 1px solid var(--device-border-color);
+    border-bottom: 1px solid var(--device-border-color);
+    padding: 0;
+}
+
+#devices .device-list div.device .device-actions::before {
+    content: '';
+    grid-column: 2;
+    grid-row: 1 / -1;
+    background: var(--device-border-color);
+    pointer-events: none;
 }
 
 #devices .device-list div.device .device-actions:empty {
@@ -148,6 +161,7 @@ body.list #device_list_menu {
 
 #devices .device-list .disconnect-btn {
     grid-column: 1;
+    margin: 8px;
     border: 0.5px solid var(--danger-color);
     border-radius: 6px;
     background: transparent;
@@ -171,7 +185,8 @@ body.list #device_list_menu {
 
 /* Sleep/wake button */
 #devices .device-list .sleep-wake-btn {
-    grid-column: 2;
+    grid-column: 3;
+    margin: 8px;
     border-radius: 6px;
     background: transparent;
     padding: 4px 10px;
@@ -210,19 +225,47 @@ body.list #device_list_menu {
     cursor: not-allowed;
 }
 
-/* Services / action buttons — 2x2 grid filled column-first:
-   left col = [shell][list files], right col = [connect][configure stream] */
+/* Modal-launch buttons — 2x2 grid filled column-first:
+   left col = [shell][list files], right col = [connect][configure stream].
+   Table-style grid: 2 button columns separated by a real 1px column
+   (vertical divider) and 2 button rows separated by a real 1px row
+   (horizontal divider). Outer border on left/right; border-top is the
+   row divider shared with the device-info table above. All dividers
+   are real grid tracks for pixel-exact rendering (no sub-pixel AA). */
 #devices .device-list div.device .services {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    grid-template-rows: auto auto;
+    grid-template-columns: 1fr 1px 1fr;
+    grid-template-rows: auto 1px auto;
     grid-auto-flow: column;
-    gap: 6px;
+    gap: 0;
     align-items: center;
-    justify-items: start;
+    justify-items: center;
     border-top: 1px solid var(--device-border-color);
-    padding-top: 8px;
-    padding-bottom: 8px;
+    border-left: 1px solid var(--device-border-color);
+    border-right: 1px solid var(--device-border-color);
+    padding: 0;
+}
+
+#devices .device-list div.device .services::before {
+    content: '';
+    grid-column: 2;
+    grid-row: 1 / -1;
+    background: var(--device-border-color);
+    pointer-events: none;
+}
+
+#devices .device-list div.device .services::after {
+    content: '';
+    grid-column: 1 / -1;
+    grid-row: 2;
+    background: var(--device-border-color);
+    pointer-events: none;
+}
+
+/* Margin around modal buttons gives them breathing room inside the grid
+   cells (container padding is 0 so dividers can span edge-to-edge). */
+#devices .device-list div.device .services > .desc-block {
+    margin: 8px;
 }
 
 #devices .device-list div.device .services:last-child {
