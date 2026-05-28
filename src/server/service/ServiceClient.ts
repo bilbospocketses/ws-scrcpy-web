@@ -94,6 +94,13 @@ export interface ServiceClient {
     status(name: string): Promise<ServiceStatus>;
     restart(name: string): Promise<void>;
     stop(name: string): Promise<void>;
+    /**
+     * Resolve the actual installed scope from the filesystem (which unit file
+     * exists), independent of any config value. Optional: only SystemdClient
+     * implements it (Linux user-vs-system scope). Windows is always Local
+     * System, so ServyClient omits it and the API reports no scope.
+     */
+    getInstalledScope?(name: string): Promise<'user' | 'system' | null>;
 }
 
 /**

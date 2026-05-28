@@ -36,6 +36,16 @@ export interface ServiceStatusResponse {
      * when supported=true.
      */
     installMode?: 'user' | 'system' | 'user-service' | 'system-service' | null;
+    /**
+     * Actual installed scope resolved from the filesystem (which systemd unit
+     * file exists), NOT inferred from the mutable `installMode`. This is the
+     * authoritative source for pre-selecting the Linux scope radio when a
+     * service is installed: `installMode` can drift (reverted on failed
+     * installs / uninstall paths) and leave the UI unable to tell which scope
+     * is active. `null` when not installed or unresolvable. Linux-only —
+     * omitted on Windows, where scope is auto-detected from execPath.
+     */
+    scope?: 'user' | 'system' | null;
 }
 
 /** Success response shape for /api/service/install and /api/service/uninstall. */

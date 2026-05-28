@@ -230,6 +230,31 @@ describe('SystemdClient', () => {
         });
     });
 
+    describe('getInstalledScope', () => {
+        // Match against the client's own path methods (not hardcoded strings) so
+        // the mock comparison survives path.join's platform-specific separator
+        // on the Windows dev host.
+        it("returns 'user' when the user-scope unit file exists", async () => {
+            const client = new SystemdClient();
+            const userPath = client.userUnitPath('WsScrcpyWeb');
+            existsSyncMock.mockImplementation((p: string) => p === userPath);
+            expect(await client.getInstalledScope('WsScrcpyWeb')).toBe('user');
+        });
+
+        it("returns 'system' when only the system-scope unit file exists", async () => {
+            const client = new SystemdClient();
+            const systemPath = client.systemUnitPath('WsScrcpyWeb');
+            existsSyncMock.mockImplementation((p: string) => p === systemPath);
+            expect(await client.getInstalledScope('WsScrcpyWeb')).toBe('system');
+        });
+
+        it('returns null when no unit file exists', async () => {
+            existsSyncMock.mockReturnValue(false);
+            const client = new SystemdClient();
+            expect(await client.getInstalledScope('WsScrcpyWeb')).toBeNull();
+        });
+    });
+
     describe('status', () => {
         it("returns 'not-installed' when neither unit file exists", async () => {
             existsSyncMock.mockReturnValue(false);

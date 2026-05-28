@@ -190,9 +190,16 @@ describe('UpdateService', () => {
         expect(captured[0]).toBe('https://internal.example/feed/');
     });
 
-    // ── VelopackLocator override (Phase 2 of Program Files migration) ──
+    // ── VelopackLocator strategy (platform-split) ──────────────────────────
+    //
+    // Windows hands Velopack an explicit locator (Program Files migration).
+    // Linux passes NO locator and delegates to Velopack's native
+    // auto_locate_app_manifest. `platform` is injected so BOTH branches run on
+    // any host — the original doubled-`usr/usr/bin` Linux locator bug (beta.19 /
+    // PR #230) slipped through because tests only ever ran the host-platform
+    // branch with an injected installRoot, never the real __dirname arithmetic.
 
-    it('init: passes a VelopackLocatorConfig to the factory shaped for the host platform', () => {
+    it('init (win32): passes an explicit Windows VelopackLocatorConfig', () => {
         const installRoot = path.join('/fake', 'install', 'root');
         let receivedLocator: unknown;
         const factory = vi.fn((_feed: string, _opts: UpdateOptions, locator?: unknown) => {
@@ -200,6 +207,7 @@ describe('UpdateService', () => {
             return fakeMgr();
         });
         const svc = new UpdateService({
+            platform: 'win32',
             installRoot,
             existsSync: () => true,
             updateManagerFactory: factory,
@@ -210,53 +218,72 @@ describe('UpdateService', () => {
 
         expect(receivedLocator).toBeDefined();
         const loc = receivedLocator as Record<string, unknown>;
-        if (process.platform === 'win32') {
-            expect(loc['RootAppDir']).toBe(installRoot);
-            expect(loc['UpdateExePath']).toBe(path.join(installRoot, 'Update.exe'));
-            expect(loc['PackagesDir']).toBe(path.join(installRoot, 'packages'));
-            expect(loc['ManifestPath']).toBe(path.join(installRoot, 'current', 'sq.version'));
-            expect(loc['CurrentBinaryDir']).toBe(path.join(installRoot, 'current'));
-            expect(loc['IsPortable']).toBe(false);
-        } else {
-            // Linux AppImage shape — mirrors Velopack 1.0.1's lib-rust
-            // auto_locate_app_manifest. beforeEach() sets APPIMAGE so the
-            // marker check passes and the factory actually runs.
-            const contentsDir = path.join(installRoot, 'usr', 'bin');
-            expect(loc['RootAppDir']).toBe('/fake/WsScrcpyWeb.AppImage');
-            expect(loc['UpdateExePath']).toBe(path.join(contentsDir, 'UpdateNix'));
-            expect(loc['PackagesDir']).toBe('/var/tmp/velopack/WsScrcpyWeb/packages');
-            expect(loc['ManifestPath']).toBe(path.join(contentsDir, 'sq.version'));
-            expect(loc['CurrentBinaryDir']).toBe(contentsDir);
-            expect(loc['IsPortable']).toBe(true);
-        }
+        expect(loc['RootAppDir']).toBe(installRoot);
+        expect(loc['UpdateExePath']).toBe(path.join(installRoot, 'Update.exe'));
+        expect(loc['PackagesDir']).toBe(path.join(installRoot, 'packages'));
+        expect(loc['ManifestPath']).toBe(path.join(installRoot, 'current', 'sq.version'));
+        expect(loc['CurrentBinaryDir']).toBe(path.join(installRoot, 'current'));
+        expect(loc['IsPortable']).toBe(false);
     });
 
-    it('reconfigure: passes the same locator to the new factory invocation', async () => {
-        const installRoot = '/fake/install/root';
-        const captured: unknown[] = [];
+    it('init (linux): passes NO locator — delegates to Velopack auto-locate', () => {
+        // beforeEach sets APPIMAGE so the Linux production-marker check passes
+        // and the factory actually runs.
+        let called = false;
+        let receivedLocator: unknown = 'sentinel';
         const factory = vi.fn((_feed: string, _opts: UpdateOptions, locator?: unknown) => {
-            captured.push(locator);
+            called = true;
+            receivedLocator = locator;
             return fakeMgr();
         });
         const svc = new UpdateService({
-            installRoot,
+            platform: 'linux',
+            installRoot: path.join('/fake', 'install', 'root'),
             existsSync: () => true,
             updateManagerFactory: factory,
             setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
             clearIntervalFn: () => undefined,
         });
         svc.init();
-        await svc.reconfigure('beta', 'a-different-owner');
 
-        // init + reconfigure both invoked the factory; both got the locator.
-        expect(captured.length).toBeGreaterThanOrEqual(2);
-        const initLocator = captured[0] as Record<string, unknown>;
-        const reconfigLocator = captured[captured.length - 1] as Record<string, unknown>;
-        const expectedRootAppDir =
-            process.platform === 'win32' ? installRoot : '/fake/WsScrcpyWeb.AppImage';
-        expect(initLocator['RootAppDir']).toBe(expectedRootAppDir);
-        expect(reconfigLocator['RootAppDir']).toBe(expectedRootAppDir);
-        expect(reconfigLocator).toEqual(initLocator);
+        expect(called).toBe(true);
+        // undefined → the velopack binding forwards `null` to the native FFI,
+        // triggering auto_locate_app_manifest. Any hand-built locator here
+        // reintroduces the beta.19 doubled-`usr/usr/bin` failure.
+        expect(receivedLocator).toBeUndefined();
+    });
+
+    it('reconfigure: re-passes the platform-appropriate locator on both platforms', async () => {
+        for (const platform of ['win32', 'linux'] as const) {
+            const installRoot = path.join('/fake', 'install', 'root');
+            const captured: unknown[] = [];
+            const factory = vi.fn((_feed: string, _opts: UpdateOptions, locator?: unknown) => {
+                captured.push(locator);
+                return fakeMgr();
+            });
+            const svc = new UpdateService({
+                platform,
+                installRoot,
+                existsSync: () => true,
+                updateManagerFactory: factory,
+                setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
+                clearIntervalFn: () => undefined,
+            });
+            svc.init();
+            await svc.reconfigure('beta', 'a-different-owner');
+
+            // init + reconfigure both invoked the factory.
+            expect(captured.length).toBeGreaterThanOrEqual(2);
+            const initLocator = captured[0];
+            const reconfigLocator = captured[captured.length - 1];
+            if (platform === 'win32') {
+                expect((initLocator as Record<string, unknown>)['RootAppDir']).toBe(installRoot);
+                expect(reconfigLocator).toEqual(initLocator);
+            } else {
+                expect(initLocator).toBeUndefined();
+                expect(reconfigLocator).toBeUndefined();
+            }
+        }
     });
 
     // ── checkForUpdates ─────────────────────────────────────────────────

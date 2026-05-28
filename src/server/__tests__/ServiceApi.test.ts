@@ -195,6 +195,27 @@ describe('ServiceApi', () => {
         expect(body.installMode).toBe('system-service');
     });
 
+    it('GET /status surfaces the filesystem scope from client.getInstalledScope', async () => {
+        // Bug fix: the Linux scope radio must reflect the actual installed unit
+        // (filesystem truth), not the mutable installMode. ServiceApi calls
+        // getInstalledScope when the client implements it (SystemdClient only).
+        const client = fakeClient({
+            status: vi.fn(async () => 'stopped' as const),
+            getInstalledScope: vi.fn(async () => 'user' as const),
+        });
+        const factoryResult: ServiceClientFactoryResult = {
+            client,
+            supported: true,
+            platform: 'linux',
+        };
+        const api = new ServiceApi(() => factoryResult, () => 'user');
+        const { req, res } = makeReqRes('/api/service/status');
+        await api.handle(req, res);
+        const body = JSON.parse((res as any).getBody());
+        expect(body.scope).toBe('user');
+        expect(client.getInstalledScope).toHaveBeenCalledWith('WsScrcpyWeb');
+    });
+
     it('POST /install returns 501 with unsupportedReason on unsupported platforms', async () => {
         const factoryResult: ServiceClientFactoryResult = {
             client: fakeClient(),
@@ -620,6 +641,42 @@ describe('ServiceApi', () => {
             expect((res as any).getStatus()).toBe(200);
             const opts = installFn.mock.calls[0]?.[0];
             expect(opts?.scope).toBe('user');
+        });
+
+        it('POST /install on Linux uses $APPIMAGE as binPath (stable systemd ExecStart)', async () => {
+            // The server runs as a Node child of the launcher, so
+            // process.execPath is the Node binary — using it as ExecStart would
+            // start Node with no script (REPL/immediate-exit under systemd) and
+            // the service would never bind a port. ExecStart must be the stable
+            // .AppImage entry exposed via $APPIMAGE.
+            const savedAppImage = process.env['APPIMAGE'];
+            process.env['APPIMAGE'] = '/home/jamie/Applications/WsScrcpyWeb.AppImage';
+            try {
+                const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(async () => undefined);
+                const client = fakeClient({
+                    install: installFn,
+                    status: vi.fn(async () => 'running' as const),
+                });
+                const factoryResult: ServiceClientFactoryResult = {
+                    client,
+                    supported: true,
+                    platform: 'linux',
+                };
+                const api = new ServiceApi(() => factoryResult, () => 'user');
+                const { req, res } = makeReqRes(
+                    '/api/service/install',
+                    'POST',
+                    JSON.stringify({ scope: 'user' }),
+                );
+                await api.handle(req, res);
+                expect((res as any).getStatus()).toBe(200);
+                const opts = installFn.mock.calls[0]?.[0];
+                expect(opts?.binPath).toBe('/home/jamie/Applications/WsScrcpyWeb.AppImage');
+                expect(opts?.startupDir).toBe('/home/jamie/Applications');
+            } finally {
+                if (savedAppImage === undefined) delete process.env['APPIMAGE'];
+                else process.env['APPIMAGE'] = savedAppImage;
+            }
         });
     });
 

@@ -53,6 +53,13 @@ export interface UpdateServiceOptions {
     setIntervalFn?: (cb: () => void, ms: number) => NodeJS.Timeout;
     /** Override timer cancellation for tests. */
     clearIntervalFn?: (handle: NodeJS.Timeout) => void;
+    /**
+     * Override the host platform for tests. Default: `process.platform`.
+     * Lets the Windows/Linux locator branches be exercised on any host — the
+     * original Linux locator bug (doubled `usr/usr/bin`) slipped through
+     * because tests only ever ran the host-platform branch.
+     */
+    platform?: NodeJS.Platform;
 }
 
 export interface UpdateServiceState {
@@ -89,7 +96,8 @@ export class UpdateService {
     private state: UpdateServiceState;
     private timer: NodeJS.Timeout | null = null;
     private readonly installRoot: string;
-    private readonly locator: VelopackLocatorConfig;
+    private readonly platform: NodeJS.Platform;
+    private readonly locator: VelopackLocatorConfig | undefined;
     private readonly factory: UpdateManagerFactory;
     private readonly feedUrlOverride: string | undefined;
     private readonly existsSync: (p: string) => boolean;
@@ -97,6 +105,7 @@ export class UpdateService {
     private readonly clearIntervalFn: (handle: NodeJS.Timeout) => void;
 
     constructor(opts: UpdateServiceOptions = {}) {
+        this.platform = opts.platform ?? process.platform;
         // v0.1.15: anchor installRoot at the webpack bundle's location, not
         // at process.execPath. Our launcher resolves the Node binary to
         // <base>/current/seed/node/node.exe (first run) or
@@ -109,28 +118,43 @@ export class UpdateService {
         // and dependencies/. Same pattern as the v0.1.10 scrcpy-server seed
         // path fix in DependencyManager.ts.
         this.installRoot = opts.installRoot ?? path.resolve(__dirname, '..', '..');
-        // Phase 2 of Program Files migration: explicitly hand Velopack the
-        // install paths via VelopackLocatorConfig instead of relying on its
-        // env-var-driven auto-locate. Computed once — installRoot is
-        // immutable for the lifetime of the service.
+        // Velopack locator strategy is platform-split:
         //
-        // v0.1.30: branch by platform. Windows uses the Squirrel-style
-        // `<installRoot>/current/` swap layout. Linux AppImage mirrors
-        // Velopack 1.0.1's lib-rust `auto_locate_app_manifest` (Linux
-        // branch in src/lib-rust/src/locator.rs):
-        //   RootAppDir       = $APPIMAGE (the .AppImage file path)
-        //   UpdateExePath    = <mount>/usr/bin/UpdateNix
-        //   PackagesDir      = /var/tmp/velopack/<packId>/packages
-        //   ManifestPath     = <mount>/usr/bin/sq.version
-        //   CurrentBinaryDir = <mount>/usr/bin
-        //   IsPortable       = true
-        // installRoot resolves to the AppImage mount root inside the bundle
-        // (webpack outputs to <mount>/usr/bin/dist/index.js; ../.. = <mount>).
-        // Pre-v0.1.30 the single Windows-shape config threw on Linux because
-        // Velopack's Linux locator validates UpdateNix existence at the
-        // configured path; PR #216's `mgr === null` reconfigure guard masked
-        // the throw. Both halves of the fix land together here.
-        if (process.platform === 'win32') {
+        //   Windows — hand Velopack an explicit VelopackLocatorConfig. Phase 2
+        //   of the Program Files migration: once the PerMachine MSI moved the
+        //   install to C:\Program Files\WsScrcpyWeb\, Velopack's env-var-driven
+        //   auto-locate stopped finding the install root reliably, so we
+        //   compute the Squirrel-style `<installRoot>/current/` swap layout
+        //   ourselves. Computed once — installRoot is immutable for the
+        //   service's lifetime.
+        //
+        //   Linux — DO NOT pass a locator; delegate to Velopack's native
+        //   auto_locate_app_manifest (lib-rust/src/locator.rs). Given $APPIMAGE
+        //   it truncates the exe path at the `/usr/bin/` boundary to find the
+        //   AppImage mount root, then derives everything itself:
+        //     CurrentBinaryDir = <mount>/usr/bin
+        //     UpdateExePath    = <mount>/usr/bin/UpdateNix
+        //     ManifestPath     = <mount>/usr/bin/sq.version
+        //     PackagesDir      = /var/tmp/velopack/<packId>/packages
+        //   The velopack Node binding (node_modules/velopack/lib/index.js)
+        //   forwards `null` to the native FFI whenever the locator arg is
+        //   falsy, which is exactly what enables auto-locate. init() only
+        //   constructs the manager when APPIMAGE is set, so auto-locate always
+        //   has the data it needs.
+        //
+        //   Why not a hand-built Linux locator: beta.7 (PR #216) masked a Linux
+        //   construction throw with a `mgr === null` guard; beta.19 (PR #230)
+        //   then hand-built the config from `path.resolve(__dirname,'..','..')`.
+        //   But that Windows-shaped arithmetic is off by one level on Linux —
+        //   the AppImage payload sits at <mount>/usr/bin/dist (one deeper than
+        //   Windows' <root>/current/dist), so installRoot resolved to
+        //   <mount>/usr and `path.join(installRoot,'usr','bin')` produced a
+        //   DOUBLED <mount>/usr/usr/bin. Velopack couldn't find UpdateNix or
+        //   sq.version there, construction threw, the init() catch nulled mgr,
+        //   and every update check silently no-oped (the "beta.19 still doesn't
+        //   fix Linux updates" report). Letting Velopack locate itself removes
+        //   the entire arithmetic-drift failure mode.
+        if (this.platform === 'win32') {
             this.locator = {
                 RootAppDir: this.installRoot,
                 UpdateExePath: path.join(this.installRoot, 'Update.exe'),
@@ -146,21 +170,8 @@ export class UpdateService {
                 IsPortable: false,
             };
         } else {
-            // Linux AppImage. APPIMAGE may be empty/unset in dev mode — the
-            // locator is only handed to Velopack inside init() when the
-            // production-marker check (APPIMAGE non-empty) passes, so an
-            // invalid locator here is safely unused. packId is fixed by the
-            // `vpk pack --packId WsScrcpyWeb` invocation in release.yml.
-            const appImagePath = process.env['APPIMAGE'] ?? '';
-            const contentsDir = path.join(this.installRoot, 'usr', 'bin');
-            this.locator = {
-                RootAppDir: appImagePath,
-                UpdateExePath: path.join(contentsDir, 'UpdateNix'),
-                PackagesDir: '/var/tmp/velopack/WsScrcpyWeb/packages',
-                ManifestPath: path.join(contentsDir, 'sq.version'),
-                CurrentBinaryDir: contentsDir,
-                IsPortable: true,
-            };
+            // Non-Windows (Linux AppImage): undefined → Velopack auto-locates.
+            this.locator = undefined;
         }
         this.factory = opts.updateManagerFactory ?? defaultUpdateManagerFactory;
         this.feedUrlOverride = opts.feedUrlOverride;
@@ -207,7 +218,7 @@ export class UpdateService {
         //
         // Detect production mode: Update.exe on Windows, APPIMAGE env on Linux.
         let markerExists: boolean;
-        if (process.platform === 'win32') {
+        if (this.platform === 'win32') {
             const markerPath = path.join(this.installRoot, 'Update.exe');
             markerExists = this.existsSync(markerPath);
             if (!markerExists) {

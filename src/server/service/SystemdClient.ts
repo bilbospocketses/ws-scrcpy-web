@@ -242,6 +242,17 @@ export class SystemdClient implements ServiceClient {
         return null;
     }
 
+    /**
+     * Public accessor for the active scope (which unit file exists on disk).
+     * Surfaced through `/api/service/status` so the frontend can pre-select the
+     * Linux scope radio from filesystem truth rather than the mutable
+     * `installMode` config (which can drift / be reverted). `null` when no unit
+     * file exists for `name`.
+     */
+    public async getInstalledScope(name: string): Promise<SystemdScope | null> {
+        return this.resolveActiveScope(name);
+    }
+
     public async install(opts: ServiceInstallOptions): Promise<void> {
         const scope = opts.scope;
         if (!scope) {

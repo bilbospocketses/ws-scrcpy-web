@@ -114,11 +114,19 @@ export class ServiceApi {
         const status = await result.client.status(WS_SCRCPY_SERVICE_NAME);
         const disk = this.readDiskConfig();
         const installMode = Config.getInstance().getAppConfig().installMode;
+        // Authoritative installed scope from the filesystem (which systemd unit
+        // exists), independent of the mutable installMode. Only SystemdClient
+        // implements getInstalledScope; Windows omits it (scope auto-detected
+        // from execPath there, and the scope radios are Linux-only in the UI).
+        const scope = result.client.getInstalledScope
+            ? await result.client.getInstalledScope(WS_SCRCPY_SERVICE_NAME)
+            : undefined;
         const body: ServiceStatusResponse = {
             supported: true,
             platform: result.platform,
             status,
             installMode,
+            ...(scope !== undefined ? { scope } : {}),
             ...(disk.diskWebPort != null ? { diskWebPort: disk.diskWebPort } : {}),
             ...(disk.configMtime != null ? { configMtime: disk.configMtime } : {}),
         };
@@ -210,11 +218,28 @@ export class ServiceApi {
             binPath = launcherExe;
             startupDir = installRoot;
         } else {
-            // Linux: SystemdClient takes the launcher binary directly via
-            // process.execPath (the AppImage entrypoint). Working directory
-            // is the launcher's parent dir.
-            binPath = process.execPath;
-            startupDir = path.dirname(process.execPath);
+            // Linux: the systemd unit must point at a STABLE entry that
+            // launches the WHOLE app. The server runs as a Node CHILD of the
+            // launcher (launcher/src/spawn.rs spawns `node dist/index.js`), so
+            // process.execPath here is the Node binary — using it as ExecStart
+            // would start Node with no script (REPL; under systemd's /dev/null
+            // stdin it reads EOF and exits immediately), the exact failure the
+            // win32 branch above warns about. The service would never bind or
+            // auto-shift a web port, the install-flow redirect poll would never
+            // see a config change, and status would read "stopped".
+            //
+            // For an AppImage the stable entry is the .AppImage file itself,
+            // exposed by the runtime as $APPIMAGE (the same env UpdateService
+            // keys production-mode detection off). Running it re-mounts and runs
+            // the launcher, which spawns the server and binds the web port,
+            // auto-shifting +1 on collision (PortPicker / reconcileWebPort) and
+            // persisting the new port to config.json — which is what the
+            // frontend's post-install poll watches. Fall back to
+            // process.execPath for non-AppImage / from-source runs where
+            // $APPIMAGE is unset.
+            const appImagePath = process.env['APPIMAGE'];
+            binPath = appImagePath && appImagePath.length > 0 ? appImagePath : process.execPath;
+            startupDir = path.dirname(binPath);
         }
 
         // v0.1.24-beta.7: service.log moves under <dataRoot>/logs/ to

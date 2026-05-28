@@ -823,12 +823,21 @@ export class SettingsModal extends Modal {
         this.serviceScopeSystemRadio = null;
         if (resp.platform === 'linux') {
             const isInstalled = status !== 'not-installed';
-            const installedScope: 'user' | 'system' | null =
-                resp.installMode === 'system-service'
+            // Prefer the authoritative filesystem scope (which systemd unit
+            // exists) reported by the status endpoint. Fall back to mapping the
+            // installMode config — accepting BOTH the bare ('user'/'system')
+            // and '-service' forms — for older servers that don't report scope.
+            // The pre-fix code only mapped the two '-service' forms and trusted
+            // the mutable installMode, so a drifted/reverted value left both
+            // radios unselected even with a service installed.
+            const scopeFromInstallMode: 'user' | 'system' | null =
+                resp.installMode === 'system-service' || resp.installMode === 'system'
                     ? 'system'
-                    : resp.installMode === 'user-service'
+                    : resp.installMode === 'user-service' || resp.installMode === 'user'
                         ? 'user'
                         : null;
+            const installedScope: 'user' | 'system' | null =
+                resp.scope === 'user' || resp.scope === 'system' ? resp.scope : scopeFromInstallMode;
 
             const scopeFrag = document.createDocumentFragment();
 
