@@ -225,7 +225,7 @@ describe('SystemdClient', () => {
             // Should write tmp file then call execFile (pkexec), not execFileSync (direct systemctl)
             expect(writeFileSyncMock).toHaveBeenCalled();
             expect(execFileMock).toHaveBeenCalled();
-            const pkexecCall = execFileMock.mock.calls[0];
+            const pkexecCall = execFileMock.mock.calls[0]!;
             expect(pkexecCall[0]).toBe('pkexec');
         });
     });
@@ -335,7 +335,7 @@ describe('SystemdClient', () => {
             const client = new SystemdClient();
             await client.uninstall('WsScrcpyWeb');
             expect(execFileMock).toHaveBeenCalled();
-            const pkexecCall = execFileMock.mock.calls[0];
+            const pkexecCall = execFileMock.mock.calls[0]!;
             expect(pkexecCall[0]).toBe('pkexec');
         });
 

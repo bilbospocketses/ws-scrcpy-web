@@ -86,6 +86,47 @@ async function runPkexec(shellCmd: string, label: string): Promise<string> {
     }
 }
 
+/**
+ * Check if libfuse2 is available (required for Velopack AppImage updates).
+ * If missing, return the package-manager install command for the detected
+ * distro family (deb or rpm). Returns null if already present.
+ */
+function libfuse2InstallCmd(): string | null {
+    try {
+        const out = execFileSync('ldconfig', ['-p'], {
+            stdio: ['ignore', 'pipe', 'pipe'],
+            encoding: 'utf8',
+        });
+        if (out.includes('libfuse.so.2')) return null;
+    } catch {
+        // ldconfig not found or failed — assume libfuse2 is missing.
+    }
+
+    if (fs.existsSync('/usr/bin/dnf')) {
+        return 'dnf install -y fuse-libs';
+    }
+    if (fs.existsSync('/usr/bin/apt-get')) {
+        return 'apt-get install -y libfuse2';
+    }
+    if (fs.existsSync('/usr/bin/yum')) {
+        return 'yum install -y fuse-libs';
+    }
+    log.warn('libfuse2 missing but cannot detect package manager (no dnf, apt-get, or yum)');
+    return null;
+}
+
+/**
+ * Ensure libfuse2 is installed (required for Velopack AppImage updates).
+ * Uses pkexec for graphical privilege escalation if installation is needed.
+ */
+async function ensureLibfuse2(): Promise<void> {
+    const cmd = libfuse2InstallCmd();
+    if (!cmd) return;
+    log.info(`libfuse2 not found; installing via: ${cmd}`);
+    await runPkexec(cmd, 'install libfuse2');
+    log.info('libfuse2 installed successfully');
+}
+
 function runSystemctl(args: string[], label: string): string {
     try {
         return execFileSync('systemctl', args, {
@@ -193,6 +234,11 @@ export class SystemdClient implements ServiceClient {
                 'SystemdClient.install: scope is required (caller must pass user or system)',
             );
         }
+
+        // Ensure libfuse2 is present (required for Velopack AppImage updates).
+        // Runs before service install so the user gets one pkexec prompt for
+        // both libfuse2 + service (system scope) or just libfuse2 (user scope).
+        await ensureLibfuse2();
 
         const unitContent = renderUnitFile(opts, scope);
         const unitPath = scope === 'user'
