@@ -106,7 +106,7 @@ function maybeShowWelcomeModal(): void {
                     });
                     return;
                 }
-                maybeShowPortChangeModal(runtime.webPort);
+                maybeShowPortChangeModal(config.bookmarkDismissedForPort, runtime.webPort);
                 return;
             }
 
@@ -121,20 +121,17 @@ function maybeShowWelcomeModal(): void {
                 return;
             }
 
-            maybeShowPortChangeModal(runtime.webPort);
+            maybeShowPortChangeModal(config.bookmarkDismissedForPort, runtime.webPort);
         })
         .catch(() => {
             // /api/config absent (e.g., dev server without P2 wiring) — silently bail.
         });
 }
 
-function maybeShowPortChangeModal(currentPort: number): void {
-    void import('./client/firstRunGate').then((gate) => {
-        const dismissedFor = gate.getBookmarkDismissedPort();
-        if (dismissedFor === currentPort) return;
-        void import('./client/PortChangeModal').then(({ PortChangeModal }) => {
-            new PortChangeModal({ webPort: currentPort });
-        });
+function maybeShowPortChangeModal(dismissedFor: number | null, currentPort: number): void {
+    if (dismissedFor === currentPort) return;
+    void import('./client/PortChangeModal').then(({ PortChangeModal }) => {
+        new PortChangeModal({ webPort: currentPort });
     });
 }
 

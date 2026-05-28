@@ -36,6 +36,17 @@ export interface AppConfig {
      * service-instance modal is dismissed.
      */
     serviceFirstRunSeen: boolean;
+    /**
+     * v0.1.30-beta.8: the web port for which the user dismissed the
+     * "bookmark this URL" reminder with "don't show again" checked.
+     * `null` means never dismissed. Lived in localStorage pre-beta.8
+     * (key `wsScrcpy.bookmarkDismissedForPort`) but was unreliable on
+     * Linux AppImage where the browser may treat each launch as a
+     * different origin. Per-port semantics preserved by storing the
+     * port number rather than a boolean — port change still triggers
+     * the modal because the stored port won't match the current port.
+     */
+    bookmarkDismissedForPort: number | null;
 
     // Pre-existing fields (kept for backward compatibility / runtime usage)
     webPort: number;
@@ -94,6 +105,7 @@ export const APP_CONFIG_DEFAULTS: AppConfig = {
     githubOwner: 'bilbospocketses',
     webPort: 8000,
     serviceFirstRunSeen: false,
+    bookmarkDismissedForPort: null,
 };
 
 export const VALID_INSTALL_MODES: ReadonlyArray<InstallMode> = [

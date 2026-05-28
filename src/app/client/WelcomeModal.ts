@@ -1,6 +1,5 @@
 import { Modal } from '../ui/Modal';
 import type { ServiceStatusResponse, ServiceInstallResponse } from '../../common/ServiceEvents';
-import { setBookmarkDismissedPort } from './firstRunGate';
 import { ServiceOperationModal } from './ServiceOperationModal';
 
 export type WelcomeChoice = 'service' | 'on-demand';
@@ -40,7 +39,13 @@ export class WelcomeModal extends Modal {
         // "first-run overrides port modal" rule, in addition to the
         // priority order in index.ts. If the user later changes ports,
         // the saved port mismatches and the port modal correctly returns.
-        setBookmarkDismissedPort(this.opts.webPort);
+        // Fire-and-forget — modal still renders correctly if the PATCH
+        // fails (priority order in index.ts also gates this).
+        void fetch('/api/config', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ bookmarkDismissedForPort: this.opts.webPort }),
+        }).catch(() => { /* belt-and-suspenders only — silent */ });
         // Defer body/footer fill past class-field init phase (ES2022 useDefineForClassFields).
         queueMicrotask(() => {
             this.fillBody(this.bodyEl);
@@ -392,13 +397,13 @@ export class WelcomeModal extends Modal {
             const ok = await this.patchConfig({
                 installMode: 'user',
                 firstRunComplete: true,
+                bookmarkDismissedForPort: this.opts.webPort,
             });
             if (!ok) {
                 this.setStatus("couldn't save preference. try again?", true);
                 this.setBusy(false);
                 return;
             }
-            setBookmarkDismissedPort(this.opts.webPort);
         }
         this.opts.onDecision('on-demand');
         this.close();

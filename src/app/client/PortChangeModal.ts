@@ -1,5 +1,4 @@
 import { Modal } from '../ui/Modal';
-import { setBookmarkDismissedPort } from './firstRunGate';
 
 /**
  * v0.1.10: bookmark reminder shown whenever the page loads on a port
@@ -11,13 +10,17 @@ import { setBookmarkDismissedPort } from './firstRunGate';
  * the port changes, and the user's existing bookmark would 404
  * after a port change.
  *
- * Gating rule: localStorage stores the port number that was last
- * acknowledged (`wsScrcpy.bookmarkDismissedForPort`). On every page
- * load we compare against the current port and re-show the modal if
- * they differ. The modal can only be permanently dismissed for the
- * CURRENT port — the user must check "don't show again" AND click
- * "got it." Closing without the checkbox simply leaves the flag
- * unchanged, so the modal will return on the next page load.
+ * Gating rule: config.json's `bookmarkDismissedForPort` stores the
+ * port number that was last acknowledged. On every page load we
+ * compare against the current port and re-show the modal if they
+ * differ. The modal can only be permanently dismissed for the CURRENT
+ * port — the user must check "don't show again" AND click "got it."
+ * Closing without the checkbox leaves the flag unchanged, so the
+ * modal will return on the next page load.
+ *
+ * v0.1.30-beta.8: migrated from localStorage to config.json. The
+ * localStorage version was unreliable on Linux AppImage where the
+ * browser may treat each launch as a different origin.
  *
  * Distinct from WelcomeModal/ServiceFirstRunModal: those are about
  * pick-an-install-mode and service-mode-orientation respectively.
@@ -106,7 +109,12 @@ export class PortChangeModal extends Modal {
     private dismiss(): void {
         if (this.dismissBtn) this.dismissBtn.disabled = true;
         if (this.dontShowCheckbox?.checked) {
-            setBookmarkDismissedPort(this.opts.webPort);
+            // Fire-and-forget; modal closes regardless of network outcome.
+            void fetch('/api/config', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ bookmarkDismissedForPort: this.opts.webPort }),
+            }).catch(() => { /* network hiccup — modal will re-show next load */ });
         }
         this.opts.onDismissed?.();
         this.close();

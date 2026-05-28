@@ -43,6 +43,7 @@ export interface FlatConfig {
     installMode?: InstallMode | null;
     firstRunComplete?: boolean;
     serviceFirstRunSeen?: boolean;
+    bookmarkDismissedForPort?: number | null;
     autoUpdate?: boolean;
     updateCheckIntervalMinutes?: number;
     channel?: 'stable' | 'beta';
@@ -240,6 +241,17 @@ function validateField<K extends keyof AppConfig>(key: K, value: unknown): Valid
             }
             return { ok: true, value: value as AppConfig[K] };
         }
+        case 'bookmarkDismissedForPort': {
+            // null means "never dismissed"; otherwise must be a valid port.
+            if (value === null) return { ok: true, value: null as AppConfig[K] };
+            if (!isInteger(value) || (value as number) < 1024 || (value as number) > 65535) {
+                return {
+                    ok: false,
+                    error: 'bookmarkDismissedForPort must be null or an integer between 1024 and 65535',
+                };
+            }
+            return { ok: true, value: value as AppConfig[K] };
+        }
         case 'githubOwner': {
             if (typeof value !== 'string' || value.length === 0) {
                 return { ok: false, error: 'githubOwner must be a non-empty string' };
@@ -284,6 +296,11 @@ function sanitizeAppConfig(raw: FlatConfig, warn: (msg: string) => void): AppCon
         );
         if (r.ok) out.serviceFirstRunSeen = r.value;
         else warn(`config.json: ${r.error}; using default false`);
+    }
+    if (raw.bookmarkDismissedForPort !== undefined) {
+        const r = validateField('bookmarkDismissedForPort', raw.bookmarkDismissedForPort);
+        if (r.ok) out.bookmarkDismissedForPort = r.value;
+        else warn(`config.json: ${r.error}; using default null`);
     }
     if (raw.autoUpdate !== undefined) {
         const r = validateField('autoUpdate', raw.autoUpdate);
