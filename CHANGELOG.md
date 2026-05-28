@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.13] - 2026-05-28
+
+### Changed
+
+- Device card button borders now match their text color: disconnect red, turn on green, turn off red, "checking…" gray, modal-launch buttons (shell/list files/connect/config stream) blue.
+- Card inner padding shifted asymmetric (8px / 8px / 8px / 20px — left bumped 8 → 20). Card outer width unchanged; the inner content shifts right to balance the open whitespace on the right of the value column.
+
 ## [0.1.30-beta.12] - 2026-05-28
 
 ### Changed

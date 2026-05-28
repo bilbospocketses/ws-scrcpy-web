@@ -74,7 +74,10 @@ body.list #device_list_menu {
 #devices .device-list div.device {
     border: 1px solid var(--device-border-color);
     border-radius: 8px;
-    padding: 8px;
+    /* Asymmetric padding: extra left to balance the right-side
+       whitespace from the value column. Card outer width is set by
+       the grid; only the inner content area shifts right. */
+    padding: 8px 8px 8px 20px;
     background: var(--device-list-default-color);
     transition: border-color 0.15s, box-shadow 0.15s;
 }
@@ -145,7 +148,7 @@ body.list #device_list_menu {
 
 #devices .device-list .disconnect-btn {
     grid-column: 1;
-    border: 0.5px solid var(--text-color);
+    border: 0.5px solid var(--danger-color);
     border-radius: 6px;
     background: transparent;
     color: var(--danger-color);
@@ -169,7 +172,6 @@ body.list #device_list_menu {
 /* Sleep/wake button */
 #devices .device-list .sleep-wake-btn {
     grid-column: 2;
-    border: 0.5px solid var(--text-color);
     border-radius: 6px;
     background: transparent;
     padding: 4px 10px;
@@ -181,14 +183,17 @@ body.list #device_list_menu {
 }
 
 #devices .device-list .sleep-wake-btn.state-off {
+    border: 0.5px solid var(--success-color);
     color: var(--success-color);
 }
 
 #devices .device-list .sleep-wake-btn.state-on {
+    border: 0.5px solid var(--danger-color);
     color: var(--danger-color);
 }
 
 #devices .device-list .sleep-wake-btn.state-unknown {
+    border: 0.5px solid var(--text-color-light, #888);
     color: var(--text-color-light, #888);
 }
 
@@ -232,7 +237,7 @@ body.list #device_list_menu {
     margin: 0;
     display: inline-flex;
     align-items: center;
-    border: 0.5px solid var(--text-color);
+    border: 0.5px solid #5b9aff;
     border-radius: 6px;
     overflow: hidden;
     white-space: nowrap;
