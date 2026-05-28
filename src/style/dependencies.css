@@ -75,6 +75,23 @@
     cursor: not-allowed;
 }
 
+/* "Check for updates" — semantic match with the "turn on" / success
+   sleep-wake button. Border + text in success-green. */
+.dep-btn.dep-check-all {
+    border-color: var(--success-color);
+    color: var(--success-color);
+}
+
+/* Network-discovery scan buttons — semantic match with caution / start-
+   an-action. Border + text in warning-orange (--warning-color is solidly
+   orange now: dark #fb923c, light #b45309). */
+.dep-btn.discovery-quick-scan-btn,
+.dep-btn.discovery-scan-btn,
+.dep-btn.discovery-manual-btn {
+    border-color: var(--warning-color);
+    color: var(--warning-color);
+}
+
 .dep-update {
     border-color: #2a6a2a;
     color: #4ade80;

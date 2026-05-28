@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.16] - 2026-05-28
+
+### Changed
+
+- "check for updates" button (Dependencies section) now uses green border + text (`var(--success-color)`), matching the "turn on" sleep-wake button.
+- Network-discovery scan buttons (quick scan, scan network, manually add) now use orange border + text (`var(--warning-color)`).
+- `--warning-color` (dark theme) changed from amber `#fbbf24` to orange `#fb923c` for a clearer "not yellow" orange. Light theme `#b45309` (already orange-700) unchanged. `.dep-warn` status badge follows the new orange.
+
 ## [0.1.30-beta.15] - 2026-05-28
 
 > Note: v0.1.30-beta.14 was tagged but its squash-merge silently failed, so the beta.14 release artifacts contain beta.13 content. This release combines everything that was meant for beta.14 plus the table-grid additions below.
