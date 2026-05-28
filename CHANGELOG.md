@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Linux in-app updates now actually work (corrects beta.19's attempted fix).** beta.19 (#230) hand-built `VelopackLocatorConfig` on Linux from `path.resolve(__dirname, '..', '..')`, but that Windows-shaped arithmetic is off by one level on the AppImage: the payload sits at `<mount>/usr/bin/dist` (one deeper than Windows' `<root>/current/dist`), so `installRoot` resolved to `<mount>/usr` and `path.join(installRoot,'usr','bin')` produced a doubled `<mount>/usr/usr/bin`. Velopack couldn't find `UpdateNix`/`sq.version` there, `UpdateManager` construction threw, `init()`'s catch nulled `mgr`, and every update check silently no-oped. Fixed by passing **no** locator on Linux and delegating to Velopack's native `auto_locate_app_manifest` (which derives the correct paths from `$APPIMAGE`); Windows keeps its explicit locator. A `platform` injection seam on `UpdateService` lets both branches be unit-tested on any host — the original bug hid because tests only ran the host-platform branch. (PR #237; shipped in beta.21 + beta.22.)
+- **Linux service install now produces a service that actually runs.** The systemd unit's `ExecStart` was `process.execPath`, which in the server process is the Node binary (the server runs as a Node child of the launcher), not the launcher/AppImage. systemd started Node with no script argument; under its `/dev/null` stdin Node read EOF and exited immediately, so the service never bound a port, never auto-shifted on collision, the install-flow redirect timed out ("couldn't find the new port"), and status read "stopped." Fixed by using the stable `$APPIMAGE` entry as `ExecStart` (running it re-mounts and runs the launcher → server binds + auto-shifts the port via PortPicker), falling back to `process.execPath` for from-source runs. Applies to both user and system scope. (PR #237.)
+- **Linux service scope radio now reflects the installed scope.** `/api/service/status` now reports the authoritative scope from `SystemdClient.resolveActiveScope()` (which systemd unit file exists on disk) via a new optional `ServiceClient.getInstalledScope()`; the settings modal selects the scope radio from that, falling back to mapping all four `installMode` forms instead of only the two `-service` forms. Pre-fix a drifted or reverted `installMode` left both radios unselected on an installed service. (PR #237.)
+
+### Changed
+
+- **v0.1.30-beta.22 is a no-op companion release to beta.21** — identical code, published solely as the update target for verifying the now-fixed Linux in-app updater (install beta.21, confirm it auto-updates to beta.22). See `docs/RELEASING.md` "no-op companion releases."
+
 ## [0.1.30-beta.21] - 2026-05-28
 
 ## [0.1.30-beta.20] - 2026-05-28
