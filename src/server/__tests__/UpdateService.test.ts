@@ -641,6 +641,7 @@ describe('UpdateService', () => {
     });
 
     it('reconfigure: dev mode → no-op (no factory call)', async () => {
+        delete process.env['APPIMAGE'];
         const factory = vi.fn(() => fakeMgr());
         const svc = new UpdateService({
             installRoot: '/fake',
@@ -721,6 +722,7 @@ describe('UpdateService', () => {
     });
 
     it('restartTimer with isInstalled=false → no timer scheduled', () => {
+        delete process.env['APPIMAGE'];
         const setFn = vi.fn(() => 'h' as unknown as NodeJS.Timeout);
         const svc = new UpdateService({
             installRoot: '/fake',
@@ -736,6 +738,7 @@ describe('UpdateService', () => {
     // ── getStatus / shape ───────────────────────────────────────────────
 
     it('getStatus returns a snapshot copy (mutating it does not affect internal state)', async () => {
+        delete process.env['APPIMAGE'];
         const svc = new UpdateService({
             installRoot: '/fake',
             existsSync: () => false,
