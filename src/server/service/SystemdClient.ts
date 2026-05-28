@@ -91,6 +91,18 @@ async function runPkexec(shellCmd: string, label: string): Promise<string> {
  * If missing, return the package-manager install command for the detected
  * distro family (deb or rpm). Returns null if already present.
  */
+export function isLibfuse2Installed(): boolean {
+    try {
+        const out = execFileSync('ldconfig', ['-p'], {
+            stdio: ['ignore', 'pipe', 'pipe'],
+            encoding: 'utf8',
+        });
+        return out.includes('libfuse.so.2');
+    } catch {
+        return false;
+    }
+}
+
 function libfuse2InstallCmd(): string | null {
     try {
         const out = execFileSync('ldconfig', ['-p'], {
@@ -119,7 +131,7 @@ function libfuse2InstallCmd(): string | null {
  * Ensure libfuse2 is installed (required for Velopack AppImage updates).
  * Uses pkexec for graphical privilege escalation if installation is needed.
  */
-async function ensureLibfuse2(): Promise<void> {
+export async function ensureLibfuse2(): Promise<void> {
     const cmd = libfuse2InstallCmd();
     if (!cmd) return;
     log.info(`libfuse2 not found; installing via: ${cmd}`);
@@ -234,11 +246,6 @@ export class SystemdClient implements ServiceClient {
                 'SystemdClient.install: scope is required (caller must pass user or system)',
             );
         }
-
-        // Ensure libfuse2 is present (required for Velopack AppImage updates).
-        // Runs before service install so the user gets one pkexec prompt for
-        // both libfuse2 + service (system scope) or just libfuse2 (user scope).
-        await ensureLibfuse2();
 
         const unitContent = renderUnitFile(opts, scope);
         const unitPath = scope === 'user'
