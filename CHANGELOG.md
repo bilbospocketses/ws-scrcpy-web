@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.5] - 2026-05-27
+
+### Fixed
+
+- Device card layout regression: `table-layout:fixed` from beta.4 collapsed label column to ~3px, causing device info labels to overlay values and "turn off" button text to overflow its border.
+
+### Added
+
+- **Linux pkexec support.** System-scope service install/uninstall now uses pkexec for graphical privilege escalation instead of requiring `sudo` relaunch.
+- **Linux Velopack SDK init.** AppImage detection via `APPIMAGE` env var enables production-mode update checks on Linux (previously hardcoded to dev mode).
+- **libfuse2 gate.** Settings > Updates shows a warning and one-click install button when libfuse2 is missing (required for AppImage self-updates). Detects dnf/apt-get/yum automatically.
+
 ## [0.1.30-beta.4] - 2026-05-28
 
 ## [0.1.30-beta.3] - 2026-05-27
