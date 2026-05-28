@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Linux in-app updates now work.** `UpdateService` built `VelopackLocatorConfig` with Windows-shape paths (`UpdateExePath: <root>/Update.exe`, `CurrentBinaryDir: <root>/current`, etc.) on every platform. Velopack 1.0.1's lib-rust `auto_locate_app_manifest` validates `UpdateNix` existence at the configured path before returning, so `UpdateManager` construction threw on every Linux AppImage launch. Beta.7's PR #216 added an `mgr === null` guard in `reconfigure()` to mask the throw at the cost of silent no-op updates. Now platform-branched: Windows keeps the Squirrel-style `<installRoot>/current/` layout; Linux mirrors the Velopack Linux locator exactly — `RootAppDir = $APPIMAGE`, `UpdateExePath = <mount>/usr/bin/UpdateNix`, `PackagesDir = /var/tmp/velopack/WsScrcpyWeb/packages`, `ManifestPath = <mount>/usr/bin/sq.version`, `CurrentBinaryDir = <mount>/usr/bin`, `IsPortable = true`. The `mgr === null` guard is retained as defensive belt-and-suspenders only.
+
+### Changed
+
+- `release.yml` Publish step: `make_latest: 'legacy'` → `make_latest: true`. The legacy value was intended to fix releases-page sort drift but caused GitHub's Latest badge to stick at `v0.1.30-beta.9` across the entire beta.10–18 push on 2026-05-28, making 9 newer betas invisible to Velopack's `GithubSource` (which queries `/releases/latest` to discover the newest release in the configured channel). Forcing every release to claim Latest restores discovery; sort order will be addressed separately if it regresses.
+
+### Removed
+
+- v0.1.30-beta.3 through v0.1.30-beta.17 GitHub releases. They were iterative UI-polish + Linux-debug intermediates that have no value to anyone outside testing. v0.1.30-beta.18 absorbs all their content and remains the discoverable beta. Tags are preserved in git history; only the GitHub releases (and their attached assets) were deleted.
+
 ## [0.1.30-beta.18] - 2026-05-28
 
 ### Changed

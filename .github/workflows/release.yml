@@ -272,13 +272,15 @@ jobs:
           # only stable assets. See feedback_velopack_permachine_lessons.md
           # Gotcha 5 for the full diagnosis.
           #
-          # make_latest: 'legacy' lets GitHub determine Latest via its
-          # own SemVer + creation-date algorithm instead of every new
-          # release forcibly stealing the badge. Fixes the releases page
-          # sort order (betas were appearing in the middle instead of at
-          # the top because each publish force-set Latest and GitHub
-          # sorted non-Latest entries by commit date not publish date).
-          make_latest: 'legacy'
+          # make_latest: true — every published release explicitly claims the
+          # Latest badge. Velopack's GithubSource queries /releases/latest to
+          # discover the newest release in the configured channel, so the
+          # Latest badge MUST track the most recent tag or in-app updates
+          # silently no-op. The earlier 'legacy' value (intended to fix
+          # releases-page sort drift) caused the Latest badge to stick at
+          # v0.1.30-beta.9 across the entire beta.10-18 push on 2026-05-28,
+          # making 9 newer betas invisible to auto-update.
+          make_latest: true
           body_path: release-notes.md
           files: |
             artifacts/windows-final/*.msi

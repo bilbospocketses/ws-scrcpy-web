@@ -192,7 +192,7 @@ describe('UpdateService', () => {
 
     // ── VelopackLocator override (Phase 2 of Program Files migration) ──
 
-    it('init: passes a VelopackLocatorConfig to the factory anchored at installRoot', () => {
+    it('init: passes a VelopackLocatorConfig to the factory shaped for the host platform', () => {
         const installRoot = path.join('/fake', 'install', 'root');
         let receivedLocator: unknown;
         const factory = vi.fn((_feed: string, _opts: UpdateOptions, locator?: unknown) => {
@@ -210,12 +210,25 @@ describe('UpdateService', () => {
 
         expect(receivedLocator).toBeDefined();
         const loc = receivedLocator as Record<string, unknown>;
-        expect(loc['RootAppDir']).toBe(installRoot);
-        expect(loc['UpdateExePath']).toBe(path.join(installRoot, 'Update.exe'));
-        expect(loc['PackagesDir']).toBe(path.join(installRoot, 'packages'));
-        expect(loc['ManifestPath']).toBe(path.join(installRoot, 'current', 'sq.version'));
-        expect(loc['CurrentBinaryDir']).toBe(path.join(installRoot, 'current'));
-        expect(loc['IsPortable']).toBe(false);
+        if (process.platform === 'win32') {
+            expect(loc['RootAppDir']).toBe(installRoot);
+            expect(loc['UpdateExePath']).toBe(path.join(installRoot, 'Update.exe'));
+            expect(loc['PackagesDir']).toBe(path.join(installRoot, 'packages'));
+            expect(loc['ManifestPath']).toBe(path.join(installRoot, 'current', 'sq.version'));
+            expect(loc['CurrentBinaryDir']).toBe(path.join(installRoot, 'current'));
+            expect(loc['IsPortable']).toBe(false);
+        } else {
+            // Linux AppImage shape — mirrors Velopack 1.0.1's lib-rust
+            // auto_locate_app_manifest. beforeEach() sets APPIMAGE so the
+            // marker check passes and the factory actually runs.
+            const contentsDir = path.join(installRoot, 'usr', 'bin');
+            expect(loc['RootAppDir']).toBe('/fake/WsScrcpyWeb.AppImage');
+            expect(loc['UpdateExePath']).toBe(path.join(contentsDir, 'UpdateNix'));
+            expect(loc['PackagesDir']).toBe('/var/tmp/velopack/WsScrcpyWeb/packages');
+            expect(loc['ManifestPath']).toBe(path.join(contentsDir, 'sq.version'));
+            expect(loc['CurrentBinaryDir']).toBe(contentsDir);
+            expect(loc['IsPortable']).toBe(true);
+        }
     });
 
     it('reconfigure: passes the same locator to the new factory invocation', async () => {
@@ -239,8 +252,10 @@ describe('UpdateService', () => {
         expect(captured.length).toBeGreaterThanOrEqual(2);
         const initLocator = captured[0] as Record<string, unknown>;
         const reconfigLocator = captured[captured.length - 1] as Record<string, unknown>;
-        expect(initLocator['RootAppDir']).toBe(installRoot);
-        expect(reconfigLocator['RootAppDir']).toBe(installRoot);
+        const expectedRootAppDir =
+            process.platform === 'win32' ? installRoot : '/fake/WsScrcpyWeb.AppImage';
+        expect(initLocator['RootAppDir']).toBe(expectedRootAppDir);
+        expect(reconfigLocator['RootAppDir']).toBe(expectedRootAppDir);
         expect(reconfigLocator).toEqual(initLocator);
     });
 
