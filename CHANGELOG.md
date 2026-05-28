@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.22] - 2026-05-28
+
 ### Fixed
 
 - **Linux in-app updates now actually work (corrects beta.19's attempted fix).** beta.19 (#230) hand-built `VelopackLocatorConfig` on Linux from `path.resolve(__dirname, '..', '..')`, but that Windows-shaped arithmetic is off by one level on the AppImage: the payload sits at `<mount>/usr/bin/dist` (one deeper than Windows' `<root>/current/dist`), so `installRoot` resolved to `<mount>/usr` and `path.join(installRoot,'usr','bin')` produced a doubled `<mount>/usr/usr/bin`. Velopack couldn't find `UpdateNix`/`sq.version` there, `UpdateManager` construction threw, `init()`'s catch nulled `mgr`, and every update check silently no-oped. Fixed by passing **no** locator on Linux and delegating to Velopack's native `auto_locate_app_manifest` (which derives the correct paths from `$APPIMAGE`); Windows keeps its explicit locator. A `platform` injection seam on `UpdateService` lets both branches be unit-tested on any host — the original bug hid because tests only ran the host-platform branch. (PR #237; shipped in beta.21 + beta.22.)
