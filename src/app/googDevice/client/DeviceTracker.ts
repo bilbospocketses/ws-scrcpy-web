@@ -193,12 +193,13 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
         const isNetworkDevice = device.udid.includes(':');
         const row = html`<div class="device ${isActive ? 'active' : 'not-active'}">
             <table class="device-info">
-                <tr class="device-name-row"><td class="device-label">Device Name:</td><td colspan="2"></td></tr>
-                <tr><td class="device-label">Model:</td><td colspan="2">${deviceName}</td></tr>
-                <tr><td class="device-label">Device ID:</td><td colspan="2" class="device-serial">${device.udid}</td></tr>
-                <tr class="android-row"><td class="device-label">Android:</td><td>${(device['ro.build.version.release'] || '').split('.')[0]}</td></tr>
+                <tr class="device-name-row"><td class="device-label">Device Name:</td><td></td></tr>
+                <tr><td class="device-label">Model:</td><td>${deviceName}</td></tr>
+                <tr><td class="device-label">Device ID:</td><td class="device-serial">${device.udid}</td></tr>
+                <tr><td class="device-label">Android:</td><td>${(device['ro.build.version.release'] || '').split('.')[0]}</td></tr>
                 <tr><td class="device-label">SDK:</td><td>${device['ro.build.version.sdk']}</td></tr>
             </table>
+            <div class="device-actions"></div>
             <div id="${overlayId}" class="services">
                 <div class="services-label">opens in modal</div>
             </div>
@@ -219,16 +220,14 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
             return;
         }
 
-        // Add action buttons cell (disconnect + sleep/wake) via DOM
-        const androidRow = row.querySelector('.android-row');
-        if (androidRow) {
-            const td = document.createElement('td');
-            td.rowSpan = 2;
-            td.className = 'device-actions-cell';
-            const wrapper = document.createElement('div');
-            wrapper.className = 'device-actions-wrapper';
-
-            // Disconnect button (network devices only) — left side
+        // Action buttons (disconnect + sleep/wake) live in a sibling div
+        // outside the device-info table. Keeps the table free of column-width
+        // pressure from the buttons so the table fits within the card on both
+        // Windows and Linux (Linux's wider mono font rendering used to push
+        // the table past the card border when actions were a rowSpan cell).
+        const actionsRow = row.querySelector('.device-actions');
+        if (actionsRow) {
+            // Disconnect button (network devices only)
             if (isNetworkDevice) {
                 const disconnectBtn = document.createElement('button');
                 disconnectBtn.className = 'disconnect-btn';
@@ -245,10 +244,10 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
                         disconnectBtn.disabled = false;
                     }
                 });
-                wrapper.appendChild(disconnectBtn);
+                actionsRow.appendChild(disconnectBtn);
             }
 
-            // Sleep/wake button (all devices) — right side
+            // Sleep/wake button (all devices)
             // State comes from server via WebSocket (descriptor['screen.state'])
             const screenState = device['screen.state'] || 'unknown';
             const sleepBtn = document.createElement('button');
@@ -267,9 +266,6 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
             sleepBtn.addEventListener('click', async () => {
                 const isAwake = sleepBtn.dataset['awake'] === 'true';
                 sleepBtn.disabled = true;
-                // §25b — using-declaration replaces the prior try/finally that
-                // re-enabled the button on every exit path. Captures sleepBtn
-                // lexically; dispose fires on return or throw from the fetch.
                 using _restoreBtn = {
                     [Symbol.dispose](): void {
                         sleepBtn.disabled = false;
@@ -291,10 +287,7 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
                     sleepBtn.className = `sleep-wake-btn ${isAwake ? 'state-on' : 'state-off'}`;
                 }
             });
-            wrapper.appendChild(sleepBtn);
-
-            td.appendChild(wrapper);
-            androidRow.appendChild(td);
+            actionsRow.appendChild(sleepBtn);
         }
 
         // Auto-select best interface: prefer wifi/direct IP, fallback to proxy

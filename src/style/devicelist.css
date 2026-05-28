@@ -123,20 +123,22 @@ body.list #device_list_menu {
     font-size: 12px;
 }
 
-/* Device action buttons (disconnect + sleep/wake) */
-#devices .device-info td.device-actions-cell {
-    vertical-align: middle;
-    padding-left: 12px;
-    padding-top: 10px;
-}
-
-#devices .device-actions-wrapper {
+/* Device action buttons (disconnect + sleep/wake) — sibling row to the
+   device-info table. Centered horizontally so the buttons sit symmetrically
+   regardless of how many appear (active network device gets disconnect +
+   turn-on/off; active USB device gets just turn-on/off). Kept outside the
+   table so wider-mono-font platforms (Linux) don't squeeze the table layout. */
+#devices .device-list div.device .device-actions {
     display: flex;
     flex-direction: row;
-    justify-content: flex-end;
+    justify-content: center;
     align-items: center;
     gap: 8px;
-    padding-right: 20px;
+    padding: 8px 0;
+}
+
+#devices .device-list div.device .device-actions:empty {
+    display: none;
 }
 
 #devices .device-list .disconnect-btn {

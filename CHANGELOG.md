@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.9] - 2026-05-28
+
+### Fixed
+
+- **Linux device card overflow.** Disconnect + turn-on/off buttons moved out of the device-info table cell (`<td rowSpan=2>`) into a dedicated `<div class="device-actions">` sibling row, centered horizontally. Linux's wider mono-font rendering used to push the table layout past the card border when actions were a rowSpan cell -- clipping the "turn off" button and the Device Name pencil edit icon. Buttons now sit in their own row below the SDK info, centered, with no clipping on either platform.
+
 ## [0.1.30-beta.8] - 2026-05-28
 
 ### Changed
