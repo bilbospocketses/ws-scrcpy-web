@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.6] - 2026-05-27
+
+### Fixed
+
+- Device card layout regression: remove `table-layout:fixed` from device info table -- it collapsed the label column to ~3px, causing device info labels to overlay values and "turn off" button text to overflow its border.
+
 ## [0.1.30-beta.5] - 2026-05-28
 
 ## [0.1.30-beta.4] - 2026-05-28
