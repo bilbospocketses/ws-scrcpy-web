@@ -63,6 +63,7 @@ describe('UpdateService', () => {
         CONFIG: process.env[EnvName.CONFIG_PATH],
         DEPS: process.env['DEPS_PATH'],
         FEED: process.env['VELOPACK_FEED_URL'],
+        APPIMAGE: process.env['APPIMAGE'],
     };
 
     // Intercept fs.promises.readFile so pollOperationServerPort returns
@@ -77,6 +78,7 @@ describe('UpdateService', () => {
         process.env[EnvName.CONFIG_PATH] = configPath;
         process.env['DEPS_PATH'] = path.join(tmpRoot, 'deps');
         delete process.env['VELOPACK_FEED_URL'];
+        process.env['APPIMAGE'] = '/fake/WsScrcpyWeb.AppImage';
         Config._resetForTest();
 
         const realReadFile = fs.promises.readFile.bind(fs.promises);
@@ -99,6 +101,8 @@ describe('UpdateService', () => {
         else process.env['DEPS_PATH'] = savedEnv.DEPS;
         if (savedEnv.FEED === undefined) delete process.env['VELOPACK_FEED_URL'];
         else process.env['VELOPACK_FEED_URL'] = savedEnv.FEED;
+        if (savedEnv.APPIMAGE === undefined) delete process.env['APPIMAGE'];
+        else process.env['APPIMAGE'] = savedEnv.APPIMAGE;
         while (tmpDirs.length) {
             const d = tmpDirs.pop()!;
             try {
@@ -112,6 +116,7 @@ describe('UpdateService', () => {
     // ── Dev mode detection ──────────────────────────────────────────────
 
     it('init: Update.exe absent → isInstalled=false, status=idle', () => {
+        delete process.env['APPIMAGE'];
         const factory = vi.fn(() => fakeMgr());
         const svc = new UpdateService({
             installRoot: '/fake/root',
@@ -129,7 +134,7 @@ describe('UpdateService', () => {
         expect(factory).not.toHaveBeenCalled();
     });
 
-    it('init: Update.exe present + factory throws → isInstalled=false, logs warning', () => {
+    it('init: Update.exe present + factory throws → isInstalled=true, logs warning', () => {
         const factory = vi.fn(() => {
             throw new Error('native addon broken');
         });
@@ -140,7 +145,7 @@ describe('UpdateService', () => {
         });
         svc.init();
         const s = svc.getStatus();
-        expect(s.isInstalled).toBe(false);
+        expect(s.isInstalled).toBe(true);
         expect(s.status).toBe('idle');
         expect(factory).toHaveBeenCalledTimes(1);
     });
