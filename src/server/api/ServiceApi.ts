@@ -144,28 +144,17 @@ export class ServiceApi {
         //   - Windows: ignore the request body, use the injected scope detector
         //     (auto-detects from execPath via detectInstallScope()).
         //   - Linux:   read `scope` from the request body, default to 'user'
-        //     when absent. If the caller asked for system scope but we're not
-        //     root, return 403 BEFORE invoking the client — SystemdClient also
-        //     guards this, but doing it at the API boundary lets us return a
-        //     clean HTTP error code.
+        //     when absent. System-scope install from a non-root process is
+        //     elevated inside SystemdClient.install() via pkexec (PR #211);
+        //     the API stays unelevated and just forwards the requested scope.
+        //     A pre-#211 API-boundary 403 guard short-circuited the pkexec
+        //     path and was removed — the user saw "Relaunch the AppImage with
+        //     sudo" instead of a password prompt.
         let scope: 'user' | 'system';
         if (result.platform === 'linux') {
             const body = await readJsonBody(req);
             const requested = (body as ServiceInstallRequest).scope;
             scope = requested === 'system' ? 'system' : 'user';
-
-            if (scope === 'system' && process.getuid?.() !== 0) {
-                const failure: ServiceActionFailure = {
-                    ok: false,
-                    error:
-                        'system scope requires root. Relaunch the AppImage with sudo, ' +
-                        'or pick user scope.',
-                    reason: 'unknown',
-                };
-                res.writeHead(403);
-                res.end(JSON.stringify(failure));
-                return true;
-            }
         } else {
             scope = this.scope();
         }

@@ -63,7 +63,7 @@ export class AdminConfirmModal extends Modal {
         const message = document.createElement('p');
         message.style.cssText = 'margin: 0 0 12px;';
         message.textContent = this.platform === 'linux'
-            ? `${this.capitalizedAction()} with system scope requires root privileges. the appimage must be launched with sudo.`
+            ? `${this.capitalizedAction()} with system scope needs administrator privileges. polkit will show a password prompt next.`
             : `${this.capitalizedAction()} requires administrative privileges. Windows will show a UAC prompt next.`;
         container.appendChild(message);
 

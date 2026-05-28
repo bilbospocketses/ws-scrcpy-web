@@ -449,8 +449,12 @@ describe('ServiceApi', () => {
     // ServiceApi inspects result.platform === 'linux' to decide whether to
     // parse the JSON body for `scope`. The injected scope() factory is a
     // no-op on Linux — scope arrives via the request body, defaults to
-    // 'user' when absent, and a system-scope request from a non-root process
-    // returns 403 BEFORE the client install is invoked.
+    // 'user' when absent. System-scope from a non-root process is forwarded
+    // to the client; SystemdClient.install() handles elevation internally
+    // via pkexec (PR #211). The API itself stays unelevated. The pre-#211
+    // API-boundary 403 guard was removed because it short-circuited the
+    // pkexec path and surfaced "Relaunch the AppImage with sudo" instead of
+    // a password prompt.
     describe('Linux scope branch', () => {
         let savedGetuid: typeof process.getuid | undefined;
         beforeEach(() => {
@@ -537,13 +541,22 @@ describe('ServiceApi', () => {
             expect((opts as { account?: unknown })?.account).toBeUndefined();
         });
 
-        it('POST /install on Linux with {scope: "system"} as non-root returns 403', async () => {
+        it('POST /install on Linux with {scope: "system"} as non-root forwards to client (SystemdClient handles pkexec)', async () => {
+            // Pre-PR #211 the API short-circuited with 403 here. Post-#211
+            // the API forwards the request to SystemdClient.install(), which
+            // internally writes the unit to a tmp path and uses pkexec to
+            // copy + daemon-reload + enable in one password prompt. The API
+            // mock here just confirms the install path is exercised; pkexec
+            // mechanics are SystemdClient's responsibility.
             Object.defineProperty(process, 'getuid', {
                 value: () => 1000,
                 configurable: true,
             });
             const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(async () => undefined);
-            const client = fakeClient({ install: installFn });
+            const client = fakeClient({
+                install: installFn,
+                status: vi.fn(async () => 'running' as const),
+            });
             const factoryResult: ServiceClientFactoryResult = {
                 client,
                 supported: true,
@@ -556,11 +569,13 @@ describe('ServiceApi', () => {
                 JSON.stringify({ scope: 'system' }),
             );
             await api.handle(req, res);
-            expect((res as any).getStatus()).toBe(403);
+            expect((res as any).getStatus()).toBe(200);
             const body = JSON.parse((res as any).getBody());
-            expect(body.ok).toBe(false);
-            expect(body.error).toMatch(/system scope requires root/);
-            expect(installFn).not.toHaveBeenCalled();
+            expect(body.ok).toBe(true);
+            expect(body.installMode).toBe('system-service');
+            expect(installFn).toHaveBeenCalledOnce();
+            const opts = installFn.mock.calls[0]?.[0];
+            expect(opts?.scope).toBe('system');
         });
 
         it('POST /install on Linux with malformed JSON body falls back to user scope', async () => {
