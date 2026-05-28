@@ -2,6 +2,7 @@ import { Modal } from '../ui/Modal';
 
 export interface AdminConfirmOptions {
     action: 'install service' | 'uninstall service';
+    platform?: 'win32' | 'linux';
 }
 
 /**
@@ -42,12 +43,15 @@ export class AdminConfirmModal extends Modal {
         });
     }
 
+    private readonly platform: 'win32' | 'linux';
+
     private constructor(opts: AdminConfirmOptions, resolve: (value: boolean) => void) {
-        super({ title: 'Administrative Privileges Required' });
+        const isLinux = opts.platform === 'linux';
+        super({ title: isLinux ? 'Root Privileges Required' : 'Administrative Privileges Required' });
         this.resolveFn = resolve;
         this.action = opts.action;
+        this.platform = opts.platform ?? 'win32';
         this.dialog.classList.add('admin-confirm-modal');
-        // Defer body fill past class-field init phase (matches WelcomeModal pattern).
         queueMicrotask(() => this.fillBody(this.bodyEl));
     }
 
@@ -58,7 +62,9 @@ export class AdminConfirmModal extends Modal {
     private fillBody(container: HTMLElement): void {
         const message = document.createElement('p');
         message.style.cssText = 'margin: 0 0 12px;';
-        message.textContent = `${this.capitalizedAction()} requires administrative privileges. Windows will show a UAC prompt next.`;
+        message.textContent = this.platform === 'linux'
+            ? `${this.capitalizedAction()} with system scope requires root privileges. the appimage must be launched with sudo.`
+            : `${this.capitalizedAction()} requires administrative privileges. Windows will show a UAC prompt next.`;
         container.appendChild(message);
 
         const question = document.createElement('p');

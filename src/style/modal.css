@@ -201,6 +201,14 @@ dialog.modal .modal-controls {
     gap: 0.5rem 0.75rem;
     align-items: center;
     padding-right: 0.5rem;
+    min-width: 0;
+}
+
+dialog.modal .modal-controls select,
+dialog.modal .modal-controls input {
+    max-width: 100%;
+    box-sizing: border-box;
+    min-width: 0;
 }
 
 dialog.modal .modal-controls .label {

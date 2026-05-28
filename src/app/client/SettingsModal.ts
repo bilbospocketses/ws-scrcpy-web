@@ -1,6 +1,6 @@
 import { Modal } from '../ui/Modal';
 import { resetAllDismissals } from './firstRunGate';
-import { AdminConfirmModal } from './AdminConfirmModal';
+import { AdminConfirmModal, type AdminConfirmOptions } from './AdminConfirmModal';
 import { ServiceOperationModal } from './ServiceOperationModal';
 import type { AppConfigEnvelope, AppConfigPatchResponse, UpdateChannel } from '../../common/ConfigEvents';
 import type {
@@ -38,6 +38,7 @@ export class SettingsModal extends Modal {
     private serverSaveBtn!: HTMLButtonElement;
     private currentWebPort: number | null = null;
     private serviceScopeSystemRadio: HTMLInputElement | null = null;
+    private servicePlatform: 'win32' | 'linux' | null = null;
 
     // ── Updates section state ─────────────────────────────────────────────
     private updatesBody!: HTMLElement;
@@ -749,6 +750,7 @@ export class SettingsModal extends Modal {
 
     private renderServiceState(resp: ServiceStatusResponse): void {
         this.serviceSection.replaceChildren();
+        this.servicePlatform = (resp.platform as 'win32' | 'linux') ?? null;
 
         if (!resp.supported) {
             const notice = document.createElement('p');
@@ -834,8 +836,17 @@ export class SettingsModal extends Modal {
     }
 
     private async onInstallService(btn: HTMLButtonElement): Promise<void> {
-        const confirmed = await AdminConfirmModal.confirm({ action: 'install service' });
-        if (!confirmed) return;
+        const isLinux = this.servicePlatform === 'linux';
+        const isSystemScope = this.serviceScopeSystemRadio?.checked ?? false;
+
+        if (isLinux && !isSystemScope) {
+            // User scope on Linux: no elevation needed, proceed directly.
+        } else {
+            const opts: AdminConfirmOptions = { action: 'install service' };
+            if (this.servicePlatform) opts.platform = this.servicePlatform;
+            const confirmed = await AdminConfirmModal.confirm(opts);
+            if (!confirmed) return;
+        }
 
         btn.disabled = true;
         const prevText = btn.textContent;
@@ -915,8 +926,17 @@ export class SettingsModal extends Modal {
     }
 
     private async onUninstallService(btn: HTMLButtonElement): Promise<void> {
-        const confirmed = await AdminConfirmModal.confirm({ action: 'uninstall service' });
-        if (!confirmed) return;
+        const isLinux = this.servicePlatform === 'linux';
+        const isSystemScope = this.serviceScopeSystemRadio?.checked ?? false;
+
+        if (isLinux && !isSystemScope) {
+            // User scope on Linux: no elevation needed, proceed directly.
+        } else {
+            const opts: AdminConfirmOptions = { action: 'uninstall service' };
+            if (this.servicePlatform) opts.platform = this.servicePlatform;
+            const confirmed = await AdminConfirmModal.confirm(opts);
+            if (!confirmed) return;
+        }
 
         btn.disabled = true;
         const prevText = btn.textContent;
