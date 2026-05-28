@@ -725,25 +725,6 @@ dialog.settings-modal .settings-confirm-panel .settings-confirm-buttons {
     justify-content: flex-end;
 }
 
-/* Service section: scope chooser fieldset for Linux installs. */
-dialog.settings-modal .settings-scope-fieldset {
-    grid-column: 1 / -1;
-    margin: 0.25rem 0;
-    padding: 0.5rem 0.75rem;
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 6px;
-}
-
-[data-theme="light"] dialog.settings-modal .settings-scope-fieldset {
-    border-color: rgba(0, 0, 0, 0.12);
-}
-
-dialog.settings-modal .settings-scope-fieldset legend {
-    padding: 0 0.4rem;
-    font-size: 13px;
-    color: var(--text-color-light, #888);
-}
-
 /* --- Service operation modal (Phase 3) --- */
 
 dialog.service-operation-modal .modal-header-controls {

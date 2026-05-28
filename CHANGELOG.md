@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Settings modal Linux scope chooser now lives in a standard 2-column grid row** matching the update channel row. Description on the left ("service scope"), radios on the right ("user" / "system (req. sudo)"). The pre-v0.1.30 implementation rendered the chooser as a `<fieldset>` spanning both columns, which (a) didn't match any other settings row and (b) starved the install-button row below it of horizontal space on narrower modal widths, causing the button text "not installed — install?" to wrap to two lines. Removed the orphaned `.settings-scope-fieldset` CSS as part of the cleanup.
+
 ### Fixed
 
 - **Linux system-scope service install now triggers the pkexec password prompt as designed.** A stale guard in `ServiceApi.handleInstall` (predating PR #211) returned 403 with the message *"system scope requires root. Relaunch the AppImage with sudo, or pick user scope."* whenever the API received a `scope: 'system'` request from a non-root process — short-circuiting before `SystemdClient.install()` (which was rewritten in PR #211 to elevate via pkexec) was ever reached. The guard was a holdover from when `SystemdClient` also threw on non-root system-scope, "doing it at the API boundary lets us return a clean HTTP error code." `SystemdClient` no longer throws there. Removed the guard so the request falls through to the pkexec path. Paired updates: `AdminConfirmModal.ts` Linux confirmation text rewritten from *"the appimage must be launched with sudo"* to *"polkit will show a password prompt next."* The 403-asserting test in `ServiceApi.test.ts` was inverted to confirm `installFn` IS called with `scope: 'system'` and the API returns 200; pkexec mechanics remain `SystemdClient`'s responsibility.
