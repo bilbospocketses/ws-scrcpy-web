@@ -74,10 +74,12 @@ body.list #device_list_menu {
 #devices .device-list div.device {
     border: 1px solid var(--device-border-color);
     border-radius: 8px;
-    /* Asymmetric padding: extra left to balance the right-side
-       whitespace from the value column. Card outer width is set by
-       the grid; only the inner content area shifts right. */
-    padding: 8px 8px 8px 20px;
+    /* Symmetric horizontal padding so the dark-grey content area sits
+       equidistant from the left and right card borders. (The active
+       device's 3px green / not-active 3px red left border is outside
+       this padding and replaces the 1px default left border — that
+       asymmetry is intentional, not part of the content padding.) */
+    padding: 8px 14px;
     background: var(--device-list-default-color);
     transition: border-color 0.15s, box-shadow 0.15s;
 }
@@ -152,6 +154,10 @@ body.list #device_list_menu {
     grid-column: 2;
     grid-row: 1 / -1;
     background: var(--device-border-color);
+    /* Override parent's justify-items: center / align-items: center
+       which would auto-size the pseudo to its 0-width content and
+       leave the divider invisible. Stretch fills the 1px grid cell. */
+    place-self: stretch;
     pointer-events: none;
 }
 
@@ -251,6 +257,10 @@ body.list #device_list_menu {
     grid-column: 2;
     grid-row: 1 / -1;
     background: var(--device-border-color);
+    /* See note on .device-actions::before — stretch needed so the
+       pseudo fills its 1px-wide grid cell instead of collapsing to
+       0-width content. */
+    place-self: stretch;
     pointer-events: none;
 }
 
@@ -259,6 +269,7 @@ body.list #device_list_menu {
     grid-column: 1 / -1;
     grid-row: 2;
     background: var(--device-border-color);
+    place-self: stretch;
     pointer-events: none;
 }
 
