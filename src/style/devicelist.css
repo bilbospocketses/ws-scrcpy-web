@@ -136,7 +136,6 @@ body.list #device_list_menu {
     gap: 20px;
     border-top: 1px solid var(--device-border-color);
     padding: 8px 0;
-    margin-top: 8px;
 }
 
 #devices .device-list div.device .device-actions:empty {
@@ -210,7 +209,7 @@ body.list #device_list_menu {
 #devices .device-list div.device .services {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    grid-template-rows: auto auto auto;
+    grid-template-rows: auto auto;
     grid-auto-flow: column;
     gap: 6px;
     align-items: center;
@@ -226,15 +225,6 @@ body.list #device_list_menu {
 
 #devices .device-list div.device .services:first-of-type {
     margin-top: 8px;
-}
-
-#devices .services-label {
-    grid-column: 1 / -1;
-    grid-row: 1;
-    justify-self: start;
-    font-size: 13px;
-    color: var(--text-color-light, #888);
-    margin-bottom: 2px;
 }
 
 #devices .device-list div.desc-block {

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.11] - 2026-05-28
+
+### Changed
+
+- Device card layout: action buttons (disconnect + turn on/off) moved to the bottom of the card. Modal-launch buttons (shell, list files, connect, config stream) shift up accordingly.
+- "opens in modal" label removed; the four blue modal-launch buttons are self-explanatory and the label was making cards taller than needed.
+
 ## [0.1.30-beta.10] - 2026-05-28
 
 ### Changed

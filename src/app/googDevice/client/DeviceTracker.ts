@@ -199,10 +199,8 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
                 <tr><td class="device-label">Android:</td><td>${(device['ro.build.version.release'] || '').split('.')[0]}</td></tr>
                 <tr><td class="device-label">SDK:</td><td>${device['ro.build.version.sdk']}</td></tr>
             </table>
+            <div id="${overlayId}" class="services"></div>
             <div class="device-actions"></div>
-            <div id="${overlayId}" class="services">
-                <div class="services-label">opens in modal</div>
-            </div>
         </div>`.content;
         const overlaySection = row.getElementById(overlayId);
 
