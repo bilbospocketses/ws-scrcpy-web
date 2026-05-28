@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.14] - 2026-05-28
+
+### Changed
+
+- `.dep-btn` button border (3 scan-section buttons + "check for updates" button) changed from `var(--text-color)` (white) to `#5b9aff` (matching their blue text). Border-matches-text convention now applies across all page chrome.
+- Device card button grids (services + device-actions) centered: `justify-items: start` → `center`. Modal-launch and action buttons now sit at the center of their grid columns.
+- Added a vertical divider line down the centerline of the services and device-actions grids, mirroring the existing horizontal border-tops between sections.
+
 ## [0.1.30-beta.13] - 2026-05-28
 
 ### Changed

@@ -137,9 +137,23 @@ body.list #device_list_menu {
     grid-template-columns: 1fr 1fr;
     gap: 6px;
     align-items: center;
-    justify-items: start;
+    justify-items: center;
+    position: relative;
     border-top: 1px solid var(--device-border-color);
     padding: 8px 0;
+}
+
+/* Vertical divider down the center, mirroring the horizontal border-tops
+   between sections. Spans the full height of the actions row. */
+#devices .device-list div.device .device-actions::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    width: 1px;
+    background: var(--device-border-color);
+    pointer-events: none;
 }
 
 #devices .device-list div.device .device-actions:empty {
@@ -219,10 +233,24 @@ body.list #device_list_menu {
     grid-auto-flow: column;
     gap: 6px;
     align-items: center;
-    justify-items: start;
+    justify-items: center;
+    position: relative;
     border-top: 1px solid var(--device-border-color);
     padding-top: 8px;
     padding-bottom: 8px;
+}
+
+/* Vertical divider down the center, mirroring the horizontal border-tops
+   between sections. Spans the full height of the services grid. */
+#devices .device-list div.device .services::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    width: 1px;
+    background: var(--device-border-color);
+    pointer-events: none;
 }
 
 #devices .device-list div.device .services:last-child {

@@ -55,7 +55,7 @@
 /* Buttons */
 .dep-btn {
     padding: 0.3rem 0.75rem;
-    border: 0.5px solid var(--text-color);
+    border: 0.5px solid #5b9aff;
     border-radius: 6px;
     background: transparent;
     color: #5b9aff;
