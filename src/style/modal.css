@@ -537,17 +537,18 @@ dialog.settings-modal .settings-section-heading {
  */
 dialog.settings-modal .settings-section-body {
     display: grid;
-    /* Labels and controls tracks are both fixed-width so the controls
-       column never shifts when dynamic label text changes (status
-       messages, version strings, etc.) or when button text changes
-       (install/uninstall states). 20rem labels fits all steady-state
-       label strings ("save restarts & redirects to new port" ≈ 308px
-       at 13px monospace) with cushion. 16rem controls fits the widest
-       steady-state button text ("not installed — install?" ≈ 231px)
-       without wrap. The trailing 1fr dumps the small remaining width
-       on the right of the controls so the controls column sits a
-       touch left of the modal's right edge. */
-    grid-template-columns: [labels] 20rem [controls] 16rem [end] 1fr;
+    /* Labels fixed at 20rem so the controls boundary doesn't shift when
+       dynamic label text changes (status messages, version strings) or
+       when button text changes (install/uninstall states). Controls
+       take 1fr (was 16rem + [end] 1fr buffer pre-2026-05-28). The fixed
+       16rem controls column was sized against Windows font rendering
+       ("not installed — install?" ≈ 231px at 13px monospace, fit) but
+       wrapped on Linux 1920x1080 unscaled where the same monospace
+       string renders ~10% wider. Flexing controls to 1fr gives Linux
+       the breathing room without affecting Windows (controls hug left
+       via .settings-control justify-content: flex-start, so the extra
+       width on Windows is just empty space to the right of each control). */
+    grid-template-columns: [labels] 20rem [controls] 1fr;
     align-items: center;
     gap: 0.5rem 1rem;
 }

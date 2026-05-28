@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Settings modal controls column now flexes to fill remaining width** (`grid-template-columns: [labels] 20rem [controls] 1fr` — was `[labels] 20rem [controls] 16rem [end] 1fr`). The pre-fix fixed 16rem controls column was sized against Windows font rendering ("not installed — install?" ≈ 231px at 13px monospace, fit). On Linux 1920x1080 unscaled the same monospace string renders ~10% wider and wrapped to two lines, along with "system (req. sudo)" radios and other steady-state controls. Flexing controls to `1fr` gives Linux the breathing room without affecting Windows visually (controls hug left via `.settings-control justify-content: flex-start`; extra width on Windows is just empty space to the right of each control).
+- **Server section label tightened** from "save restarts & redirects to new port" to "save restarts & redirects" — the "to new port" suffix is implicit (saving the port field obviously redirects to that port) and was the longest steady-state label string, putting pressure on the 20rem labels column on Linux.
+
 ## [0.1.30-beta.19] - 2026-05-28
 
 ### Changed

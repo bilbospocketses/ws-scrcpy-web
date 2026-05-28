@@ -169,7 +169,7 @@ export class SettingsModal extends Modal {
             void this.onSavePort();
         });
         const { row: saveRow, labelEl: saveLabelEl } = this.buildDynamicLabelRow(
-            'save restarts & redirects to new port',
+            'save restarts & redirects',
             this.serverSaveBtn,
         );
         body.appendChild(saveRow);
@@ -194,7 +194,7 @@ export class SettingsModal extends Modal {
             // Default note: explain the redirect-on-save behavior so the
             // user knows clicking save isn't a static config change but a
             // server restart with auto-redirect to the new URL.
-            this.setServerStatus('save restarts & redirects to new port');
+            this.setServerStatus('save restarts & redirects');
         } catch {
             this.setServerStatus("couldn't reach server", true);
         }
