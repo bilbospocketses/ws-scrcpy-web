@@ -1,5 +1,4 @@
 import { Modal } from '../ui/Modal';
-import { resetAllDismissals } from './firstRunGate';
 import { AdminConfirmModal, type AdminConfirmOptions } from './AdminConfirmModal';
 import { ServiceOperationModal } from './ServiceOperationModal';
 import type { AppConfigEnvelope, AppConfigPatchResponse, UpdateChannel } from '../../common/ConfigEvents';
@@ -1125,11 +1124,14 @@ export class SettingsModal extends Modal {
         confirmBtn.className = 'settings-btn settings-btn-primary';
         confirmBtn.textContent = 'confirm reset';
         confirmBtn.addEventListener('click', () => {
-            resetAllDismissals();
             fetch('/api/config', {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ firstRunComplete: false, serviceFirstRunSeen: false }),
+                body: JSON.stringify({
+                    firstRunComplete: false,
+                    serviceFirstRunSeen: false,
+                    bookmarkDismissedForPort: null,
+                }),
             }).finally(() => {
                 window.location.reload();
             });

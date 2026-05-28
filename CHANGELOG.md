@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.8] - 2026-05-28
+
+### Changed
+
+- **PortChangeModal dismissal moved from localStorage to config.json.** Adds `bookmarkDismissedForPort: number | null` field to `AppConfig`; defaults to `null`. Stores the last-acknowledged web port; modal re-shows whenever the current web port differs from this value. The localStorage version was unreliable on Linux AppImage where the browser may treat each launch as a different origin, causing the modal to appear repeatedly. Deletes `src/app/client/firstRunGate.ts` and its tests; all modal-dismissal state now lives server-side in `config.json` alongside `firstRunComplete` and `serviceFirstRunSeen`.
+
 ## [0.1.30-beta.7] - 2026-05-27
 
 ### Fixed

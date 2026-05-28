@@ -1,5 +1,4 @@
 import { Modal } from '../ui/Modal';
-import { setBookmarkDismissedPort } from './firstRunGate';
 
 /**
  * One-shot informational modal shown on the FIRST page load of a
@@ -39,8 +38,14 @@ export class ServiceFirstRunModal extends Modal {
         // service first-run copy includes a bookmark hint, so the
         // PortChangeModal would be redundant. State-level enforcement
         // of "first-run overrides port modal" beyond just the if/else
-        // ordering in index.ts.
-        setBookmarkDismissedPort(this.opts.webPort);
+        // ordering in index.ts. Fire-and-forget: priority order in
+        // index.ts also gates this, so a failed PATCH doesn't cause
+        // double-modal stacking on this page load.
+        void fetch('/api/config', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ bookmarkDismissedForPort: this.opts.webPort }),
+        }).catch(() => { /* belt-and-suspenders only — silent */ });
         // Defer body fill past class-field init phase
         // (ES2022 useDefineForClassFields). Same pattern as
         // WelcomeModal. The footer is set up via buildFooter() which
@@ -117,12 +122,14 @@ export class ServiceFirstRunModal extends Modal {
     private async dismiss(): Promise<void> {
         if (this.dismissBtn) this.dismissBtn.disabled = true;
         if (this.dontShowCheckbox?.checked) {
-            setBookmarkDismissedPort(this.opts.webPort);
             try {
                 await fetch('/api/config', {
                     method: 'PATCH',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ serviceFirstRunSeen: true }),
+                    body: JSON.stringify({
+                        serviceFirstRunSeen: true,
+                        bookmarkDismissedForPort: this.opts.webPort,
+                    }),
                 });
             } catch {
                 /* fall-through: still close */
