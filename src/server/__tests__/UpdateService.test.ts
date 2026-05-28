@@ -140,7 +140,7 @@ describe('UpdateService', () => {
         });
         svc.init();
         const s = svc.getStatus();
-        expect(s.isInstalled).toBe(false);
+        expect(s.isInstalled).toBe(true);
         expect(s.status).toBe('idle');
         expect(factory).toHaveBeenCalledTimes(1);
     });

@@ -30,16 +30,19 @@
  * See `docs/plans/sp3-p4b-contracts.md` for the full spec.
  */
 
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { promisify } from 'node:util';
 import { Logger } from '../Logger';
 import type {
     ServiceClient,
     ServiceInstallOptions,
     ServiceStatus,
 } from './ServiceClient';
+
+const execFileAsync = promisify(execFile);
 
 const log = Logger.for('SystemdClient');
 
@@ -55,6 +58,34 @@ const TRAY_AUTOSTART_FILE = 'ws-scrcpy-web-tray.desktop';
  * Wrap execFileSync so the thrown Error includes stderr — matches the pattern
  * established in ServyClient. Without this, Node surfaces only the exit code.
  */
+/**
+ * Run a command via pkexec for graphical privilege escalation. The user
+ * sees a single password prompt for the entire shell command. Throws on
+ * auth-cancel (exit 126), pkexec-not-found, or command failure.
+ */
+async function runPkexec(shellCmd: string, label: string): Promise<string> {
+    try {
+        const { stdout } = await execFileAsync('pkexec', ['sh', '-c', shellCmd], {
+            encoding: 'utf8',
+            timeout: 60_000,
+        });
+        return stdout;
+    } catch (err) {
+        const e = err as NodeJS.ErrnoException & { code?: string | number; stderr?: string };
+        if (e.code === 'ENOENT') {
+            throw new Error(
+                `pkexec not found. install polkit (e.g. "sudo dnf install polkit" on fedora) or use user scope instead.`,
+            );
+        }
+        const stderr = typeof e.stderr === 'string' ? e.stderr.trim() : '';
+        const exitCode = typeof e.code === 'number' ? e.code : (e as { status?: number }).status;
+        if (exitCode === 126) {
+            throw new Error('authentication was dismissed. service install cancelled.');
+        }
+        throw new Error(`pkexec ${label} failed: ${stderr || e.message}`);
+    }
+}
+
 function runSystemctl(args: string[], label: string): string {
     try {
         return execFileSync('systemctl', args, {
@@ -163,27 +194,38 @@ export class SystemdClient implements ServiceClient {
             );
         }
 
-        if (scope === 'system' && process.getuid?.() !== 0) {
-            // Throw BEFORE any side effect — ServiceApi catches and returns 403.
-            throw new Error(
-                'system scope requires root. Relaunch the AppImage with sudo, or pick user scope.',
-            );
-        }
-
         const unitContent = renderUnitFile(opts, scope);
         const unitPath = scope === 'user'
             ? this.userUnitPath(opts.name)
             : this.systemUnitPath(opts.name);
 
-        fs.mkdirSync(path.dirname(unitPath), { recursive: true });
-        fs.writeFileSync(unitPath, unitContent, { mode: 0o644 });
+        if (scope === 'system' && process.getuid?.() !== 0) {
+            // Not root — use pkexec for graphical privilege escalation.
+            // Write unit to temp, then pkexec copies + enables in one prompt.
+            const tmpFile = path.join(os.tmpdir(), `${opts.name}.service.tmp`);
+            fs.writeFileSync(tmpFile, unitContent, { mode: 0o644 });
+            try {
+                const cmd = [
+                    `cp "${tmpFile}" "${unitPath}"`,
+                    'systemctl daemon-reload',
+                    `systemctl enable --now ${opts.name}.service`,
+                ].join(' && ');
+                await runPkexec(cmd, 'install (system scope)');
+            } finally {
+                try { fs.unlinkSync(tmpFile); } catch { /* best-effort cleanup */ }
+            }
+        } else {
+            // User scope (no elevation) or already root.
+            fs.mkdirSync(path.dirname(unitPath), { recursive: true });
+            fs.writeFileSync(unitPath, unitContent, { mode: 0o644 });
 
-        const baseArgs = scope === 'user' ? ['--user'] : [];
-        runSystemctl([...baseArgs, 'daemon-reload'], 'daemon-reload');
-        runSystemctl(
-            [...baseArgs, 'enable', '--now', `${opts.name}.service`],
-            `enable --now ${opts.name}.service`,
-        );
+            const baseArgs = scope === 'user' ? ['--user'] : [];
+            runSystemctl([...baseArgs, 'daemon-reload'], 'daemon-reload');
+            runSystemctl(
+                [...baseArgs, 'enable', '--now', `${opts.name}.service`],
+                `enable --now ${opts.name}.service`,
+            );
+        }
 
         if (scope === 'user') {
             // Best-effort linger so the service survives a full logout.
@@ -219,40 +261,40 @@ export class SystemdClient implements ServiceClient {
     public async uninstall(name: string): Promise<void> {
         const scope = this.resolveActiveScope(name);
         if (scope === null) {
-            // Already uninstalled — idempotent. Mirrors ServyClient's tolerance
-            // of "not installed" cases.
             return;
         }
 
         if (scope === 'system' && process.getuid?.() !== 0) {
-            throw new Error('system-scope service uninstall requires root.');
-        }
+            const unitPath = this.systemUnitPath(name);
+            const cmd = [
+                `systemctl disable --now ${name}.service || true`,
+                `rm -f "${unitPath}"`,
+                'systemctl daemon-reload',
+            ].join(' && ');
+            await runPkexec(cmd, 'uninstall (system scope)');
+        } else {
+            const baseArgs = scope === 'user' ? ['--user'] : [];
+            try {
+                runSystemctl(
+                    [...baseArgs, 'disable', '--now', `${name}.service`],
+                    `disable --now ${name}.service`,
+                );
+            } catch (err) {
+                log.info(`systemctl disable returned: ${(err as Error).message}`);
+            }
 
-        const baseArgs = scope === 'user' ? ['--user'] : [];
+            const unitPath = scope === 'user' ? this.userUnitPath(name) : this.systemUnitPath(name);
+            try {
+                fs.unlinkSync(unitPath);
+            } catch {
+                // Already gone.
+            }
 
-        // Best-effort disable+stop. systemctl returns non-zero if the service
-        // is already stopped or never started — that's not an error for our
-        // purposes. The unit file removal below is the load-bearing step.
-        try {
-            runSystemctl(
-                [...baseArgs, 'disable', '--now', `${name}.service`],
-                `disable --now ${name}.service`,
-            );
-        } catch (err) {
-            log.info(`systemctl disable returned: ${(err as Error).message}`);
-        }
-
-        const unitPath = scope === 'user' ? this.userUnitPath(name) : this.systemUnitPath(name);
-        try {
-            fs.unlinkSync(unitPath);
-        } catch {
-            // Already gone — desired post-state achieved.
-        }
-
-        try {
-            runSystemctl([...baseArgs, 'daemon-reload'], 'daemon-reload (after uninstall)');
-        } catch (err) {
-            log.warn(`daemon-reload after uninstall failed: ${(err as Error).message}`);
+            try {
+                runSystemctl([...baseArgs, 'daemon-reload'], 'daemon-reload (after uninstall)');
+            } catch (err) {
+                log.warn(`daemon-reload after uninstall failed: ${(err as Error).message}`);
+            }
         }
 
         // Best-effort autostart cleanup (user scope only — system scope never

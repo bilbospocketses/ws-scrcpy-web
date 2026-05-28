@@ -23,8 +23,12 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 // Hoisted mocks — must be declared before the SystemdClient import so the
 // module receives mocked deps at evaluation time.
 const execFileSyncMock = vi.fn();
+const execFileMock = vi.fn((_cmd: string, _args: string[], _opts: unknown, cb: (err: Error | null, result: { stdout: string; stderr: string }) => void) => {
+    cb(null, { stdout: '', stderr: '' });
+});
 vi.mock('node:child_process', () => ({
     execFileSync: (...args: unknown[]) => execFileSyncMock(...args),
+    execFile: (...args: unknown[]) => execFileMock(...(args as Parameters<typeof execFileMock>)),
 }));
 
 const existsSyncMock = vi.fn();
@@ -43,6 +47,7 @@ const userInfoMock = vi.fn(() => ({ username: 'jamie' }));
 vi.mock('node:os', () => ({
     homedir: () => homedirMock(),
     userInfo: () => userInfoMock(),
+    tmpdir: () => '/tmp',
 }));
 
 import { renderUnitFile, SystemdClient } from '../service/SystemdClient';
@@ -213,14 +218,15 @@ describe('SystemdClient', () => {
             expect(desktopWrites).toHaveLength(0);
         });
 
-        it('system scope as non-root: throws before any side-effect', async () => {
+        it('system scope as non-root: uses pkexec for privilege escalation', async () => {
             Object.defineProperty(process, 'getuid', { value: () => 1000, configurable: true });
             const client = new SystemdClient();
-            await expect(client.install({ ...baseOpts, scope: 'system' })).rejects.toThrow(
-                /system scope requires root/,
-            );
-            expect(writeFileSyncMock).not.toHaveBeenCalled();
-            expect(execFileSyncMock).not.toHaveBeenCalled();
+            await client.install({ ...baseOpts, scope: 'system' });
+            // Should write tmp file then call execFile (pkexec), not execFileSync (direct systemctl)
+            expect(writeFileSyncMock).toHaveBeenCalled();
+            expect(execFileMock).toHaveBeenCalled();
+            const pkexecCall = execFileMock.mock.calls[0];
+            expect(pkexecCall[0]).toBe('pkexec');
         });
     });
 
@@ -319,7 +325,7 @@ describe('SystemdClient', () => {
             );
         });
 
-        it('system scope as non-root: throws', async () => {
+        it('system scope as non-root: uses pkexec for privilege escalation', async () => {
             existsSyncMock.mockImplementation(
                 (p: string) =>
                     String(p).startsWith('/etc/systemd/system/') ||
@@ -327,9 +333,10 @@ describe('SystemdClient', () => {
             );
             Object.defineProperty(process, 'getuid', { value: () => 1000, configurable: true });
             const client = new SystemdClient();
-            await expect(client.uninstall('WsScrcpyWeb')).rejects.toThrow(
-                /requires root/,
-            );
+            await client.uninstall('WsScrcpyWeb');
+            expect(execFileMock).toHaveBeenCalled();
+            const pkexecCall = execFileMock.mock.calls[0];
+            expect(pkexecCall[0]).toBe('pkexec');
         });
 
         it('tolerates systemctl disable failures (already stopped)', async () => {
