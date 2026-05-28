@@ -174,37 +174,19 @@ export class UpdateService {
         // with the v0.1.15 installRoot fix this is the second of two
         // wrong assumptions that put the updater in permanent dev mode.
         //
-        // Linux AppImage: detect production mode via APPIMAGE env var (set by
-        // the AppImage runtime). No Update.exe equivalent — Velopack auto-update
-        // on AppImage is not yet wired, so we set isInstalled but skip mgr init.
-        const isWindows = process.platform === 'win32';
-        let markerExists: boolean;
-        if (isWindows) {
-            const markerPath = path.join(this.installRoot, 'Update.exe');
-            markerExists = this.existsSync(markerPath);
-            if (!markerExists) {
-                log.info(`dev mode (Update.exe not found at ${markerPath})`);
-            }
-        } else {
-            markerExists = !!(process.env['APPIMAGE'] && process.env['APPIMAGE'].length > 0);
-            if (!markerExists) {
-                log.info('dev mode (APPIMAGE env var not set — not running from AppImage)');
-            }
-        }
+        // Linux AppImage: no Update.exe equivalent. Treated as dev mode for
+        // now — Velopack auto-update on AppImage is a separate concern and
+        // the Linux Velopack flow isn't shipped in v0.1.x anyway.
+        const markerName = process.platform === 'win32' ? 'Update.exe' : '__no_marker__';
+        const markerPath = path.join(this.installRoot, markerName);
+        const markerExists = this.existsSync(markerPath);
 
         if (!markerExists) {
             // v0.1.17: surface the package.json version even in dev mode so
             // the UI can show "current: vX.Y.Z (dev mode)" rather than a
             // bare "dev mode" with no clue what's actually running.
             this.state = { isInstalled: false, currentVersion: getAppVersion(), status: 'idle' };
-            return;
-        }
-
-        // Linux AppImage: production mode detected but no Velopack update flow yet.
-        // Set isInstalled so the UI doesn't show "dev mode", but skip mgr init.
-        if (!isWindows) {
-            this.state = { isInstalled: true, currentVersion: getAppVersion(), status: 'idle' };
-            log.info(`Linux AppImage production mode (v${getAppVersion()}), updates not yet wired`);
+            log.info(`dev mode (${markerName} not found at ${markerPath})`);
             return;
         }
 
@@ -230,7 +212,7 @@ export class UpdateService {
         } catch (err) {
             // Marker present but mgr construction threw — corrupted install or SDK bug.
             log.warn(
-                `Production marker present but UpdateManager construction failed: ${(err as Error).message}. ` +
+                `${markerName} exists but UpdateManager construction failed: ${(err as Error).message}. ` +
                     `Treating as dev mode.`,
             );
             this.mgr = null;
