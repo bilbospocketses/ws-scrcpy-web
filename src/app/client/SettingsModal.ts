@@ -812,14 +812,14 @@ export class SettingsModal extends Modal {
 
         const status = resp.status ?? 'not-installed';
 
-        // Linux scope chooser only when not-installed; spans both columns.
+        // Linux scope chooser only when not-installed. Rendered as a standard
+        // settings row (description left, radios right) matching the update
+        // channel row's pattern. Pre-v0.1.30 this used a fieldset spanning
+        // both columns, which broke the grid alignment of the install button
+        // row below it (button wrapped to two lines on narrower modal widths).
         this.serviceScopeSystemRadio = null;
         if (status === 'not-installed' && resp.platform === 'linux') {
-            const fieldset = document.createElement('fieldset');
-            fieldset.className = 'settings-scope-fieldset';
-            const legend = document.createElement('legend');
-            legend.textContent = 'scope';
-            fieldset.appendChild(legend);
+            const scopeFrag = document.createDocumentFragment();
 
             const userLabel = document.createElement('label');
             userLabel.className = 'settings-radio-label';
@@ -829,8 +829,8 @@ export class SettingsModal extends Modal {
             userRadio.value = 'user';
             userRadio.checked = true;
             userLabel.appendChild(userRadio);
-            userLabel.appendChild(document.createTextNode('just for me (no sudo)'));
-            fieldset.appendChild(userLabel);
+            userLabel.appendChild(document.createTextNode('user'));
+            scopeFrag.appendChild(userLabel);
 
             const sysLabel = document.createElement('label');
             sysLabel.className = 'settings-radio-label';
@@ -839,10 +839,10 @@ export class SettingsModal extends Modal {
             sysRadio.name = 'settings-scope';
             sysRadio.value = 'system';
             sysLabel.appendChild(sysRadio);
-            sysLabel.appendChild(document.createTextNode('all users (requires sudo)'));
-            fieldset.appendChild(sysLabel);
+            sysLabel.appendChild(document.createTextNode('system (req. sudo)'));
+            scopeFrag.appendChild(sysLabel);
 
-            this.serviceSection.appendChild(fieldset);
+            this.serviceSection.appendChild(this.buildRow('service scope', scopeFrag));
             this.serviceScopeSystemRadio = sysRadio;
         }
 
