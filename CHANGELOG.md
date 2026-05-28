@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.10] - 2026-05-28
+
+### Changed
+
+- Device card polish: thin border-top separator above the disconnect/turn-on/off action row (matches the "opens in modal" services separator); label-to-value gap widened from 8px to 24px so info reads less cramped; gap between disconnect and turn-on/off buttons widened from 8px to 20px.
+
 ## [0.1.30-beta.9] - 2026-05-28
 
 ### Fixed

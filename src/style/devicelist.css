@@ -108,7 +108,7 @@ body.list #device_list_menu {
 
 #devices .device-info td.device-label {
     color: var(--text-color-light, #888);
-    padding-right: 8px;
+    padding-right: 24px;
     white-space: nowrap;
     width: 1%;
 }
@@ -133,8 +133,10 @@ body.list #device_list_menu {
     flex-direction: row;
     justify-content: center;
     align-items: center;
-    gap: 8px;
+    gap: 20px;
+    border-top: 1px solid var(--device-border-color);
     padding: 8px 0;
+    margin-top: 8px;
 }
 
 #devices .device-list div.device .device-actions:empty {
