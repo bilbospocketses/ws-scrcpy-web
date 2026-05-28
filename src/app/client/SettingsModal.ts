@@ -313,13 +313,61 @@ export class SettingsModal extends Modal {
         this.updatesCheckNowBtn = null;
 
         if (!s.isInstalled) {
-            // Dev mode — single inline note spanning both columns, no controls.
             const devNote = document.createElement('p');
             devNote.className = 'settings-stub-note';
             devNote.style.gridColumn = '1 / -1';
             const versionStr = s.currentVersion ? `current: v${s.currentVersion} — ` : '';
             devNote.textContent = `${versionStr}dev mode — packaging features disabled`;
             this.updatesBody.appendChild(devNote);
+            return;
+        }
+
+        // Linux libfuse2 gate — required for AppImage updates via Velopack.
+        if (s.libfuse2Installed === false) {
+            const versionNote = document.createElement('p');
+            versionNote.className = 'settings-stub-note';
+            versionNote.style.gridColumn = '1 / -1';
+            versionNote.textContent = `current: v${s.currentVersion}`;
+            this.updatesBody.appendChild(versionNote);
+
+            const warning = document.createElement('p');
+            warning.style.cssText = 'grid-column: 1 / -1; color: var(--error-color, #ff6b6b); margin: 4px 0;';
+            warning.textContent = 'libfuse2 is required for in-app updates but is not installed.';
+            this.updatesBody.appendChild(warning);
+
+            const installBtn = document.createElement('button');
+            installBtn.type = 'button';
+            installBtn.className = 'settings-btn settings-btn-primary';
+            installBtn.textContent = 'install libfuse2';
+            installBtn.addEventListener('click', () => {
+                installBtn.disabled = true;
+                installBtn.textContent = 'installing...';
+                fetch('/api/updates/install-libfuse2', { method: 'POST' })
+                    .then(async (r) => {
+                        const data = await r.json().catch(() => null) as { ok?: boolean; error?: string } | null;
+                        if (r.ok && data?.ok) {
+                            void this.refreshUpdates();
+                        } else {
+                            warning.textContent = data?.error ?? 'install failed';
+                            installBtn.disabled = false;
+                            installBtn.textContent = 'install libfuse2';
+                        }
+                    })
+                    .catch(() => {
+                        warning.textContent = "couldn't reach server";
+                        installBtn.disabled = false;
+                        installBtn.textContent = 'install libfuse2';
+                    });
+            });
+            const btnRow = document.createElement('div');
+            btnRow.style.cssText = 'grid-column: 1 / -1; display: flex; justify-content: flex-start;';
+            btnRow.appendChild(installBtn);
+            this.updatesBody.appendChild(btnRow);
+
+            const hint = document.createElement('p');
+            hint.style.cssText = 'grid-column: 1 / -1; color: var(--text-color-light); font-size: 12px; margin: 4px 0 0;';
+            hint.textContent = 'or install manually (e.g. "sudo dnf install fuse-libs") and restart the app.';
+            this.updatesBody.appendChild(hint);
             return;
         }
 

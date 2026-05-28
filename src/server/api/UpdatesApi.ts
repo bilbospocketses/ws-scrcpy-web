@@ -11,6 +11,7 @@ import type {
 import { Config } from '../Config';
 import { Logger } from '../Logger';
 import type { UpdateService } from '../UpdateService';
+import { isLibfuse2Installed, ensureLibfuse2 } from '../service/SystemdClient';
 import { readJsonBody } from './utils';
 
 const log = Logger.for('UpdatesApi');
@@ -56,6 +57,9 @@ export class UpdatesApi {
             if (req.method === 'PATCH' && url === '/api/updates/config') {
                 return await this.handleConfig(req, res);
             }
+            if (req.method === 'POST' && url === '/api/updates/install-libfuse2') {
+                return await this.handleInstallLibfuse2(res);
+            }
 
             res.writeHead(404);
             res.end(JSON.stringify({ error: 'Not found' }));
@@ -85,6 +89,9 @@ export class UpdatesApi {
             githubOwner: cfg.githubOwner,
             updateCheckIntervalMinutes: cfg.updateCheckIntervalMinutes,
         };
+        if (process.platform !== 'win32') {
+            out.libfuse2Installed = isLibfuse2Installed();
+        }
         if (s.availableVersion !== undefined) out.availableVersion = s.availableVersion;
         if (s.progress !== undefined) out.progress = s.progress;
         if (s.errorMessage !== undefined) out.errorMessage = s.errorMessage;
@@ -208,6 +215,28 @@ export class UpdatesApi {
 
         res.writeHead(200);
         res.end(JSON.stringify(this.buildStatusResponse()));
+        return true;
+    }
+
+    private async handleInstallLibfuse2(res: ServerResponse): Promise<boolean> {
+        if (process.platform === 'win32') {
+            res.writeHead(400);
+            res.end(JSON.stringify({ ok: false, error: 'libfuse2 is Linux-only' }));
+            return true;
+        }
+        if (isLibfuse2Installed()) {
+            res.writeHead(200);
+            res.end(JSON.stringify({ ok: true, alreadyInstalled: true }));
+            return true;
+        }
+        try {
+            await ensureLibfuse2();
+            res.writeHead(200);
+            res.end(JSON.stringify({ ok: true }));
+        } catch (err) {
+            res.writeHead(500);
+            res.end(JSON.stringify({ ok: false, error: (err as Error).message }));
+        }
         return true;
     }
 }
