@@ -12,7 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Device card button internal padding reduced: modal-launch buttons `0.3rem 0.75rem` → `0.15rem 0.5rem`; disconnect + sleep-wake `4px 10px` → `2px 8px`. Text size unchanged.
-- All device card buttons left-aligned within their grid cells (modal-launch + action). Cell padding (8px) provides offset from the gray cell border.
+- All device card buttons left-aligned within their grid cells (modal-launch + action). Cell padding (`0 8px`) provides offset from the gray cell border.
+- Device card grid cells uniform height (`36px` with `box-sizing: border-box`) across both the services grid and the device-actions row, so all three rows are the same height. Previously the modal-launch row 2 was shortest (button content without icon), and the action row was tallest (heavier button styling); now all three render identical.
 
 ## [0.1.30-beta.17] - 2026-05-28
 

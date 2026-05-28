@@ -155,7 +155,9 @@ body.list #device_list_menu {
     display: flex;
     align-items: center;
     justify-content: flex-start;
-    padding: 8px;
+    padding: 0 8px;
+    height: 36px;
+    box-sizing: border-box;
 }
 
 #devices .device-list div.device .device-actions > .action-cell:nth-child(1) {
@@ -258,11 +260,13 @@ body.list #device_list_menu {
     display: flex;
     align-items: center;
     justify-content: flex-start;
-    padding: 8px;
+    padding: 0 8px;
     margin: 0;
     border: none;
     border-radius: 0;
     overflow: visible;
+    height: 36px;
+    box-sizing: border-box;
 }
 
 /* Cross dividers via cell borders. With grid-auto-flow: column over 2
