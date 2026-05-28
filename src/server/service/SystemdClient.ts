@@ -14,9 +14,12 @@
  *                  ws-scrcpy-web-tray.desktop` file is written to autostart
  *                  the tray helper at desktop login (best-effort).
  *
- *   - **system** — unit at `/etc/systemd/system/<name>.service`. REQUIRES
- *                  root; SystemdClient throws if `process.getuid() !== 0`
- *                  before any side effect. No tray autostart (system-scope
+ *   - **system** — unit at `/etc/systemd/system/<name>.service`. Requires
+ *                  root to write; when `process.getuid() !== 0`, elevation
+ *                  goes through pkexec (PR #211) — the unit body is written
+ *                  to a tmp path and `pkexec sh -c "cp ... && daemon-reload
+ *                  && enable"` runs the privileged steps under a single
+ *                  graphical password prompt. No tray autostart (system-scope
  *                  services typically run on headless servers without a
  *                  desktop session).
  *
