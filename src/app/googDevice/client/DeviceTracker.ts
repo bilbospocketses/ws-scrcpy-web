@@ -225,6 +225,15 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
         // the table past the card border when actions were a rowSpan cell).
         const actionsRow = row.querySelector('.device-actions');
         if (actionsRow) {
+            // Each action button lives inside an `.action-cell` wrapper so the
+            // grid divider can be drawn as a real CSS border on the cell —
+            // borders sit at element edges (integer pixels), so they render
+            // crisply unlike 1px grid-track dividers which can land on sub-
+            // pixel positions and anti-alias to a thicker/dimmer line.
+            const disconnectCell = document.createElement('div');
+            disconnectCell.className = 'action-cell action-cell-disconnect';
+            actionsRow.appendChild(disconnectCell);
+
             // Disconnect button (network devices only)
             if (isNetworkDevice) {
                 const disconnectBtn = document.createElement('button');
@@ -242,8 +251,12 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
                         disconnectBtn.disabled = false;
                     }
                 });
-                actionsRow.appendChild(disconnectBtn);
+                disconnectCell.appendChild(disconnectBtn);
             }
+
+            const sleepCell = document.createElement('div');
+            sleepCell.className = 'action-cell action-cell-sleep';
+            actionsRow.appendChild(sleepCell);
 
             // Sleep/wake button (all devices)
             // State comes from server via WebSocket (descriptor['screen.state'])
@@ -285,7 +298,7 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
                     sleepBtn.className = `sleep-wake-btn ${isAwake ? 'state-on' : 'state-off'}`;
                 }
             });
-            actionsRow.appendChild(sleepBtn);
+            sleepCell.appendChild(sleepBtn);
         }
 
         // Auto-select best interface: prefer wifi/direct IP, fallback to proxy

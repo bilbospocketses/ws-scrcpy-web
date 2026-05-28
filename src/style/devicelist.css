@@ -131,16 +131,14 @@ body.list #device_list_menu {
 /* Device action buttons (disconnect + sleep/wake) — sibling row to the
    device-info table. 2-column grid with outer borders on all four sides;
    border-top is the row divider shared with the services grid above.
-   No inner vertical divider — 1px grid-track dividers render with sub-
-   pixel anti-aliasing artifacts that look thicker/dimmer than the outer
-   borders. */
+   Inner vertical divider is drawn as a border-right on the first
+   .action-cell (an element edge → integer pixel → crisp rendering, no
+   sub-pixel AA artifacts). */
 #devices .device-list div.device .device-actions {
     display: grid;
     grid-template-columns: 1fr 1fr;
     grid-template-rows: auto;
     gap: 0;
-    align-items: center;
-    justify-items: center;
     border-top: 1px solid var(--device-border-color);
     border-left: 1px solid var(--device-border-color);
     border-right: 1px solid var(--device-border-color);
@@ -148,13 +146,27 @@ body.list #device_list_menu {
     padding: 0;
 }
 
+/* Each action button lives inside an .action-cell that stretches to
+   fill its grid cell. The cell's right border (first cell only) is
+   the inner vertical divider. */
+#devices .device-list div.device .device-actions > .action-cell {
+    justify-self: stretch;
+    align-self: stretch;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 8px;
+}
+
+#devices .device-list div.device .device-actions > .action-cell:nth-child(1) {
+    border-right: 1px solid var(--device-border-color);
+}
+
 #devices .device-list div.device .device-actions:empty {
     display: none;
 }
 
 #devices .device-list .disconnect-btn {
-    grid-column: 1;
-    margin: 8px;
     border: 0.5px solid var(--danger-color);
     border-radius: 6px;
     background: transparent;
@@ -178,8 +190,6 @@ body.list #device_list_menu {
 
 /* Sleep/wake button */
 #devices .device-list .sleep-wake-btn {
-    grid-column: 2;
-    margin: 8px;
     border-radius: 6px;
     background: transparent;
     padding: 4px 10px;
@@ -221,27 +231,57 @@ body.list #device_list_menu {
 /* Modal-launch buttons — 2x2 grid filled column-first:
    left col = [shell][list files], right col = [connect][configure stream].
    Outer borders on left/right; border-top is the row divider shared with
-   the device-info table above. No inner cross dividers — 1px grid-track
-   dividers render with sub-pixel anti-aliasing artifacts that look
-   thicker/dimmer than the outer borders. */
+   the device-info table above. Inner cross dividers are drawn as
+   border-right / border-bottom on the cells (the .desc-block items
+   themselves stretch to fill their cell). Borders sit at element edges
+   (integer pixels) so they render crisply, unlike 1px grid-track
+   dividers which can land on sub-pixel positions and anti-alias. */
 #devices .device-list div.device .services {
     display: grid;
     grid-template-columns: 1fr 1fr;
     grid-template-rows: auto auto;
     grid-auto-flow: column;
     gap: 0;
-    align-items: center;
-    justify-items: center;
     border-top: 1px solid var(--device-border-color);
     border-left: 1px solid var(--device-border-color);
     border-right: 1px solid var(--device-border-color);
     padding: 0;
 }
 
-/* Margin around modal buttons gives them breathing room inside the grid
-   cells (container padding is 0). */
+/* Each .desc-block (modal-launch cell) stretches to fill its grid cell.
+   Padding gives breathing room around the inner button (which carries
+   the blue border — moved off .desc-block so .desc-block can act as
+   the gray-bordered cell). */
 #devices .device-list div.device .services > .desc-block {
-    margin: 8px;
+    justify-self: stretch;
+    align-self: stretch;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 8px;
+    margin: 0;
+    border: none;
+    border-radius: 0;
+    overflow: visible;
+}
+
+/* Cross dividers via cell borders. With grid-auto-flow: column over 2
+   rows: nth-child(1)=top-left, (2)=bottom-left, (3)=top-right,
+   (4)=bottom-right. Top-left gets right + bottom; bottom-left gets
+   right; top-right gets bottom; bottom-right gets none. For inactive
+   devices (3 buttons, no `connect`), nth-child(3) is `config stream`
+   sitting at top-right with border-bottom — that's fine; the line
+   ends at the cell boundary regardless of whether anything below
+   occupies the empty bottom-right cell. */
+#devices .device-list div.device .services > .desc-block:nth-child(1) {
+    border-right: 1px solid var(--device-border-color);
+    border-bottom: 1px solid var(--device-border-color);
+}
+#devices .device-list div.device .services > .desc-block:nth-child(2) {
+    border-right: 1px solid var(--device-border-color);
+}
+#devices .device-list div.device .services > .desc-block:nth-child(3) {
+    border-bottom: 1px solid var(--device-border-color);
 }
 
 #devices .device-list div.device .services:last-child {
@@ -252,11 +292,13 @@ body.list #device_list_menu {
     margin-top: 8px;
 }
 
+/* .desc-block default styles for places OUTSIDE the services grid
+   (kept for any other consumer). Inside the services grid, .desc-block
+   acts as a cell; the blue border is moved to the inner button/link. */
 #devices .device-list div.desc-block {
     margin: 0;
     display: inline-flex;
     align-items: center;
-    border: 0.5px solid #5b9aff;
     border-radius: 6px;
     overflow: hidden;
     white-space: nowrap;
@@ -283,10 +325,13 @@ body.list #device_list_menu {
     color: var(--link-color_visited-light);
 }
 
-/* Action buttons and links styled as buttons */
+/* Action buttons and links styled as buttons. Blue border moved here
+   from .desc-block so the parent .desc-block can act as a grid cell
+   (with gray cell borders) without an outer blue border around it. */
 #devices .device-list div.desc-block .action-button,
 #devices .device-list div.desc-block a {
-    border: none;
+    border: 0.5px solid #5b9aff;
+    border-radius: 6px;
     background-color: transparent;
     color: #5b9aff;
     text-decoration: none;

@@ -12,10 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Device card horizontal padding now symmetric (8px 14px); the 3px green/red active-state left border is outside this padding so it doesn't unbalance the content area.
-
-### Changed
-
-- Reverted the inner cross dividers (vertical between columns, horizontal between modal-launch rows). 1px grid-track dividers position based on the auto-sized neighbor tracks, which often land on sub-pixel boundaries — the browser then anti-aliases the line across two physical pixels, making it appear thicker and dimmer than the outer borders (which are at element edges, always integer pixels). Outer borders + section dividers remain.
+- Device card grid dividers now render crisp (no sub-pixel anti-aliasing). The previous attempt used 1px grid-track dividers (`grid-template-columns: 1fr 1px 1fr`), which position based on neighbor auto-tracks that often land on sub-pixel boundaries — the browser anti-aliased the line across two physical pixels, making it thicker and dimmer than the outer borders. Switched to cell-border drawing: `.desc-block` items stretch to fill their grid cells and get `border-right` / `border-bottom` via `:nth-child` to draw the cross; action buttons are now wrapped in `.action-cell` divs with the same treatment. Borders sit at element edges (always integer pixels) and render at the same crispness as the outer card border.
+- Blue button border moved from `.desc-block` (now the cell) to the inner `.action-button` / `<a>` (the actual button shape). Visual unchanged — blue-bordered button sits centered inside a gray-bordered cell.
 
 ## [0.1.30-beta.16] - 2026-05-28
 
