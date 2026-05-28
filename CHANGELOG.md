@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.18] - 2026-05-28
+
+### Changed
+
+- Device card button internal padding reduced: modal-launch buttons `0.3rem 0.75rem` → `0.15rem 0.5rem`; disconnect + sleep-wake `4px 10px` → `2px 8px`. Text size unchanged.
+- All device card buttons left-aligned within their grid cells (modal-launch + action). Cell padding (8px) provides offset from the gray cell border.
+
 ## [0.1.30-beta.17] - 2026-05-28
 
 ### Fixed
