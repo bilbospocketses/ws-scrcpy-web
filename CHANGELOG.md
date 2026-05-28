@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Settings modal Linux scope chooser now always renders, even when the service is installed.** When the service is installed, the radios are pre-selected from the active install mode (`user-service` → user, `system-service` → system) and disabled — switching scope is still a deliberate uninstall→reinstall operation (systemd user-scope and system-scope unit files can't coexist for the same service name), but now the user can see at a glance which scope they picked. Pre-fix the row was hidden entirely once installed and there was no in-UI way to tell the active scope. Disabled-radio labels render with `opacity: 0.5` + `cursor: not-allowed` via a `:has(input:disabled)` rule. `ServiceStatusResponse` now carries `installMode` so the frontend doesn't need a second endpoint to populate the row.
 - **Settings modal Linux scope chooser now lives in a standard 2-column grid row** matching the update channel row. Description on the left ("service scope"), radios on the right ("user" / "system (req. sudo)"). The pre-v0.1.30 implementation rendered the chooser as a `<fieldset>` spanning both columns, which (a) didn't match any other settings row and (b) starved the install-button row below it of horizontal space on narrower modal widths, causing the button text "not installed — install?" to wrap to two lines. Removed the orphaned `.settings-scope-fieldset` CSS as part of the cleanup.
 
 ### Fixed

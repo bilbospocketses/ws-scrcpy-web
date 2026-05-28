@@ -812,13 +812,24 @@ export class SettingsModal extends Modal {
 
         const status = resp.status ?? 'not-installed';
 
-        // Linux scope chooser only when not-installed. Rendered as a standard
-        // settings row (description left, radios right) matching the update
-        // channel row's pattern. Pre-v0.1.30 this used a fieldset spanning
-        // both columns, which broke the grid alignment of the install button
-        // row below it (button wrapped to two lines on narrower modal widths).
+        // Linux scope chooser: standard settings row matching the update
+        // channel row's pattern. Always rendered on Linux. When the service
+        // is installed, the radios are pre-selected from resp.installMode
+        // and disabled — switching scope requires a deliberate
+        // uninstall→reinstall (systemd user-scope and system-scope unit
+        // files live in different paths and can't coexist for the same
+        // service name). Pre-v0.1.30 the row was only rendered when not
+        // installed, leaving no in-UI way to tell which scope was active.
         this.serviceScopeSystemRadio = null;
-        if (status === 'not-installed' && resp.platform === 'linux') {
+        if (resp.platform === 'linux') {
+            const isInstalled = status !== 'not-installed';
+            const installedScope: 'user' | 'system' | null =
+                resp.installMode === 'system-service'
+                    ? 'system'
+                    : resp.installMode === 'user-service'
+                        ? 'user'
+                        : null;
+
             const scopeFrag = document.createDocumentFragment();
 
             const userLabel = document.createElement('label');
@@ -827,7 +838,8 @@ export class SettingsModal extends Modal {
             userRadio.type = 'radio';
             userRadio.name = 'settings-scope';
             userRadio.value = 'user';
-            userRadio.checked = true;
+            userRadio.checked = isInstalled ? installedScope === 'user' : true;
+            userRadio.disabled = isInstalled;
             userLabel.appendChild(userRadio);
             userLabel.appendChild(document.createTextNode('user'));
             scopeFrag.appendChild(userLabel);
@@ -838,12 +850,17 @@ export class SettingsModal extends Modal {
             sysRadio.type = 'radio';
             sysRadio.name = 'settings-scope';
             sysRadio.value = 'system';
+            sysRadio.checked = isInstalled && installedScope === 'system';
+            sysRadio.disabled = isInstalled;
             sysLabel.appendChild(sysRadio);
             sysLabel.appendChild(document.createTextNode('system (req. sudo)'));
             scopeFrag.appendChild(sysLabel);
 
             this.serviceSection.appendChild(this.buildRow('service scope', scopeFrag));
-            this.serviceScopeSystemRadio = sysRadio;
+            // serviceScopeSystemRadio feeds the install request body; null
+            // it out when installed so the install handler (unreachable in
+            // that state anyway) can't accidentally consume a stale value.
+            this.serviceScopeSystemRadio = isInstalled ? null : sysRadio;
         }
 
         // One row: label = informational blurb (left column, wraps),

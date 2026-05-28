@@ -174,6 +174,27 @@ describe('ServiceApi', () => {
         expect(body.configMtime).toBeGreaterThan(0);
     });
 
+    it('GET /status surfaces installMode so the frontend can show the active scope', async () => {
+        // The settings modal uses this to pre-select + disable the scope
+        // radios when a Linux service is already installed. Round-trip the
+        // config value through the status endpoint to confirm it lands in
+        // the response body (not gated by platform).
+        const cfg = Config.getInstance();
+        cfg.updateAppConfig({ installMode: 'system-service' });
+
+        const client = fakeClient({ status: vi.fn(async () => 'running' as const) });
+        const factoryResult: ServiceClientFactoryResult = {
+            client,
+            supported: true,
+            platform: 'linux',
+        };
+        const api = new ServiceApi(() => factoryResult, () => 'user');
+        const { req, res } = makeReqRes('/api/service/status');
+        await api.handle(req, res);
+        const body = JSON.parse((res as any).getBody());
+        expect(body.installMode).toBe('system-service');
+    });
+
     it('POST /install returns 501 with unsupportedReason on unsupported platforms', async () => {
         const factoryResult: ServiceClientFactoryResult = {
             client: fakeClient(),

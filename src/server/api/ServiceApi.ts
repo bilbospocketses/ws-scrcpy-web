@@ -113,10 +113,12 @@ export class ServiceApi {
         }
         const status = await result.client.status(WS_SCRCPY_SERVICE_NAME);
         const disk = this.readDiskConfig();
+        const installMode = Config.getInstance().getAppConfig().installMode;
         const body: ServiceStatusResponse = {
             supported: true,
             platform: result.platform,
             status,
+            installMode,
             ...(disk.diskWebPort != null ? { diskWebPort: disk.diskWebPort } : {}),
             ...(disk.configMtime != null ? { configMtime: disk.configMtime } : {}),
         };

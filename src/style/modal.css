@@ -599,6 +599,17 @@ dialog.settings-modal .settings-control .settings-radio-label {
 }
 
 /*
+ * Disabled radio (e.g. service scope while installed): mute the whole
+ * label, not just the radio circle, so the read-only state reads at a
+ * glance. :has() is supported in the AppImage's bundled webview
+ * (Chrome 105+ / Firefox 121+ / Safari 15.4+).
+ */
+dialog.settings-modal .settings-control .settings-radio-label:has(input:disabled) {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/*
  * Apply-update button styling — green outline + green text — mirroring
  * the home-page UpdateButton chip's "ready" state. Higher specificity
  * than .settings-btn-primary so it overrides when both classes are

@@ -29,6 +29,13 @@ export interface ServiceStatusResponse {
     diskWebPort?: number | undefined;
     /** config.json filesystem mtime in epoch milliseconds. Present when supported=true. */
     configMtime?: number | undefined;
+    /**
+     * Snapshot of `AppConfig.installMode` at status time. Lets the frontend
+     * tell which service scope is active (`user-service` vs `system-service`)
+     * without poking a second endpoint. `null` when never installed. Present
+     * when supported=true.
+     */
+    installMode?: 'user' | 'system' | 'user-service' | 'system-service' | null;
 }
 
 /** Success response shape for /api/service/install and /api/service/uninstall. */
@@ -113,8 +120,9 @@ export type ServiceUninstallResponse = ServiceActionSuccess | ServiceActionFailu
  * - On **Linux**, `scope` selects between user-level (`~/.config/systemd/user/`,
  *   no sudo) and system-level (`/etc/systemd/system/`, requires root) systemd
  *   units. Defaults to `'user'` when omitted. If `scope === 'system'` and the
- *   server isn't running as root, the API returns HTTP 403 with a descriptive
- *   error.
+ *   server isn't running as root, `SystemdClient.install()` elevates via
+ *   pkexec (single graphical password prompt covers cp + daemon-reload +
+ *   enable). The API itself stays unelevated.
  * - On **Windows**, `scope` is IGNORED — the install scope is auto-detected
  *   from `process.execPath` (Per-Machine vs Per-User) at install time.
  */
