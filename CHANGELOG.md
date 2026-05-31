@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **`dependabot-auto-merge.yml` no longer grants a workflow-level write token.** The top-level `permissions:` block granted `contents: write` + `pull-requests: write` to the entire workflow; the `auto-merge` job now declares those writes itself and the workflow default drops to `contents: read`. Closes the high-severity `TokenPermissionsID` (OpenSSF Scorecard / CodeQL) code-scanning alert. Mirrors the `release.yml` hardening that closed Scorecard alert #16.
+
 ## [0.1.30-beta.22] - 2026-05-28
 
 ### Fixed
