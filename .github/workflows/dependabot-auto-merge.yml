@@ -7,14 +7,20 @@
 name: Dependabot auto-merge
 on: pull_request
 
+# Workflow-level default: read-only. The auto-merge job narrows UP to the
+# writes it needs. A top-level write token is what TokenPermissionsID
+# (OpenSSF Scorecard / CodeQL) flags high-severity — closes alert #28.
+# Mirrors release.yml (which closed Scorecard alert #16).
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
   auto-merge:
     runs-on: ubuntu-latest
     if: github.actor == 'dependabot[bot]'
+    permissions:
+      contents: write        # gh pr merge --squash writes the default branch
+      pull-requests: write   # enable auto-merge on the PR
     steps:
       - name: Fetch Dependabot metadata
         id: metadata
