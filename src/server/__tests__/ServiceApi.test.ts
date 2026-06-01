@@ -72,6 +72,7 @@ describe('ServiceApi', () => {
     const savedEnv = {
         CONFIG: process.env[EnvName.CONFIG_PATH],
         DEPS: process.env['DEPS_PATH'],
+        PROGRAMDATA: process.env['PROGRAMDATA'],
     };
 
     beforeEach(() => {
@@ -81,6 +82,13 @@ describe('ServiceApi', () => {
         fs.writeFileSync(configPath, JSON.stringify({}));
         process.env[EnvName.CONFIG_PATH] = configPath;
         process.env['DEPS_PATH'] = path.join(tmpRoot, 'deps');
+        // Redirect PROGRAMDATA to tmpRoot so Config.resolveDataRoot (which reads
+        // process.env['PROGRAMDATA'] directly on Windows) resolves cfg.dataRoot
+        // to <tmpRoot>\WsScrcpyWeb. Without this, control-marker writes
+        // (local-appimage, uninstall-pending) land in the REAL C:\ProgramData
+        // on every test run. With it, all such writes land inside tmpRoot, which
+        // afterEach rmSyncs recursively — fully hermetic.
+        process.env['PROGRAMDATA'] = tmpRoot;
         Config._resetForTest();
     });
 
@@ -94,6 +102,8 @@ describe('ServiceApi', () => {
         else process.env[EnvName.CONFIG_PATH] = savedEnv.CONFIG;
         if (savedEnv.DEPS === undefined) delete process.env['DEPS_PATH'];
         else process.env['DEPS_PATH'] = savedEnv.DEPS;
+        if (savedEnv.PROGRAMDATA === undefined) delete process.env['PROGRAMDATA'];
+        else process.env['PROGRAMDATA'] = savedEnv.PROGRAMDATA;
         while (tmpDirs.length) {
             const d = tmpDirs.pop()!;
             try {
@@ -624,12 +634,6 @@ describe('ServiceApi', () => {
             const appImagePath = '/home/jamie/Applications/WsScrcpyWeb.AppImage';
             const savedAppImage = process.env['APPIMAGE'];
             process.env['APPIMAGE'] = appImagePath;
-            // Compute the marker path up-front so we can clean it up in finally.
-            // On Windows cfg.dataRoot = C:\ProgramData\WsScrcpyWeb (a real path),
-            // so the marker lands outside tmpDirs and must be cleaned explicitly.
-            const cfg = Config.getInstance();
-            const dataRoot = cfg.dataRoot ?? path.dirname(cfg.dependenciesPath);
-            const markerPath = path.join(dataRoot, 'control', 'local-appimage');
             try {
                 const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(async () => undefined);
                 const client = fakeClient({
@@ -651,10 +655,14 @@ describe('ServiceApi', () => {
                 expect((res as any).getStatus()).toBe(200);
 
                 // Verify the marker landed on disk with the correct content.
+                // PROGRAMDATA is redirected to tmpRoot in beforeEach, so
+                // cfg.dataRoot resolves inside tmpRoot (cleaned by afterEach).
+                const cfg = Config.getInstance();
+                const dataRoot = cfg.dataRoot ?? path.dirname(cfg.dependenciesPath);
+                const markerPath = path.join(dataRoot, 'control', 'local-appimage');
                 expect(fs.existsSync(markerPath)).toBe(true);
                 expect(fs.readFileSync(markerPath, 'utf8')).toBe(appImagePath);
             } finally {
-                try { fs.rmSync(markerPath, { force: true }); } catch { /* best-effort */ }
                 if (savedAppImage === undefined) delete process.env['APPIMAGE'];
                 else process.env['APPIMAGE'] = savedAppImage;
             }
@@ -663,11 +671,6 @@ describe('ServiceApi', () => {
         it('POST /install on Linux without $APPIMAGE does NOT write local-appimage marker', async () => {
             const savedAppImage = process.env['APPIMAGE'];
             delete process.env['APPIMAGE'];
-            // Compute the marker path and ensure no stale copy from a prior run.
-            const cfg = Config.getInstance();
-            const dataRoot = cfg.dataRoot ?? path.dirname(cfg.dependenciesPath);
-            const markerPath = path.join(dataRoot, 'control', 'local-appimage');
-            try { fs.rmSync(markerPath, { force: true }); } catch { /* best-effort */ }
             try {
                 const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(async () => undefined);
                 const client = fakeClient({
@@ -688,7 +691,11 @@ describe('ServiceApi', () => {
                 await api.handle(req, res);
                 expect((res as any).getStatus()).toBe(200);
 
-                // Marker must NOT exist when APPIMAGE is unset.
+                // Marker must NOT exist when APPIMAGE is unset. tmpRoot is fresh
+                // per-test (beforeEach), so no stale marker can leak in.
+                const cfg = Config.getInstance();
+                const dataRoot = cfg.dataRoot ?? path.dirname(cfg.dependenciesPath);
+                const markerPath = path.join(dataRoot, 'control', 'local-appimage');
                 expect(fs.existsSync(markerPath)).toBe(false);
             } finally {
                 if (savedAppImage === undefined) delete process.env['APPIMAGE'];
