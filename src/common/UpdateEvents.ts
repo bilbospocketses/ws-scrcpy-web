@@ -73,4 +73,10 @@ export interface UpdatesErrorResponse {
 /** Apply success envelope (returned right before the deferred process.exit). */
 export interface UpdatesApplyResponse {
     ok: true;
+    /**
+     * Linux only. When 'reconnect', the client shows the upgrading overlay and
+     * polls the same origin until the relaunched app answers on the new
+     * version. Absent on Windows (which uses the operation-server HTML redirect).
+     */
+    mode?: 'reconnect';
 }

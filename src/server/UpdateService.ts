@@ -430,6 +430,15 @@ export class UpdateService {
             return { redirectPort: null };
         }
 
+        // Linux local mode: Velopack applies on exit and relaunches the AppImage
+        // (which rebinds the freed web port). The Windows operation-server helper
+        // below does not exist on Linux — spawning it would ENOENT and the apply
+        // would never run. restart=true so Velopack relaunches the new version.
+        if (this.platform !== 'win32') {
+            this.mgr.waitExitThenApplyUpdate(this.state.pendingUpdate, true, true);
+            return { redirectPort: null };
+        }
+
         const cfg = Config.getInstance();
         const dataRoot = cfg.dataRoot ?? path.dirname(cfg.dependenciesPath);
         const helperPath = path.join(

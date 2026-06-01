@@ -270,6 +270,38 @@ describe('UpdatesApi', () => {
         expect(schedule).not.toHaveBeenCalled();
     });
 
+    it('POST /apply (linux): body carries mode:"reconnect" when redirectPort is null', async () => {
+        const orig = Object.getOwnPropertyDescriptor(process, 'platform');
+        Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+        try {
+            const svc = fakeService({ isInstalled: true, status: 'ready', availableVersion: '0.2.0' });
+            const api = new UpdatesApi(svc, vi.fn(), vi.fn());
+            const { req, res } = makeReqRes('/api/updates/apply', 'POST');
+            await api.handle(req, res);
+            expect((res as any).getStatus()).toBe(200);
+            expect(JSON.parse((res as any).getBody())).toEqual({ ok: true, mode: 'reconnect' });
+            expect(svc.applyUpdate).toHaveBeenCalledTimes(1);
+        } finally {
+            if (orig) Object.defineProperty(process, 'platform', orig);
+        }
+    });
+
+    it('POST /apply (win32): body is { ok:true } with no mode', async () => {
+        const orig = Object.getOwnPropertyDescriptor(process, 'platform');
+        Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+        try {
+            const svc = fakeService({ isInstalled: true, status: 'ready', availableVersion: '0.2.0' });
+            const api = new UpdatesApi(svc, vi.fn(), vi.fn());
+            const { req, res } = makeReqRes('/api/updates/apply', 'POST');
+            await api.handle(req, res);
+            const body = JSON.parse((res as any).getBody());
+            expect(body).toEqual({ ok: true });
+            expect(body.mode).toBeUndefined();
+        } finally {
+            if (orig) Object.defineProperty(process, 'platform', orig);
+        }
+    });
+
     // ── PATCH /config: validation ────────────────────────────────────────
 
     it('PATCH /config: bad channel → 400', async () => {
