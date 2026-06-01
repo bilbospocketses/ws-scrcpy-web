@@ -1,13 +1,25 @@
 // @vitest-environment jsdom
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { UpgradingOverlay } from '../UpgradingOverlay';
 
+beforeAll(() => {
+    // jsdom doesn't implement the top-layer dialog methods.
+    HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) {
+        this.open = true;
+    });
+    HTMLDialogElement.prototype.close = vi.fn(function (this: HTMLDialogElement) {
+        this.open = false;
+    });
+});
+
 describe('UpgradingOverlay', () => {
-    it('mounts, shows the applying message, swaps to timeout copy, and removes', () => {
+    it('mounts a top-layer <dialog> via showModal, swaps to timeout copy, and removes', () => {
+        const spy = vi.spyOn(HTMLDialogElement.prototype, 'showModal');
         const o = new UpgradingOverlay();
         o.mount();
-        const el = document.querySelector('.upgrading-overlay');
+        const el = document.querySelector('dialog.upgrading-overlay');
         expect(el).not.toBeNull();
+        expect(spy).toHaveBeenCalledTimes(1);
         expect(el!.textContent).toContain('updating');
 
         o.setState('timeout', 'http://localhost:8000/');

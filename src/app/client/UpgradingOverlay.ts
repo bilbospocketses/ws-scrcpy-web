@@ -8,25 +8,34 @@ type OverlayState = 'applying' | 'reconnecting' | 'timeout';
  * needed to render). Lowercase copy per the app motif.
  */
 export class UpgradingOverlay {
-    private root: HTMLDivElement | null = null;
+    private root: HTMLDialogElement | null = null;
     private msg: HTMLParagraphElement | null = null;
 
     mount(): void {
         if (this.root) return;
-        const root = document.createElement('div');
+        const root = document.createElement('dialog');
         root.className = 'upgrading-overlay';
-        // Inline the few critical styles so the overlay renders even if the
-        // stylesheet is mid-reload. Visual polish belongs in the stylesheet.
+        // Inline critical styles so it renders even if the stylesheet is mid-reload.
+        // It's a <dialog> in the top layer (via showModal), so it sits above the
+        // Settings <dialog> regardless of z-index. Fill the viewport; kill default
+        // dialog chrome.
         root.style.cssText =
-            'position:fixed;inset:0;z-index:99999;display:flex;flex-direction:column;' +
-            'align-items:center;justify-content:center;gap:1rem;background:rgba(0,0,0,0.85);' +
-            'color:#fff;font:14px/1.5 system-ui,sans-serif;text-align:center;padding:2rem;';
+            'position:fixed;inset:0;width:100vw;height:100vh;max-width:100vw;max-height:100vh;' +
+            'box-sizing:border-box;border:none;margin:0;padding:2rem;display:flex;' +
+            'flex-direction:column;align-items:center;justify-content:center;gap:1rem;' +
+            'background:rgba(0,0,0,0.85);color:#fff;font:14px/1.5 system-ui,sans-serif;text-align:center;';
         const spinner = document.createElement('div');
         spinner.className = 'upgrading-overlay-spinner';
         const msg = document.createElement('p');
         msg.className = 'upgrading-overlay-msg';
         root.append(spinner, msg);
         document.body.appendChild(root);
+        // showModal() promotes the dialog to the browser top layer, above any other
+        // open modal (e.g. the Settings <dialog>) regardless of z-index. Guard for
+        // jsdom/older engines where showModal may be absent.
+        if (typeof root.showModal === 'function') {
+            root.showModal();
+        }
         this.root = root;
         this.msg = msg;
         this.setState('applying');
@@ -45,7 +54,12 @@ export class UpgradingOverlay {
     }
 
     remove(): void {
-        this.root?.remove();
+        if (this.root) {
+            if (this.root.open && typeof this.root.close === 'function') {
+                this.root.close();
+            }
+            this.root.remove();
+        }
         this.root = null;
         this.msg = null;
     }
