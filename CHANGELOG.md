@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.24] - 2026-06-01
+
+### Changed
+
+- **v0.1.30-beta.24 is a no-op companion release to beta.23** — identical code, published solely as the update target for verifying the now-fixed Linux in-app updater (install beta.23, confirm it auto-updates to beta.24). The no-op-companion practice was retired for the stable Windows updater (see `docs/RELEASING.md`), but is re-used here specifically to verify the Linux updater end-to-end.
+
 ## [0.1.30-beta.23] - 2026-06-01
 
 ### Fixed
