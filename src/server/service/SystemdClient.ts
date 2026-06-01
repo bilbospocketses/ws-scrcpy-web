@@ -394,6 +394,18 @@ export class SystemdClient implements ServiceClient {
         }
     }
 
+    /**
+     * Disable + remove the systemd unit for `name`, resolving the active scope
+     * from whichever unit file exists on disk. Idempotent — a no-op if neither
+     * unit file is present.
+     *
+     * NOTE (item 32): the Linux `/api/service/uninstall` path no longer calls
+     * this method. ServiceApi.handleUninstall hands off to an out-of-cgroup
+     * `systemd-run` teardown helper instead, because running `systemctl disable
+     * --now` from inside the service unit's own cgroup would kill the calling
+     * process mid-operation. This method is retained as the `ServiceClient`
+     * interface implementation (and for any non-cgroup-bound callers).
+     */
     public async uninstall(name: string): Promise<void> {
         const scope = this.resolveActiveScope(name);
         if (scope === null) {
@@ -402,10 +414,11 @@ export class SystemdClient implements ServiceClient {
 
         if (scope === 'system' && process.getuid?.() !== 0) {
             const unitPath = this.systemUnitPath(name);
+            const systemctl = resolveSystemTool('systemctl');
             const cmd = [
-                `systemctl disable --now ${name}.service || true`,
+                `${systemctl} disable --now ${name}.service || true`,
                 `rm -f "${unitPath}"`,
-                'systemctl daemon-reload',
+                `${systemctl} daemon-reload`,
             ].join(' && ');
             await runPkexec(cmd, 'uninstall (system scope)');
         } else {
