@@ -19,6 +19,8 @@ mod tray_supervisor;
 mod uac_requester;
 mod unzip_handler;
 mod operation_server;
+#[cfg(target_os = "linux")]
+mod linux_apply;
 #[cfg(windows)]
 mod user_session_spawn;
 
@@ -81,6 +83,14 @@ fn main() {
     // the SHA-pinned launcher instead of resolving via system PATH.
     if let Some(code) = unzip_handler::handle(&args) {
         log::info(&format!("unzip exiting with code {code}"));
+        std::process::exit(code);
+    }
+
+    // Linux in-app update apply helper (spawned by the Node server in dataRoot,
+    // outside the AppImage mount). Swaps $APPIMAGE + relaunches. Linux-only.
+    #[cfg(target_os = "linux")]
+    if let Some(code) = linux_apply::handle(&args) {
+        log::info(&format!("linux-apply exiting with code {code}"));
         std::process::exit(code);
     }
 
