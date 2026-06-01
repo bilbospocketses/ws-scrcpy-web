@@ -11,6 +11,18 @@ import type {
 import type { UpdatesStatusResponse, UpdatesConfigPatchRequest } from '../../common/UpdateEvents';
 
 /**
+ * Follow-up copy shown after a Linux service uninstall begins, by scope.
+ * User scope: the Rust teardown helper relaunches the home AppImage in local
+ * mode, so the page will reconnect. System scope: no relaunch - user is
+ * informed the service has been stopped.
+ */
+export function uninstallFollowupMessage(mode: 'user' | 'system'): string {
+    return mode === 'system'
+        ? 'service removed. the system service has been stopped. relaunch the app manually to use local mode.'
+        : 'service removed. relaunching the app in local mode. this page will reconnect shortly.';
+}
+
+/**
  * Settings modal — unified two-column grid layout.
  *
  * Every section is built from the same primitive:
@@ -1038,6 +1050,24 @@ export class SettingsModal extends Modal {
                 return;
             }
             if (data.status === 'shutting-down') {
+                // Derive scope from the installMode field so we know whether a
+                // local relaunch is coming (user scope) or not (system scope).
+                const isSystemUninstall =
+                    data.installMode === 'system' || data.installMode === 'system-service';
+                if (isLinux && isSystemUninstall) {
+                    // System scope on Linux: teardown helper stops the unit but
+                    // does NOT relaunch a local instance. Nothing to poll for.
+                    modal.close();
+                    btn.disabled = false;
+                    btn.textContent = prevText;
+                    this.renderServiceError(
+                        uninstallFollowupMessage('system'),
+                        () => void this.refreshService(),
+                    );
+                    return;
+                }
+                // User scope on Linux (or Windows): a fresh local instance is
+                // relaunching. Fall through to the mtime poll / navigate path.
                 // §39: mtime-based discovery via operation-server's /api/discover.
                 // The service-Node is about to die. The operation-server takes over
                 // the port. Poll /api/discover until config.json mtime changes
