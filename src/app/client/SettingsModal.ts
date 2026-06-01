@@ -1,6 +1,7 @@
 import { Modal } from '../ui/Modal';
 import { AdminConfirmModal, type AdminConfirmOptions } from './AdminConfirmModal';
 import { ServiceOperationModal } from './ServiceOperationModal';
+import { runUpgradingHandoff } from './UpgradingOverlay';
 import type { AppConfigEnvelope, AppConfigPatchResponse, UpdateChannel } from '../../common/ConfigEvents';
 import type {
     ServiceStatusResponse,
@@ -676,6 +677,13 @@ export class SettingsModal extends Modal {
                 // Re-poll to learn the current state (probably 409 because state
                 // wasn't 'ready' anymore by the time we got here).
                 void this.refreshUpdates();
+                return;
+            }
+            const applyBody = (await r.json().catch(() => ({}))) as { mode?: string };
+            if (applyBody.mode === 'reconnect') {
+                // Linux: server relaunching the AppImage. Show the upgrading
+                // overlay and poll the same origin until the new version answers.
+                await runUpgradingHandoff(this.updatesLastStatus?.currentVersion ?? '');
                 return;
             }
             // Success: server is exiting within ~100ms. Show "restarting…" and

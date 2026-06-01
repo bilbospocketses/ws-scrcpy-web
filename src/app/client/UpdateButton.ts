@@ -1,4 +1,5 @@
 import type { UpdatesStatusResponse } from '../../common/UpdateEvents';
+import { runUpgradingHandoff } from './UpgradingOverlay';
 
 /**
  * UpdateButton — small top-right indicator that polls /api/updates/status and
@@ -217,10 +218,18 @@ export function createUpdateButton(): HTMLElement {
                 void poll();
                 return;
             }
-            // Success: server is exiting within ~100ms. Show "restarting…" and
-            // attempt a page reload after a short grace period. The reload will
-            // fail until Velopack finishes the swap and relaunches the server;
-            // that's expected — leave the message visible.
+            const body = (await r.json().catch(() => ({}))) as { mode?: string };
+            if (body.mode === 'reconnect') {
+                // Linux: the server is relaunching the AppImage. Show the
+                // upgrading overlay and poll the same origin until the new
+                // version answers, then reload (timeout → bookmark fallback).
+                await runUpgradingHandoff(lastStatus?.currentVersion ?? '');
+                return;
+            }
+            // Windows / fallback: server is exiting within ~100ms. Show
+            // "restarting…" and attempt a page reload after a short grace
+            // period. The reload fails until Velopack finishes the swap and
+            // relaunches the server; that's expected — leave the message visible.
             renderRestarting();
             window.setTimeout(() => {
                 try {
