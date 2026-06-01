@@ -27,14 +27,20 @@ This is the operational runbook for cutting a release. Every step is a concrete 
    node scripts/extract-changelog.mjs vX.Y.Z
    ```
    Confirm the captured section reads correctly. While releases remain unsigned, also try `--unsigned` to preview the warning block CI will inject.
-6. **Commit and tag.**
+6. **Land the bump via a PR — the tag is created for you.** `main` is protected (PR + passing checks + signed commit required), so you can **not** `git push origin main`, and you do **not** tag by hand. The `auto-release.yml` pipeline (fires on every push to `main`) does the tagging. Two ways in:
+
+   **(a) Label-driven (preferred).** Put a `release:beta` or `release:stable` label on the feature PR before it merges. On merge, the `Auto Release` workflow computes the next version, opens an **API-signed** bump PR (web-flow-signed so it satisfies `required_signatures`), and auto-merges it; that bump-commit merge then triggers the tag push. Nothing manual after labeling.
+
+   **(b) Manual bump PR.** Otherwise open the bump PR yourself. The commit subject **must** start with `chore: bump to v` — `Auto Release` keys off it (mode 2):
    ```bash
-   git add package.json Cargo.toml Cargo.lock CHANGELOG.md
-   git commit -m "chore(release): vX.Y.Z"
-   git tag -a vX.Y.Z -m "vX.Y.Z"
-   git push origin main
-   git push origin vX.Y.Z
+   git checkout -b chore/bump-vX.Y.Z
+   git add package.json Cargo.toml CHANGELOG.md   # files already edited in step 3
+   git commit -m "chore: bump to vX.Y.Z"
+   git push -u origin chore/bump-vX.Y.Z
+   gh pr create --title "chore: bump to vX.Y.Z" --body "release vX.Y.Z"
+   gh pr merge --squash --delete-branch --auto
    ```
+   On merge, `Auto Release` detects the bump commit and pushes the `vX.Y.Z` tag itself, which triggers `release.yml`. **Never** run `git tag` / `git push origin vX.Y.Z` by hand — the release bot owns tagging.
 7. **Watch CI.** The tag push triggers `.github/workflows/release.yml`. Both Windows and Linux jobs run in parallel; the `publish` job uploads artifacts (MSI, portable ZIP, AppImage, nupkg, releases.stable.json, SHA256SUMS) and creates a GitHub Release with auto-generated notes. (When a code-signing path is wired in, signed artifacts and detached signatures will be published alongside.)
    ```bash
    gh run watch
@@ -43,15 +49,19 @@ This is the operational runbook for cutting a release. Every step is a concrete 
 
 ## Cutting a beta release
 
-Same as stable, but the tag uses a `-beta.N` suffix and CI marks the release as a pre-release.
+Same flow as stable (PR-based, auto-tagged), but the version carries a `-beta.N` suffix.
+
+The fastest path is the **`release:beta` label** (step 6a): label the feature PR, merge it, and `Auto Release` cuts the next `-beta.N` for you. To cut a specific beta by hand, open a bump PR whose commit subject is `chore: bump to vX.Y.Z-beta.N` (step 6b); `Auto Release` tags it on merge:
 
 ```bash
-node scripts/bump-version.mjs X.Y.Z-beta.1
-git add package.json Cargo.toml Cargo.lock CHANGELOG.md
-git commit -m "chore(release): vX.Y.Z-beta.1"
-git tag -a vX.Y.Z-beta.1 -m "vX.Y.Z-beta.1"
-git push origin main
-git push origin vX.Y.Z-beta.1
+git checkout -b chore/bump-vX.Y.Z-beta.N
+node scripts/bump-version.mjs X.Y.Z-beta.N
+git add package.json Cargo.toml CHANGELOG.md
+git commit -m "chore: bump to vX.Y.Z-beta.N"
+git push -u origin chore/bump-vX.Y.Z-beta.N
+gh pr create --title "chore: bump to vX.Y.Z-beta.N" --body "release vX.Y.Z-beta.N"
+gh pr merge --squash --delete-branch --auto
+# Auto Release pushes the tag on merge — do NOT tag by hand.
 ```
 
 The release workflow detects `*-beta*` in the tag name, sets `channel=beta`, and uses a separate Velopack feed file (`releases.beta.json`) so beta and stable channels are independent.
