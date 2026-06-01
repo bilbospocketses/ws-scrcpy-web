@@ -36,7 +36,6 @@ const REPO_ROOT = join(__dirname, '..');
 
 const PACK_ID = 'WsScrcpyWeb';                    // Matches Windows packId
 const MAIN_EXE = 'ws-scrcpy-web-launcher';        // Linux binary, no .exe
-const CHANNEL = 'linux';                          // Velopack default for Linux
 const CATEGORIES = 'Utility';                     // FreeDesktop categories spec
 
 const PUBLISH_DIR = join(REPO_ROOT, 'publish');
@@ -111,10 +110,21 @@ function main() {
     }
 
     const version = readVersion();
+    // Linux ships per-platform Velopack channels (linux-beta / linux-stable) so
+    // its releases.<channel>.json feed + nupkg don't collide with the Windows
+    // beta/stable feeds on the same GitHub release. Derive beta/stable from the
+    // version (mirrors release.yml's tag→channel rule; assert-version-sync keeps
+    // package.json === tag). MUST match UpdateService.resolveExplicitChannel so
+    // the installed app queries the feed we actually publish.
+    const channelBase = version.includes('-beta') ? 'beta' : 'stable';
+    const CHANNEL = `linux-${channelBase}`;
     log(`packing AppImage: id=${PACK_ID} version=${version} channel=${CHANNEL}`);
 
     // execFileSync with array-form args — no shell interpolation, no
     // injection surface. Inherit stdio so vpk's progress reaches the user.
+    // -o Releases pins flat output (matching the Windows leg) so the AppImage,
+    // the releases.<channel>.json feed, and the *-full.nupkg all land directly
+    // in Releases/ for the CI upload globs to harvest.
     execFileSync(
         'vpk',
         [
@@ -126,6 +136,7 @@ function main() {
             '--icon', ICON_PATH,
             '--categories', CATEGORIES,
             '--channel', CHANNEL,
+            '-o', 'Releases',
         ],
         { cwd: REPO_ROOT, stdio: 'inherit' },
     );
@@ -134,10 +145,8 @@ function main() {
     // the .AppImage runs on hosts without libfuse2/libfuse3 installed.
     // Velopack ships the older fuse2-linked runtime by default; the
     // swap is what makes the artifact truly portable.
-    const releasesLinuxDir = join(REPO_ROOT, 'Releases', 'linux');
-    const releasesDir = existsSync(releasesLinuxDir)
-        ? releasesLinuxDir
-        : join(REPO_ROOT, 'Releases');
+    // -o Releases (above) pins flat output, so the AppImage is directly in Releases/.
+    const releasesDir = join(REPO_ROOT, 'Releases');
     const appimages = existsSync(releasesDir)
         ? readdirSync(releasesDir).filter((f) => f.endsWith('.AppImage'))
         : [];

@@ -226,6 +226,8 @@ jobs:
           path: |
             Releases/*.AppImage
             Releases/*.AppImage.sig
+            Releases/*.nupkg
+            Releases/releases.linux-${{ needs.prepare.outputs.channel }}.json
 
   publish:
     needs: [prepare, build-windows, build-linux]
@@ -289,4 +291,6 @@ jobs:
             artifacts/windows-final/releases.${{ needs.prepare.outputs.channel }}.json
             artifacts/linux-final/*.AppImage
             artifacts/linux-final/*.AppImage.sig
+            artifacts/linux-final/*.nupkg
+            artifacts/linux-final/releases.linux-${{ needs.prepare.outputs.channel }}.json
             SHA256SUMS

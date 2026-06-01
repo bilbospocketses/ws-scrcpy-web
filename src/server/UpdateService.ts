@@ -221,6 +221,18 @@ export class UpdateService {
     }
 
     /**
+     * The feed channel the app should query. Linux publishes per-platform
+     * channels (linux-beta / linux-stable) so its releases.<channel>.json feed
+     * doesn't collide with the Windows beta/stable feeds on the same GitHub
+     * release — so a Linux app must query 'linux-<channel>'. Windows queries the
+     * raw channel. (macOS isn't shipped; it would query the raw channel here.)
+     * MUST match the channel package-linux.mjs packs the AppImage with.
+     */
+    private resolveExplicitChannel(channel: UpdateChannel): string {
+        return this.platform === 'linux' ? `linux-${channel}` : channel;
+    }
+
+    /**
      * Initial setup: detect install mode, build mgr if installed, schedule
      * background timer + fire one immediate check. Synchronous-ish; the
      * immediate check is fire-and-forget via void.
@@ -260,7 +272,7 @@ export class UpdateService {
             this.mgr = this.factory(
                 feedUrl,
                 {
-                    ExplicitChannel: cfg.channel,
+                    ExplicitChannel: this.resolveExplicitChannel(cfg.channel),
                     AllowVersionDowngrade: false,
                     MaximumDeltasBeforeFallback: 10,
                 },
@@ -308,7 +320,7 @@ export class UpdateService {
             const newMgr = this.factory(
                 feedUrl,
                 {
-                    ExplicitChannel: channel,
+                    ExplicitChannel: this.resolveExplicitChannel(channel),
                     AllowVersionDowngrade: false,
                     MaximumDeltasBeforeFallback: 10,
                 },

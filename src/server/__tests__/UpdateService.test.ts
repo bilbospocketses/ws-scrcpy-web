@@ -306,6 +306,72 @@ describe('UpdateService', () => {
         }
     });
 
+    // ── ExplicitChannel (platform-aware) ───────────────────────────────────
+    //
+    // Linux publishes per-platform channels (linux-beta / linux-stable) so its
+    // releases.<channel>.json feed doesn't collide with the Windows beta/stable
+    // feeds on the same GitHub release. The app must therefore query
+    // 'linux-<channel>' on Linux. Windows queries the raw channel. (Without
+    // this, a Linux app reads releases.beta.json — which lists only the Windows
+    // package — and finds no Linux update even after the locator is fixed.)
+
+    it('init (linux): ExplicitChannel is prefixed linux-<channel>', () => {
+        Config.getInstance().updateAppConfig({ channel: 'beta' });
+        let opts: UpdateOptions | undefined;
+        const factory = vi.fn((_feed: string, o: UpdateOptions) => {
+            opts = o;
+            return fakeMgr();
+        });
+        const svc = new UpdateService({
+            platform: 'linux',
+            installRoot: path.join('/fake', 'mount', 'usr'),
+            existsSync: () => true,
+            updateManagerFactory: factory,
+            setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
+            clearIntervalFn: () => undefined,
+        });
+        svc.init();
+        expect(opts?.ExplicitChannel).toBe('linux-beta');
+    });
+
+    it('init (win32): ExplicitChannel is the raw channel (no prefix)', () => {
+        Config.getInstance().updateAppConfig({ channel: 'beta' });
+        let opts: UpdateOptions | undefined;
+        const factory = vi.fn((_feed: string, o: UpdateOptions) => {
+            opts = o;
+            return fakeMgr();
+        });
+        const svc = new UpdateService({
+            platform: 'win32',
+            installRoot: path.join('/fake', 'root'),
+            existsSync: () => true,
+            updateManagerFactory: factory,
+            setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
+            clearIntervalFn: () => undefined,
+        });
+        svc.init();
+        expect(opts?.ExplicitChannel).toBe('beta');
+    });
+
+    it('reconfigure (linux): ExplicitChannel is prefixed linux-<channel>', async () => {
+        let lastOpts: UpdateOptions | undefined;
+        const factory = vi.fn((_feed: string, o: UpdateOptions) => {
+            lastOpts = o;
+            return fakeMgr();
+        });
+        const svc = new UpdateService({
+            platform: 'linux',
+            installRoot: path.join('/fake', 'mount', 'usr'),
+            existsSync: () => true,
+            updateManagerFactory: factory,
+            setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
+            clearIntervalFn: () => undefined,
+        });
+        svc.init();
+        await svc.reconfigure('stable', 'bilbospocketses');
+        expect(lastOpts?.ExplicitChannel).toBe('linux-stable');
+    });
+
     // ── checkForUpdates ─────────────────────────────────────────────────
 
     it('checkForUpdates: null result → status=idle, no pendingUpdate', async () => {
@@ -651,6 +717,9 @@ describe('UpdateService', () => {
             .mockReturnValueOnce(newMgr);
 
         const svc = new UpdateService({
+            // Pin platform so ExplicitChannel stays 'beta' (Linux would prefix
+            // it to 'linux-beta' — covered by the platform-aware tests above).
+            platform: 'win32',
             installRoot: '/fake',
             existsSync: () => true,
             updateManagerFactory: factory,
