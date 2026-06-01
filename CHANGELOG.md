@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **v0.1.30-beta.28 is a no-op companion release to beta.27** — identical code, published as the upgrade target for verifying the new download-based Linux in-app update apply: install beta.27 in user mode on Linux, click update, and confirm the "updating…" overlay appears (above Settings), the AppImage is downloaded + SHA-256-verified + swapped, and the app relaunches on beta.28.
+
 ## [0.1.30-beta.27] - 2026-06-01
 
 ### Fixed
