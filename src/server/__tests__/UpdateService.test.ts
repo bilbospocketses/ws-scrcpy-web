@@ -402,6 +402,7 @@ describe('UpdateService', () => {
         });
         const svc = new UpdateService({
             installRoot: '/fake',
+            platform: 'win32',
             existsSync: () => true,
             updateManagerFactory: () => mgr,
             setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
@@ -414,6 +415,28 @@ describe('UpdateService', () => {
         expect(s.status).toBe('ready');
         expect(s.availableVersion).toBe('0.2.0');
         expect(s.progress).toBe(100);
+    });
+
+    it('checkForUpdates (linux): autoUpdate=true does NOT download the nupkg; status=ready', async () => {
+        Config.getInstance().updateAppConfig({ autoUpdate: true });
+        const downloadUpdateAsync = vi.fn(async () => undefined);
+        const mgr = fakeMgr({
+            checkForUpdatesAsync: async () => fakeUpdateInfo('0.2.0'),
+            downloadUpdateAsync,
+        });
+        const svc = new UpdateService({
+            platform: 'linux',
+            installRoot: path.join('/fake', 'mount', 'usr'),
+            existsSync: () => true,
+            updateManagerFactory: () => mgr,
+            setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
+            clearIntervalFn: () => undefined,
+        });
+        process.env['APPIMAGE'] = '/home/u/Downloads/App.AppImage';
+        svc.init();
+        await svc.checkForUpdates();
+        expect(svc.getStatus().status).toBe('ready');
+        expect(downloadUpdateAsync).not.toHaveBeenCalled();
     });
 
     it('checkForUpdates: UpdateInfo + autoUpdate=false → status=ready without downloading', async () => {

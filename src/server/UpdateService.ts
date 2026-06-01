@@ -363,11 +363,13 @@ export class UpdateService {
             this.state.pendingUpdate = info;
 
             const cfg = Config.getInstance().getAppConfig();
-            if (cfg.autoUpdate) {
+            // On Linux our apply downloads the published AppImage directly, so the
+            // Velopack nupkg is never used — never pre-download it (saves ~60 MB per
+            // check). On Windows, keep the autoUpdate pre-download. autoUpdate=false
+            // also lands in the else. Availability is surfaced via status='ready'.
+            if (cfg.autoUpdate && this.platform !== 'linux') {
                 await this.downloadIfNeeded();
             } else {
-                // autoUpdate disabled: surface "available" via status='ready' but no download yet.
-                // waitExitThenApplyUpdate handles undownloaded updates internally on Apply.
                 this.state.status = 'ready';
             }
         } catch (err) {
