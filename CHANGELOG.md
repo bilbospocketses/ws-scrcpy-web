@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.23] - 2026-06-01
+
+### Fixed
+
+- **Linux in-app updates: `UpdateManager` no longer fails to construct.** beta.21 (#237) passed no locator on Linux, delegating to Velopack's `auto_locate_app_manifest`. But that function (velopack 1.0.1 `lib-rust/src/locator.rs`) locates the install by searching **`std::env::current_exe()`** for `/usr/bin/`, and our server runs under the Node binary in `<dataRoot>/dependencies/node/` (Local-Dependencies-Only) — no `/usr/bin/` segment — so it returned "Could not locate '/usr/bin/'", construction threw, `init()` nulled `mgr`, and every check silently no-oped. The Linux locator is now hand-built and anchored on `__dirname` (the bundle at `<mount>/usr/bin/dist`, reliably under the mount): contents dir = `installRoot/bin` = `<mount>/usr/bin`, mirroring Velopack's own Linux output. (`$APPIMAGE` only sets `RootAppDir`; it does not drive install-root discovery, contrary to the beta.21 assumption.) (PR #242.)
+- **Linux in-app updates: the feed now contains an installable Linux package.** Even with the locator fixed, the app queried `releases.{beta,stable}.json` — which list only the Windows package — while the Linux build packed channel `linux` and never uploaded its feed/nupkg. Linux now uses per-platform channels: the app queries `linux-<channel>` (`UpdateService.resolveExplicitChannel`), `package-linux.mjs` packs `--channel linux-<beta|stable>` (+ `-o Releases`), and `release.yml` uploads the `releases.linux-<channel>.json` feed + Linux `.nupkg`. Windows packaging is unchanged. (PR #242.)
+
 ### Security
 
 - **`dependabot-auto-merge.yml` no longer grants a workflow-level write token.** The top-level `permissions:` block granted `contents: write` + `pull-requests: write` to the entire workflow; the `auto-merge` job now declares those writes itself and the workflow default drops to `contents: read`. Closes the high-severity `TokenPermissionsID` (OpenSSF Scorecard / CodeQL) code-scanning alert. Mirrors the `release.yml` hardening that closed Scorecard alert #16.
