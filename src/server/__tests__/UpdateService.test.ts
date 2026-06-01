@@ -735,13 +735,20 @@ describe('UpdateService', () => {
         expect(mkdirSpy).toHaveBeenCalled();
     });
 
-    // Linux local-mode apply: no operation-server helper (that's a Windows-only
-    // staged .exe). Velopack applies on exit + relaunches via restart=true.
-    it('applyUpdate (linux local mode): waitExitThenApplyUpdate(restart=true), no helper spawn', async () => {
-        Config.getInstance().updateAppConfig({ autoUpdate: false, installMode: 'user' });
-        const info = fakeUpdateInfo('0.2.0');
+    // Linux local-mode apply: replaces Velopack's broken UpdateNix apply with a
+    // hand-rolled download -> verify-sha256 -> spawn-helper. (Velopack 1.0.1's apply
+    // fails on our AppImage — see docs/specs/2026-06-01-linux-appimage-self-update-design.md.)
+    it('applyUpdate (linux local): downloads + verifies + spawns helper; no waitExitThenApplyUpdate', async () => {
+        const { createHash } = await import('crypto');
+        Config.getInstance().updateAppConfig({ autoUpdate: false, installMode: 'user', channel: 'beta', githubOwner: 'bilbospocketses' });
+        const appImageBytes = Buffer.from('NEW-APPIMAGE-CONTENT');
+        const goodHash = createHash('sha256').update(appImageBytes).digest('hex');
+        const sums = `${goodHash}  ./linux-final/WsScrcpyWeb-linux-beta.AppImage\n`;
+        const fetchFn = vi.fn(async (url: string) =>
+            url.endsWith('.AppImage') ? new Response(appImageBytes) : new Response(sums),
+        ) as unknown as typeof fetch;
         const applyFn = vi.fn();
-        const mgr = fakeMgr({ checkForUpdatesAsync: async () => info, waitExitThenApplyUpdate: applyFn });
+        const mgr = fakeMgr({ checkForUpdatesAsync: async () => fakeUpdateInfo('0.1.30-beta.26'), waitExitThenApplyUpdate: applyFn });
         const spawnMock = vi.mocked(child_process.spawn);
         spawnMock.mockClear();
         const svc = new UpdateService({
@@ -751,15 +758,45 @@ describe('UpdateService', () => {
             updateManagerFactory: () => mgr,
             setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
             clearIntervalFn: () => undefined,
+            fetchFn,
         });
+        process.env['APPIMAGE'] = '/home/u/Downloads/WsScrcpyWeb-linux-beta.AppImage';
         svc.init();
         await svc.checkForUpdates();
         expect(svc.getStatus().status).toBe('ready');
+
         const result = await svc.applyUpdate();
-        expect(applyFn).toHaveBeenCalledTimes(1);
-        expect(applyFn.mock.calls[0]![1]).toBe(true); // silent
-        expect(applyFn.mock.calls[0]![2]).toBe(true); // restart
         expect(result.redirectPort).toBeNull();
+        expect(applyFn).not.toHaveBeenCalled();
+        expect(spawnMock).toHaveBeenCalledTimes(1);
+        const [bin, argv] = spawnMock.mock.calls[0]!;
+        expect(String(bin)).toMatch(/control[\\/]operation-server[\\/]ws-scrcpy-web-launcher\.exe$/);
+        expect(argv).toEqual(
+            expect.arrayContaining(['--linux-apply', '--target', '/home/u/Downloads/WsScrcpyWeb-linux-beta.AppImage']),
+        );
+    });
+
+    it('applyUpdate (linux local): SHA mismatch aborts, no helper spawn', async () => {
+        Config.getInstance().updateAppConfig({ autoUpdate: false, installMode: 'user', channel: 'beta', githubOwner: 'bilbospocketses' });
+        const sums = `${'0'.repeat(64)}  ./linux-final/WsScrcpyWeb-linux-beta.AppImage\n`;
+        const fetchFn = vi.fn(async (url: string) =>
+            url.endsWith('.AppImage') ? new Response(Buffer.from('CORRUPT')) : new Response(sums),
+        ) as unknown as typeof fetch;
+        const spawnMock = vi.mocked(child_process.spawn);
+        spawnMock.mockClear();
+        const svc = new UpdateService({
+            platform: 'linux',
+            installRoot: path.join('/fake', 'mount', 'usr'),
+            existsSync: () => true,
+            updateManagerFactory: () => fakeMgr({ checkForUpdatesAsync: async () => fakeUpdateInfo('0.1.30-beta.26') }),
+            setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
+            clearIntervalFn: () => undefined,
+            fetchFn,
+        });
+        process.env['APPIMAGE'] = '/home/u/Downloads/WsScrcpyWeb-linux-beta.AppImage';
+        svc.init();
+        await svc.checkForUpdates();
+        await expect(svc.applyUpdate()).rejects.toThrow(/mismatch/i);
         expect(spawnMock).not.toHaveBeenCalled();
     });
 

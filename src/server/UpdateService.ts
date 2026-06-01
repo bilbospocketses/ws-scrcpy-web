@@ -18,6 +18,9 @@ import type { UpdateState } from '../common/UpdateEvents';
 import { AdbClient } from './AdbClient';
 import { Config } from './Config';
 import { Logger } from './Logger';
+import { linuxAppImageAssetName, releaseAssetUrl, parseSha256Sums } from './linuxUpdateAssets';
+import { verifySha256 } from './verifySha256';
+import { downloadToFile, fetchText } from './downloadToFile';
 
 const execFileAsync = promisify(execFile);
 
@@ -60,6 +63,8 @@ export interface UpdateServiceOptions {
      * because tests only ever ran the host-platform branch.
      */
     platform?: NodeJS.Platform;
+    /** Override global fetch for tests (AppImage download + SHA256SUMS). Default: global fetch. */
+    fetchFn?: typeof fetch;
 }
 
 export interface UpdateServiceState {
@@ -103,6 +108,7 @@ export class UpdateService {
     private readonly existsSync: (p: string) => boolean;
     private readonly setIntervalFn: (cb: () => void, ms: number) => NodeJS.Timeout;
     private readonly clearIntervalFn: (handle: NodeJS.Timeout) => void;
+    private readonly fetchFn: typeof fetch;
 
     constructor(opts: UpdateServiceOptions = {}) {
         this.platform = opts.platform ?? process.platform;
@@ -196,6 +202,7 @@ export class UpdateService {
         this.existsSync = opts.existsSync ?? fs.existsSync;
         this.setIntervalFn = opts.setIntervalFn ?? ((cb, ms) => setInterval(cb, ms));
         this.clearIntervalFn = opts.clearIntervalFn ?? ((handle) => clearInterval(handle));
+        this.fetchFn = opts.fetchFn ?? fetch;
         this.state = { isInstalled: false, currentVersion: '', status: 'idle' };
     }
 
@@ -264,6 +271,15 @@ export class UpdateService {
         if (!markerExists) {
             this.state = { isInstalled: false, currentVersion: getAppVersion(), status: 'idle' };
             return;
+        }
+
+        // Linux: a successful relaunch means the previous version's rollback
+        // backup is safe to drop. Best-effort; ignore failures.
+        if (this.platform !== 'win32') {
+            const appImage = process.env['APPIMAGE'];
+            if (appImage) {
+                void fs.promises.rm(`${appImage}.bak`, { force: true }).catch(() => undefined);
+            }
         }
 
         try {
@@ -432,12 +448,53 @@ export class UpdateService {
             return { redirectPort: null };
         }
 
-        // Linux local mode: Velopack applies on exit and relaunches the AppImage
-        // (which rebinds the freed web port). The Windows operation-server helper
-        // below does not exist on Linux — spawning it would ENOENT and the apply
-        // would never run. restart=true so Velopack relaunches the new version.
+        // Linux local mode: Velopack 1.0.1's UpdateNix apply fails on our AppImage
+        // (it re-derives a locator from `--root <appimage>` and fails the
+        // UpdateExePath check — see docs/specs/2026-06-01-linux-appimage-self-update-design.md).
+        // Replace it: download the published AppImage, verify its SHA-256 against the
+        // release SHA256SUMS, then hand off to the out-of-mount helper to swap
+        // $APPIMAGE + relaunch. (Service mode returned above, so this is local-only.)
         if (this.platform !== 'win32') {
-            this.mgr.waitExitThenApplyUpdate(this.state.pendingUpdate, true, true);
+            const config = Config.getInstance();
+            const appCfg = config.getAppConfig();
+            const version = this.state.availableVersion;
+            if (!version) {
+                throw new Error('apply: no available version resolved');
+            }
+            const assetName = linuxAppImageAssetName(appCfg.channel);
+            const appImageUrl = releaseAssetUrl(appCfg.githubOwner, version, assetName);
+            const sumsUrl = releaseAssetUrl(appCfg.githubOwner, version, 'SHA256SUMS');
+
+            const dataRoot = config.dataRoot ?? path.dirname(config.dependenciesPath);
+            const stagingDir = path.join(dataRoot, 'control', 'update-staging');
+            await fs.promises.mkdir(stagingDir, { recursive: true });
+            const stagedPath = path.join(stagingDir, `${assetName}.new`);
+
+            log.info(`applyUpdate(linux): downloading ${appImageUrl}`);
+            await downloadToFile(appImageUrl, stagedPath, this.fetchFn);
+            const sumsText = await fetchText(sumsUrl, this.fetchFn);
+            const expected = parseSha256Sums(sumsText, assetName);
+            if (!expected) {
+                await fs.promises.rm(stagedPath, { force: true });
+                throw new Error(`apply: SHA256SUMS has no entry for ${assetName}`);
+            }
+            const ok = await verifySha256(stagedPath, expected);
+            if (!ok) {
+                await fs.promises.rm(stagedPath, { force: true });
+                throw new Error(`apply: SHA-256 mismatch for ${assetName} — aborting`);
+            }
+
+            const appImagePath = process.env['APPIMAGE'] ?? '';
+            // The launcher stages this helper copy (named *.exe even on Linux) to
+            // dataRoot on every boot — outside the AppImage mount, so it survives exit.
+            const helperPath = path.join(dataRoot, 'control', 'operation-server', 'ws-scrcpy-web-launcher.exe');
+            const child = spawn(
+                helperPath,
+                ['--linux-apply', '--staged', stagedPath, '--target', appImagePath, '--wait-pid', String(process.pid)],
+                { detached: true, stdio: 'ignore' },
+            );
+            child.unref();
+            log.info(`applyUpdate(linux): spawned helper pid ${child.pid} to swap ${appImagePath}`);
             return { redirectPort: null };
         }
 
