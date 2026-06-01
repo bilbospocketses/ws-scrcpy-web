@@ -562,6 +562,10 @@ describe('UpdateService', () => {
             waitExitThenApplyUpdate: applyFn,
         });
         const svc = new UpdateService({
+            // Windows local mode (operation-server helper). The Linux local-mode
+            // path (waitExitThenApplyUpdate) has its own test below; pin win32 so
+            // this Windows assertion is deterministic on a Linux CI host too.
+            platform: 'win32',
             installRoot: '/fake',
             existsSync: () => true,
             updateManagerFactory: () => mgr,
@@ -631,6 +635,9 @@ describe('UpdateService', () => {
             waitExitThenApplyUpdate: applyFn,
         });
         const svc = new UpdateService({
+            // Windows local mode; Linux local mode is tested separately. Pin
+            // win32 so this Windows assertion holds on a Linux CI host too.
+            platform: 'win32',
             installRoot: '/fake',
             existsSync: () => true,
             updateManagerFactory: () => mgr,
@@ -673,6 +680,12 @@ describe('UpdateService', () => {
             waitExitThenApplyUpdate: applyFn,
         });
         const svc = new UpdateService({
+            // Pin win32: service variants call waitExitThenApplyUpdate; the
+            // local (user/system) variants use the Windows operation-server
+            // helper (not waitExitThenApplyUpdate). Linux local mode differs and
+            // is covered separately — without this pin the local variants fail
+            // on a Linux CI host (they'd hit the new Linux apply branch).
+            platform: 'win32',
             installRoot: '/fake-install-root',
             existsSync: () => true,
             updateManagerFactory: () => mgr,
