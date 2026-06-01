@@ -45,7 +45,7 @@ describe('buildSystemInstallScript', () => {
         expect(script).toContain('cp "/home/u/Apps/WsScrcpyWeb-linux-beta.AppImage" "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"');
         expect(script).toContain('chmod 0755 "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"');
         expect(script).toContain("semanage fcontext -a -t bin_t '/opt/ws-scrcpy-web(/.*)?'");
-        expect(script).toContain('restorecon -Rv /opt/ws-scrcpy-web');
+        expect(script).toContain('restorecon -Rv "/opt/ws-scrcpy-web"');
         expect(script).toContain('chcon -t bin_t "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"');
         expect(script).toContain('cp "/tmp/WsScrcpyWeb.service.tmp" "/etc/systemd/system/WsScrcpyWeb.service"');
         expect(script).toContain('systemctl daemon-reload');
@@ -62,5 +62,13 @@ describe('buildSystemInstallScript', () => {
         const script = buildSystemInstallScript(args, (t) => `/usr/bin/${t}`, (t) => `/usr/sbin/${t}`);
         expect(script).toContain('/usr/bin/systemctl daemon-reload');
         expect(script).toContain('/usr/sbin/restorecon -Rv');
+    });
+
+    it('label step is best-effort — a failed SELinux label does not abort the unit install', () => {
+        const script = buildSystemInstallScript(args);
+        // wrapped in a subshell + `|| true` so a non-SELinux host (semanage absent, chcon errors)
+        // still proceeds to cp unit + enable.
+        expect(script).toContain('|| true');
+        expect(script.indexOf('cp "/tmp/WsScrcpyWeb.service.tmp"')).toBeGreaterThan(script.indexOf('chcon'));
     });
 });

@@ -217,6 +217,7 @@ export function buildSystemInstallScript(
     sbinTool: (t: string) => string = (t) => resolveSystemTool(t),
 ): string {
     const staged = `${STAGED_SYSTEM_DIR}/${STAGED_SYSTEM_APPIMAGE}`;
+    const mkdir = binTool('mkdir');
     const cp = binTool('cp');
     const chmod = binTool('chmod');
     const chcon = binTool('chcon');
@@ -225,13 +226,18 @@ export function buildSystemInstallScript(
     const restorecon = sbinTool('restorecon');
     return [
         // 1. stage the AppImage into /opt (root-owned)
-        `mkdir -p ${STAGED_SYSTEM_DIR}`,
+        `${mkdir} -p ${STAGED_SYSTEM_DIR}`,
         `${cp} "${args.sourceAppImage}" "${staged}"`,
         `${chmod} 0755 "${staged}"`,
         // 2. label bin_t so init_t can exec it. Persistent rule (semanage) when
         //    available; restorecon applies it; chcon is the transient fallback
-        //    for minimal images without policycoreutils-python-utils.
-        `( ${semanage} fcontext -a -t bin_t '${STAGED_SYSTEM_DIR}(/.*)?' && ${restorecon} -Rv ${STAGED_SYSTEM_DIR} ) || ${chcon} -t bin_t "${staged}"`,
+        //    for minimal images without policycoreutils-python-utils. The whole
+        //    step is a best-effort subshell with a trailing `|| true`: POSIX sh
+        //    gives `&&`/`||` EQUAL precedence (left-assoc), so without isolation
+        //    a label failure on a non-SELinux host (semanage absent + chcon
+        //    erroring on a non-SELinux fs) would break the outer `&&` chain and
+        //    silently skip the unit cp + enable below.
+        `( ( ${semanage} fcontext -a -t bin_t '${STAGED_SYSTEM_DIR}(/.*)?' && ${restorecon} -Rv "${STAGED_SYSTEM_DIR}" ) || ${chcon} -t bin_t "${staged}" || true )`,
         // 3. install + enable the unit (ExecStart already points at ${staged})
         `${cp} "${args.unitTmpPath}" "${args.unitPath}"`,
         `${systemctl} daemon-reload`,
