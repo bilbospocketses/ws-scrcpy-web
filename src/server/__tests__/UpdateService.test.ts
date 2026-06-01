@@ -509,6 +509,9 @@ describe('UpdateService', () => {
         });
         const svc = new UpdateService({
             installRoot: '/fake',
+            // Pin win32: checkForUpdates only triggers downloadIfNeeded off Linux
+            // (Linux skips the unused nupkg download). This covers the download path.
+            platform: 'win32',
             existsSync: () => true,
             updateManagerFactory: () => mgr,
             setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
@@ -548,6 +551,8 @@ describe('UpdateService', () => {
         });
         const svc = new UpdateService({
             installRoot: '/fake',
+            // Pin win32: checkForUpdates only triggers downloadIfNeeded off Linux.
+            platform: 'win32',
             existsSync: () => true,
             updateManagerFactory: () => mgr,
             setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
