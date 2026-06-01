@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.25] - 2026-06-01
+
+### Added
+
+- **"Updating…" handoff overlay for Linux in-app updates.** On a `mode:'reconnect'` apply response, the client shows a full-viewport `UpgradingOverlay` and polls the same origin until the relaunched app answers on the new version, then reloads — with a bookmark-URL fallback if it doesn't return within ~60s (so you're never stranded). Windows keeps its operation-server redirect; the reconnect path is gated on the Linux-only `mode` flag. (PR #246.)
+
+### Fixed
+
+- **Linux in-app updates now apply and relaunch (third + final Linux updater fix).** After beta.23 fixed discovery (locator + per-platform feed), *applying* an update on Linux killed the app without updating: local-mode `applyUpdate` spawned the Windows operation-server helper (`ws-scrcpy-web-launcher.exe`), which ENOENTs on Linux, so Velopack's apply never ran and the deferred `process.exit` took the app down (re-running the AppImage came back on the old version). Linux local-mode now calls `waitExitThenApplyUpdate(restart=true)` directly — Velopack applies on exit and relaunches the AppImage, which rebinds the freed web port. Windows is byte-for-byte unchanged. (PR #246.)
+
 ## [0.1.30-beta.24] - 2026-06-01
 
 ### Changed
