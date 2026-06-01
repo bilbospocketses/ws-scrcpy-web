@@ -164,6 +164,12 @@ export class UpdatesApi {
             res.end(html);
         } else {
             const body: UpdatesApplyResponse = { ok: true };
+            // Linux: tell the client to show the upgrading overlay and poll-
+            // reconnect to the relaunched app. Windows uses the redirectPort
+            // HTML branch above, so it never reaches here with a real install.
+            if (process.platform !== 'win32') {
+                body.mode = 'reconnect';
+            }
             res.writeHead(200);
             res.end(JSON.stringify(body));
         }

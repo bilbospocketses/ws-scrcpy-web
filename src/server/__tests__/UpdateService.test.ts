@@ -699,6 +699,34 @@ describe('UpdateService', () => {
         expect(mkdirSpy).toHaveBeenCalled();
     });
 
+    // Linux local-mode apply: no operation-server helper (that's a Windows-only
+    // staged .exe). Velopack applies on exit + relaunches via restart=true.
+    it('applyUpdate (linux local mode): waitExitThenApplyUpdate(restart=true), no helper spawn', async () => {
+        Config.getInstance().updateAppConfig({ autoUpdate: false, installMode: 'user' });
+        const info = fakeUpdateInfo('0.2.0');
+        const applyFn = vi.fn();
+        const mgr = fakeMgr({ checkForUpdatesAsync: async () => info, waitExitThenApplyUpdate: applyFn });
+        const spawnMock = vi.mocked(child_process.spawn);
+        spawnMock.mockClear();
+        const svc = new UpdateService({
+            platform: 'linux',
+            installRoot: path.join('/fake', 'mount', 'usr'),
+            existsSync: () => true,
+            updateManagerFactory: () => mgr,
+            setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
+            clearIntervalFn: () => undefined,
+        });
+        svc.init();
+        await svc.checkForUpdates();
+        expect(svc.getStatus().status).toBe('ready');
+        const result = await svc.applyUpdate();
+        expect(applyFn).toHaveBeenCalledTimes(1);
+        expect(applyFn.mock.calls[0]![1]).toBe(true); // silent
+        expect(applyFn.mock.calls[0]![2]).toBe(true); // restart
+        expect(result.redirectPort).toBeNull();
+        expect(spawnMock).not.toHaveBeenCalled();
+    });
+
     // ── reconfigure ─────────────────────────────────────────────────────
 
     it('reconfigure: swaps internal mgr + triggers immediate check', async () => {
