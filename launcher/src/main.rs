@@ -21,6 +21,8 @@ mod unzip_handler;
 mod operation_server;
 #[cfg(target_os = "linux")]
 mod linux_apply;
+#[cfg(target_os = "linux")]
+mod linux_service;
 #[cfg(windows)]
 mod user_session_spawn;
 
