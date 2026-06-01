@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Consistent modal button styling (all platforms).** The welcome modal's install-service buttons use white text (was blue), and the bookmark (`PortChangeModal`) + service-first-run (`ServiceFirstRunModal`) "got it" buttons now get the same white-outline / white-text / mono treatment — they previously fell back to the browser-default button because their `.modal-button` class had no CSS. All three modals now match the app's outline-button motif.
+
 ## [0.1.30-beta.28] - 2026-06-01
 
 ### Changed

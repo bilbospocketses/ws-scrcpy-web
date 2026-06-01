@@ -208,7 +208,7 @@ export class WelcomeModal extends Modal {
         this.yesBtn.textContent = 'yes, install service';
         this.yesBtn.style.cssText =
             'border: 0.5px solid var(--text-color, #ddd); border-radius: 6px; ' +
-            'background: transparent; color: #5b9aff; padding: 8px 16px; cursor: pointer;';
+            'background: transparent; color: var(--text-color, #ddd); padding: 8px 16px; cursor: pointer;';
         this.yesBtn.addEventListener('click', () => {
             void this.onYes();
         });
@@ -218,7 +218,7 @@ export class WelcomeModal extends Modal {
         this.noBtn.textContent = 'no, run on demand';
         this.noBtn.style.cssText =
             'border: 0.5px solid var(--text-color, #ddd); border-radius: 6px; ' +
-            'background: transparent; color: #5b9aff; padding: 8px 16px; cursor: pointer;';
+            'background: transparent; color: var(--text-color, #ddd); padding: 8px 16px; cursor: pointer;';
         this.noBtn.addEventListener('click', () => {
             void this.onNo();
         });

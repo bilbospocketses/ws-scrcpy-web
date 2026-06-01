@@ -392,6 +392,24 @@ dialog.modal .modal-settings button:hover {
     background: var(--device-list-hover-color, hsl(218, 17%, 18%));
 }
 
+/* Shared "got it" / confirm button for the bookmark (PortChangeModal) +
+   service-first-run (ServiceFirstRunModal) modals. Matches the welcome modal's
+   outline buttons — white outline + white text, transparent, mono font —
+   replacing the browser-default look (the class previously had no CSS). */
+.modal-button {
+    border: 0.5px solid var(--text-color, #ddd);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-color, #ddd);
+    padding: 8px 16px;
+    cursor: pointer;
+    font: inherit;
+}
+
+.modal-button:hover {
+    background: var(--device-list-hover-color, hsl(218, 17%, 18%));
+}
+
 /* ── Status text (footer) ── */
 dialog.modal .status-text {
     font-size: 13px;
