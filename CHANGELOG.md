@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.27] - 2026-06-01
+
 ### Fixed
 
 - **Linux in-app updates now actually apply (fourth Linux updater fix — the real one).** beta.25's `waitExitThenApplyUpdate(restart=true)` was inert on Linux: Velopack 1.0.1's `UpdateNix apply`, invoked with only `--root <appimage>`, re-derives its own locator via `FromSpecifiedRootDir` and fails the `UpdateExePath.exists()` check (`locator.rs:114`) — aborting in under a millisecond with "Update.exe does not exist in the expected path", before any file is touched (confirmed on real Fedora via `/tmp/velopack.log`, mode- and restart-independent). Linux local-mode apply no longer uses Velopack's updater: it downloads the published AppImage from the GitHub release, verifies it against the release `SHA256SUMS`, and hands off to an out-of-mount launcher helper (`--linux-apply`) that backs up + swaps `$APPIMAGE` and relaunches it. Velopack 1.1.1 documents no fix for this path, so the dependency is unchanged. Windows + Linux service mode are byte-for-byte unchanged.
