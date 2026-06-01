@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Linux system-scope service install now starts under SELinux (item 33).** The system unit's `ExecStart` was the user-home `$APPIMAGE`, but systemd runs system units under the `init_t` domain and SELinux-enforcing (Fedora) denies `init_t` exec of a `user_home_t` file — so the service failed to start and restart-looped on a repeating AVC. System-scope install now stages the AppImage to a root-owned `/opt/ws-scrcpy-web/`, labels it `bin_t` (persistent `semanage fcontext` + `restorecon`, with a `chcon` fallback for minimal images — all best-effort and isolated so a label failure on a non-SELinux distro doesn't abort the install), and points the unit's `ExecStart` there. User scope is unchanged (runs as the unconfined user from the home AppImage).
+- **Linux service uninstall now tears down cleanly and returns to local mode (item 32).** Uninstall previously ran `systemctl disable --now` from inside the service's own cgroup, killing the calling process mid-operation (leaving stragglers and a non-functional app). It now hands off to an out-of-cgroup helper launched via `systemd-run` (a transient unit that survives stopping the service unit): the helper stops → disables → `reset-failed` → removes the unit (and, for system scope, the `/opt` staging plus the SELinux `fcontext` rule) → reaps the escaped adb daemon → and on user scope relaunches the home AppImage in local mode via its own transient unit. Windows uninstall is byte-for-byte unchanged.
+
+### Changed
+
+- **Linux service-mode OS tools now resolve to absolute paths (Local-Dependencies-Only).** `systemctl`, `pkexec`, `loginctl`, `ldconfig`, `systemd-run`, `cp`, `chmod`, `restorecon`, `chcon`, and `semanage` are invoked by absolute path (resolved across `/usr/bin`, `/bin`, `/usr/sbin`, `/sbin`) instead of by bare name, closing the `$PATH`-hijack surface — mirroring the Windows `System32` hardening.
+
 ## [0.1.30-beta.29] - 2026-06-01
 
 ### Changed
