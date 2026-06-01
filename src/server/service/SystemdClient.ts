@@ -44,6 +44,7 @@ import type {
     ServiceInstallOptions,
     ServiceStatus,
 } from './ServiceClient';
+import { resolveSystemTool } from './systemTools';
 
 const execFileAsync = promisify(execFile);
 
@@ -204,6 +205,41 @@ export function renderUnitFile(opts: ServiceInstallOptions, scope: SystemdScope)
 }
 
 /**
+ * Build the privileged shell script for a system-scope install. Runs under a
+ * single pkexec prompt. Stages the AppImage into /opt (root-owned), labels it
+ * bin_t so init_t may exec it (item 33), then installs + enables the unit.
+ * `binTool`/`sbinTool` are injectable for testing; production resolves absolute
+ * paths via systemTools (Local-Dependencies-Only — no bare-name $PATH lookup).
+ */
+export function buildSystemInstallScript(
+    args: { sourceAppImage: string; unitTmpPath: string; unitPath: string; name: string },
+    binTool: (t: string) => string = (t) => resolveSystemTool(t),
+    sbinTool: (t: string) => string = (t) => resolveSystemTool(t),
+): string {
+    const staged = `${STAGED_SYSTEM_DIR}/${STAGED_SYSTEM_APPIMAGE}`;
+    const cp = binTool('cp');
+    const chmod = binTool('chmod');
+    const chcon = binTool('chcon');
+    const systemctl = binTool('systemctl');
+    const semanage = sbinTool('semanage');
+    const restorecon = sbinTool('restorecon');
+    return [
+        // 1. stage the AppImage into /opt (root-owned)
+        `mkdir -p ${STAGED_SYSTEM_DIR}`,
+        `${cp} "${args.sourceAppImage}" "${staged}"`,
+        `${chmod} 0755 "${staged}"`,
+        // 2. label bin_t so init_t can exec it. Persistent rule (semanage) when
+        //    available; restorecon applies it; chcon is the transient fallback
+        //    for minimal images without policycoreutils-python-utils.
+        `( ${semanage} fcontext -a -t bin_t '${STAGED_SYSTEM_DIR}(/.*)?' && ${restorecon} -Rv ${STAGED_SYSTEM_DIR} ) || ${chcon} -t bin_t "${staged}"`,
+        // 3. install + enable the unit (ExecStart already points at ${staged})
+        `${cp} "${args.unitTmpPath}" "${args.unitPath}"`,
+        `${systemctl} daemon-reload`,
+        `${systemctl} enable --now ${args.name}.service`,
+    ].join(' && ');
+}
+
+/**
  * Resolve the absolute path of the tray helper binary.
  *
  * Mirrors `ServyClient.resolveTrayHelperPath` shape:
@@ -288,15 +324,17 @@ export class SystemdClient implements ServiceClient {
 
         if (scope === 'system' && process.getuid?.() !== 0) {
             // Not root — use pkexec for graphical privilege escalation.
-            // Write unit to temp, then pkexec copies + enables in one prompt.
+            // Write unit to temp, then pkexec stages AppImage + labels bin_t +
+            // copies unit + enables — all under a single graphical prompt.
             const tmpFile = path.join(os.tmpdir(), `${opts.name}.service.tmp`);
             fs.writeFileSync(tmpFile, unitContent, { mode: 0o644 });
             try {
-                const cmd = [
-                    `cp "${tmpFile}" "${unitPath}"`,
-                    'systemctl daemon-reload',
-                    `systemctl enable --now ${opts.name}.service`,
-                ].join(' && ');
+                const cmd = buildSystemInstallScript({
+                    sourceAppImage: opts.binPath,
+                    unitTmpPath: tmpFile,
+                    unitPath,
+                    name: opts.name,
+                });
                 await runPkexec(cmd, 'install (system scope)');
             } finally {
                 try { fs.unlinkSync(tmpFile); } catch { /* best-effort cleanup */ }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { SystemdClient, renderUnitFile, STAGED_SYSTEM_DIR } from './SystemdClient';
+import { SystemdClient, renderUnitFile, STAGED_SYSTEM_DIR, buildSystemInstallScript } from './SystemdClient';
 
 describe('system-scope staging', () => {
     const baseOpts = {
@@ -28,5 +28,39 @@ describe('system-scope staging', () => {
     it('user unit ExecStart still points at the home AppImage (unchanged)', () => {
         const unit = renderUnitFile(baseOpts, 'user');
         expect(unit).toContain('ExecStart=/home/u/Apps/WsScrcpyWeb-linux-beta.AppImage');
+    });
+});
+
+describe('buildSystemInstallScript', () => {
+    const args = {
+        sourceAppImage: '/home/u/Apps/WsScrcpyWeb-linux-beta.AppImage',
+        unitTmpPath: '/tmp/WsScrcpyWeb.service.tmp',
+        unitPath: '/etc/systemd/system/WsScrcpyWeb.service',
+        name: 'WsScrcpyWeb',
+    };
+
+    it('stages the AppImage to /opt, chmods, labels bin_t, then installs the unit', () => {
+        const script = buildSystemInstallScript(args);
+        expect(script).toContain('mkdir -p /opt/ws-scrcpy-web');
+        expect(script).toContain('cp "/home/u/Apps/WsScrcpyWeb-linux-beta.AppImage" "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"');
+        expect(script).toContain('chmod 0755 "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"');
+        expect(script).toContain("semanage fcontext -a -t bin_t '/opt/ws-scrcpy-web(/.*)?'");
+        expect(script).toContain('restorecon -Rv /opt/ws-scrcpy-web');
+        expect(script).toContain('chcon -t bin_t "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"');
+        expect(script).toContain('cp "/tmp/WsScrcpyWeb.service.tmp" "/etc/systemd/system/WsScrcpyWeb.service"');
+        expect(script).toContain('systemctl daemon-reload');
+        expect(script).toContain('systemctl enable --now WsScrcpyWeb.service');
+    });
+
+    it('staging precedes the unit copy (so ExecStart target exists before enable)', () => {
+        const script = buildSystemInstallScript(args);
+        expect(script.indexOf('/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage'))
+            .toBeLessThan(script.indexOf('enable --now'));
+    });
+
+    it('uses absolute tool paths (no bare names)', () => {
+        const script = buildSystemInstallScript(args, (t) => `/usr/bin/${t}`, (t) => `/usr/sbin/${t}`);
+        expect(script).toContain('/usr/bin/systemctl daemon-reload');
+        expect(script).toContain('/usr/sbin/restorecon -Rv');
     });
 });
