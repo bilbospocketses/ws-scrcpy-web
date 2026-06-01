@@ -57,6 +57,11 @@ const TRAY_HELPER_BIN = 'ws-scrcpy-web-tray';
 /** Autostart .desktop filename written under `~/.config/autostart/`. */
 const TRAY_AUTOSTART_FILE = 'ws-scrcpy-web-tray.desktop';
 
+/** Root-owned staging dir for the system-scope AppImage (SELinux bin_t — init_t can exec). */
+export const STAGED_SYSTEM_DIR = '/opt/ws-scrcpy-web';
+/** Stable, channel-agnostic filename for the staged system-scope AppImage. */
+export const STAGED_SYSTEM_APPIMAGE = 'WsScrcpyWeb.AppImage';
+
 /**
  * Wrap execFileSync so the thrown Error includes stderr — matches the pattern
  * established in ServyClient. Without this, Node surfaces only the exit code.
@@ -166,6 +171,13 @@ export function renderUnitFile(opts: ServiceInstallOptions, scope: SystemdScope)
         .map(([k, v]) => `Environment=${k}=${v}`)
         .join('\n');
     const wantedBy = scope === 'user' ? 'default.target' : 'multi-user.target';
+    // System scope runs under init_t and may NOT exec a user_home_t AppImage,
+    // so the unit references the staged /opt copy (labelled bin_t at install).
+    // User scope runs as the unconfined user and execs the home AppImage directly.
+    const execStart = scope === 'system'
+        ? `${STAGED_SYSTEM_DIR}/${STAGED_SYSTEM_APPIMAGE}`
+        : opts.binPath;
+    const workingDir = scope === 'system' ? STAGED_SYSTEM_DIR : opts.startupDir;
     // StartLimitIntervalSec=300 means: count restart attempts in a rolling
     // 5-minute window; if maxRestartAttempts is exceeded, systemd gives up.
     return [
@@ -175,8 +187,8 @@ export function renderUnitFile(opts: ServiceInstallOptions, scope: SystemdScope)
         '',
         '[Service]',
         'Type=simple',
-        `ExecStart=${opts.binPath}`,
-        `WorkingDirectory=${opts.startupDir}`,
+        `ExecStart=${execStart}`,
+        `WorkingDirectory=${workingDir}`,
         'Restart=on-failure',
         'RestartSec=5',
         `StartLimitBurst=${opts.maxRestartAttempts}`,
@@ -229,6 +241,14 @@ export class SystemdClient implements ServiceClient {
     /** Absolute path to the tray helper autostart .desktop file (user scope). */
     public trayAutostartPath(): string {
         return path.join(os.homedir(), '.config', 'autostart', TRAY_AUTOSTART_FILE);
+    }
+
+    /** Absolute path of the staged system-scope AppImage (system scope ExecStart). */
+    public stagedSystemBinPath(): string {
+        // Forward-slash Linux path on purpose — this is the path written into the
+        // Linux systemd unit. Do NOT use path.join here: on a Windows host it emits
+        // backslashes, which both fails the test and is wrong for a Linux unit file.
+        return `${STAGED_SYSTEM_DIR}/${STAGED_SYSTEM_APPIMAGE}`;
     }
 
     /**
