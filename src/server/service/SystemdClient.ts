@@ -53,6 +53,14 @@ const log = Logger.for('SystemdClient');
 /** systemd scope: per-user (default.target) or system-wide (multi-user.target). */
 export type SystemdScope = 'user' | 'system';
 
+/** Resolve systemctl to an absolute path + return the (bin, args) pair for execFile. */
+export function systemctlArgv(
+    args: string[],
+    resolve: (t: string) => string = (t) => resolveSystemTool(t),
+): { bin: string; args: string[] } {
+    return { bin: resolve('systemctl'), args };
+}
+
 /** Filename of the tray helper binary on Linux (no extension). */
 const TRAY_HELPER_BIN = 'ws-scrcpy-web-tray';
 /** Autostart .desktop filename written under `~/.config/autostart/`. */
@@ -64,17 +72,13 @@ export const STAGED_SYSTEM_DIR = '/opt/ws-scrcpy-web';
 export const STAGED_SYSTEM_APPIMAGE = 'WsScrcpyWeb.AppImage';
 
 /**
- * Wrap execFileSync so the thrown Error includes stderr — matches the pattern
- * established in ServyClient. Without this, Node surfaces only the exit code.
- */
-/**
  * Run a command via pkexec for graphical privilege escalation. The user
  * sees a single password prompt for the entire shell command. Throws on
  * auth-cancel (exit 126), pkexec-not-found, or command failure.
  */
 async function runPkexec(shellCmd: string, label: string): Promise<string> {
     try {
-        const { stdout } = await execFileAsync('pkexec', ['sh', '-c', shellCmd], {
+        const { stdout } = await execFileAsync(resolveSystemTool('pkexec'), ['sh', '-c', shellCmd], {
             encoding: 'utf8',
             timeout: 60_000,
         });
@@ -102,7 +106,7 @@ async function runPkexec(shellCmd: string, label: string): Promise<string> {
  */
 export function isLibfuse2Installed(): boolean {
     try {
-        const out = execFileSync('ldconfig', ['-p'], {
+        const out = execFileSync(resolveSystemTool('ldconfig'), ['-p'], {
             stdio: ['ignore', 'pipe', 'pipe'],
             encoding: 'utf8',
         });
@@ -114,7 +118,7 @@ export function isLibfuse2Installed(): boolean {
 
 function libfuse2InstallCmd(): string | null {
     try {
-        const out = execFileSync('ldconfig', ['-p'], {
+        const out = execFileSync(resolveSystemTool('ldconfig'), ['-p'], {
             stdio: ['ignore', 'pipe', 'pipe'],
             encoding: 'utf8',
         });
@@ -150,7 +154,8 @@ export async function ensureLibfuse2(): Promise<void> {
 
 function runSystemctl(args: string[], label: string): string {
     try {
-        return execFileSync('systemctl', args, {
+        const { bin, args: a } = systemctlArgv(args);
+        return execFileSync(bin, a, {
             stdio: ['ignore', 'pipe', 'pipe'],
             encoding: 'utf8',
         });
@@ -364,7 +369,7 @@ export class SystemdClient implements ServiceClient {
             // systems), missing privileges on hardened distros. Service is
             // already installed + running — degraded but functional.
             try {
-                execFileSync('loginctl', ['enable-linger', os.userInfo().username], {
+                execFileSync(resolveSystemTool('loginctl'), ['enable-linger', os.userInfo().username], {
                     stdio: ['ignore', 'pipe', 'pipe'],
                 });
             } catch (err) {
@@ -453,9 +458,10 @@ export class SystemdClient implements ServiceClient {
         // error for our purposes (the unit file exists; we just want the
         // running state).
         try {
+            const { bin, args: a } = systemctlArgv([...baseArgs, 'is-active', `${name}.service`]);
             const out = execFileSync(
-                'systemctl',
-                [...baseArgs, 'is-active', `${name}.service`],
+                bin,
+                a,
                 { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8' },
             ).trim();
             return out === 'active' ? 'running' : 'stopped';

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { SystemdClient, renderUnitFile, STAGED_SYSTEM_DIR, buildSystemInstallScript } from './SystemdClient';
+import { SystemdClient, renderUnitFile, STAGED_SYSTEM_DIR, buildSystemInstallScript, systemctlArgv } from './SystemdClient';
 
 describe('system-scope staging', () => {
     const baseOpts = {
@@ -70,5 +70,13 @@ describe('buildSystemInstallScript', () => {
         // still proceeds to cp unit + enable.
         expect(script).toContain('|| true');
         expect(script.indexOf('cp "/tmp/WsScrcpyWeb.service.tmp"')).toBeGreaterThan(script.indexOf('chcon'));
+    });
+});
+
+describe('absolute-path OS tools', () => {
+    it('systemctlArgv resolves systemctl to an absolute path', () => {
+        const argv = systemctlArgv(['--user', 'daemon-reload'], (t) => `/usr/bin/${t}`);
+        expect(argv.bin).toBe('/usr/bin/systemctl');
+        expect(argv.args).toEqual(['--user', 'daemon-reload']);
     });
 });
