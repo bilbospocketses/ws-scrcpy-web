@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.26] - 2026-06-01
+
+### Changed
+
+- **v0.1.30-beta.26 is a no-op companion release to beta.25** — identical code, published as the update target for verifying the now-fixed Linux in-app update APPLY path (install beta.25, click update, confirm the "updating…" overlay appears and the app reloads on beta.26).
+
 ## [0.1.30-beta.25] - 2026-06-01
 
 ### Added
