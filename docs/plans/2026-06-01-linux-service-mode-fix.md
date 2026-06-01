@@ -29,6 +29,18 @@
 
 ---
 
+## Rust testing on this Windows host (local, via `cross`)
+
+The launcher's Linux modules (`linux_service`, `linux_apply`) are `#[cfg(target_os = "linux")]`, so they need a Linux toolchain. This host has **`cross` 0.2.5 + the `ghcr.io/cross-rs/x86_64-unknown-linux-gnu:0.2.5` Docker image** (machine-tooling inventory, re-confirmed via `docker images`) — so the Rust steps below run **locally**, not just on CI. Wherever a Rust step shows `cargo test … --lib linux_service` or `cargo clippy`, run it as:
+
+- unit tests: `cross test -p launcher --lib linux_service --target x86_64-unknown-linux-gnu`
+- lint: `cross clippy -p launcher --target x86_64-unknown-linux-gnu -- -D warnings`
+- full Rust suite (Linux): `cross test --workspace --target x86_64-unknown-linux-gnu`
+
+Plain `cargo test --target <linux-triple>` FAILS on this host (no Linux linker) — always use `cross` (needs Docker Desktop running). A native-Linux runner / CI can use plain `cargo`. Cross containers compile + run unit tests but do NOT run systemd or SELinux-enforcing, so the runtime behavior in Tasks 6 + 12 still needs the real Fedora box; everything else (including the `linux_service` unit tests) verifies here.
+
+---
+
 ## Task 1: OS-tool absolute-path resolver
 
 **Files:**
