@@ -242,6 +242,25 @@ export class ServiceApi {
             startupDir = path.dirname(binPath);
         }
 
+        // Record the home AppImage path so a later USER-scope uninstall can
+        // relaunch the app in local mode. System scope runs the /opt copy and
+        // won't know the user's home AppImage otherwise. Best-effort: a failed
+        // marker write logs + continues (it only degrades the post-uninstall
+        // relaunch, not the install).
+        if (result.platform === 'linux') {
+            const appImage = process.env['APPIMAGE'];
+            if (appImage && appImage.length > 0) {
+                const dataRoot = cfg.dataRoot ?? path.dirname(cfg.dependenciesPath);
+                const markerPath = path.join(dataRoot, 'control', 'local-appimage');
+                try {
+                    fs.mkdirSync(path.dirname(markerPath), { recursive: true });
+                    fs.writeFileSync(markerPath, appImage, 'utf8');
+                } catch (err) {
+                    log.warn(`could not write local-appimage marker: ${(err as Error).message}`);
+                }
+            }
+        }
+
         // v0.1.24-beta.7: service.log moves under <dataRoot>/logs/ to
         // colocate with launcher.log + server.log + ws-scrcpy-web.log.
         // Pre-beta.7 it lived at <dataRoot>/dependencies/service.log,

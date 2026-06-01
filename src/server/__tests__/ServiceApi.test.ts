@@ -620,6 +620,82 @@ describe('ServiceApi', () => {
             expect(opts?.scope).toBe('system');
         });
 
+        it('POST /install on Linux with $APPIMAGE set writes local-appimage marker to <dataRoot>/control/local-appimage', async () => {
+            const appImagePath = '/home/jamie/Applications/WsScrcpyWeb.AppImage';
+            const savedAppImage = process.env['APPIMAGE'];
+            process.env['APPIMAGE'] = appImagePath;
+            // Compute the marker path up-front so we can clean it up in finally.
+            // On Windows cfg.dataRoot = C:\ProgramData\WsScrcpyWeb (a real path),
+            // so the marker lands outside tmpDirs and must be cleaned explicitly.
+            const cfg = Config.getInstance();
+            const dataRoot = cfg.dataRoot ?? path.dirname(cfg.dependenciesPath);
+            const markerPath = path.join(dataRoot, 'control', 'local-appimage');
+            try {
+                const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(async () => undefined);
+                const client = fakeClient({
+                    install: installFn,
+                    status: vi.fn(async () => 'running' as const),
+                });
+                const factoryResult: ServiceClientFactoryResult = {
+                    client,
+                    supported: true,
+                    platform: 'linux',
+                };
+                const api = new ServiceApi(() => factoryResult, () => 'user');
+                const { req, res } = makeReqRes(
+                    '/api/service/install',
+                    'POST',
+                    JSON.stringify({ scope: 'user' }),
+                );
+                await api.handle(req, res);
+                expect((res as any).getStatus()).toBe(200);
+
+                // Verify the marker landed on disk with the correct content.
+                expect(fs.existsSync(markerPath)).toBe(true);
+                expect(fs.readFileSync(markerPath, 'utf8')).toBe(appImagePath);
+            } finally {
+                try { fs.rmSync(markerPath, { force: true }); } catch { /* best-effort */ }
+                if (savedAppImage === undefined) delete process.env['APPIMAGE'];
+                else process.env['APPIMAGE'] = savedAppImage;
+            }
+        });
+
+        it('POST /install on Linux without $APPIMAGE does NOT write local-appimage marker', async () => {
+            const savedAppImage = process.env['APPIMAGE'];
+            delete process.env['APPIMAGE'];
+            // Compute the marker path and ensure no stale copy from a prior run.
+            const cfg = Config.getInstance();
+            const dataRoot = cfg.dataRoot ?? path.dirname(cfg.dependenciesPath);
+            const markerPath = path.join(dataRoot, 'control', 'local-appimage');
+            try { fs.rmSync(markerPath, { force: true }); } catch { /* best-effort */ }
+            try {
+                const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(async () => undefined);
+                const client = fakeClient({
+                    install: installFn,
+                    status: vi.fn(async () => 'running' as const),
+                });
+                const factoryResult: ServiceClientFactoryResult = {
+                    client,
+                    supported: true,
+                    platform: 'linux',
+                };
+                const api = new ServiceApi(() => factoryResult, () => 'user');
+                const { req, res } = makeReqRes(
+                    '/api/service/install',
+                    'POST',
+                    JSON.stringify({ scope: 'user' }),
+                );
+                await api.handle(req, res);
+                expect((res as any).getStatus()).toBe(200);
+
+                // Marker must NOT exist when APPIMAGE is unset.
+                expect(fs.existsSync(markerPath)).toBe(false);
+            } finally {
+                if (savedAppImage === undefined) delete process.env['APPIMAGE'];
+                else process.env['APPIMAGE'] = savedAppImage;
+            }
+        });
+
         it('POST /install on Linux with malformed JSON body falls back to user scope', async () => {
             const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(async () => undefined);
             const client = fakeClient({
