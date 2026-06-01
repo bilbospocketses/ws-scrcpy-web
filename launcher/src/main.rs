@@ -96,6 +96,12 @@ fn main() {
         std::process::exit(code);
     }
 
+    #[cfg(target_os = "linux")]
+    if let Some(code) = linux_service::handle(&args) {
+        log::info(&format!("linux-service-teardown exiting with code {code}"));
+        std::process::exit(code);
+    }
+
     // Cross-session user-launcher spawn dispatch. Invoked from post-stop.bat
     // after `servy-cli uninstall` completes, to drop a fresh user-session
     // launcher so the user lands on local-mode UI post-uninstall. Wraps
