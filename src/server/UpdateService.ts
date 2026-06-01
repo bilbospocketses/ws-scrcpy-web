@@ -128,32 +128,33 @@ export class UpdateService {
         //   ourselves. Computed once — installRoot is immutable for the
         //   service's lifetime.
         //
-        //   Linux — DO NOT pass a locator; delegate to Velopack's native
-        //   auto_locate_app_manifest (lib-rust/src/locator.rs). Given $APPIMAGE
-        //   it truncates the exe path at the `/usr/bin/` boundary to find the
-        //   AppImage mount root, then derives everything itself:
-        //     CurrentBinaryDir = <mount>/usr/bin
-        //     UpdateExePath    = <mount>/usr/bin/UpdateNix
-        //     ManifestPath     = <mount>/usr/bin/sq.version
-        //     PackagesDir      = /var/tmp/velopack/<packId>/packages
-        //   The velopack Node binding (node_modules/velopack/lib/index.js)
-        //   forwards `null` to the native FFI whenever the locator arg is
-        //   falsy, which is exactly what enables auto-locate. init() only
-        //   constructs the manager when APPIMAGE is set, so auto-locate always
-        //   has the data it needs.
+        //   Linux (AppImage) — hand-build the locator too, anchored on
+        //   installRoot. We do NOT delegate to Velopack's auto_locate_app_manifest:
+        //   on Linux (lib-rust/src/locator.rs) auto_locate finds the install by
+        //   searching `std::env::current_exe()` for "/usr/bin/" — but our server
+        //   runs inside the Node binary, which (Local-Dependencies-Only) lives at
+        //   <dataRoot>/dependencies/node/node, NOT under the AppImage mount's
+        //   /usr/bin/. So current_exe() has no "/usr/bin/" segment, auto_locate
+        //   returns "Could not locate '/usr/bin/'", UpdateManager construction
+        //   throws, the init() catch nulls mgr, and every check silently no-ops.
+        //   ($APPIMAGE is read by auto_locate only AFTER that search, to set
+        //   RootAppDir — it is NOT used to find the install root, contrary to the
+        //   beta.21 assumption.)
         //
-        //   Why not a hand-built Linux locator: beta.7 (PR #216) masked a Linux
-        //   construction throw with a `mgr === null` guard; beta.19 (PR #230)
-        //   then hand-built the config from `path.resolve(__dirname,'..','..')`.
-        //   But that Windows-shaped arithmetic is off by one level on Linux —
-        //   the AppImage payload sits at <mount>/usr/bin/dist (one deeper than
-        //   Windows' <root>/current/dist), so installRoot resolved to
-        //   <mount>/usr and `path.join(installRoot,'usr','bin')` produced a
-        //   DOUBLED <mount>/usr/usr/bin. Velopack couldn't find UpdateNix or
-        //   sq.version there, construction threw, the init() catch nulled mgr,
-        //   and every update check silently no-oped (the "beta.19 still doesn't
-        //   fix Linux updates" report). Letting Velopack locate itself removes
-        //   the entire arithmetic-drift failure mode.
+        //   installRoot = resolve(__dirname,'..','..'). The bundle is at
+        //   <mount>/usr/bin/dist, so on Linux installRoot = <mount>/usr and the
+        //   Velopack contents dir is installRoot/bin = <mount>/usr/bin — the same
+        //   shape the Windows branch uses (installRoot/current). __dirname is part
+        //   of the read-only AppImage payload, so it is reliably under the mount
+        //   (unlike current_exe()). RootAppDir is the $APPIMAGE file path, matching
+        //   Velopack's own Linux locator output.
+        //
+        //   Lineage: beta.7 (#216) masked the throw with a `mgr===null` guard;
+        //   beta.19 (#230) hand-built from resolve(__dirname,'..','..') but then
+        //   re-appended usr/bin → DOUBLED <mount>/usr/usr/bin; beta.21 (#237)
+        //   delegated to auto_locate (this comment's predecessor) which fails for
+        //   the current_exe() reason above. The contents dir is simply
+        //   installRoot/bin — no re-appended usr, no auto_locate.
         if (this.platform === 'win32') {
             this.locator = {
                 RootAppDir: this.installRoot,
@@ -170,8 +171,25 @@ export class UpdateService {
                 IsPortable: false,
             };
         } else {
-            // Non-Windows (Linux AppImage): undefined → Velopack auto-locates.
-            this.locator = undefined;
+            // Linux AppImage: hand-built locator anchored on installRoot/bin
+            // (= <mount>/usr/bin). See the strategy comment above for why we do
+            // NOT use Velopack's auto_locate here.
+            const contentsDir = path.join(this.installRoot, 'bin');
+            const appImage = process.env['APPIMAGE'];
+            this.locator = {
+                // RootAppDir is the .AppImage FILE path, per Velopack's Linux
+                // auto_locate (locator.rs). Fall back to installRoot only if
+                // APPIMAGE is somehow unset (init() requires it for prod mode).
+                RootAppDir: appImage && appImage.length > 0 ? appImage : this.installRoot,
+                UpdateExePath: path.join(contentsDir, 'UpdateNix'),
+                // Velopack's Linux packages dir: /var/tmp/velopack/<id>/packages
+                // (id = WsScrcpyWeb). Used at download time, not checked at
+                // construction. Hardcoded forward-slash — a Linux-only path.
+                PackagesDir: '/var/tmp/velopack/WsScrcpyWeb/packages',
+                ManifestPath: path.join(contentsDir, 'sq.version'),
+                CurrentBinaryDir: contentsDir,
+                IsPortable: true,
+            };
         }
         this.factory = opts.updateManagerFactory ?? defaultUpdateManagerFactory;
         this.feedUrlOverride = opts.feedUrlOverride;
