@@ -23,6 +23,7 @@ import {
     type ServiceClientFactoryResult,
 } from '../service';
 import { resolveSystemTool } from '../service/systemTools';
+import { STAGED_SYSTEM_DIR, STAGED_SYSTEM_HELPER } from '../service/SystemdClient';
 import { readJsonBody } from './utils';
 
 const log = Logger.for('ServiceApi');
@@ -447,18 +448,39 @@ export class ServiceApi {
             }
 
             const dataRoot = cfg.dataRoot ?? path.dirname(cfg.dependenciesPath);
-            // Same staged out-of-mount helper UpdateService.applyUpdate uses — note the
-            // `.exe` suffix is the fixed staged name even on Linux (refresh_helper_binary).
-            const helper = path.join(dataRoot, 'control', 'operation-server', 'ws-scrcpy-web-launcher.exe');
             const systemdRun = resolveSystemTool('systemd-run');
-            const sdArgs = [
-                ...(scope === 'user' ? ['--user'] : []),
-                '--collect',
-                `--unit=wsscrcpy-teardown-${Date.now()}`,
-                helper,
-                '--linux-service-teardown', '--scope', scope, '--unit', WS_SCRCPY_SERVICE_NAME,
-            ];
-            this.spawnDetached(systemdRun, sdArgs);
+            const teardownUnit = `--unit=wsscrcpy-teardown-${Date.now()}`;
+            let cmd: string;
+            let sdArgs: string[];
+            if (scope === 'system') {
+                // System scope: exec the /opt-staged helper (bin_t — init_t may exec
+                // it, unlike the data_home_t home copy SELinux blocks), out-of-cgroup
+                // via systemd-run --system, elevated by pkexec when the serving process
+                // isn't already root (the system service itself runs as root).
+                const optHelper = `${STAGED_SYSTEM_DIR}/${STAGED_SYSTEM_HELPER}`;
+                const runArgs = [
+                    '--system', '--collect', teardownUnit,
+                    optHelper, '--linux-service-teardown', '--scope', 'system', '--unit', WS_SCRCPY_SERVICE_NAME,
+                ];
+                if (process.getuid?.() === 0) {
+                    cmd = systemdRun;
+                    sdArgs = runArgs;
+                } else {
+                    cmd = resolveSystemTool('pkexec');
+                    sdArgs = [systemdRun, ...runArgs];
+                }
+            } else {
+                // User scope: UNCHANGED — home helper, user manager, includes relaunch.
+                // Same staged out-of-mount helper UpdateService.applyUpdate uses — note
+                // the `.exe` suffix is the fixed staged name even on Linux.
+                const helper = path.join(dataRoot, 'control', 'operation-server', 'ws-scrcpy-web-launcher.exe');
+                cmd = systemdRun;
+                sdArgs = [
+                    '--user', '--collect', teardownUnit,
+                    helper, '--linux-service-teardown', '--scope', 'user', '--unit', WS_SCRCPY_SERVICE_NAME,
+                ];
+            }
+            this.spawnDetached(cmd, sdArgs);
             log.info(`uninstall(linux): spawned teardown helper via systemd-run (${scope} scope)`);
 
             const body: ServiceActionSuccess = { ok: true, status: 'shutting-down', installMode: newMode };
