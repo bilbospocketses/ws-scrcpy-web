@@ -46,7 +46,7 @@ describe('ServerShutdownApi', () => {
     it('POST /api/server/shutdown writes 200 with { ok: true } envelope', async () => {
         const schedule = vi.fn();
         const exit = vi.fn();
-        const api = new ServerShutdownApi(schedule, exit);
+        const api = new ServerShutdownApi({ schedule, exit });
         const { req, res } = makeReqRes('/api/server/shutdown', 'POST');
         const handled = await api.handle(req, res);
         expect(handled).toBe(true);
@@ -57,7 +57,7 @@ describe('ServerShutdownApi', () => {
     it('schedules process.exit(0) via setTimeout after responding', async () => {
         const schedule = vi.fn();
         const exit = vi.fn();
-        const api = new ServerShutdownApi(schedule, exit);
+        const api = new ServerShutdownApi({ schedule, exit });
         const { req, res } = makeReqRes('/api/server/shutdown', 'POST');
         await api.handle(req, res);
 
@@ -70,7 +70,34 @@ describe('ServerShutdownApi', () => {
         expect(exit).not.toHaveBeenCalled();
 
         // Manually invoke the scheduled callback; verify exit(0) is then called.
-        (cb as () => void)();
+        // The callback now returns a promise (awaits cleanup first), so await it.
+        await (cb as () => Promise<void>)();
         expect(exit).toHaveBeenCalledWith(0);
+    });
+
+    it('awaits cleanup before exiting (cleanup runs, then exit 0)', async () => {
+        const order: string[] = [];
+        const cleanup = vi.fn(async () => {
+            order.push('cleanup');
+        });
+        const schedule = vi.fn();
+        const exit = vi.fn(() => {
+            order.push('exit');
+        });
+        const api = new ServerShutdownApi({ cleanup, schedule, exit });
+        const { req, res } = makeReqRes('/api/server/shutdown', 'POST');
+        await api.handle(req, res);
+
+        // Cleanup must NOT run until the scheduled tick (response flushes first).
+        expect(cleanup).not.toHaveBeenCalled();
+        expect(schedule).toHaveBeenCalledTimes(1);
+        const [cb] = schedule.mock.calls[0]!;
+
+        await (cb as () => Promise<void>)();
+
+        expect(cleanup).toHaveBeenCalledTimes(1);
+        expect(exit).toHaveBeenCalledWith(0);
+        // Ordering is the whole point: adb daemon + services torn down first.
+        expect(order).toEqual(['cleanup', 'exit']);
     });
 });

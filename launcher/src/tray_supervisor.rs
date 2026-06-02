@@ -48,7 +48,40 @@ use crate::log;
 use crate::user_session_spawn::{spawn_in_active_user_session, SpawnUserLauncherArgs};
 
 const TRAY_POLL_INTERVAL_SECS: u64 = 10;
-const TRAY_PROCESS_NAME: &str = "ws-scrcpy-web-tray.exe";
+pub(crate) const TRAY_PROCESS_NAME: &str = "ws-scrcpy-web-tray.exe";
+
+/// Decide whether the launcher's terminal exit should reap the tray helper.
+/// Skipped when an update-apply or uninstall handoff is pending: those exits
+/// relaunch the launcher (which respawns the tray) or are handled by that flow,
+/// so the tray must persist across them. A plain quit (Settings "stop server &
+/// exit", Ctrl+C, Servy stop) has no marker and reaps the tray — otherwise it
+/// is orphaned, since the tray is spawned detached and NOT in the launcher's
+/// kill-on-close job object, so it survives launcher exit on its own. Pure (no
+/// I/O) so it is unit-testable, like `supervisor::decide_restart`.
+pub(crate) fn should_reap_tray_on_exit(apply_pending: bool, uninstall_pending: bool) -> bool {
+    !apply_pending && !uninstall_pending
+}
+
+/// Reap the standalone tray helper on the launcher's terminal exit. Marker-
+/// gated via `should_reap_tray_on_exit` (markers live under
+/// `<data_root>/control/`). Best-effort `taskkill`; failure is logged, not
+/// fatal — the launcher is exiting regardless. The tray-supervisor poll thread
+/// dies with this process, so there is no respawn after the kill.
+pub(crate) fn reap_tray_on_terminal_exit(data_root: &Path) {
+    let control = data_root.join("control");
+    let apply_pending = control.join("apply-update-pending").exists();
+    let uninstall_pending = control.join("uninstall-pending").exists();
+    if !should_reap_tray_on_exit(apply_pending, uninstall_pending) {
+        log::info(
+            "tray-supervisor: terminal exit with update/uninstall handoff pending; leaving tray for relaunch",
+        );
+        return;
+    }
+    log::info("tray-supervisor: terminal exit; reaping tray helper");
+    let _ = crate::elevated_runner::silent_command("taskkill")
+        .args(["/F", "/IM", TRAY_PROCESS_NAME])
+        .output();
+}
 
 /// Start a background thread that ensures a tray exists in the user
 /// session at all times. Returns immediately. The thread runs for the
@@ -382,5 +415,30 @@ fn is_tray_running_in_session(session_id: u32) -> bool {
         );
 
         found
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reaps_tray_on_plain_terminal_exit() {
+        assert!(should_reap_tray_on_exit(false, false));
+    }
+
+    #[test]
+    fn skips_reap_when_update_apply_pending() {
+        assert!(!should_reap_tray_on_exit(true, false));
+    }
+
+    #[test]
+    fn skips_reap_when_uninstall_pending() {
+        assert!(!should_reap_tray_on_exit(false, true));
+    }
+
+    #[test]
+    fn skips_reap_when_both_markers_present() {
+        assert!(!should_reap_tray_on_exit(true, true));
     }
 }

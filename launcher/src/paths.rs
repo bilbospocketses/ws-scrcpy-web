@@ -59,9 +59,17 @@ impl Paths {
         let data_root = if cfg!(windows) {
             common::config::data_root_for_windows(programdata_override)
         } else {
+            // Honor an explicit DATA_ROOT override (DATA_ROOT > XDG > HOME),
+            // matching common::config::data_root_from_env and the Node side, so
+            // the spawn path and the service-teardown/tray-reap path agree.
+            let data_root_override = std::env::var("DATA_ROOT").ok();
             let xdg = std::env::var("XDG_DATA_HOME").ok();
             let home = std::env::var("HOME").ok();
-            common::config::data_root_for_linux(xdg.as_deref(), home.as_deref())
+            common::config::data_root_for_linux(
+                data_root_override.as_deref(),
+                xdg.as_deref(),
+                home.as_deref(),
+            )
         };
 
         let deps_path = match deps_override {

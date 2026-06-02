@@ -99,7 +99,7 @@ HttpServer.addApiHandler(configApi);
 const serviceApi = new ServiceApi();
 HttpServer.addApiHandler(serviceApi);
 
-const shutdownApi = new ServerShutdownApi();
+const shutdownApi = new ServerShutdownApi({ cleanup: gracefulShutdown });
 HttpServer.addApiHandler(shutdownApi);
 
 const updateService = new UpdateService();
@@ -263,6 +263,33 @@ process.on('unhandledRejection', (reason) => {
 
 const EXIT_WATCHDOG_MS = 10_000;
 
+let cleanupStarted = false;
+/**
+ * Shared graceful teardown: stop the adb daemon we own + release running
+ * services. Idempotent so the SIGINT/SIGTERM handler and the
+ * /api/server/shutdown path (Settings "stop server & exit" button / Windows
+ * tray) can both call it without double-teardown. The shutdown API awaits it
+ * before process.exit(0); the signal handler fires it best-effort and relies
+ * on the exit watchdog below. NOT used on the exit-75 restart-for-update path,
+ * which deliberately keeps the adb daemon alive across supervisor-driven
+ * restarts.
+ */
+async function gracefulShutdown(): Promise<void> {
+    if (cleanupStarted) return;
+    cleanupStarted = true;
+    serverLog.info('Stopping adb daemon (kill-server) ...');
+    try {
+        await scanAdb.killServer();
+    } catch (err) {
+        serverLog.warn(`adb kill-server during exit failed: ${(err as Error).message}`);
+    }
+    runningServices.forEach((service: Service) => {
+        const serviceName = service.getName();
+        serverLog.info(`Stopping ${serviceName} ...`);
+        service.release();
+    });
+}
+
 let interrupted = false;
 function exit(signal: string) {
     // Force stdout/stderr to blocking mode so every subsequent log line
@@ -289,23 +316,12 @@ function exit(signal: string) {
         return;
     }
     interrupted = true;
-    // Tear down our adb daemon on clean shutdown. We started it via
-    // AdbClient.startServer; per the "own the daemon's lifetime" stance,
-    // a clean SIGINT/SIGTERM should not leave the daemon orphaned holding
-    // port 5037. This path is for clean exit ONLY — process.exit(75)
-    // (restart-for-update) bypasses this function so the daemon stays
-    // alive across supervisor-driven restarts. Fire-and-forget; the
-    // watchdog below catches any hang, and a stuck adb is no worse than
-    // today's behavior.
-    serverLog.info('Stopping adb daemon (kill-server) ...');
-    scanAdb.killServer().catch((err: Error) => {
-        serverLog.warn(`adb kill-server during exit failed: ${err.message}`);
-    });
-    runningServices.forEach((service: Service) => {
-        const serviceName = service.getName();
-        serverLog.info(`Stopping ${serviceName} ...`);
-        service.release();
-    });
+    // Fire-and-forget the shared teardown (idempotent — the /api/server/shutdown
+    // path may have already run it). The 2000ms hold + watchdog below backstop
+    // any hang. process.exit(75) (restart-for-update) bypasses this function
+    // entirely, so the daemon stays alive across supervisor-driven restarts —
+    // see gracefulShutdown's doc.
+    void gracefulShutdown();
     // setBlocking(true) at top of exit() makes the console.log calls in
     // serverLog / Logger synchronous-to-the-TTY, so by the time control
     // reaches here every "Stopping X" line is already on the console.

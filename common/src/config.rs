@@ -25,11 +25,21 @@ pub fn data_root_for_windows(programdata: Option<&str>) -> PathBuf {
     PathBuf::from(pd).join("WsScrcpyWeb")
 }
 
-/// Pure resolver for the writable-state root on Linux. Follows the XDG
-/// Base Directory spec: `$XDG_DATA_HOME/WsScrcpyWeb` if set, otherwise
-/// `~/.local/share/WsScrcpyWeb`. Mirrors `resolveDataRoot` in
-/// `src/server/Config.ts`. Parameters are injectable for testing.
-pub fn data_root_for_linux(xdg_data_home: Option<&str>, home: Option<&str>) -> PathBuf {
+/// Pure resolver for the writable-state root on Linux. Precedence mirrors
+/// `resolveDataRoot` in `src/server/Config.ts`: an explicit `DATA_ROOT`
+/// override (used verbatim — it is already the full path, NOT joined with
+/// `WsScrcpyWeb`), then `$XDG_DATA_HOME/WsScrcpyWeb`, then
+/// `~/.local/share/WsScrcpyWeb`. Honoring `DATA_ROOT` here keeps the Rust side
+/// (launcher spawn + service teardown + tray reap) aligned with the Node side,
+/// which already reads `DATA_ROOT`. Parameters are injectable for testing.
+pub fn data_root_for_linux(
+    data_root: Option<&str>,
+    xdg_data_home: Option<&str>,
+    home: Option<&str>,
+) -> PathBuf {
+    if let Some(dr) = data_root.filter(|s| !s.is_empty()) {
+        return PathBuf::from(dr);
+    }
     if let Some(xdg) = xdg_data_home.filter(|s| !s.is_empty()) {
         return PathBuf::from(xdg).join("WsScrcpyWeb");
     }
@@ -47,9 +57,10 @@ pub fn data_root_from_env() -> Option<PathBuf> {
         let pd = std::env::var("PROGRAMDATA").ok();
         Some(data_root_for_windows(pd.as_deref()))
     } else {
+        let data_root = std::env::var("DATA_ROOT").ok();
         let xdg = std::env::var("XDG_DATA_HOME").ok();
         let home = std::env::var("HOME").ok();
-        Some(data_root_for_linux(xdg.as_deref(), home.as_deref()))
+        Some(data_root_for_linux(data_root.as_deref(), xdg.as_deref(), home.as_deref()))
     }
 }
 
@@ -249,19 +260,33 @@ mod tests {
 
     #[test]
     fn data_root_for_linux_uses_xdg_data_home_when_set() {
-        let result = data_root_for_linux(Some("/custom/data"), Some("/home/user"));
+        let result = data_root_for_linux(None, Some("/custom/data"), Some("/home/user"));
         assert_eq!(result, PathBuf::from("/custom/data/WsScrcpyWeb"));
     }
 
     #[test]
     fn data_root_for_linux_falls_back_to_home_local_share() {
-        let result = data_root_for_linux(None, Some("/home/user"));
+        let result = data_root_for_linux(None, None, Some("/home/user"));
         assert_eq!(result, PathBuf::from("/home/user/.local/share/WsScrcpyWeb"));
     }
 
     #[test]
     fn data_root_for_linux_ignores_empty_xdg_data_home() {
-        let result = data_root_for_linux(Some(""), Some("/home/user"));
+        let result = data_root_for_linux(None, Some(""), Some("/home/user"));
+        assert_eq!(result, PathBuf::from("/home/user/.local/share/WsScrcpyWeb"));
+    }
+
+    #[test]
+    fn data_root_for_linux_honors_data_root_override_verbatim() {
+        // DATA_ROOT wins over XDG/HOME and is used as-is (no WsScrcpyWeb join),
+        // mirroring TS resolveDataRoot which returns env.DATA_ROOT directly.
+        let result = data_root_for_linux(Some("/explicit/root"), Some("/xdg"), Some("/home/user"));
+        assert_eq!(result, PathBuf::from("/explicit/root"));
+    }
+
+    #[test]
+    fn data_root_for_linux_ignores_empty_data_root() {
+        let result = data_root_for_linux(Some(""), None, Some("/home/user"));
         assert_eq!(result, PathBuf::from("/home/user/.local/share/WsScrcpyWeb"));
     }
 

@@ -292,6 +292,16 @@ fn main() {
         )),
     }
 
+    // §27 — reap the standalone tray helper on terminal exit. It is spawned
+    // detached and NOT in the kill-on-close job object, so it survives launcher
+    // exit on its own; without this a plain "stop server & exit" (or any clean
+    // exit) leaves an orphaned tray pointing at a dead launcher. Marker-gated so
+    // update-apply / uninstall handoffs (which relaunch) keep their tray.
+    #[cfg(windows)]
+    if let Some(dr) = common::config::data_root_from_env() {
+        tray_supervisor::reap_tray_on_terminal_exit(&dr);
+    }
+
     log::info(&format!("ws-scrcpy-web-launcher exiting with code {exit_code}"));
     std::process::exit(exit_code);
 }
