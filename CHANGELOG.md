@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.36] - 2026-06-02
+
 ### Changed
 
 - **v0.1.30-beta.36 is a no-op companion to beta.35** — identical code, published as the update *target* to validate the #27 relaunch fix end-to-end. From a beta.35 instance, run the full failing path — install a user-scope service → uninstall it (relaunch via `systemd-run --collect`) → update — and confirm it swaps **and auto-relaunches** onto beta.36 unattended.
