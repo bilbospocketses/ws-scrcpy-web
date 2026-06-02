@@ -1063,6 +1063,33 @@ describe('ServiceApi', () => {
             expect(body.status).toBe('shutting-down');
         });
 
+        it('schedules local-instance exit after a successful install on Linux (mirrors win32)', async () => {
+            const scheduled: number[] = [];
+            const scheduleExit = vi.fn((_fn: () => void, ms: number) => { scheduled.push(ms); });
+            const client = fakeClient({
+                install: vi.fn(async () => undefined),
+                status: vi.fn(async () => 'running' as const),
+            });
+            const factoryResult: ServiceClientFactoryResult = {
+                client,
+                supported: true,
+                platform: 'linux',
+            };
+            // Constructor: factory, scope, existsCheck, spawnDetached, scheduleExit
+            const api = new ServiceApi(
+                () => factoryResult,
+                () => 'user',
+                () => true,
+                vi.fn(), // spawnDetached (unused by install path)
+                scheduleExit,
+            );
+            const { req, res } = makeReqRes('/api/service/install', 'POST', JSON.stringify({ scope: 'user' }));
+            await api.handle(req, res);
+            expect((res as any).getStatus()).toBe(200);
+            expect(scheduleExit).toHaveBeenCalledTimes(1);
+            expect(scheduled[0]).toBe(15_000);
+        });
+
         it('user-scope uninstall is UNCHANGED (home helper, systemd-run --user, no pkexec)', async () => {
             // The existing user-scope test is the canonical; this twin makes the
             // regression explicit alongside the new system-scope tests.

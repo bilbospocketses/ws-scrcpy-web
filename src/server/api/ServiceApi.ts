@@ -58,6 +58,7 @@ export class ServiceApi {
             child.on('error', (err) => log.warn(`spawnDetached ${cmd} error: ${err.message}`));
             child.unref();
         },
+        private scheduleExit: (fn: () => void, ms: number) => void = (fn, ms) => { setTimeout(fn, ms).unref(); },
     ) {}
 
     public async handle(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
@@ -383,14 +384,17 @@ export class ServiceApi {
         const disk = this.readDiskConfig();
 
         // Schedule local-Node exit. This instance is useless once the service
-        // is running. The frontend navigates to the service port once it
-        // detects config.json mtime change — this timer is a safety cap, not
-        // a timing mechanism.
-        if (result.platform === 'win32') {
-            setTimeout(() => {
+        // is running; it also holds the web port. The frontend navigates to the
+        // service port once it detects config.json mtime change — this timer is
+        // a safety cap, not a timing mechanism. Fire on win32 AND linux: the
+        // local instance lingers on Linux too, causing concurrent-instance and
+        // port-discovery-timeout symptoms (beta.31 fix #3). win32 behavior is
+        // byte-for-byte identical to before (same 15 s, same log message).
+        if (result.platform === 'win32' || result.platform === 'linux') {
+            this.scheduleExit(() => {
                 log.info('install-flow: local instance exiting (service is running)');
                 process.exit(0);
-            }, 15_000).unref();
+            }, 15_000);
         }
 
         const body: ServiceActionSuccess = {
