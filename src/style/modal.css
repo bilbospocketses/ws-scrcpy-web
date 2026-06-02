@@ -617,6 +617,12 @@ dialog.settings-modal .settings-control .settings-radio-label {
     margin: 0;
 }
 
+/* Bright accent so the radio's selected dot stays visible even when the label
+ * is muted (disabled scope). Matches the app's checkboxes/range controls. */
+dialog.settings-modal .settings-control .settings-radio-label input[type="radio"] {
+    accent-color: #5b9aff;
+}
+
 /*
  * Disabled radio (e.g. service scope while installed): mute the whole
  * label, not just the radio circle, so the read-only state reads at a
@@ -624,7 +630,7 @@ dialog.settings-modal .settings-control .settings-radio-label {
  * (Chrome 105+ / Firefox 121+ / Safari 15.4+).
  */
 dialog.settings-modal .settings-control .settings-radio-label:has(input:disabled) {
-    opacity: 0.5;
+    opacity: 0.65;
     cursor: not-allowed;
 }
 
