@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.34] - 2026-06-02
+
 ### Changed
 
 - **v0.1.30-beta.34 is a no-op companion to beta.33** — identical code, published purely as the update *target* to validate the #27 local-apply fix end-to-end. The fix only takes effect once you're running a version that has it, so validation requires updating **from** beta.33: from a beta.33 instance — especially one relaunched after a **user-scope service uninstall** (the `systemd-run --collect` case that was failing) — update to beta.34 and confirm the AppImage swaps and the app relaunches on beta.34.
