@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.38] - 2026-06-02
+
 ### Added
 
 - **In-app updates now apply in Linux service mode (user and system scope).** Previously only local-mode Linux updates applied; service mode silently no-op'd (it routed to Velopack's AppImage-incompatible apply). The same download → SHA-256-verify → swap machinery is now used for service mode: a launcher helper, launched out-of-cgroup via `systemd-run`, stops the unit → swaps the AppImage → (system scope) re-applies the `bin_t` SELinux label → starts the unit. **user-service** updates the home AppImage via the user manager; **system-service** updates the `/opt` staged copy as root via the system manager — no polkit prompt, so a system service can self-update headlessly. Windows and Linux-local apply paths are unchanged.
