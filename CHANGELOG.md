@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **In-app updates now apply in Linux service mode (user and system scope).** Previously only local-mode Linux updates applied; service mode silently no-op'd (it routed to Velopack's AppImage-incompatible apply). The same download → SHA-256-verify → swap machinery is now used for service mode: a launcher helper, launched out-of-cgroup via `systemd-run`, stops the unit → swaps the AppImage → (system scope) re-applies the `bin_t` SELinux label → starts the unit. **user-service** updates the home AppImage via the user manager; **system-service** updates the `/opt` staged copy as root via the system manager — no polkit prompt, so a system service can self-update headlessly. Windows and Linux-local apply paths are unchanged.
+
 ### Fixed
 
 - **The auto-release version-bump now commits `Cargo.lock`.** beta.37 taught `npm run version:bump` to sync the workspace crate versions in `Cargo.lock`, but the auto-release bump-PR commit was assembled from a fixed three-file list (`package.json`/`Cargo.toml`/`CHANGELOG.md`) that dropped the lock change — so the lockfile still lagged through CI-cut releases. `Cargo.lock` is now part of the bump commit, and the beta.37 lag has been resynced.

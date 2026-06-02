@@ -644,6 +644,10 @@ describe('UpdateService', () => {
             waitExitThenApplyUpdate: applyFn,
         });
         const svc = new UpdateService({
+            // Windows service mode keeps Velopack's waitExitThenApplyUpdate. Linux
+            // service mode now uses the download-based apply (item 39), so this
+            // assertion is win32-specific — without the pin it breaks on Linux CI.
+            platform: 'win32',
             installRoot: '/fake',
             existsSync: () => true,
             updateManagerFactory: () => mgr,
@@ -822,6 +826,63 @@ describe('UpdateService', () => {
         await svc.checkForUpdates();
         await expect(svc.applyUpdate()).rejects.toThrow(/mismatch/i);
         expect(spawnMock).not.toHaveBeenCalled();
+    });
+
+    // Linux SERVICE-mode apply (Phase 2 / item 39): the early-return to
+    // Velopack is now win32-only, so Linux service mode falls through to the
+    // download->verify->spawn-helper path with a --service-restart directive
+    // (the helper stops/swaps/starts the unit). user-service targets the home
+    // $APPIMAGE (user manager); system-service targets the /opt staged copy and
+    // passes --relabel (root, system manager). On the (non-systemd) test host
+    // buildDetachedSpawn falls back to a bare exec, so we assert the helper argv.
+    it.each([
+        ['user-service' as const, 'user' as const],
+        ['system-service' as const, 'system' as const],
+    ])('applyUpdate (linux %s): spawns helper with --service-restart; no waitExitThenApplyUpdate', async (installMode, scope) => {
+        const { createHash } = await import('crypto');
+        Config.getInstance().updateAppConfig({ autoUpdate: false, installMode, channel: 'beta', githubOwner: 'bilbospocketses' });
+        const appImageBytes = Buffer.from('NEW-APPIMAGE-CONTENT');
+        const goodHash = createHash('sha256').update(appImageBytes).digest('hex');
+        const sums = `${goodHash}  ./linux-final/WsScrcpyWeb-linux-beta.AppImage\n`;
+        const fetchFn = vi.fn(async (url: string) =>
+            url.endsWith('.AppImage') ? new Response(appImageBytes) : new Response(sums),
+        ) as unknown as typeof fetch;
+        const applyFn = vi.fn();
+        const mgr = fakeMgr({ checkForUpdatesAsync: async () => fakeUpdateInfo('0.1.30-beta.40'), waitExitThenApplyUpdate: applyFn });
+        const spawnMock = vi.mocked(child_process.spawn);
+        spawnMock.mockClear();
+        const svc = new UpdateService({
+            platform: 'linux',
+            installRoot: path.join('/fake', 'mount', 'usr'),
+            existsSync: () => true,
+            updateManagerFactory: () => mgr,
+            setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
+            clearIntervalFn: () => undefined,
+            fetchFn,
+        });
+        process.env['APPIMAGE'] = '/home/u/Downloads/WsScrcpyWeb-linux-beta.AppImage';
+        svc.init();
+        await svc.checkForUpdates();
+        expect(svc.getStatus().status).toBe('ready');
+
+        const result = await svc.applyUpdate();
+        expect(result.redirectPort).toBeNull();
+        // Linux service mode no longer routes to Velopack's (broken) apply.
+        expect(applyFn).not.toHaveBeenCalled();
+        expect(spawnMock).toHaveBeenCalledTimes(1);
+        const [bin, argv] = spawnMock.mock.calls[0]!;
+        const cmdline = [String(bin), ...(argv as string[]).map(String)].join(' ');
+        expect(cmdline).toMatch(/control[\\/]operation-server[\\/]ws-scrcpy-web-launcher\.exe/);
+        expect(cmdline).toContain('--linux-apply');
+        expect(cmdline).toContain(`--service-restart ${scope}`);
+        expect(cmdline).toContain('--unit WsScrcpyWeb');
+        if (scope === 'system') {
+            expect(cmdline).toContain('--target /opt/ws-scrcpy-web/WsScrcpyWeb.AppImage');
+            expect(cmdline).toContain('--relabel');
+        } else {
+            expect(cmdline).toContain('--target /home/u/Downloads/WsScrcpyWeb-linux-beta.AppImage');
+            expect(cmdline).not.toContain('--relabel');
+        }
     });
 
     // ── reconfigure ─────────────────────────────────────────────────────

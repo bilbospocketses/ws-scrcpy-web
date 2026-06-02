@@ -15,7 +15,7 @@ pub enum Scope {
 }
 
 /// `--user` prefix tokens for user scope, empty for system scope.
-fn scope_prefix(scope: Scope) -> Vec<String> {
+pub(crate) fn scope_prefix(scope: Scope) -> Vec<String> {
     match scope {
         Scope::User => vec!["--user".to_string()],
         Scope::System => vec![],
@@ -36,7 +36,7 @@ pub fn unit_path(scope: Scope, name: &str) -> PathBuf {
 
 /// Derive the sbin dir from the bin dir (`/usr/bin` -> `/usr/sbin`, `/bin` -> `/sbin`).
 /// semanage/restorecon live in sbin; everything else in bin.
-fn sbindir_from(bindir: &str) -> String {
+pub(crate) fn sbindir_from(bindir: &str) -> String {
     bindir
         .strip_suffix("/bin")
         .map(|p| format!("{p}/sbin"))

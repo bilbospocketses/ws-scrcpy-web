@@ -8,6 +8,7 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use crate::linux_service::{self, Scope};
 use crate::log;
 
 /// Dispatch: if argv contains `--linux-apply`, handle it and return Some(exit_code).
@@ -37,8 +38,19 @@ fn run(args: &[String]) -> i32 {
             return 2;
         }
     };
+
+    // Service-mode apply (Phase 2): if --service-restart is present, the helper
+    // stops the unit (synchronous, reaps the in-cgroup app), settles for the
+    // FUSE unmount, swaps, relabels (system scope), and starts the unit — no
+    // --wait-pid, no bare relaunch. Reached for user-service (user manager,
+    // home $APPIMAGE) and system-service (system manager, root, /opt + bin_t).
+    if let Some((scope, unit, relabel)) = parse_service_restart(args) {
+        return run_service_restart(&staged, &target, scope, &unit, relabel);
+    }
+
+    // Local-mode apply (unchanged #27 path): wait for the app pid, swap, relaunch.
     let wait_pid = arg_value(args, "--wait-pid").and_then(|s| s.parse::<u32>().ok());
-    log::info(&format!("linux-apply: staged={staged:?} target={target:?} wait_pid={wait_pid:?}"));
+    log::info(&format!("linux-apply(local): staged={staged:?} target={target:?} wait_pid={wait_pid:?}"));
 
     if let Some(pid) = wait_pid {
         wait_for_pid_exit(pid, Duration::from_secs(60));
@@ -61,6 +73,68 @@ fn run(args: &[String]) -> i32 {
     // consumer — Windows-only — so clearing it just keeps dataRoot tidy).
     cleanup_apply_artifacts(&staged);
     code
+}
+
+/// Service-mode apply: stop the unit (synchronous, reaps the in-cgroup app +
+/// unmounts the AppImage), settle until the file is swappable, swap, relabel
+/// (system scope), start the unit. No bare relaunch — the unit start brings the
+/// app back. Runs from inside a `systemd-run` transient unit (own cgroup), so it
+/// survives stopping the service unit. Exec orchestration over the pure builders
+/// (those are unit-tested; this path is Fedora-verified per the Phase 2 spec).
+fn run_service_restart(staged: &Path, target: &Path, scope: Scope, unit: &str, relabel: bool) -> i32 {
+    let bindir = linux_service::tool_dir("systemctl");
+    log::info(&format!(
+        "linux-apply(service): scope={scope:?} unit={unit} target={target:?} relabel={relabel}"
+    ));
+
+    // 1. Stop the unit (synchronous): reaps the in-cgroup launcher+Node+children
+    //    and unmounts the running AppImage so its file becomes swappable.
+    run_cmd(&service_unit_command(scope, "stop", unit, &bindir));
+
+    // 2. Settle: retry the swap until it succeeds (the FUSE unmount can lag the
+    //    stop). swap_appimage is self-healing on failure (restores the .bak), so
+    //    retrying is safe. Give up after 15s rather than start a stale version.
+    let start = Instant::now();
+    loop {
+        match swap_appimage(staged, target) {
+            Ok(()) => break,
+            Err(e) => {
+                if start.elapsed() >= Duration::from_secs(15) {
+                    log::error(&format!("linux-apply(service): swap failed after settle: {e}"));
+                    cleanup_apply_artifacts(staged);
+                    // Do NOT start into a broken binary; swap_appimage left the old one in place.
+                    return 1;
+                }
+                std::thread::sleep(Duration::from_millis(200));
+            }
+        }
+    }
+
+    // 3. System scope only: re-apply the bin_t label so init_t may exec the
+    //    swapped /opt copy. restorecon (persistent rule) preferred, else chcon.
+    if relabel {
+        let restorecon = format!("{}/restorecon", linux_service::sbindir_from(&bindir));
+        let present = Path::new(&restorecon).exists();
+        run_cmd(&relabel_command(target, &bindir, present));
+    }
+
+    // 4. Start the unit on the new version (rebinds the same web port).
+    run_cmd(&service_unit_command(scope, "start", unit, &bindir));
+    cleanup_apply_artifacts(staged);
+    0
+}
+
+/// Run one argv vector, logging the outcome (best-effort). Shared by the service path.
+fn run_cmd(argv: &[String]) {
+    let (cmd, rest) = match argv.split_first() {
+        Some(v) => v,
+        None => return,
+    };
+    match std::process::Command::new(cmd).args(rest).status() {
+        Ok(s) if s.success() => log::info(&format!("linux-apply(service) ok: {}", argv.join(" "))),
+        Ok(s) => log::error(&format!("linux-apply(service) non-zero ({:?}): {}", s.code(), argv.join(" "))),
+        Err(e) => log::error(&format!("linux-apply(service) spawn failed: {} ({e})", argv.join(" "))),
+    }
 }
 
 /// `<target>.bak`
@@ -165,6 +239,41 @@ pub fn relaunch_command(target: &Path, under_systemd: bool, systemd_run: &str) -
     }
 }
 
+/// `systemctl [--user] <action> <unit>.service` — `--user` for user scope, the
+/// system manager for system scope. Absolute systemctl path (Local-Deps). Pure.
+pub fn service_unit_command(scope: Scope, action: &str, unit: &str, bindir: &str) -> Vec<String> {
+    let systemctl = format!("{bindir}/systemctl");
+    let pre = linux_service::scope_prefix(scope);
+    [vec![systemctl], pre, vec![action.to_string(), format!("{unit}.service")]].concat()
+}
+
+/// Re-apply the `bin_t` SELinux label to the system-staged target after a swap,
+/// so `init_t` may exec it. `restorecon` (sbin) re-applies the persistent
+/// fcontext rule set at install; when absent, fall back to `chcon -t bin_t`
+/// (bin). `restorecon_present` is the availability the caller probed. Pure.
+pub fn relabel_command(target: &Path, bindir: &str, restorecon_present: bool) -> Vec<String> {
+    let t = target.to_string_lossy().into_owned();
+    if restorecon_present {
+        let sbindir = linux_service::sbindir_from(bindir);
+        vec![format!("{sbindir}/restorecon"), "-v".into(), t]
+    } else {
+        vec![format!("{bindir}/chcon"), "-t".into(), "bin_t".into(), t]
+    }
+}
+
+/// Parse `--service-restart <user|system> --unit <name> [--relabel]`. Returns
+/// None when `--service-restart` is absent (the local-mode apply path). Pure.
+pub fn parse_service_restart(args: &[String]) -> Option<(Scope, String, bool)> {
+    let scope = arg_value(args, "--service-restart").and_then(|s| match s {
+        "user" => Some(Scope::User),
+        "system" => Some(Scope::System),
+        _ => None,
+    })?;
+    let unit = arg_value(args, "--unit")?.to_string();
+    let relabel = args.iter().any(|a| a == "--relabel");
+    Some((scope, unit, relabel))
+}
+
 /// `<data_root>/control/apply-update-pending` — the apply marker path. Pure.
 pub fn apply_marker_path(data_root: &Path) -> PathBuf {
     data_root.join("control").join("apply-update-pending")
@@ -241,5 +350,61 @@ mod tests {
             apply_marker_path(Path::new("/d")),
             PathBuf::from("/d/control/apply-update-pending")
         );
+    }
+
+    #[test]
+    fn service_unit_command_user_scope() {
+        assert_eq!(
+            service_unit_command(linux_service::Scope::User, "stop", "WsScrcpyWeb", "/usr/bin"),
+            vec!["/usr/bin/systemctl", "--user", "stop", "WsScrcpyWeb.service"]
+        );
+        assert_eq!(
+            service_unit_command(linux_service::Scope::User, "start", "WsScrcpyWeb", "/usr/bin"),
+            vec!["/usr/bin/systemctl", "--user", "start", "WsScrcpyWeb.service"]
+        );
+    }
+
+    #[test]
+    fn service_unit_command_system_scope_has_no_user_flag() {
+        assert_eq!(
+            service_unit_command(linux_service::Scope::System, "stop", "WsScrcpyWeb", "/usr/bin"),
+            vec!["/usr/bin/systemctl", "stop", "WsScrcpyWeb.service"]
+        );
+    }
+
+    #[test]
+    fn relabel_command_prefers_restorecon_then_chcon() {
+        // restorecon present -> use it (re-applies the persistent fcontext rule).
+        assert_eq!(
+            relabel_command(Path::new("/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"), "/usr/bin", true),
+            vec!["/usr/sbin/restorecon", "-v", "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"]
+        );
+        // restorecon absent -> chcon -t bin_t fallback (bin dir).
+        assert_eq!(
+            relabel_command(Path::new("/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"), "/usr/bin", false),
+            vec!["/usr/bin/chcon", "-t", "bin_t", "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"]
+        );
+    }
+
+    #[test]
+    fn parse_service_restart_reads_scope_unit_relabel() {
+        let args: Vec<String> = ["--linux-apply", "--service-restart", "system", "--unit", "WsScrcpyWeb", "--relabel"]
+            .iter().map(|s| s.to_string()).collect();
+        assert_eq!(
+            parse_service_restart(&args),
+            Some((linux_service::Scope::System, "WsScrcpyWeb".to_string(), true))
+        );
+
+        let user: Vec<String> = ["--linux-apply", "--service-restart", "user", "--unit", "WsScrcpyWeb"]
+            .iter().map(|s| s.to_string()).collect();
+        assert_eq!(
+            parse_service_restart(&user),
+            Some((linux_service::Scope::User, "WsScrcpyWeb".to_string(), false))
+        );
+
+        // absent -> None (the local-mode path)
+        let local: Vec<String> = ["--linux-apply", "--staged", "/a", "--target", "/b"]
+            .iter().map(|s| s.to_string()).collect();
+        assert_eq!(parse_service_restart(&local), None);
     }
 }
