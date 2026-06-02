@@ -106,26 +106,44 @@ fn wait_for_pid_exit(pid: u32, timeout: Duration) {
     log::error(&format!("linux-apply: pid {pid} still alive after {timeout:?}; proceeding anyway"));
 }
 
-/// Spawn the new AppImage so it OUTLIVES this helper. When this helper itself
+/// Relaunch the new AppImage so it OUTLIVES this helper. When this helper itself
 /// runs inside a systemd transient unit (launched via `systemd-run --collect`,
-/// which sets INVOCATION_ID), a plain child would live in THIS helper's cgroup
-/// and be reaped when the helper exits and `--collect` deactivates the unit — so
-/// relaunch the app in its OWN `systemd-run --user --collect` transient unit
-/// (mirrors linux_service.rs). On a non-systemd host the helper is its own
-/// session leader, so a detached spawn survives. Argv built by `relaunch_command`.
+/// which sets INVOCATION_ID), the relaunched app must run in its OWN
+/// `systemd-run --user --collect` transient unit (user-manager-owned, separate
+/// cgroup) so it survives this helper's exit (mirrors linux_service.rs). On a
+/// non-systemd host the helper is its own session leader, so a detached spawn
+/// survives. Argv built by `relaunch_command`.
 fn relaunch(target: &Path) {
     let systemd_run = format!("{}/systemd-run", crate::linux_service::tool_dir("systemd-run"));
-    let argv = relaunch_command(target, under_systemd(), &systemd_run);
+    let use_systemd = under_systemd() && Path::new(&systemd_run).exists();
+    let argv = relaunch_command(target, use_systemd, &systemd_run);
     let (cmd, rest) = argv.split_first().expect("non-empty argv");
-    match std::process::Command::new(cmd)
+    let mut command = std::process::Command::new(cmd);
+    command
         .args(rest)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-    {
-        Ok(child) => log::info(&format!("linux-apply: relaunched via `{}` (pid {})", argv.join(" "), child.id())),
-        Err(e) => log::error(&format!("linux-apply: relaunch failed (`{}`): {e}", argv.join(" "))),
+        .stderr(std::process::Stdio::null());
+    if use_systemd {
+        // MUST WAIT (.status), not .spawn: this helper runs in its OWN
+        // `systemd-run --collect` unit, so the instant we exit systemd reaps our
+        // cgroup. A .spawn'd `systemd-run` child would be killed mid-registration
+        // and the relaunch unit would never start — beta.33's bug (swap ok, but
+        // the app never came back). `systemd-run` returns promptly once the unit
+        // is registered+started; the unit is user-manager-owned (its own cgroup)
+        // so it outlives us. Same pattern as linux_service.rs's teardown relaunch.
+        match command.status() {
+            Ok(s) => log::info(&format!(
+                "linux-apply: relaunched via `{}` (systemd-run exit {:?})", argv.join(" "), s.code()
+            )),
+            Err(e) => log::error(&format!("linux-apply: relaunch failed (`{}`): {e}", argv.join(" "))),
+        }
+    } else {
+        // Non-systemd: we're a session leader; detached spawn, app reparents to init.
+        match command.spawn() {
+            Ok(child) => log::info(&format!("linux-apply: relaunched `{}` (pid {})", argv.join(" "), child.id())),
+            Err(e) => log::error(&format!("linux-apply: relaunch failed (`{}`): {e}", argv.join(" "))),
+        }
     }
 }
 

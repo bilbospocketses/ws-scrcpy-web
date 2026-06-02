@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Linux local-mode update now auto-relaunches after the swap (#27, follow-up to beta.33).** beta.33 made the apply helper survive and the binary swap succeed, but the *relaunch* still failed in the service-uninstall case: the helper spawned `systemd-run --user --collect <app>` with `.spawn()` and exited immediately — and because the helper itself runs in its own `--collect` transient unit, exiting reaped that unit's cgroup and killed the `systemd-run` child before it could register the relaunch unit, so the swapped new version never started (the update "succeeded" on disk but the app didn't come back). The relaunch now uses `.status()` (waits for `systemd-run` to register the user-manager-owned transient unit before the helper exits), mirroring the service-teardown relaunch; the non-systemd path still detached-spawns directly. The TS spawn side awaits `systemd-run`'s registration the same way. Net: a local update — including right after a user-scope service uninstall — now swaps **and** relaunches onto the new version unattended.
+
 ## [0.1.30-beta.34] - 2026-06-02
 
 ### Changed

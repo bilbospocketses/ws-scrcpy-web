@@ -18,7 +18,20 @@ vi.mock('child_process', async (importOriginal) => {
     const real = await importOriginal<typeof child_process>();
     return {
         ...real,
-        spawn: vi.fn(() => ({ pid: 12345, unref: vi.fn() })),
+        spawn: vi.fn(() => {
+            // Minimal ChildProcess stand-in: `unref` (detached non-systemd path)
+            // + `once` (the systemd-run path awaits 'exit' = unit registration;
+            // fire it on the next microtask so the await resolves in tests).
+            const child: { pid: number; unref: () => void; once: (e: string, cb: () => void) => unknown } = {
+                pid: 12345,
+                unref: vi.fn(),
+                once: vi.fn((event: string, cb: () => void) => {
+                    if (event === 'exit') queueMicrotask(cb);
+                    return child;
+                }),
+            };
+            return child;
+        }),
     };
 });
 

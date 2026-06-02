@@ -501,12 +501,27 @@ export class UpdateService {
                 '--target', appImagePath, '--wait-pid', String(process.pid),
             ];
             const plan = buildDetachedSpawn(helperPath, helperArgs, { unit: `wsscrcpy-apply-${Date.now()}` });
-            const child = spawn(plan.cmd, plan.args, { detached: true, stdio: 'ignore' });
-            child.unref();
-            log.info(
-                `applyUpdate(linux): spawned apply helper via ${plan.cmd} ` +
-                    `(systemd=${plan.viaSystemd}, pid ${child.pid}) to swap ${appImagePath}`,
-            );
+            if (plan.viaSystemd) {
+                // systemd-run registers the transient unit then exits promptly.
+                // AWAIT it so the unit is registered before THIS process exits —
+                // otherwise Node's exit can reap the systemd-run child (it's in
+                // Node's cgroup) before registration completes and the helper unit
+                // never starts. (The Rust relaunch waits the same way via .status.)
+                await new Promise<void>((resolve) => {
+                    const c = spawn(plan.cmd, plan.args, { stdio: 'ignore' });
+                    c.once('exit', () => resolve());
+                    c.once('error', () => resolve());
+                });
+                log.info(
+                    `applyUpdate(linux): registered apply helper via ${plan.cmd} (systemd) to swap ${appImagePath}`,
+                );
+            } else {
+                const child = spawn(plan.cmd, plan.args, { detached: true, stdio: 'ignore' });
+                child.unref();
+                log.info(
+                    `applyUpdate(linux): spawned apply helper via ${plan.cmd} (pid ${child.pid}) to swap ${appImagePath}`,
+                );
+            }
             return { redirectPort: null };
         }
 
