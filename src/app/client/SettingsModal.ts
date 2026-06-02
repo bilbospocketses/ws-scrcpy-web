@@ -59,6 +59,20 @@ export function classifyInstallPoll(args: {
 }
 
 /**
+ * The config patch sent by "reset welcome and bookmark prompts" — clears all
+ * four first-run / bookmark flags so each relevant modal can re-fire. Exported
+ * (pure) for testing. (v0.1.30-beta.31 #5d adds the global bookmark flag.)
+ */
+export function resetPromptsPayload(): Record<string, boolean | null> {
+    return {
+        firstRunComplete: false,
+        serviceFirstRunSeen: false,
+        bookmarkDismissedForPort: null,
+        bookmarkDismissedGlobally: false,
+    };
+}
+
+/**
  * Settings modal — unified two-column grid layout.
  *
  * Every section is built from the same primitive:
@@ -1213,9 +1227,10 @@ export class SettingsModal extends Modal {
 
         const confirmText = document.createElement('p');
         confirmText.textContent =
-            'this resets the welcome modal, service-mode modal, and per-port bookmark ' +
-            'reminder. the page will reload so the appropriate modal can re-fire. ' +
-            'it does not affect install mode, audio preferences, or scan history.';
+            'this resets the welcome modal, service-mode modal, the per-port bookmark ' +
+            'reminder, and the global bookmark dismissal. the page will reload so the ' +
+            'appropriate modal can re-fire. it does not affect install mode, audio ' +
+            'preferences, or scan history.';
         confirmPanel.appendChild(confirmText);
 
         const confirmButtons = document.createElement('div');
@@ -1238,11 +1253,7 @@ export class SettingsModal extends Modal {
             fetch('/api/config', {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    firstRunComplete: false,
-                    serviceFirstRunSeen: false,
-                    bookmarkDismissedForPort: null,
-                }),
+                body: JSON.stringify(resetPromptsPayload()),
             }).finally(() => {
                 window.location.reload();
             });

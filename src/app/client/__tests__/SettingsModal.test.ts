@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { uninstallFollowupMessage, classifyInstallPoll } from '../SettingsModal';
+import { uninstallFollowupMessage, classifyInstallPoll, resetPromptsPayload } from '../SettingsModal';
 
 describe('uninstallFollowupMessage', () => {
     it('user scope -> reconnect/relaunch message', () => {
@@ -23,5 +23,16 @@ describe('classifyInstallPoll', () => {
     });
     it('times out after maxIterations', () => {
         expect(classifyInstallPoll({ ...base, iterations: 31 })).toEqual({ kind: 'timeout' });
+    });
+});
+
+describe('resetPromptsPayload', () => {
+    it('clears all four first-run / bookmark flags', () => {
+        expect(resetPromptsPayload()).toEqual({
+            firstRunComplete: false,
+            serviceFirstRunSeen: false,
+            bookmarkDismissedForPort: null,
+            bookmarkDismissedGlobally: false,
+        });
     });
 });
