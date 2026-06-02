@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.39] - 2026-06-02
+
 ### Added
 
 - **"Stop server & exit" button (Settings → App).** A new button cleanly stops the server and closes the app on every platform. It confirms first, then runs graceful teardown — stopping the adb daemon and releasing active device streams — before exiting, and closes the browser tab (falling back to an "app stopped — you can close this tab" page when the browser blocks self-close). On Windows it also reaps the standalone tray helper, which is spawned detached and would otherwise be left orphaned pointing at a dead launcher (the reap is skipped during an in-app update / uninstall handoff, which relaunch and keep their tray). The button is disabled with an explanatory note in service mode, where the OS service manager owns the lifecycle. It reuses the existing `/api/server/shutdown` endpoint, which now runs the same graceful teardown the `SIGINT`/`SIGTERM` path does — fixing a latent case where a tray- or endpoint-initiated shutdown exited directly and left the adb daemon orphaned.
