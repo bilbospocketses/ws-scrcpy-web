@@ -589,10 +589,13 @@ export class UpdateService {
      * user has to manually restart the service), which is a worse-but-not-
      * fatal degradation. The Velopack apply itself still proceeds.
      *
-     * Path matches `launcher/src/post_stop_handler.rs::marker_path` and
-     * `Config.applyUpdatePendingMarkerPath` (single source of truth on the
-     * Node side). Content is intentionally empty — the post-stop handler
-     * only checks for presence, not content.
+     * The marker path (`<dataRoot>/control/apply-update-pending`) is mirrored on
+     * the Rust side by `launcher/src/elevated_runner.rs::write_post_stop_bat`
+     * (the Windows post-stop bat that reads it) and
+     * `launcher/src/linux_apply.rs::apply_marker_path` (Linux);
+     * `Config.applyUpdatePendingMarkerPath` is the single source of truth on the
+     * Node side. Content is intentionally empty — the readers only check for
+     * presence, not content.
      */
     private async writeApplyUpdatePendingMarker(): Promise<void> {
         const markerPath = Config.getInstance().applyUpdatePendingMarkerPath;
