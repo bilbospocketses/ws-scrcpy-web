@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.33] - 2026-06-02
+
 ### Fixed
 
 - **Linux local-mode in-app update no longer silently fails to swap (#27).** The update downloads and SHA-256-verifies the new AppImage, then hands off to an out-of-mount helper to swap `$APPIMAGE` and relaunch. That helper was spawned with a plain `detached: true`, which keeps it in the *app's* cgroup — so when the app was running inside a `systemd-run --collect` transient unit (e.g. an instance relaunched by the service-uninstall teardown), the unit's cgroup was reaped on the app's exit and the helper was **killed before it swapped**: the update appeared to hang and the app stayed on the old version (a reboot "fixed" it by returning to a normally-launched instance). The helper now runs in its **own** `systemd-run --user --collect` transient unit (separate cgroup), falling back to `setsid` then a bare detached spawn on non-systemd hosts; and it relaunches the swapped AppImage the same way so the new instance survives the helper's exit. The helper also clears the staged file + the apply-update marker on completion. A normally-launched update was unaffected; this fixes the update-after-service-uninstall case. Windows + Linux service mode unchanged.
