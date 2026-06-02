@@ -79,6 +79,16 @@ export interface ServiceInstallOptions {
      * Windows — ServyClient runs the service as Local System.
      */
     scope?: 'user' | 'system' | undefined;
+    /**
+     * Linux system-scope only: absolute path to the home-directory launcher
+     * helper (`ws-scrcpy-web-launcher.exe`) to stage into `/opt/ws-scrcpy-web/`
+     * alongside the AppImage. The existing fcontext rule labels the whole dir
+     * `bin_t`, so `init_t` can exec the staged helper during system-scope
+     * uninstall teardown. Omit when the helper is not available (from-source
+     * runs); SystemdClient logs a warning and skips the staging step.
+     * Windows ServyClient ignores this field.
+     */
+    linuxHelperSource?: string | undefined;
 }
 
 /**

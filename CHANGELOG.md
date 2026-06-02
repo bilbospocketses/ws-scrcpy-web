@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.31] - 2026-06-02
+
+Fixes for issues found smoke-testing **beta.30**'s Linux service mode on real Fedora 44 (SELinux enforcing), plus a bookmark global-dismiss option. Windows service mode and Linux local mode are byte-for-byte unchanged; there are no launcher/Rust changes.
+
+### Added
+
+- **Global bookmark dismissal.** The bookmark reminder (`PortChangeModal`) gains a second option — "don't show again — ever, even when the port changes" — gated behind a confirmation dialog and persisted as `bookmarkDismissedGlobally` in `config.json`. Checking it supersedes and disables the per-port checkbox. "Reset welcome and bookmark prompts" now clears it as well.
+
+### Fixed
+
+- **Linux system-scope service uninstall now tears down under SELinux.** The teardown handoff exec'd the launcher helper from `~/.local/share/…` (`data_home_t`), which SELinux (Fedora enforcing) denies `init_t` from executing — so a system-scope uninstall silently failed and the service persisted. System install now also stages the helper into `/opt/ws-scrcpy-web/` (labelled `bin_t` by the existing fcontext rule), and uninstall execs that copy via `systemd-run --system`, wrapped in `pkexec` when the triggering process isn't already root. User-scope uninstall is unchanged.
+- **systemd `StartLimit*` keys moved to `[Unit]`.** `StartLimitIntervalSec`/`StartLimitBurst` were emitted in `[Service]`, where systemd ignores them — so the restart cap never applied and a failing unit restarted every 5 s indefinitely. They now live in `[Unit]`.
+- **No more orphaned/concurrent local instances after a Linux service install.** The post-install local-instance exit was gated to Windows; on Linux the originating local app lingered (up to three concurrent instances were observed) and held the web port. It now exits after a successful install on Linux too.
+- **No false "port discovery timed out" after install.** When the service reclaims the same web port — now the common case, since the local instance exits — the install poll detects the local server going away and reconnects to the same URL after a short grace, instead of reporting an error. The port-shift navigate path (used on Windows) is unchanged.
+- **Install-scope radio contrast.** When a service is installed the scope radios are disabled and were muted to `opacity:0.5` with no `accent-color`, hiding the selected dot; they now use `accent-color:#5b9aff` and a lifted `0.65` disabled opacity.
+
+### Docs
+
+- **README:** corrected the systemd unit name to `WsScrcpyWeb.service` and scope-qualified the "do not move the AppImage" caveat — a system-scope service runs the staged `/opt/ws-scrcpy-web/` copy, so only a user-scope service is affected by moving the home AppImage.
+
 ## [0.1.30-beta.30] - 2026-06-02
 
 ### Fixed

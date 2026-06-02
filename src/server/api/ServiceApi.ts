@@ -23,6 +23,7 @@ import {
     type ServiceClientFactoryResult,
 } from '../service';
 import { resolveSystemTool } from '../service/systemTools';
+import { STAGED_SYSTEM_DIR, STAGED_SYSTEM_HELPER } from '../service/SystemdClient';
 import { readJsonBody } from './utils';
 
 const log = Logger.for('ServiceApi');
@@ -57,6 +58,7 @@ export class ServiceApi {
             child.on('error', (err) => log.warn(`spawnDetached ${cmd} error: ${err.message}`));
             child.unref();
         },
+        private scheduleExit: (fn: () => void, ms: number) => void = (fn, ms) => { setTimeout(fn, ms).unref(); },
     ) {}
 
     public async handle(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
@@ -267,6 +269,24 @@ export class ServiceApi {
             }
         }
 
+        // System-scope install only: resolve the home launcher helper so it can
+        // be staged into /opt/ws-scrcpy-web/ at install time. The fcontext rule
+        // `/opt/ws-scrcpy-web(/.*)? -> bin_t` + restorecon will label it bin_t,
+        // allowing init_t to exec it during system-scope uninstall teardown
+        // (SELinux AVC fix, item #2 install side). Best-effort: if the helper
+        // isn't present (from-source / unavailable), log and skip — the install
+        // itself still succeeds, system uninstall may need manual cleanup.
+        let linuxHelperSource: string | undefined;
+        if (result.platform === 'linux' && scope === 'system') {
+            const dr = cfg.dataRoot ?? path.dirname(cfg.dependenciesPath);
+            const cand = path.join(dr, 'control', 'operation-server', 'ws-scrcpy-web-launcher.exe');
+            if (this.existsCheck(cand)) {
+                linuxHelperSource = cand;
+            } else {
+                log.warn(`linux system install: teardown helper not found at ${cand}; /opt staging skipped (system uninstall may need manual cleanup)`);
+            }
+        }
+
         // v0.1.24-beta.7: service.log moves under <dataRoot>/logs/ to
         // colocate with launcher.log + server.log + ws-scrcpy-web.log.
         // Pre-beta.7 it lived at <dataRoot>/dependencies/service.log,
@@ -328,6 +348,9 @@ export class ServiceApi {
                 dataRoot: Config.getInstance().dataRoot ?? undefined,
                 // Linux SystemdClient consumes scope; Windows ServyClient ignores it.
                 scope,
+                // Linux system-scope only: home helper path to stage into /opt (bin_t).
+                // Windows ServyClient ignores this field.
+                linuxHelperSource,
             });
         } catch (err) {
             // Install failed — revert installMode so the next page load
@@ -361,14 +384,17 @@ export class ServiceApi {
         const disk = this.readDiskConfig();
 
         // Schedule local-Node exit. This instance is useless once the service
-        // is running. The frontend navigates to the service port once it
-        // detects config.json mtime change — this timer is a safety cap, not
-        // a timing mechanism.
-        if (result.platform === 'win32') {
-            setTimeout(() => {
+        // is running; it also holds the web port. The frontend navigates to the
+        // service port once it detects config.json mtime change — this timer is
+        // a safety cap, not a timing mechanism. Fire on win32 AND linux: the
+        // local instance lingers on Linux too, causing concurrent-instance and
+        // port-discovery-timeout symptoms (beta.31 fix #3). win32 behavior is
+        // byte-for-byte identical to before (same 15 s, same log message).
+        if (result.platform === 'win32' || result.platform === 'linux') {
+            this.scheduleExit(() => {
                 log.info('install-flow: local instance exiting (service is running)');
                 process.exit(0);
-            }, 15_000).unref();
+            }, 15_000);
         }
 
         const body: ServiceActionSuccess = {
@@ -426,18 +452,39 @@ export class ServiceApi {
             }
 
             const dataRoot = cfg.dataRoot ?? path.dirname(cfg.dependenciesPath);
-            // Same staged out-of-mount helper UpdateService.applyUpdate uses — note the
-            // `.exe` suffix is the fixed staged name even on Linux (refresh_helper_binary).
-            const helper = path.join(dataRoot, 'control', 'operation-server', 'ws-scrcpy-web-launcher.exe');
             const systemdRun = resolveSystemTool('systemd-run');
-            const sdArgs = [
-                ...(scope === 'user' ? ['--user'] : []),
-                '--collect',
-                `--unit=wsscrcpy-teardown-${Date.now()}`,
-                helper,
-                '--linux-service-teardown', '--scope', scope, '--unit', WS_SCRCPY_SERVICE_NAME,
-            ];
-            this.spawnDetached(systemdRun, sdArgs);
+            const teardownUnit = `--unit=wsscrcpy-teardown-${Date.now()}`;
+            let cmd: string;
+            let sdArgs: string[];
+            if (scope === 'system') {
+                // System scope: exec the /opt-staged helper (bin_t — init_t may exec
+                // it, unlike the data_home_t home copy SELinux blocks), out-of-cgroup
+                // via systemd-run --system, elevated by pkexec when the serving process
+                // isn't already root (the system service itself runs as root).
+                const optHelper = `${STAGED_SYSTEM_DIR}/${STAGED_SYSTEM_HELPER}`;
+                const runArgs = [
+                    '--system', '--collect', teardownUnit,
+                    optHelper, '--linux-service-teardown', '--scope', 'system', '--unit', WS_SCRCPY_SERVICE_NAME,
+                ];
+                if (process.getuid?.() === 0) {
+                    cmd = systemdRun;
+                    sdArgs = runArgs;
+                } else {
+                    cmd = resolveSystemTool('pkexec');
+                    sdArgs = [systemdRun, ...runArgs];
+                }
+            } else {
+                // User scope: UNCHANGED — home helper, user manager, includes relaunch.
+                // Same staged out-of-mount helper UpdateService.applyUpdate uses — note
+                // the `.exe` suffix is the fixed staged name even on Linux.
+                const helper = path.join(dataRoot, 'control', 'operation-server', 'ws-scrcpy-web-launcher.exe');
+                cmd = systemdRun;
+                sdArgs = [
+                    '--user', '--collect', teardownUnit,
+                    helper, '--linux-service-teardown', '--scope', 'user', '--unit', WS_SCRCPY_SERVICE_NAME,
+                ];
+            }
+            this.spawnDetached(cmd, sdArgs);
             log.info(`uninstall(linux): spawned teardown helper via systemd-run (${scope} scope)`);
 
             const body: ServiceActionSuccess = { ok: true, status: 'shutting-down', installMode: newMode };

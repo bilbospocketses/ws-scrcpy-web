@@ -70,6 +70,12 @@ const TRAY_AUTOSTART_FILE = 'ws-scrcpy-web-tray.desktop';
 export const STAGED_SYSTEM_DIR = '/opt/ws-scrcpy-web';
 /** Stable, channel-agnostic filename for the staged system-scope AppImage. */
 export const STAGED_SYSTEM_APPIMAGE = 'WsScrcpyWeb.AppImage';
+/**
+ * Stable filename for the staged launcher helper in /opt (system-scope).
+ * Staged alongside the AppImage so the fcontext rule labels it bin_t —
+ * allowing init_t to exec it during system-scope uninstall teardown.
+ */
+export const STAGED_SYSTEM_HELPER = 'ws-scrcpy-web-launcher.exe';
 
 /**
  * Run a command via pkexec for graphical privilege escalation. The user
@@ -184,12 +190,16 @@ export function renderUnitFile(opts: ServiceInstallOptions, scope: SystemdScope)
         ? `${STAGED_SYSTEM_DIR}/${STAGED_SYSTEM_APPIMAGE}`
         : opts.binPath;
     const workingDir = scope === 'system' ? STAGED_SYSTEM_DIR : opts.startupDir;
-    // StartLimitIntervalSec=300 means: count restart attempts in a rolling
-    // 5-minute window; if maxRestartAttempts is exceeded, systemd gives up.
     return [
         '[Unit]',
         `Description=${opts.description}`,
         'After=network.target',
+        // systemd reads StartLimit* from [Unit], NOT [Service] (it silently
+        // ignores them in [Service] -> the restart cap never applies).
+        // StartLimitIntervalSec=300 means: count restart attempts in a rolling
+        // 5-minute window; if maxRestartAttempts is exceeded, systemd gives up.
+        'StartLimitIntervalSec=300',
+        `StartLimitBurst=${opts.maxRestartAttempts}`,
         '',
         '[Service]',
         'Type=simple',
@@ -197,8 +207,6 @@ export function renderUnitFile(opts: ServiceInstallOptions, scope: SystemdScope)
         `WorkingDirectory=${workingDir}`,
         'Restart=on-failure',
         'RestartSec=5',
-        `StartLimitBurst=${opts.maxRestartAttempts}`,
-        'StartLimitIntervalSec=300',
         ...(envLines ? [envLines] : []),
         `StandardOutput=append:${opts.logPath}`,
         `StandardError=append:${opts.logPath}`,
@@ -217,11 +225,12 @@ export function renderUnitFile(opts: ServiceInstallOptions, scope: SystemdScope)
  * paths via systemTools (Local-Dependencies-Only — no bare-name $PATH lookup).
  */
 export function buildSystemInstallScript(
-    args: { sourceAppImage: string; unitTmpPath: string; unitPath: string; name: string },
+    args: { sourceAppImage: string; sourceHelper?: string; unitTmpPath: string; unitPath: string; name: string },
     binTool: (t: string) => string = (t) => resolveSystemTool(t),
     sbinTool: (t: string) => string = (t) => resolveSystemTool(t),
 ): string {
     const staged = `${STAGED_SYSTEM_DIR}/${STAGED_SYSTEM_APPIMAGE}`;
+    const stagedHelper = `${STAGED_SYSTEM_DIR}/${STAGED_SYSTEM_HELPER}`;
     const mkdir = binTool('mkdir');
     const cp = binTool('cp');
     const chmod = binTool('chmod');
@@ -229,11 +238,20 @@ export function buildSystemInstallScript(
     const systemctl = binTool('systemctl');
     const semanage = sbinTool('semanage');
     const restorecon = sbinTool('restorecon');
-    return [
+    const steps: string[] = [
         // 1. stage the AppImage into /opt (root-owned)
         `${mkdir} -p ${STAGED_SYSTEM_DIR}`,
         `${cp} "${args.sourceAppImage}" "${staged}"`,
         `${chmod} 0755 "${staged}"`,
+    ];
+    // 1b. optionally stage the teardown helper alongside the AppImage so the
+    //     existing fcontext rule labels it bin_t — allowing init_t to exec it
+    //     during system-scope uninstall teardown (SELinux AVC fix, item #2).
+    if (args.sourceHelper) {
+        steps.push(`${cp} "${args.sourceHelper}" "${stagedHelper}"`);
+        steps.push(`${chmod} 0755 "${stagedHelper}"`);
+    }
+    steps.push(
         // 2. label bin_t so init_t can exec it. Persistent rule (semanage) when
         //    available; restorecon applies it; chcon is the transient fallback
         //    for minimal images without policycoreutils-python-utils. The whole
@@ -242,12 +260,14 @@ export function buildSystemInstallScript(
         //    a label failure on a non-SELinux host (semanage absent + chcon
         //    erroring on a non-SELinux fs) would break the outer `&&` chain and
         //    silently skip the unit cp + enable below.
+        //    restorecon covers the whole dir — labels the helper bin_t too when present.
         `( ( ${semanage} fcontext -a -t bin_t '${STAGED_SYSTEM_DIR}(/.*)?' && ${restorecon} -Rv "${STAGED_SYSTEM_DIR}" ) || ${chcon} -t bin_t "${staged}" || true )`,
         // 3. install + enable the unit (ExecStart already points at ${staged})
         `${cp} "${args.unitTmpPath}" "${args.unitPath}"`,
         `${systemctl} daemon-reload`,
         `${systemctl} enable --now ${args.name}.service`,
-    ].join(' && ');
+    );
+    return steps.join(' && ');
 }
 
 /**
@@ -342,6 +362,7 @@ export class SystemdClient implements ServiceClient {
             try {
                 const cmd = buildSystemInstallScript({
                     sourceAppImage: opts.binPath,
+                    ...(opts.linuxHelperSource ? { sourceHelper: opts.linuxHelperSource } : {}),
                     unitTmpPath: tmpFile,
                     unitPath,
                     name: opts.name,

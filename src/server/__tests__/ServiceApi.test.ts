@@ -775,6 +775,109 @@ describe('ServiceApi', () => {
             }
         });
 
+        // ── Linux system-scope install: launcher helper staging (#2 install) ───
+        //
+        // At system-scope install, ServiceApi resolves the home launcher helper
+        // from <dataRoot>/control/operation-server/ws-scrcpy-web-launcher.exe and
+        // passes it as linuxHelperSource to client.install(). The existing
+        // /opt/ws-scrcpy-web fcontext rule then labels it bin_t alongside the
+        // AppImage so init_t can exec it during uninstall teardown (SELinux AVC fix).
+
+        it('POST /install on Linux system scope passes linuxHelperSource when the helper candidate exists', async () => {
+            const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(async () => undefined);
+            const client = fakeClient({
+                install: installFn,
+                status: vi.fn(async () => 'running' as const),
+            });
+            const factoryResult: ServiceClientFactoryResult = {
+                client,
+                supported: true,
+                platform: 'linux',
+            };
+
+            // Create the helper candidate in the tmp dataRoot so existsCheck hits.
+            const cfg = Config.getInstance();
+            const dataRoot = cfg.dataRoot ?? path.dirname(cfg.dependenciesPath);
+            const helperDir = path.join(dataRoot, 'control', 'operation-server');
+            fs.mkdirSync(helperDir, { recursive: true });
+            const helperPath = path.join(helperDir, 'ws-scrcpy-web-launcher.exe');
+            fs.writeFileSync(helperPath, '', 'utf8');
+
+            const api = new ServiceApi(() => factoryResult, () => 'user');
+            const { req, res } = makeReqRes(
+                '/api/service/install',
+                'POST',
+                JSON.stringify({ scope: 'system' }),
+            );
+            await api.handle(req, res);
+            expect((res as any).getStatus()).toBe(200);
+
+            const opts = installFn.mock.calls[0]?.[0];
+            expect(opts?.scope).toBe('system');
+            expect(opts?.linuxHelperSource).toBe(helperPath);
+        });
+
+        it('POST /install on Linux system scope passes undefined linuxHelperSource when helper is absent', async () => {
+            const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(async () => undefined);
+            const client = fakeClient({
+                install: installFn,
+                status: vi.fn(async () => 'running' as const),
+            });
+            const factoryResult: ServiceClientFactoryResult = {
+                client,
+                supported: true,
+                platform: 'linux',
+            };
+
+            // Do NOT create the helper — existsCheck returns false.
+            const api = new ServiceApi(() => factoryResult, () => 'user');
+            const { req, res } = makeReqRes(
+                '/api/service/install',
+                'POST',
+                JSON.stringify({ scope: 'system' }),
+            );
+            await api.handle(req, res);
+            expect((res as any).getStatus()).toBe(200);
+
+            const opts = installFn.mock.calls[0]?.[0];
+            expect(opts?.scope).toBe('system');
+            expect(opts?.linuxHelperSource).toBeUndefined();
+        });
+
+        it('POST /install on Linux user scope does NOT pass linuxHelperSource (user scope has no /opt staging)', async () => {
+            const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(async () => undefined);
+            const client = fakeClient({
+                install: installFn,
+                status: vi.fn(async () => 'running' as const),
+            });
+            const factoryResult: ServiceClientFactoryResult = {
+                client,
+                supported: true,
+                platform: 'linux',
+            };
+
+            // Create helper so we can confirm it is NOT passed for user scope.
+            const cfg = Config.getInstance();
+            const dataRoot = cfg.dataRoot ?? path.dirname(cfg.dependenciesPath);
+            const helperDir = path.join(dataRoot, 'control', 'operation-server');
+            fs.mkdirSync(helperDir, { recursive: true });
+            const helperPath = path.join(helperDir, 'ws-scrcpy-web-launcher.exe');
+            fs.writeFileSync(helperPath, '', 'utf8');
+
+            const api = new ServiceApi(() => factoryResult, () => 'user');
+            const { req, res } = makeReqRes(
+                '/api/service/install',
+                'POST',
+                JSON.stringify({ scope: 'user' }),
+            );
+            await api.handle(req, res);
+            expect((res as any).getStatus()).toBe(200);
+
+            const opts = installFn.mock.calls[0]?.[0];
+            expect(opts?.scope).toBe('user');
+            expect(opts?.linuxHelperSource).toBeUndefined();
+        });
+
         // ── Linux uninstall — systemd-run teardown handoff (item 32) ───────────
         //
         // On Linux, uninstall MUST NOT call client.uninstall() because this Node
@@ -870,6 +973,168 @@ describe('ServiceApi', () => {
             const body = JSON.parse((res as any).getBody());
             expect(body.ok).toBe(true);
             expect(body.status).toBe('not-installed');
+        });
+
+        // ── Linux system-scope uninstall: /opt bin_t helper + pkexec (#2 uninstall) ──
+        //
+        // System-scope uninstall must exec the /opt-staged launcher copy (labelled
+        // bin_t by the install-side fcontext rule) rather than the home-copy
+        // (data_home_t) — init_t may NOT exec data_home_t → SELinux AVC → teardown
+        // never runs → service persists after uninstall. Uses systemd-run --system
+        // (not --user) so it escapes the service cgroup. Wraps in pkexec when the
+        // serving process is NOT already root (system service itself runs as root).
+
+        it('system-scope uninstall execs the /opt helper (bin_t) via systemd-run --system, root → no pkexec', async () => {
+            Object.defineProperty(process, 'getuid', { value: () => 0, configurable: true });
+            const client = fakeClient({
+                uninstall: vi.fn(async () => undefined),
+                status: vi.fn(async () => 'running' as const),
+                getInstalledScope: vi.fn(async () => 'system' as const),
+            });
+            const factoryResult: ServiceClientFactoryResult = {
+                client,
+                supported: true,
+                platform: 'linux',
+            };
+
+            let spawnedCmd = '';
+            let spawnedArgs: string[] = [];
+            const spawnDetached = vi.fn((cmd: string, args: string[]) => {
+                spawnedCmd = cmd;
+                spawnedArgs = args;
+            });
+
+            Config.getInstance().updateAppConfig({ installMode: 'system-service' });
+
+            const api = new ServiceApi(() => factoryResult, () => 'user', () => true, spawnDetached);
+            const { req, res } = makeReqRes('/api/service/uninstall', 'POST');
+            await api.handle(req, res);
+
+            // Root → cmd is systemd-run directly (no pkexec wrapper)
+            expect(spawnedCmd).toMatch(/systemd-run$/);
+            expect(spawnedArgs).toContain('--system');
+            expect(spawnedArgs).not.toContain('--user');
+            // Execs the /opt-staged helper (bin_t), not the home copy (data_home_t)
+            expect(spawnedArgs.some((a) => a.endsWith('/opt/ws-scrcpy-web/ws-scrcpy-web-launcher.exe'))).toBe(true);
+            // --scope value forwarded to the helper
+            expect(spawnedArgs).toContain('system');
+
+            expect((res as any).getStatus()).toBe(200);
+            const body = JSON.parse((res as any).getBody());
+            expect(body.ok).toBe(true);
+            expect(body.status).toBe('shutting-down');
+        });
+
+        it('system-scope uninstall wraps in pkexec when the serving process is NOT root', async () => {
+            Object.defineProperty(process, 'getuid', { value: () => 1000, configurable: true });
+            const client = fakeClient({
+                uninstall: vi.fn(async () => undefined),
+                status: vi.fn(async () => 'running' as const),
+                getInstalledScope: vi.fn(async () => 'system' as const),
+            });
+            const factoryResult: ServiceClientFactoryResult = {
+                client,
+                supported: true,
+                platform: 'linux',
+            };
+
+            let spawnedCmd = '';
+            let spawnedArgs: string[] = [];
+            const spawnDetached = vi.fn((cmd: string, args: string[]) => {
+                spawnedCmd = cmd;
+                spawnedArgs = args;
+            });
+
+            Config.getInstance().updateAppConfig({ installMode: 'system-service' });
+
+            const api = new ServiceApi(() => factoryResult, () => 'user', () => true, spawnDetached);
+            const { req, res } = makeReqRes('/api/service/uninstall', 'POST');
+            await api.handle(req, res);
+
+            // Non-root → cmd is pkexec; systemd-run is the first arg
+            expect(spawnedCmd).toMatch(/pkexec$/);
+            expect(spawnedArgs[0]).toMatch(/systemd-run$/);
+            expect(spawnedArgs).toContain('--system');
+            expect(spawnedArgs.some((a) => a.endsWith('/opt/ws-scrcpy-web/ws-scrcpy-web-launcher.exe'))).toBe(true);
+
+            expect((res as any).getStatus()).toBe(200);
+            const body = JSON.parse((res as any).getBody());
+            expect(body.ok).toBe(true);
+            expect(body.status).toBe('shutting-down');
+        });
+
+        it('schedules local-instance exit after a successful install on Linux (mirrors win32)', async () => {
+            const scheduled: number[] = [];
+            const scheduleExit = vi.fn((_fn: () => void, ms: number) => { scheduled.push(ms); });
+            const client = fakeClient({
+                install: vi.fn(async () => undefined),
+                status: vi.fn(async () => 'running' as const),
+            });
+            const factoryResult: ServiceClientFactoryResult = {
+                client,
+                supported: true,
+                platform: 'linux',
+            };
+            // Constructor: factory, scope, existsCheck, spawnDetached, scheduleExit
+            const api = new ServiceApi(
+                () => factoryResult,
+                () => 'user',
+                () => true,
+                vi.fn(), // spawnDetached (unused by install path)
+                scheduleExit,
+            );
+            const { req, res } = makeReqRes('/api/service/install', 'POST', JSON.stringify({ scope: 'user' }));
+            await api.handle(req, res);
+            expect((res as any).getStatus()).toBe(200);
+            expect(scheduleExit).toHaveBeenCalledTimes(1);
+            expect(scheduled[0]).toBe(15_000);
+        });
+
+        it('user-scope uninstall is UNCHANGED (home helper, systemd-run --user, no pkexec)', async () => {
+            // The existing user-scope test is the canonical; this twin makes the
+            // regression explicit alongside the new system-scope tests.
+            const uninstallSpy = vi.fn(async () => undefined);
+            const client = fakeClient({
+                uninstall: uninstallSpy,
+                status: vi.fn(async () => 'running' as const),
+                getInstalledScope: vi.fn(async () => 'user' as const),
+            });
+            const factoryResult: ServiceClientFactoryResult = {
+                client,
+                supported: true,
+                platform: 'linux',
+            };
+
+            let spawnedCmd = '';
+            let spawnedArgs: string[] = [];
+            const spawnDetached = vi.fn((cmd: string, args: string[]) => {
+                spawnedCmd = cmd;
+                spawnedArgs = args;
+            });
+
+            Config.getInstance().updateAppConfig({ installMode: 'user-service' });
+
+            const api = new ServiceApi(() => factoryResult, () => 'user', () => true, spawnDetached);
+            const { req, res } = makeReqRes('/api/service/uninstall', 'POST');
+            await api.handle(req, res);
+
+            // client.uninstall must NOT be called (cgroup-escape handoff)
+            expect(uninstallSpy).not.toHaveBeenCalled();
+            // User scope → systemd-run --user, no pkexec
+            expect(spawnedCmd).toMatch(/systemd-run$/);
+            expect(spawnedArgs).toContain('--user');
+            expect(spawnedArgs).not.toContain('--system');
+            // Helper is the home copy (operation-server), NOT the /opt copy.
+            // Use the same two-check pattern as the canonical user-scope test above
+            // so the assertion works with both / and \ separators (test host is Windows).
+            const userHelperArg = spawnedArgs.find((a) => a.endsWith('ws-scrcpy-web-launcher.exe'));
+            expect(userHelperArg).toBeDefined();
+            expect(userHelperArg).toContain('operation-server');
+
+            expect((res as any).getStatus()).toBe(200);
+            const body = JSON.parse((res as any).getBody());
+            expect(body.ok).toBe(true);
+            expect(body.status).toBe('shutting-down');
         });
     });
 

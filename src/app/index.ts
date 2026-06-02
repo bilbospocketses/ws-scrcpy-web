@@ -2,6 +2,7 @@ import '../style/app.css';
 import '../style/dependencies.css';
 import '../style/first-run-banner.css';
 import '../style/home.css';
+import { shouldShowBookmark } from './client/bookmarkGate';
 import { DependencyPanel } from './client/DependencyPanel';
 import { FirstRunBanner } from './client/FirstRunBanner';
 import { HostTracker } from './client/HostTracker';
@@ -106,7 +107,7 @@ function maybeShowWelcomeModal(): void {
                     });
                     return;
                 }
-                maybeShowPortChangeModal(config.bookmarkDismissedForPort, runtime.webPort);
+                maybeShowPortChangeModal(config.bookmarkDismissedGlobally, config.bookmarkDismissedForPort, runtime.webPort);
                 return;
             }
 
@@ -121,15 +122,19 @@ function maybeShowWelcomeModal(): void {
                 return;
             }
 
-            maybeShowPortChangeModal(config.bookmarkDismissedForPort, runtime.webPort);
+            maybeShowPortChangeModal(config.bookmarkDismissedGlobally, config.bookmarkDismissedForPort, runtime.webPort);
         })
         .catch(() => {
             // /api/config absent (e.g., dev server without P2 wiring) — silently bail.
         });
 }
 
-function maybeShowPortChangeModal(dismissedFor: number | null, currentPort: number): void {
-    if (dismissedFor === currentPort) return;
+function maybeShowPortChangeModal(
+    globallyDismissed: boolean,
+    dismissedFor: number | null,
+    currentPort: number,
+): void {
+    if (!shouldShowBookmark({ globallyDismissed, dismissedForPort: dismissedFor, currentPort })) return;
     void import('./client/PortChangeModal').then(({ PortChangeModal }) => {
         new PortChangeModal({ webPort: currentPort });
     });

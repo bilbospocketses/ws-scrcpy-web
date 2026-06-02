@@ -55,6 +55,16 @@ describe('Config — AppConfig extension', () => {
         expect(c).toEqual(APP_CONFIG_DEFAULTS);
     });
 
+    it('persists bookmarkDismissedGlobally from config.json (#5a global bookmark dismiss)', () => {
+        setup({ bookmarkDismissedGlobally: true });
+        expect(Config.getInstance().getAppConfig().bookmarkDismissedGlobally).toBe(true);
+    });
+
+    it('defaults bookmarkDismissedGlobally to false when absent', () => {
+        setup({});
+        expect(Config.getInstance().getAppConfig().bookmarkDismissedGlobally).toBe(false);
+    });
+
     it('migrates legacy `port` → `webPort` in memory without rewriting file', () => {
         const configPath = setup({ port: 8123 });
         const before = fs.readFileSync(configPath, 'utf-8');

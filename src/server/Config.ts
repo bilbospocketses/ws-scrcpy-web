@@ -44,6 +44,7 @@ export interface FlatConfig {
     firstRunComplete?: boolean;
     serviceFirstRunSeen?: boolean;
     bookmarkDismissedForPort?: number | null;
+    bookmarkDismissedGlobally?: boolean;
     autoUpdate?: boolean;
     updateCheckIntervalMinutes?: number;
     channel?: 'stable' | 'beta';
@@ -235,7 +236,8 @@ function validateField<K extends keyof AppConfig>(key: K, value: unknown): Valid
         }
         case 'firstRunComplete':
         case 'autoUpdate':
-        case 'serviceFirstRunSeen': {
+        case 'serviceFirstRunSeen':
+        case 'bookmarkDismissedGlobally': {
             if (typeof value !== 'boolean') {
                 return { ok: false, error: `${key} must be a boolean` };
             }
@@ -301,6 +303,11 @@ function sanitizeAppConfig(raw: FlatConfig, warn: (msg: string) => void): AppCon
         const r = validateField('bookmarkDismissedForPort', raw.bookmarkDismissedForPort);
         if (r.ok) out.bookmarkDismissedForPort = r.value;
         else warn(`config.json: ${r.error}; using default null`);
+    }
+    if (raw.bookmarkDismissedGlobally !== undefined) {
+        const r = validateField('bookmarkDismissedGlobally', raw.bookmarkDismissedGlobally);
+        if (r.ok) out.bookmarkDismissedGlobally = r.value;
+        else warn(`config.json: ${r.error}; using default false`);
     }
     if (raw.autoUpdate !== undefined) {
         const r = validateField('autoUpdate', raw.autoUpdate);
