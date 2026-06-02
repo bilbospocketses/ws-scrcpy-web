@@ -125,7 +125,7 @@ pub fn handle(args: &[String]) -> Option<i32> {
 
 /// Probe for the absolute dir (/usr/bin then /bin) containing `tool`. Falls back
 /// to /usr/bin. Local-Dependencies-Only: never invoke a tool by bare name.
-fn tool_dir(tool: &str) -> String {
+pub(crate) fn tool_dir(tool: &str) -> String {
     for d in ["/usr/bin", "/bin"] {
         if Path::new(&format!("{d}/{tool}")).exists() {
             return d.to_string();
