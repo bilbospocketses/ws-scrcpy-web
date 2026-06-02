@@ -268,14 +268,14 @@ Linux releases ship as a single self-contained AppImage built with [Velopack](ht
 
 The first-run welcome modal offers to install ws-scrcpy-web as a systemd service. Two scopes are available:
 
-- **just for me (no sudo)** — installs to `~/.config/systemd/user/ws-scrcpy-web.service`. Starts at login. `loginctl enable-linger` is invoked best-effort so the service survives logout.
-- **all users (requires sudo)** — installs to `/etc/systemd/system/ws-scrcpy-web.service`. Starts at boot. The install API triggers a `pkexec` graphical password prompt to acquire root for the single shell command that writes the unit + runs `systemctl daemon-reload` + `systemctl enable --now`. No AppImage relaunch needed. Falls back gracefully if `pkexec` isn't installed: error message tells the user to install polkit (`sudo dnf install polkit` on Fedora) or pick user scope.
+- **just for me (no sudo)** — installs to `~/.config/systemd/user/WsScrcpyWeb.service`. Starts at login. `loginctl enable-linger` is invoked best-effort so the service survives logout.
+- **all users (requires sudo)** — installs to `/etc/systemd/system/WsScrcpyWeb.service`. Starts at boot. The install API triggers a `pkexec` graphical password prompt to acquire root for the single shell command that writes the unit + runs `systemctl daemon-reload` + `systemctl enable --now`. No AppImage relaunch needed. Falls back gracefully if `pkexec` isn't installed: error message tells the user to install polkit (`sudo dnf install polkit` on Fedora) or pick user scope.
 
 You can also install/uninstall the service later from Settings → Service.
 
 #### AppImage placement caveat
 
-The systemd unit's `ExecStart=` is set to the absolute AppImage path at install time. **Do not move or rename the AppImage after installing the service** — the service will fail to start on next boot/login. If you need to relocate the AppImage, uninstall the service first, move the file, then re-install.
+For a **user-scope** service the systemd unit's `ExecStart=` points at the AppImage where it lived at install time, so **do not move or rename the AppImage after installing a user-scope service** — it will fail to start on next login. If you need to relocate it, uninstall the service first, move the file, then re-install. A **system-scope** service is unaffected: the installer stages a copy of the AppImage to `/opt/ws-scrcpy-web/` (labelled `bin_t` for SELinux) and points `ExecStart=` there, so moving your home AppImage does not break it.
 
 #### Verifying the AppImage signature
 
