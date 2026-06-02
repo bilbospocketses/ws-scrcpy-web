@@ -47,6 +47,13 @@ export interface AppConfig {
      * the modal because the stored port won't match the current port.
      */
     bookmarkDismissedForPort: number | null;
+    /**
+     * v0.1.30-beta.31: global "don't show the bookmark reminder again, ever,
+     * even when the port changes". When true the bookmark modal never shows,
+     * regardless of port. Distinct from the per-port `bookmarkDismissedForPort`.
+     * (Stored in config.json for now; SQLite migration is item 37.)
+     */
+    bookmarkDismissedGlobally: boolean;
 
     // Pre-existing fields (kept for backward compatibility / runtime usage)
     webPort: number;
@@ -106,6 +113,7 @@ export const APP_CONFIG_DEFAULTS: AppConfig = {
     webPort: 8000,
     serviceFirstRunSeen: false,
     bookmarkDismissedForPort: null,
+    bookmarkDismissedGlobally: false,
 };
 
 export const VALID_INSTALL_MODES: ReadonlyArray<InstallMode> = [
