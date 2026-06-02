@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **"Stop server & exit" button (Settings → App).** A new button cleanly stops the server and closes the app on every platform. It confirms first, then runs graceful teardown — stopping the adb daemon and releasing active device streams — before exiting, and closes the browser tab (falling back to an "app stopped — you can close this tab" page when the browser blocks self-close). On Windows it also reaps the standalone tray helper, which is spawned detached and would otherwise be left orphaned pointing at a dead launcher (the reap is skipped during an in-app update / uninstall handoff, which relaunch and keep their tray). The button is disabled with an explanatory note in service mode, where the OS service manager owns the lifecycle. It reuses the existing `/api/server/shutdown` endpoint, which now runs the same graceful teardown the `SIGINT`/`SIGTERM` path does — fixing a latent case where a tray- or endpoint-initiated shutdown exited directly and left the adb daemon orphaned.
+
+### Fixed
+
+- **The Linux Rust data-root resolver now honors `DATA_ROOT`.** `data_root_for_linux` followed only `XDG_DATA_HOME > HOME`, while the Node side (`resolveDataRoot`) honors `DATA_ROOT > XDG_DATA_HOME > ~/.local/share`. An explicit `DATA_ROOT` override is now respected on the Rust side too, across **both** of its callers — the launcher spawn path (`Paths::compute`) and the service-teardown / tray-reap path (`data_root_from_env`) — so they cannot diverge from the Node child's data root.
+- **The system-scope service uninstall confirmation renders as neutral info, not an error.** The "service removed — relaunch the app manually" follow-up was shown through the error renderer (red text + a "retry" button) though it is an informational success; it now renders as a plain status line.
+
 ## [0.1.30-beta.38] - 2026-06-02
 
 ### Added
