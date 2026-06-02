@@ -79,14 +79,14 @@ export class AdminConfirmModal extends Modal {
 
         const cancelBtn = document.createElement('button');
         cancelBtn.type = 'button';
-        cancelBtn.className = 'settings-btn';
+        cancelBtn.className = 'modal-button';
         cancelBtn.textContent = 'cancel';
         cancelBtn.addEventListener('click', () => this.resolveAndClose(false));
         footer.appendChild(cancelBtn);
 
         const continueBtn = document.createElement('button');
         continueBtn.type = 'button';
-        continueBtn.className = 'settings-btn settings-btn-primary';
+        continueBtn.className = 'modal-button';
         continueBtn.textContent = 'continue';
         continueBtn.addEventListener('click', () => this.resolveAndClose(true));
         footer.appendChild(continueBtn);

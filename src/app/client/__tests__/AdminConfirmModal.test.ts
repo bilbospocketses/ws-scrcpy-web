@@ -121,4 +121,13 @@ describe('AdminConfirmModal.confirm', () => {
         await expect(promise).resolves.toBe(true);
         spy.mockRestore();
     });
+
+    it('styles both footer buttons with the shared white-outline .modal-button class', async () => {
+        const promise = AdminConfirmModal.confirm({ action: 'install service' });
+        await Promise.resolve();
+        expect(getButton('continue').classList.contains('modal-button')).toBe(true);
+        expect(getButton('cancel').classList.contains('modal-button')).toBe(true);
+        getButton('cancel').click();
+        await promise;
+    });
 });

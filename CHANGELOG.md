@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Confirmation dialogs now use the white-outline button style.** The "Root/Administrative Privileges Required" (service install and uninstall) and "End Shell Session" confirm dialogs had solid light-fill buttons; their cancel and confirm buttons now use the shared white-outline button style (white outline + white text, transparent) introduced for the welcome, bookmark, and service-mode modals in beta.29, so every modal button matches.
+
+### Fixed
+
+- **The Linux service-scope radios show which scope is active again when a service is installed.** While a service was installed the user/system scope radios used the `disabled` attribute, and Chromium desaturates `accent-color` on disabled controls — so the selected dot rendered as washed-out grey and you couldn't tell which scope was active. The radios are now kept enabled and made read-only via `pointer-events: none` + `tabindex="-1"`, so the blue selected dot stays visible. (Scope detection itself was already correct; it now has unit-test coverage.)
+- **`npm run version:bump` now keeps `Cargo.lock` in sync.** The bump script updated `package.json` and `Cargo.toml` but not `Cargo.lock`, so the workspace crates' resolved versions in the lockfile lagged the manifest. The script now also rewrites the `ws-scrcpy-web-{common,launcher,tray}` version entries in `Cargo.lock` by text edit (so it still runs in the toolchain-less auto-release bump job), and the existing lag has been resynced.
+
 ## [0.1.30-beta.36] - 2026-06-02
 
 ### Changed

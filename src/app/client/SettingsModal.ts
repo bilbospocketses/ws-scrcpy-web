@@ -72,6 +72,64 @@ export function resetPromptsPayload(): Record<string, boolean | null> {
     };
 }
 
+/** Structural subset of ServiceStatusResponse that drives the scope radios.
+ * Fields admit `undefined` explicitly for exactOptionalPropertyTypes so the
+ * full ServiceStatusResponse is assignable. */
+export interface ScopeRadioInputs {
+    status?: string | undefined;
+    installMode?: string | null | undefined;
+    scope?: string | null | undefined;
+}
+
+export interface ScopeRadioState {
+    installedScope: 'user' | 'system' | null;
+    /** A service is installed -> the radios are read-only (locked). */
+    locked: boolean;
+    userChecked: boolean;
+    systemChecked: boolean;
+}
+
+/**
+ * Derive the Linux service-scope radio state from the service status. Pure (no
+ * DOM) so it is unit-testable. Prefers the authoritative filesystem scope
+ * (resp.scope — which systemd unit exists) and falls back to mapping the
+ * mutable installMode, accepting BOTH the bare ('user'/'system') and '-service'
+ * forms for older servers that don't report scope. (The pre-fix render code
+ * only mapped the two '-service' forms, so a drifted installMode left both
+ * radios unselected even with a service installed.)
+ */
+export function scopeRadioState(resp: ScopeRadioInputs): ScopeRadioState {
+    const isInstalled = (resp.status ?? 'not-installed') !== 'not-installed';
+    const scopeFromInstallMode: 'user' | 'system' | null =
+        resp.installMode === 'system-service' || resp.installMode === 'system'
+            ? 'system'
+            : resp.installMode === 'user-service' || resp.installMode === 'user'
+                ? 'user'
+                : null;
+    const installedScope: 'user' | 'system' | null =
+        resp.scope === 'user' || resp.scope === 'system' ? resp.scope : scopeFromInstallMode;
+    return {
+        installedScope,
+        locked: isInstalled,
+        userChecked: isInstalled ? installedScope === 'user' : true,
+        systemChecked: isInstalled && installedScope === 'system',
+    };
+}
+
+/**
+ * Lock a service-scope radio as read-only WITHOUT the `disabled` attribute.
+ * Chromium desaturates `accent-color` on :disabled form controls, which made
+ * the selected dot invisible against the muted track (item 42 — the active
+ * scope was unreadable when a service was installed). Keeping the radio
+ * ENABLED lets accent-color render; tabindex=-1 removes it from the tab order,
+ * and the `.settings-radio-locked` class applies `pointer-events: none` on the
+ * label so it can't be clicked or toggled.
+ */
+export function lockScopeRadioControl(label: HTMLLabelElement, radio: HTMLInputElement): void {
+    radio.tabIndex = -1;
+    label.classList.add('settings-radio-locked');
+}
+
 /**
  * Settings modal — unified two-column grid layout.
  *
@@ -883,31 +941,21 @@ export class SettingsModal extends Modal {
         const status = resp.status ?? 'not-installed';
 
         // Linux scope chooser: standard settings row matching the update
-        // channel row's pattern. Always rendered on Linux. When the service
-        // is installed, the radios are pre-selected from resp.installMode
-        // and disabled — switching scope requires a deliberate
-        // uninstall→reinstall (systemd user-scope and system-scope unit
-        // files live in different paths and can't coexist for the same
-        // service name). Pre-v0.1.30 the row was only rendered when not
-        // installed, leaving no in-UI way to tell which scope was active.
+        // channel row's pattern. Always rendered on Linux. When the service is
+        // installed the radios are pre-selected from the active scope and
+        // LOCKED (read-only) — switching scope requires a deliberate
+        // uninstall→reinstall (systemd user-scope and system-scope unit files
+        // live in different paths and can't coexist for the same service
+        // name). Pre-v0.1.30 the row was only rendered when not installed,
+        // leaving no in-UI way to tell which scope was active.
         this.serviceScopeSystemRadio = null;
         if (resp.platform === 'linux') {
-            const isInstalled = status !== 'not-installed';
-            // Prefer the authoritative filesystem scope (which systemd unit
-            // exists) reported by the status endpoint. Fall back to mapping the
-            // installMode config — accepting BOTH the bare ('user'/'system')
-            // and '-service' forms — for older servers that don't report scope.
-            // The pre-fix code only mapped the two '-service' forms and trusted
-            // the mutable installMode, so a drifted/reverted value left both
-            // radios unselected even with a service installed.
-            const scopeFromInstallMode: 'user' | 'system' | null =
-                resp.installMode === 'system-service' || resp.installMode === 'system'
-                    ? 'system'
-                    : resp.installMode === 'user-service' || resp.installMode === 'user'
-                        ? 'user'
-                        : null;
-            const installedScope: 'user' | 'system' | null =
-                resp.scope === 'user' || resp.scope === 'system' ? resp.scope : scopeFromInstallMode;
+            // Detection + lock state (pure, unit-tested in scopeRadioState).
+            // Locked radios stay ENABLED and are made non-interactive via
+            // lockScopeRadioControl — NOT `disabled` — because Chromium
+            // desaturates accent-color on :disabled controls, which hid the
+            // selected dot (item 42).
+            const st = scopeRadioState(resp);
 
             const scopeFrag = document.createDocumentFragment();
 
@@ -917,10 +965,10 @@ export class SettingsModal extends Modal {
             userRadio.type = 'radio';
             userRadio.name = 'settings-scope';
             userRadio.value = 'user';
-            userRadio.checked = isInstalled ? installedScope === 'user' : true;
-            userRadio.disabled = isInstalled;
+            userRadio.checked = st.userChecked;
             userLabel.appendChild(userRadio);
             userLabel.appendChild(document.createTextNode('user'));
+            if (st.locked) lockScopeRadioControl(userLabel, userRadio);
             scopeFrag.appendChild(userLabel);
 
             const sysLabel = document.createElement('label');
@@ -929,17 +977,17 @@ export class SettingsModal extends Modal {
             sysRadio.type = 'radio';
             sysRadio.name = 'settings-scope';
             sysRadio.value = 'system';
-            sysRadio.checked = isInstalled && installedScope === 'system';
-            sysRadio.disabled = isInstalled;
+            sysRadio.checked = st.systemChecked;
             sysLabel.appendChild(sysRadio);
             sysLabel.appendChild(document.createTextNode('system (req. sudo)'));
+            if (st.locked) lockScopeRadioControl(sysLabel, sysRadio);
             scopeFrag.appendChild(sysLabel);
 
             this.serviceSection.appendChild(this.buildRow('service scope', scopeFrag));
-            // serviceScopeSystemRadio feeds the install request body; null
-            // it out when installed so the install handler (unreachable in
-            // that state anyway) can't accidentally consume a stale value.
-            this.serviceScopeSystemRadio = isInstalled ? null : sysRadio;
+            // serviceScopeSystemRadio feeds the install request body; null it
+            // out when locked so the install handler (unreachable in that state
+            // anyway) can't accidentally consume a stale value.
+            this.serviceScopeSystemRadio = st.locked ? null : sysRadio;
         }
 
         // One row: label = informational blurb (left column, wraps),

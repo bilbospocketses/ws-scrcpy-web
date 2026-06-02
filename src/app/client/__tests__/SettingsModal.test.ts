@@ -1,5 +1,13 @@
+// @vitest-environment jsdom
+
 import { describe, it, expect } from 'vitest';
-import { uninstallFollowupMessage, classifyInstallPoll, resetPromptsPayload } from '../SettingsModal';
+import {
+    uninstallFollowupMessage,
+    classifyInstallPoll,
+    resetPromptsPayload,
+    scopeRadioState,
+    lockScopeRadioControl,
+} from '../SettingsModal';
 
 describe('uninstallFollowupMessage', () => {
     it('user scope -> reconnect/relaunch message', () => {
@@ -34,5 +42,70 @@ describe('resetPromptsPayload', () => {
             bookmarkDismissedForPort: null,
             bookmarkDismissedGlobally: false,
         });
+    });
+});
+
+describe('scopeRadioState', () => {
+    it('not installed -> unlocked, user pre-selected as the default', () => {
+        expect(scopeRadioState({ status: 'not-installed' })).toEqual({
+            installedScope: null,
+            locked: false,
+            userChecked: true,
+            systemChecked: false,
+        });
+    });
+
+    it('installed user scope (authoritative resp.scope) -> locked, user checked', () => {
+        expect(scopeRadioState({ status: 'running', scope: 'user' })).toEqual({
+            installedScope: 'user',
+            locked: true,
+            userChecked: true,
+            systemChecked: false,
+        });
+    });
+
+    it('installed system scope (authoritative resp.scope) -> locked, system checked', () => {
+        expect(scopeRadioState({ status: 'running', scope: 'system' })).toEqual({
+            installedScope: 'system',
+            locked: true,
+            userChecked: false,
+            systemChecked: true,
+        });
+    });
+
+    it('falls back to installMode when resp.scope is absent: user-service form', () => {
+        expect(scopeRadioState({ status: 'running', installMode: 'user-service' })).toMatchObject({
+            installedScope: 'user',
+            locked: true,
+            userChecked: true,
+        });
+    });
+
+    it('falls back to installMode when resp.scope is absent: bare system form', () => {
+        expect(scopeRadioState({ status: 'running', installMode: 'system' })).toMatchObject({
+            installedScope: 'system',
+            locked: true,
+            systemChecked: true,
+        });
+    });
+});
+
+describe('lockScopeRadioControl', () => {
+    it('locks a scope radio readonly WITHOUT the disabled attribute, so accent-color still renders', () => {
+        const label = document.createElement('label');
+        label.className = 'settings-radio-label';
+        const radio = document.createElement('input');
+        radio.type = 'radio';
+        label.appendChild(radio);
+
+        lockScopeRadioControl(label, radio);
+
+        // The bug was `radio.disabled = true`: Chromium desaturates accent-color
+        // on :disabled controls, so the selected dot went invisible. The radio
+        // must stay ENABLED and be locked via tabindex + a class (the CSS rule
+        // applies pointer-events:none on the label).
+        expect(radio.disabled).toBe(false);
+        expect(radio.tabIndex).toBe(-1);
+        expect(label.classList.contains('settings-radio-locked')).toBe(true);
     });
 });

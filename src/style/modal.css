@@ -618,20 +618,25 @@ dialog.settings-modal .settings-control .settings-radio-label {
 }
 
 /* Bright accent so the radio's selected dot stays visible even when the label
- * is muted (disabled scope). Matches the app's checkboxes/range controls. */
+ * is muted (locked scope). Matches the app's checkboxes/range controls. The
+ * radio is never `disabled` (Chromium desaturates accent-color on :disabled),
+ * so this dot renders at full saturation in both the active and locked state. */
 dialog.settings-modal .settings-control .settings-radio-label input[type="radio"] {
     accent-color: #5b9aff;
 }
 
 /*
- * Disabled radio (e.g. service scope while installed): mute the whole
- * label, not just the radio circle, so the read-only state reads at a
- * glance. :has() is supported in the AppImage's bundled webview
- * (Chrome 105+ / Firefox 121+ / Safari 15.4+).
+ * Locked radio (service scope while a service is installed): mute the whole
+ * label so the read-only state reads at a glance, and block interaction with
+ * pointer-events. We do NOT use the `disabled` attribute — Chromium
+ * desaturates accent-color on :disabled controls, which hid the selected dot
+ * (item 42). The radio stays enabled (accent-color renders) and is locked via
+ * this class (set by lockScopeRadioControl) plus tabindex=-1 on the input.
  */
-dialog.settings-modal .settings-control .settings-radio-label:has(input:disabled) {
+dialog.settings-modal .settings-control .settings-radio-label.settings-radio-locked {
     opacity: 0.65;
     cursor: not-allowed;
+    pointer-events: none;
 }
 
 /*

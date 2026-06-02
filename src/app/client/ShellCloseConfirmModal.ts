@@ -39,14 +39,14 @@ export class ShellCloseConfirmModal extends Modal {
 
         const cancelBtn = document.createElement('button');
         cancelBtn.type = 'button';
-        cancelBtn.className = 'settings-btn';
+        cancelBtn.className = 'modal-button';
         cancelBtn.textContent = 'cancel';
         cancelBtn.addEventListener('click', () => this.resolveAndClose(false));
         footer.appendChild(cancelBtn);
 
         const closeBtn = document.createElement('button');
         closeBtn.type = 'button';
-        closeBtn.className = 'settings-btn settings-btn-primary';
+        closeBtn.className = 'modal-button';
         closeBtn.textContent = 'close';
         closeBtn.addEventListener('click', () => this.resolveAndClose(true));
         footer.appendChild(closeBtn);
