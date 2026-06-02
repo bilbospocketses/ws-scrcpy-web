@@ -23,6 +23,42 @@ export function uninstallFollowupMessage(mode: 'user' | 'system'): string {
 }
 
 /**
+ * Classify one tick of the post-install port-discovery poll. Pure (no DOM or
+ * timers) so it is unit-testable. After a service install the web port is
+ * handed off to the service-Node:
+ * - unreachable local server -> the local instance is exiting (fix #3) and the
+ *   service is rebinding the SAME port -> reconnect (reload the current URL).
+ * - config.json mtime changed + a known disk port -> the service bound a new
+ *   port -> navigate there (the pre-existing Windows path, unchanged).
+ * - past the iteration cap -> timeout.
+ */
+export type PollOutcome =
+    | { kind: 'keep-polling' }
+    | { kind: 'navigate'; port: number }
+    | { kind: 'reconnect' }
+    | { kind: 'timeout' };
+
+export function classifyInstallPoll(args: {
+    reachable: boolean;
+    configMtime: number | null;
+    baselineMtime: number;
+    diskWebPort: number | null;
+    iterations: number;
+    maxIterations: number;
+}): PollOutcome {
+    if (!args.reachable) return { kind: 'reconnect' };
+    if (
+        args.configMtime != null &&
+        args.configMtime !== args.baselineMtime &&
+        args.diskWebPort != null
+    ) {
+        return { kind: 'navigate', port: args.diskWebPort };
+    }
+    if (args.iterations > args.maxIterations) return { kind: 'timeout' };
+    return { kind: 'keep-polling' };
+}
+
+/**
  * Settings modal — unified two-column grid layout.
  *
  * Every section is built from the same primitive:
@@ -976,38 +1012,49 @@ export class SettingsModal extends Modal {
             let iterations = 0;
             const poll = setInterval(async () => {
                 iterations++;
-                if (iterations > maxIterations) {
-                    clearInterval(poll);
-                    modal.close();
-                    btn.disabled = false;
-                    btn.textContent = prevText;
-                    this.renderServiceError(
-                        'service is running but port discovery timed out. reload the page at your usual address.',
-                        () => void this.refreshService(),
-                    );
-                    return;
-                }
+                // A thrown/aborted fetch means the local server has dropped: under
+                // fix #3 the local instance exits after a successful install, so the
+                // service is taking over the SAME port (reconnect, not an error).
+                let reachable = true;
+                let configMtime: number | null = null;
+                let diskWebPort: number | null = null;
                 try {
                     const statusResp = await fetch('/api/service/status', { signal: AbortSignal.timeout(5000) });
-                    if (!statusResp.ok) return;
-                    const statusData = await statusResp.json() as { configMtime?: number; diskWebPort?: number };
-                    if (
-                        statusData.configMtime != null &&
-                        statusData.configMtime !== baselineMtime &&
-                        statusData.diskWebPort != null
-                    ) {
-                        clearInterval(poll);
-                        window.location.href = `http://localhost:${statusData.diskWebPort}/`;
+                    if (statusResp.ok) {
+                        const statusData = await statusResp.json() as { configMtime?: number; diskWebPort?: number };
+                        configMtime = statusData.configMtime ?? null;
+                        diskWebPort = statusData.diskWebPort ?? null;
                     }
                 } catch {
-                    clearInterval(poll);
-                    modal.close();
-                    btn.disabled = false;
-                    btn.textContent = prevText;
-                    this.renderServiceError(
-                        'lost connection to local server during handoff. reload the page at the service port.',
-                        () => void this.refreshService(),
-                    );
+                    reachable = false;
+                }
+                const outcome = classifyInstallPoll({
+                    reachable, configMtime, baselineMtime, diskWebPort, iterations, maxIterations,
+                });
+                switch (outcome.kind) {
+                    case 'navigate':
+                        clearInterval(poll);
+                        window.location.href = `http://localhost:${outcome.port}/`;
+                        return;
+                    case 'reconnect':
+                        // Same-port handoff: reload the current URL after a short
+                        // grace so the service has bound the port.
+                        clearInterval(poll);
+                        btn.textContent = 'reconnecting…';
+                        setTimeout(() => { window.location.reload(); }, 2500);
+                        return;
+                    case 'timeout':
+                        clearInterval(poll);
+                        modal.close();
+                        btn.disabled = false;
+                        btn.textContent = prevText;
+                        this.renderServiceError(
+                            'service is running but port discovery timed out. reload the page at your usual address.',
+                            () => void this.refreshService(),
+                        );
+                        return;
+                    case 'keep-polling':
+                        return;
                 }
             }, pollInterval);
         } catch {
