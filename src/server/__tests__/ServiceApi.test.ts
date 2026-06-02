@@ -73,6 +73,8 @@ describe('ServiceApi', () => {
         CONFIG: process.env[EnvName.CONFIG_PATH],
         DEPS: process.env['DEPS_PATH'],
         PROGRAMDATA: process.env['PROGRAMDATA'],
+        XDG_DATA_HOME: process.env['XDG_DATA_HOME'],
+        DATA_ROOT: process.env['DATA_ROOT'],
     };
 
     beforeEach(() => {
@@ -89,6 +91,13 @@ describe('ServiceApi', () => {
         // on every test run. With it, all such writes land inside tmpRoot, which
         // afterEach rmSyncs recursively — fully hermetic.
         process.env['PROGRAMDATA'] = tmpRoot;
+        // On Linux, resolveDataRoot ignores PROGRAMDATA. Redirect via XDG_DATA_HOME
+        // instead (DATA_ROOT has higher priority and must not leak from the runner env,
+        // so clear it first). This makes cfg.dataRoot resolve to <tmpRoot>/WsScrcpyWeb
+        // on Linux too — mirroring the Windows PROGRAMDATA redirect — so marker writes
+        // land inside tmpRoot and are cleaned up by afterEach rmSync.
+        delete process.env['DATA_ROOT'];
+        process.env['XDG_DATA_HOME'] = tmpRoot;
         Config._resetForTest();
     });
 
@@ -104,6 +113,10 @@ describe('ServiceApi', () => {
         else process.env['DEPS_PATH'] = savedEnv.DEPS;
         if (savedEnv.PROGRAMDATA === undefined) delete process.env['PROGRAMDATA'];
         else process.env['PROGRAMDATA'] = savedEnv.PROGRAMDATA;
+        if (savedEnv.XDG_DATA_HOME === undefined) delete process.env['XDG_DATA_HOME'];
+        else process.env['XDG_DATA_HOME'] = savedEnv.XDG_DATA_HOME;
+        if (savedEnv.DATA_ROOT === undefined) delete process.env['DATA_ROOT'];
+        else process.env['DATA_ROOT'] = savedEnv.DATA_ROOT;
         while (tmpDirs.length) {
             const d = tmpDirs.pop()!;
             try {
