@@ -117,15 +117,19 @@ This is a general orphan-tray-after-terminal-exit fix, not just the button path.
 
 ### 40a — Rust `data_root` honors `DATA_ROOT` (Linux)
 
-`common/src/config.rs`. TS `resolveDataRoot` (Config.ts:151) resolves
-`DATA_ROOT > XDG_DATA_HOME > ~/.local/share` on non-Windows, but
-`data_root_for_linux` / `data_root_from_env` only do `XDG_DATA_HOME > HOME` — the
-explicit `DATA_ROOT` launcher-bridge override is ignored. Add an injectable
-`data_root` override param to the pure `data_root_for_linux` (mirrors the existing
-injectable-param test pattern) and read `DATA_ROOT` first in the non-Windows branch of
-`data_root_from_env`. Windows branch unchanged (TS also ignores `DATA_ROOT` on win32).
-Confirm the launcher's own `DATA_ROOT`-set site so honoring it here is not circular.
-Add Rust unit tests mirroring the TS precedence. `cross test --workspace` is authoritative.
+`common/src/config.rs` + `launcher/src/paths.rs`. TS `resolveDataRoot`
+(Config.ts:151) resolves `DATA_ROOT > XDG_DATA_HOME > ~/.local/share` on
+non-Windows, but `data_root_for_linux` only does `XDG_DATA_HOME > HOME` — the
+explicit `DATA_ROOT` override is ignored. Add an injectable `data_root` override
+param to the pure `data_root_for_linux` (used verbatim, mirroring TS), then pass
+`DATA_ROOT` from **both** of its callers: `data_root_from_env` (common — service
+teardown / tray reap / local-appimage marker) **and** `Paths::compute`
+(launcher spawn path). Fixing only one would diverge the teardown root from the
+spawn root when `DATA_ROOT` is set — a new asymmetry. Windows branch unchanged
+(TS also ignores `DATA_ROOT` on win32). `spawn.rs` sets `DATA_ROOT` for the Node
+child from the computed root, so honoring it here is not circular. Rust unit
+tests mirror the TS precedence; `cross test --workspace` is authoritative for the
+non-Windows paths.
 
 ### 40b — neutral `renderServiceInfo` for system-scope uninstall
 
