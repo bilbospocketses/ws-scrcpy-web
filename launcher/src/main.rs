@@ -21,6 +21,8 @@ mod unzip_handler;
 mod operation_server;
 #[cfg(target_os = "linux")]
 mod linux_apply;
+#[cfg(target_os = "linux")]
+mod linux_service;
 #[cfg(windows)]
 mod user_session_spawn;
 
@@ -91,6 +93,12 @@ fn main() {
     #[cfg(target_os = "linux")]
     if let Some(code) = linux_apply::handle(&args) {
         log::info(&format!("linux-apply exiting with code {code}"));
+        std::process::exit(code);
+    }
+
+    #[cfg(target_os = "linux")]
+    if let Some(code) = linux_service::handle(&args) {
+        log::info(&format!("linux-service-teardown exiting with code {code}"));
         std::process::exit(code);
     }
 

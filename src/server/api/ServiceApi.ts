@@ -22,6 +22,7 @@ import {
     getServiceClient,
     type ServiceClientFactoryResult,
 } from '../service';
+import { resolveSystemTool } from '../service/systemTools';
 import { readJsonBody } from './utils';
 
 const log = Logger.for('ServiceApi');
@@ -51,6 +52,11 @@ export class ServiceApi {
         private readonly factory: () => ServiceClientFactoryResult = () => getServiceClient(),
         private readonly scope: () => 'user' | 'system' = () => detectInstallScope(),
         private readonly existsCheck: (p: string) => boolean = (p: string) => fs.existsSync(p),
+        private readonly spawnDetached: (cmd: string, args: string[]) => void = (cmd, args) => {
+            const child = spawn(cmd, args, { detached: true, stdio: 'ignore' });
+            child.on('error', (err) => log.warn(`spawnDetached ${cmd} error: ${err.message}`));
+            child.unref();
+        },
     ) {}
 
     public async handle(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
@@ -242,6 +248,25 @@ export class ServiceApi {
             startupDir = path.dirname(binPath);
         }
 
+        // Record the home AppImage path so a later USER-scope uninstall can
+        // relaunch the app in local mode. System scope runs the /opt copy and
+        // won't know the user's home AppImage otherwise. Best-effort: a failed
+        // marker write logs + continues (it only degrades the post-uninstall
+        // relaunch, not the install).
+        if (result.platform === 'linux') {
+            const appImage = process.env['APPIMAGE'];
+            if (appImage && appImage.length > 0) {
+                const dataRoot = cfg.dataRoot ?? path.dirname(cfg.dependenciesPath);
+                const markerPath = path.join(dataRoot, 'control', 'local-appimage');
+                try {
+                    fs.mkdirSync(path.dirname(markerPath), { recursive: true });
+                    fs.writeFileSync(markerPath, appImage, 'utf8');
+                } catch (err) {
+                    log.warn(`could not write local-appimage marker: ${(err as Error).message}`);
+                }
+            }
+        }
+
         // v0.1.24-beta.7: service.log moves under <dataRoot>/logs/ to
         // colocate with launcher.log + server.log + ws-scrcpy-web.log.
         // Pre-beta.7 it lived at <dataRoot>/dependencies/service.log,
@@ -372,6 +397,54 @@ export class ServiceApi {
         }
 
         const cfg = Config.getInstance();
+
+        if (result.platform === 'linux') {
+            // Item 32: do NOT run `systemctl disable --now` from here — this Node
+            // process is inside the service unit's cgroup, so stopping the unit
+            // would kill us mid-call (no clean teardown, no relaunch). Instead
+            // hand off to an OUT-OF-CGROUP helper via systemd-run: it runs in its
+            // own transient unit, survives stopping our unit, then tears down +
+            // (user scope) relaunches local. Mirrors the Windows operation-server
+            // handoff. We do NOT call client.uninstall() on Linux.
+            const scope = result.client.getInstalledScope
+                ? await result.client.getInstalledScope(WS_SCRCPY_SERVICE_NAME)
+                : null;
+            if (scope === null) {
+                const body: ServiceActionSuccess = { ok: true, status: 'not-installed', installMode: 'user' };
+                res.writeHead(200);
+                res.end(JSON.stringify(body));
+                return true;
+            }
+
+            // Revert installMode to local BEFORE the teardown so the relaunched
+            // local instance reads local mode (mirrors the Windows revert-first ordering).
+            const newMode: InstallMode = scope === 'system' ? 'system' : 'user';
+            try {
+                cfg.updateAppConfig({ installMode: newMode });
+            } catch (err) {
+                log.warn(`uninstall(linux): installMode revert failed (continuing): ${(err as Error).message}`);
+            }
+
+            const dataRoot = cfg.dataRoot ?? path.dirname(cfg.dependenciesPath);
+            // Same staged out-of-mount helper UpdateService.applyUpdate uses — note the
+            // `.exe` suffix is the fixed staged name even on Linux (refresh_helper_binary).
+            const helper = path.join(dataRoot, 'control', 'operation-server', 'ws-scrcpy-web-launcher.exe');
+            const systemdRun = resolveSystemTool('systemd-run');
+            const sdArgs = [
+                ...(scope === 'user' ? ['--user'] : []),
+                '--collect',
+                `--unit=wsscrcpy-teardown-${Date.now()}`,
+                helper,
+                '--linux-service-teardown', '--scope', scope, '--unit', WS_SCRCPY_SERVICE_NAME,
+            ];
+            this.spawnDetached(systemdRun, sdArgs);
+            log.info(`uninstall(linux): spawned teardown helper via systemd-run (${scope} scope)`);
+
+            const body: ServiceActionSuccess = { ok: true, status: 'shutting-down', installMode: newMode };
+            res.writeHead(200);
+            res.end(JSON.stringify(body));
+            return true;
+        }
 
         // v0.1.8: if a resume token is present in the request headers,
         // validate it before doing anything else. The token comes from

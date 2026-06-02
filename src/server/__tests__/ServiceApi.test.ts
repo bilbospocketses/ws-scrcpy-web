@@ -72,6 +72,9 @@ describe('ServiceApi', () => {
     const savedEnv = {
         CONFIG: process.env[EnvName.CONFIG_PATH],
         DEPS: process.env['DEPS_PATH'],
+        PROGRAMDATA: process.env['PROGRAMDATA'],
+        XDG_DATA_HOME: process.env['XDG_DATA_HOME'],
+        DATA_ROOT: process.env['DATA_ROOT'],
     };
 
     beforeEach(() => {
@@ -81,6 +84,20 @@ describe('ServiceApi', () => {
         fs.writeFileSync(configPath, JSON.stringify({}));
         process.env[EnvName.CONFIG_PATH] = configPath;
         process.env['DEPS_PATH'] = path.join(tmpRoot, 'deps');
+        // Redirect PROGRAMDATA to tmpRoot so Config.resolveDataRoot (which reads
+        // process.env['PROGRAMDATA'] directly on Windows) resolves cfg.dataRoot
+        // to <tmpRoot>\WsScrcpyWeb. Without this, control-marker writes
+        // (local-appimage, uninstall-pending) land in the REAL C:\ProgramData
+        // on every test run. With it, all such writes land inside tmpRoot, which
+        // afterEach rmSyncs recursively — fully hermetic.
+        process.env['PROGRAMDATA'] = tmpRoot;
+        // On Linux, resolveDataRoot ignores PROGRAMDATA. Redirect via XDG_DATA_HOME
+        // instead (DATA_ROOT has higher priority and must not leak from the runner env,
+        // so clear it first). This makes cfg.dataRoot resolve to <tmpRoot>/WsScrcpyWeb
+        // on Linux too — mirroring the Windows PROGRAMDATA redirect — so marker writes
+        // land inside tmpRoot and are cleaned up by afterEach rmSync.
+        delete process.env['DATA_ROOT'];
+        process.env['XDG_DATA_HOME'] = tmpRoot;
         Config._resetForTest();
     });
 
@@ -94,6 +111,12 @@ describe('ServiceApi', () => {
         else process.env[EnvName.CONFIG_PATH] = savedEnv.CONFIG;
         if (savedEnv.DEPS === undefined) delete process.env['DEPS_PATH'];
         else process.env['DEPS_PATH'] = savedEnv.DEPS;
+        if (savedEnv.PROGRAMDATA === undefined) delete process.env['PROGRAMDATA'];
+        else process.env['PROGRAMDATA'] = savedEnv.PROGRAMDATA;
+        if (savedEnv.XDG_DATA_HOME === undefined) delete process.env['XDG_DATA_HOME'];
+        else process.env['XDG_DATA_HOME'] = savedEnv.XDG_DATA_HOME;
+        if (savedEnv.DATA_ROOT === undefined) delete process.env['DATA_ROOT'];
+        else process.env['DATA_ROOT'] = savedEnv.DATA_ROOT;
         while (tmpDirs.length) {
             const d = tmpDirs.pop()!;
             try {
@@ -620,6 +643,79 @@ describe('ServiceApi', () => {
             expect(opts?.scope).toBe('system');
         });
 
+        it('POST /install on Linux with $APPIMAGE set writes local-appimage marker to <dataRoot>/control/local-appimage', async () => {
+            const appImagePath = '/home/jamie/Applications/WsScrcpyWeb.AppImage';
+            const savedAppImage = process.env['APPIMAGE'];
+            process.env['APPIMAGE'] = appImagePath;
+            try {
+                const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(async () => undefined);
+                const client = fakeClient({
+                    install: installFn,
+                    status: vi.fn(async () => 'running' as const),
+                });
+                const factoryResult: ServiceClientFactoryResult = {
+                    client,
+                    supported: true,
+                    platform: 'linux',
+                };
+                const api = new ServiceApi(() => factoryResult, () => 'user');
+                const { req, res } = makeReqRes(
+                    '/api/service/install',
+                    'POST',
+                    JSON.stringify({ scope: 'user' }),
+                );
+                await api.handle(req, res);
+                expect((res as any).getStatus()).toBe(200);
+
+                // Verify the marker landed on disk with the correct content.
+                // PROGRAMDATA is redirected to tmpRoot in beforeEach, so
+                // cfg.dataRoot resolves inside tmpRoot (cleaned by afterEach).
+                const cfg = Config.getInstance();
+                const dataRoot = cfg.dataRoot ?? path.dirname(cfg.dependenciesPath);
+                const markerPath = path.join(dataRoot, 'control', 'local-appimage');
+                expect(fs.existsSync(markerPath)).toBe(true);
+                expect(fs.readFileSync(markerPath, 'utf8')).toBe(appImagePath);
+            } finally {
+                if (savedAppImage === undefined) delete process.env['APPIMAGE'];
+                else process.env['APPIMAGE'] = savedAppImage;
+            }
+        });
+
+        it('POST /install on Linux without $APPIMAGE does NOT write local-appimage marker', async () => {
+            const savedAppImage = process.env['APPIMAGE'];
+            delete process.env['APPIMAGE'];
+            try {
+                const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(async () => undefined);
+                const client = fakeClient({
+                    install: installFn,
+                    status: vi.fn(async () => 'running' as const),
+                });
+                const factoryResult: ServiceClientFactoryResult = {
+                    client,
+                    supported: true,
+                    platform: 'linux',
+                };
+                const api = new ServiceApi(() => factoryResult, () => 'user');
+                const { req, res } = makeReqRes(
+                    '/api/service/install',
+                    'POST',
+                    JSON.stringify({ scope: 'user' }),
+                );
+                await api.handle(req, res);
+                expect((res as any).getStatus()).toBe(200);
+
+                // Marker must NOT exist when APPIMAGE is unset. tmpRoot is fresh
+                // per-test (beforeEach), so no stale marker can leak in.
+                const cfg = Config.getInstance();
+                const dataRoot = cfg.dataRoot ?? path.dirname(cfg.dependenciesPath);
+                const markerPath = path.join(dataRoot, 'control', 'local-appimage');
+                expect(fs.existsSync(markerPath)).toBe(false);
+            } finally {
+                if (savedAppImage === undefined) delete process.env['APPIMAGE'];
+                else process.env['APPIMAGE'] = savedAppImage;
+            }
+        });
+
         it('POST /install on Linux with malformed JSON body falls back to user scope', async () => {
             const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(async () => undefined);
             const client = fakeClient({
@@ -677,6 +773,103 @@ describe('ServiceApi', () => {
                 if (savedAppImage === undefined) delete process.env['APPIMAGE'];
                 else process.env['APPIMAGE'] = savedAppImage;
             }
+        });
+
+        // ── Linux uninstall — systemd-run teardown handoff (item 32) ───────────
+        //
+        // On Linux, uninstall MUST NOT call client.uninstall() because this Node
+        // process runs inside the service unit's own cgroup — stopping the unit
+        // from within it would kill us mid-call (no clean teardown, no relaunch).
+        // Instead, ServiceApi hands off to an out-of-cgroup helper via systemd-run,
+        // which runs in a transient unit, survives stopping our unit, then tears
+        // down + (user scope) relaunches local. Mirrors the Windows operation-server
+        // handoff on the service-context (LocalSystem) uninstall path.
+
+        it('POST /uninstall on Linux does NOT call client.uninstall(), reverts installMode to user, spawns systemd-run teardown helper', async () => {
+            const uninstallSpy = vi.fn(async () => undefined);
+            const client = fakeClient({
+                uninstall: uninstallSpy,
+                status: vi.fn(async () => 'running' as const),
+                getInstalledScope: vi.fn(async () => 'user' as const),
+            });
+            const factoryResult: ServiceClientFactoryResult = {
+                client,
+                supported: true,
+                platform: 'linux',
+            };
+
+            let spawnedCmd = '';
+            let spawnedArgs: string[] = [];
+            const spawnDetached = vi.fn((cmd: string, args: string[]) => {
+                spawnedCmd = cmd;
+                spawnedArgs = args;
+            });
+
+            Config.getInstance().updateAppConfig({ installMode: 'user-service' });
+
+            // Pass spawnDetached as 4th constructor arg (injectable for tests).
+            const api = new ServiceApi(() => factoryResult, () => 'user', () => true, spawnDetached);
+            const { req, res } = makeReqRes('/api/service/uninstall', 'POST');
+            await api.handle(req, res);
+
+            // (a) Must NOT call client.uninstall()
+            expect(uninstallSpy).not.toHaveBeenCalled();
+
+            // (b) installMode must be reverted to 'user' (local mode, user scope)
+            expect(Config.getInstance().getAppConfig().installMode).toBe('user');
+
+            // (c) spawnDetached must have been invoked with systemd-run + correct args
+            expect(spawnDetached).toHaveBeenCalledTimes(1);
+            // systemd-run resolved via resolveSystemTool — on a non-Linux host it
+            // falls back to the bare name 'systemd-run' (no /usr/bin/systemd-run on Windows).
+            expect(spawnedCmd).toMatch(/systemd-run/);
+            // user scope → --user flag present
+            expect(spawnedArgs).toContain('--user');
+            expect(spawnedArgs).toContain('--collect');
+            // teardown args forwarded to the helper
+            expect(spawnedArgs).toContain('--linux-service-teardown');
+            expect(spawnedArgs).toContain('--scope');
+            expect(spawnedArgs).toContain('user');
+            expect(spawnedArgs).toContain('--unit');
+            expect(spawnedArgs).toContain('WsScrcpyWeb');
+            // helper path uses the operation-server staged name (same .exe suffix as UpdateService)
+            const helperArg = spawnedArgs.find((a) => a.endsWith('ws-scrcpy-web-launcher.exe'));
+            expect(helperArg).toBeDefined();
+            expect(helperArg).toContain('operation-server');
+
+            // (d) Response: { ok: true, status: 'shutting-down' }
+            expect((res as any).getStatus()).toBe(200);
+            const body = JSON.parse((res as any).getBody());
+            expect(body.ok).toBe(true);
+            expect(body.status).toBe('shutting-down');
+            expect(body.installMode).toBe('user');
+        });
+
+        it('POST /uninstall on Linux with scope=null (not-installed) returns not-installed, no spawn', async () => {
+            const client = fakeClient({
+                uninstall: vi.fn(async () => undefined),
+                status: vi.fn(async () => 'not-installed' as const),
+                getInstalledScope: vi.fn(async () => null),
+            });
+            const factoryResult: ServiceClientFactoryResult = {
+                client,
+                supported: true,
+                platform: 'linux',
+            };
+
+            const spawnDetached = vi.fn();
+            const api = new ServiceApi(() => factoryResult, () => 'user', () => true, spawnDetached);
+            const { req, res } = makeReqRes('/api/service/uninstall', 'POST');
+            await api.handle(req, res);
+
+            // Not installed — no spawn, no uninstall call
+            expect(spawnDetached).not.toHaveBeenCalled();
+            expect(client.uninstall).not.toHaveBeenCalled();
+
+            expect((res as any).getStatus()).toBe(200);
+            const body = JSON.parse((res as any).getBody());
+            expect(body.ok).toBe(true);
+            expect(body.status).toBe('not-installed');
         });
     });
 

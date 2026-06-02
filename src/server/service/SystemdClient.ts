@@ -44,6 +44,7 @@ import type {
     ServiceInstallOptions,
     ServiceStatus,
 } from './ServiceClient';
+import { resolveSystemTool } from './systemTools';
 
 const execFileAsync = promisify(execFile);
 
@@ -52,15 +53,24 @@ const log = Logger.for('SystemdClient');
 /** systemd scope: per-user (default.target) or system-wide (multi-user.target). */
 export type SystemdScope = 'user' | 'system';
 
+/** Resolve systemctl to an absolute path + return the (bin, args) pair for execFile. */
+export function systemctlArgv(
+    args: string[],
+    resolve: (t: string) => string = (t) => resolveSystemTool(t),
+): { bin: string; args: string[] } {
+    return { bin: resolve('systemctl'), args };
+}
+
 /** Filename of the tray helper binary on Linux (no extension). */
 const TRAY_HELPER_BIN = 'ws-scrcpy-web-tray';
 /** Autostart .desktop filename written under `~/.config/autostart/`. */
 const TRAY_AUTOSTART_FILE = 'ws-scrcpy-web-tray.desktop';
 
-/**
- * Wrap execFileSync so the thrown Error includes stderr — matches the pattern
- * established in ServyClient. Without this, Node surfaces only the exit code.
- */
+/** Root-owned staging dir for the system-scope AppImage (SELinux bin_t — init_t can exec). */
+export const STAGED_SYSTEM_DIR = '/opt/ws-scrcpy-web';
+/** Stable, channel-agnostic filename for the staged system-scope AppImage. */
+export const STAGED_SYSTEM_APPIMAGE = 'WsScrcpyWeb.AppImage';
+
 /**
  * Run a command via pkexec for graphical privilege escalation. The user
  * sees a single password prompt for the entire shell command. Throws on
@@ -68,7 +78,7 @@ const TRAY_AUTOSTART_FILE = 'ws-scrcpy-web-tray.desktop';
  */
 async function runPkexec(shellCmd: string, label: string): Promise<string> {
     try {
-        const { stdout } = await execFileAsync('pkexec', ['sh', '-c', shellCmd], {
+        const { stdout } = await execFileAsync(resolveSystemTool('pkexec'), ['sh', '-c', shellCmd], {
             encoding: 'utf8',
             timeout: 60_000,
         });
@@ -96,7 +106,7 @@ async function runPkexec(shellCmd: string, label: string): Promise<string> {
  */
 export function isLibfuse2Installed(): boolean {
     try {
-        const out = execFileSync('ldconfig', ['-p'], {
+        const out = execFileSync(resolveSystemTool('ldconfig'), ['-p'], {
             stdio: ['ignore', 'pipe', 'pipe'],
             encoding: 'utf8',
         });
@@ -108,7 +118,7 @@ export function isLibfuse2Installed(): boolean {
 
 function libfuse2InstallCmd(): string | null {
     try {
-        const out = execFileSync('ldconfig', ['-p'], {
+        const out = execFileSync(resolveSystemTool('ldconfig'), ['-p'], {
             stdio: ['ignore', 'pipe', 'pipe'],
             encoding: 'utf8',
         });
@@ -144,7 +154,8 @@ export async function ensureLibfuse2(): Promise<void> {
 
 function runSystemctl(args: string[], label: string): string {
     try {
-        return execFileSync('systemctl', args, {
+        const { bin, args: a } = systemctlArgv(args);
+        return execFileSync(bin, a, {
             stdio: ['ignore', 'pipe', 'pipe'],
             encoding: 'utf8',
         });
@@ -166,6 +177,13 @@ export function renderUnitFile(opts: ServiceInstallOptions, scope: SystemdScope)
         .map(([k, v]) => `Environment=${k}=${v}`)
         .join('\n');
     const wantedBy = scope === 'user' ? 'default.target' : 'multi-user.target';
+    // System scope runs under init_t and may NOT exec a user_home_t AppImage,
+    // so the unit references the staged /opt copy (labelled bin_t at install).
+    // User scope runs as the unconfined user and execs the home AppImage directly.
+    const execStart = scope === 'system'
+        ? `${STAGED_SYSTEM_DIR}/${STAGED_SYSTEM_APPIMAGE}`
+        : opts.binPath;
+    const workingDir = scope === 'system' ? STAGED_SYSTEM_DIR : opts.startupDir;
     // StartLimitIntervalSec=300 means: count restart attempts in a rolling
     // 5-minute window; if maxRestartAttempts is exceeded, systemd gives up.
     return [
@@ -175,8 +193,8 @@ export function renderUnitFile(opts: ServiceInstallOptions, scope: SystemdScope)
         '',
         '[Service]',
         'Type=simple',
-        `ExecStart=${opts.binPath}`,
-        `WorkingDirectory=${opts.startupDir}`,
+        `ExecStart=${execStart}`,
+        `WorkingDirectory=${workingDir}`,
         'Restart=on-failure',
         'RestartSec=5',
         `StartLimitBurst=${opts.maxRestartAttempts}`,
@@ -189,6 +207,47 @@ export function renderUnitFile(opts: ServiceInstallOptions, scope: SystemdScope)
         `WantedBy=${wantedBy}`,
         '',
     ].join('\n');
+}
+
+/**
+ * Build the privileged shell script for a system-scope install. Runs under a
+ * single pkexec prompt. Stages the AppImage into /opt (root-owned), labels it
+ * bin_t so init_t may exec it (item 33), then installs + enables the unit.
+ * `binTool`/`sbinTool` are injectable for testing; production resolves absolute
+ * paths via systemTools (Local-Dependencies-Only — no bare-name $PATH lookup).
+ */
+export function buildSystemInstallScript(
+    args: { sourceAppImage: string; unitTmpPath: string; unitPath: string; name: string },
+    binTool: (t: string) => string = (t) => resolveSystemTool(t),
+    sbinTool: (t: string) => string = (t) => resolveSystemTool(t),
+): string {
+    const staged = `${STAGED_SYSTEM_DIR}/${STAGED_SYSTEM_APPIMAGE}`;
+    const mkdir = binTool('mkdir');
+    const cp = binTool('cp');
+    const chmod = binTool('chmod');
+    const chcon = binTool('chcon');
+    const systemctl = binTool('systemctl');
+    const semanage = sbinTool('semanage');
+    const restorecon = sbinTool('restorecon');
+    return [
+        // 1. stage the AppImage into /opt (root-owned)
+        `${mkdir} -p ${STAGED_SYSTEM_DIR}`,
+        `${cp} "${args.sourceAppImage}" "${staged}"`,
+        `${chmod} 0755 "${staged}"`,
+        // 2. label bin_t so init_t can exec it. Persistent rule (semanage) when
+        //    available; restorecon applies it; chcon is the transient fallback
+        //    for minimal images without policycoreutils-python-utils. The whole
+        //    step is a best-effort subshell with a trailing `|| true`: POSIX sh
+        //    gives `&&`/`||` EQUAL precedence (left-assoc), so without isolation
+        //    a label failure on a non-SELinux host (semanage absent + chcon
+        //    erroring on a non-SELinux fs) would break the outer `&&` chain and
+        //    silently skip the unit cp + enable below.
+        `( ( ${semanage} fcontext -a -t bin_t '${STAGED_SYSTEM_DIR}(/.*)?' && ${restorecon} -Rv "${STAGED_SYSTEM_DIR}" ) || ${chcon} -t bin_t "${staged}" || true )`,
+        // 3. install + enable the unit (ExecStart already points at ${staged})
+        `${cp} "${args.unitTmpPath}" "${args.unitPath}"`,
+        `${systemctl} daemon-reload`,
+        `${systemctl} enable --now ${args.name}.service`,
+    ].join(' && ');
 }
 
 /**
@@ -231,6 +290,14 @@ export class SystemdClient implements ServiceClient {
         return path.join(os.homedir(), '.config', 'autostart', TRAY_AUTOSTART_FILE);
     }
 
+    /** Absolute path of the staged system-scope AppImage (system scope ExecStart). */
+    public stagedSystemBinPath(): string {
+        // Forward-slash Linux path on purpose — this is the path written into the
+        // Linux systemd unit. Do NOT use path.join here: on a Windows host it emits
+        // backslashes, which both fails the test and is wrong for a Linux unit file.
+        return `${STAGED_SYSTEM_DIR}/${STAGED_SYSTEM_APPIMAGE}`;
+    }
+
     /**
      * Inspect the filesystem to decide which scope owns this service. Used by
      * uninstall / status / restart / stop so callers don't have to track
@@ -268,15 +335,17 @@ export class SystemdClient implements ServiceClient {
 
         if (scope === 'system' && process.getuid?.() !== 0) {
             // Not root — use pkexec for graphical privilege escalation.
-            // Write unit to temp, then pkexec copies + enables in one prompt.
+            // Write unit to temp, then pkexec stages AppImage + labels bin_t +
+            // copies unit + enables — all under a single graphical prompt.
             const tmpFile = path.join(os.tmpdir(), `${opts.name}.service.tmp`);
             fs.writeFileSync(tmpFile, unitContent, { mode: 0o644 });
             try {
-                const cmd = [
-                    `cp "${tmpFile}" "${unitPath}"`,
-                    'systemctl daemon-reload',
-                    `systemctl enable --now ${opts.name}.service`,
-                ].join(' && ');
+                const cmd = buildSystemInstallScript({
+                    sourceAppImage: opts.binPath,
+                    unitTmpPath: tmpFile,
+                    unitPath,
+                    name: opts.name,
+                });
                 await runPkexec(cmd, 'install (system scope)');
             } finally {
                 try { fs.unlinkSync(tmpFile); } catch { /* best-effort cleanup */ }
@@ -300,7 +369,7 @@ export class SystemdClient implements ServiceClient {
             // systems), missing privileges on hardened distros. Service is
             // already installed + running — degraded but functional.
             try {
-                execFileSync('loginctl', ['enable-linger', os.userInfo().username], {
+                execFileSync(resolveSystemTool('loginctl'), ['enable-linger', os.userInfo().username], {
                     stdio: ['ignore', 'pipe', 'pipe'],
                 });
             } catch (err) {
@@ -325,6 +394,18 @@ export class SystemdClient implements ServiceClient {
         }
     }
 
+    /**
+     * Disable + remove the systemd unit for `name`, resolving the active scope
+     * from whichever unit file exists on disk. Idempotent — a no-op if neither
+     * unit file is present.
+     *
+     * NOTE (item 32): the Linux `/api/service/uninstall` path no longer calls
+     * this method. ServiceApi.handleUninstall hands off to an out-of-cgroup
+     * `systemd-run` teardown helper instead, because running `systemctl disable
+     * --now` from inside the service unit's own cgroup would kill the calling
+     * process mid-operation. This method is retained as the `ServiceClient`
+     * interface implementation (and for any non-cgroup-bound callers).
+     */
     public async uninstall(name: string): Promise<void> {
         const scope = this.resolveActiveScope(name);
         if (scope === null) {
@@ -333,10 +414,11 @@ export class SystemdClient implements ServiceClient {
 
         if (scope === 'system' && process.getuid?.() !== 0) {
             const unitPath = this.systemUnitPath(name);
+            const systemctl = resolveSystemTool('systemctl');
             const cmd = [
-                `systemctl disable --now ${name}.service || true`,
+                `${systemctl} disable --now ${name}.service || true`,
                 `rm -f "${unitPath}"`,
-                'systemctl daemon-reload',
+                `${systemctl} daemon-reload`,
             ].join(' && ');
             await runPkexec(cmd, 'uninstall (system scope)');
         } else {
@@ -389,9 +471,10 @@ export class SystemdClient implements ServiceClient {
         // error for our purposes (the unit file exists; we just want the
         // running state).
         try {
+            const { bin, args: a } = systemctlArgv([...baseArgs, 'is-active', `${name}.service`]);
             const out = execFileSync(
-                'systemctl',
-                [...baseArgs, 'is-active', `${name}.service`],
+                bin,
+                a,
                 { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8' },
             ).trim();
             return out === 'active' ? 'running' : 'stopped';
