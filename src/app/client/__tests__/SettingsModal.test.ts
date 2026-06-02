@@ -7,6 +7,7 @@ import {
     resetPromptsPayload,
     scopeRadioState,
     lockScopeRadioControl,
+    stopServerButtonState,
 } from '../SettingsModal';
 
 describe('uninstallFollowupMessage', () => {
@@ -107,5 +108,30 @@ describe('lockScopeRadioControl', () => {
         expect(radio.disabled).toBe(false);
         expect(radio.tabIndex).toBe(-1);
         expect(label.classList.contains('settings-radio-locked')).toBe(true);
+    });
+});
+
+describe('stopServerButtonState', () => {
+    it('not installed (local mode) -> enabled, no note', () => {
+        expect(stopServerButtonState({ status: 'not-installed' })).toEqual({
+            disabled: false,
+            note: null,
+        });
+    });
+
+    it('absent status (unknown) -> treated as not-installed -> enabled', () => {
+        expect(stopServerButtonState({})).toEqual({ disabled: false, note: null });
+    });
+
+    it('running user-scope service -> disabled with a service-mode note', () => {
+        const s = stopServerButtonState({ status: 'running', scope: 'user' });
+        expect(s.disabled).toBe(true);
+        expect(s.note).toMatch(/service/i);
+    });
+
+    it('running system-scope service -> disabled with a service-mode note', () => {
+        const s = stopServerButtonState({ status: 'running', scope: 'system' });
+        expect(s.disabled).toBe(true);
+        expect(s.note).toMatch(/service/i);
     });
 });

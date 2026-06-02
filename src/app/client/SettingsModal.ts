@@ -1,5 +1,6 @@
 import { Modal } from '../ui/Modal';
 import { AdminConfirmModal, type AdminConfirmOptions } from './AdminConfirmModal';
+import { ConfirmModal } from './ConfirmModal';
 import { ServiceOperationModal } from './ServiceOperationModal';
 import { runUpgradingHandoff } from './UpgradingOverlay';
 import type { AppConfigEnvelope, AppConfigPatchResponse, UpdateChannel } from '../../common/ConfigEvents';
@@ -117,6 +118,27 @@ export function scopeRadioState(resp: ScopeRadioInputs): ScopeRadioState {
 }
 
 /**
+ * Gate the App-section "stop server & exit" button by service mode. When a
+ * service is installed (service mode), the OS service manager owns the app's
+ * lifecycle — a browser-initiated quit would fight it (or be restarted), so the
+ * button is disabled with an explanatory note. In local mode (no service) the
+ * button is enabled. Pure (no DOM) so it is unit-testable; mirrors
+ * scopeRadioState's "installed" derivation.
+ */
+export function stopServerButtonState(resp: ScopeRadioInputs): {
+    disabled: boolean;
+    note: string | null;
+} {
+    const isInstalled = (resp.status ?? 'not-installed') !== 'not-installed';
+    return isInstalled
+        ? {
+              disabled: true,
+              note: 'managed by the system service — stop it via your service manager, or uninstall the service.',
+          }
+        : { disabled: false, note: null };
+}
+
+/**
  * Lock a service-scope radio as read-only WITHOUT the `disabled` attribute.
  * Chromium desaturates `accent-color` on :disabled form controls, which made
  * the selected dot invisible against the muted track (item 42 — the active
@@ -159,6 +181,10 @@ export class SettingsModal extends Modal {
     private currentWebPort: number | null = null;
     private serviceScopeSystemRadio: HTMLInputElement | null = null;
     private servicePlatform: 'win32' | 'linux' | null = null;
+
+    // ── App section state ─────────────────────────────────────────────────
+    private stopServerButton: HTMLButtonElement | null = null;
+    private stopServerNote: HTMLElement | null = null;
 
     // ── Updates section state ─────────────────────────────────────────────
     private updatesBody!: HTMLElement;
@@ -926,6 +952,8 @@ export class SettingsModal extends Modal {
     private renderServiceState(resp: ServiceStatusResponse): void {
         this.serviceSection.replaceChildren();
         this.servicePlatform = (resp.platform as 'win32' | 'linux') ?? null;
+        // Gate the App-section "stop server & exit" button off in service mode.
+        this.applyStopServerButtonState(resp);
 
         if (!resp.supported) {
             const notice = document.createElement('p');
@@ -1262,6 +1290,27 @@ export class SettingsModal extends Modal {
     private buildAppSection(): HTMLElement {
         const { section, body } = this.buildSection('App');
 
+        // §27 — stop the server and exit the app. Backs the existing
+        // /api/server/shutdown endpoint (which now runs graceful teardown
+        // before exiting 0 — a clean exit the launcher supervisor will NOT
+        // restart). Gated off in service mode (the OS service manager owns the
+        // lifecycle) by applyStopServerButtonState, driven from
+        // renderServiceState once /api/service/status resolves.
+        const stopBtn = document.createElement('button');
+        stopBtn.type = 'button';
+        stopBtn.className = 'settings-btn settings-btn-primary';
+        stopBtn.textContent = 'stop server & exit';
+        stopBtn.addEventListener('click', () => void this.onStopServerExit(stopBtn));
+        this.stopServerButton = stopBtn;
+        body.appendChild(this.buildRow('stop the server and close the app', stopBtn));
+
+        const stopNote = document.createElement('p');
+        stopNote.className = 'settings-status';
+        stopNote.style.gridColumn = '1 / -1';
+        stopNote.hidden = true;
+        this.stopServerNote = stopNote;
+        body.appendChild(stopNote);
+
         const resetBtn = document.createElement('button');
         resetBtn.type = 'button';
         resetBtn.className = 'settings-btn settings-btn-primary';
@@ -1316,5 +1365,61 @@ export class SettingsModal extends Modal {
         });
 
         return section;
+    }
+
+    /**
+     * Reflect the (unit-tested) stopServerButtonState decision onto the App
+     * section's button + note. Called from renderServiceState once
+     * /api/service/status resolves, so the button is disabled with a note when
+     * a service is installed (service mode) and enabled otherwise.
+     */
+    private applyStopServerButtonState(resp: ScopeRadioInputs): void {
+        if (!this.stopServerButton) return;
+        const state = stopServerButtonState(resp);
+        this.stopServerButton.disabled = state.disabled;
+        if (this.stopServerNote) {
+            this.stopServerNote.textContent = state.note ?? '';
+            this.stopServerNote.hidden = state.note === null;
+        }
+    }
+
+    /**
+     * Confirm, then POST /api/server/shutdown (graceful teardown + exit 0),
+     * then try to self-close the tab. Falls back to a full-page "app stopped"
+     * notice when the browser blocks window.close() (tabs not opened by script).
+     */
+    private async onStopServerExit(btn: HTMLButtonElement): Promise<void> {
+        const confirmed = await ConfirmModal.confirm({
+            title: 'stop server & exit',
+            message:
+                'the app will shut down and this browser tab will try to close. ' +
+                'any active device connections will end. continue?',
+        });
+        if (!confirmed) return;
+
+        btn.disabled = true;
+        btn.textContent = 'stopping…';
+        try {
+            await fetch('/api/server/shutdown', { method: 'POST' });
+        } catch {
+            // The server drops the connection as it exits — expected, not an error.
+        }
+        // window.close() only succeeds for tabs the script itself opened;
+        // otherwise it is a silent no-op. Show the notice regardless — if the
+        // tab does close the overlay is moot, if not the user gets clear closure.
+        window.close();
+        this.showAppStoppedOverlay();
+    }
+
+    /** Blank the page with a centered "app stopped" notice (window.close fallback). */
+    private showAppStoppedOverlay(): void {
+        const overlay = document.createElement('div');
+        overlay.style.cssText =
+            'position:fixed;inset:0;display:flex;align-items:center;justify-content:center;' +
+            'padding:1rem;text-align:center;opacity:0.85;';
+        const msg = document.createElement('p');
+        msg.textContent = 'app stopped — you can close this tab.';
+        overlay.appendChild(msg);
+        document.body.replaceChildren(overlay);
     }
 }
