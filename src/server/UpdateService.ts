@@ -21,6 +21,7 @@ import { Logger } from './Logger';
 import { linuxAppImageAssetName, releaseAssetUrl, parseSha256Sums } from './linuxUpdateAssets';
 import { verifySha256 } from './verifySha256';
 import { downloadToFile, fetchText } from './downloadToFile';
+import { buildDetachedSpawn } from './service/systemTools';
 
 const execFileAsync = promisify(execFile);
 
@@ -488,13 +489,24 @@ export class UpdateService {
             // The launcher stages this helper copy (named *.exe even on Linux) to
             // dataRoot on every boot — outside the AppImage mount, so it survives exit.
             const helperPath = path.join(dataRoot, 'control', 'operation-server', 'ws-scrcpy-web-launcher.exe');
-            const child = spawn(
-                helperPath,
-                ['--linux-apply', '--staged', stagedPath, '--target', appImagePath, '--wait-pid', String(process.pid)],
-                { detached: true, stdio: 'ignore' },
-            );
+            // Spawn the helper so it OUTLIVES this AppImage's teardown (#27). A plain
+            // detached spawn keeps the helper in the app's cgroup; when the app runs
+            // inside a `systemd-run --collect` transient unit (e.g. relaunched by the
+            // service-uninstall teardown), that unit's cgroup is reaped on the app's
+            // exit and the helper is killed BEFORE it swaps. buildDetachedSpawn wraps
+            // it in its own `systemd-run --user --collect` unit (separate cgroup),
+            // falling back to `setsid` then bare on non-systemd hosts.
+            const helperArgs = [
+                '--linux-apply', '--staged', stagedPath,
+                '--target', appImagePath, '--wait-pid', String(process.pid),
+            ];
+            const plan = buildDetachedSpawn(helperPath, helperArgs, { unit: `wsscrcpy-apply-${Date.now()}` });
+            const child = spawn(plan.cmd, plan.args, { detached: true, stdio: 'ignore' });
             child.unref();
-            log.info(`applyUpdate(linux): spawned helper pid ${child.pid} to swap ${appImagePath}`);
+            log.info(
+                `applyUpdate(linux): spawned apply helper via ${plan.cmd} ` +
+                    `(systemd=${plan.viaSystemd}, pid ${child.pid}) to swap ${appImagePath}`,
+            );
             return { redirectPort: null };
         }
 

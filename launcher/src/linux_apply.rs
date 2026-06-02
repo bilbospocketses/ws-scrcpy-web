@@ -44,7 +44,7 @@ fn run(args: &[String]) -> i32 {
         wait_for_pid_exit(pid, Duration::from_secs(60));
     }
 
-    match swap_appimage(&staged, &target) {
+    let code = match swap_appimage(&staged, &target) {
         Ok(()) => {
             log::info("linux-apply: swap ok, relaunching");
             relaunch(&target);
@@ -54,7 +54,13 @@ fn run(args: &[String]) -> i32 {
             log::error(&format!("linux-apply: swap failed: {e}"));
             1
         }
-    }
+    };
+    // Best-effort cleanup so a completed OR failed apply leaves no cruft (#27):
+    // the staged .new (consumed on success, orphaned on failure) and the
+    // apply-update-pending marker (UpdateService writes it; it has no Linux
+    // consumer — Windows-only — so clearing it just keeps dataRoot tidy).
+    cleanup_apply_artifacts(&staged);
+    code
 }
 
 /// `<target>.bak`
@@ -100,16 +106,58 @@ fn wait_for_pid_exit(pid: u32, timeout: Duration) {
     log::error(&format!("linux-apply: pid {pid} still alive after {timeout:?}; proceeding anyway"));
 }
 
-/// Spawn the new AppImage detached; the helper then exits.
+/// Spawn the new AppImage so it OUTLIVES this helper. When this helper itself
+/// runs inside a systemd transient unit (launched via `systemd-run --collect`,
+/// which sets INVOCATION_ID), a plain child would live in THIS helper's cgroup
+/// and be reaped when the helper exits and `--collect` deactivates the unit — so
+/// relaunch the app in its OWN `systemd-run --user --collect` transient unit
+/// (mirrors linux_service.rs). On a non-systemd host the helper is its own
+/// session leader, so a detached spawn survives. Argv built by `relaunch_command`.
 fn relaunch(target: &Path) {
-    match std::process::Command::new(target)
+    let systemd_run = format!("{}/systemd-run", crate::linux_service::tool_dir("systemd-run"));
+    let argv = relaunch_command(target, under_systemd(), &systemd_run);
+    let (cmd, rest) = argv.split_first().expect("non-empty argv");
+    match std::process::Command::new(cmd)
+        .args(rest)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
     {
-        Ok(child) => log::info(&format!("linux-apply: relaunched {target:?} (pid {})", child.id())),
-        Err(e) => log::error(&format!("linux-apply: relaunch failed: {e}")),
+        Ok(child) => log::info(&format!("linux-apply: relaunched via `{}` (pid {})", argv.join(" "), child.id())),
+        Err(e) => log::error(&format!("linux-apply: relaunch failed (`{}`): {e}", argv.join(" "))),
+    }
+}
+
+/// True when running inside a systemd unit — `systemd-run` sets `INVOCATION_ID`
+/// for the processes it starts. Drives the relaunch escape strategy.
+fn under_systemd() -> bool {
+    std::env::var("INVOCATION_ID").map(|v| !v.is_empty()).unwrap_or(false)
+}
+
+/// argv for relaunching `target`. Under systemd → its OWN `systemd-run --user
+/// --collect` transient unit (survives this helper's exit); otherwise a bare
+/// exec (the caller detaches via stdio-null). Pure — unit-tested.
+pub fn relaunch_command(target: &Path, under_systemd: bool, systemd_run: &str) -> Vec<String> {
+    let t = target.to_string_lossy().into_owned();
+    if under_systemd {
+        vec![systemd_run.to_string(), "--user".into(), "--collect".into(), t]
+    } else {
+        vec![t]
+    }
+}
+
+/// `<data_root>/control/apply-update-pending` — the apply marker path. Pure.
+pub fn apply_marker_path(data_root: &Path) -> PathBuf {
+    data_root.join("control").join("apply-update-pending")
+}
+
+/// Best-effort removal of the staged `.new` + the apply-update-pending marker.
+/// Never fails the apply — a cleanup error is irrelevant to the swap outcome.
+fn cleanup_apply_artifacts(staged: &Path) {
+    let _ = std::fs::remove_file(staged);
+    if let Some(data_root) = common::config::data_root_from_env() {
+        let _ = std::fs::remove_file(apply_marker_path(&data_root));
     }
 }
 
@@ -148,5 +196,32 @@ mod tests {
         let args = vec!["x".to_string(), "--target".to_string(), "/a/b".to_string()];
         assert_eq!(arg_value(&args, "--target"), Some("/a/b"));
         assert_eq!(arg_value(&args, "--missing"), None);
+    }
+
+    #[test]
+    fn relaunch_uses_own_systemd_unit_under_systemd() {
+        // #27: under systemd the new app must run in its OWN --collect unit so it
+        // survives this helper's exit (not in this helper's reaped cgroup).
+        assert_eq!(
+            relaunch_command(Path::new("/home/u/App.AppImage"), true, "/usr/bin/systemd-run"),
+            vec!["/usr/bin/systemd-run", "--user", "--collect", "/home/u/App.AppImage"]
+        );
+    }
+
+    #[test]
+    fn relaunch_is_direct_when_not_under_systemd() {
+        // Non-systemd host: helper is its own session leader, plain exec survives.
+        assert_eq!(
+            relaunch_command(Path::new("/home/u/App.AppImage"), false, "/usr/bin/systemd-run"),
+            vec!["/home/u/App.AppImage"]
+        );
+    }
+
+    #[test]
+    fn apply_marker_path_is_under_control() {
+        assert_eq!(
+            apply_marker_path(Path::new("/d")),
+            PathBuf::from("/d/control/apply-update-pending")
+        );
     }
 }
