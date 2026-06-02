@@ -1,4 +1,5 @@
 import { Modal } from '../ui/Modal';
+import { ConfirmModal } from './ConfirmModal';
 
 /**
  * v0.1.10: bookmark reminder shown whenever the page loads on a port
@@ -36,10 +37,12 @@ export class PortChangeModal extends Modal {
     private opts!: PortChangeModalOptions;
     private dismissBtn: HTMLButtonElement | null = null;
     private dontShowCheckbox: HTMLInputElement | null = null;
+    private globalCheckbox: HTMLInputElement | null = null;
 
     constructor(options: PortChangeModalOptions) {
         super({ title: 'bookmark this URL' });
         this.opts = options;
+        this.dialog.classList.add('port-change-modal');
         // Same deferred-fill pattern as WelcomeModal/ServiceFirstRunModal:
         // queueMicrotask so this.opts is set before fillBody reads it.
         queueMicrotask(() => {
@@ -56,7 +59,7 @@ export class PortChangeModal extends Modal {
         const btn = document.createElement('button');
         btn.textContent = 'got it';
         btn.className = 'modal-button modal-button-primary';
-        btn.addEventListener('click', () => this.dismiss());
+        btn.addEventListener('click', () => void this.dismiss());
         footer.appendChild(btn);
         this.dismissBtn = btn;
         return footer;
@@ -104,9 +107,45 @@ export class PortChangeModal extends Modal {
         );
         this.dontShowCheckbox = checkbox;
         container.appendChild(dontShowLabel);
+
+        // v0.1.30-beta.31 #5c: a stronger "never, even when the port changes"
+        // (global) dismissal. Checking it supersedes — and disables — the
+        // per-port box. Committing it goes through a confirmation (see dismiss).
+        const globalLabel = document.createElement('label');
+        globalLabel.style.cssText = dontShowLabel.style.cssText + ' margin-top: 8px;';
+        const globalCheckbox = document.createElement('input');
+        globalCheckbox.type = 'checkbox';
+        globalLabel.appendChild(globalCheckbox);
+        globalLabel.appendChild(
+            document.createTextNode("don't show again — ever, even when the port changes"),
+        );
+        this.globalCheckbox = globalCheckbox;
+        container.appendChild(globalLabel);
+        globalCheckbox.addEventListener('change', () => {
+            checkbox.disabled = globalCheckbox.checked;
+            dontShowLabel.style.opacity = globalCheckbox.checked ? '0.5' : '1';
+        });
     }
 
-    private dismiss(): void {
+    private async dismiss(): Promise<void> {
+        // Global dismissal is the stronger choice — gate it behind a confirmation
+        // so it isn't committed by an accidental tick. Cancel leaves the modal
+        // open with the box still checked (nothing committed).
+        if (this.globalCheckbox?.checked) {
+            const ok = await ConfirmModal.confirm({
+                title: 'dismiss bookmark reminder',
+                message: "you won't see this bookmark helper again, even when the port changes.",
+            });
+            if (!ok) return;
+            void fetch('/api/config', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ bookmarkDismissedGlobally: true }),
+            }).catch(() => { /* network hiccup — re-show next load */ });
+            this.opts.onDismissed?.();
+            this.close();
+            return;
+        }
         if (this.dismissBtn) this.dismissBtn.disabled = true;
         if (this.dontShowCheckbox?.checked) {
             // Fire-and-forget; modal closes regardless of network outcome.
