@@ -15,6 +15,7 @@ import {
 import { getAppVersion } from './appVersion';
 import type { UpdateChannel } from '../common/ConfigEvents';
 import type { UpdateState } from '../common/UpdateEvents';
+import { WS_SCRCPY_SERVICE_NAME } from '../common/ServiceEvents';
 import { AdbClient } from './AdbClient';
 import { Config } from './Config';
 import { Logger } from './Logger';
@@ -444,7 +445,10 @@ export class UpdateService {
 
         await this.writeApplyUpdatePendingMarker();
 
-        if (isServiceMode) {
+        // Windows service mode keeps Velopack's apply (the operation-server
+        // handoff below). Linux service mode falls through to the download-based
+        // apply (item 39) — branched by installMode in the Linux block.
+        if (isServiceMode && this.platform === 'win32') {
             this.mgr.waitExitThenApplyUpdate(this.state.pendingUpdate, true, false);
             return { redirectPort: null };
         }
@@ -485,22 +489,39 @@ export class UpdateService {
                 throw new Error(`apply: SHA-256 mismatch for ${assetName} — aborting`);
             }
 
-            const appImagePath = process.env['APPIMAGE'] ?? '';
+            const homeAppImage = process.env['APPIMAGE'] ?? '';
             // The launcher stages this helper copy (named *.exe even on Linux) to
             // dataRoot on every boot — outside the AppImage mount, so it survives exit.
             const helperPath = path.join(dataRoot, 'control', 'operation-server', 'ws-scrcpy-web-launcher.exe');
-            // Spawn the helper so it OUTLIVES this AppImage's teardown (#27). A plain
-            // detached spawn keeps the helper in the app's cgroup; when the app runs
-            // inside a `systemd-run --collect` transient unit (e.g. relaunched by the
-            // service-uninstall teardown), that unit's cgroup is reaped on the app's
-            // exit and the helper is killed BEFORE it swaps. buildDetachedSpawn wraps
-            // it in its own `systemd-run --user --collect` unit (separate cgroup),
-            // falling back to `setsid` then bare on non-systemd hosts.
-            const helperArgs = [
-                '--linux-apply', '--staged', stagedPath,
-                '--target', appImagePath, '--wait-pid', String(process.pid),
-            ];
-            const plan = buildDetachedSpawn(helperPath, helperArgs, { unit: `wsscrcpy-apply-${Date.now()}` });
+            // installMode selects the apply shape (item 39). The helper always
+            // OUTLIVES this AppImage's teardown — buildDetachedSpawn wraps it in
+            // its own `systemd-run --collect` transient unit (separate cgroup; #27),
+            // falling back to `setsid` then bare on non-systemd hosts:
+            //  - local ('user'): swap $APPIMAGE, wait for our pid, bare relaunch.
+            //  - user-service:  the helper stops/swaps/starts the --user unit;
+            //    target = home $APPIMAGE (user manager).
+            //  - system-service: the helper (root) stops/swaps/relabels/starts the
+            //    system unit; target = the /opt staged copy; system-manager
+            //    systemd-run (no --user). No pkexec — root self-update, headless.
+            const STAGED_SYSTEM_TARGET = '/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage';
+            let target: string;
+            let helperArgs: string[];
+            let spawnSystem = false;
+            if (installMode === 'system-service') {
+                target = STAGED_SYSTEM_TARGET;
+                helperArgs = ['--linux-apply', '--staged', stagedPath, '--target', target,
+                    '--service-restart', 'system', '--unit', WS_SCRCPY_SERVICE_NAME, '--relabel'];
+                spawnSystem = true;
+            } else if (installMode === 'user-service') {
+                target = homeAppImage;
+                helperArgs = ['--linux-apply', '--staged', stagedPath, '--target', target,
+                    '--service-restart', 'user', '--unit', WS_SCRCPY_SERVICE_NAME];
+            } else {
+                target = homeAppImage;
+                helperArgs = ['--linux-apply', '--staged', stagedPath, '--target', target,
+                    '--wait-pid', String(process.pid)];
+            }
+            const plan = buildDetachedSpawn(helperPath, helperArgs, { unit: `wsscrcpy-apply-${Date.now()}`, system: spawnSystem });
             if (plan.viaSystemd) {
                 // systemd-run registers the transient unit then exits promptly.
                 // AWAIT it so the unit is registered before THIS process exits —
@@ -513,13 +534,13 @@ export class UpdateService {
                     c.once('error', () => resolve());
                 });
                 log.info(
-                    `applyUpdate(linux): registered apply helper via ${plan.cmd} (systemd) to swap ${appImagePath}`,
+                    `applyUpdate(linux): registered apply helper via ${plan.cmd} (systemd) to swap ${target}`,
                 );
             } else {
                 const child = spawn(plan.cmd, plan.args, { detached: true, stdio: 'ignore' });
                 child.unref();
                 log.info(
-                    `applyUpdate(linux): spawned apply helper via ${plan.cmd} (pid ${child.pid}) to swap ${appImagePath}`,
+                    `applyUpdate(linux): spawned apply helper via ${plan.cmd} (pid ${child.pid}) to swap ${target}`,
                 );
             }
             return { redirectPort: null };
