@@ -153,6 +153,22 @@ export function lockScopeRadioControl(label: HTMLLabelElement, radio: HTMLInputE
 }
 
 /**
+ * Build a neutral (non-error) full-width service status line — a plain label,
+ * no error styling, no retry button. Used for informational follow-ups like the
+ * system-scope uninstall success message (item 40b — previously mis-rendered
+ * through renderServiceError as red + a retry button, though it is an
+ * informational success, not an error). Pure DOM so it is unit-testable, like
+ * lockScopeRadioControl.
+ */
+export function buildServiceInfoRow(message: string): HTMLElement {
+    const p = document.createElement('p');
+    p.className = 'settings-status';
+    p.style.gridColumn = '1 / -1';
+    p.textContent = message;
+    return p;
+}
+
+/**
  * Settings modal — unified two-column grid layout.
  *
  * Every section is built from the same primitive:
@@ -1054,6 +1070,16 @@ export class SettingsModal extends Modal {
         this.serviceSection.appendChild(row);
     }
 
+    /**
+     * Render a neutral informational message in the service section (no error
+     * styling, no retry button) — for informational follow-ups like the
+     * system-scope uninstall success message. See buildServiceInfoRow (item 40b).
+     */
+    private renderServiceInfo(msg: string): void {
+        this.serviceSection.replaceChildren();
+        this.serviceSection.appendChild(buildServiceInfoRow(msg));
+    }
+
     private async onInstallService(btn: HTMLButtonElement): Promise<void> {
         const isLinux = this.servicePlatform === 'linux';
         const isSystemScope = this.serviceScopeSystemRadio?.checked ?? false;
@@ -1197,10 +1223,7 @@ export class SettingsModal extends Modal {
                     modal.close();
                     btn.disabled = false;
                     btn.textContent = prevText;
-                    this.renderServiceError(
-                        uninstallFollowupMessage('system'),
-                        () => void this.refreshService(),
-                    );
+                    this.renderServiceInfo(uninstallFollowupMessage('system'));
                     return;
                 }
                 // User scope on Linux (or Windows): a fresh local instance is

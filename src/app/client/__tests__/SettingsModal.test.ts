@@ -8,6 +8,7 @@ import {
     scopeRadioState,
     lockScopeRadioControl,
     stopServerButtonState,
+    buildServiceInfoRow,
 } from '../SettingsModal';
 
 describe('uninstallFollowupMessage', () => {
@@ -133,5 +134,15 @@ describe('stopServerButtonState', () => {
         const s = stopServerButtonState({ status: 'running', scope: 'system' });
         expect(s.disabled).toBe(true);
         expect(s.note).toMatch(/service/i);
+    });
+});
+
+describe('buildServiceInfoRow', () => {
+    it('renders a neutral status line — no error styling, no retry button', () => {
+        const row = buildServiceInfoRow('service removed. relaunch the app manually.');
+        expect(row.textContent).toContain('service removed');
+        expect(row.className).toContain('settings-status');
+        expect(row.className).not.toContain('settings-status-error');
+        expect(row.querySelector('button')).toBeNull();
     });
 });
