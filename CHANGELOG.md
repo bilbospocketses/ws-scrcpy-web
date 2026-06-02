@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.30] - 2026-06-02
+
 ### Fixed
 
 - **Linux system-scope service install now starts under SELinux (item 33).** The system unit's `ExecStart` was the user-home `$APPIMAGE`, but systemd runs system units under the `init_t` domain and SELinux-enforcing (Fedora) denies `init_t` exec of a `user_home_t` file — so the service failed to start and restart-looped on a repeating AVC. System-scope install now stages the AppImage to a root-owned `/opt/ws-scrcpy-web/`, labels it `bin_t` (persistent `semanage fcontext` + `restorecon`, with a `chcon` fallback for minimal images — all best-effort and isolated so a label failure on a non-SELinux distro doesn't abort the install), and points the unit's `ExecStart` there. User scope is unchanged (runs as the unconfined user from the home AppImage).
