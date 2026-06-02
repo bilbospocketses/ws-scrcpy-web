@@ -80,3 +80,27 @@ describe('absolute-path OS tools', () => {
         expect(argv.args).toEqual(['--user', 'daemon-reload']);
     });
 });
+
+describe('renderUnitFile', () => {
+    const baseOpts = {
+        name: 'WsScrcpyWeb',
+        displayName: 'ws-scrcpy-web',
+        description: 'desc',
+        binPath: '/home/u/Apps/WsScrcpyWeb-linux-beta.AppImage',
+        startupDir: '/home/u/Apps',
+        startType: 'Automatic' as const,
+        maxRestartAttempts: 3,
+        envVars: { DEPS_PATH: '/home/u/.local/share/WsScrcpyWeb/dependencies' },
+        logPath: '/home/u/.local/share/WsScrcpyWeb/logs/service.log',
+    };
+
+    it('places StartLimit keys in [Unit], not [Service] (systemd ignores them in [Service])', () => {
+        const unit = renderUnitFile(baseOpts, 'system');
+        const unitSection = unit.slice(unit.indexOf('[Unit]'), unit.indexOf('[Service]'));
+        const serviceSection = unit.slice(unit.indexOf('[Service]'), unit.indexOf('[Install]'));
+        expect(unitSection).toContain('StartLimitIntervalSec=300');
+        expect(unitSection).toContain('StartLimitBurst=3');
+        expect(serviceSection).not.toContain('StartLimitIntervalSec');
+        expect(serviceSection).not.toContain('StartLimitBurst');
+    });
+});

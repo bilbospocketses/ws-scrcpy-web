@@ -184,12 +184,16 @@ export function renderUnitFile(opts: ServiceInstallOptions, scope: SystemdScope)
         ? `${STAGED_SYSTEM_DIR}/${STAGED_SYSTEM_APPIMAGE}`
         : opts.binPath;
     const workingDir = scope === 'system' ? STAGED_SYSTEM_DIR : opts.startupDir;
-    // StartLimitIntervalSec=300 means: count restart attempts in a rolling
-    // 5-minute window; if maxRestartAttempts is exceeded, systemd gives up.
     return [
         '[Unit]',
         `Description=${opts.description}`,
         'After=network.target',
+        // systemd reads StartLimit* from [Unit], NOT [Service] (it silently
+        // ignores them in [Service] -> the restart cap never applies).
+        // StartLimitIntervalSec=300 means: count restart attempts in a rolling
+        // 5-minute window; if maxRestartAttempts is exceeded, systemd gives up.
+        'StartLimitIntervalSec=300',
+        `StartLimitBurst=${opts.maxRestartAttempts}`,
         '',
         '[Service]',
         'Type=simple',
@@ -197,8 +201,6 @@ export function renderUnitFile(opts: ServiceInstallOptions, scope: SystemdScope)
         `WorkingDirectory=${workingDir}`,
         'Restart=on-failure',
         'RestartSec=5',
-        `StartLimitBurst=${opts.maxRestartAttempts}`,
-        'StartLimitIntervalSec=300',
         ...(envLines ? [envLines] : []),
         `StandardOutput=append:${opts.logPath}`,
         `StandardError=append:${opts.logPath}`,
