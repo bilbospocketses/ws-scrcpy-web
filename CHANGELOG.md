@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The auto-release version-bump now commits `Cargo.lock`.** beta.37 taught `npm run version:bump` to sync the workspace crate versions in `Cargo.lock`, but the auto-release bump-PR commit was assembled from a fixed three-file list (`package.json`/`Cargo.toml`/`CHANGELOG.md`) that dropped the lock change — so the lockfile still lagged through CI-cut releases. `Cargo.lock` is now part of the bump commit, and the beta.37 lag has been resynced.
+
 ## [0.1.30-beta.37] - 2026-06-02
 
 ### Changed
