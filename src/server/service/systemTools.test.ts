@@ -58,4 +58,12 @@ describe('buildDetachedSpawn', () => {
         const plan = buildDetachedSpawn(prog, pArgs, {}, resolve);
         expect(plan.args).toEqual(['--user', '--collect', prog, ...pArgs]);
     });
+
+    it('omits --user for the system manager when system:true (root system-scope apply)', () => {
+        const resolve = (t: string) => (t === 'systemd-run' ? '/usr/bin/systemd-run' : t);
+        const plan = buildDetachedSpawn(prog, pArgs, { unit: 'wsscrcpy-apply-1', system: true }, resolve);
+        expect(plan.cmd).toBe('/usr/bin/systemd-run');
+        expect(plan.args).toEqual(['--collect', '--unit=wsscrcpy-apply-1', prog, ...pArgs]);
+        expect(plan.viaSystemd).toBe(true);
+    });
 });

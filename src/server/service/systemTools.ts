@@ -47,15 +47,18 @@ export interface DetachedSpawnPlan {
 export function buildDetachedSpawn(
     program: string,
     programArgs: string[],
-    opts: { unit?: string } = {},
+    opts: { unit?: string; system?: boolean } = {},
     resolve: (t: string) => string = (t) => resolveSystemTool(t),
 ): DetachedSpawnPlan {
     const systemdRun = resolve('systemd-run');
     if (systemdRun.startsWith('/')) {
+        // System scope runs as root -> the system manager (no --user). User
+        // scope keeps --user (a user-manager-owned transient unit).
+        const scopeArg = opts.system ? [] : ['--user'];
         const unitArg = opts.unit ? [`--unit=${opts.unit}`] : [];
         return {
             cmd: systemdRun,
-            args: ['--user', '--collect', ...unitArg, program, ...programArgs],
+            args: [...scopeArg, '--collect', ...unitArg, program, ...programArgs],
             viaSystemd: true,
         };
     }
