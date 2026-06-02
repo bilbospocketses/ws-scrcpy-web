@@ -136,9 +136,10 @@ jobs:
           }
           PKG_BLOB=$(create_blob package.json)
           CARGO_BLOB=$(create_blob Cargo.toml)
+          LOCK_BLOB=$(create_blob Cargo.lock)
           CL_BLOB=$(create_blob CHANGELOG.md)
 
-          # Create a new tree with the three updated files
+          # Create a new tree with the four updated files
           NEW_TREE=$(gh api "repos/$GITHUB_REPOSITORY/git/trees" \
             --input - --jq '.sha' <<TREEOF
           {
@@ -146,6 +147,7 @@ jobs:
             "tree": [
               {"path": "package.json", "mode": "100644", "type": "blob", "sha": "$PKG_BLOB"},
               {"path": "Cargo.toml", "mode": "100644", "type": "blob", "sha": "$CARGO_BLOB"},
+              {"path": "Cargo.lock", "mode": "100644", "type": "blob", "sha": "$LOCK_BLOB"},
               {"path": "CHANGELOG.md", "mode": "100644", "type": "blob", "sha": "$CL_BLOB"}
             ]
           }
