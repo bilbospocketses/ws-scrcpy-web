@@ -39,6 +39,28 @@ describe('buildSystemInstallScript', () => {
         name: 'WsScrcpyWeb',
     };
 
+    it('stages the launcher helper into /opt alongside the AppImage (bin_t via the fcontext rule)', () => {
+        const script = buildSystemInstallScript({
+            sourceAppImage: '/home/u/Apps/WsScrcpyWeb-linux-beta.AppImage',
+            sourceHelper: '/home/u/.local/share/WsScrcpyWeb/control/operation-server/ws-scrcpy-web-launcher.exe',
+            unitTmpPath: '/tmp/WsScrcpyWeb.service.tmp',
+            unitPath: '/etc/systemd/system/WsScrcpyWeb.service',
+            name: 'WsScrcpyWeb',
+        });
+        expect(script).toContain('cp "/home/u/.local/share/WsScrcpyWeb/control/operation-server/ws-scrcpy-web-launcher.exe" "/opt/ws-scrcpy-web/ws-scrcpy-web-launcher.exe"');
+        expect(script).toContain('chmod 0755 "/opt/ws-scrcpy-web/ws-scrcpy-web-launcher.exe"');
+        const helperCp = script.indexOf('/opt/ws-scrcpy-web/ws-scrcpy-web-launcher.exe');
+        const relabel = script.indexOf('restorecon -Rv');
+        expect(helperCp).toBeLessThan(relabel);
+    });
+
+    it('omits the helper cp when no sourceHelper is provided (from-source / unavailable)', () => {
+        const script = buildSystemInstallScript({
+            sourceAppImage: '/a.AppImage', unitTmpPath: '/t', unitPath: '/u', name: 'WsScrcpyWeb',
+        });
+        expect(script).not.toContain('ws-scrcpy-web-launcher.exe');
+    });
+
     it('stages the AppImage to /opt, chmods, labels bin_t, then installs the unit', () => {
         const script = buildSystemInstallScript(args);
         expect(script).toContain('mkdir -p /opt/ws-scrcpy-web');

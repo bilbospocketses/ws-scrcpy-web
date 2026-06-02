@@ -775,6 +775,109 @@ describe('ServiceApi', () => {
             }
         });
 
+        // ── Linux system-scope install: launcher helper staging (#2 install) ───
+        //
+        // At system-scope install, ServiceApi resolves the home launcher helper
+        // from <dataRoot>/control/operation-server/ws-scrcpy-web-launcher.exe and
+        // passes it as linuxHelperSource to client.install(). The existing
+        // /opt/ws-scrcpy-web fcontext rule then labels it bin_t alongside the
+        // AppImage so init_t can exec it during uninstall teardown (SELinux AVC fix).
+
+        it('POST /install on Linux system scope passes linuxHelperSource when the helper candidate exists', async () => {
+            const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(async () => undefined);
+            const client = fakeClient({
+                install: installFn,
+                status: vi.fn(async () => 'running' as const),
+            });
+            const factoryResult: ServiceClientFactoryResult = {
+                client,
+                supported: true,
+                platform: 'linux',
+            };
+
+            // Create the helper candidate in the tmp dataRoot so existsCheck hits.
+            const cfg = Config.getInstance();
+            const dataRoot = cfg.dataRoot ?? path.dirname(cfg.dependenciesPath);
+            const helperDir = path.join(dataRoot, 'control', 'operation-server');
+            fs.mkdirSync(helperDir, { recursive: true });
+            const helperPath = path.join(helperDir, 'ws-scrcpy-web-launcher.exe');
+            fs.writeFileSync(helperPath, '', 'utf8');
+
+            const api = new ServiceApi(() => factoryResult, () => 'user');
+            const { req, res } = makeReqRes(
+                '/api/service/install',
+                'POST',
+                JSON.stringify({ scope: 'system' }),
+            );
+            await api.handle(req, res);
+            expect((res as any).getStatus()).toBe(200);
+
+            const opts = installFn.mock.calls[0]?.[0];
+            expect(opts?.scope).toBe('system');
+            expect(opts?.linuxHelperSource).toBe(helperPath);
+        });
+
+        it('POST /install on Linux system scope passes undefined linuxHelperSource when helper is absent', async () => {
+            const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(async () => undefined);
+            const client = fakeClient({
+                install: installFn,
+                status: vi.fn(async () => 'running' as const),
+            });
+            const factoryResult: ServiceClientFactoryResult = {
+                client,
+                supported: true,
+                platform: 'linux',
+            };
+
+            // Do NOT create the helper — existsCheck returns false.
+            const api = new ServiceApi(() => factoryResult, () => 'user');
+            const { req, res } = makeReqRes(
+                '/api/service/install',
+                'POST',
+                JSON.stringify({ scope: 'system' }),
+            );
+            await api.handle(req, res);
+            expect((res as any).getStatus()).toBe(200);
+
+            const opts = installFn.mock.calls[0]?.[0];
+            expect(opts?.scope).toBe('system');
+            expect(opts?.linuxHelperSource).toBeUndefined();
+        });
+
+        it('POST /install on Linux user scope does NOT pass linuxHelperSource (user scope has no /opt staging)', async () => {
+            const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(async () => undefined);
+            const client = fakeClient({
+                install: installFn,
+                status: vi.fn(async () => 'running' as const),
+            });
+            const factoryResult: ServiceClientFactoryResult = {
+                client,
+                supported: true,
+                platform: 'linux',
+            };
+
+            // Create helper so we can confirm it is NOT passed for user scope.
+            const cfg = Config.getInstance();
+            const dataRoot = cfg.dataRoot ?? path.dirname(cfg.dependenciesPath);
+            const helperDir = path.join(dataRoot, 'control', 'operation-server');
+            fs.mkdirSync(helperDir, { recursive: true });
+            const helperPath = path.join(helperDir, 'ws-scrcpy-web-launcher.exe');
+            fs.writeFileSync(helperPath, '', 'utf8');
+
+            const api = new ServiceApi(() => factoryResult, () => 'user');
+            const { req, res } = makeReqRes(
+                '/api/service/install',
+                'POST',
+                JSON.stringify({ scope: 'user' }),
+            );
+            await api.handle(req, res);
+            expect((res as any).getStatus()).toBe(200);
+
+            const opts = installFn.mock.calls[0]?.[0];
+            expect(opts?.scope).toBe('user');
+            expect(opts?.linuxHelperSource).toBeUndefined();
+        });
+
         // ── Linux uninstall — systemd-run teardown handoff (item 32) ───────────
         //
         // On Linux, uninstall MUST NOT call client.uninstall() because this Node

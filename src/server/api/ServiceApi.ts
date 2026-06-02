@@ -267,6 +267,24 @@ export class ServiceApi {
             }
         }
 
+        // System-scope install only: resolve the home launcher helper so it can
+        // be staged into /opt/ws-scrcpy-web/ at install time. The fcontext rule
+        // `/opt/ws-scrcpy-web(/.*)? -> bin_t` + restorecon will label it bin_t,
+        // allowing init_t to exec it during system-scope uninstall teardown
+        // (SELinux AVC fix, item #2 install side). Best-effort: if the helper
+        // isn't present (from-source / unavailable), log and skip — the install
+        // itself still succeeds, system uninstall may need manual cleanup.
+        let linuxHelperSource: string | undefined;
+        if (result.platform === 'linux' && scope === 'system') {
+            const dr = cfg.dataRoot ?? path.dirname(cfg.dependenciesPath);
+            const cand = path.join(dr, 'control', 'operation-server', 'ws-scrcpy-web-launcher.exe');
+            if (this.existsCheck(cand)) {
+                linuxHelperSource = cand;
+            } else {
+                log.warn(`linux system install: teardown helper not found at ${cand}; /opt staging skipped (system uninstall may need manual cleanup)`);
+            }
+        }
+
         // v0.1.24-beta.7: service.log moves under <dataRoot>/logs/ to
         // colocate with launcher.log + server.log + ws-scrcpy-web.log.
         // Pre-beta.7 it lived at <dataRoot>/dependencies/service.log,
@@ -328,6 +346,9 @@ export class ServiceApi {
                 dataRoot: Config.getInstance().dataRoot ?? undefined,
                 // Linux SystemdClient consumes scope; Windows ServyClient ignores it.
                 scope,
+                // Linux system-scope only: home helper path to stage into /opt (bin_t).
+                // Windows ServyClient ignores this field.
+                linuxHelperSource,
             });
         } catch (err) {
             // Install failed — revert installMode so the next page load
