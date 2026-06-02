@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.32] - 2026-06-02
+
 ## [0.1.30-beta.31] - 2026-06-02
 
 Fixes for issues found smoke-testing **beta.30**'s Linux service mode on real Fedora 44 (SELinux enforcing), plus a bookmark global-dismiss option. Windows service mode and Linux local mode are byte-for-byte unchanged; there are no launcher/Rust changes.
