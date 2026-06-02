@@ -774,11 +774,17 @@ describe('UpdateService', () => {
         expect(result.redirectPort).toBeNull();
         expect(applyFn).not.toHaveBeenCalled();
         expect(spawnMock).toHaveBeenCalledTimes(1);
+        // #27: the helper is spawned so it OUTLIVES the app's cgroup teardown.
+        // On a systemd host it's wrapped in `systemd-run --user --collect` (cmd =
+        // systemd-run, launcher in argv); on a non-systemd host it's spawned
+        // directly (cmd = launcher). Assert on the full command line so the test
+        // is robust across both — buildDetachedSpawn's exact wrapping (incl. the
+        // setsid/bare fallback) is covered by systemTools.test.ts.
         const [bin, argv] = spawnMock.mock.calls[0]!;
-        expect(String(bin)).toMatch(/control[\\/]operation-server[\\/]ws-scrcpy-web-launcher\.exe$/);
-        expect(argv).toEqual(
-            expect.arrayContaining(['--linux-apply', '--target', '/home/u/Downloads/WsScrcpyWeb-linux-beta.AppImage']),
-        );
+        const cmdline = [String(bin), ...(argv as string[]).map(String)].join(' ');
+        expect(cmdline).toMatch(/control[\\/]operation-server[\\/]ws-scrcpy-web-launcher\.exe/);
+        expect(cmdline).toContain('--linux-apply');
+        expect(cmdline).toContain('--target /home/u/Downloads/WsScrcpyWeb-linux-beta.AppImage');
     });
 
     it('applyUpdate (linux local): SHA mismatch aborts, no helper spawn', async () => {
