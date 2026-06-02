@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.37] - 2026-06-02
+
 ### Changed
 
 - **Confirmation dialogs now use the white-outline button style.** The "Root/Administrative Privileges Required" (service install and uninstall) and "End Shell Session" confirm dialogs had solid light-fill buttons; their cancel and confirm buttons now use the shared white-outline button style (white outline + white text, transparent) introduced for the welcome, bookmark, and service-mode modals in beta.29, so every modal button matches.
