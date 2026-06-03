@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.40] - 2026-06-03
+
 ### Fixed
 
 - **Linux system-scope service install now uses persistent, self-contained `/opt` paths instead of `/tmp` + the installing user's home.** A system-scope install left the root service mis-pathed: its `config.json` landed in `/tmp/WsScrcpyWeb` (ephemeral — wiped on reboot) because the unit set no `DATA_ROOT` and a root service has no `HOME`, and it ran `node`/`adb` from the installing user's `~/.local/share/.../dependencies` (fragile, a root-executing-user-writable-binary surface, and a Local-Dependencies-Only violation). The install now points the unit's `DATA_ROOT` + `DEPS_PATH` at `/opt/ws-scrcpy-web/{data,dependencies}`, copies the deps into `/opt` (the tree is `bin_t`-labelled so `init_t` can exec them; the data dir gets a more-specific `var_lib_t` rule so the service can write it under SELinux), and seeds the service's `config.json` (`installMode`, `firstRunComplete`, the user's web port) — so the service reads a correct, persistent config (no stray WelcomeModal), survives reboots, runs the app's own deps, and the post-install browser hand-off lands on the same port. As defense-in-depth, Rust `data_root_for_linux` no longer silently falls back to `/tmp` when nothing is set; it fails loudly so a misconfiguration is caught. (The system-scope uninstall→relaunch hand-off is a separate follow-up.)
