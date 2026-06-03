@@ -23,7 +23,7 @@ import {
     type ServiceClientFactoryResult,
 } from '../service';
 import { resolveSystemTool } from '../service/systemTools';
-import { STAGED_SYSTEM_DIR, STAGED_SYSTEM_HELPER } from '../service/SystemdClient';
+import { STAGED_SYSTEM_DIR, STAGED_SYSTEM_HELPER, buildServiceUnitEnv, buildSystemSeedConfig } from '../service/SystemdClient';
 import { readJsonBody } from './utils';
 
 const log = Logger.for('ServiceApi');
@@ -301,9 +301,10 @@ export class ServiceApi {
             // if the directory truly can't be created.
         }
         const logPath = path.join(logsDir, 'service.log');
-        const envVars: Record<string, string> = {
-            DEPS_PATH: cfg.dependenciesPath,
-        };
+        // Scope-aware unit env (#36): linux system-scope points DATA_ROOT +
+        // DEPS_PATH at the app's own /opt tree (not the installing user's home,
+        // and not the /tmp the root service would otherwise fall back to).
+        const envVars = buildServiceUnitEnv(result.platform, scope, cfg.dependenciesPath);
 
         // Persist installMode to disk BEFORE invoking the install. The
         // service-instance's Node process loads Config from config.json
@@ -351,6 +352,15 @@ export class ServiceApi {
                 // Linux system-scope only: home helper path to stage into /opt (bin_t).
                 // Windows ServyClient ignores this field.
                 linuxHelperSource,
+                // Linux system-scope only (#36): copy the user's deps into /opt
+                // and seed the service config so it doesn't run deps from home or
+                // land its config in /tmp. Windows + user-scope ignore these.
+                ...(result.platform === 'linux' && scope === 'system'
+                    ? {
+                          sourceDeps: cfg.dependenciesPath,
+                          seedConfig: buildSystemSeedConfig(cfg.getAppConfig().webPort),
+                      }
+                    : {}),
             });
         } catch (err) {
             // Install failed — revert installMode so the next page load

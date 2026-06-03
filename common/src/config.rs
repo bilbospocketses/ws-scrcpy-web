@@ -45,7 +45,16 @@ pub fn data_root_for_linux(
     }
     match home {
         Some(h) => PathBuf::from(h).join(".local").join("share").join("WsScrcpyWeb"),
-        None => PathBuf::from("/tmp").join("WsScrcpyWeb"),
+        // #36: never silently fall back to ephemeral, world-writable /tmp. A
+        // system service must set DATA_ROOT (ServiceApi system-scope install);
+        // any other no-HOME context is a real misconfiguration — fail loudly so
+        // it's caught, not silently corrupted into /tmp (which a root service
+        // loses on every reboot).
+        None => panic!(
+            "data_root_for_linux: none of DATA_ROOT, XDG_DATA_HOME, or HOME is set; \
+             cannot resolve a persistent data root (refusing the old /tmp fallback). \
+             A systemd service must set Environment=DATA_ROOT."
+        ),
     }
 }
 
@@ -288,6 +297,14 @@ mod tests {
     fn data_root_for_linux_ignores_empty_data_root() {
         let result = data_root_for_linux(Some(""), None, Some("/home/user"));
         assert_eq!(result, PathBuf::from("/home/user/.local/share/WsScrcpyWeb"));
+    }
+
+    #[test]
+    #[should_panic(expected = "DATA_ROOT")]
+    fn data_root_for_linux_panics_instead_of_tmp_when_nothing_set() {
+        // #36 defense: the old `None => /tmp/WsScrcpyWeb` silently landed a
+        // no-HOME root service in ephemeral /tmp. It now fails loudly instead.
+        let _ = data_root_for_linux(None, None, None);
     }
 
     #[test]

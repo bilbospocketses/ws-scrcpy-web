@@ -89,6 +89,22 @@ export interface ServiceInstallOptions {
      * Windows ServyClient ignores this field.
      */
     linuxHelperSource?: string | undefined;
+
+    /**
+     * Linux system-scope only (#36): the installing user's `dependencies/` dir.
+     * Copied into `/opt/ws-scrcpy-web/dependencies` at install so the root
+     * service runs the app's OWN deps (Local-Dependencies-Only) rather than
+     * reaching into a user's home. Windows + Linux user-scope ignore this.
+     */
+    sourceDeps?: string | undefined;
+
+    /**
+     * Linux system-scope only (#36): the config.json seeded into the staged
+     * `/opt/ws-scrcpy-web/data` dir so the service boots with a correct,
+     * persistent config (system-service mode, first-run-complete, the user's
+     * web port) instead of a fresh one in ephemeral /tmp. Ignored elsewhere.
+     */
+    seedConfig?: Record<string, unknown> | undefined;
 }
 
 /**

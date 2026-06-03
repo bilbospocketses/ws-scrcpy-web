@@ -32,20 +32,13 @@ export class WelcomeModal extends Modal {
         super({ title: 'Welcome to ws-scrcpy-web' });
         this.opts = options;
         this.dialog.classList.add('welcome-modal');
-        // v0.1.14: eagerly mark the bookmark-port as "covered" the moment
-        // this modal is constructed. The Welcome copy already includes a
-        // bookmark hint, so a port modal would be redundant noise on the
-        // same page load. State-level enforcement (the flag itself) of the
-        // "first-run overrides port modal" rule, in addition to the
-        // priority order in index.ts. If the user later changes ports,
-        // the saved port mismatches and the port modal correctly returns.
-        // Fire-and-forget — modal still renders correctly if the PATCH
-        // fails (priority order in index.ts also gates this).
-        void fetch('/api/config', {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ bookmarkDismissedForPort: this.opts.webPort }),
-        }).catch(() => { /* belt-and-suspenders only — silent */ });
+        // No eager bookmarkDismissedForPort stamp here (removed — bug #35).
+        // It was redundant: index.ts already gates modal priority on the same
+        // load (WelcomeModal shows; PortChangeModal early-returns), and the
+        // decision-completion path below stamps the port legitimately. The
+        // eager stamp also clobbered "reset welcome and bookmark prompts" —
+        // the reset re-shows this modal (firstRunComplete=false), which
+        // re-stamped the current port over the reset's null.
         // Defer body/footer fill past class-field init phase (ES2022 useDefineForClassFields).
         queueMicrotask(() => {
             this.fillBody(this.bodyEl);

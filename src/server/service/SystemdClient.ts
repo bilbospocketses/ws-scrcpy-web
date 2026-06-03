@@ -78,6 +78,50 @@ export const STAGED_SYSTEM_APPIMAGE = 'WsScrcpyWeb.AppImage';
 export const STAGED_SYSTEM_HELPER = 'ws-scrcpy-web-launcher.exe';
 
 /**
+ * Root-owned writable state dir for the system-scope service (config.json,
+ * logs/). A MORE-SPECIFIC fcontext (`…/data → var_lib_t`) overrides the dir's
+ * general bin_t rule so the service may write here under SELinux (#36).
+ */
+export const STAGED_SYSTEM_DATA_DIR = `${STAGED_SYSTEM_DIR}/data`;
+/**
+ * Root-owned dependencies dir for the system-scope service (node/adb/
+ * scrcpy-server). Under the bin_t-labelled /opt tree so init_t may exec them,
+ * and so the app runs its OWN deps rather than a copy from a user's home
+ * (Local-Dependencies-Only, #36).
+ */
+export const STAGED_SYSTEM_DEPS_DIR = `${STAGED_SYSTEM_DIR}/dependencies`;
+
+/**
+ * The systemd unit's Environment vars for a given platform + scope. Linux
+ * system-scope MUST point at the app's own /opt tree (Local-Dependencies-Only)
+ * and set DATA_ROOT so the root service (which has no HOME) doesn't fall back
+ * to ephemeral /tmp (#36). Every other case keeps the caller's deps path and
+ * lets the launcher bridge DATA_ROOT (Windows ProgramData, Linux user XDG/HOME).
+ */
+export function buildServiceUnitEnv(
+    platform: NodeJS.Platform,
+    scope: SystemdScope | undefined,
+    userDepsPath: string,
+): Record<string, string> {
+    if (platform === 'linux' && scope === 'system') {
+        return { DATA_ROOT: STAGED_SYSTEM_DATA_DIR, DEPS_PATH: STAGED_SYSTEM_DEPS_DIR };
+    }
+    return { DEPS_PATH: userDepsPath };
+}
+
+/**
+ * The config.json seeded into the system service's /opt data dir at install so
+ * it reads a correct, persistent config on first boot (#36): it knows it is a
+ * service (ServiceFirstRunModal, not WelcomeModal), is already first-run-
+ * complete, and binds the same web port the installing user is on (so the
+ * post-install browser hand-off lands on the same URL). Other fields fall to
+ * Config defaults when the service loads this file.
+ */
+export function buildSystemSeedConfig(currentWebPort: number): Record<string, unknown> {
+    return { installMode: 'system-service', firstRunComplete: true, webPort: currentWebPort };
+}
+
+/**
  * Run a command via pkexec for graphical privilege escalation. The user
  * sees a single password prompt for the entire shell command. Throws on
  * auth-cancel (exit 126), pkexec-not-found, or command failure.
@@ -225,7 +269,15 @@ export function renderUnitFile(opts: ServiceInstallOptions, scope: SystemdScope)
  * paths via systemTools (Local-Dependencies-Only — no bare-name $PATH lookup).
  */
 export function buildSystemInstallScript(
-    args: { sourceAppImage: string; sourceHelper?: string; unitTmpPath: string; unitPath: string; name: string },
+    args: {
+        sourceAppImage: string;
+        sourceHelper?: string;
+        sourceDeps?: string;
+        seedConfigTmpPath?: string;
+        unitTmpPath: string;
+        unitPath: string;
+        name: string;
+    },
     binTool: (t: string) => string = (t) => resolveSystemTool(t),
     sbinTool: (t: string) => string = (t) => resolveSystemTool(t),
 ): string {
@@ -239,8 +291,11 @@ export function buildSystemInstallScript(
     const semanage = sbinTool('semanage');
     const restorecon = sbinTool('restorecon');
     const steps: string[] = [
-        // 1. stage the AppImage into /opt (root-owned)
+        // 1. stage dirs: the /opt root + the writable data dir (always — the
+        //    system service writes its config + logs there). The deps dir is
+        //    added below only when we have deps to copy.
         `${mkdir} -p ${STAGED_SYSTEM_DIR}`,
+        `${mkdir} -p ${STAGED_SYSTEM_DATA_DIR}`,
         `${cp} "${args.sourceAppImage}" "${staged}"`,
         `${chmod} 0755 "${staged}"`,
     ];
@@ -250,6 +305,19 @@ export function buildSystemInstallScript(
     if (args.sourceHelper) {
         steps.push(`${cp} "${args.sourceHelper}" "${stagedHelper}"`);
         steps.push(`${chmod} 0755 "${stagedHelper}"`);
+    }
+    // 1c. copy the installing user's deps into the app's OWN /opt tree so the
+    //     root service runs them (Local-Dependencies-Only) instead of reaching
+    //     into a user's home. restorecon below labels them bin_t (init_t exec).
+    if (args.sourceDeps) {
+        steps.push(`${mkdir} -p ${STAGED_SYSTEM_DEPS_DIR}`);
+        steps.push(`${cp} -a "${args.sourceDeps}/." "${STAGED_SYSTEM_DEPS_DIR}/"`);
+    }
+    // 1d. seed the system config so the service reads a correct, persistent
+    //     config on first boot (system-service mode, first-run-complete, the
+    //     user's web port). Written before restorecon so it gets var_lib_t.
+    if (args.seedConfigTmpPath) {
+        steps.push(`${cp} "${args.seedConfigTmpPath}" "${STAGED_SYSTEM_DATA_DIR}/config.json"`);
     }
     steps.push(
         // 2. label bin_t so init_t can exec it. Persistent rule (semanage) when
@@ -261,7 +329,7 @@ export function buildSystemInstallScript(
         //    erroring on a non-SELinux fs) would break the outer `&&` chain and
         //    silently skip the unit cp + enable below.
         //    restorecon covers the whole dir — labels the helper bin_t too when present.
-        `( ( ${semanage} fcontext -a -t bin_t '${STAGED_SYSTEM_DIR}(/.*)?' && ${restorecon} -Rv "${STAGED_SYSTEM_DIR}" ) || ${chcon} -t bin_t "${staged}" || true )`,
+        `( ( ${semanage} fcontext -a -t bin_t '${STAGED_SYSTEM_DIR}(/.*)?' && ${semanage} fcontext -a -t var_lib_t '${STAGED_SYSTEM_DATA_DIR}(/.*)?' && ${restorecon} -Rv "${STAGED_SYSTEM_DIR}" ) || ${chcon} -t bin_t "${staged}" || true )`,
         // 3. install + enable the unit (ExecStart already points at ${staged})
         `${cp} "${args.unitTmpPath}" "${args.unitPath}"`,
         `${systemctl} daemon-reload`,
@@ -359,10 +427,19 @@ export class SystemdClient implements ServiceClient {
             // copies unit + enables — all under a single graphical prompt.
             const tmpFile = path.join(os.tmpdir(), `${opts.name}.service.tmp`);
             fs.writeFileSync(tmpFile, unitContent, { mode: 0o644 });
+            // Seed config -> temp file; the pkexec script cp's it into the staged
+            // /opt/.../data dir (root-owned) under the single graphical prompt.
+            let seedTmpFile: string | undefined;
+            if (opts.seedConfig) {
+                seedTmpFile = path.join(os.tmpdir(), `${opts.name}.seed.json`);
+                fs.writeFileSync(seedTmpFile, JSON.stringify(opts.seedConfig, null, 2) + '\n', { mode: 0o644 });
+            }
             try {
                 const cmd = buildSystemInstallScript({
                     sourceAppImage: opts.binPath,
                     ...(opts.linuxHelperSource ? { sourceHelper: opts.linuxHelperSource } : {}),
+                    ...(opts.sourceDeps ? { sourceDeps: opts.sourceDeps } : {}),
+                    ...(seedTmpFile ? { seedConfigTmpPath: seedTmpFile } : {}),
                     unitTmpPath: tmpFile,
                     unitPath,
                     name: opts.name,
@@ -370,6 +447,9 @@ export class SystemdClient implements ServiceClient {
                 await runPkexec(cmd, 'install (system scope)');
             } finally {
                 try { fs.unlinkSync(tmpFile); } catch { /* best-effort cleanup */ }
+                if (seedTmpFile) {
+                    try { fs.unlinkSync(seedTmpFile); } catch { /* best-effort cleanup */ }
+                }
             }
         } else {
             // User scope (no elevation) or already root.

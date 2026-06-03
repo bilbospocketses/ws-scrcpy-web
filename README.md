@@ -299,7 +299,7 @@ When Velopack ships its type-2 runtime (post-1.0.1), this dependency will be emb
 
 #### Tray icon
 
-ws-scrcpy-web does not currently expose a tray icon on Linux. On Windows the launcher provides a tray for quick stop/restart, but the Linux launcher has no tray surface yet — when one is added it will mirror the Windows behavior. For now use Settings → Server → Stop Server in the web UI to stop the app cleanly.
+ws-scrcpy-web does not currently expose a tray icon on Linux. On Windows the launcher provides a tray for quick stop/restart, but the Linux launcher has no tray surface yet — when one is added it will mirror the Windows behavior. For now use Settings → App → stop server & exit in the web UI to stop the app cleanly.
 
 ## Configuration
 
@@ -314,6 +314,8 @@ Almost all configuration is managed through the in-app **Settings** panel (gear 
 | `updateCheckIntervalMinutes` | `60` | Settings → Updates → Check interval |
 | `channel` | `stable` | Settings → Updates → Channel |
 | `githubOwner` | `bilbospocketses` | Settings → Updates → GitHub owner (override for forks) |
+
+Not a stored field, but reached the same way: **Settings → App → stop server & exit** cleanly stops the server and quits the app — the primary clean-exit path on Linux (no tray there), disabled in service mode.
 
 **Update channels are baked into the installation.** Velopack tracks the channel (stable or beta) at the package level — it's part of the installed identity, not just a config preference. Changing the `channel` setting changes which feed the updater *queries*, but the in-app updater cannot cross from one channel to another. A beta installation will not successfully apply a stable update (or vice versa), even if the updater detects and downloads it. **To switch channels, uninstall the current version and fresh-install the desired channel's MSI/AppImage.** This is a Velopack platform constraint, not a ws-scrcpy-web limitation.
 

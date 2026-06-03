@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Linux system-scope service install now uses persistent, self-contained `/opt` paths instead of `/tmp` + the installing user's home.** A system-scope install left the root service mis-pathed: its `config.json` landed in `/tmp/WsScrcpyWeb` (ephemeral — wiped on reboot) because the unit set no `DATA_ROOT` and a root service has no `HOME`, and it ran `node`/`adb` from the installing user's `~/.local/share/.../dependencies` (fragile, a root-executing-user-writable-binary surface, and a Local-Dependencies-Only violation). The install now points the unit's `DATA_ROOT` + `DEPS_PATH` at `/opt/ws-scrcpy-web/{data,dependencies}`, copies the deps into `/opt` (the tree is `bin_t`-labelled so `init_t` can exec them; the data dir gets a more-specific `var_lib_t` rule so the service can write it under SELinux), and seeds the service's `config.json` (`installMode`, `firstRunComplete`, the user's web port) — so the service reads a correct, persistent config (no stray WelcomeModal), survives reboots, runs the app's own deps, and the post-install browser hand-off lands on the same port. As defense-in-depth, Rust `data_root_for_linux` no longer silently falls back to `/tmp` when nothing is set; it fails loudly so a misconfiguration is caught. (The system-scope uninstall→relaunch hand-off is a separate follow-up.)
+- **"Reset welcome and bookmark prompts" now fully clears the per-port bookmark dismissal.** `WelcomeModal` and `ServiceFirstRunModal` eagerly PATCHed `bookmarkDismissedForPort` to the current port in their constructors. Because the reset re-shows the welcome modal (it sets `firstRunComplete: false`), that eager write re-stamped the current port over the reset's `null` — so the bookmark reminder stayed suppressed for that port. The eager stamp was redundant (modal priority is already gated in `index.ts`, and each modal's completion path stamps the port legitimately) and has been removed.
+- **README points to the real "stop server & exit" location.** The Linux "no tray icon" note directed users to a nonexistent "Settings → Server → Stop Server"; it now points to "Settings → App → stop server & exit" (where the button shipped in beta.39), and the button is listed in the Configuration section.
+
 ## [0.1.30-beta.39] - 2026-06-02
 
 ### Added

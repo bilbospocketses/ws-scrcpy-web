@@ -93,6 +93,36 @@ describe('buildSystemInstallScript', () => {
         expect(script).toContain('|| true');
         expect(script.indexOf('cp "/tmp/WsScrcpyWeb.service.tmp"')).toBeGreaterThan(script.indexOf('chcon'));
     });
+
+    it('copies the user deps into /opt and seeds the data config (#36)', () => {
+        const script = buildSystemInstallScript({
+            sourceAppImage: '/home/u/Apps/WsScrcpyWeb-linux-beta.AppImage',
+            sourceDeps: '/home/u/.local/share/WsScrcpyWeb/dependencies',
+            seedConfigTmpPath: '/tmp/WsScrcpyWeb.seed.json',
+            unitTmpPath: '/tmp/WsScrcpyWeb.service.tmp',
+            unitPath: '/etc/systemd/system/WsScrcpyWeb.service',
+            name: 'WsScrcpyWeb',
+        });
+        // writable state dir + deps dir created
+        expect(script).toContain('mkdir -p /opt/ws-scrcpy-web/data');
+        expect(script).toContain('mkdir -p /opt/ws-scrcpy-web/dependencies');
+        // deps copied from the user's dir into the app's OWN /opt tree (Local-Deps)
+        expect(script).toContain('cp -a "/home/u/.local/share/WsScrcpyWeb/dependencies/." "/opt/ws-scrcpy-web/dependencies/"');
+        // seed config written into the data dir
+        expect(script).toContain('cp "/tmp/WsScrcpyWeb.seed.json" "/opt/ws-scrcpy-web/data/config.json"');
+        // data dir gets the writable var_lib_t label (more-specific beats the tree's bin_t)
+        expect(script).toContain("semanage fcontext -a -t var_lib_t '/opt/ws-scrcpy-web/data(/.*)?'");
+        // deps + seed land before the relabel so restorecon labels them correctly
+        expect(script.indexOf('config.json')).toBeLessThan(script.indexOf('restorecon -Rv'));
+    });
+
+    it('always prepares the writable data dir, but omits deps-copy + seed when not provided', () => {
+        const script = buildSystemInstallScript(args);
+        expect(script).toContain('mkdir -p /opt/ws-scrcpy-web/data');
+        expect(script).toContain("semanage fcontext -a -t var_lib_t '/opt/ws-scrcpy-web/data(/.*)?'");
+        expect(script).not.toContain('cp -a');
+        expect(script).not.toContain('/data/config.json');
+    });
 });
 
 describe('absolute-path OS tools', () => {
