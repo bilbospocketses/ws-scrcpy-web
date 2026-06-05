@@ -102,6 +102,25 @@ fn main() {
         std::process::exit(code);
     }
 
+    // Service-defer: if an ACTIVE system-scope service owns the app, open the
+    // browser at its URL and exit instead of spawning a duplicate local server.
+    #[cfg(target_os = "linux")]
+    {
+        let cfg = common::config::AppConfig::load(std::path::Path::new("/var/opt/ws-scrcpy-web"));
+        if let (Some(mode), Some(port)) = (cfg.install_mode.as_deref(), cfg.web_port) {
+            let live = std::net::TcpStream::connect_timeout(
+                &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
+                std::time::Duration::from_millis(200),
+            ).is_ok();
+            if let Some(url) = linux_service::service_defer_url(Some(mode), Some(port), live) {
+                log::info(&format!("service-defer: active system service; opening {url}"));
+                let xdg = format!("{}/xdg-open", linux_service::tool_dir("xdg-open"));
+                let _ = std::process::Command::new(&xdg).arg(&url).status();
+                std::process::exit(0);
+            }
+        }
+    }
+
     // Bootstrapper: if the shared machine-wide /opt binary exists and we are a
     // home AppImage (not /opt itself), re-exec the /opt copy and exit. MUST run
     // before single_instance::acquire so the /opt child — not this wrapper — owns

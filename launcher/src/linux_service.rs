@@ -121,6 +121,17 @@ pub fn relaunch_target(scope: Scope, marker: Option<String>) -> Option<PathBuf> 
     }
 }
 
+/// The service URL to open (then exit) when an ACTIVE system service owns the
+/// app, so a local launch doesn't spawn a duplicate. `install_mode` + `web_port`
+/// come from the /var/opt system-service config; `port_live` is a TCP-probe
+/// result the caller supplies. Pure.
+pub fn service_defer_url(install_mode: Option<&str>, web_port: Option<u16>, port_live: bool) -> Option<String> {
+    match (install_mode, web_port) {
+        (Some("system-service"), Some(port)) if port_live => Some(format!("http://localhost:{port}")),
+        _ => None,
+    }
+}
+
 /// Dispatch: handle `--linux-service-teardown`, return Some(exit_code).
 pub fn handle(args: &[String]) -> Option<i32> {
     if !args.iter().any(|a| a == "--linux-service-teardown") {
@@ -278,5 +289,14 @@ mod tests {
         assert_eq!(bootstrap_target(true, Some(opt)), None);              // we ARE /opt -> don't re-exec self
         assert_eq!(bootstrap_target(false, Some("/home/u/App.AppImage")), None); // no /opt -> run in place
         assert_eq!(bootstrap_target(true, None), None);                  // from-source (no $APPIMAGE) -> None
+    }
+
+    #[test]
+    fn defer_to_service_only_when_system_service_and_port_live() {
+        assert_eq!(service_defer_url(Some("system-service"), Some(8000), true),
+                   Some("http://localhost:8000".to_string()));
+        assert_eq!(service_defer_url(Some("system-service"), Some(8000), false), None); // installed but down
+        assert_eq!(service_defer_url(Some("user"), Some(8000), true), None);            // not service mode
+        assert_eq!(service_defer_url(None, None, true), None);
     }
 }
