@@ -125,15 +125,39 @@ fn main() {
     // home AppImage (not /opt itself), re-exec the /opt copy and exit. MUST run
     // before single_instance::acquire so the /opt child — not this wrapper — owns
     // the per-user lock.
+    //
+    // Version-aware (Phase 3): reads /opt/ws-scrcpy-web/VERSION; if the home
+    // AppImage is NEWER than /opt, runs in-place and sets
+    // WS_SCRCPY_OPT_UPDATE_AVAILABLE=1 so the frontend can offer an /opt upgrade.
     #[cfg(target_os = "linux")]
     {
         let opt = std::path::Path::new("/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage");
         let appimage = std::env::var("APPIMAGE").ok();
-        if let Some(target) = linux_service::bootstrap_target(opt.exists(), appimage.as_deref()) {
-            log::info(&format!("bootstrap: exec'ing machine-wide /opt binary {target:?}"));
-            let status = std::process::Command::new(&target).status();
-            let code = status.ok().and_then(|s| s.code()).unwrap_or(0);
-            std::process::exit(code);
+        let opt_version = std::fs::read_to_string("/opt/ws-scrcpy-web/VERSION")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        let action = linux_service::bootstrap_decision(
+            opt.exists(),
+            appimage.as_deref(),
+            env!("CARGO_PKG_VERSION"),
+            opt_version.as_deref(),
+        );
+        match action {
+            linux_service::BootstrapAction::ExecOpt(target) => {
+                log::info(&format!("bootstrap: exec'ing machine-wide /opt binary {target:?}"));
+                let status = std::process::Command::new(&target).status();
+                let code = status.ok().and_then(|s| s.code()).unwrap_or(0);
+                std::process::exit(code);
+            }
+            linux_service::BootstrapAction::RunHomeOfferUpdate => {
+                log::info("bootstrap: home AppImage is newer than /opt; running in-place, flagging update offer");
+                std::env::set_var("WS_SCRCPY_OPT_UPDATE_AVAILABLE", "1");
+                // fall through to normal launch
+            }
+            linux_service::BootstrapAction::RunHome => {
+                // no /opt, or we ARE /opt, or no $APPIMAGE — launch in place
+            }
         }
     }
 

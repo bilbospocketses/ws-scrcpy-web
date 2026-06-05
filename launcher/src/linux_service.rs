@@ -97,10 +97,46 @@ pub fn parse_args(args: &[String]) -> Option<(Scope, String)> {
     Some((scope, unit))
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BootstrapAction { ExecOpt(PathBuf), RunHomeOfferUpdate, RunHome }
+
+/// Compare versions like "0.1.31" / "0.1.31-beta.4". Core (X.Y.Z) numeric; a
+/// `-beta.N` pre-release sorts BEFORE the same core release, and by N among betas.
+fn version_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    fn parse(v: &str) -> ([u64; 3], Option<u64>) {
+        let (core, pre) = v.split_once('-').map_or((v, None), |(c, p)| (c, Some(p)));
+        let mut nums = [0u64; 3];
+        for (i, part) in core.split('.').take(3).enumerate() { nums[i] = part.parse().unwrap_or(0); }
+        let beta = pre.and_then(|p| p.rsplit('.').next()).and_then(|n| n.parse::<u64>().ok());
+        (nums, beta)
+    }
+    let (ca, ba) = parse(a);
+    let (cb, bb) = parse(b);
+    ca.cmp(&cb).then_with(|| match (ba, bb) {
+        (None, None) => std::cmp::Ordering::Equal,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (Some(x), Some(y)) => x.cmp(&y),
+    })
+}
+
+/// `self_version` = the running (home) AppImage's version; `opt_version` = parsed
+/// /opt/VERSION (None if absent/unreadable). Pure.
+pub fn bootstrap_decision(opt_exists: bool, appimage_env: Option<&str>, self_version: &str, opt_version: Option<&str>) -> BootstrapAction {
+    let opt = PathBuf::from("/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage");
+    let is_self_opt = appimage_env.map(|p| p == opt.to_string_lossy()).unwrap_or(false);
+    if !opt_exists || appimage_env.is_none() || is_self_opt { return BootstrapAction::RunHome; }
+    match opt_version {
+        Some(ov) if version_cmp(self_version, ov) == std::cmp::Ordering::Greater => BootstrapAction::RunHomeOfferUpdate,
+        _ => BootstrapAction::ExecOpt(opt),
+    }
+}
+
 /// Pure bootstrapper decision. `opt_exists` = the shared /opt AppImage is present;
 /// `appimage_env` = $APPIMAGE (the file we were launched from). Returns the /opt
 /// binary to re-exec, or None to continue the in-place launch. No version-compare
 /// (that is a later phase).
+#[allow(dead_code)]
 pub fn bootstrap_target(opt_exists: bool, appimage_env: Option<&str>) -> Option<PathBuf> {
     let opt = PathBuf::from("/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage");
     match appimage_env {
@@ -402,5 +438,26 @@ mod tests {
             vec!["/usr/bin/systemd-run", "--uid=1000", "--setenv=HOME=/home/jamie",
                  "--setenv=WS_SCRCPY_WEB_PORT=8000", "--collect", "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"]
         );
+    }
+
+    #[test]
+    fn version_cmp_orders_core_and_betas() {
+        use std::cmp::Ordering::*;
+        assert_eq!(version_cmp("0.1.31", "0.1.30"), Greater);
+        assert_eq!(version_cmp("0.1.31", "0.1.31"), Equal);
+        assert_eq!(version_cmp("0.1.31", "0.1.31-beta.4"), Greater); // release > its beta
+        assert_eq!(version_cmp("0.1.31-beta.5", "0.1.31-beta.4"), Greater);
+        assert_eq!(version_cmp("0.1.30", "0.1.31-beta.1"), Less);
+    }
+
+    #[test]
+    fn bootstrap_decides_by_version() {
+        let opt = "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage";
+        assert_eq!(bootstrap_decision(true, Some("/home/u/App.AppImage"), "0.1.30", Some("0.1.31")), BootstrapAction::ExecOpt(opt.into()));
+        assert_eq!(bootstrap_decision(true, Some("/home/u/App.AppImage"), "0.1.31", Some("0.1.31")), BootstrapAction::ExecOpt(opt.into()));
+        assert_eq!(bootstrap_decision(true, Some("/home/u/App.AppImage"), "0.1.32", Some("0.1.31")), BootstrapAction::RunHomeOfferUpdate);
+        assert_eq!(bootstrap_decision(true, Some(opt), "0.1.31", Some("0.1.31")), BootstrapAction::RunHome);   // we ARE /opt
+        assert_eq!(bootstrap_decision(false, Some("/home/u/App.AppImage"), "0.1.31", None), BootstrapAction::RunHome);  // no /opt
+        assert_eq!(bootstrap_decision(true, Some("/home/u/App.AppImage"), "0.1.31", None), BootstrapAction::ExecOpt(opt.into())); // unknown /opt version -> run /opt
     }
 }
