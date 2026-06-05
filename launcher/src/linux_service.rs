@@ -110,7 +110,6 @@ pub fn bootstrap_target(opt_exists: bool, appimage_env: Option<&str>) -> Option<
 }
 
 /// First column of each `loginctl list-sessions --no-legend` line = session id.
-#[allow(dead_code)] // wired in P2-4 (system-scope relaunch)
 pub fn parse_session_ids(list_output: &str) -> Vec<String> {
     list_output.lines().filter_map(|l| l.split_whitespace().next()).map(str::to_string).collect()
 }
@@ -118,7 +117,6 @@ pub fn parse_session_ids(list_output: &str) -> Vec<String> {
 /// uid of the session from a `loginctl show-session <id> -p Active -p Type -p User -p Display`
 /// block, IFF it is active AND graphical (x11/wayland). We don't need DISPLAY — the
 /// relaunched app is a server the browser reconnects to.
-#[allow(dead_code)] // wired in P2-4 (system-scope relaunch)
 pub fn active_graphical_uid_from_show(show_output: &str) -> Option<u32> {
     let (mut active, mut kind, mut uid) = (false, String::new(), None::<u32>);
     for line in show_output.lines() {
@@ -138,7 +136,6 @@ pub fn active_graphical_uid_from_show(show_output: &str) -> Option<u32> {
 /// --collect <appimage>` — relaunch the shared /opt binary AS the user, with HOME
 /// (mandatory — else data_root_for_linux panics) and the service's port (so the
 /// browser reconnects). No DISPLAY (it's a server). Pure.
-#[allow(dead_code)] // wired in P2-4 (system-scope relaunch)
 pub fn system_relaunch_command(systemd_run: &str, uid: u32, home: &str, web_port: u16, appimage: &str) -> Vec<String> {
     vec![
         systemd_run.to_string(),
@@ -199,6 +196,29 @@ pub(crate) fn tool_dir(tool: &str) -> String {
     "/usr/bin".to_string()
 }
 
+/// Best-effort: the active graphical session's uid via loginctl (absolute paths,
+/// Local-Deps). Pure parsers (P2-1) do the work; this is the exec seam.
+fn discover_active_graphical_uid() -> Option<u32> {
+    let loginctl = format!("{}/loginctl", tool_dir("loginctl"));
+    let list = std::process::Command::new(&loginctl).args(["list-sessions", "--no-legend"]).output().ok()?;
+    for id in parse_session_ids(&String::from_utf8_lossy(&list.stdout)) {
+        if let Ok(show) = std::process::Command::new(&loginctl)
+            .args(["show-session", &id, "-p", "Active", "-p", "Type", "-p", "User", "-p", "Display"]).output() {
+            if let Some(uid) = active_graphical_uid_from_show(&String::from_utf8_lossy(&show.stdout)) {
+                return Some(uid);
+            }
+        }
+    }
+    None
+}
+
+/// Resolve a uid's home dir from `getent passwd <uid>` (field 6). Absolute path.
+fn home_for_uid(uid: u32) -> Option<String> {
+    let getent = format!("{}/getent", tool_dir("getent"));
+    let out = std::process::Command::new(&getent).args(["passwd", &uid.to_string()]).output().ok()?;
+    String::from_utf8_lossy(&out.stdout).lines().next()?.split(':').nth(5).map(str::to_string)
+}
+
 fn run(scope: Scope, unit: &str) -> i32 {
     let bd = tool_dir("systemctl");
     log::info(&format!("linux-service-teardown: scope={scope:?} unit={unit}"));
@@ -247,6 +267,26 @@ fn run(scope: Scope, unit: &str) -> i32 {
                 "teardown: relaunched local {target_str} via systemd-run (exit {:?})", s.code()
             )),
             Err(e) => log::error(&format!("teardown: relaunch via systemd-run failed: {e}")),
+        }
+    }
+
+    if scope == Scope::System {
+        let systemd_run = format!("{}/systemd-run", tool_dir("systemd-run"));
+        let appimage = "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage";
+        let web_port = common::config::AppConfig::load(std::path::Path::new("/var/opt/ws-scrcpy-web")).web_port;
+        match (discover_active_graphical_uid(), web_port) {
+            (Some(uid), Some(port)) => match home_for_uid(uid) {
+                Some(home) => {
+                    let argv = system_relaunch_command(&systemd_run, uid, &home, port, appimage);
+                    let (cmd, rest) = argv.split_first().expect("non-empty argv");
+                    match std::process::Command::new(cmd).args(rest).status() {
+                        Ok(s) => log::info(&format!("system uninstall: relaunched {appimage} as uid {uid} on port {port} (exit {:?})", s.code())),
+                        Err(e) => log::error(&format!("system uninstall: relaunch failed: {e}")),
+                    }
+                }
+                None => log::error(&format!("system uninstall: no home for uid {uid}; skipping relaunch")),
+            },
+            _ => log::info("system uninstall: no active graphical session / no service port — skipping relaunch (manual fallback)"),
         }
     }
     0
