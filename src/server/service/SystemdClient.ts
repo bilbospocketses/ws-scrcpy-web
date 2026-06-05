@@ -389,6 +389,56 @@ export function buildMachineWideInstallScript(
     ].join(' && ');
 }
 
+/**
+ * Build the privileged shell script for an in-app update of a machine-wide-
+ * no-service install (the user runs the root-owned `/opt` AppImage directly,
+ * NOT a service). Runs under a single pkexec prompt.
+ *
+ * The swap is a RENAME, never a `cp`: `cp` overwrites the file in place, which
+ * fails with `ETXTBSY` on the running AppImage. A rename works while the old
+ * AppImage is still mounted — the old inode stays alive for the running process,
+ * and the new file lands at the same path for the next launch:
+ *
+ *   1. `mv -f <opt>/WsScrcpyWeb.AppImage <opt>/WsScrcpyWeb.AppImage.bak` — back up
+ *      the running binary (rollback). The live process keeps its mounted inode.
+ *   2. `mv -f <staged> <opt>/WsScrcpyWeb.AppImage` — move the verified download in.
+ *   3. `chmod 0755` the new file.
+ *   4. re-apply the `bin_t` label best-effort — `restorecon` re-applies the
+ *      persistent fcontext rule set at machine-wide install; `chcon -t bin_t` is
+ *      the transient fallback; the trailing `|| true` keeps a non-SELinux host
+ *      going (mirrors linux_apply.rs::relabel_command, which relabels the single
+ *      swapped file with `restorecon -v` / `chcon -t bin_t`).
+ *   5. `printf` the new VERSION marker into `/opt/ws-scrcpy-web/VERSION`.
+ *
+ * The relaunch is NOT part of this script — it must run as the user (not under
+ * pkexec, which would come back as root). The caller spawns a separate detached
+ * relaunch-only helper that waits for the old process to exit (releasing the
+ * per-user flock) before relaunching the freshly-swapped `/opt` copy.
+ *
+ * `binTool`/`sbinTool` are injectable for testing; production resolves absolute
+ * paths via systemTools (Local-Dependencies-Only — no bare-name $PATH lookup).
+ */
+export function buildMachineWideUpdateScript(
+    args: { stagedAppImage: string; version: string },
+    binTool: (t: string) => string = (t) => resolveSystemTool(t),
+    sbinTool: (t: string) => string = (t) => resolveSystemTool(t),
+): string {
+    const target = `${STAGED_SYSTEM_DIR}/${STAGED_SYSTEM_APPIMAGE}`;
+    const backup = `${target}.bak`;
+    const mv = binTool('mv');
+    const chmod = binTool('chmod');
+    const chcon = binTool('chcon');
+    const printf = binTool('printf');
+    const restorecon = sbinTool('restorecon');
+    return [
+        `${mv} -f "${target}" "${backup}"`,
+        `${mv} -f "${args.stagedAppImage}" "${target}"`,
+        `${chmod} 0755 "${target}"`,
+        `( ${restorecon} -v "${target}" || ${chcon} -t bin_t "${target}" || true )`,
+        `${printf} '%s' '${args.version}' > ${SYSTEM_OPT_VERSION_FILE}`,
+    ].join(' && ');
+}
+
 /** Legacy beta.40 system-scope state dir (pre-/var/opt). Migrated away by
  *  buildSystemMigrationScript — `rm -rf`'d and its fcontext rule deleted. */
 export const LEGACY_SYSTEM_DATA_DIR = `${STAGED_SYSTEM_DIR}/data`;

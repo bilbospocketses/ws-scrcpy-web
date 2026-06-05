@@ -885,6 +885,79 @@ describe('UpdateService', () => {
         }
     });
 
+    // Linux MACHINE-WIDE-NO-SERVICE apply (Phase 3 / P3b): the user runs the
+    // root-owned /opt AppImage directly (NOT a service), so $APPIMAGE lives under
+    // /opt/ws-scrcpy-web/ while installMode is NOT a service mode. A `cp` over /opt
+    // would ETXTBSY the running file and the per-user flock blocks a fresh /opt
+    // instance until the old one exits — so applyUpdate (1) elevates a RENAME-based
+    // swap via ONE pkexec (buildMachineWideUpdateScript), then (2) spawns a
+    // relaunch-ONLY helper (NO --staged) that waits for our pid to exit (releasing
+    // the flock) + relaunches /opt. The relaunch must NOT be elevated.
+    it.each([
+        ['user' as const],
+        ['system' as const],
+        [null],
+    ])('applyUpdate (linux machine-wide-no-service, installMode=%s): pkexec rename-swap + relaunch-only helper', async (installMode) => {
+        const { createHash } = await import('crypto');
+        Config.getInstance().updateAppConfig({ autoUpdate: false, installMode, channel: 'beta', githubOwner: 'bilbospocketses' });
+        const appImageBytes = Buffer.from('NEW-APPIMAGE-CONTENT');
+        const goodHash = createHash('sha256').update(appImageBytes).digest('hex');
+        const sums = `${goodHash}  ./linux-final/WsScrcpyWeb-linux-beta.AppImage\n`;
+        const fetchFn = vi.fn(async (url: string) =>
+            url.endsWith('.AppImage') ? new Response(appImageBytes) : new Response(sums),
+        ) as unknown as typeof fetch;
+        const applyFn = vi.fn();
+        const mgr = fakeMgr({ checkForUpdatesAsync: async () => fakeUpdateInfo('0.1.31-beta.2'), waitExitThenApplyUpdate: applyFn });
+        const pkexecMock = vi.fn<(shellCmd: string, label: string) => Promise<string>>(async () => '');
+        const spawnMock = vi.mocked(child_process.spawn);
+        spawnMock.mockClear();
+        const svc = new UpdateService({
+            platform: 'linux',
+            installRoot: path.join('/fake', 'mount', 'usr'),
+            existsSync: () => true,
+            updateManagerFactory: () => mgr,
+            setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
+            clearIntervalFn: () => undefined,
+            fetchFn,
+            runPkexecFn: pkexecMock,
+        });
+        // The discriminator is the /opt $APPIMAGE path (not installMode); the
+        // machine-wide install leaves installMode at whatever it was (user/system/null).
+        process.env['APPIMAGE'] = '/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage';
+        svc.init();
+        await svc.checkForUpdates();
+        expect(svc.getStatus().status).toBe('ready');
+
+        const result = await svc.applyUpdate();
+        expect(result.redirectPort).toBeNull();
+        // Velopack's (broken) apply is never used.
+        expect(applyFn).not.toHaveBeenCalled();
+
+        // (1) the elevated RENAME-swap ran under ONE pkexec with the right label.
+        expect(pkexecMock).toHaveBeenCalledTimes(1);
+        const [script, label] = pkexecMock.mock.calls[0]!;
+        expect(label).toBe('machine-wide-update');
+        expect(script).toContain('mv -f');
+        expect(script).toContain('/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage.bak'); // old → .bak
+        expect(script).toContain('"/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"');   // staged → /opt
+        expect(script).toContain('.new');                                        // the staged download moved in
+        expect(script).toContain("'0.1.31-beta.2' > /opt/ws-scrcpy-web/VERSION"); // new VERSION
+        expect(script).not.toMatch(/\bcp\b/);                                    // never cp (ETXTBSY)
+
+        // (2) the relaunch-only helper is spawned (NOT under pkexec): no --staged,
+        // no --service-restart — just --target /opt + --wait-pid <ourpid>.
+        expect(spawnMock).toHaveBeenCalledTimes(1);
+        const [bin, argv] = spawnMock.mock.calls[0]!;
+        const cmdline = [String(bin), ...(argv as string[]).map(String)].join(' ');
+        expect(cmdline).toMatch(/control[\\/]operation-server[\\/]ws-scrcpy-web-launcher\.exe/);
+        expect(cmdline).toContain('--linux-apply');
+        expect(cmdline).toContain('--target /opt/ws-scrcpy-web/WsScrcpyWeb.AppImage');
+        expect(cmdline).toContain(`--wait-pid ${process.pid}`);
+        expect(cmdline).not.toContain('--staged');        // relaunch-only: no swap by the helper
+        expect(cmdline).not.toContain('--service-restart');
+        expect(cmdline).not.toContain('--relabel');
+    });
+
     // ── reconfigure ─────────────────────────────────────────────────────
 
     it('reconfigure: swaps internal mgr + triggers immediate check', async () => {

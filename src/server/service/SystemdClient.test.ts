@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { SystemdClient, renderUnitFile, STAGED_SYSTEM_DIR, buildSystemInstallScript, systemctlArgv, buildServiceUnitEnv, buildMachineWideInstallScript, buildSystemMigrationScript, buildSystemSeedConfig } from './SystemdClient';
+import { SystemdClient, renderUnitFile, STAGED_SYSTEM_DIR, buildSystemInstallScript, systemctlArgv, buildServiceUnitEnv, buildMachineWideInstallScript, buildMachineWideUpdateScript, buildSystemMigrationScript, buildSystemSeedConfig } from './SystemdClient';
 
 describe('system-scope staging', () => {
     const baseOpts = {
@@ -194,6 +194,71 @@ describe('buildMachineWideInstallScript', () => {
         expect(s).toContain('Exec=/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage');     // every user launches the shared /opt binary
         expect(s).not.toContain('dependencies');   // binary only — deps stay per-user ~/.local
         expect(s).not.toContain('systemctl');      // no service install here
+    });
+});
+
+describe('buildMachineWideUpdateScript', () => {
+    // Phase 3 — machine-wide-no-service in-app update. The user runs the
+    // root-owned /opt AppImage directly (NOT a service), so the swap needs ONE
+    // pkexec. A `cp` over /opt would ETXTBSY the running file, so the swap is a
+    // RENAME (the old inode stays alive for the running process; renames work
+    // while the AppImage is mounted). The new file gets re-labelled bin_t + a
+    // fresh VERSION.
+    const args = {
+        stagedAppImage:
+            '/home/u/.local/share/WsScrcpyWeb/control/update-staging/WsScrcpyWeb-linux-beta.AppImage.new',
+        version: '0.1.31-beta.2',
+    };
+
+    it('rename-swaps the /opt AppImage (old→.bak, staged→/opt), chmods, relabels best-effort, writes VERSION', () => {
+        const s = buildMachineWideUpdateScript(args, (t) => `/usr/bin/${t}`, (t) => `/usr/sbin/${t}`);
+        // 1. back up the RUNNING /opt binary by RENAME (cp would ETXTBSY it).
+        expect(s).toContain(
+            '/usr/bin/mv -f "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage" "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage.bak"',
+        );
+        // 2. move the staged download into place (rename, not cp).
+        expect(s).toContain(
+            `/usr/bin/mv -f "${args.stagedAppImage}" "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"`,
+        );
+        // 3. chmod the new binary executable.
+        expect(s).toContain('/usr/bin/chmod 0755 "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"');
+        // 4. re-apply the bin_t label best-effort: restorecon (persistent rule),
+        //    chcon fallback, trailing `|| true` so a non-SELinux host still writes VERSION.
+        expect(s).toContain('/usr/sbin/restorecon -v "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"');
+        expect(s).toContain('/usr/bin/chcon -t bin_t "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"');
+        // 5. write the new VERSION marker.
+        expect(s).toContain(`/usr/bin/printf '%s' '0.1.31-beta.2' > /opt/ws-scrcpy-web/VERSION`);
+    });
+
+    it('NEVER cp the AppImage (cp overwrites in place → ETXTBSY on the running file)', () => {
+        const s = buildMachineWideUpdateScript(args, (t) => `/usr/bin/${t}`, (t) => `/usr/sbin/${t}`);
+        expect(s).not.toMatch(/\bcp\b/);
+    });
+
+    it('orders the steps: backup-rename → staged-rename → chmod → relabel → VERSION', () => {
+        const s = buildMachineWideUpdateScript(args);
+        const backup = s.indexOf('.bak');
+        const stagedMove = s.indexOf(args.stagedAppImage);
+        const chmod = s.indexOf('chmod 0755');
+        const relabel = s.indexOf('restorecon -v');
+        const version = s.indexOf('VERSION');
+        expect(backup).toBeGreaterThanOrEqual(0);
+        expect(backup).toBeLessThan(stagedMove);
+        expect(stagedMove).toBeLessThan(chmod);
+        expect(chmod).toBeLessThan(relabel);
+        expect(relabel).toBeLessThan(version);
+    });
+
+    it('relabel is best-effort — restorecon → chcon → || true in one subshell (never aborts the && chain)', () => {
+        const s = buildMachineWideUpdateScript(args, (t) => `/usr/bin/${t}`, (t) => `/usr/sbin/${t}`);
+        expect(s).toMatch(/\(\s*\/usr\/sbin\/restorecon -v "[^"]+" \|\| \/usr\/bin\/chcon -t bin_t "[^"]+" \|\| true\s*\)/);
+    });
+
+    it('uses absolute tool paths (no bare names) when resolvers are injected', () => {
+        const s = buildMachineWideUpdateScript(args, (t) => `/usr/bin/${t}`, (t) => `/usr/sbin/${t}`);
+        expect(s).toContain('/usr/bin/mv -f');
+        expect(s).toContain('/usr/bin/printf');
+        expect(s).toContain('/usr/sbin/restorecon');
     });
 });
 

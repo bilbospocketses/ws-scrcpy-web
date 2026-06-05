@@ -23,6 +23,7 @@ import { linuxAppImageAssetName, releaseAssetUrl, parseSha256Sums } from './linu
 import { verifySha256 } from './verifySha256';
 import { downloadToFile, fetchText } from './downloadToFile';
 import { buildDetachedSpawn } from './service/systemTools';
+import { buildMachineWideUpdateScript, runPkexec, STAGED_SYSTEM_DIR } from './service/SystemdClient';
 
 const execFileAsync = promisify(execFile);
 
@@ -67,6 +68,12 @@ export interface UpdateServiceOptions {
     platform?: NodeJS.Platform;
     /** Override global fetch for tests (AppImage download + SHA256SUMS). Default: global fetch. */
     fetchFn?: typeof fetch;
+    /**
+     * Override the pkexec runner for tests — used by the machine-wide-no-service
+     * apply to elevate the rename-swap of the root-owned /opt binary under a
+     * single graphical prompt. Default: the real {@link runPkexec} (SystemdClient).
+     */
+    runPkexecFn?: (shellCmd: string, label: string) => Promise<string>;
 }
 
 export interface UpdateServiceState {
@@ -111,6 +118,7 @@ export class UpdateService {
     private readonly setIntervalFn: (cb: () => void, ms: number) => NodeJS.Timeout;
     private readonly clearIntervalFn: (handle: NodeJS.Timeout) => void;
     private readonly fetchFn: typeof fetch;
+    private readonly runPkexecFn: (shellCmd: string, label: string) => Promise<string>;
 
     constructor(opts: UpdateServiceOptions = {}) {
         this.platform = opts.platform ?? process.platform;
@@ -205,6 +213,7 @@ export class UpdateService {
         this.setIntervalFn = opts.setIntervalFn ?? ((cb, ms) => setInterval(cb, ms));
         this.clearIntervalFn = opts.clearIntervalFn ?? ((handle) => clearInterval(handle));
         this.fetchFn = opts.fetchFn ?? fetch;
+        this.runPkexecFn = opts.runPkexecFn ?? runPkexec;
         this.state = { isInstalled: false, currentVersion: '', status: 'idle' };
     }
 
@@ -493,17 +502,28 @@ export class UpdateService {
             // The launcher stages this helper copy (named *.exe even on Linux) to
             // dataRoot on every boot — outside the AppImage mount, so it survives exit.
             const helperPath = path.join(dataRoot, 'control', 'operation-server', 'ws-scrcpy-web-launcher.exe');
-            // installMode selects the apply shape (item 39). The helper always
-            // OUTLIVES this AppImage's teardown — buildDetachedSpawn wraps it in
-            // its own `systemd-run --collect` transient unit (separate cgroup; #27),
+            // installMode + the $APPIMAGE path select the apply shape. The helper
+            // always OUTLIVES this AppImage's teardown — buildDetachedSpawn wraps it
+            // in its own `systemd-run --collect` transient unit (separate cgroup; #27),
             // falling back to `setsid` then bare on non-systemd hosts:
-            //  - local ('user'): swap $APPIMAGE, wait for our pid, bare relaunch.
+            //  - local ('user'/'system', home $APPIMAGE): swap $APPIMAGE, wait for
+            //    our pid, bare relaunch.
+            //  - machine-wide-no-service (non-service installMode, /opt $APPIMAGE):
+            //    elevate a RENAME-swap of the root-owned /opt binary via ONE pkexec
+            //    (cp would ETXTBSY the running file), then a relaunch-ONLY helper
+            //    (no --staged) waits for our pid (flock release) + relaunches /opt.
+            //    The relaunch is NOT elevated (pkexec would come back as root).
             //  - user-service:  the helper stops/swaps/starts the --user unit;
             //    target = home $APPIMAGE (user manager).
             //  - system-service: the helper (root) stops/swaps/relabels/starts the
             //    system unit; target = the /opt staged copy; system-manager
             //    systemd-run (no --user). No pkexec — root self-update, headless.
             const STAGED_SYSTEM_TARGET = '/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage';
+            // Machine-wide-no-service discriminator: $APPIMAGE under the root-owned
+            // /opt tree while installMode is NOT a service mode (the machine-wide
+            // install leaves installMode at user/system/null — the /opt path is the
+            // real signal, not installMode).
+            const isMachineWide = !isServiceMode && homeAppImage.startsWith(`${STAGED_SYSTEM_DIR}/`);
             let target: string;
             let helperArgs: string[];
             let spawnSystem = false;
@@ -516,6 +536,18 @@ export class UpdateService {
                 target = homeAppImage;
                 helperArgs = ['--linux-apply', '--staged', stagedPath, '--target', target,
                     '--service-restart', 'user', '--unit', WS_SCRCPY_SERVICE_NAME];
+            } else if (isMachineWide) {
+                // (1) elevate ONLY the swap (root-owned /opt). One pkexec prompt does
+                //     the ETXTBSY-safe rename-swap of the /opt binary + VERSION write.
+                await this.runPkexecFn(
+                    buildMachineWideUpdateScript({ stagedAppImage: stagedPath, version }),
+                    'machine-wide-update',
+                );
+                // (2) relaunch-ONLY helper (no --staged): the swap already happened
+                //     above, so the helper just waits for our pid to exit (releasing
+                //     the per-user flock) then relaunches the freshly-swapped /opt.
+                target = homeAppImage;
+                helperArgs = ['--linux-apply', '--target', target, '--wait-pid', String(process.pid)];
             } else {
                 target = homeAppImage;
                 helperArgs = ['--linux-apply', '--staged', stagedPath, '--target', target,

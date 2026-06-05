@@ -24,13 +24,6 @@ fn arg_value<'a>(args: &'a [String], key: &str) -> Option<&'a str> {
 }
 
 fn run(args: &[String]) -> i32 {
-    let staged = match arg_value(args, "--staged") {
-        Some(s) => PathBuf::from(s),
-        None => {
-            log::error("linux-apply: missing --staged");
-            return 2;
-        }
-    };
     let target = match arg_value(args, "--target") {
         Some(s) => PathBuf::from(s),
         None => {
@@ -44,12 +37,42 @@ fn run(args: &[String]) -> i32 {
     // FUSE unmount, swaps, relabels (system scope), and starts the unit — no
     // --wait-pid, no bare relaunch. Reached for user-service (user manager,
     // home $APPIMAGE) and system-service (system manager, root, /opt + bin_t).
+    // It swaps the binary, so it requires --staged.
     if let Some((scope, unit, relabel)) = parse_service_restart(args) {
+        let staged = match arg_value(args, "--staged") {
+            Some(s) => PathBuf::from(s),
+            None => {
+                log::error("linux-apply(service): --service-restart requires --staged");
+                return 2;
+            }
+        };
         return run_service_restart(&staged, &target, scope, &unit, relabel);
     }
 
-    // Local-mode apply (unchanged #27 path): wait for the app pid, swap, relaunch.
     let wait_pid = arg_value(args, "--wait-pid").and_then(|s| s.parse::<u32>().ok());
+
+    // Relaunch-only apply (Phase 3, machine-wide-no-service): --staged is ABSENT.
+    // The user runs the root-owned /opt AppImage directly, so the Node server has
+    // ALREADY done the privileged RENAME-swap of the /opt binary under one pkexec
+    // (a `cp` would ETXTBSY the running file; the per-user flock blocks a fresh
+    // /opt instance until the old one exits). This helper therefore only waits for
+    // the app's pid to exit (releasing the flock) and relaunches the swapped /opt
+    // copy — no swap, no staged cleanup. The relaunch must NOT be elevated, which
+    // is why it runs here (as the user) rather than inside the pkexec script.
+    if !should_swap(args) {
+        log::info(&format!("linux-apply(relaunch-only): target={target:?} wait_pid={wait_pid:?}"));
+        if let Some(pid) = wait_pid {
+            wait_for_pid_exit(pid, Duration::from_secs(60));
+        }
+        relaunch(&target);
+        return 0;
+    }
+
+    // Local-mode apply (unchanged #27 path): wait for the app pid, swap, relaunch.
+    // should_swap(args) == true above guarantees --staged is present.
+    let staged = PathBuf::from(
+        arg_value(args, "--staged").expect("should_swap() == true guarantees --staged present"),
+    );
     log::info(&format!("linux-apply(local): staged={staged:?} target={target:?} wait_pid={wait_pid:?}"));
 
     if let Some(pid) = wait_pid {
@@ -274,6 +297,15 @@ pub fn parse_service_restart(args: &[String]) -> Option<(Scope, String, bool)> {
     Some((scope, unit, relabel))
 }
 
+/// Whether the apply must SWAP the binary (true) or is relaunch-only (false).
+/// Local + service applies pass `--staged` and swap it in. Phase 3 machine-wide-
+/// no-service applies OMIT `--staged` — the elevated pkexec RENAME-swap of the
+/// root-owned /opt binary already ran in the Node server — so the helper only
+/// waits-for-pid + relaunches the swapped /opt copy. Pure — unit-tested.
+pub fn should_swap(args: &[String]) -> bool {
+    arg_value(args, "--staged").is_some()
+}
+
 /// `<data_root>/control/apply-update-pending` — the apply marker path. Pure.
 pub fn apply_marker_path(data_root: &Path) -> PathBuf {
     data_root.join("control").join("apply-update-pending")
@@ -406,5 +438,23 @@ mod tests {
         let local: Vec<String> = ["--linux-apply", "--staged", "/a", "--target", "/b"]
             .iter().map(|s| s.to_string()).collect();
         assert_eq!(parse_service_restart(&local), None);
+    }
+
+    #[test]
+    fn should_swap_false_for_relaunch_only_missing_staged() {
+        // Phase 3 machine-wide-no-service: the helper is invoked WITHOUT --staged
+        // (the elevated pkexec rename-swap of the /opt binary already ran in the
+        // Node server). run() must then SKIP swap_appimage and only wait-for-pid +
+        // relaunch the freshly-swapped /opt copy.
+        let relaunch_only: Vec<String> =
+            ["--linux-apply", "--target", "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage", "--wait-pid", "4321"]
+                .iter().map(|s| s.to_string()).collect();
+        assert!(!should_swap(&relaunch_only), "no --staged means relaunch-only (skip swap)");
+
+        // Local + service applies carry --staged and DO swap the binary in place.
+        let local: Vec<String> =
+            ["--linux-apply", "--staged", "/d/App.new", "--target", "/home/u/App.AppImage", "--wait-pid", "4321"]
+                .iter().map(|s| s.to_string()).collect();
+        assert!(should_swap(&local), "--staged present means swap then relaunch");
     }
 }
