@@ -25,6 +25,7 @@ On Linux the app runs as a bare AppImage from the user's home; only the system-s
 5. **Uninstall→relaunch = `loginctl` active-session discovery + `systemd-run --uid`** (Windows parity) — resolved *fresh at uninstall*, not capture-at-install. Manual-guidance fallback when headless.
 6. **Migration = uninstall→reinstall on upgrade** for existing system-scope installs (carry `webPort`/`installMode`); local/home users get only the first-run prompt; user-scope stays home.
 7. **Folded fix (a):** the teardown `semanage fcontext -d`'s **both** the `/opt` `bin_t` and `/var/opt` `var_lib_t` rules (the beta.40 regression: install added a second rule the teardown never removed).
+8. **Single-instance + service-aware launch (per-user) — added 2026-06-05.** The shared `/opt` binary + the system-wide Start-Menu `.desktop` require a **per-user single-instance guard** (`flock` on `$XDG_RUNTIME_DIR/ws-scrcpy-web.lock`; today's `single_instance.rs` Linux path is a no-op stub) so a user can't double-launch their user-mode instance (from `/opt` or home), while different users each get one. And a local launch **defers to an active system service** (opens its URL, no second server) — the "menu no-op in service mode". Launch order: service-active → per-user-instance → `/opt`-exec → run-in-place.
 
 ---
 

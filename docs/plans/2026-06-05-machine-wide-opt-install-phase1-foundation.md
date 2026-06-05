@@ -170,6 +170,12 @@ git -C "C:/Users/jscha/source/repos/ws-scrcpy-web" commit -m "fix(linux): teardo
 
 ## Group B — Machine-wide binary install + bootstrapper
 
+**Launch decision tree** (Linux, user context — the order the launcher applies these guards before any local server starts):
+1. **Active system service?** → open its URL + exit (Task B5). No local server.
+2. **Already an instance for THIS user?** → exit 0 (Task B4 — per-user flock).
+3. **Shared `/opt` binary present + we're the home AppImage?** → exec `/opt` (Task B2).
+4. **Else** → run in place; the first-run modal (Group C) offers system-wide install when `/opt` is absent + not declined.
+
 ### Task B1: `buildMachineWideInstallScript` (binary-only relocate to `/opt`)
 
 Stages **only** the AppImage into `/opt` (deps stay per-user `~/.local`), labels `bin_t`, writes `VERSION`, drops the `.desktop`. Mirrors `buildSystemInstallScript`'s pkexec-script shape (`SystemdClient.ts:271-339`) but is the smaller binary-only variant used by the first-launch "install system-wide" path.
@@ -192,7 +198,8 @@ it('machine-wide install stages just the binary + label + desktop + VERSION', ()
     expect(s).toContain("semanage fcontext -a -t bin_t '/opt/ws-scrcpy-web(/.*)?'");
     expect(s).toContain('restorecon -Rv "/opt/ws-scrcpy-web"');
     expect(s).toContain('/opt/ws-scrcpy-web/VERSION');           // VERSION written (Phase-3 version-compare reads it)
-    expect(s).toContain('/usr/share/applications/ws-scrcpy-web.desktop');
+    expect(s).toContain('/usr/share/applications/ws-scrcpy-web.desktop');   // SYSTEM-WIDE menu (all users)
+    expect(s).toContain('Exec=/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage');     // every user launches the shared /opt binary under their own login
     // binary-only: NO deps copy, NO unit install
     expect(s).not.toContain('dependencies');
     expect(s).not.toContain('systemctl');
@@ -205,7 +212,7 @@ it('machine-wide install stages just the binary + label + desktop + VERSION', ()
 ```
 [Desktop Entry]\nType=Application\nName=ws-scrcpy-web\nExec=/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage\nIcon=ws-scrcpy-web\nCategories=Utility;
 ```
-Steps joined with ` && `: `mkdir -p /opt/ws-scrcpy-web` · `cp <src> <staged>` · `chmod 0755 <staged>` · `printf '%s' '<version>' > /opt/ws-scrcpy-web/VERSION` · the bin_t label subshell + `restorecon -Rv /opt/ws-scrcpy-web` · write `.desktop` (best-effort, trailing `|| true`).
+Steps joined with ` && `: `mkdir -p /opt/ws-scrcpy-web` · `cp <src> <staged>` · `chmod 0755 <staged>` · `printf '%s' '<version>' > /opt/ws-scrcpy-web/VERSION` · the bin_t label subshell + `restorecon -Rv /opt/ws-scrcpy-web` · write the **system-wide** `.desktop` to `/usr/share/applications/` (best-effort `|| true`) · refresh the menu cache via `update-desktop-database /usr/share/applications` (best-effort `|| true`, so it appears without re-login). The `.desktop` lands in the **system-wide** apps dir → it shows in **every** user's application menu; `Exec` = the shared `/opt` binary, so each user launches it **under their own login** (their `~/.local/share/WsScrcpyWeb` dataRoot + deps).
 
 - [ ] **Step 4: Run, verify pass** — `npm test -- src/server/service/SystemdClient.test.ts` → PASS.
 
@@ -302,6 +309,130 @@ git -C "C:/Users/jscha/source/repos/ws-scrcpy-web" add src/server/api/ServiceApi
 git -C "C:/Users/jscha/source/repos/ws-scrcpy-web" commit -m "feat(api): install-system-wide + decline-system-wide endpoints"
 ```
 
+### Task B4: Linux per-user single-instance guard (flock)
+
+The shared `/opt` binary + the Start-Menu item introduce exactly the "shortcut double-launch" failure mode the existing `single_instance.rs` Linux stub (lines 135-149) said it would add "a PID-file approach later if needed" for. Implement it now, **PER-USER** (different users each get one instance; a user can't double-launch — whether the running instance is the `/opt` binary OR a home AppImage). A `flock` on `$XDG_RUNTIME_DIR/ws-scrcpy-web.lock` (`/run/user/<uid>` is uid-scoped + wiped on logout); fall back to `<dataRoot>/control/instance.lock`.
+
+**Files:** Modify `launcher/src/single_instance.rs` (`#[cfg(not(windows))] mod imp`); `launcher/Cargo.toml` (`rustix` — already in the tree per the clippy build; add as a direct dep if missing).
+
+- [ ] **Step 1: Write the failing test** (gate `#[cfg(all(test, not(windows)))]`):
+
+```rust
+#[test]
+fn linux_lock_path_prefers_xdg_runtime_dir() {
+    assert_eq!(lock_path(Some("/run/user/1000"), Some("/home/u/.local/share/WsScrcpyWeb")),
+               PathBuf::from("/run/user/1000/ws-scrcpy-web.lock"));
+    assert_eq!(lock_path(None, Some("/home/u/.local/share/WsScrcpyWeb")),
+               PathBuf::from("/home/u/.local/share/WsScrcpyWeb/control/instance.lock"));
+}
+
+#[test]
+fn flock_blocks_same_user_second_launch() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("instance.lock");
+    let first = acquire_at(&p).unwrap();
+    assert!(first.is_some(), "first acquire holds the lock");
+    assert!(acquire_at(&p).unwrap().is_none(), "second acquire on a held flock returns None");
+    drop(first);
+    assert!(acquire_at(&p).unwrap().is_some(), "after drop, re-acquire succeeds");
+}
+```
+
+- [ ] **Step 2: Run, verify fail** — `cross test -p ws-scrcpy-web-launcher --target x86_64-unknown-linux-gnu single_instance` → FAIL (`lock_path`/`acquire_at` undefined; stub always returns `Some`).
+
+- [ ] **Step 3: Implement** — replace the non-windows `mod imp` stub:
+
+```rust
+#[cfg(not(windows))]
+mod imp {
+    use anyhow::Result;
+    use std::fs::{File, OpenOptions};
+    use std::path::{Path, PathBuf};
+    use rustix::fs::{flock, FlockOperation};
+
+    pub struct InstanceGuard { _file: File }  // Drop closes the fd -> releases the flock
+
+    pub fn lock_path(xdg_runtime_dir: Option<&str>, data_root: Option<&str>) -> PathBuf {
+        if let Some(x) = xdg_runtime_dir.filter(|s| !s.is_empty()) {
+            return PathBuf::from(x).join("ws-scrcpy-web.lock");
+        }
+        PathBuf::from(data_root.unwrap_or("/tmp")).join("control").join("instance.lock")
+    }
+
+    pub fn acquire_at(path: &Path) -> Result<Option<InstanceGuard>> {
+        if let Some(parent) = path.parent() { let _ = std::fs::create_dir_all(parent); }
+        let file = OpenOptions::new().create(true).write(true).open(path)?;
+        match flock(&file, FlockOperation::NonBlockingLockExclusive) {
+            Ok(()) => Ok(Some(InstanceGuard { _file: file })),
+            Err(e) if e == rustix::io::Errno::WOULDBLOCK => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    pub fn acquire(_name: &str) -> Result<Option<InstanceGuard>> {
+        let xdg = std::env::var("XDG_RUNTIME_DIR").ok();
+        let dr = common::config::data_root_from_env().map(|p| p.to_string_lossy().into_owned());
+        acquire_at(&lock_path(xdg.as_deref(), dr.as_deref()))
+    }
+
+    pub fn is_elevated() -> bool { false }
+}
+```
+`main()` already calls `single_instance::acquire(&current_mutex_name())` and exits 0 on `None` (per the module contract) — no `main()` change; the Linux path now actually guards. Verify `main()` acquires the guard on the normal-launch path (after the sub-command dispatches) before reading the source.
+
+- [ ] **Step 4: Run, verify pass + clippy** — `cross test … single_instance` PASS; `cross clippy … -- -D warnings` clean.
+
+- [ ] **Step 5: Commit**
+```bash
+git -C "C:/Users/jscha/source/repos/ws-scrcpy-web" add launcher/src/single_instance.rs launcher/Cargo.toml
+git -C "C:/Users/jscha/source/repos/ws-scrcpy-web" commit -m "feat(linux): per-user single-instance guard via flock on XDG_RUNTIME_DIR"
+```
+
+### Task B5: Defer to an active system service (menu no-op in service mode)
+
+When a system-scope service is active, a local launch (e.g. the Start-Menu item) must NOT spawn a second server (PortPicker would bind `webPort+1` → a confusing duplicate). Detect the active service and open the browser at its URL, then exit. Detection (user context, no privilege): read the system-service config at `/var/opt/ws-scrcpy-web/config.json`; if `installMode == "system-service"`, TCP-probe `127.0.0.1:<webPort>`; if live, defer.
+
+**Files:** Modify `launcher/src/linux_service.rs` (pure decision fn) + `launcher/src/main.rs` (wire FIRST in the Linux launch path, before the Task B2 bootstrap seam).
+
+- [ ] **Step 1: Write the failing test** (pure fn):
+
+```rust
+#[test]
+fn defer_to_service_only_when_system_service_and_port_live() {
+    assert_eq!(service_defer_url(Some("system-service"), Some(8000), true),
+               Some("http://localhost:8000".to_string()));
+    assert_eq!(service_defer_url(Some("system-service"), Some(8000), false), None); // installed but down
+    assert_eq!(service_defer_url(Some("user"), Some(8000), true), None);            // not service mode
+    assert_eq!(service_defer_url(None, None, true), None);
+}
+```
+
+- [ ] **Step 2: Run, verify fail** — `cross test … linux_service` → FAIL.
+
+- [ ] **Step 3: Implement** — pure fn in `linux_service.rs`:
+
+```rust
+/// The service URL to open (then exit) when an ACTIVE system service owns the
+/// app, so a local launch doesn't spawn a duplicate. `install_mode` + `web_port`
+/// come from the /var/opt system-service config; `port_live` is a TCP-probe
+/// result the caller supplies. Pure.
+pub fn service_defer_url(install_mode: Option<&str>, web_port: Option<u16>, port_live: bool) -> Option<String> {
+    match (install_mode, web_port) {
+        (Some("system-service"), Some(port)) if port_live => Some(format!("http://localhost:{port}")),
+        _ => None,
+    }
+}
+```
+Wire in `main.rs` (Linux), BEFORE the `bootstrap_target` check: load `common::config::AppConfig::load(Path::new("/var/opt/ws-scrcpy-web"))`, TCP-probe `127.0.0.1:<web_port>` (≈200ms connect timeout), and if `service_defer_url(...)` is `Some(url)`, best-effort `xdg-open <url>` (absolute path via the existing tool resolver) + `std::process::exit(0)`.
+
+- [ ] **Step 4: Run, verify pass** — `cross test … linux_service` PASS.
+
+- [ ] **Step 5: Commit**
+```bash
+git -C "C:/Users/jscha/source/repos/ws-scrcpy-web" add launcher/src/linux_service.rs launcher/src/main.rs
+git -C "C:/Users/jscha/source/repos/ws-scrcpy-web" commit -m "feat(linux): local launch defers to an active system service (no duplicate instance)"
+```
+
 ---
 
 ## Group C — Service-install gating + first-run modal (frontend)
@@ -390,6 +521,9 @@ Not unit-coverable; run on the Hyper-V Fedora VM after the unit work is green:
 - Fresh AppImage, first run → **system-wide install modal**; **install** → app relocates to `/opt`, `.desktop` appears, relaunches from `/opt`, `ls -Z /opt/ws-scrcpy-web` → `bin_t`; **not now** → runs in place, marker written, **no re-prompt** next launch.
 - System-scope service install **gated** until machine-wide install is done (greyed + modal); after machine-wide install, the system service installs, state lands in **`/var/opt/ws-scrcpy-web`** (`ls -Z` → `var_lib_t`), config persists across reboot, **zero AVC**.
 - Uninstall the system service → `semanage fcontext -l | grep ws-scrcpy-web` is **empty** (both rules gone — fix (a)); `/opt` + `/var/opt` removed.
+- **Multi-user launch:** a SECOND user logs in → ws-scrcpy-web is in their application menu → launching it runs the shared `/opt` binary **under that user's login** (their own `~/.local/share/WsScrcpyWeb` data + deps), independent of the installer.
+- **No same-user double-launch:** with the app already running for a user (from `/opt` OR home), clicking the menu item again is a no-op (`flock` held); a *different* user can still launch their own.
+- **Service-mode menu = no-op:** with the system service active, the menu item opens the browser at the service URL and spawns **no** second server (PortPicker does not bind `webPort+1`).
 
 ---
 
