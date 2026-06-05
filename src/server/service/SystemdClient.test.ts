@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { SystemdClient, renderUnitFile, STAGED_SYSTEM_DIR, buildSystemInstallScript, systemctlArgv, buildServiceUnitEnv, buildMachineWideInstallScript } from './SystemdClient';
+import { SystemdClient, renderUnitFile, STAGED_SYSTEM_DIR, buildSystemInstallScript, systemctlArgv, buildServiceUnitEnv, buildMachineWideInstallScript, buildSystemMigrationScript, buildSystemSeedConfig } from './SystemdClient';
 
 describe('system-scope staging', () => {
     const baseOpts = {
@@ -194,5 +194,72 @@ describe('buildMachineWideInstallScript', () => {
         expect(s).toContain('Exec=/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage');     // every user launches the shared /opt binary
         expect(s).not.toContain('dependencies');   // binary only — deps stay per-user ~/.local
         expect(s).not.toContain('systemctl');      // no service install here
+    });
+});
+
+describe('buildSystemMigrationScript', () => {
+    const args = {
+        seedConfigJson: JSON.stringify(buildSystemSeedConfig(8000)),
+        unitTmpPath: '/tmp/WsScrcpyWeb.service.tmp',
+        unitPath: '/etc/systemd/system/WsScrcpyWeb.service',
+        name: 'WsScrcpyWeb',
+    };
+
+    it('old-cleanup: stops + disables + reset-failed the unit, rm -rf the legacy /opt/.../data, deletes the legacy fcontext rule', () => {
+        const script = buildSystemMigrationScript(args);
+        expect(script).toContain('systemctl stop WsScrcpyWeb.service');
+        expect(script).toContain('systemctl disable WsScrcpyWeb.service');
+        expect(script).toContain('systemctl reset-failed WsScrcpyWeb.service');
+        expect(script).toContain('rm -rf /opt/ws-scrcpy-web/data');
+        expect(script).toContain("semanage fcontext -d '/opt/ws-scrcpy-web/data(/.*)?'");
+    });
+
+    it('new-setup: mkdir /var/opt, seeds config.json there, adds var_lib_t + restorecon, installs the unit, daemon-reload, enable --now', () => {
+        const script = buildSystemMigrationScript(args);
+        expect(script).toContain('mkdir -p /var/opt/ws-scrcpy-web');
+        expect(script).toContain('/var/opt/ws-scrcpy-web/config.json');
+        expect(script).toContain("semanage fcontext -a -t var_lib_t '/var/opt/ws-scrcpy-web(/.*)?'");
+        expect(script).toContain('restorecon -Rv "/var/opt/ws-scrcpy-web"');
+        expect(script).toContain('cp "/tmp/WsScrcpyWeb.service.tmp" "/etc/systemd/system/WsScrcpyWeb.service"');
+        expect(script).toContain('systemctl daemon-reload');
+        expect(script).toContain('systemctl enable --now WsScrcpyWeb.service');
+    });
+
+    it('carries the seeded webPort into /var/opt/.../config.json', () => {
+        const script = buildSystemMigrationScript(args);
+        expect(script).toContain('"webPort":8000');
+        // the config.json write lands BEFORE the relabel so restorecon labels it var_lib_t
+        expect(script.indexOf('config.json')).toBeLessThan(script.indexOf('restorecon -Rv'));
+    });
+
+    it('does NOT re-copy the AppImage or deps — the binary stays in /opt', () => {
+        const script = buildSystemMigrationScript(args);
+        // no cp of the binary / deps — migration only relocates state + unit
+        expect(script).not.toContain('WsScrcpyWeb.AppImage');
+        expect(script).not.toContain('cp -a');
+    });
+
+    it('old cleanup runs before the new-layout setup', () => {
+        const script = buildSystemMigrationScript(args);
+        expect(script.indexOf('rm -rf /opt/ws-scrcpy-web/data'))
+            .toBeLessThan(script.indexOf('mkdir -p /var/opt/ws-scrcpy-web'));
+        expect(script.indexOf('mkdir -p /var/opt/ws-scrcpy-web'))
+            .toBeLessThan(script.indexOf('enable --now'));
+    });
+
+    it('cleanup steps are best-effort (|| true) so a stopped/non-SELinux host still migrates', () => {
+        const script = buildSystemMigrationScript(args);
+        // stop/disable/reset-failed + the legacy fcontext delete must not abort the && chain
+        expect(script).toContain('|| true');
+        // the unit install still happens after the best-effort SELinux relabel
+        expect(script.indexOf('cp "/tmp/WsScrcpyWeb.service.tmp"'))
+            .toBeGreaterThan(script.indexOf('restorecon -Rv'));
+    });
+
+    it('uses absolute tool paths (no bare names)', () => {
+        const script = buildSystemMigrationScript(args, (t) => `/usr/bin/${t}`, (t) => `/usr/sbin/${t}`);
+        expect(script).toContain('/usr/bin/systemctl daemon-reload');
+        expect(script).toContain('/usr/sbin/restorecon -Rv');
+        expect(script).toContain('/usr/sbin/semanage fcontext -d');
     });
 });

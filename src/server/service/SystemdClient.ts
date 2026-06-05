@@ -389,6 +389,93 @@ export function buildMachineWideInstallScript(
     ].join(' && ');
 }
 
+/** Legacy beta.40 system-scope state dir (pre-/var/opt). Migrated away by
+ *  buildSystemMigrationScript — `rm -rf`'d and its fcontext rule deleted. */
+export const LEGACY_SYSTEM_DATA_DIR = `${STAGED_SYSTEM_DIR}/data`;
+
+/**
+ * Build the privileged shell script for a one-shot system-scope MIGRATION from
+ * the legacy beta.40 `/opt/ws-scrcpy-web/data` state layout to the FHS-correct
+ * `/var/opt/ws-scrcpy-web` layout. Runs under a single pkexec prompt.
+ *
+ * The /opt AppImage + deps are ALREADY staged and STAY PUT — this script only
+ * relocates the writable state dir, fixes the SELinux fcontext rules, and
+ * reinstalls the unit with `DATA_ROOT=/var/opt`. It does NOT re-copy the
+ * AppImage or deps (avoids the out-of-process uninstall→reinstall coordination
+ * problem: nothing is torn down except the unit + the old state dir).
+ *
+ * Two phases, `&&`-joined under one prompt:
+ *   1. OLD cleanup — best-effort (`|| true`): a stopped/disabled/not-failed unit
+ *      or a non-SELinux host must NOT abort the migration. stop + disable +
+ *      reset-failed the unit; `rm -rf` the legacy `/opt/.../data` state; delete
+ *      the legacy `var_lib_t` fcontext rule on `/opt/.../data`.
+ *   2. NEW setup — authoritative (a failure aborts so we never `enable` a broken
+ *      unit): mkdir the `/var/opt` state dir (+ logs/ for the unit's append:),
+ *      seed `config.json` there (carries webPort + installMode=system-service),
+ *      add the `var_lib_t` fcontext rule + restorecon (best-effort SELinux
+ *      subshell with a chcon transient fallback, mirroring
+ *      buildSystemInstallScript), install the new unit, daemon-reload, enable.
+ *
+ * `binTool`/`sbinTool` are injectable for testing; production resolves absolute
+ * paths via systemTools (Local-Dependencies-Only — no bare-name $PATH lookup).
+ */
+export function buildSystemMigrationScript(
+    args: {
+        /** Pre-stringified seed config (JSON) written inline to the new config.json. */
+        seedConfigJson: string;
+        /** Tmp path holding the freshly-rendered new (DATA_ROOT=/var/opt) unit body. */
+        unitTmpPath: string;
+        /** Destination unit path, e.g. /etc/systemd/system/WsScrcpyWeb.service. */
+        unitPath: string;
+        /** Canonical service name (e.g. 'WsScrcpyWeb'). */
+        name: string;
+    },
+    binTool: (t: string) => string = (t) => resolveSystemTool(t),
+    sbinTool: (t: string) => string = (t) => resolveSystemTool(t),
+): string {
+    const mkdir = binTool('mkdir');
+    const cp = binTool('cp');
+    const rm = binTool('rm');
+    const printf = binTool('printf');
+    const chcon = binTool('chcon');
+    const systemctl = binTool('systemctl');
+    const semanage = sbinTool('semanage');
+    const restorecon = sbinTool('restorecon');
+    const stateLogs = `${SYSTEM_STATE_DIR}/logs`;
+    return [
+        // ── 1. OLD cleanup (best-effort) ──────────────────────────────────────
+        // stop/disable/reset-failed may each fail benignly (unit not loaded /
+        // already disabled / not failed); `|| true` keeps the `&&` chain alive so
+        // the migration still proceeds to the new-layout setup. POSIX sh gives
+        // `&&`/`||` EQUAL left-assoc precedence, so `A || true && B` => `((A||true)&&B)`.
+        `${systemctl} stop ${args.name}.service || true`,
+        `${systemctl} disable ${args.name}.service || true`,
+        `${systemctl} reset-failed ${args.name}.service || true`,
+        // rm -rf is idempotent (exit 0 even when absent); drop the legacy state tree.
+        `${rm} -rf ${LEGACY_SYSTEM_DATA_DIR}`,
+        // delete the legacy var_lib_t rule on /opt/.../data — best-effort subshell
+        // (rule may be absent / host non-SELinux), isolated so it can't break the chain.
+        `( ${semanage} fcontext -d '${LEGACY_SYSTEM_DATA_DIR}(/.*)?' || true )`,
+        // ── 2. NEW setup (authoritative) ──────────────────────────────────────
+        // create the FHS state dir (+ logs/ so the unit's StandardOutput append:
+        // target's parent exists before enable --now starts the service).
+        `${mkdir} -p ${stateLogs}`,
+        // seed config.json inline (no tmp-seed file → atomic, and the carried
+        // webPort is auditable in the script). Written BEFORE the relabel so
+        // restorecon labels it var_lib_t.
+        `${printf} '%s' '${args.seedConfigJson}' > ${SYSTEM_STATE_DIR}/config.json`,
+        // label the state dir var_lib_t + restorecon. Best-effort subshell with a
+        // chcon transient fallback + trailing `|| true` so a non-SELinux host still
+        // proceeds to install the unit — mirrors buildSystemInstallScript.
+        `( ( ${semanage} fcontext -a -t var_lib_t '${SYSTEM_STATE_DIR}(/.*)?' && ${restorecon} -Rv "${SYSTEM_STATE_DIR}" ) || ${chcon} -t var_lib_t "${SYSTEM_STATE_DIR}" || true )`,
+        // reinstall the unit (ExecStart still points at the in-place /opt AppImage;
+        // env now carries DATA_ROOT=/var/opt) + reload + enable.
+        `${cp} "${args.unitTmpPath}" "${args.unitPath}"`,
+        `${systemctl} daemon-reload`,
+        `${systemctl} enable --now ${args.name}.service`,
+    ].join(' && ');
+}
+
 /**
  * Resolve the absolute path of the tray helper binary.
  *
