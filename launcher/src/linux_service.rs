@@ -97,6 +97,18 @@ pub fn parse_args(args: &[String]) -> Option<(Scope, String)> {
     Some((scope, unit))
 }
 
+/// Pure bootstrapper decision. `opt_exists` = the shared /opt AppImage is present;
+/// `appimage_env` = $APPIMAGE (the file we were launched from). Returns the /opt
+/// binary to re-exec, or None to continue the in-place launch. No version-compare
+/// (that is a later phase).
+pub fn bootstrap_target(opt_exists: bool, appimage_env: Option<&str>) -> Option<PathBuf> {
+    let opt = PathBuf::from("/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage");
+    match appimage_env {
+        Some(p) if opt_exists && p != opt.to_string_lossy() => Some(opt),
+        _ => None,
+    }
+}
+
 /// User scope relaunches the home AppImage (from the install-time marker) into
 /// local mode. System scope never auto-relaunches (headless-dominant; the admin
 /// re-launches their own AppImage). Returns the path to relaunch, or None.
@@ -257,5 +269,14 @@ mod tests {
         assert_eq!(relaunch_target(Scope::System, Some("/home/u/Apps/App.AppImage".into())), None);
         // user scope, missing marker -> None
         assert_eq!(relaunch_target(Scope::User, None), None);
+    }
+
+    #[test]
+    fn bootstrap_target_execs_opt_when_present_and_not_self() {
+        let opt = "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage";
+        assert_eq!(bootstrap_target(true, Some("/home/u/App.AppImage")), Some(PathBuf::from(opt)));
+        assert_eq!(bootstrap_target(true, Some(opt)), None);              // we ARE /opt -> don't re-exec self
+        assert_eq!(bootstrap_target(false, Some("/home/u/App.AppImage")), None); // no /opt -> run in place
+        assert_eq!(bootstrap_target(true, None), None);                  // from-source (no $APPIMAGE) -> None
     }
 }

@@ -102,6 +102,22 @@ fn main() {
         std::process::exit(code);
     }
 
+    // Bootstrapper: if the shared machine-wide /opt binary exists and we are a
+    // home AppImage (not /opt itself), re-exec the /opt copy and exit. MUST run
+    // before single_instance::acquire so the /opt child — not this wrapper — owns
+    // the per-user lock.
+    #[cfg(target_os = "linux")]
+    {
+        let opt = std::path::Path::new("/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage");
+        let appimage = std::env::var("APPIMAGE").ok();
+        if let Some(target) = linux_service::bootstrap_target(opt.exists(), appimage.as_deref()) {
+            log::info(&format!("bootstrap: exec'ing machine-wide /opt binary {target:?}"));
+            let status = std::process::Command::new(&target).status();
+            let code = status.ok().and_then(|s| s.code()).unwrap_or(0);
+            std::process::exit(code);
+        }
+    }
+
     // Cross-session user-launcher spawn dispatch. Invoked from post-stop.bat
     // after `servy-cli uninstall` completes, to drop a fresh user-session
     // launcher so the user lands on local-mode UI post-uninstall. Wraps
