@@ -139,6 +139,18 @@ export function stopServerButtonState(resp: ScopeRadioInputs): {
 }
 
 export interface SystemServiceInstallGate { enabled: boolean; note: string | null; }
+/**
+ * Derive whether the migration reinstall notice should be shown. Pure (no DOM)
+ * so it is unit-testable; mirrors systemServiceInstallGate's shape. When true,
+ * the caller should render the notice text and a [reinstall now] action button
+ * that POSTs /api/service/migrate-system.
+ */
+export function migrationNotice(input: { serviceMigrationNeeded?: boolean }): { show: boolean; text: string } {
+    return input.serviceMigrationNeeded
+        ? { show: true, text: 'this service uses the old layout. reinstall it to update to the new layout.' }
+        : { show: false, text: '' };
+}
+
 /** System-scope service install requires a machine-wide /opt install first
  *  (the root service execs the /opt binary; it can't exist without it). */
 export function systemServiceInstallGate(input: { machineWideInstalled: boolean }): SystemServiceInstallGate {

@@ -158,7 +158,7 @@ export class ServiceApi {
         //     users" modal once the user has declined it (persistent marker).
         // Both go through the injected existsCheck so the API stays unit-testable.
         // Spread conditionally (like scope/diskWebPort) so they're Linux-only.
-        let machineWide: { machineWideInstalled: boolean; systemInstallDeclined: boolean; serviceMigrationNeeded: boolean } | null = null;
+        let machineWide: { machineWideInstalled: boolean; systemInstallDeclined: boolean; serviceMigrationNeeded: boolean; optUpdateAvailable: boolean } | null = null;
         if (result.platform === 'linux') {
             const cfg = Config.getInstance();
             const dataRoot = cfg.dataRoot ?? path.dirname(cfg.dependenciesPath);
@@ -168,6 +168,7 @@ export class ServiceApi {
                 serviceMigrationNeeded: systemServiceNeedsMigration({
                     oldDataDirExists: this.existsCheck('/opt/ws-scrcpy-web/data'),
                 }),
+                optUpdateAvailable: process.env['WS_SCRCPY_OPT_UPDATE_AVAILABLE'] === '1',
             };
         }
         const body: ServiceStatusResponse = {

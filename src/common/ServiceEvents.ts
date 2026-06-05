@@ -52,6 +52,8 @@ export interface ServiceStatusResponse {
     systemInstallDeclined?: boolean;
     /** Linux: a legacy /opt/.../data system install needs migration to /var/opt. */
     serviceMigrationNeeded?: boolean;
+    /** Linux: launcher detected a newer home AppImage than /opt; offer the system-wide update. */
+    optUpdateAvailable?: boolean;
 }
 
 /** Success response shape for /api/service/install and /api/service/uninstall. */

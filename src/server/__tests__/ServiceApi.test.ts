@@ -1475,6 +1475,85 @@ describe('ServiceApi', () => {
         expect(body.serviceMigrationNeeded).toBeUndefined();
     });
 
+    // ── optUpdateAvailable — launcher env flag (P3c-2) ────────────────────────
+
+    it('GET /status on linux sets optUpdateAvailable=true when WS_SCRCPY_OPT_UPDATE_AVAILABLE=1', async () => {
+        const savedEnvVar = process.env['WS_SCRCPY_OPT_UPDATE_AVAILABLE'];
+        process.env['WS_SCRCPY_OPT_UPDATE_AVAILABLE'] = '1';
+        try {
+            const client = fakeClient({ status: vi.fn(async () => 'running' as const) });
+            const factoryResult: ServiceClientFactoryResult = {
+                client,
+                supported: true,
+                platform: 'linux',
+            };
+            const api = new ServiceApi(() => factoryResult, () => 'user', () => false);
+            const { req, res } = makeReqRes('/api/service/status');
+            await api.handle(req, res);
+            const body = JSON.parse((res as any).getBody());
+            expect(body.optUpdateAvailable).toBe(true);
+        } finally {
+            if (savedEnvVar === undefined) delete process.env['WS_SCRCPY_OPT_UPDATE_AVAILABLE'];
+            else process.env['WS_SCRCPY_OPT_UPDATE_AVAILABLE'] = savedEnvVar;
+        }
+    });
+
+    it('GET /status on linux sets optUpdateAvailable=false when WS_SCRCPY_OPT_UPDATE_AVAILABLE is unset', async () => {
+        const savedEnvVar = process.env['WS_SCRCPY_OPT_UPDATE_AVAILABLE'];
+        delete process.env['WS_SCRCPY_OPT_UPDATE_AVAILABLE'];
+        try {
+            const client = fakeClient({ status: vi.fn(async () => 'running' as const) });
+            const factoryResult: ServiceClientFactoryResult = {
+                client,
+                supported: true,
+                platform: 'linux',
+            };
+            const api = new ServiceApi(() => factoryResult, () => 'user', () => false);
+            const { req, res } = makeReqRes('/api/service/status');
+            await api.handle(req, res);
+            const body = JSON.parse((res as any).getBody());
+            expect(body.optUpdateAvailable).toBe(false);
+        } finally {
+            if (savedEnvVar === undefined) delete process.env['WS_SCRCPY_OPT_UPDATE_AVAILABLE'];
+            else process.env['WS_SCRCPY_OPT_UPDATE_AVAILABLE'] = savedEnvVar;
+        }
+    });
+
+    it('GET /status on linux sets optUpdateAvailable=false when WS_SCRCPY_OPT_UPDATE_AVAILABLE=0', async () => {
+        const savedEnvVar = process.env['WS_SCRCPY_OPT_UPDATE_AVAILABLE'];
+        process.env['WS_SCRCPY_OPT_UPDATE_AVAILABLE'] = '0';
+        try {
+            const client = fakeClient({ status: vi.fn(async () => 'running' as const) });
+            const factoryResult: ServiceClientFactoryResult = {
+                client,
+                supported: true,
+                platform: 'linux',
+            };
+            const api = new ServiceApi(() => factoryResult, () => 'user', () => false);
+            const { req, res } = makeReqRes('/api/service/status');
+            await api.handle(req, res);
+            const body = JSON.parse((res as any).getBody());
+            expect(body.optUpdateAvailable).toBe(false);
+        } finally {
+            if (savedEnvVar === undefined) delete process.env['WS_SCRCPY_OPT_UPDATE_AVAILABLE'];
+            else process.env['WS_SCRCPY_OPT_UPDATE_AVAILABLE'] = savedEnvVar;
+        }
+    });
+
+    it('GET /status on win32 omits optUpdateAvailable (linux-only field)', async () => {
+        const client = fakeClient({ status: vi.fn(async () => 'running' as const) });
+        const factoryResult: ServiceClientFactoryResult = {
+            client,
+            supported: true,
+            platform: 'win32',
+        };
+        const api = new ServiceApi(() => factoryResult, () => 'user', () => true);
+        const { req, res } = makeReqRes('/api/service/status');
+        await api.handle(req, res);
+        const body = JSON.parse((res as any).getBody());
+        expect(body.optUpdateAvailable).toBeUndefined();
+    });
+
     // ── reason discriminator + no-direct-uninstall guard (v0.1.25) ──────────
 
     it('service+LocalSystem uninstall writes marker and returns shutting-down (Phase 4 replaces handoff)', async () => {

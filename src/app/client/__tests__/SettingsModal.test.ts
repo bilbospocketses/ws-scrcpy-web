@@ -11,6 +11,7 @@ import {
     buildServiceInfoRow,
     systemServiceInstallGate,
     applySystemInstallGate,
+    migrationNotice,
 } from '../SettingsModal';
 
 describe('uninstallFollowupMessage', () => {
@@ -187,5 +188,19 @@ describe('buildServiceInfoRow', () => {
         expect(row.className).toContain('settings-status');
         expect(row.className).not.toContain('settings-status-error');
         expect(row.querySelector('button')).toBeNull();
+    });
+});
+
+describe('migrationNotice', () => {
+    it('show=true with reinstall text when serviceMigrationNeeded=true', () => {
+        const result = migrationNotice({ serviceMigrationNeeded: true });
+        expect(result.show).toBe(true);
+        expect(result.text).toMatch(/old layout|reinstall|new layout/i);
+    });
+    it('show=false with empty text when serviceMigrationNeeded=false', () => {
+        expect(migrationNotice({ serviceMigrationNeeded: false })).toEqual({ show: false, text: '' });
+    });
+    it('show=false with empty text when serviceMigrationNeeded is undefined', () => {
+        expect(migrationNotice({})).toEqual({ show: false, text: '' });
     });
 });
