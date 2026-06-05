@@ -1,16 +1,14 @@
-# Auto-merge Dependabot PRs for patch and minor version bumps.
+# Auto-merge Dependabot PRs.
 #
-# Major bumps are left for manual review (framework upgrades, breaking changes).
-# The workflow enables --auto so the actual merge waits for required status checks
-# to pass before landing.
+# Patch/minor version bumps AND security updates (any size) auto-merge once required
+# status checks pass (--auto waits for green). Non-security MAJOR bumps are held with a
+# needs-manual-review label (framework upgrades / breaking changes).
 
 name: Dependabot auto-merge
 on: pull_request
 
-# Workflow-level default: read-only. The auto-merge job narrows UP to the
-# writes it needs. A top-level write token is what TokenPermissionsID
-# (OpenSSF Scorecard / CodeQL) flags high-severity — closes alert #28.
-# Mirrors release.yml (which closed Scorecard alert #16).
+# Top-level read-only; the job narrows UP to the writes it needs. A top-level write
+# token is flagged high-severity by OpenSSF Scorecard (TokenPermissionsID).
 permissions:
   contents: read
 
@@ -20,18 +18,29 @@ jobs:
     if: github.actor == 'dependabot[bot]'
     permissions:
       contents: write        # gh pr merge --squash writes the default branch
-      pull-requests: write   # enable auto-merge on the PR
+      pull-requests: write   # enable auto-merge + label the PR
     steps:
       - name: Fetch Dependabot metadata
         id: metadata
         uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
         with:
           github-token: "${{ secrets.GITHUB_TOKEN }}"
-      - name: Auto-merge patch and minor updates
+      - name: Auto-merge patch/minor, or any security update
         if: >-
           steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
-          steps.metadata.outputs.update-type == 'version-update:semver-minor'
+          steps.metadata.outputs.update-type == 'version-update:semver-minor' ||
+          steps.metadata.outputs.ghsa-id != ''
         run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{github.event.pull_request.html_url}}
+          GH_TOKEN: ${{secrets.GITHUB_TOKEN}}
+      - name: Hold non-security major bump for manual review
+        if: >-
+          steps.metadata.outputs.update-type == 'version-update:semver-major' &&
+          steps.metadata.outputs.ghsa-id == ''
+        run: |
+          gh pr edit "$PR_URL" --add-label "needs-manual-review"
+          gh pr comment "$PR_URL" --body "Non-security major bump - auto-merge skipped; review and merge manually."
         env:
           PR_URL: ${{github.event.pull_request.html_url}}
           GH_TOKEN: ${{secrets.GITHUB_TOKEN}}
