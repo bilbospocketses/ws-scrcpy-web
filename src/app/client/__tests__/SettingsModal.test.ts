@@ -9,6 +9,7 @@ import {
     lockScopeRadioControl,
     stopServerButtonState,
     buildServiceInfoRow,
+    systemServiceInstallGate,
 } from '../SettingsModal';
 
 describe('uninstallFollowupMessage', () => {
@@ -134,6 +135,18 @@ describe('stopServerButtonState', () => {
         const s = stopServerButtonState({ status: 'running', scope: 'system' });
         expect(s.disabled).toBe(true);
         expect(s.note).toMatch(/service/i);
+    });
+});
+
+describe('systemServiceInstallGate', () => {
+    it('disables system service install with explainer when not machine-wide', () => {
+        expect(systemServiceInstallGate({ machineWideInstalled: false })).toEqual({
+            enabled: false,
+            note: 'system service install requires installing system-wide for all users first.',
+        });
+    });
+    it('enables it (no note) once machine-wide installed', () => {
+        expect(systemServiceInstallGate({ machineWideInstalled: true })).toEqual({ enabled: true, note: null });
     });
 });
 

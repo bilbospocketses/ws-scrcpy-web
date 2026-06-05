@@ -138,6 +138,15 @@ export function stopServerButtonState(resp: ScopeRadioInputs): {
         : { disabled: false, note: null };
 }
 
+export interface SystemServiceInstallGate { enabled: boolean; note: string | null; }
+/** System-scope service install requires a machine-wide /opt install first
+ *  (the root service execs the /opt binary; it can't exist without it). */
+export function systemServiceInstallGate(input: { machineWideInstalled: boolean }): SystemServiceInstallGate {
+    return input.machineWideInstalled
+        ? { enabled: true, note: null }
+        : { enabled: false, note: 'system service install requires installing system-wide for all users first.' };
+}
+
 /**
  * Lock a service-scope radio as read-only WITHOUT the `disabled` attribute.
  * Chromium desaturates `accent-color` on :disabled form controls, which made
