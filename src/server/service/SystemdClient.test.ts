@@ -179,7 +179,7 @@ describe('renderUnitFile', () => {
 });
 
 describe('buildMachineWideInstallScript', () => {
-    it('machine-wide install stages just the binary + label + desktop + VERSION', () => {
+    it('machine-wide install stages the binary + label + desktop + VERSION, then deletes the source', () => {
         const s = buildMachineWideInstallScript(
             { sourceAppImage: '/home/u/Downloads/WsScrcpyWeb-linux-beta.AppImage', version: '0.1.31-beta.1' },
             (t) => `/usr/bin/${t}`, (t) => `/usr/sbin/${t}`,
@@ -194,6 +194,7 @@ describe('buildMachineWideInstallScript', () => {
         expect(s).toContain('Exec=/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage');     // every user launches the shared /opt binary
         expect(s).not.toContain('dependencies');   // binary only — deps stay per-user ~/.local
         expect(s).not.toContain('systemctl');      // no service install here
+        expect(s).toContain('rm -f "/home/u/Downloads/WsScrcpyWeb-linux-beta.AppImage"');  // final step: delete the original (true relocate)
     });
 });
 

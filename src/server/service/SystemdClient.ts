@@ -352,7 +352,9 @@ export function buildSystemInstallScript(
  * Build the privileged shell script for a machine-wide install. Runs under a
  * single pkexec prompt. Relocates ONLY the AppImage binary to /opt (no deps,
  * no systemd unit) — deps stay per-user in ~/.local. Writes VERSION, drops a
- * system-wide .desktop entry for all users, and refreshes the menu cache.
+ * system-wide .desktop entry for all users, and refreshes the menu cache. As the
+ * final step it DELETES the original (home) AppImage — a true relocate — so the
+ * user can't end up running a stale home copy alongside the /opt one.
  * `binTool`/`sbinTool` are injectable for testing; production resolves absolute
  * paths via systemTools (Local-Dependencies-Only — no bare-name $PATH lookup).
  */
@@ -370,6 +372,7 @@ export function buildMachineWideInstallScript(
     const semanage = sbinTool('semanage');
     const restorecon = sbinTool('restorecon');
     const updateDesktopDb = binTool('update-desktop-database');
+    const rm = binTool('rm');
     const desktop = [
         '[Desktop Entry]',
         'Type=Application',
@@ -386,6 +389,13 @@ export function buildMachineWideInstallScript(
         `( ( ${semanage} fcontext -a -t bin_t '${STAGED_SYSTEM_DIR}(/.*)?' && ${restorecon} -Rv "${STAGED_SYSTEM_DIR}" ) || ${chcon} -t bin_t "${staged}" || true )`,
         `( ${printf} '${desktop}\\n' > ${SYSTEM_DESKTOP_FILE} || true )`,
         `( ${updateDesktopDb} /usr/share/applications || true )`,
+        // Final step — remove the original (home) AppImage now that the binary
+        // lives in /opt: a true relocate. Runs as root (pkexec), so it can unlink
+        // the user's file; unlinking is safe while the home AppImage is still the
+        // running process (the inode stays alive for the live FUSE mount until it
+        // exits / re-execs to /opt). `|| true` so a failed cleanup never aborts an
+        // otherwise-successful install.
+        `( ${rm} -f "${args.sourceAppImage}" || true )`,
     ].join(' && ');
 }
 

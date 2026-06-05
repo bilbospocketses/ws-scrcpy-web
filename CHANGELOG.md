@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Installing system-wide now removes the original home AppImage.** When you choose "yes, all users", the final step of the machine-wide install deletes the AppImage you launched from (a true relocate), so you don't keep a stale home copy running alongside the `/opt` one. Re-download if you want a fresh local copy.
+
 ## [0.1.30-beta.42] - 2026-06-05
 
 ### Changed
