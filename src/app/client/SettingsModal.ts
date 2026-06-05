@@ -148,6 +148,28 @@ export function systemServiceInstallGate(input: { machineWideInstalled: boolean 
 }
 
 /**
+ * Apply the system-scope install gate to the Linux service-install button and
+ * its note element. When the 'system' scope radio is the selected scope and the
+ * app is NOT yet installed machine-wide (/opt), system-scope service install
+ * can't work, so disable the button and surface the gate note; otherwise the
+ * button is enabled and the note hidden. Pure DOM mutation on the passed
+ * elements (mirrors lockScopeRadioControl) so it is unit-testable; the gate
+ * logic itself lives in the unit-tested systemServiceInstallGate.
+ */
+export function applySystemInstallGate(
+    btn: HTMLButtonElement,
+    note: HTMLElement,
+    systemSelected: boolean,
+    machineWideInstalled: boolean,
+): void {
+    const gate = systemServiceInstallGate({ machineWideInstalled });
+    const blocked = systemSelected && !gate.enabled;
+    btn.disabled = blocked;
+    note.textContent = blocked ? (gate.note ?? '') : '';
+    note.hidden = !blocked;
+}
+
+/**
  * Lock a service-scope radio as read-only WITHOUT the `disabled` attribute.
  * Chromium desaturates `accent-color` on :disabled form controls, which made
  * the selected dot invisible against the muted track (item 42 — the active
@@ -1002,6 +1024,10 @@ export class SettingsModal extends Modal {
         // name). Pre-v0.1.30 the row was only rendered when not installed,
         // leaving no in-UI way to tell which scope was active.
         this.serviceScopeSystemRadio = null;
+        // Captured for the system-scope install gate wired after the button is
+        // built (both radios drive its re-evaluation on toggle).
+        let scopeUserRadio: HTMLInputElement | null = null;
+        let scopeSystemRadio: HTMLInputElement | null = null;
         if (resp.platform === 'linux') {
             // Detection + lock state (pure, unit-tested in scopeRadioState).
             // Locked radios stay ENABLED and are made non-interactive via
@@ -1041,6 +1067,8 @@ export class SettingsModal extends Modal {
             // out when locked so the install handler (unreachable in that state
             // anyway) can't accidentally consume a stale value.
             this.serviceScopeSystemRadio = st.locked ? null : sysRadio;
+            scopeUserRadio = userRadio;
+            scopeSystemRadio = sysRadio;
         }
 
         // One row: label = informational blurb (left column, wraps),
@@ -1065,6 +1093,27 @@ export class SettingsModal extends Modal {
         this.serviceSection.appendChild(
             this.buildRow('installs/uninstalls server service', btn),
         );
+
+        // Linux: gate the system-scope install button on a prior machine-wide
+        // (/opt) install — the root service execs the shared /opt binary, which
+        // must exist first. Only relevant in the not-installed state (the
+        // install button); when a service is installed the button is uninstall
+        // and the radios are locked. Re-evaluated whenever the scope radio
+        // toggles. Gate logic is the unit-tested applySystemInstallGate.
+        if (status === 'not-installed' && resp.platform === 'linux' && scopeSystemRadio) {
+            const systemRadio = scopeSystemRadio;
+            const machineWideInstalled = resp.machineWideInstalled ?? false;
+            const gateNote = document.createElement('p');
+            gateNote.className = 'settings-status';
+            gateNote.style.gridColumn = '1 / -1';
+            gateNote.hidden = true;
+            this.serviceSection.appendChild(gateNote);
+            const applyGate = (): void =>
+                applySystemInstallGate(btn, gateNote, systemRadio.checked, machineWideInstalled);
+            systemRadio.addEventListener('change', applyGate);
+            scopeUserRadio?.addEventListener('change', applyGate);
+            applyGate();
+        }
     }
 
     private renderServiceError(msg: string, onRetry: () => void): void {

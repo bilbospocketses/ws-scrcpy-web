@@ -7,6 +7,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ServiceApi } from '../api/ServiceApi';
 import { Config } from '../Config';
 import { EnvName } from '../EnvName';
+import {
+    DECLINE_MARKER_NAME,
+    STAGED_SYSTEM_APPIMAGE,
+    STAGED_SYSTEM_DIR,
+} from '../service/SystemdClient';
 import type {
     ServiceClient,
     ServiceClientFactoryResult,
@@ -237,6 +242,72 @@ describe('ServiceApi', () => {
         const body = JSON.parse((res as any).getBody());
         expect(body.scope).toBe('user');
         expect(client.getInstalledScope).toHaveBeenCalledWith('WsScrcpyWeb');
+    });
+
+    it('GET /status on linux reports machineWideInstalled + systemInstallDeclined from existsCheck', async () => {
+        // The frontend reads these two flags off /api/service/status to (a) gate
+        // the system-scope service-install button (machineWideInstalled) and (b)
+        // decide whether to show the first-run machine-wide-install modal
+        // (systemInstallDeclined). Both derive from the injected existsCheck so
+        // the API stays testable without touching the real filesystem.
+        const cfg = Config.getInstance();
+        const dataRoot = cfg.dataRoot ?? path.dirname(cfg.dependenciesPath);
+        const optAppImage = `${STAGED_SYSTEM_DIR}/${STAGED_SYSTEM_APPIMAGE}`;
+        const declineMarker = path.join(dataRoot, 'control', DECLINE_MARKER_NAME);
+        // /opt AppImage present, decline marker absent.
+        const existsCheck = vi.fn((p: string) => p === optAppImage);
+
+        const client = fakeClient({ status: vi.fn(async () => 'running' as const) });
+        const factoryResult: ServiceClientFactoryResult = {
+            client,
+            supported: true,
+            platform: 'linux',
+        };
+        const api = new ServiceApi(() => factoryResult, () => 'user', existsCheck);
+        const { req, res } = makeReqRes('/api/service/status');
+        await api.handle(req, res);
+        const body = JSON.parse((res as any).getBody());
+        expect(body.machineWideInstalled).toBe(true);
+        expect(body.systemInstallDeclined).toBe(false);
+        // Confirms the two paths the impl checks (so a path-shape regression fails here).
+        expect(existsCheck).toHaveBeenCalledWith(optAppImage);
+        expect(existsCheck).toHaveBeenCalledWith(declineMarker);
+    });
+
+    it('GET /status on linux reflects the inverse existsCheck (not machine-wide, declined)', async () => {
+        const cfg = Config.getInstance();
+        const dataRoot = cfg.dataRoot ?? path.dirname(cfg.dependenciesPath);
+        const declineMarker = path.join(dataRoot, 'control', DECLINE_MARKER_NAME);
+        // /opt AppImage absent, decline marker present.
+        const existsCheck = (p: string) => p === declineMarker;
+
+        const client = fakeClient({ status: vi.fn(async () => 'running' as const) });
+        const factoryResult: ServiceClientFactoryResult = {
+            client,
+            supported: true,
+            platform: 'linux',
+        };
+        const api = new ServiceApi(() => factoryResult, () => 'user', existsCheck);
+        const { req, res } = makeReqRes('/api/service/status');
+        await api.handle(req, res);
+        const body = JSON.parse((res as any).getBody());
+        expect(body.machineWideInstalled).toBe(false);
+        expect(body.systemInstallDeclined).toBe(true);
+    });
+
+    it('GET /status on win32 omits machineWideInstalled + systemInstallDeclined (linux-only fields)', async () => {
+        const client = fakeClient({ status: vi.fn(async () => 'running' as const) });
+        const factoryResult: ServiceClientFactoryResult = {
+            client,
+            supported: true,
+            platform: 'win32',
+        };
+        const api = new ServiceApi(() => factoryResult, () => 'user', () => true);
+        const { req, res } = makeReqRes('/api/service/status');
+        await api.handle(req, res);
+        const body = JSON.parse((res as any).getBody());
+        expect(body.machineWideInstalled).toBeUndefined();
+        expect(body.systemInstallDeclined).toBeUndefined();
     });
 
     it('POST /install returns 501 with unsupportedReason on unsupported platforms', async () => {

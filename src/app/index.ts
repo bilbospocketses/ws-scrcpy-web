@@ -14,6 +14,7 @@ import { createUpdateButton } from './client/UpdateButton';
 import type { Tool } from './client/Tool';
 import { WelcomeModal } from './client/WelcomeModal';
 import type { AppConfigEnvelope } from '../common/ConfigEvents';
+import type { ServiceStatusResponse } from '../common/ServiceEvents';
 import { StreamClientScrcpy } from './googDevice/client/StreamClientScrcpy';
 
 function isResumingUninstall(): boolean {
@@ -129,6 +130,62 @@ function maybeShowWelcomeModal(): void {
         });
 }
 
+/**
+ * First-run entry point. On Linux, ahead of the local WelcomeModal, offer to
+ * install the app to /opt for all users when (a) it isn't already installed
+ * machine-wide and (b) the user hasn't previously declined — both surfaced via
+ * /api/service/status. Installing reloads the page (the launcher bootstrapper
+ * then execs the /opt binary); declining records the choice server-side and
+ * falls through to the normal first-run flow. Every non-applicable case (not
+ * Linux, already installed, previously declined, or the status endpoint
+ * unreachable) proceeds straight to maybeShowWelcomeModal.
+ */
+function maybeShowFirstRunModal(): void {
+    // Never cover the uninstall-progress overlay (mirrors maybeShowWelcomeModal).
+    if (isResumingUninstall()) return;
+    fetch('/api/service/status')
+        .then((r) => (r.ok ? (r.json() as Promise<ServiceStatusResponse>) : null))
+        .then((status) => {
+            const offerMachineWide =
+                status != null &&
+                status.platform === 'linux' &&
+                status.machineWideInstalled === false &&
+                status.systemInstallDeclined === false;
+            if (!offerMachineWide) {
+                maybeShowWelcomeModal();
+                return;
+            }
+            void import('./client/SystemWideInstallModal').then(({ SystemWideInstallModal }) => {
+                new SystemWideInstallModal({
+                    onInstall: () => {
+                        void fetch('/api/service/install-system-wide', { method: 'POST' })
+                            .then((r) => {
+                                if (r.ok) {
+                                    // Reload so the launcher bootstrapper execs the /opt binary.
+                                    window.location.reload();
+                                } else {
+                                    // Install didn't take (e.g. the admin prompt was
+                                    // dismissed) — continue the normal first-run flow.
+                                    maybeShowWelcomeModal();
+                                }
+                            })
+                            .catch(() => maybeShowWelcomeModal());
+                    },
+                    onDecline: () => {
+                        // Record the decline (server marker) so we don't re-ask, then
+                        // let the normal first-run flow continue.
+                        void fetch('/api/service/decline-system-wide', { method: 'POST' }).catch(() => {});
+                        maybeShowWelcomeModal();
+                    },
+                });
+            });
+        })
+        .catch(() => {
+            // /api/service/status unreachable — fall back to the normal flow.
+            maybeShowWelcomeModal();
+        });
+}
+
 function maybeShowPortChangeModal(
     globallyDismissed: boolean,
     dismissedFor: number | null,
@@ -189,7 +246,7 @@ window.onload = async (): Promise<void> => {
         pageContainer.insertBefore(banner.getElement(), pageContainer.firstChild);
     });
 
-    maybeShowWelcomeModal();
+    maybeShowFirstRunModal();
 
     // v0.1.8 uninstall handoff: if we arrived with
     // ?resume=uninstall-service&token=..., the previous (service)

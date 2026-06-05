@@ -10,6 +10,7 @@ import {
     stopServerButtonState,
     buildServiceInfoRow,
     systemServiceInstallGate,
+    applySystemInstallGate,
 } from '../SettingsModal';
 
 describe('uninstallFollowupMessage', () => {
@@ -147,6 +148,35 @@ describe('systemServiceInstallGate', () => {
     });
     it('enables it (no note) once machine-wide installed', () => {
         expect(systemServiceInstallGate({ machineWideInstalled: true })).toEqual({ enabled: true, note: null });
+    });
+});
+
+describe('applySystemInstallGate', () => {
+    it('disables the install button + shows the gate note when system selected and not machine-wide', () => {
+        const btn = document.createElement('button');
+        const note = document.createElement('p');
+        note.hidden = true;
+        applySystemInstallGate(btn, note, /* systemSelected */ true, /* machineWideInstalled */ false);
+        expect(btn.disabled).toBe(true);
+        expect(note.hidden).toBe(false);
+        expect(note.textContent).toMatch(/system-wide/i);
+    });
+
+    it('enables the button + hides the note when user scope is selected (gate only applies to system)', () => {
+        const btn = document.createElement('button');
+        const note = document.createElement('p');
+        applySystemInstallGate(btn, note, /* systemSelected */ false, /* machineWideInstalled */ false);
+        expect(btn.disabled).toBe(false);
+        expect(note.hidden).toBe(true);
+        expect(note.textContent).toBe('');
+    });
+
+    it('enables the button (no note) when machine-wide is installed even if system is selected', () => {
+        const btn = document.createElement('button');
+        const note = document.createElement('p');
+        applySystemInstallGate(btn, note, /* systemSelected */ true, /* machineWideInstalled */ true);
+        expect(btn.disabled).toBe(false);
+        expect(note.hidden).toBe(true);
     });
 });
 

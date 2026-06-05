@@ -23,7 +23,7 @@ import {
     type ServiceClientFactoryResult,
 } from '../service';
 import { resolveSystemTool } from '../service/systemTools';
-import { STAGED_SYSTEM_DIR, STAGED_SYSTEM_HELPER, buildServiceUnitEnv, buildSystemSeedConfig, buildMachineWideInstallScript, runPkexec, DECLINE_MARKER_NAME } from '../service/SystemdClient';
+import { STAGED_SYSTEM_DIR, STAGED_SYSTEM_APPIMAGE, STAGED_SYSTEM_HELPER, buildServiceUnitEnv, buildSystemSeedConfig, buildMachineWideInstallScript, runPkexec, DECLINE_MARKER_NAME } from '../service/SystemdClient';
 import { getAppVersion } from '../appVersion';
 import { readJsonBody } from './utils';
 
@@ -137,6 +137,22 @@ export class ServiceApi {
         const scope = result.client.getInstalledScope
             ? await result.client.getInstalledScope(WS_SCRCPY_SERVICE_NAME)
             : undefined;
+        // Linux-only machine-wide-install signals the frontend reads off status:
+        //   - machineWideInstalled gates the system-scope service-install button
+        //     (the root service execs the shared /opt binary, which must exist).
+        //   - systemInstallDeclined suppresses the first-run "install for all
+        //     users" modal once the user has declined it (persistent marker).
+        // Both go through the injected existsCheck so the API stays unit-testable.
+        // Spread conditionally (like scope/diskWebPort) so they're Linux-only.
+        let machineWide: { machineWideInstalled: boolean; systemInstallDeclined: boolean } | null = null;
+        if (result.platform === 'linux') {
+            const cfg = Config.getInstance();
+            const dataRoot = cfg.dataRoot ?? path.dirname(cfg.dependenciesPath);
+            machineWide = {
+                machineWideInstalled: this.existsCheck(`${STAGED_SYSTEM_DIR}/${STAGED_SYSTEM_APPIMAGE}`),
+                systemInstallDeclined: this.existsCheck(path.join(dataRoot, 'control', DECLINE_MARKER_NAME)),
+            };
+        }
         const body: ServiceStatusResponse = {
             supported: true,
             platform: result.platform,
@@ -145,6 +161,7 @@ export class ServiceApi {
             ...(scope !== undefined ? { scope } : {}),
             ...(disk.diskWebPort != null ? { diskWebPort: disk.diskWebPort } : {}),
             ...(disk.configMtime != null ? { configMtime: disk.configMtime } : {}),
+            ...(machineWide ?? {}),
         };
         res.writeHead(200);
         res.end(JSON.stringify(body));
