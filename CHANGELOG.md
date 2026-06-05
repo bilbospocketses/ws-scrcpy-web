@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.41] - 2026-06-05
+
 ### Added
 
 - **Linux machine-wide install (`/opt`) — parity with the Windows PerMachine MSI.** ws-scrcpy-web can now install system-wide for all users. On first launch the home AppImage offers to install system-wide; accepting relocates the binary to `/opt/ws-scrcpy-web/` via a single `pkexec` and drops a system-wide `/usr/share/applications` desktop entry, so every user launches it under their own login with their own per-user data. Declining runs the app in place and is remembered (no re-nag) — you re-opt-in only through an explicit "install system-wide" action. The home AppImage doubles as a bootstrapper: when a machine-wide install is present it execs the shared `/opt` binary.
