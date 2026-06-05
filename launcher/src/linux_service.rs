@@ -134,6 +134,22 @@ pub fn active_graphical_uid_from_show(show_output: &str) -> Option<u32> {
     if active && (kind == "x11" || kind == "wayland") { uid } else { None }
 }
 
+/// `systemd-run --uid=<uid> --setenv=HOME=<home> --setenv=WS_SCRCPY_WEB_PORT=<port>
+/// --collect <appimage>` — relaunch the shared /opt binary AS the user, with HOME
+/// (mandatory — else data_root_for_linux panics) and the service's port (so the
+/// browser reconnects). No DISPLAY (it's a server). Pure.
+#[allow(dead_code)] // wired in P2-4 (system-scope relaunch)
+pub fn system_relaunch_command(systemd_run: &str, uid: u32, home: &str, web_port: u16, appimage: &str) -> Vec<String> {
+    vec![
+        systemd_run.to_string(),
+        format!("--uid={uid}"),
+        format!("--setenv=HOME={home}"),
+        format!("--setenv=WS_SCRCPY_WEB_PORT={web_port}"),
+        "--collect".to_string(),
+        appimage.to_string(),
+    ]
+}
+
 /// User scope relaunches the home AppImage (from the install-time marker) into
 /// local mode. System scope never auto-relaunches (headless-dominant; the admin
 /// re-launches their own AppImage). Returns the path to relaunch, or None.
@@ -337,5 +353,14 @@ mod tests {
         assert_eq!(active_graphical_uid_from_show("Active=yes\nType=x11\nUser=1001\nDisplay=:0"), Some(1001));
         assert_eq!(active_graphical_uid_from_show("Active=no\nType=x11\nUser=1000\nDisplay=:0"), None);
         assert_eq!(active_graphical_uid_from_show("Active=yes\nType=tty\nUser=1000\nDisplay="), None);
+    }
+
+    #[test]
+    fn system_relaunch_command_runs_as_user_on_service_port() {
+        assert_eq!(
+            system_relaunch_command("/usr/bin/systemd-run", 1000, "/home/jamie", 8000, "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"),
+            vec!["/usr/bin/systemd-run", "--uid=1000", "--setenv=HOME=/home/jamie",
+                 "--setenv=WS_SCRCPY_WEB_PORT=8000", "--collect", "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"]
+        );
     }
 }
