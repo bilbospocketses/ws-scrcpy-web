@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Linux machine-wide install (`/opt`) — parity with the Windows PerMachine MSI.** ws-scrcpy-web can now install system-wide for all users. On first launch the home AppImage offers to install system-wide; accepting relocates the binary to `/opt/ws-scrcpy-web/` via a single `pkexec` and drops a system-wide `/usr/share/applications` desktop entry, so every user launches it under their own login with their own per-user data. Declining runs the app in place and is remembered (no re-nag) — you re-opt-in only through an explicit "install system-wide" action. The home AppImage doubles as a bootstrapper: when a machine-wide install is present it execs the shared `/opt` binary.
+- **Uninstall now relaunches in the active user's desktop session (Linux).** Mirroring the Windows active-session model, uninstalling the machine-wide app — by any administrator — relaunches it for the active graphical desktop user on the same web port, discovered via `loginctl`. When there is no active session (headless), it falls back to on-screen guidance instead of leaving an orphaned process.
+- **Per-user single-instance guard and service-aware launch (Linux).** A per-user `flock` on `$XDG_RUNTIME_DIR` now blocks the same user from double-launching (whether from `/opt` or from home) — the previous Linux single-instance path was a no-op stub. A local launch while an active system service is running defers to the service (opens its URL) instead of starting a second server.
+
+### Changed
+
+- **Linux system-scope state moved to `/var/opt` (FHS), and the system service install is gated on a machine-wide install.** The binary and bundled dependencies live in `/opt/ws-scrcpy-web/` (SELinux `bin_t`); variable state — config, logs, and auto-updated dependencies — now lives in `/var/opt/ws-scrcpy-web/` (`var_lib_t`), replacing the former `/opt/ws-scrcpy-web/data`. The **system**-scope service radio is disabled (with an explanatory note) until the app is installed system-wide; the user-scope service stays available in both modes.
+- **In-app updates and migration for machine-wide installs.** In system-service mode the root service updates `/opt` + `/var/opt` directly with no prompt (headless self-update); in machine-wide-but-no-service mode an app-binary update takes a single `pkexec` and swaps the running `/opt` binary by rename (avoiding `ETXTBSY`), relaunching after exit so the single-instance lock releases first. A newer home AppImage over an older `/opt` install is detected and offered as an update. An existing legacy system install under `/opt/ws-scrcpy-web/data` is detected and migrated to `/var/opt` on upgrade in a single `pkexec` (stop/disable the old unit, remove the old tree and its SELinux rule, set up `/var/opt`, reinstall the unit), carrying over your web port and install mode.
+
+### Fixed
+
+- **System-scope uninstall now removes both SELinux `fcontext` rules.** A system install registers two `semanage fcontext` rules (the `/opt` tree and the variable-state path), but uninstall removed only the tree rule, leaving a stale `var_lib_t` entry behind. Uninstall now deletes both.
+
 ### Docs
 
 - **README:** corrected the Linux AppImage download name to the channel-suffixed `WsScrcpyWeb-linux-stable.AppImage` / `WsScrcpyWeb-linux-beta.AppImage`, and rewrote the libfuse2 section — the AppImage now bundles the static type-2 runtime, so it launches without host `libfuse2`; the libfuse2 note now scopes to the in-app updater only.
