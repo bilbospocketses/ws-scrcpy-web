@@ -1,7 +1,7 @@
 // biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import * as net from 'net';
 import { afterEach, describe, expect, it } from 'vitest';
-import { findAvailablePort } from '../PortPicker';
+import { findAvailablePort, webPortOverride } from '../PortPicker';
 
 function listenOn(port: number): Promise<net.Server> {
     return new Promise((resolve, reject) => {
@@ -40,6 +40,17 @@ async function reserveEphemeral(): Promise<number> {
     await close(srv);
     return port;
 }
+
+describe('webPortOverride', () => {
+    it('parses a valid port', () => { expect(webPortOverride('8000')).toBe(8000); });
+    it('rejects invalid/unset', () => {
+        expect(webPortOverride(undefined)).toBeNull();
+        expect(webPortOverride('')).toBeNull();
+        expect(webPortOverride('0')).toBeNull();
+        expect(webPortOverride('70000')).toBeNull();
+        expect(webPortOverride('abc')).toBeNull();
+    });
+});
 
 describe('findAvailablePort', () => {
     const opened: net.Server[] = [];

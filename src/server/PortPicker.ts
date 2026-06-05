@@ -34,6 +34,14 @@ function tryPort(port: number): Promise<boolean> {
     });
 }
 
+/** Parse the one-shot WS_SCRCPY_WEB_PORT override into a valid port, or null.
+ *  Set by the Phase 2 system-uninstall relaunch to force the exact (free) service
+ *  port so the user's browser reconnects. */
+export function webPortOverride(env: string | undefined): number | null {
+    const n = Number(env);
+    return Number.isInteger(n) && n > 0 && n < 65536 ? n : null;
+}
+
 /**
  * Walk [start, end] inclusive in order. Return the first port that is free,
  * or null if every port in the range is busy.

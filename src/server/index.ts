@@ -13,7 +13,7 @@ import { WhoamiApi } from './api/WhoamiApi';
 import { Config } from './Config';
 import { UpdateService } from './UpdateService';
 import { DependencyManager } from './DependencyManager';
-import { findAvailablePort } from './PortPicker';
+import { findAvailablePort, webPortOverride } from './PortPicker';
 import { DeviceLabelStore } from './DeviceLabelStore';
 import { DeviceProbe } from './DeviceProbe';
 import { Logger } from './Logger';
@@ -65,8 +65,10 @@ const config = Config.getInstance();
 // port is found (range = configured..+99). On shift, persist the new port and
 // flip portWasAutoShifted in firstRunStatus.
 async function reconcileWebPort(): Promise<void> {
-    const desired = config.getAppConfig().webPort;
-    const found = await findAvailablePort(desired, desired + 99);
+    const override = webPortOverride(process.env['WS_SCRCPY_WEB_PORT']);
+    const desired = override ?? config.getAppConfig().webPort;
+    // An override (Phase 2 relaunch) forces the EXACT free port; else walk forward to auto-shift.
+    const found = await findAvailablePort(desired, override !== null ? desired : desired + 99);
     if (found === null) {
         Logger.for('Server').error(`No free port available in range ${desired}..${desired + 99}`);
         return;
