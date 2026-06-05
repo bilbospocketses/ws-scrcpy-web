@@ -50,6 +50,8 @@ export interface ServiceStatusResponse {
     machineWideInstalled?: boolean;
     /** Linux: the user declined the first-run system-wide install (marker present). */
     systemInstallDeclined?: boolean;
+    /** Linux: a legacy /opt/.../data system install needs migration to /var/opt. */
+    serviceMigrationNeeded?: boolean;
 }
 
 /** Success response shape for /api/service/install and /api/service/uninstall. */

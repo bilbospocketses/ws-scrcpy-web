@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ServiceApi } from '../api/ServiceApi';
+import { ServiceApi, systemServiceNeedsMigration } from '../api/ServiceApi';
 import { Config } from '../Config';
 import { EnvName } from '../EnvName';
 import {
@@ -1314,6 +1314,71 @@ describe('ServiceApi', () => {
         const { req, res } = makeReqRes('/api/service/bogus', 'GET');
         await api.handle(req, res);
         expect((res as any).getStatus()).toBe(404);
+    });
+
+    // ── serviceMigrationNeeded — pure helper + status flag (P3a-1) ────────────
+
+    describe('systemServiceNeedsMigration', () => {
+        it('true when DATA_ROOT is the legacy /opt/.../data', () => {
+            expect(systemServiceNeedsMigration({ dataRootEnv: '/opt/ws-scrcpy-web/data', oldDataDirExists: false })).toBe(true);
+        });
+        it('true when the legacy data dir exists', () => {
+            expect(systemServiceNeedsMigration({ oldDataDirExists: true })).toBe(true);
+        });
+        it('false otherwise', () => {
+            expect(systemServiceNeedsMigration({ dataRootEnv: '/var/opt/ws-scrcpy-web', oldDataDirExists: false })).toBe(false);
+            expect(systemServiceNeedsMigration({ oldDataDirExists: false })).toBe(false);
+        });
+    });
+
+    it('GET /status on linux with legacy /opt/.../data dir present sets serviceMigrationNeeded=true', async () => {
+        // existsCheck: the legacy dir (/opt/ws-scrcpy-web/data) is present
+        const legacyDataDir = '/opt/ws-scrcpy-web/data';
+        const existsCheck = vi.fn((p: string) => p === legacyDataDir);
+
+        const client = fakeClient({ status: vi.fn(async () => 'running' as const) });
+        const factoryResult: ServiceClientFactoryResult = {
+            client,
+            supported: true,
+            platform: 'linux',
+        };
+        const api = new ServiceApi(() => factoryResult, () => 'user', existsCheck);
+        const { req, res } = makeReqRes('/api/service/status');
+        await api.handle(req, res);
+        const body = JSON.parse((res as any).getBody());
+        expect(body.serviceMigrationNeeded).toBe(true);
+        expect(existsCheck).toHaveBeenCalledWith(legacyDataDir);
+    });
+
+    it('GET /status on linux with legacy /opt/.../data dir absent sets serviceMigrationNeeded=false', async () => {
+        // existsCheck: nothing exists (neither /opt AppImage nor legacy data dir)
+        const existsCheck = vi.fn((_p: string) => false);
+
+        const client = fakeClient({ status: vi.fn(async () => 'running' as const) });
+        const factoryResult: ServiceClientFactoryResult = {
+            client,
+            supported: true,
+            platform: 'linux',
+        };
+        const api = new ServiceApi(() => factoryResult, () => 'user', existsCheck);
+        const { req, res } = makeReqRes('/api/service/status');
+        await api.handle(req, res);
+        const body = JSON.parse((res as any).getBody());
+        expect(body.serviceMigrationNeeded).toBe(false);
+    });
+
+    it('GET /status on win32 omits serviceMigrationNeeded (linux-only field)', async () => {
+        const client = fakeClient({ status: vi.fn(async () => 'running' as const) });
+        const factoryResult: ServiceClientFactoryResult = {
+            client,
+            supported: true,
+            platform: 'win32',
+        };
+        const api = new ServiceApi(() => factoryResult, () => 'user', () => true);
+        const { req, res } = makeReqRes('/api/service/status');
+        await api.handle(req, res);
+        const body = JSON.parse((res as any).getBody());
+        expect(body.serviceMigrationNeeded).toBeUndefined();
     });
 
     // ── reason discriminator + no-direct-uninstall guard (v0.1.25) ──────────

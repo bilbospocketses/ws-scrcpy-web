@@ -30,6 +30,16 @@ import { readJsonBody } from './utils';
 const log = Logger.for('ServiceApi');
 
 /**
+ * Returns true when a beta.40-era system-scope install used the legacy
+ * `/opt/ws-scrcpy-web/data` state layout and should be migrated to
+ * `/var/opt`. Either signal is sufficient: an explicit DATA_ROOT env that
+ * points at the old path, OR the old directory still existing on disk.
+ */
+export function systemServiceNeedsMigration(input: { dataRootEnv?: string; oldDataDirExists: boolean }): boolean {
+    return input.dataRootEnv === '/opt/ws-scrcpy-web/data' || input.oldDataDirExists;
+}
+
+/**
  * HTTP API for SP3 P3 service-mode operations.
  *
  *   GET  /api/service/status     -> ServiceStatusResponse (always 200)
@@ -144,13 +154,16 @@ export class ServiceApi {
         //     users" modal once the user has declined it (persistent marker).
         // Both go through the injected existsCheck so the API stays unit-testable.
         // Spread conditionally (like scope/diskWebPort) so they're Linux-only.
-        let machineWide: { machineWideInstalled: boolean; systemInstallDeclined: boolean } | null = null;
+        let machineWide: { machineWideInstalled: boolean; systemInstallDeclined: boolean; serviceMigrationNeeded: boolean } | null = null;
         if (result.platform === 'linux') {
             const cfg = Config.getInstance();
             const dataRoot = cfg.dataRoot ?? path.dirname(cfg.dependenciesPath);
             machineWide = {
                 machineWideInstalled: this.existsCheck(`${STAGED_SYSTEM_DIR}/${STAGED_SYSTEM_APPIMAGE}`),
                 systemInstallDeclined: this.existsCheck(path.join(dataRoot, 'control', DECLINE_MARKER_NAME)),
+                serviceMigrationNeeded: systemServiceNeedsMigration({
+                    oldDataDirExists: this.existsCheck('/opt/ws-scrcpy-web/data'),
+                }),
             };
         }
         const body: ServiceStatusResponse = {
