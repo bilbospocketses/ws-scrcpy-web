@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The Linux "install for all users?" first-run prompt has clearer copy and now requires an explicit choice.** The body spells out both paths — clicking "yes, all users" installs the app to `/opt` with one administrator prompt; clicking "no, me only" leaves it running from wherever you launch it — and the two buttons are labelled to match. The dialog can no longer be dismissed without deciding: the close (×) button is removed and Escape / clicking outside the dialog are ignored, so it no longer silently reappears on the next launch after an accidental dismissal.
+
 ## [0.1.30-beta.41] - 2026-06-05
 
 ### Added

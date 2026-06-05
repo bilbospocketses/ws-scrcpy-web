@@ -4,6 +4,12 @@ import { createThemeToggle } from '../client/ThemeToggle';
 export interface ModalOptions {
     title: string;
     onClose?: ((result: unknown) => void) | undefined;
+    /**
+     * When false, the modal is a forced choice: no close (×) button is
+     * rendered, and Escape / backdrop clicks are ignored — the only way to
+     * dismiss it is an explicit in-body action. Defaults to true.
+     */
+    dismissible?: boolean;
 }
 
 export abstract class Modal {
@@ -11,11 +17,13 @@ export abstract class Modal {
     protected readonly frameEl: HTMLElement;
     protected readonly bodyEl: HTMLElement;
     private readonly headerControls: HTMLElement;
-    private readonly closeBtn: HTMLButtonElement;
+    private readonly closeBtn?: HTMLButtonElement;
+    private readonly dismissible: boolean;
     private readonly options: ModalOptions;
 
     constructor(options: ModalOptions) {
         this.options = options;
+        this.dismissible = options.dismissible !== false;
 
         // Create <dialog>
         this.dialog = document.createElement('dialog');
@@ -42,11 +50,15 @@ export abstract class Modal {
         themeBtn.classList.add('modal-close'); // reuse close button sizing
         this.headerControls.appendChild(themeBtn);
 
-        this.closeBtn = document.createElement('button');
-        this.closeBtn.classList.add('modal-close');
-        this.closeBtn.textContent = '\u00d7';
-        this.closeBtn.addEventListener('click', () => this.onCloseButtonClick());
-        this.headerControls.appendChild(this.closeBtn);
+        // Forced-choice modals (dismissible: false) render no \u00d7 \u2014 the user
+        // must pick an in-body action.
+        if (this.dismissible) {
+            this.closeBtn = document.createElement('button');
+            this.closeBtn.classList.add('modal-close');
+            this.closeBtn.textContent = '\u00d7';
+            this.closeBtn.addEventListener('click', () => this.onCloseButtonClick());
+            this.headerControls.appendChild(this.closeBtn);
+        }
 
         header.appendChild(this.headerControls);
 
@@ -71,11 +83,13 @@ export abstract class Modal {
         // Event listeners
         this.dialog.addEventListener('cancel', (e) => {
             e.preventDefault();
-            this.onEscapeKey(e);
+            if (this.dismissible) {
+                this.onEscapeKey(e);
+            }
         });
 
         this.dialog.addEventListener('click', (e) => {
-            if (e.target === this.dialog) {
+            if (this.dismissible && e.target === this.dialog) {
                 this.onBackdropClick(e as MouseEvent);
             }
         });
