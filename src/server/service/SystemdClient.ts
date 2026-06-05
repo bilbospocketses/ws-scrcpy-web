@@ -78,11 +78,12 @@ export const STAGED_SYSTEM_APPIMAGE = 'WsScrcpyWeb.AppImage';
 export const STAGED_SYSTEM_HELPER = 'ws-scrcpy-web-launcher.exe';
 
 /**
- * Root-owned writable state dir for the system-scope service (config.json,
- * logs/). A MORE-SPECIFIC fcontext (`…/data → var_lib_t`) overrides the dir's
- * general bin_t rule so the service may write here under SELinux (#36).
+ * FHS-correct writable state dir for the system-scope service (config.json,
+ * logs/). Lives under `/var/opt` (outside `/opt`) so it is writable by root
+ * and correctly labelled `var_lib_t` by SELinux. The `/opt` restorecon does
+ * NOT reach this tree — it gets its own `restorecon -Rv` step at install (#36).
  */
-export const STAGED_SYSTEM_DATA_DIR = `${STAGED_SYSTEM_DIR}/data`;
+export const SYSTEM_STATE_DIR = '/var/opt/ws-scrcpy-web';
 /**
  * Root-owned dependencies dir for the system-scope service (node/adb/
  * scrcpy-server). Under the bin_t-labelled /opt tree so init_t may exec them,
@@ -104,7 +105,7 @@ export function buildServiceUnitEnv(
     userDepsPath: string,
 ): Record<string, string> {
     if (platform === 'linux' && scope === 'system') {
-        return { DATA_ROOT: STAGED_SYSTEM_DATA_DIR, DEPS_PATH: STAGED_SYSTEM_DEPS_DIR };
+        return { DATA_ROOT: SYSTEM_STATE_DIR, DEPS_PATH: STAGED_SYSTEM_DEPS_DIR };
     }
     return { DEPS_PATH: userDepsPath };
 }
@@ -291,11 +292,13 @@ export function buildSystemInstallScript(
     const semanage = sbinTool('semanage');
     const restorecon = sbinTool('restorecon');
     const steps: string[] = [
-        // 1. stage dirs: the /opt root + the writable data dir (always — the
-        //    system service writes its config + logs there). The deps dir is
-        //    added below only when we have deps to copy.
+        // 1. stage dirs: the /opt root for binaries + deps, plus the FHS-correct
+        //    writable state dir at /var/opt (always — the system service writes
+        //    its config + logs there). The /opt restorecon does NOT reach /var/opt,
+        //    so the state dir gets its own restorecon step below.
+        //    The deps dir is added below only when we have deps to copy.
         `${mkdir} -p ${STAGED_SYSTEM_DIR}`,
-        `${mkdir} -p ${STAGED_SYSTEM_DATA_DIR}`,
+        `${mkdir} -p ${SYSTEM_STATE_DIR}`,
         `${cp} "${args.sourceAppImage}" "${staged}"`,
         `${chmod} 0755 "${staged}"`,
     ];
@@ -317,7 +320,7 @@ export function buildSystemInstallScript(
     //     config on first boot (system-service mode, first-run-complete, the
     //     user's web port). Written before restorecon so it gets var_lib_t.
     if (args.seedConfigTmpPath) {
-        steps.push(`${cp} "${args.seedConfigTmpPath}" "${STAGED_SYSTEM_DATA_DIR}/config.json"`);
+        steps.push(`${cp} "${args.seedConfigTmpPath}" "${SYSTEM_STATE_DIR}/config.json"`);
     }
     steps.push(
         // 2. label bin_t so init_t can exec it. Persistent rule (semanage) when
@@ -329,7 +332,7 @@ export function buildSystemInstallScript(
         //    erroring on a non-SELinux fs) would break the outer `&&` chain and
         //    silently skip the unit cp + enable below.
         //    restorecon covers the whole dir — labels the helper bin_t too when present.
-        `( ( ${semanage} fcontext -a -t bin_t '${STAGED_SYSTEM_DIR}(/.*)?' && ${semanage} fcontext -a -t var_lib_t '${STAGED_SYSTEM_DATA_DIR}(/.*)?' && ${restorecon} -Rv "${STAGED_SYSTEM_DIR}" ) || ${chcon} -t bin_t "${staged}" || true )`,
+        `( ( ${semanage} fcontext -a -t bin_t '${STAGED_SYSTEM_DIR}(/.*)?' && ${semanage} fcontext -a -t var_lib_t '${SYSTEM_STATE_DIR}(/.*)?' && ${restorecon} -Rv "${STAGED_SYSTEM_DIR}" && ${restorecon} -Rv "${SYSTEM_STATE_DIR}" ) || ${chcon} -t bin_t "${staged}" || true )`,
         // 3. install + enable the unit (ExecStart already points at ${staged})
         `${cp} "${args.unitTmpPath}" "${args.unitPath}"`,
         `${systemctl} daemon-reload`,

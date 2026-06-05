@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { SystemdClient, renderUnitFile, STAGED_SYSTEM_DIR, buildSystemInstallScript, systemctlArgv } from './SystemdClient';
+import { SystemdClient, renderUnitFile, STAGED_SYSTEM_DIR, buildSystemInstallScript, systemctlArgv, buildServiceUnitEnv } from './SystemdClient';
 
 describe('system-scope staging', () => {
     const baseOpts = {
@@ -104,24 +104,45 @@ describe('buildSystemInstallScript', () => {
             name: 'WsScrcpyWeb',
         });
         // writable state dir + deps dir created
-        expect(script).toContain('mkdir -p /opt/ws-scrcpy-web/data');
+        expect(script).toContain('mkdir -p /var/opt/ws-scrcpy-web');
         expect(script).toContain('mkdir -p /opt/ws-scrcpy-web/dependencies');
         // deps copied from the user's dir into the app's OWN /opt tree (Local-Deps)
         expect(script).toContain('cp -a "/home/u/.local/share/WsScrcpyWeb/dependencies/." "/opt/ws-scrcpy-web/dependencies/"');
-        // seed config written into the data dir
-        expect(script).toContain('cp "/tmp/WsScrcpyWeb.seed.json" "/opt/ws-scrcpy-web/data/config.json"');
-        // data dir gets the writable var_lib_t label (more-specific beats the tree's bin_t)
-        expect(script).toContain("semanage fcontext -a -t var_lib_t '/opt/ws-scrcpy-web/data(/.*)?'");
+        // seed config written into the state dir (FHS /var/opt)
+        expect(script).toContain('cp "/tmp/WsScrcpyWeb.seed.json" "/var/opt/ws-scrcpy-web/config.json"');
+        // state dir gets the writable var_lib_t label (more-specific beats the tree's bin_t)
+        expect(script).toContain("semanage fcontext -a -t var_lib_t '/var/opt/ws-scrcpy-web(/.*)?'");
         // deps + seed land before the relabel so restorecon labels them correctly
         expect(script.indexOf('config.json')).toBeLessThan(script.indexOf('restorecon -Rv'));
     });
 
-    it('always prepares the writable data dir, but omits deps-copy + seed when not provided', () => {
+    it('always prepares the writable state dir, but omits deps-copy + seed when not provided', () => {
         const script = buildSystemInstallScript(args);
-        expect(script).toContain('mkdir -p /opt/ws-scrcpy-web/data');
-        expect(script).toContain("semanage fcontext -a -t var_lib_t '/opt/ws-scrcpy-web/data(/.*)?'");
+        expect(script).toContain('mkdir -p /var/opt/ws-scrcpy-web');
+        expect(script).toContain("semanage fcontext -a -t var_lib_t '/var/opt/ws-scrcpy-web(/.*)?'");
         expect(script).not.toContain('cp -a');
-        expect(script).not.toContain('/data/config.json');
+        expect(script).not.toContain('config.json');
+    });
+});
+
+describe('SYSTEM_STATE_DIR — FHS /var/opt retargeting', () => {
+    it('system-scope unit env points DATA_ROOT at /var/opt (not /opt/.../data)', () => {
+        const env = buildServiceUnitEnv('linux', 'system', '/home/u/.local/share/WsScrcpyWeb/dependencies');
+        expect(env['DATA_ROOT']).toBe('/var/opt/ws-scrcpy-web');
+        expect(env['DEPS_PATH']).toBe('/opt/ws-scrcpy-web/dependencies');
+    });
+
+    it('system install seeds config + labels state under /var/opt (var_lib_t)', () => {
+        const script = buildSystemInstallScript(
+            { sourceAppImage: '/home/u/App.AppImage', seedConfigTmpPath: '/tmp/seed.json',
+              unitTmpPath: '/tmp/u.service', unitPath: '/etc/systemd/system/WsScrcpyWeb.service', name: 'WsScrcpyWeb' },
+            (t) => `/usr/bin/${t}`, (t) => `/usr/sbin/${t}`,
+        );
+        expect(script).toContain('mkdir -p /var/opt/ws-scrcpy-web');
+        expect(script).toContain('cp "/tmp/seed.json" "/var/opt/ws-scrcpy-web/config.json"');
+        expect(script).toContain("semanage fcontext -a -t var_lib_t '/var/opt/ws-scrcpy-web(/.*)?'");
+        expect(script).toContain('restorecon -Rv "/var/opt/ws-scrcpy-web"');
+        expect(script).not.toContain('/opt/ws-scrcpy-web/data');
     });
 });
 

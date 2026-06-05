@@ -11,9 +11,9 @@ import { buildServiceUnitEnv, buildSystemSeedConfig } from '../service/SystemdCl
 describe('buildServiceUnitEnv (#36 system-scope /opt paths)', () => {
     const userDeps = '/home/jamie/.local/share/WsScrcpyWeb/dependencies';
 
-    it('linux + system: DATA_ROOT + DEPS_PATH under /opt, NOT the user home', () => {
+    it('linux + system: DATA_ROOT at /var/opt (FHS state), DEPS_PATH under /opt (bin_t), NOT the user home', () => {
         expect(buildServiceUnitEnv('linux', 'system', userDeps)).toEqual({
-            DATA_ROOT: '/opt/ws-scrcpy-web/data',
+            DATA_ROOT: '/var/opt/ws-scrcpy-web',
             DEPS_PATH: '/opt/ws-scrcpy-web/dependencies',
         });
     });
