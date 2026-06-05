@@ -23,7 +23,8 @@ import {
     type ServiceClientFactoryResult,
 } from '../service';
 import { resolveSystemTool } from '../service/systemTools';
-import { STAGED_SYSTEM_DIR, STAGED_SYSTEM_HELPER, buildServiceUnitEnv, buildSystemSeedConfig } from '../service/SystemdClient';
+import { STAGED_SYSTEM_DIR, STAGED_SYSTEM_HELPER, buildServiceUnitEnv, buildSystemSeedConfig, buildMachineWideInstallScript, runPkexec, DECLINE_MARKER_NAME } from '../service/SystemdClient';
+import { getAppVersion } from '../appVersion';
 import { readJsonBody } from './utils';
 
 const log = Logger.for('ServiceApi');
@@ -59,6 +60,7 @@ export class ServiceApi {
             child.unref();
         },
         private scheduleExit: (fn: () => void, ms: number) => void = (fn, ms) => { setTimeout(fn, ms).unref(); },
+        private readonly runPkexecFn: (shellCmd: string, label: string) => Promise<string> = runPkexec,
     ) {}
 
     public async handle(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
@@ -76,6 +78,12 @@ export class ServiceApi {
             }
             if (req.method === 'POST' && url === '/api/service/uninstall') {
                 return await this.handleUninstall(req, res);
+            }
+            if (req.method === 'POST' && url === '/api/service/install-system-wide') {
+                return await this.handleInstallSystemWide(res);
+            }
+            if (req.method === 'POST' && url === '/api/service/decline-system-wide') {
+                return await this.handleDeclineSystemWide(res);
             }
 
             res.writeHead(404);
@@ -637,6 +645,49 @@ export class ServiceApi {
         };
         res.writeHead(200);
         res.end(JSON.stringify(body));
+        return true;
+    }
+
+    private async handleInstallSystemWide(res: ServerResponse): Promise<boolean> {
+        if (process.platform !== 'linux') {
+            res.writeHead(200);
+            res.end(JSON.stringify({ ok: false, error: 'machine-wide install is linux-only', reason: 'unsupported' }));
+            return true;
+        }
+        const appImage = process.env['APPIMAGE'];
+        if (!appImage) {
+            res.writeHead(400);
+            res.end(JSON.stringify({ ok: false, error: 'not running from an AppImage ($APPIMAGE unset)', reason: 'unknown' }));
+            return true;
+        }
+        const version = getAppVersion();
+        const script = buildMachineWideInstallScript({ sourceAppImage: appImage, version });
+        try {
+            await this.runPkexecFn(script, 'install-system-wide');
+            res.writeHead(200);
+            res.end(JSON.stringify({ ok: true, status: 'installed' }));
+        } catch (err) {
+            const msg = (err as Error).message;
+            const declined = /dismissed/i.test(msg);
+            res.writeHead(declined ? 403 : 500);
+            res.end(JSON.stringify({ ok: false, error: msg, reason: declined ? 'uac-declined' : 'unknown' }));
+        }
+        return true;
+    }
+
+    private async handleDeclineSystemWide(res: ServerResponse): Promise<boolean> {
+        const cfg = Config.getInstance();
+        const dataRoot = cfg.dataRoot ?? path.dirname(cfg.dependenciesPath);
+        const marker = path.join(dataRoot, 'control', DECLINE_MARKER_NAME);
+        try {
+            fs.mkdirSync(path.dirname(marker), { recursive: true });
+            fs.writeFileSync(marker, '', 'utf8');
+            res.writeHead(200);
+            res.end(JSON.stringify({ ok: true, status: 'declined' }));
+        } catch (err) {
+            res.writeHead(500);
+            res.end(JSON.stringify({ ok: false, error: (err as Error).message, reason: 'unknown' }));
+        }
         return true;
     }
 

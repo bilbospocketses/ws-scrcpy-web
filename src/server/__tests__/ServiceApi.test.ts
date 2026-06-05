@@ -1138,6 +1138,101 @@ describe('ServiceApi', () => {
         });
     });
 
+    // ── machine-wide install + decline endpoints (B3) ────────────────────────
+    describe('install-system-wide + decline-system-wide', () => {
+        let savedPlatform: NodeJS.Platform;
+        beforeEach(() => {
+            savedPlatform = process.platform;
+            // Force linux so the platform guard passes on any test-host OS.
+            Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+        });
+        afterEach(() => {
+            Object.defineProperty(process, 'platform', { value: savedPlatform, configurable: true });
+        });
+
+        it('POST /api/service/install-system-wide with $APPIMAGE set invokes pkexec runner once with cp + bin_t script, returns 200', async () => {
+            const appImagePath = '/home/jamie/Applications/WsScrcpyWeb.AppImage';
+            const savedAppImage = process.env['APPIMAGE'];
+            process.env['APPIMAGE'] = appImagePath;
+            try {
+                const fakePkexec = vi.fn(async (_cmd: string, _label: string) => '');
+                const api = new ServiceApi(
+                    undefined,
+                    undefined,
+                    undefined,
+                    undefined,
+                    undefined,
+                    fakePkexec,
+                );
+                const { req, res } = makeReqRes('/api/service/install-system-wide', 'POST');
+                await api.handle(req, res);
+
+                expect((res as any).getStatus()).toBe(200);
+                const body = JSON.parse((res as any).getBody());
+                expect(body.ok).toBe(true);
+
+                expect(fakePkexec).toHaveBeenCalledTimes(1);
+                const [script, label] = fakePkexec.mock.calls[0]!;
+                expect(script).toContain(`cp "${appImagePath}" "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"`);
+                expect(script).toContain('bin_t');
+                expect(label).toBe('install-system-wide');
+            } finally {
+                if (savedAppImage === undefined) delete process.env['APPIMAGE'];
+                else process.env['APPIMAGE'] = savedAppImage;
+            }
+        });
+
+        it('POST /api/service/install-system-wide with $APPIMAGE unset returns 400, pkexec NOT called', async () => {
+            const savedAppImage = process.env['APPIMAGE'];
+            delete process.env['APPIMAGE'];
+            try {
+                const fakePkexec = vi.fn(async (_cmd: string, _label: string) => '');
+                const api = new ServiceApi(
+                    undefined,
+                    undefined,
+                    undefined,
+                    undefined,
+                    undefined,
+                    fakePkexec,
+                );
+                const { req, res } = makeReqRes('/api/service/install-system-wide', 'POST');
+                await api.handle(req, res);
+
+                expect((res as any).getStatus()).toBe(400);
+                const body = JSON.parse((res as any).getBody());
+                expect(body.ok).toBe(false);
+                expect(fakePkexec).not.toHaveBeenCalled();
+            } finally {
+                if (savedAppImage === undefined) delete process.env['APPIMAGE'];
+                else process.env['APPIMAGE'] = savedAppImage;
+            }
+        });
+
+        it('POST /api/service/decline-system-wide writes decline marker under <dataRoot>/control and returns 200', async () => {
+            const fakePkexec = vi.fn(async (_cmd: string, _label: string) => '');
+            const api = new ServiceApi(
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+                fakePkexec,
+            );
+            const { req, res } = makeReqRes('/api/service/decline-system-wide', 'POST');
+            await api.handle(req, res);
+
+            expect((res as any).getStatus()).toBe(200);
+            const body = JSON.parse((res as any).getBody());
+            expect(body.ok).toBe(true);
+
+            // Marker file must exist at <dataRoot>/control/system-install-declined
+            const cfg = Config.getInstance();
+            const dataRoot = cfg.dataRoot ?? path.dirname(cfg.dependenciesPath);
+            const markerPath = path.join(dataRoot, 'control', 'system-install-declined');
+            expect(fs.existsSync(markerPath)).toBe(true);
+        });
+    });
+
     it('returns 404 for unrecognized /api/service/* paths', async () => {
         const factoryResult: ServiceClientFactoryResult = {
             client: fakeClient(),

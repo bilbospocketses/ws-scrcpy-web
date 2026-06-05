@@ -126,12 +126,15 @@ export function buildSystemSeedConfig(currentWebPort: number): Record<string, un
     return { installMode: 'system-service', firstRunComplete: true, webPort: currentWebPort };
 }
 
+/** Per-user decline marker filename — no leading slash, relative to <dataRoot>/control/. */
+export const DECLINE_MARKER_NAME = 'system-install-declined';
+
 /**
  * Run a command via pkexec for graphical privilege escalation. The user
  * sees a single password prompt for the entire shell command. Throws on
  * auth-cancel (exit 126), pkexec-not-found, or command failure.
  */
-async function runPkexec(shellCmd: string, label: string): Promise<string> {
+export async function runPkexec(shellCmd: string, label: string): Promise<string> {
     try {
         const { stdout } = await execFileAsync(resolveSystemTool('pkexec'), ['sh', '-c', shellCmd], {
             encoding: 'utf8',
