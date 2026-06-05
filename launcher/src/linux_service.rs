@@ -109,6 +109,31 @@ pub fn bootstrap_target(opt_exists: bool, appimage_env: Option<&str>) -> Option<
     }
 }
 
+/// First column of each `loginctl list-sessions --no-legend` line = session id.
+#[allow(dead_code)] // wired in P2-4 (system-scope relaunch)
+pub fn parse_session_ids(list_output: &str) -> Vec<String> {
+    list_output.lines().filter_map(|l| l.split_whitespace().next()).map(str::to_string).collect()
+}
+
+/// uid of the session from a `loginctl show-session <id> -p Active -p Type -p User -p Display`
+/// block, IFF it is active AND graphical (x11/wayland). We don't need DISPLAY — the
+/// relaunched app is a server the browser reconnects to.
+#[allow(dead_code)] // wired in P2-4 (system-scope relaunch)
+pub fn active_graphical_uid_from_show(show_output: &str) -> Option<u32> {
+    let (mut active, mut kind, mut uid) = (false, String::new(), None::<u32>);
+    for line in show_output.lines() {
+        if let Some((k, v)) = line.split_once('=') {
+            match k.trim() {
+                "Active" => active = v.trim() == "yes",
+                "Type" => kind = v.trim().to_string(),
+                "User" => uid = v.trim().parse().ok(),
+                _ => {}
+            }
+        }
+    }
+    if active && (kind == "x11" || kind == "wayland") { uid } else { None }
+}
+
 /// User scope relaunches the home AppImage (from the install-time marker) into
 /// local mode. System scope never auto-relaunches (headless-dominant; the admin
 /// re-launches their own AppImage). Returns the path to relaunch, or None.
@@ -298,5 +323,19 @@ mod tests {
         assert_eq!(service_defer_url(Some("system-service"), Some(8000), false), None); // installed but down
         assert_eq!(service_defer_url(Some("user"), Some(8000), true), None);            // not service mode
         assert_eq!(service_defer_url(None, None, true), None);
+    }
+
+    #[test]
+    fn parses_session_ids_from_list() {
+        let list = "   3 1000 jamie seat0 tty2\n  c1 0 root  -    -\n";
+        assert_eq!(parse_session_ids(list), vec!["3".to_string(), "c1".to_string()]);
+    }
+
+    #[test]
+    fn active_graphical_uid_only_when_active_and_graphical() {
+        assert_eq!(active_graphical_uid_from_show("Active=yes\nType=wayland\nUser=1000\nDisplay="), Some(1000));
+        assert_eq!(active_graphical_uid_from_show("Active=yes\nType=x11\nUser=1001\nDisplay=:0"), Some(1001));
+        assert_eq!(active_graphical_uid_from_show("Active=no\nType=x11\nUser=1000\nDisplay=:0"), None);
+        assert_eq!(active_graphical_uid_from_show("Active=yes\nType=tty\nUser=1000\nDisplay="), None);
     }
 }
