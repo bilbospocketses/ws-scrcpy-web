@@ -1755,6 +1755,7 @@ version = "0.1.30-beta.40"
 dependencies = [
  "anyhow",
  "ctrlc",
+ "rustix",
  "serde",
  "serde_json",
  "tempfile",
