@@ -61,16 +61,17 @@ pub fn teardown_commands(scope: Scope, name: &str, bindir: &str) -> Vec<Vec<Stri
         [vec![systemctl.clone()], pre.clone(), vec!["reset-failed".into(), unit.clone()]].concat(),
         vec![rm.clone(), "-f".into(), unit_file.to_string_lossy().into_owned()],
     ];
-    // system scope also removes the /opt staging + the semanage fcontext rule
+    // system scope also removes the /opt staging + /var/opt state + BOTH fcontext rules
     if scope == Scope::System {
         let semanage = format!("{}/semanage", sbindir_from(bindir));
-        cmds.push(vec![rm.clone(), "-rf".into(), "/opt/ws-scrcpy-web".into()]);
-        cmds.push(vec![
-            semanage,
-            "fcontext".into(),
-            "-d".into(),
-            "/opt/ws-scrcpy-web(/.*)?".into(),
-        ]);
+        for dir in ["/opt/ws-scrcpy-web", "/var/opt/ws-scrcpy-web"] {
+            cmds.push(vec![rm.clone(), "-rf".into(), dir.into()]);
+        }
+        // remove BOTH fcontext rules the install added: the /opt bin_t tree rule
+        // AND the /var/opt var_lib_t state rule (else the rule lingers post-uninstall).
+        for pathspec in ["/opt/ws-scrcpy-web(/.*)?", "/var/opt/ws-scrcpy-web(/.*)?"] {
+            cmds.push(vec![semanage.clone(), "fcontext".into(), "-d".into(), pathspec.to_string()]);
+        }
     }
     // reload
     cmds.push([vec![systemctl.clone()], pre.clone(), vec!["daemon-reload".into()]].concat());
@@ -230,6 +231,19 @@ mod tests {
     fn sbindir_derivation() {
         assert_eq!(sbindir_from("/usr/bin"), "/usr/sbin");
         assert_eq!(sbindir_from("/bin"), "/sbin");
+    }
+
+    #[test]
+    fn system_scope_teardown_removes_opt_and_var_opt() {
+        let cmds = teardown_commands(Scope::System, "WsScrcpyWeb", "/usr/bin");
+        let joined: Vec<String> = cmds.iter().map(|c| c.join(" ")).collect();
+        let removes_dir = |d: &str| joined.iter().any(|c| c.contains("rm") && c.contains(d));
+        let removes_fcontext = |spec: &str|
+            joined.iter().any(|c| c.contains("semanage fcontext -d") && c.ends_with(spec));
+        assert!(removes_dir("/opt/ws-scrcpy-web"));
+        assert!(removes_dir("/var/opt/ws-scrcpy-web"));
+        assert!(removes_fcontext("/opt/ws-scrcpy-web(/.*)?"));      // bin_t tree
+        assert!(removes_fcontext("/var/opt/ws-scrcpy-web(/.*)?"));  // var_lib_t state
     }
 
     #[test]
