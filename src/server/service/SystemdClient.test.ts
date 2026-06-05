@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { SystemdClient, renderUnitFile, STAGED_SYSTEM_DIR, buildSystemInstallScript, systemctlArgv, buildServiceUnitEnv } from './SystemdClient';
+import { SystemdClient, renderUnitFile, STAGED_SYSTEM_DIR, buildSystemInstallScript, systemctlArgv, buildServiceUnitEnv, buildMachineWideInstallScript } from './SystemdClient';
 
 describe('system-scope staging', () => {
     const baseOpts = {
@@ -175,5 +175,24 @@ describe('renderUnitFile', () => {
         expect(unitSection).toContain('StartLimitBurst=3');
         expect(serviceSection).not.toContain('StartLimitIntervalSec');
         expect(serviceSection).not.toContain('StartLimitBurst');
+    });
+});
+
+describe('buildMachineWideInstallScript', () => {
+    it('machine-wide install stages just the binary + label + desktop + VERSION', () => {
+        const s = buildMachineWideInstallScript(
+            { sourceAppImage: '/home/u/Downloads/WsScrcpyWeb-linux-beta.AppImage', version: '0.1.31-beta.1' },
+            (t) => `/usr/bin/${t}`, (t) => `/usr/sbin/${t}`,
+        );
+        expect(s).toContain('mkdir -p /opt/ws-scrcpy-web');
+        expect(s).toContain('cp "/home/u/Downloads/WsScrcpyWeb-linux-beta.AppImage" "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"');
+        expect(s).toContain('chmod 0755 "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"');
+        expect(s).toContain("semanage fcontext -a -t bin_t '/opt/ws-scrcpy-web(/.*)?'");
+        expect(s).toContain('restorecon -Rv "/opt/ws-scrcpy-web"');
+        expect(s).toContain('/opt/ws-scrcpy-web/VERSION');
+        expect(s).toContain('/usr/share/applications/ws-scrcpy-web.desktop');   // SYSTEM-WIDE menu (all users)
+        expect(s).toContain('Exec=/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage');     // every user launches the shared /opt binary
+        expect(s).not.toContain('dependencies');   // binary only — deps stay per-user ~/.local
+        expect(s).not.toContain('systemctl');      // no service install here
     });
 });

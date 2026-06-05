@@ -84,6 +84,10 @@ export const STAGED_SYSTEM_HELPER = 'ws-scrcpy-web-launcher.exe';
  * NOT reach this tree — it gets its own `restorecon -Rv` step at install (#36).
  */
 export const SYSTEM_STATE_DIR = '/var/opt/ws-scrcpy-web';
+/** VERSION file written into /opt at machine-wide install (binary-only relocate). */
+export const SYSTEM_OPT_VERSION_FILE = `${STAGED_SYSTEM_DIR}/VERSION`;
+/** System-wide .desktop entry for all users (machine-wide install only). */
+export const SYSTEM_DESKTOP_FILE = '/usr/share/applications/ws-scrcpy-web.desktop';
 /**
  * Root-owned dependencies dir for the system-scope service (node/adb/
  * scrcpy-server). Under the bin_t-labelled /opt tree so init_t may exec them,
@@ -339,6 +343,47 @@ export function buildSystemInstallScript(
         `${systemctl} enable --now ${args.name}.service`,
     );
     return steps.join(' && ');
+}
+
+/**
+ * Build the privileged shell script for a machine-wide install. Runs under a
+ * single pkexec prompt. Relocates ONLY the AppImage binary to /opt (no deps,
+ * no systemd unit) — deps stay per-user in ~/.local. Writes VERSION, drops a
+ * system-wide .desktop entry for all users, and refreshes the menu cache.
+ * `binTool`/`sbinTool` are injectable for testing; production resolves absolute
+ * paths via systemTools (Local-Dependencies-Only — no bare-name $PATH lookup).
+ */
+export function buildMachineWideInstallScript(
+    args: { sourceAppImage: string; version: string },
+    binTool: (t: string) => string = (t) => resolveSystemTool(t),
+    sbinTool: (t: string) => string = (t) => resolveSystemTool(t),
+): string {
+    const staged = `${STAGED_SYSTEM_DIR}/${STAGED_SYSTEM_APPIMAGE}`;
+    const mkdir = binTool('mkdir');
+    const cp = binTool('cp');
+    const chmod = binTool('chmod');
+    const chcon = binTool('chcon');
+    const printf = binTool('printf');
+    const semanage = sbinTool('semanage');
+    const restorecon = sbinTool('restorecon');
+    const updateDesktopDb = binTool('update-desktop-database');
+    const desktop = [
+        '[Desktop Entry]',
+        'Type=Application',
+        'Name=ws-scrcpy-web',
+        `Exec=${staged}`,
+        'Icon=ws-scrcpy-web',
+        'Categories=Utility;',
+    ].join('\\n');
+    return [
+        `${mkdir} -p ${STAGED_SYSTEM_DIR}`,
+        `${cp} "${args.sourceAppImage}" "${staged}"`,
+        `${chmod} 0755 "${staged}"`,
+        `${printf} '%s' '${args.version}' > ${SYSTEM_OPT_VERSION_FILE}`,
+        `( ( ${semanage} fcontext -a -t bin_t '${STAGED_SYSTEM_DIR}(/.*)?' && ${restorecon} -Rv "${STAGED_SYSTEM_DIR}" ) || ${chcon} -t bin_t "${staged}" || true )`,
+        `( ${printf} '${desktop}\\n' > ${SYSTEM_DESKTOP_FILE} || true )`,
+        `( ${updateDesktopDb} /usr/share/applications || true )`,
+    ].join(' && ');
 }
 
 /**
