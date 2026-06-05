@@ -87,7 +87,7 @@ Reasoning: Velopack feed entries are append-only; deleting an entry breaks any c
 
 ## Future signer setup (placeholder)
 
-Release artifacts are currently unsigned. SignPath Foundation declined the OSS application (see [Unreleased] in CHANGELOG.md for the disclosure). Code-signing is under evaluation; when a signer is selected, this section will document:
+Release artifacts are currently unsigned. SignPath Foundation declined the OSS application on 2026-05-07. Code-signing is under evaluation; when a signer is selected, this section will document:
 
 - The CI secret(s) and repository variable(s) needed to enable the signed-mode branch in `.github/workflows/release.yml`.
 - The first signed release version + cut procedure.
@@ -114,7 +114,7 @@ When cutting a stable release after a chain of yanked or partially-broken beta r
 - **README.md** `## Downloads` — short paragraph identifying which versions need a fresh-MSI install vs which can in-app update.
 - **docs/PROGRAMDATA-MIGRATION.md** — full step-by-step migration including any per-bug fix-version table.
 
-Existing precedent: the v0.1.23 stable cut migration covers v0.1.21 / v0.1.22 / v0.1.23-beta.{1..6} → v0.1.23, since the in-app updater on those builds was broken at varying severity (Velopack PerMachine + ACL + Job Object + auto-apply paths). The full diagnosis chain is captured in CHANGELOG entries v0.1.23-beta.1 through beta.13 and in `feedback_velopack_permachine_lessons.md` (Gotchas 1–11).
+Existing precedent: the v0.1.23 stable cut migration covers v0.1.21 / v0.1.22 / v0.1.23-beta.{1..6} → v0.1.23, since the in-app updater on those builds was broken at varying severity (Velopack PerMachine + ACL + Job Object + auto-apply paths). The full diagnosis chain is captured in CHANGELOG entries v0.1.23-beta.1 through beta.13.
 
 For future stable cuts after broken-beta chains: keep the same shape — README has a short pointer, MIGRATION doc has the full story.
 

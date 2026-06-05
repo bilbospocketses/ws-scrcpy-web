@@ -889,15 +889,15 @@ Run `npm outdated` to check all at once. Update one at a time, build + test afte
 |---|---------|---------|---------|--------------|
 | 1 | `typescript` | 6.0.2 | Compiles TypeScript source to JavaScript | Major versions may need `tsconfig.json` changes |
 | 2 | `webpack` | 5.106.2 | Bundles source into server and browser output | Patch updates are safe |
-| 3 | `webpack-cli` | 7.0.2 | Command-line interface for webpack | Major versions usually just drop old Node support |
+| 3 | `webpack-cli` | 7.0.3 | Command-line interface for webpack | Major versions usually just drop old Node support |
 | 4 | `css-loader` | 7.1.4 | Processes CSS imports for webpack bundling | Major versions may need webpack config changes |
 | 5 | `mini-css-extract-plugin` | 2.10.2 | Extracts CSS into separate .css files | Tied to webpack version |
-| 6 | `ts-loader` | 9.5.7 | Lets webpack process TypeScript files | Must be compatible with TypeScript version |
+| 6 | `ts-loader` | 9.6.0 | Lets webpack process TypeScript files | Must be compatible with TypeScript version |
 | 7 | `ts-node` | 10.9.2 | Runs webpack config files written in TypeScript | Must be compatible with TypeScript version |
-| 8 | `@biomejs/biome` | 2.4.12 | Linter and code formatter (replaces ESLint + Prettier) | Major versions need config migration (`npx @biomejs/biome migrate`) |
+| 8 | `@biomejs/biome` | 2.4.16 | Linter and code formatter (replaces ESLint + Prettier) | Major versions need config migration (`npx @biomejs/biome migrate`) |
 | 9 | `@types/node` | 24.12.2 | TypeScript type definitions for Node.js APIs | Must match target Node.js LTS major version (even numbers only, never odd) |
 | 10 | `@types/ws` | 8.18.1 | TypeScript type definitions for ws library | Must match `ws` major version |
-| 11 | `vitest` | 4.1.4 | Test runner for unit and integration tests | Usually safe to update |
+| 11 | `vitest` | 4.1.8 | Test runner for unit and integration tests | Usually safe to update |
 | 12 | `@xterm/xterm` | 6.0.0 | Terminal emulator rendered in the browser (Microsoft) | Major versions may have API changes affecting `ShellClient.ts` and `ShellModal.ts` |
 | 13 | `@xterm/addon-attach` | 0.12.0 | Connects xterm to a WebSocket for remote shell | Must match `@xterm/xterm` major version |
 | 14 | `@xterm/addon-fit` | 0.11.0 | Auto-resizes terminal to fit its container | Must match `@xterm/xterm` major version |
@@ -906,7 +906,7 @@ Run `npm outdated` to check all at once. Update one at a time, build + test afte
 
 | # | Package | Current | Purpose | Update notes |
 |---|---------|---------|---------|--------------|
-| 15 | `ws` | 8.20.0 | WebSocket server powering all browser-to-server communication | Bundled into webpack output; not user-updatable. Stable, rarely updates. Check before every release. |
+| 15 | `ws` | 8.21.0 | WebSocket server powering all browser-to-server communication | Bundled into webpack output; not user-updatable. Stable, rarely updates. Check before every release. |
 
 ### Runtime dependencies managed by in-app updater
 
@@ -1558,9 +1558,12 @@ card as disabled-via-CSS + `aria-disabled` + tooltip when
 
 ## 19. Service Mode Architecture
 
-Service mode lets ws-scrcpy-web run as a Windows service (via [Servy](https://github.com/nicedayzhu/servy)) or a Linux systemd unit, so the app starts at boot and survives logouts. The architecture uses an **operation-server pattern** for seamless install/uninstall transitions with no UAC prompts on uninstall and no port-sweep delays.
+Service mode lets ws-scrcpy-web run as a Windows service (via [Servy](https://github.com/nicedayzhu/servy)) or a Linux **systemd** unit, so the app starts at boot and survives logouts. Both platforms share the same browser UI and `/api/service/*` endpoints (sections 19.3–19.4) but use different OS mechanics:
 
-### 19.1 Install Flow
+- **Windows** (sections 19.1–19.2) uses an **operation-server pattern** — privileged work is deferred to a `post-stop.bat` Servy hook, so uninstall needs no UAC prompt and there is no port-sweep delay.
+- **Linux** (section 19.5) drives **systemd** directly, with an out-of-cgroup `systemd-run` teardown helper so an uninstall can stop the very unit that triggered it. User and system scopes are both supported; system scope is hardened for SELinux and Local-Dependencies-Only.
+
+### 19.1 Windows Install Flow (Servy)
 
 1. User clicks "Install as service" in the welcome modal or Settings.
 2. Browser calls `POST /api/service/install`.
@@ -1569,7 +1572,7 @@ Service mode lets ws-scrcpy-web run as a Windows service (via [Servy](https://gi
 5. The modal polls `GET /api/service/status` until it detects that the service-mode Node has started and written a new `webPort` to `config.json`.
 6. On detection, the modal auto-navigates to the service-mode URL.
 
-### 19.2 Uninstall Flow (Operation-Server Pattern)
+### 19.2 Windows Uninstall Flow (Operation-Server Pattern)
 
 The uninstall flow avoids UAC by deferring privileged work to a `post-stop.bat` script that Servy runs after the service Node exits:
 
@@ -1598,21 +1601,45 @@ The mtime-based discovery mechanism replaces the old `discoverServicePort` appro
 - **Uninstall:** `ServiceOperationModal` monitors `config.json` mtime. When the fresh user-session launcher writes its port, the mtime changes and the modal reads the new value.
 - The operation-server exposes `/api/discover` for the browser to detect when the fresh launcher is ready.
 
-### 19.5 Components
+### 19.5 Linux Service Mode (systemd)
+
+On Linux the service is a systemd unit managed by `SystemdClient` (`src/server/service/SystemdClient.ts`) — the cross-platform `ServiceClient` counterpart to the Windows `ServyClient`. The install UI offers two **scopes**:
+
+| Scope | Unit file | Elevation | Starts | Notes |
+|-------|-----------|-----------|--------|-------|
+| **user** | `~/.config/systemd/user/<name>.service` | none | at login | `loginctl enable-linger` (best-effort) keeps it running after logout; a `~/.config/autostart/ws-scrcpy-web-tray.desktop` autostarts the tray |
+| **system** | `/etc/systemd/system/<name>.service` | `pkexec` (one prompt) | at boot | hardened for SELinux + Local-Dependencies-Only (below); no tray autostart (headless-dominant) |
+
+The unit body (`renderUnitFile`) is `Type=simple`, `Restart=on-failure` / `RestartSec=5`, with `StartLimitIntervalSec`/`StartLimitBurst` in `[Unit]` (systemd silently ignores them in `[Service]`), and `StandardOutput`/`StandardError=append:` to the log. `WantedBy` is `default.target` (user) or `multi-user.target` (system). Running state is read with `systemctl is-active` (machine-readable), not `systemctl status`.
+
+**System scope — SELinux + Local-Dependencies-Only.** A system unit runs under the `init_t` domain, which SELinux (e.g. Fedora enforcing) forbids from exec'ing a `user_home_t` AppImage — and a root service has no `HOME`. So a system install (`buildSystemInstallScript`, run under one `pkexec` prompt) stages everything into a root-owned `/opt/ws-scrcpy-web/` tree:
+
+- `WsScrcpyWeb.AppImage`, the launcher helper, and a copy of the user's `dependencies/` → labelled **`bin_t`** (persistent `semanage fcontext` + `restorecon`, with a transient `chcon` fallback) so `init_t` may exec them, and so the service runs its **own** deps instead of reaching into a user's home.
+- `…/data/` (config + logs) gets a more-specific **`var_lib_t`** rule so the service may write there under SELinux.
+- The unit's `Environment=` sets `DATA_ROOT=/opt/ws-scrcpy-web/data` + `DEPS_PATH=/opt/ws-scrcpy-web/dependencies` (`buildServiceUnitEnv`), and a seeded `config.json` (`buildSystemSeedConfig`: `installMode=system-service`, `firstRunComplete=true`, the installing user's `webPort`) lands in `…/data/` so the service boots a correct, persistent config on the same port — no stray WelcomeModal, and it survives reboot. The whole label step is isolated with a trailing `|| true` so a non-SELinux host doesn't abort the install.
+
+**Uninstall — out-of-cgroup teardown.** Calling `systemctl stop` from inside the service unit's own cgroup would kill the calling process mid-operation (item 32). So `ServiceApi` launches the launcher helper via `systemd-run` (its own transient unit / separate cgroup) with `--linux-service-teardown --scope <user|system> --unit <name>`; `linux_service.rs` then runs, best-effort: `stop` → `disable` → `reset-failed` → remove the unit file → (system scope) `rm -rf /opt/ws-scrcpy-web` + `semanage fcontext -d` the `bin_t` rule → `daemon-reload` → reap the escaped adb daemon. **User scope** then relaunches the home AppImage in local mode via `systemd-run --user --collect` (path read from the `<dataRoot>/control/local-appimage` marker); **system scope** does not auto-relaunch (the admin relaunches their own AppImage).
+
+### 19.6 Components
 
 | File | Purpose |
 |------|---------|
-| `src/server/api/ServiceApi.ts` | REST endpoints for install/uninstall |
+| `src/server/api/ServiceApi.ts` | REST endpoints; Windows `post-stop` handoff + Linux `systemd-run` teardown launch |
+| `src/server/service/ServiceClient.ts` | Cross-platform service interface (`install`/`uninstall`/`status`/scope) |
+| `src/server/service/ServyClient.ts` | Windows implementation (servy-cli) |
+| `src/server/service/SystemdClient.ts` | Linux implementation (systemd; both scopes; `/opt` staging + SELinux labelling) |
+| `src/server/service/systemTools.ts` | Absolute-path resolver for OS tools (`systemctl`, `pkexec`, `semanage`, …) — Local-Dependencies-Only |
 | `src/app/client/ServiceOperationModal.ts` | Browser-side transition modal with polling |
-| `src/app/client/SettingsModal.ts` | Service install/uninstall controls in the Settings panel |
-| `launcher/src/operation_server.rs` | Rust binary that serves the transition page during uninstall/update |
-| `launcher/src/elevated_runner.rs` | Generates `post-stop.bat` with uninstall/update-apply logic |
+| `src/app/client/SettingsModal.ts` | Service install/uninstall controls + scope radios in the Settings panel |
+| `launcher/src/operation_server.rs` | Rust binary that serves the transition page during uninstall/update (Windows) |
+| `launcher/src/elevated_runner.rs` | Generates `post-stop.bat` with uninstall/update-apply logic (Windows) |
+| `launcher/src/linux_service.rs` | Out-of-cgroup systemd teardown + user-scope local relaunch (Linux) |
 
 ---
 
 ## 20. Launcher Architecture
 
-The Rust launcher (`ws-scrcpy-web-launcher.exe` on Windows) is the production entry point for MSI and AppImage installs. It replaces the `start.cmd` / `start.sh` scripts (which remain for dev mode only).
+The Rust launcher is the production entry point for MSI and AppImage installs — `ws-scrcpy-web-launcher.exe` on Windows, the same binary (no `.exe`) wired as the AppImage's `mainExe` on Linux. It replaces the `start.cmd` / `start.sh` scripts (which remain for dev mode only). The supervisor loop (20.1) is cross-platform; sections 20.2–20.7 are Windows-specific OS integration, and section 20.8 covers the Linux-only subcommands.
 
 ### 20.1 Supervisor Loop
 
@@ -1660,7 +1687,20 @@ All Rust binaries use `common::session::active_interactive_session()` (in `commo
 
 `launcher/src/hooks.rs` provides a `silent_command` helper that spawns processes with the `CREATE_NO_WINDOW` creation flag. All subprocess launches (Node, tray, ADB, operation-server) use this helper to prevent console window flashes during normal operation.
 
-### 20.8 Key Files
+### 20.8 Linux Launcher Subcommands
+
+On Linux the launcher binary is also the entry point for several one-shot, out-of-process operations, dispatched by argv at startup (each returns an exit code and skips the supervisor loop):
+
+| Flag | Module | Purpose |
+|------|--------|---------|
+| `--linux-apply --staged <p> --target <p>` | `linux_apply.rs` | Swap a downloaded AppImage over `$APPIMAGE` and relaunch (local-mode update apply). Launched via `systemd-run --collect` so it survives the app's exit (item #27). |
+| `--linux-apply … --service-restart <user\|system> --unit <name> [--relabel]` | `linux_apply.rs` | Service-mode update apply (item 39): stop the unit → swap → (`--relabel`, system scope) re-apply the `bin_t` label → start the unit. System scope runs as root via `systemd-run` (no `--user`), so it self-updates headlessly with no `pkexec`. |
+| `--linux-service-teardown --scope <user\|system> --unit <name>` | `linux_service.rs` | Out-of-cgroup service-uninstall teardown (section 19.5). |
+| `--local-takeover` | `supervisor.rs` | Forces local (non-service) mode for the instance the service-uninstall teardown relaunches. |
+
+The Linux data root is resolved by `common/src/config.rs` (`DATA_ROOT` → `XDG_DATA_HOME` → `~/.local/share/WsScrcpyWeb`), mirroring the Node `resolveDataRoot`. The AppImage runtime itself is swapped to the static type-2 runtime at **build** time (`scripts/swap-appimage-runtime.mjs`), so it launches without host `libfuse2` (see the README "libfuse2" note).
+
+### 20.9 Key Files
 
 | File | Purpose |
 |------|---------|
@@ -1671,9 +1711,12 @@ All Rust binaries use `common::session::active_interactive_session()` (in `commo
 | `launcher/src/job_object.rs` | Kill-on-close job object for child process cleanup |
 | `launcher/src/operation_server.rs` | Transition-page HTTP server for service install/uninstall |
 | `launcher/src/hooks.rs` | `silent_command` helper with `CREATE_NO_WINDOW` |
+| `launcher/src/linux_apply.rs` | Linux update-apply: local swap + relaunch, and `--service-restart` |
+| `launcher/src/linux_service.rs` | Linux service teardown + user-scope local relaunch |
 | `launcher/src/paths.rs` | Path resolution (`dataRoot`, `depsPath`, `logsDir`) |
 | `launcher/src/log.rs` | Launcher-side logging to `launcher.log` |
-| `common/src/session.rs` | `active_interactive_session()` — `WTSEnumerateSessionsW`-based resolver |
+| `common/src/config.rs` | Shared data-root resolution; Linux `DATA_ROOT`/XDG, fails loudly instead of `/tmp` |
+| `common/src/session.rs` | `active_interactive_session()` — `WTSEnumerateSessionsW`-based resolver (Windows) |
 
 ---
 
@@ -1719,7 +1762,7 @@ The in-app updater uses [Velopack](https://velopack.io/) to apply full-applicati
 
 - **Check:** Polls the GitHub release feed for new versions. The feed URL is constructed from `config.json` fields (`githubOwner`, `channel`). The `channel` field selects between `releases.json` (stable) and `releases.beta.json` (beta).
 - **Download:** Downloads the update delta/full package with progress reporting to the browser via WebSocket events.
-- **Apply:** Calls `UpdateManager.waitExitThenApplyUpdate()`, which signals the launcher to exit, apply the update, and relaunch.
+- **Apply (Windows):** Calls `UpdateManager.waitExitThenApplyUpdate()`, which signals the launcher to exit, apply the update, and relaunch. **On Linux this Velopack path is inert** — its `UpdateNix apply` aborts before touching any file — so `applyUpdate()` branches to a download-and-swap flow instead (section 22.5).
 
 ### 22.2 Upgrade Server
 
@@ -1734,20 +1777,40 @@ The upgrade-server's wind-down probe detects when the new Node process is ready:
 
 | Marker file | Written by | Read by | Purpose |
 |-------------|-----------|---------|---------|
-| `apply-update-pending` | Node (UpdateService) | `post-stop.bat` | Tells the post-stop script to run the Velopack apply step |
+| `control/apply-update-pending` | Node (UpdateService) | `post-stop` handler | (Windows) tells the post-stop step to run the Velopack apply |
+| `control/local-appimage` | Node (install) | `linux_service.rs` | (Linux) home AppImage path, used to relaunch local mode after a user-scope service uninstall |
 | `.restart` | Node (DependencyManager) | Launcher supervisor | Triggers a Node respawn after dep updates |
 
 ### 22.4 Dev-Mode Safety
 
 The `requiresLauncher` flag in `DependencyDefinitions.ts` gates Node.js and ADB updates in dev mode. When running without the Rust launcher (i.e., `npm start`), these updates are blocked because there is no supervisor to handle the restart. The browser UI shows the updates as available but disables the apply button with an explanatory tooltip.
 
-### 22.5 Key Files
+### 22.5 Linux Apply (download + swap)
+
+Velopack's `UpdateNix apply` is inert on the AppImage layout — it re-derives its own locator and aborts in under a millisecond, before touching any file (diagnosed on Fedora; see CHANGELOG v0.1.30-beta.27). So on Linux `applyUpdate()` does **not** delegate to Velopack. For every Linux install mode it instead:
+
+1. Downloads the published AppImage for the target version from the GitHub release and verifies it against the release `SHA256SUMS`.
+2. Hands off to the launcher's `--linux-apply` helper (section 20.8), launched via `systemd-run --collect` so it survives the app's own exit (separate cgroup — item #27).
+3. Spawns the operation-server (22.2) to serve the "updating…" transition page.
+
+The helper shape is selected by `installMode`:
+
+| Mode | Helper args | Behaviour |
+|------|-------------|-----------|
+| local | `--linux-apply --staged <s> --target <t>` | back up + swap `$APPIMAGE`, relaunch |
+| user-service | `… --service-restart user --unit <name>` | stop unit → swap home AppImage → start (user manager) |
+| system-service | `… --service-restart system --unit <name> --relabel` | stop unit → swap the `/opt` copy → re-apply `bin_t` → start (system manager, root, no `pkexec`) |
+
+Windows and the Windows-service apply path are unchanged (Velopack `waitExitThenApplyUpdate`).
+
+### 22.6 Key Files
 
 | File | Purpose |
 |------|---------|
-| `src/server/UpdateService.ts` | Velopack wrapper: check, download, apply |
+| `src/server/UpdateService.ts` | Velopack wrapper (check, download); Windows apply + Linux download-and-swap branch |
 | `src/server/api/UpdatesApi.ts` | REST + WebSocket endpoints for the browser update UI |
-| `src/server/Config.ts` | `autoUpdate`, `updateCheckIntervalMinutes`, `channel` fields |
+| `src/server/Config.ts` | `autoUpdate`, `updateCheckIntervalMinutes`, `channel` fields + control-marker paths |
+| `launcher/src/linux_apply.rs` | Linux AppImage swap + relaunch + `--service-restart` |
 | `launcher/src/operation_server.rs` | Upgrade-server and uninstall-server (shared binary) |
 
 ---
@@ -1774,7 +1837,7 @@ else
 Shown on the first page load of a local-mode (non-service) instance. Lets the user choose their install mode:
 
 - **Just for me (local)** — runs as a user-session process, starts when the user launches the app
-- **Install as a service** — triggers service installation (section 19.1)
+- **Install as a service** — triggers service installation (section 19.1 on Windows, 19.5 on Linux)
 
 On dismissal, `firstRunComplete = true` is persisted to `config.json` server-side. This survives port shifts and browser clears because it is stored on the server, not in localStorage.
 
@@ -1789,14 +1852,16 @@ On dismissal, `serviceFirstRunSeen = true` is persisted to `config.json`.
 
 ### 23.4 Config.json Persistence
 
-Both dismissal flags are stored in `config.json` rather than localStorage:
+The first-run and bookmark-dismissal flags are stored in `config.json` rather than localStorage:
 
 | Field | Default | Set by |
 |-------|---------|--------|
 | `firstRunComplete` | `false` | WelcomeModal dismissal |
 | `serviceFirstRunSeen` | `false` | ServiceFirstRunModal dismissal |
+| `bookmarkDismissedForPort` | `null` | PortChangeModal "got it" (stamps the current port) |
+| `bookmarkDismissedGlobally` | `false` | PortChangeModal "don't show again — ever" |
 
-This design means the first-run state survives port changes, browser cache clears, and machine reboots. The Settings panel includes a "Reset welcome prompts" button that resets both flags, allowing the user to re-trigger the first-run flow.
+This design means the state survives port changes, browser cache clears, and machine reboots (localStorage is unreliable on the Linux AppImage, which can treat each launch as a different origin). The **Settings → App** panel includes a **"reset welcome and bookmark prompts"** button (`resetPromptsPayload()`) that clears all four fields at once — `firstRunComplete` and `serviceFirstRunSeen` back to `false`, `bookmarkDismissedForPort` to `null`, and `bookmarkDismissedGlobally` to `false` — re-triggering the first-run flow.
 
 ### 23.5 Port Change Modal
 

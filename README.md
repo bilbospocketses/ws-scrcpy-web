@@ -140,7 +140,7 @@ Get the latest release from the [Releases page](https://github.com/bilbospockets
 
 - **Windows MSI** (recommended) — installs per-machine to `C:\Program Files\WsScrcpyWeb\` with writable runtime state at `C:\ProgramData\WsScrcpyWeb\`. Requires admin (UAC) to install and to apply each subsequent update. Multi-user friendly; service mode and local mode share configuration.
 - **Windows portable ZIP** — unzip and run; no install required, no auto-updates. Useful for air-gapped setups.
-- **Linux AppImage** — `chmod +x ws-scrcpy-web-<version>.AppImage` and run. See [Linux install](#linux-install-appimage) below.
+- **Linux AppImage** — download `WsScrcpyWeb-linux-stable.AppImage` (or `WsScrcpyWeb-linux-beta.AppImage` for the beta channel), `chmod +x` it, and run. See [Linux install](#linux-install-appimage) below.
 
 **Upgrading from v0.1.20 or earlier on Windows:** the install layout changed. See [docs/PROGRAMDATA-MIGRATION.md](docs/PROGRAMDATA-MIGRATION.md) for the uninstall-then-reinstall steps.
 
@@ -261,9 +261,9 @@ In dev mode, `start.cmd` / `start.sh` provide a simpler restart loop for the sam
 
 Linux releases ship as a single self-contained AppImage built with [Velopack](https://velopack.io/). No package manager, no sudo (for user-scope installs), no system-wide changes.
 
-1. Download `WsScrcpyWeb-linux.AppImage` from the [Releases](https://github.com/bilbospocketses/ws-scrcpy-web/releases) page.
-2. Make it executable: `chmod +x WsScrcpyWeb-linux.AppImage`
-3. Run it: `./WsScrcpyWeb-linux.AppImage`
+1. Download `WsScrcpyWeb-linux-stable.AppImage` (stable channel) or `WsScrcpyWeb-linux-beta.AppImage` (beta channel) from the [Releases](https://github.com/bilbospocketses/ws-scrcpy-web/releases) page.
+2. Make it executable: `chmod +x WsScrcpyWeb-linux-stable.AppImage`
+3. Run it: `./WsScrcpyWeb-linux-stable.AppImage`
 4. Open `http://localhost:8000` in your browser.
 
 The first-run welcome modal offers to install ws-scrcpy-web as a systemd service. Two scopes are available:
@@ -285,17 +285,17 @@ AppImage signing is currently under evaluation; releases ship **unsigned** for n
 
 The bundled `node-pty` native binary is built against glibc. Musl-based distros (Alpine and similar) are not supported. Run on glibc-based distros: Ubuntu, Debian, Fedora, Arch, openSUSE, etc. — anything that ships glibc 2.31+ should work.
 
-#### libfuse2 (for in-app updates)
+#### libfuse2 (only for in-app updates)
 
-The AppImage runtime in Velopack 1.0.1 (the type-1 AppImageKit runtime) requires `libfuse.so.2` to mount its squashfs filesystem at launch. If your distro doesn't have it installed, the AppImage itself will refuse to start (this is an AppImageKit-level error, before any of our code runs). The in-app updater also relies on libfuse2 to extract update bundles.
+**The AppImage no longer needs libfuse2 to launch.** Our packaging swaps in the static [type-2 AppImage runtime](https://github.com/AppImage/type2-runtime) (it statically links libfuse), so the AppImage starts on any glibc-based distro — including fresh Ubuntu 24+, Fedora 40+, and Arch installs that no longer ship libfuse2 by default. Just `chmod +x` and run.
 
-If you launch the AppImage successfully but Settings → Updates shows a libfuse2 warning, click **install libfuse2** to invoke `pkexec sudo <pkg-manager> install` for your distro (auto-detected: `dnf`, `apt-get`, or `yum`). Or install manually:
+The **in-app updater** is the one remaining piece that still needs host `libfuse2`: it mounts the downloaded update AppImage to extract the new build. If Settings → Updates shows a libfuse2 warning, click **install libfuse2** to invoke `pkexec <pkg-manager> install` for your distro (auto-detected: `dnf`, `apt-get`, or `yum`). Or install manually:
 
 - **Debian/Ubuntu**: `sudo apt-get install libfuse2`
 - **Fedora/RHEL**: `sudo dnf install fuse-libs`
 - **Arch**: `sudo pacman -S fuse2`
 
-When Velopack ships its type-2 runtime (post-1.0.1), this dependency will be embedded in the AppImage and this step will go away.
+> This updater-side dependency is slated for removal: Velopack 1.1.1 (now bundled) ships its own type-2 runtime, so once it's verified on a no-libfuse2 distro the gate goes away entirely.
 
 #### Tray icon
 

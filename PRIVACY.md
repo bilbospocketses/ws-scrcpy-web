@@ -14,7 +14,7 @@ Everything you do with ws-scrcpy-web stays on your computer:
 - **scrcpy stream data** (video, audio, touch/keyboard input) -- bounces between the device, the local server, and your browser. Never leaves the LAN.
 - **Network device discovery** (mDNS + TCP port-5555 sweep) -- your machine talks to your local network only.
 - **Web UI** -- served from `localhost`. No third-party scripts, no analytics, no tracking pixels.
-- **localStorage preferences** -- theme choice (dark/light), per-device audio settings, saved subnets for network scans. All `localStorage`, no cookies.
+- **localStorage preferences** -- theme choice (dark/light), per-device video/audio stream settings, file-browser icon size, and saved subnets for network scans. All `localStorage`, no cookies.
 
 ## What leaves your machine
 
@@ -55,7 +55,7 @@ Release artifacts are currently unsigned, so there is no code-signing revocation
 - **No analytics.** We don't send page views, click events, or session times anywhere.
 - **No crash reporting.** We don't ship Sentry, Bugsnag, or anything similar. If we add this in the future, the change will be flagged in `CHANGELOG.md` and this file will be updated.
 - **No project-operated server.** There is no ws-scrcpy-web cloud account, no login, no sync. The app is local-only.
-- **No cookies.** The web UI sets a `localStorage` theme preference. That's it. No cookies of any kind.
+- **No cookies.** The web UI stores only `localStorage` UI preferences (theme, stream/scan settings — see below). No cookies of any kind.
 
 ## Third-party operators
 
@@ -73,9 +73,11 @@ When traffic does leave your machine, it goes to one of these well-known operato
 
 The browser side of the app uses `localStorage` only, no cookies. Stored keys are limited to:
 
-- Theme preference (`dark` or `light`)
+- Theme preference (`ws-scrcpy-web-theme`: `dark` or `light`)
+- Per-device video/stream settings (codec, encoder, fps, bitrate; keyed per device/display)
 - Per-device audio settings (`ws-scrcpy-web:audio:<udid>`)
-- Saved network-scan subnets
+- File-browser icon-size preference
+- Saved network-scan subnets (`ws-scrcpy-web:scan-subnets`)
 
 No third-party scripts. No fonts loaded from CDNs. No analytics SDKs. The browser bundle ships from your local server only.
 

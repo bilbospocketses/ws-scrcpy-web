@@ -61,10 +61,10 @@ Any PR that changes protocol code or control-message encoding MUST include or up
 
 Larger features go through a spec → plan → implementation cycle:
 
-- **Specs:** `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md`
-- **Plans:** `docs/superpowers/plans/YYYY-MM-DD-<topic>.md`
+- **Specs:** `docs/specs/YYYY-MM-DD-<topic>-design.md`
+- **Plans:** `docs/plans/YYYY-MM-DD-<topic>.md`
 
-Existing specs and plans in `docs/` are a useful read before proposing architectural changes.
+Existing specs and plans under `docs/specs/`, `docs/plans/`, and the earlier `docs/superpowers/` tree are a useful read before proposing architectural changes.
 
 ## Commit Messages
 

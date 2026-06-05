@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Docs
+
+- **README:** corrected the Linux AppImage download name to the channel-suffixed `WsScrcpyWeb-linux-stable.AppImage` / `WsScrcpyWeb-linux-beta.AppImage`, and rewrote the libfuse2 section — the AppImage now bundles the static type-2 runtime, so it launches without host `libfuse2`; the libfuse2 note now scopes to the in-app updater only.
+- **TECHNICAL_GUIDE:** documented Linux service mode (systemd; user/system scopes; SELinux `/opt` staging), the Linux launcher subcommands, and the Linux download-and-swap update apply (sections 19/20/22); corrected the reset-prompts field list (23.4) and the dependency version table (12).
+- **THIRD-PARTY-NOTICES:** added attribution for the bundled MIT runtime dependencies (`ws`, `@xterm/*`, `node-pty`, `velopack`).
+- Misc: self-contained the SignPath disclosure (RELEASING) and removed references to an internal-only file from RELEASING / PROGRAMDATA-MIGRATION; fixed the spec/plan paths in CONTRIBUTING; completed the localStorage inventory in PRIVACY.
+
 ## [0.1.30-beta.40] - 2026-06-03
 
 ### Fixed
@@ -1659,7 +1666,7 @@ The honest accounting of how we got here:
 ### Privacy and code signing
 
 - `PRIVACY.md` documents outbound traffic (update checks, optional dep installs from `nodejs.org`, `dl.google.com`, `github.com`). No telemetry. No analytics. No project-operated server.
-- ~~Code signing via [SignPath Foundation](https://signpath.org)'s free OSS program — application is in review. Once approved, the next release will be the first signed release. Until then, integrity is verifiable via the `SHA256SUMS` file shipped with each release.~~ *(Retracted 2026-05-07: SignPath Foundation declined the application — see [Unreleased].)*
+- ~~Code signing via [SignPath Foundation](https://signpath.org)'s free OSS program — application is in review. Once approved, the next release will be the first signed release. Until then, integrity is verifiable via the `SHA256SUMS` file shipped with each release.~~ *(Retracted 2026-05-07: SignPath Foundation declined the application — see docs/RELEASING.md "Future signer setup".)*
 
 ## [0.1.3] - 2026-04-27 [YANKED]
 
@@ -1723,7 +1730,7 @@ The honest accounting of how we got here:
 ### Privacy and code signing
 
 - `PRIVACY.md` documents outbound traffic (update checks, optional dep installs from `nodejs.org`, `dl.google.com`, `github.com`). No telemetry. No analytics. No project-operated server.
-- ~~Code signing via [SignPath Foundation](https://signpath.org)'s free OSS program — application is in review. Once approved, the next release will be the first signed release. Until then, integrity is verifiable via the `SHA256SUMS` file shipped with each release.~~ *(Retracted 2026-05-07: SignPath Foundation declined the application — see [Unreleased].)*
+- ~~Code signing via [SignPath Foundation](https://signpath.org)'s free OSS program — application is in review. Once approved, the next release will be the first signed release. Until then, integrity is verifiable via the `SHA256SUMS` file shipped with each release.~~ *(Retracted 2026-05-07: SignPath Foundation declined the application — see docs/RELEASING.md "Future signer setup".)*
 
 ## [0.1.1] - 2026-04-27 [YANKED]
 
@@ -1791,7 +1798,7 @@ First public release.
 ### Privacy and code signing
 
 - New `PRIVACY.md` documenting outbound traffic (update checks, optional dep installs from nodejs.org / dl.google.com / github.com). No telemetry. No analytics. No project-operated server.
-- ~~Code signing via [SignPath Foundation](https://signpath.org)'s free OSS program — application is in review at v0.1.0 release. Once approved, **v0.1.1** will be the first signed release. Until then, integrity is verifiable via the `SHA256SUMS` file shipped with the release.~~ *(Retracted 2026-05-07: SignPath Foundation declined the application — see [Unreleased].)*
+- ~~Code signing via [SignPath Foundation](https://signpath.org)'s free OSS program — application is in review at v0.1.0 release. Once approved, **v0.1.1** will be the first signed release. Until then, integrity is verifiable via the `SHA256SUMS` file shipped with the release.~~ *(Retracted 2026-05-07: SignPath Foundation declined the application — see docs/RELEASING.md "Future signer setup".)*
 
 ### Notes
 

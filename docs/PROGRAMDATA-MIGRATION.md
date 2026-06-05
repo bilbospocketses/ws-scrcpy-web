@@ -116,10 +116,10 @@ complete the upgrade no matter how many times you click apply.
 | Long-lived `adb start-server` daemon's CWD-lock on `current\` blocks Velopack swap rename | Update.exe gives up with "Unable to start the update, because one or more running processes prevented it." | v0.1.23-beta.13 (pre-apply `adb kill-server` + AdbClient cwd anchored at `<dataRoot>/dependencies/adb/`) |
 | webpack's `import { createRequire } from 'module'` tree-shaken to `void 0` | Shell button greyed out; resolver fails to load node-pty after first install. | v0.1.23-beta.23 (switched to `process.getBuiltinModule('module').createRequire(...)`) |
 
-The full per-bug diagnosis lives in `feedback_velopack_permachine_lessons.md`
-(Gotchas 1–11) and in the per-beta CHANGELOG entries v0.1.23-beta.1 through
-beta.13. None of those fixes are reachable via the in-app updater on a
-broken-chain build — Velopack's apply step itself is what's broken.
+The full per-bug diagnosis lives in the per-beta CHANGELOG entries
+v0.1.23-beta.1 through beta.13. None of those fixes are reachable via the
+in-app updater on a broken-chain build — Velopack's apply step itself is
+what's broken.
 
 ## How to migrate
 
@@ -150,6 +150,5 @@ and the `current\` swap completes automatically without the user needing
 to relaunch. Settings → Updates → "apply update v0.1.X" handles the full
 flow including auto-relaunch into the new version.
 
-If a future update fails: the `feedback_velopack_permachine_lessons.md`
-diagnostic checklist + the per-build `velopack.log` + `ws-scrcpy-web.log`
-are the right starting points.
+If a future update fails: the per-build `velopack.log` + `ws-scrcpy-web.log`
+(plus the v0.1.23-beta.1–13 CHANGELOG entries) are the right starting points.
