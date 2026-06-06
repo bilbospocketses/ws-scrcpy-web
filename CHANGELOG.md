@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.44] - 2026-06-06
+
 ### Changed
 
 - **Velopack upgraded 1.1.1 → 1.2.0 across all touchpoints** (the npm SDK in `package.json`, the Rust crate in `Cargo.lock`, and the `vpk` CLI pin in `release.yml` for both the Windows and Linux build legs). 1.2.0 is a maintenance release — notably a Linux locator root-path fix (velopack#921) on the AppImage update path and stricter semver validation (velopack#923) — with no API or CLI-flag changes (`--msi` / `--instLocation` unchanged), so the upgrade is drop-in.
