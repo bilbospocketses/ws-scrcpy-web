@@ -1143,9 +1143,9 @@ dependencies = [
 
 [[package]]
 name = "velopack"
-version = "1.1.1"
+version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2ccc718589add249fc811d1a824b4f9110d95893aca6ded683becbf38ccb3b83"
+checksum = "bd3fd8e7b771e0d0fc4ca67249273ad4eacfabe2562617b3ca42065a5972a58c"
 dependencies = [
  "anyhow",
  "bitflags",
