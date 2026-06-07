@@ -167,10 +167,10 @@ describe('SystemdClient', () => {
             const sysCalls = execFileSyncMock.mock.calls.filter((c) => c[0] === 'systemctl');
             expect(sysCalls).toHaveLength(2);
             expect(sysCalls[0]![1]).toEqual(['--user', 'daemon-reload']);
+            // F4: user scope enables but does NOT --now (the handoff helper starts it).
             expect(sysCalls[1]![1]).toEqual([
                 '--user',
                 'enable',
-                '--now',
                 'WsScrcpyWeb.service',
             ]);
 

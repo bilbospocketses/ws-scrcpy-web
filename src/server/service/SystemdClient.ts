@@ -696,10 +696,22 @@ export class SystemdClient implements ServiceClient {
 
             const baseArgs = scope === 'user' ? ['--user'] : [];
             runSystemctl([...baseArgs, 'daemon-reload'], 'daemon-reload');
-            runSystemctl(
-                [...baseArgs, 'enable', '--now', `${opts.name}.service`],
-                `enable --now ${opts.name}.service`,
-            );
+            // F4: user scope must NOT start the service here — the local app still
+            // holds the per-user single-instance lock, so the service would exit
+            // "already running" before binding. Just `enable` (persist); ServiceApi
+            // spawns a detached install-handoff helper that starts it after the
+            // local instance exits and frees the lock. Root/system starts normally.
+            if (scope === 'user') {
+                runSystemctl(
+                    [...baseArgs, 'enable', `${opts.name}.service`],
+                    `enable ${opts.name}.service`,
+                );
+            } else {
+                runSystemctl(
+                    [...baseArgs, 'enable', '--now', `${opts.name}.service`],
+                    `enable --now ${opts.name}.service`,
+                );
+            }
         }
 
         if (scope === 'user') {

@@ -102,6 +102,15 @@ fn main() {
         std::process::exit(code);
     }
 
+    // Install handoff (F4): out-of-cgroup helper that starts the user-scope
+    // service AFTER the local instance exits (freeing the single-instance lock),
+    // verifies it stays up, and rolls back + relaunches local on failure.
+    #[cfg(target_os = "linux")]
+    if let Some(code) = linux_service::handle_install_handoff(&args) {
+        log::info(&format!("linux-service-install-handoff exiting with code {code}"));
+        std::process::exit(code);
+    }
+
     // Service-defer: if an ACTIVE system-scope service owns the app, open the
     // browser at its URL and exit instead of spawning a duplicate local server.
     #[cfg(target_os = "linux")]

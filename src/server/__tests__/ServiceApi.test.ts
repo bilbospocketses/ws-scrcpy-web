@@ -1134,7 +1134,7 @@ describe('ServiceApi', () => {
             expect(body.status).toBe('shutting-down');
         });
 
-        it('schedules local-instance exit after a successful install on Linux (mirrors win32)', async () => {
+        it('schedules a prompt local-instance exit on Linux user-scope install (handoff frees the lock)', async () => {
             const scheduled: number[] = [];
             const scheduleExit = vi.fn((_fn: () => void, ms: number) => { scheduled.push(ms); });
             const client = fakeClient({
@@ -1158,13 +1158,15 @@ describe('ServiceApi', () => {
             await api.handle(req, res);
             expect((res as any).getStatus()).toBe(200);
             expect(scheduleExit).toHaveBeenCalledTimes(1);
-            expect(scheduled[0]).toBe(15_000);
+            // F4: Linux user-scope now exits promptly so the handoff helper can
+            // start the service once the per-user lock is free (was 15s blind).
+            expect(scheduled[0]).toBe(1_500);
         });
 
-        it('F3: rolls back when the service never becomes active — uninstall + revert installMode + ok:false, no exit', async () => {
-            // install() does NOT throw (systemd Type=simple reports "started" on
-            // fork, before execve fails), so the existing throw-path is not hit.
-            // verifyServiceActive returns false → the install must roll back
+        it('F3 (win32): rolls back when the service never becomes active — uninstall + revert installMode + ok:false, no exit', async () => {
+            // Windows (and Linux system scope) keep the in-handler verify/rollback —
+            // they don't share the user's single-instance lock. install() doesn't
+            // surface a failed start, so verifyServiceActive=false must roll back
             // instead of blindly exiting the local instance.
             const uninstallFn = vi.fn(async () => undefined);
             const scheduleExit = vi.fn();
@@ -1176,7 +1178,7 @@ describe('ServiceApi', () => {
             const factoryResult: ServiceClientFactoryResult = {
                 client,
                 supported: true,
-                platform: 'linux',
+                platform: 'win32',
             };
             // Pre-existing local mode → rollback must restore it.
             Config.getInstance().updateAppConfig({ installMode: 'user' });
@@ -1184,7 +1186,7 @@ describe('ServiceApi', () => {
             const api = new ServiceApi(
                 () => factoryResult,
                 () => 'user',
-                () => true,
+                () => true,          // existsCheck → packaged launcher present
                 vi.fn(),            // spawnDetached
                 scheduleExit,
                 undefined,          // runPkexecFn → default
@@ -1205,7 +1207,7 @@ describe('ServiceApi', () => {
             expect(body.reason).toBe('service-start-failed');
         });
 
-        it('F3: keeps the install when the service becomes active (no rollback on the happy path)', async () => {
+        it('F3 (win32): keeps the install when the service becomes active (no rollback)', async () => {
             const uninstallFn = vi.fn(async () => undefined);
             const scheduleExit = vi.fn();
             const client = fakeClient({
@@ -1216,7 +1218,7 @@ describe('ServiceApi', () => {
             const factoryResult: ServiceClientFactoryResult = {
                 client,
                 supported: true,
-                platform: 'linux',
+                platform: 'win32',
             };
             const api = new ServiceApi(
                 () => factoryResult,
@@ -1234,6 +1236,62 @@ describe('ServiceApi', () => {
             expect((res as any).getStatus()).toBe(200);
             const body = JSON.parse((res as any).getBody());
             expect(body.ok).toBe(true);
+        });
+
+        it('F4: Linux user-scope install hands off to the detached helper (no in-handler verify)', async () => {
+            // The service can't start while THIS local instance holds the per-user
+            // lock, so handleInstall enables the unit, spawns the out-of-cgroup
+            // install-handoff helper via systemd-run, and exits promptly to free the
+            // lock. The helper (not this handler) verifies + rolls back — so
+            // verifyServiceActive must NOT be called on this path.
+            const verifySpy = vi.fn(async () => true);
+            const scheduleExit = vi.fn();
+            let spawnedCmd = '';
+            let spawnedArgs: string[] = [];
+            const spawnDetached = vi.fn((cmd: string, args: string[]) => { spawnedCmd = cmd; spawnedArgs = args; });
+            const client = fakeClient({
+                install: vi.fn(async () => undefined),
+                status: vi.fn(async () => 'running' as const),
+            });
+            const factoryResult: ServiceClientFactoryResult = {
+                client,
+                supported: true,
+                platform: 'linux',
+            };
+            const api = new ServiceApi(
+                () => factoryResult,
+                () => 'user',
+                () => true,
+                spawnDetached,
+                scheduleExit,
+                undefined,
+                verifySpy,
+            );
+            const { req, res } = makeReqRes('/api/service/install', 'POST', JSON.stringify({ scope: 'user' }));
+            await api.handle(req, res);
+
+            // Handoff helper spawned via systemd-run --user --collect.
+            expect(spawnDetached).toHaveBeenCalledTimes(1);
+            expect(spawnedCmd).toMatch(/systemd-run/);
+            expect(spawnedArgs).toContain('--user');
+            expect(spawnedArgs).toContain('--collect');
+            expect(spawnedArgs).toContain('--linux-service-install-handoff');
+            expect(spawnedArgs).toContain('--scope');
+            expect(spawnedArgs).toContain('user');
+            expect(spawnedArgs).toContain('--unit');
+            expect(spawnedArgs).toContain('WsScrcpyWeb');
+            const helperArg = spawnedArgs.find((a) => a.endsWith('ws-scrcpy-web-launcher.exe'));
+            expect(helperArg).toBeDefined();
+            expect(helperArg).toContain('operation-server');
+            // local exits promptly to free the lock
+            expect(scheduleExit).toHaveBeenCalledTimes(1);
+            // the in-handler verify/rollback is NOT used on the Linux user path
+            expect(verifySpy).not.toHaveBeenCalled();
+            // responds shutting-down so the frontend reconnects through the gap
+            expect((res as any).getStatus()).toBe(200);
+            const body = JSON.parse((res as any).getBody());
+            expect(body.ok).toBe(true);
+            expect(body.status).toBe('shutting-down');
         });
 
         it('user-scope uninstall is UNCHANGED (home helper, systemd-run --user, no pkexec)', async () => {
@@ -1322,6 +1380,36 @@ describe('ServiceApi', () => {
                 expect(script).toContain(`cp "${appImagePath}" "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"`);
                 expect(script).toContain('bin_t');
                 expect(label).toBe('install-system-wide');
+            } finally {
+                if (savedAppImage === undefined) delete process.env['APPIMAGE'];
+                else process.env['APPIMAGE'] = savedAppImage;
+            }
+        });
+
+        it('POST /api/service/install-system-wide relaunches from /opt + exits (F5: no lingering home-mount process)', async () => {
+            const savedAppImage = process.env['APPIMAGE'];
+            process.env['APPIMAGE'] = '/home/jamie/Downloads/WsScrcpyWeb-linux-beta.AppImage';
+            try {
+                const fakePkexec = vi.fn(async (_cmd: string, _label: string) => '');
+                const scheduleExit = vi.fn();
+                let spawnedArgs: string[] = [];
+                const spawnDetached = vi.fn((_cmd: string, args: string[]) => { spawnedArgs = args; });
+                // existsCheck → relaunch helper present, so F5 hands off + exits.
+                const api = new ServiceApi(undefined, undefined, () => true, spawnDetached, scheduleExit, fakePkexec);
+                const { req, res } = makeReqRes('/api/service/install-system-wide', 'POST');
+                await api.handle(req, res);
+
+                expect((res as any).getStatus()).toBe(200);
+                const body = JSON.parse((res as any).getBody());
+                expect(body.ok).toBe(true);
+                expect(body.status).toBe('shutting-down');
+                // relaunch-only helper targeting /opt, waiting on the launcher (flock holder).
+                expect(spawnDetached).toHaveBeenCalledTimes(1);
+                expect(spawnedArgs).toContain('--linux-apply');
+                expect(spawnedArgs).toContain('--target');
+                expect(spawnedArgs.some((a) => a.endsWith('/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage'))).toBe(true);
+                expect(spawnedArgs).toContain('--wait-pid');
+                expect(scheduleExit).toHaveBeenCalledTimes(1);
             } finally {
                 if (savedAppImage === undefined) delete process.env['APPIMAGE'];
                 else process.env['APPIMAGE'] = savedAppImage;

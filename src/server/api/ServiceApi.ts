@@ -461,10 +461,47 @@ export class ServiceApi {
             return true;
         }
 
+        // F4: Linux user-scope can't start the service while THIS local instance
+        // holds the per-user single-instance lock — the service would exit
+        // "already running" before binding. install() above only `enable`d the
+        // unit (no --now); hand off to a detached, out-of-cgroup helper that
+        // starts it AFTER we exit (freeing the lock), verifies it stays up, and
+        // rolls back + relaunches local on failure. Mirror of the uninstall
+        // teardown spawn. (Windows + Linux system scope keep the in-handler
+        // verify/rollback below — they don't share the user's lock.)
+        if (result.platform === 'linux' && scope === 'user') {
+            const dataRoot = cfg.dataRoot ?? path.dirname(cfg.dependenciesPath);
+            const helper = path.join(dataRoot, 'control', 'operation-server', 'ws-scrcpy-web-launcher.exe');
+            const systemdRun = resolveSystemTool('systemd-run');
+            const handoffUnit = `--unit=wsscrcpy-install-${Date.now()}`;
+            this.spawnDetached(systemdRun, [
+                '--user', '--collect', handoffUnit,
+                helper, '--linux-service-install-handoff', '--scope', 'user', '--unit', WS_SCRCPY_SERVICE_NAME,
+            ]);
+            log.info('install-flow(linux user): spawned install-handoff helper; exiting local to free the lock');
+            // Exit promptly so the helper can start the service (release lock + port).
+            this.scheduleExit(() => {
+                log.info('install-flow: local instance exiting (handoff to service)');
+                process.exit(0);
+            }, 1_500);
+            const disk = this.readDiskConfig();
+            const body: ServiceActionSuccess = {
+                ok: true,
+                status: 'shutting-down',
+                installMode: newInstallMode,
+                ...(disk.configMtime != null ? { configMtime: disk.configMtime } : {}),
+                ...(disk.diskWebPort != null ? { diskWebPort: disk.diskWebPort } : {}),
+            };
+            res.writeHead(200);
+            res.end(JSON.stringify(body));
+            return true;
+        }
+
         // F3: verify the service actually started before sacrificing this local
         // instance. install() does NOT throw on a failed start (systemd
         // Type=simple reports "started" on fork, before execve fails), so a
         // blind exit here would strand the user with a dead app + no fallback.
+        // (Windows + Linux system scope; Linux user scope returns above.)
         const active = await this.verifyServiceActive(result.client, WS_SCRCPY_SERVICE_NAME);
         if (!active) {
             log.warn('install-flow: service did not become active; rolling back the failed install');
@@ -760,8 +797,31 @@ export class ServiceApi {
         const script = buildMachineWideInstallScript({ sourceAppImage: appImage, version });
         try {
             await this.runPkexecFn(script, 'install-system-wide');
-            res.writeHead(200);
-            res.end(JSON.stringify({ ok: true, status: 'installed' }));
+            // F5: the running instance launched from the home AppImage (now
+            // deleted by the install) and never re-execs to /opt — it lingers on
+            // the deleted FUSE mount and holds the per-user lock. Hand off to the
+            // relaunch-only helper (waits for our launcher to exit → flock free →
+            // runs /opt) and exit promptly so the app comes back from /opt, not the
+            // deleted mount. Reuses the linux_apply relaunch-only path.
+            const cfg = Config.getInstance();
+            const dataRoot = cfg.dataRoot ?? path.dirname(cfg.dependenciesPath);
+            const relaunchHelper = path.join(dataRoot, 'control', 'operation-server', 'ws-scrcpy-web-launcher.exe');
+            const optBin = `${STAGED_SYSTEM_DIR}/${STAGED_SYSTEM_APPIMAGE}`;
+            if (this.existsCheck(relaunchHelper)) {
+                // process.ppid is the launcher (the flock holder); the helper waits
+                // for it to exit before relaunching /opt.
+                this.spawnDetached(relaunchHelper, ['--linux-apply', '--target', optBin, '--wait-pid', String(process.ppid)]);
+                this.scheduleExit(() => {
+                    log.info('install-system-wide: local instance exiting → relaunch from /opt');
+                    process.exit(0);
+                }, 1_500);
+                res.writeHead(200);
+                res.end(JSON.stringify({ ok: true, status: 'shutting-down' }));
+            } else {
+                log.warn('install-system-wide: relaunch helper not found; app keeps running from the home mount until next launch');
+                res.writeHead(200);
+                res.end(JSON.stringify({ ok: true, status: 'installed' }));
+            }
         } catch (err) {
             const msg = (err as Error).message;
             const declined = /dismissed/i.test(msg);

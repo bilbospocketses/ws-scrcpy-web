@@ -328,6 +328,151 @@ fn run(scope: Scope, unit: &str) -> i32 {
     0
 }
 
+// ── install handoff (F4) ────────────────────────────────────────────────────
+//
+// A user-scope service and the local app run as the same user, so they share
+// the per-$XDG_RUNTIME_DIR single-instance flock. Starting the service while the
+// local app still holds the lock makes the service launcher see "already
+// running" and exit 0 (never binding). So the install enables the unit (NOT
+// --now) and hands off to THIS out-of-cgroup helper, which waits for the local
+// instance to exit (port released → lock freed), starts the service, verifies it
+// STAYS up (active AND serving — not the Type=simple flicker), and on failure
+// rolls back + relaunches local so the user is never stranded. Mirror of `run`.
+
+/// `systemctl [--user] start <unit>.service` argv (absolute systemctl, Local-Deps).
+pub fn start_command(scope: Scope, name: &str, bindir: &str) -> Vec<String> {
+    let systemctl = format!("{bindir}/systemctl");
+    [
+        vec![systemctl],
+        scope_prefix(scope),
+        vec!["start".into(), format!("{name}.service")],
+    ]
+    .concat()
+}
+
+/// The handoff treats the service as "up" only when systemd reports it active
+/// AND the web port actually accepts a connection. `Type=simple` flips a unit to
+/// active the instant it forks, so is-active alone is fooled by a start-then-
+/// exit-0 (the beta.45 F3 flicker); the port probe is what makes the check real.
+/// Pure.
+pub fn service_up(is_active: bool, port_open: bool) -> bool {
+    is_active && port_open
+}
+
+/// TCP-probe 127.0.0.1:<port>; true when a connection succeeds within 200ms.
+fn port_is_open(port: u16) -> bool {
+    std::net::TcpStream::connect_timeout(
+        &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
+        std::time::Duration::from_millis(200),
+    )
+    .is_ok()
+}
+
+/// Poll up to `secs` seconds (1s cadence) for the port to reach `want_open`.
+fn wait_port(port: u16, want_open: bool, secs: u64) -> bool {
+    for _ in 0..secs {
+        if port_is_open(port) == want_open {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+    port_is_open(port) == want_open
+}
+
+/// Poll up to `secs` seconds for the service to be active AND serving the port.
+fn verify_up(scope: Scope, unit: &str, bindir: &str, port: u16, secs: u64) -> bool {
+    let systemctl = format!("{bindir}/systemctl");
+    let pre = scope_prefix(scope);
+    let unit_svc = format!("{unit}.service");
+    for _ in 0..secs {
+        let mut a: Vec<&str> = pre.iter().map(String::as_str).collect();
+        a.push("is-active");
+        a.push(&unit_svc);
+        let is_active = std::process::Command::new(&systemctl)
+            .args(&a)
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "active")
+            .unwrap_or(false);
+        if service_up(is_active, port_is_open(port)) {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+    false
+}
+
+/// Dispatch: handle `--linux-service-install-handoff`, return Some(exit_code).
+pub fn handle_install_handoff(args: &[String]) -> Option<i32> {
+    if !args.iter().any(|a| a == "--linux-service-install-handoff") {
+        return None;
+    }
+    match parse_args(args) {
+        Some((scope, unit)) => Some(run_install_handoff(scope, &unit)),
+        None => {
+            log::error("linux-service-install-handoff: missing/invalid --scope or --unit");
+            Some(2)
+        }
+    }
+}
+
+fn run_install_handoff(scope: Scope, unit: &str) -> i32 {
+    let bd = tool_dir("systemctl");
+    log::info(&format!("install-handoff: scope={scope:?} unit={unit}"));
+
+    // Web port from the user config (default 8000). The local instance + the
+    // service share it; it's our signal for the local exit and the service bind.
+    let web_port = common::config::data_root_from_env()
+        .map(|dr| common::config::AppConfig::load(&dr))
+        .and_then(|c| c.web_port)
+        .unwrap_or(8000);
+
+    // 1. Wait for the local instance to release the port (it exits to free the
+    //    per-user single-instance lock the service needs). Best-effort.
+    if wait_port(web_port, false, 20) {
+        log::info(&format!("install-handoff: local instance released port {web_port}"));
+    } else {
+        log::error(&format!(
+            "install-handoff: port {web_port} still held after 20s; starting anyway"
+        ));
+    }
+
+    // 2. Start the service (lock now free → it acquires it + binds the port).
+    let argv = start_command(scope, unit, &bd);
+    let (cmd, rest) = argv.split_first().expect("non-empty argv");
+    match std::process::Command::new(cmd).args(rest).status() {
+        Ok(s) => log::info(&format!("install-handoff: started {unit} (exit {:?})", s.code())),
+        Err(e) => log::error(&format!("install-handoff: start spawn failed: {e}")),
+    }
+
+    // 3. Verify it STAYS up (active AND serving) — not the Type=simple flicker.
+    if verify_up(scope, unit, &bd, web_port, 12) {
+        log::info("install-handoff: service active + serving; handoff complete");
+        return 0;
+    }
+
+    // 4. Failure → roll back (teardown) + relaunch local so the user isn't stranded.
+    log::error("install-handoff: service did not come up; rolling back + relaunching local");
+    for argv in teardown_commands(scope, unit, &bd) {
+        let (cmd, rest) = argv.split_first().expect("non-empty argv");
+        let _ = std::process::Command::new(cmd).args(rest).status();
+    }
+    if let Some(target) = relaunch_target(scope, read_local_appimage_marker()) {
+        let systemd_run = format!("{}/systemd-run", tool_dir("systemd-run"));
+        let target_str = target.to_string_lossy().into_owned();
+        match std::process::Command::new(&systemd_run)
+            .args(["--user", "--collect", &target_str])
+            .status()
+        {
+            Ok(s) => log::info(&format!(
+                "install-handoff rollback: relaunched local {target_str} (exit {:?})",
+                s.code()
+            )),
+            Err(e) => log::error(&format!("install-handoff rollback: relaunch failed: {e}")),
+        }
+    }
+    0
+}
+
 fn read_local_appimage_marker() -> Option<String> {
     let data_root = common::config::data_root_from_env()?;
     let p = data_root.join("control").join("local-appimage");
@@ -459,5 +604,25 @@ mod tests {
         assert_eq!(bootstrap_decision(true, Some(opt), "0.1.31", Some("0.1.31")), BootstrapAction::RunHome);   // we ARE /opt
         assert_eq!(bootstrap_decision(false, Some("/home/u/App.AppImage"), "0.1.31", None), BootstrapAction::RunHome);  // no /opt
         assert_eq!(bootstrap_decision(true, Some("/home/u/App.AppImage"), "0.1.31", None), BootstrapAction::ExecOpt(opt.into())); // unknown /opt version -> run /opt
+    }
+
+    #[test]
+    fn start_command_user_and_system() {
+        assert_eq!(
+            start_command(Scope::User, "WsScrcpyWeb", "/usr/bin"),
+            vec!["/usr/bin/systemctl", "--user", "start", "WsScrcpyWeb.service"]
+        );
+        assert_eq!(
+            start_command(Scope::System, "WsScrcpyWeb", "/usr/bin"),
+            vec!["/usr/bin/systemctl", "start", "WsScrcpyWeb.service"]
+        );
+    }
+
+    #[test]
+    fn service_up_requires_active_and_serving() {
+        assert!(service_up(true, true));
+        assert!(!service_up(true, false)); // active but not serving — the Type=simple flicker
+        assert!(!service_up(false, true));
+        assert!(!service_up(false, false));
     }
 }

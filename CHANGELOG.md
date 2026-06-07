@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Linux user-scope service install now starts the service cleanly.** beta.45 fixed the unit's `ExecStart`, which exposed a deeper race: the service and the still-running local app share the same per-user single-instance lock, so the service exited "already running" before it could bind the port — and the app went dark. Installing now performs a proper hand-off — the local instance steps aside so the service can take the lock and the port — and verifies the service actually *stays up and is serving* before committing (not just that systemd forked it). If it doesn't come up, the install rolls back and the local app is relaunched, so you're never left with nothing on the port.
+- **Installing for all users no longer leaves the old process running from a deleted file.** After a machine-wide install relocated the binary to `/opt` and deleted the home AppImage, the already-running instance kept serving from the now-deleted file (it showed up as a stale `(deleted)` entry in the process list and still held the single-instance lock). It now relaunches from `/opt` once the install completes, so the deleted-file process is gone and the app runs from the installed location.
+
 ## [0.1.30-beta.45] - 2026-06-07
 
 ### Fixed
