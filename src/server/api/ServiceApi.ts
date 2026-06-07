@@ -41,6 +41,27 @@ export function systemServiceNeedsMigration(input: { dataRootEnv?: string; oldDa
 }
 
 /**
+ * F3: poll the service's is-active state until it reports `running`, up to ~15s
+ * (the old blind-exit cap). Returns true as soon as it's up; false if it never
+ * becomes active. `install()` does NOT throw on a failed start (systemd
+ * `Type=simple` reports "started" on fork, before `execve` fails), so this poll
+ * is the only signal that the service actually came up before the install-flow
+ * sacrifices the local instance.
+ */
+async function defaultVerifyServiceActive(
+    client: ServiceClientFactoryResult['client'],
+    name: string,
+): Promise<boolean> {
+    const ATTEMPTS = 30;
+    const INTERVAL_MS = 500;
+    for (let i = 0; i < ATTEMPTS; i++) {
+        if ((await client.status(name)) === 'running') return true;
+        await new Promise((resolve) => setTimeout(resolve, INTERVAL_MS));
+    }
+    return (await client.status(name)) === 'running';
+}
+
+/**
  * HTTP API for SP3 P3 service-mode operations.
  *
  *   GET  /api/service/status     -> ServiceStatusResponse (always 200)
@@ -72,6 +93,12 @@ export class ServiceApi {
         },
         private scheduleExit: (fn: () => void, ms: number) => void = (fn, ms) => { setTimeout(fn, ms).unref(); },
         private readonly runPkexecFn: (shellCmd: string, label: string) => Promise<string> = runPkexec,
+        // F3: injectable so tests can force the verify outcome without a real
+        // 15s poll. Default polls is-active; tests pass async () => true|false.
+        private readonly verifyServiceActive: (
+            client: ServiceClientFactoryResult['client'],
+            name: string,
+        ) => Promise<boolean> = defaultVerifyServiceActive,
     ) {}
 
     public async handle(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
@@ -388,8 +415,9 @@ export class ServiceApi {
                 // §32 Part 4: pass dataRoot so the elevated installer can write
                 // <dataRoot>/post-stop/post-stop.bat and register it as Servy's
                 // --postStopPath via cmd.exe (Velopack-untouchable location).
-                // Linux SystemdClient ignores this field.
-                dataRoot: Config.getInstance().dataRoot ?? undefined,
+                // F1: Linux user-scope install also uses it to stage a stable
+                // binary under <dataRoot>/bin — so guarantee it's defined.
+                dataRoot: cfg.dataRoot ?? path.dirname(cfg.dependenciesPath),
                 // Linux SystemdClient consumes scope; Windows ServyClient ignores it.
                 scope,
                 // Linux system-scope only: home helper path to stage into /opt (bin_t).
@@ -430,6 +458,39 @@ export class ServiceApi {
             const body: ServiceActionFailure = { ok: false, error: (err as Error).message, reason: 'servy-failure' };
             res.writeHead(500);
             res.end(JSON.stringify(body));
+            return true;
+        }
+
+        // F3: verify the service actually started before sacrificing this local
+        // instance. install() does NOT throw on a failed start (systemd
+        // Type=simple reports "started" on fork, before execve fails), so a
+        // blind exit here would strand the user with a dead app + no fallback.
+        const active = await this.verifyServiceActive(result.client, WS_SCRCPY_SERVICE_NAME);
+        if (!active) {
+            log.warn('install-flow: service did not become active; rolling back the failed install');
+            // Roll back the dead unit + restore the prior installMode so the
+            // user lands back in a working local app. Best-effort; surface the
+            // failure regardless. Crucially do NOT scheduleExit — keep this
+            // local instance alive.
+            try {
+                await result.client.uninstall(WS_SCRCPY_SERVICE_NAME);
+            } catch (err) {
+                log.warn(`rollback uninstall failed: ${(err as Error).message}`);
+            }
+            try {
+                cfg.updateAppConfig({ installMode: previousMode ?? null });
+            } catch (err) {
+                log.warn(`rollback installMode revert failed: ${(err as Error).message}`);
+            }
+            const failBody: ServiceActionFailure = {
+                ok: false,
+                error:
+                    'the service was installed but did not start, so it was removed; ' +
+                    'the app is still running locally. check the service logs and try again.',
+                reason: 'service-start-failed',
+            };
+            res.writeHead(500);
+            res.end(JSON.stringify(failBody));
             return true;
         }
 

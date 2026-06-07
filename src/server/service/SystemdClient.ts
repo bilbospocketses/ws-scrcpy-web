@@ -606,6 +606,41 @@ export class SystemdClient implements ServiceClient {
         return this.resolveActiveScope(name);
     }
 
+    /**
+     * F1: resolve a STABLE, executable `ExecStart` binary for a user-scope
+     * service. The volatile launch path (`opts.binPath` = `$APPIMAGE`, e.g.
+     * `~/Downloads/...AppImage`) must NEVER be the unit's `ExecStart`: a
+     * browser-downloaded AppImage is `-rw-r--r--` (the GUI can launch it but
+     * systemd's `execve()` requires `+x` → `203/EXEC`), and that file is the
+     * throwaway installer artifact (a machine-wide install deletes it; users
+     * delete downloads).
+     *
+     *   - If the machine-wide `/opt` binary exists, reuse it (already `0755`,
+     *     `bin_t`) — no copy.
+     *   - Otherwise copy the source AppImage to `<dataRoot>/bin/` and `chmod
+     *     0755`, so the unit points at a stable, guaranteed-executable file.
+     *
+     * Returns `opts` with `binPath` + `startupDir` retargeted at the resolved
+     * stable path. Forward-slash paths on purpose (Linux unit file).
+     */
+    private withStableUserBin(opts: ServiceInstallOptions): ServiceInstallOptions {
+        const optBin = `${STAGED_SYSTEM_DIR}/${STAGED_SYSTEM_APPIMAGE}`;
+        if (fs.existsSync(optBin)) {
+            return { ...opts, binPath: optBin, startupDir: STAGED_SYSTEM_DIR };
+        }
+        if (!opts.dataRoot) {
+            throw new Error(
+                'SystemdClient.install: user-scope install requires dataRoot to stage a stable binary',
+            );
+        }
+        const binDir = `${opts.dataRoot}/bin`;
+        const stableBin = `${binDir}/${STAGED_SYSTEM_APPIMAGE}`;
+        fs.mkdirSync(binDir, { recursive: true });
+        fs.copyFileSync(opts.binPath, stableBin);
+        fs.chmodSync(stableBin, 0o755);
+        return { ...opts, binPath: stableBin, startupDir: binDir };
+    }
+
     public async install(opts: ServiceInstallOptions): Promise<void> {
         const scope = opts.scope;
         if (!scope) {
@@ -614,7 +649,12 @@ export class SystemdClient implements ServiceClient {
             );
         }
 
-        const unitContent = renderUnitFile(opts, scope);
+        // F1: user-scope services must ExecStart a STABLE, executable binary —
+        // never the volatile launch path ($APPIMAGE / ~/Downloads). Resolve it
+        // (prefer the machine-wide /opt binary; else stage a copy) before render.
+        const effectiveOpts = scope === 'user' ? this.withStableUserBin(opts) : opts;
+
+        const unitContent = renderUnitFile(effectiveOpts, scope);
         const unitPath = scope === 'user'
             ? this.userUnitPath(opts.name)
             : this.systemUnitPath(opts.name);
@@ -817,29 +857,27 @@ export class SystemdClient implements ServiceClient {
      * Write the tray helper autostart .desktop file under
      * `~/.config/autostart/`. The Linux equivalent of Windows's HKCU Run-key.
      *
-     * If the tray binary can't be located on disk, write a `Exec=<bare-name>`
-     * pointing at PATH lookup so a tray binary later placed on PATH still
-     * works. Logs a warning in that case.
+     * F2: only written when a tray helper binary resolves to an ABSOLUTE path on
+     * disk. If none is found, the autostart is SKIPPED entirely — we never write
+     * a bare-name `Exec=ws-scrcpy-web-tray` (a PATH lookup that violates
+     * Local-Dependencies-Only, and — since Linux has no tray binary, item 27 —
+     * only leaves an orphaned autostart entry that never resolves).
      */
     private writeTrayAutostart(): void {
-        const desktopPath = this.trayAutostartPath();
         const trayPath = resolveTrayHelperPath();
-        let exec: string;
-        if (trayPath) {
-            exec = trayPath;
-        } else {
-            exec = TRAY_HELPER_BIN;
-            log.warn(
-                `tray helper binary not found next to launcher or in publish/; ` +
-                `writing Exec=${TRAY_HELPER_BIN} (relies on PATH lookup at login)`,
+        if (!trayPath) {
+            log.info(
+                'tray helper binary not found; skipping tray autostart (no PATH-reliant Exec written)',
             );
+            return;
         }
 
+        const desktopPath = this.trayAutostartPath();
         const content = [
             '[Desktop Entry]',
             'Type=Application',
             'Name=ws-scrcpy-web tray',
-            `Exec=${exec}`,
+            `Exec=${trayPath}`,
             'Hidden=false',
             'NoDisplay=false',
             'X-GNOME-Autostart-enabled=true',
