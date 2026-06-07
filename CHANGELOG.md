@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.45] - 2026-06-07
+
 ### Fixed
 
 - **Linux user-scope service install now works.** The user-scope systemd unit pointed `ExecStart` at the AppImage's launch path (e.g. your `~/Downloads` copy) — which systemd refuses to run when the file isn't marked executable (a browser download isn't), and which vanishes if that file is later moved or deleted. The unit now targets a stable, guaranteed-executable binary instead: the shared `/opt` binary when the app is installed machine-wide, otherwise a copy staged under `~/.local/share/WsScrcpyWeb/bin/`. (Found during the 0.1.30 Linux smoke — the service failed to start with `203/EXEC` and the app went dark.)
