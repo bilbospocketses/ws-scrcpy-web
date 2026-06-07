@@ -111,6 +111,9 @@ export interface ServiceActionSuccess {
  *   a recently-issued token for the requested action.
  * - `servy-failure`: servy-cli (or systemd-side equivalent) exited non-zero
  *   on the actual install/uninstall operation.
+ * - `service-start-failed`: the unit installed without error but never reached
+ *   the running state (e.g. a bad ExecStart). The failed unit is rolled back
+ *   and the app stays in local mode — the caller should surface a retry.
  * - `unknown`: catch-all for legacy / uncategorized failure paths.
  */
 export type ServiceFailureReason =
@@ -120,6 +123,7 @@ export type ServiceFailureReason =
     | 'handoff-no-target'
     | 'invalid-token'
     | 'servy-failure'
+    | 'service-start-failed'
     | 'unknown';
 
 /** Failure response shape for /api/service/install and /api/service/uninstall. */

@@ -35,11 +35,15 @@ const existsSyncMock = vi.fn();
 const writeFileSyncMock = vi.fn();
 const unlinkSyncMock = vi.fn();
 const mkdirSyncMock = vi.fn();
+const copyFileSyncMock = vi.fn();
+const chmodSyncMock = vi.fn();
 vi.mock('node:fs', () => ({
     existsSync: (...args: unknown[]) => existsSyncMock(...args),
     writeFileSync: (...args: unknown[]) => writeFileSyncMock(...args),
     unlinkSync: (...args: unknown[]) => unlinkSyncMock(...args),
     mkdirSync: (...args: unknown[]) => mkdirSyncMock(...args),
+    copyFileSync: (...args: unknown[]) => copyFileSyncMock(...args),
+    chmodSync: (...args: unknown[]) => chmodSyncMock(...args),
 }));
 
 const homedirMock = vi.fn(() => '/home/jamie');
@@ -50,7 +54,8 @@ vi.mock('node:os', () => ({
     tmpdir: () => '/tmp',
 }));
 
-import { renderUnitFile, SystemdClient } from '../service/SystemdClient';
+import * as path from 'node:path';
+import { renderUnitFile, SystemdClient, STAGED_SYSTEM_DIR, STAGED_SYSTEM_APPIMAGE } from '../service/SystemdClient';
 import type { ServiceInstallOptions } from '../service/ServiceClient';
 
 const baseOpts: ServiceInstallOptions = {
@@ -63,6 +68,9 @@ const baseOpts: ServiceInstallOptions = {
     maxRestartAttempts: 3,
     envVars: { DEPS_PATH: '/opt/ws-scrcpy-web/dependencies' },
     logPath: '/opt/ws-scrcpy-web/dependencies/service.log',
+    // F1: user-scope staging needs a dataRoot to copy a stable binary into
+    // when no machine-wide /opt binary exists.
+    dataRoot: '/home/jamie/.local/share/WsScrcpyWeb',
 };
 
 describe('SystemdClient', () => {
@@ -74,6 +82,8 @@ describe('SystemdClient', () => {
         writeFileSyncMock.mockReset();
         unlinkSyncMock.mockReset();
         mkdirSyncMock.mockReset();
+        copyFileSyncMock.mockReset();
+        chmodSyncMock.mockReset();
         homedirMock.mockReset().mockReturnValue('/home/jamie');
         userInfoMock.mockReset().mockReturnValue({ username: 'jamie' });
         savedGetuid = process.getuid;
@@ -126,15 +136,20 @@ describe('SystemdClient', () => {
             );
         });
 
-        it('user scope: writes ~/.config/systemd/user/ unit, calls daemon-reload + enable + loginctl', async () => {
-            // Tray helper resolution: pretend neither candidate exists so we
-            // hit the bare-name fallback (still writes the .desktop file, just
-            // logs a warning).
+        it('user scope (no machine-wide install): stages a stable binary under <dataRoot>/bin, points ExecStart there, daemon-reload + enable + loginctl', async () => {
+            // No /opt binary and no tray binary on disk → F1 copy branch + F2 skip.
             existsSyncMock.mockReturnValue(false);
             const client = new SystemdClient();
             await client.install({ ...baseOpts, scope: 'user' });
 
-            // Unit file written to ~/.config/systemd/user/WsScrcpyWeb.service
+            // F1: the source AppImage is copied to a stable per-user bin dir + chmod +x.
+            // NEVER ExecStart the volatile launch path. The bin path is a Linux
+            // forward-slash string regardless of test host.
+            const stableBin = '/home/jamie/.local/share/WsScrcpyWeb/bin/WsScrcpyWeb.AppImage';
+            expect(copyFileSyncMock).toHaveBeenCalledWith(baseOpts.binPath, stableBin);
+            expect(chmodSyncMock).toHaveBeenCalledWith(stableBin, 0o755);
+
+            // Unit file written to ~/.config/systemd/user/WsScrcpyWeb.service ...
             const unitWrites = writeFileSyncMock.mock.calls.filter((c) =>
                 String(c[0]).endsWith('WsScrcpyWeb.service'),
             );
@@ -145,6 +160,8 @@ describe('SystemdClient', () => {
                 '/home/jamie/.config/systemd/user/WsScrcpyWeb.service',
             );
             expect(unitWrites[0]![2]).toEqual({ mode: 0o644 });
+            // ... with ExecStart at the stable copy, not the source binPath.
+            expect(String(unitWrites[0]![1])).toContain(`ExecStart=${stableBin}`);
 
             // systemctl --user daemon-reload + enable --now
             const sysCalls = execFileSyncMock.mock.calls.filter((c) => c[0] === 'systemctl');
@@ -164,16 +181,50 @@ describe('SystemdClient', () => {
             expect(loginctlCalls).toHaveLength(1);
             expect(loginctlCalls[0]![1]).toEqual(['enable-linger', 'jamie']);
 
-            // Tray autostart .desktop written
+            // F2: NO tray autostart written when no tray binary is found (Linux
+            // has no tray — never emit a PATH-reliant bare-name Exec).
+            const desktopWrites = writeFileSyncMock.mock.calls.filter((c) =>
+                String(c[0]).endsWith('ws-scrcpy-web-tray.desktop'),
+            );
+            expect(desktopWrites).toHaveLength(0);
+        });
+
+        it('user scope with a machine-wide /opt install present: ExecStart is the /opt binary, no staging copy', async () => {
+            // F1 case A: the stable /opt binary already exists → reuse it (0755, bin_t).
+            const optBin = `${STAGED_SYSTEM_DIR}/${STAGED_SYSTEM_APPIMAGE}`;
+            existsSyncMock.mockImplementation(
+                (p: string) => String(p).replace(/\\/g, '/') === optBin,
+            );
+            const client = new SystemdClient();
+            await client.install({ ...baseOpts, scope: 'user' });
+
+            // No copy — the /opt binary is used directly.
+            expect(copyFileSyncMock).not.toHaveBeenCalled();
+            const unitWrites = writeFileSyncMock.mock.calls.filter((c) =>
+                String(c[0]).endsWith('WsScrcpyWeb.service'),
+            );
+            expect(String(unitWrites[0]![1])).toContain(`ExecStart=${optBin}`);
+            // never the volatile launch path
+            expect(String(unitWrites[0]![1])).not.toContain(`ExecStart=${baseOpts.binPath}`);
+        });
+
+        it('user scope: writes an ABSOLUTE-path tray autostart when a tray binary exists (never a bare PATH name)', async () => {
+            // F2 positive branch: a tray binary next to the launcher (cwd) →
+            // Exec is its absolute path; the /opt binary is absent so install
+            // still completes via the F1 copy branch.
+            const trayCandidate = path.join(process.cwd(), 'ws-scrcpy-web-tray');
+            existsSyncMock.mockImplementation((p: string) => p === trayCandidate);
+            const client = new SystemdClient();
+            await client.install({ ...baseOpts, scope: 'user' });
+
             const desktopWrites = writeFileSyncMock.mock.calls.filter((c) =>
                 String(c[0]).endsWith('ws-scrcpy-web-tray.desktop'),
             );
             expect(desktopWrites).toHaveLength(1);
-            expect(String(desktopWrites[0]![0]).replace(/\\/g, '/')).toBe(
-                '/home/jamie/.config/autostart/ws-scrcpy-web-tray.desktop',
-            );
-            expect(String(desktopWrites[0]![1])).toContain('[Desktop Entry]');
-            expect(String(desktopWrites[0]![1])).toContain('Exec=ws-scrcpy-web-tray');
+            const content = String(desktopWrites[0]![1]);
+            expect(content).toContain(`Exec=${trayCandidate}`);
+            // not the bare-name PATH fallback
+            expect(content).not.toMatch(/^Exec=ws-scrcpy-web-tray$/m);
         });
 
         it('user scope: still succeeds when loginctl throws', async () => {

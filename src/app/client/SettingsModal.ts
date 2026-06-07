@@ -1371,6 +1371,8 @@ export class SettingsModal extends Modal {
                 return 'Resume token is invalid or expired. Refresh the page and try again.';
             case 'servy-failure':
                 return `Service install/uninstall failed: ${fallbackError}`;
+            case 'service-start-failed':
+                return 'The service was installed but did not start, so it was removed. The app is still running locally — check the service logs and try again.';
             case 'unknown':
             case undefined:
                 return `An unexpected error occurred: ${fallbackError}`;

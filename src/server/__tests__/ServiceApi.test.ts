@@ -1161,6 +1161,81 @@ describe('ServiceApi', () => {
             expect(scheduled[0]).toBe(15_000);
         });
 
+        it('F3: rolls back when the service never becomes active — uninstall + revert installMode + ok:false, no exit', async () => {
+            // install() does NOT throw (systemd Type=simple reports "started" on
+            // fork, before execve fails), so the existing throw-path is not hit.
+            // verifyServiceActive returns false → the install must roll back
+            // instead of blindly exiting the local instance.
+            const uninstallFn = vi.fn(async () => undefined);
+            const scheduleExit = vi.fn();
+            const client = fakeClient({
+                install: vi.fn(async () => undefined),
+                uninstall: uninstallFn,
+                status: vi.fn(async () => 'stopped' as const),
+            });
+            const factoryResult: ServiceClientFactoryResult = {
+                client,
+                supported: true,
+                platform: 'linux',
+            };
+            // Pre-existing local mode → rollback must restore it.
+            Config.getInstance().updateAppConfig({ installMode: 'user' });
+            // Constructor: factory, scope, existsCheck, spawnDetached, scheduleExit, runPkexecFn, verifyServiceActive
+            const api = new ServiceApi(
+                () => factoryResult,
+                () => 'user',
+                () => true,
+                vi.fn(),            // spawnDetached
+                scheduleExit,
+                undefined,          // runPkexecFn → default
+                async () => false,  // verifyServiceActive → service never came up
+            );
+            const { req, res } = makeReqRes('/api/service/install', 'POST', JSON.stringify({ scope: 'user' }));
+            await api.handle(req, res);
+
+            // Dead unit removed; installMode reverted to the pre-install local mode.
+            expect(uninstallFn).toHaveBeenCalledWith('WsScrcpyWeb');
+            expect(Config.getInstance().getAppConfig().installMode).toBe('user');
+            // Local instance is NOT sacrificed — the app stays alive.
+            expect(scheduleExit).not.toHaveBeenCalled();
+            // Caller gets a clear, categorized failure.
+            expect((res as any).getStatus()).toBe(500);
+            const body = JSON.parse((res as any).getBody());
+            expect(body.ok).toBe(false);
+            expect(body.reason).toBe('service-start-failed');
+        });
+
+        it('F3: keeps the install when the service becomes active (no rollback on the happy path)', async () => {
+            const uninstallFn = vi.fn(async () => undefined);
+            const scheduleExit = vi.fn();
+            const client = fakeClient({
+                install: vi.fn(async () => undefined),
+                uninstall: uninstallFn,
+                status: vi.fn(async () => 'running' as const),
+            });
+            const factoryResult: ServiceClientFactoryResult = {
+                client,
+                supported: true,
+                platform: 'linux',
+            };
+            const api = new ServiceApi(
+                () => factoryResult,
+                () => 'user',
+                () => true,
+                vi.fn(),
+                scheduleExit,
+                undefined,
+                async () => true, // verifyServiceActive → up
+            );
+            const { req, res } = makeReqRes('/api/service/install', 'POST', JSON.stringify({ scope: 'user' }));
+            await api.handle(req, res);
+            expect(uninstallFn).not.toHaveBeenCalled();
+            expect(scheduleExit).toHaveBeenCalledTimes(1);
+            expect((res as any).getStatus()).toBe(200);
+            const body = JSON.parse((res as any).getBody());
+            expect(body.ok).toBe(true);
+        });
+
         it('user-scope uninstall is UNCHANGED (home helper, systemd-run --user, no pkexec)', async () => {
             // The existing user-scope test is the canonical; this twin makes the
             // regression explicit alongside the new system-scope tests.

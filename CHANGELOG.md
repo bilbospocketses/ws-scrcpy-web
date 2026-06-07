@@ -17,6 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Linux user-scope service install now works.** The user-scope systemd unit pointed `ExecStart` at the AppImage's launch path (e.g. your `~/Downloads` copy) — which systemd refuses to run when the file isn't marked executable (a browser download isn't), and which vanishes if that file is later moved or deleted. The unit now targets a stable, guaranteed-executable binary instead: the shared `/opt` binary when the app is installed machine-wide, otherwise a copy staged under `~/.local/share/WsScrcpyWeb/bin/`. (Found during the 0.1.30 Linux smoke — the service failed to start with `203/EXEC` and the app went dark.)
+- **A failed service install no longer leaves the app dead.** The install flow now confirms the service actually reaches the running state before it shuts down the local instance. If the service doesn't come up, the install is rolled back — the half-installed unit is removed, the previous mode is restored, and the app keeps running locally with a clear error — instead of exiting on a blind timer and stranding you with nothing on the port.
+- **No more stray tray autostart entry on Linux.** Installing a user-scope service wrote `~/.config/autostart/ws-scrcpy-web-tray.desktop` pointing at a `ws-scrcpy-web-tray` command resolved from `PATH`, but Linux has no tray binary, so the entry was orphaned (and wasn't cleaned up on uninstall). The autostart file is now written only when an actual tray binary is found on disk — never as a bare `PATH` name — so Linux installs no longer leave it behind.
+
 ## [0.1.30-beta.44] - 2026-06-06
 
 ### Changed
