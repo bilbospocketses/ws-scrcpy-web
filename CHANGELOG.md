@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.46] - 2026-06-07
+
 ### Fixed
 
 - **Linux user-scope service install now starts the service cleanly.** beta.45 fixed the unit's `ExecStart`, which exposed a deeper race: the service and the still-running local app share the same per-user single-instance lock, so the service exited "already running" before it could bind the port — and the app went dark. Installing now performs a proper hand-off — the local instance steps aside so the service can take the lock and the port — and verifies the service actually *stays up and is serving* before committing (not just that systemd forked it). If it doesn't come up, the install rolls back and the local app is relaunched, so you're never left with nothing on the port.
