@@ -15,6 +15,7 @@ import {
     appSectionButtonsState,
     buildInstallAllUsersControl,
     buildUninstallControl,
+    SettingsModal,
 } from '../SettingsModal';
 
 /** Flush microtasks + a macrotask so the awaited fetch handlers settle. */
@@ -250,13 +251,26 @@ describe('appSectionButtonsState', () => {
         expect(s.showUninstall).toBe(true);
     });
 
-    it('non-linux (win32) -> both rows hidden, nothing disabled, no note', () => {
+    it('win32 -> install-all-users hidden, uninstall shown, nothing disabled, no note', () => {
         expect(appSectionButtonsState({ platform: 'win32', machineWideInstalled: false })).toEqual({
             showInstallAllUsers: false,
             installAllUsersDisabled: false,
             installAllUsersNote: null,
-            showUninstall: false,
+            showUninstall: true,
         });
+    });
+
+    // Part A: win32 should show uninstall but NOT install-all-users
+    it('win32 -> showUninstall=true, showInstallAllUsers=false', () => {
+        const s = appSectionButtonsState({ platform: 'win32', machineWideInstalled: false });
+        expect(s.showUninstall).toBe(true);
+        expect(s.showInstallAllUsers).toBe(false);
+    });
+
+    it('linux -> showUninstall=true AND showInstallAllUsers=true', () => {
+        const s = appSectionButtonsState({ platform: 'linux', machineWideInstalled: false });
+        expect(s.showUninstall).toBe(true);
+        expect(s.showInstallAllUsers).toBe(true);
     });
 });
 
@@ -341,5 +355,45 @@ describe('buildUninstallControl', () => {
         await flush();
 
         expect(onUninstalled).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('App section row order (Part B)', () => {
+    /** Flush microtasks so SettingsModal.fillBody() runs (it is queued via queueMicrotask). */
+    const flushMicrotasks = (): Promise<void> => new Promise((resolve) => queueMicrotask(resolve));
+
+    it('App section rows appear in order: reset, install-for-all-users, stop-server, uninstall', async () => {
+        // Stub fetch so the refresh* calls inside the constructor never settle
+        // (we only need the base DOM structure, not service-status overlays).
+        vi.stubGlobal('fetch', vi.fn().mockReturnValue(new Promise(() => undefined)));
+        // jsdom does not implement <dialog>.showModal(); polyfill it so Modal constructor
+        // does not throw. The polyfill is a no-op — we only need the DOM tree, not the
+        // native dialog open state.
+        HTMLDialogElement.prototype.showModal = vi.fn();
+
+        new SettingsModal();
+        // Modal constructor appends to document.body already; wait for
+        // queueMicrotask(() => fillBody(...)) to run.
+        await flushMicrotasks();
+
+        const labels = Array.from(
+            document.body.querySelectorAll<HTMLElement>('.settings-row .settings-label'),
+        ).map((el) => el.textContent ?? '');
+
+        const resetIdx = labels.indexOf('reset welcome and bookmark prompts');
+        const installIdx = labels.indexOf('install for all users');
+        const stopIdx = labels.indexOf('stop the server and close the app');
+        const uninstallIdx = labels.indexOf('uninstall ws-scrcpy-web');
+
+        // All four rows must exist
+        expect(resetIdx, 'reset row missing').toBeGreaterThanOrEqual(0);
+        expect(installIdx, 'install-for-all-users row missing').toBeGreaterThanOrEqual(0);
+        expect(stopIdx, 'stop-server row missing').toBeGreaterThanOrEqual(0);
+        expect(uninstallIdx, 'uninstall row missing').toBeGreaterThanOrEqual(0);
+
+        // Order: reset < install-for-all-users < stop < uninstall
+        expect(resetIdx, 'reset must come before install-for-all-users').toBeLessThan(installIdx);
+        expect(installIdx, 'install-for-all-users must come before stop').toBeLessThan(stopIdx);
+        expect(stopIdx, 'stop must come before uninstall').toBeLessThan(uninstallIdx);
     });
 });

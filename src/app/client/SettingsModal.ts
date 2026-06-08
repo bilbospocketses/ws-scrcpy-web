@@ -160,11 +160,12 @@ export function stopServerButtonState(resp: ScopeRadioInputs): {
  * unit-testable; mirrors stopServerButtonState's shape and is driven from
  * renderServiceState once /api/service/status resolves.
  *
- * - Both rows are Linux-only (hidden on win32/other).
+ * - "install for all users" is Linux-only (hidden on win32/other).
+ * - "uninstall" shows on Linux AND win32 (hidden on other platforms).
  * - "install for all users" is disabled once the shared /opt machine-wide
  *   install already exists (the root service execs that binary; re-installing it
  *   is a no-op), with an explanatory note in that state.
- * - "uninstall" is ALWAYS enabled on Linux (unlike "stop server & exit" it is
+ * - "uninstall" is ALWAYS enabled when shown (unlike "stop server & exit" it is
  *   NOT gated on service mode — uninstalling is exactly how you tear a service
  *   down). Fields admit `undefined` so the full ServiceStatusResponse is
  *   assignable under exactOptionalPropertyTypes.
@@ -184,7 +185,7 @@ export function appSectionButtonsState(resp: {
         showInstallAllUsers: linux,
         installAllUsersDisabled: linux && machineWide,
         installAllUsersNote: linux && machineWide ? 'already installed for all users (/opt)' : null,
-        showUninstall: linux,
+        showUninstall: linux || resp.platform === 'win32',
     };
 }
 
@@ -1595,32 +1596,11 @@ export class SettingsModal extends Modal {
     private buildAppSection(): HTMLElement {
         const { section, body } = this.buildSection('App');
 
-        // §27 — stop the server and exit the app. Backs the existing
-        // /api/server/shutdown endpoint (which now runs graceful teardown
-        // before exiting 0 — a clean exit the launcher supervisor will NOT
-        // restart). Gated off in service mode (the OS service manager owns the
-        // lifecycle) by applyStopServerButtonState, driven from
-        // renderServiceState once /api/service/status resolves.
-        const stopBtn = document.createElement('button');
-        stopBtn.type = 'button';
-        stopBtn.className = 'settings-btn settings-btn-primary';
-        stopBtn.textContent = 'stop server & exit';
-        stopBtn.addEventListener('click', () => void this.onStopServerExit(stopBtn));
-        this.stopServerButton = stopBtn;
-        body.appendChild(this.buildRow('stop the server and close the app', stopBtn));
-
-        const stopNote = document.createElement('p');
-        stopNote.className = 'settings-status';
-        stopNote.style.gridColumn = '1 / -1';
-        stopNote.hidden = true;
-        this.stopServerNote = stopNote;
-        body.appendChild(stopNote);
-
+        // ── reset welcome & bookmark prompts ─────────────────────────────
         const resetBtn = document.createElement('button');
         resetBtn.type = 'button';
         resetBtn.className = 'settings-btn settings-btn-primary';
         resetBtn.textContent = 'reset';
-        body.appendChild(this.buildRow('reset welcome and bookmark prompts', resetBtn));
 
         // Confirm panel — hidden by default, expands inside the grid below
         // the reset row when the button is clicked. Spans both columns.
@@ -1663,38 +1643,66 @@ export class SettingsModal extends Modal {
         confirmButtons.appendChild(confirmBtn);
 
         confirmPanel.appendChild(confirmButtons);
-        body.appendChild(confirmPanel);
 
         resetBtn.addEventListener('click', () => {
             confirmPanel.classList.toggle('expanded');
         });
 
-        // §beta.49 — two Linux-only rows. Built hidden (display:none overrides the
-        // .settings-row { display: contents } rule via inline style) and revealed
-        // only on Linux by applyAppSectionButtonsState once /api/service/status
-        // resolves, so they never flash on Windows.
-
-        // "install for all users": POST /api/service/install-system-wide (pkexec
-        // → relocate to /opt → re-exec). The OS pkexec dialog is the confirmation,
-        // so no extra modal — just reload onto the re-execed instance on success.
+        // ── install for all users (Linux-only) ───────────────────────────
+        // §beta.49 — hidden (display:none overrides the .settings-row { display: contents }
+        // rule via inline style) and revealed only on Linux by applyAppSectionButtonsState
+        // once /api/service/status resolves, so it never flashes on Windows.
+        // POST /api/service/install-system-wide (pkexec → relocate to /opt → re-exec).
+        // The OS pkexec dialog is the confirmation, so no extra modal — just reload onto
+        // the re-execed instance on success.
         const install = buildInstallAllUsersControl({ reload: () => window.location.reload() });
         this.installAllUsersButton = install.button;
         this.installAllUsersNote = install.note;
         const installRow = this.buildRow('install for all users', install.button);
         installRow.style.display = 'none';
         this.installAllUsersRow = installRow;
-        body.appendChild(installRow);
-        body.appendChild(install.note);
 
-        // "uninstall ws-scrcpy-web": always enabled on Linux (NOT gated on service
-        // mode — uninstalling is how you remove a service). Reuses the confirm-panel
-        // pattern; confirm POSTs /api/service/uninstall-app { keep }.
+        // ── stop the server and exit the app ─────────────────────────────
+        // §27 — backs the /api/server/shutdown endpoint (which now runs graceful teardown
+        // before exiting 0 — a clean exit the launcher supervisor will NOT restart).
+        // Gated off in service mode (the OS service manager owns the lifecycle) by
+        // applyStopServerButtonState, driven from renderServiceState once
+        // /api/service/status resolves.
+        const stopBtn = document.createElement('button');
+        stopBtn.type = 'button';
+        stopBtn.className = 'settings-btn settings-btn-primary';
+        stopBtn.textContent = 'stop server & exit';
+        stopBtn.addEventListener('click', () => void this.onStopServerExit(stopBtn));
+        this.stopServerButton = stopBtn;
+
+        const stopNote = document.createElement('p');
+        stopNote.className = 'settings-status';
+        stopNote.style.gridColumn = '1 / -1';
+        stopNote.hidden = true;
+        this.stopServerNote = stopNote;
+
+        // ── uninstall ws-scrcpy-web (Linux + win32) ──────────────────────
+        // Always enabled when shown (NOT gated on service mode — uninstalling is how you
+        // remove a service). Reuses the confirm-panel pattern; confirm POSTs
+        // /api/service/uninstall-app { keep }.
         const uninstall = buildUninstallControl({ onUninstalled: () => this.showUninstalledOverlay() });
         this.uninstallButton = uninstall.button;
         this.uninstallConfirmPanel = uninstall.confirmPanel;
         const uninstallRow = this.buildRow('uninstall ws-scrcpy-web', uninstall.button);
         uninstallRow.style.display = 'none';
         this.uninstallRow = uninstallRow;
+
+        // ── DOM order (top → bottom) ──────────────────────────────────────
+        // 1. reset welcome & bookmark (+ inline confirm panel)
+        body.appendChild(this.buildRow('reset welcome and bookmark prompts', resetBtn));
+        body.appendChild(confirmPanel);
+        // 2. install for all users + note (Linux-only, hidden until revealed)
+        body.appendChild(installRow);
+        body.appendChild(install.note);
+        // 3. stop the server and close the app + note
+        body.appendChild(this.buildRow('stop the server and close the app', stopBtn));
+        body.appendChild(stopNote);
+        // 4. uninstall ws-scrcpy-web + confirm panel (Linux + win32, hidden until revealed)
         body.appendChild(uninstallRow);
         body.appendChild(uninstall.confirmPanel);
 
