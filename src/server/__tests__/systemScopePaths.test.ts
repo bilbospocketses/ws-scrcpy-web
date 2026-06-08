@@ -15,16 +15,17 @@ describe('buildServiceUnitEnv (#36 system-scope /opt paths)', () => {
         expect(buildServiceUnitEnv('linux', 'system', userDeps)).toEqual({
             DATA_ROOT: '/var/opt/ws-scrcpy-web',
             DEPS_PATH: '/opt/ws-scrcpy-web/dependencies',
+            WS_SCRCPY_SERVICE: '1',
         });
     });
 
     it('linux + user: the caller deps path, no DATA_ROOT override', () => {
-        expect(buildServiceUnitEnv('linux', 'user', userDeps)).toEqual({ DEPS_PATH: userDeps });
+        expect(buildServiceUnitEnv('linux', 'user', userDeps)).toEqual({ DEPS_PATH: userDeps, WS_SCRCPY_SERVICE: '1' });
     });
 
     it('win32 + system: user deps, no /opt (Windows path is unaffected)', () => {
         const winDeps = 'C:\\ProgramData\\WsScrcpyWeb\\dependencies';
-        expect(buildServiceUnitEnv('win32', 'system', winDeps)).toEqual({ DEPS_PATH: winDeps });
+        expect(buildServiceUnitEnv('win32', 'system', winDeps)).toEqual({ DEPS_PATH: winDeps, WS_SCRCPY_SERVICE: '1' });
     });
 });
 

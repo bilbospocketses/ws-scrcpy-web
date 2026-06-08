@@ -203,6 +203,11 @@ export class ServiceApi {
             platform: result.platform,
             status,
             installMode,
+            // True only inside the installed service process (its unit sets
+            // WS_SCRCPY_SERVICE=1); the transient local instance that triggers the
+            // install never has it. The post-install poll keys hand-off completion
+            // off this positive signal (no mtime-change / dead-window race).
+            servedByService: process.env['WS_SCRCPY_SERVICE'] === '1',
             ...(scope !== undefined ? { scope } : {}),
             ...(disk.diskWebPort != null ? { diskWebPort: disk.diskWebPort } : {}),
             ...(disk.configMtime != null ? { configMtime: disk.configMtime } : {}),

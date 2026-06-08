@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Installing a service no longer shows a false "port discovery timed out" error.** After a service install handed the web port over to the service, the settings page would occasionally spin and then report that it couldn't determine the service's port — even though the service was running fine and a manual refresh loaded it. The post-install reconnect was inferring that the hand-off had finished from two unreliable signals: a `config.json` change that never happens when the service rebinds the *same* port, and briefly catching the port unbound (a race against the 2-second poll). When the service came back quickly on the same port it caught neither and ran out the clock. The service now reports its own identity, and the page waits for that positive signal before reconnecting — so the hand-off is detected reliably regardless of timing. (Intermittent by nature; most visible on Linux user-scope installs.)
+
 ## [0.1.30-beta.47] - 2026-06-08
 
 ### Fixed

@@ -24,18 +24,34 @@ describe('uninstallFollowupMessage', () => {
 });
 
 describe('classifyInstallPoll', () => {
-    const base = { reachable: true, configMtime: 100, baselineMtime: 100, diskWebPort: null, iterations: 1, maxIterations: 30 };
-    it('navigates when config mtime changed + port known (the existing Windows path)', () => {
-        expect(classifyInstallPoll({ ...base, configMtime: 200, diskWebPort: 8002 })).toEqual({ kind: 'navigate', port: 8002 });
+    // The service identifies itself via servedByService=true (the WS_SCRCPY_SERVICE
+    // env set on the systemd/Servy unit). Success REQUIRES that positive signal, so
+    // a same-port hand-off no longer hinges on catching a transient dead window or a
+    // config.json mtime change that never happens — the intermittent "port discovery
+    // timed out" race (beta.47).
+    const served = {
+        reachable: true,
+        servedByService: true,
+        configMtime: 100,
+        baselineMtime: 100,
+        diskWebPort: 8000,
+        iterations: 1,
+        maxIterations: 30,
+    };
+    it('navigates when the service answers on a new port (mtime changed)', () => {
+        expect(classifyInstallPoll({ ...served, configMtime: 200, diskWebPort: 8002 })).toEqual({ kind: 'navigate', port: 8002 });
     });
-    it('reconnects (not errors) when the local server becomes unreachable - same-port handoff', () => {
-        expect(classifyInstallPoll({ ...base, reachable: false })).toEqual({ kind: 'reconnect' });
+    it('reconnects when the service answers on the SAME port, no mtime change (the race fix)', () => {
+        expect(classifyInstallPoll(served)).toEqual({ kind: 'reconnect' });
     });
-    it('keeps polling while reachable + no config change', () => {
-        expect(classifyInstallPoll(base)).toEqual({ kind: 'keep-polling' });
+    it('keeps polling while the local instance is still answering (not yet the service)', () => {
+        expect(classifyInstallPoll({ ...served, servedByService: false })).toEqual({ kind: 'keep-polling' });
     });
-    it('times out after maxIterations', () => {
-        expect(classifyInstallPoll({ ...base, iterations: 31 })).toEqual({ kind: 'timeout' });
+    it('keeps polling through the hand-off dead window (unreachable, before the cap)', () => {
+        expect(classifyInstallPoll({ ...served, reachable: false, servedByService: false, configMtime: null, diskWebPort: null, iterations: 2 })).toEqual({ kind: 'keep-polling' });
+    });
+    it('times out only when the service never takes over', () => {
+        expect(classifyInstallPoll({ ...served, servedByService: false, iterations: 31 })).toEqual({ kind: 'timeout' });
     });
 });
 

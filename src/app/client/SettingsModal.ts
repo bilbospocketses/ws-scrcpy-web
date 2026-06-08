@@ -25,13 +25,20 @@ export function uninstallFollowupMessage(mode: 'user' | 'system'): string {
 
 /**
  * Classify one tick of the post-install port-discovery poll. Pure (no DOM or
- * timers) so it is unit-testable. After a service install the web port is
- * handed off to the service-Node:
- * - unreachable local server -> the local instance is exiting (fix #3) and the
- *   service is rebinding the SAME port -> reconnect (reload the current URL).
- * - config.json mtime changed + a known disk port -> the service bound a new
- *   port -> navigate there (the pre-existing Windows path, unchanged).
- * - past the iteration cap -> timeout.
+ * timers) so it is unit-testable. After a service install the web port is handed
+ * off to the service-Node, which identifies itself via `servedByService` (the
+ * WS_SCRCPY_SERVICE env set on its unit):
+ * - reachable AND servedByService -> the service has taken over. Same port (no
+ *   config.json mtime change) -> reconnect (reload the current URL); a different
+ *   bound port (mtime changed + known disk port) -> navigate there.
+ * - otherwise (the local instance is still answering, or the brief hand-off dead
+ *   window where nothing holds the port) -> keep polling until the cap, then
+ *   timeout.
+ *
+ * Keying success on the POSITIVE servedByService signal — rather than catching a
+ * transient unreachable tick (a race against the 2s poll) or a config.json mtime
+ * change a same-port rebind never produces — removes the intermittent
+ * "port discovery timed out" failure (beta.47).
  */
 export type PollOutcome =
     | { kind: 'keep-polling' }
@@ -41,20 +48,29 @@ export type PollOutcome =
 
 export function classifyInstallPoll(args: {
     reachable: boolean;
+    servedByService: boolean;
     configMtime: number | null;
     baselineMtime: number;
     diskWebPort: number | null;
     iterations: number;
     maxIterations: number;
 }): PollOutcome {
-    if (!args.reachable) return { kind: 'reconnect' };
-    if (
-        args.configMtime != null &&
-        args.configMtime !== args.baselineMtime &&
-        args.diskWebPort != null
-    ) {
-        return { kind: 'navigate', port: args.diskWebPort };
+    // Success requires a POSITIVE signal: the instance answering /api/service/status
+    // is the service itself (WS_SCRCPY_SERVICE on its unit), not the exiting local
+    // instance and not a transient dead port.
+    if (args.reachable && args.servedByService) {
+        // Different bound port -> navigate there; same port -> reload in place.
+        if (
+            args.configMtime != null &&
+            args.configMtime !== args.baselineMtime &&
+            args.diskWebPort != null
+        ) {
+            return { kind: 'navigate', port: args.diskWebPort };
+        }
+        return { kind: 'reconnect' };
     }
+    // Still the local instance answering, or the brief hand-off dead window:
+    // keep waiting until the service identifies itself, then cap out.
     if (args.iterations > args.maxIterations) return { kind: 'timeout' };
     return { kind: 'keep-polling' };
 }
@@ -1198,24 +1214,27 @@ export class SettingsModal extends Modal {
             let iterations = 0;
             const poll = setInterval(async () => {
                 iterations++;
-                // A thrown/aborted fetch means the local server has dropped: under
-                // fix #3 the local instance exits after a successful install, so the
-                // service is taking over the SAME port (reconnect, not an error).
+                // A thrown/aborted fetch means whoever was answering has dropped —
+                // the local instance exiting, or the brief hand-off dead window. We
+                // do NOT treat that as success: we wait for the service to answer with
+                // servedByService=true (below) before reconnecting/navigating.
                 let reachable = true;
+                let servedByService = false;
                 let configMtime: number | null = null;
                 let diskWebPort: number | null = null;
                 try {
                     const statusResp = await fetch('/api/service/status', { signal: AbortSignal.timeout(5000) });
                     if (statusResp.ok) {
-                        const statusData = await statusResp.json() as { configMtime?: number; diskWebPort?: number };
+                        const statusData = await statusResp.json() as { configMtime?: number; diskWebPort?: number; servedByService?: boolean };
                         configMtime = statusData.configMtime ?? null;
                         diskWebPort = statusData.diskWebPort ?? null;
+                        servedByService = statusData.servedByService === true;
                     }
                 } catch {
                     reachable = false;
                 }
                 const outcome = classifyInstallPoll({
-                    reachable, configMtime, baselineMtime, diskWebPort, iterations, maxIterations,
+                    reachable, servedByService, configMtime, baselineMtime, diskWebPort, iterations, maxIterations,
                 });
                 switch (outcome.kind) {
                     case 'navigate':

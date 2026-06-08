@@ -30,6 +30,13 @@ export interface ServiceStatusResponse {
     /** config.json filesystem mtime in epoch milliseconds. Present when supported=true. */
     configMtime?: number | undefined;
     /**
+     * True when the answering instance is the installed service itself (its unit
+     * sets WS_SCRCPY_SERVICE=1), not the transient local instance that triggered
+     * the install. The post-install port-discovery poll keys hand-off completion
+     * off this positive signal. Present when supported=true.
+     */
+    servedByService?: boolean;
+    /**
      * Snapshot of `AppConfig.installMode` at status time. Lets the frontend
      * tell which service scope is active (`user-service` vs `system-service`)
      * without poking a second endpoint. `null` when never installed. Present

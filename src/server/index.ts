@@ -319,7 +319,6 @@ function exit(signal: string) {
     if (interrupted) {
         serverLog.info('Force exit');
         process.exit(0);
-        return;
     }
     interrupted = true;
     // Fire-and-forget the shared teardown (idempotent — the /api/server/shutdown

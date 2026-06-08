@@ -108,10 +108,13 @@ export function buildServiceUnitEnv(
     scope: SystemdScope | undefined,
     userDepsPath: string,
 ): Record<string, string> {
+    // WS_SCRCPY_SERVICE marks the process as the installed service so it can
+    // identify itself to the post-install port-discovery poll — the local
+    // instance that triggers the install never carries it. Set on every scope.
     if (platform === 'linux' && scope === 'system') {
-        return { DATA_ROOT: SYSTEM_STATE_DIR, DEPS_PATH: STAGED_SYSTEM_DEPS_DIR };
+        return { DATA_ROOT: SYSTEM_STATE_DIR, DEPS_PATH: STAGED_SYSTEM_DEPS_DIR, WS_SCRCPY_SERVICE: '1' };
     }
-    return { DEPS_PATH: userDepsPath };
+    return { DEPS_PATH: userDepsPath, WS_SCRCPY_SERVICE: '1' };
 }
 
 /**

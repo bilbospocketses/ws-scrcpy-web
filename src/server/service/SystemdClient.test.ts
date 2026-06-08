@@ -132,6 +132,15 @@ describe('SYSTEM_STATE_DIR — FHS /var/opt retargeting', () => {
         expect(env['DEPS_PATH']).toBe('/opt/ws-scrcpy-web/dependencies');
     });
 
+    it('every service unit env carries WS_SCRCPY_SERVICE=1 so the service can identify itself to the post-install poll', () => {
+        const userEnv = buildServiceUnitEnv('linux', 'user', '/home/u/.local/share/WsScrcpyWeb/dependencies');
+        const sysEnv = buildServiceUnitEnv('linux', 'system', '/home/u/.local/share/WsScrcpyWeb/dependencies');
+        const winEnv = buildServiceUnitEnv('win32', undefined, 'C:\\deps');
+        expect(userEnv['WS_SCRCPY_SERVICE']).toBe('1');
+        expect(sysEnv['WS_SCRCPY_SERVICE']).toBe('1');
+        expect(winEnv['WS_SCRCPY_SERVICE']).toBe('1');
+    });
+
     it('system install seeds config + labels state under /var/opt (var_lib_t)', () => {
         const script = buildSystemInstallScript(
             { sourceAppImage: '/home/u/App.AppImage', seedConfigTmpPath: '/tmp/seed.json',
