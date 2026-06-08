@@ -27,6 +27,8 @@ mod linux_service;
 mod linux_app_uninstall;
 #[cfg(windows)]
 mod user_session_spawn;
+#[cfg(windows)]
+mod windows_app_uninstall;
 
 fn main() {
     // --print-active-session: one-shot Win32 query. Used by the service-Node
@@ -222,6 +224,17 @@ fn main() {
     // (Velopack-untouchable). Part 3's launcher-as-post-stop approach
     // got the launcher process killed mid-sleep when Velopack swapped
     // current/. The new architecture has no in-launcher post-stop code.
+
+    // Windows in-app uninstall helper. Invoked by the Node server when the
+    // user triggers an in-app complete uninstall: runs Update.exe --uninstall
+    // (fires Velopack's --veloapp-uninstall hook → service/tray teardown +
+    // ARP cleanup) then removes dataRoot targets per keep/wipe scope. Must
+    // come BEFORE elevated_runner::handle so it dispatches cleanly.
+    #[cfg(windows)]
+    if let Some(code) = windows_app_uninstall::handle(&args) {
+        log::info(&format!("windows-app-uninstall exiting with code {code}"));
+        std::process::exit(code);
+    }
 
     // Elevate-and-run dispatch comes BEFORE Velopack hooks because the
     // helper is invoked through a UAC prompt and is a single-shot
