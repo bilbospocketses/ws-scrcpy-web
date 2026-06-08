@@ -1,4 +1,5 @@
-// In-app "complete uninstall" — PURE command-vector builder (beta.49).
+// In-app "complete uninstall" (beta.49) — the PURE command-vector builder plus
+// the Task-2 dispatch/exec layer that runs it.
 //
 // `app_uninstall_commands` returns the ordered teardown argv-vectors for a full
 // app removal, split into a `privileged` group (run under ONE pkexec elevation
@@ -6,17 +7,20 @@
 // the teardown phases of docs/smoke-tests/clear-install.sh and reuses the scope /
 // unit-path / sbin helpers from `linux_service` so the two stay in lockstep.
 //
-// PURE builder only — no dispatch, no std::process. Task 2 wires it into main.rs
-// and runs the vectors (user_owned unelevated, privileged under a single pkexec).
-// Until then nothing in production calls the builder, hence the module-level
-// `dead_code` allow (same rationale as linux_service::bootstrap_target's
-// `#[allow(dead_code)]`); Task 2 narrows/removes it once the dispatch lands.
+// Dispatch (Task 2): the UNELEVATED entry `handle` (`--linux-app-uninstall`,
+// spawned by the Node server via `systemd-run --user --collect`) runs the
+// `user_owned` group, then re-invokes the launcher under ONE pkexec for the
+// `privileged` group. That pkexec lands on the ELEVATED entry `handle_elevated`
+// (`--linux-app-uninstall-elevated`), which runs ONLY the `privileged` group as
+// root. Both sides feed the SAME args to the SAME builder, so the split is
+// identical and each instance runs exactly its own half. On a pkexec decline
+// (126/127) or a privileged failure the uninstall aborts and the running
+// AppImage is relaunched locally so the user is never stranded.
 //
 // Local-Dependencies-Only: every tool is resolved under `bindir` (sbin tools via
 // `sbindir_from(bindir)`) — never a bare name and never via PATH.
-#![allow(dead_code)]
-
-use crate::linux_service::{scope_prefix, sbindir_from, unit_path, Scope};
+use crate::linux_service::{scope_prefix, sbindir_from, tool_dir, unit_path, Scope};
+use crate::log;
 
 /// App / systemd-unit identity shared by every footprint path.
 const UNIT_NAME: &str = "WsScrcpyWeb";
@@ -187,6 +191,263 @@ pub fn app_uninstall_commands(
     }
 
     UninstallPlan { privileged, user_owned }
+}
+
+// ─── Task 2: dispatch + execution (runs the pure builder above) ────────────────
+
+/// Parsed `--linux-app-uninstall[-elevated]` invocation. `relaunch` is only
+/// meaningful on the unelevated path (the currently-running `$APPIMAGE` to
+/// restart if the user declines the pkexec prompt); it defaults to `""` on the
+/// elevated path, which never relaunches.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UninstallArgs {
+    pub svc_scope: Option<Scope>,
+    pub machine_wide: bool,
+    pub keep: bool,
+    pub data_root: String,
+    pub relaunch: String,
+}
+
+/// Parse the uninstall flags. Returns `None` (a parse error) on a missing/invalid
+/// `--scope`, a missing/invalid `--machine-wide`, a missing `--data-root`, or
+/// anything other than EXACTLY one of `--keep` / `--wipe`. `--scope none` is a
+/// VALID value mapping to `svc_scope: None` (no service was installed) — distinct
+/// from the outer `None` that signals a parse error. `--relaunch` is optional and
+/// defaults to `""` (the elevated path never reads it).
+pub fn parse_args(args: &[String]) -> Option<UninstallArgs> {
+    // --scope user|system|none  (none = no service; missing/invalid = parse error)
+    let svc_scope = match args
+        .iter()
+        .position(|a| a == "--scope")
+        .and_then(|i| args.get(i + 1))
+        .map(String::as_str)
+    {
+        Some("user") => Some(Scope::User),
+        Some("system") => Some(Scope::System),
+        Some("none") => None,
+        _ => return None,
+    };
+    // --machine-wide 0|1  (missing/invalid = parse error)
+    let machine_wide = match args
+        .iter()
+        .position(|a| a == "--machine-wide")
+        .and_then(|i| args.get(i + 1))
+        .map(String::as_str)
+    {
+        Some("1") => true,
+        Some("0") => false,
+        _ => return None,
+    };
+    // --keep XOR --wipe  (exactly one required)
+    let keep = match (
+        args.iter().any(|a| a == "--keep"),
+        args.iter().any(|a| a == "--wipe"),
+    ) {
+        (true, false) => true,
+        (false, true) => false,
+        _ => return None,
+    };
+    // --data-root <abs path>  (required)
+    let data_root = args
+        .iter()
+        .position(|a| a == "--data-root")
+        .and_then(|i| args.get(i + 1))
+        .cloned()?;
+    // --relaunch <abs path>  (optional; only read on a pkexec decline)
+    let relaunch = args
+        .iter()
+        .position(|a| a == "--relaunch")
+        .and_then(|i| args.get(i + 1))
+        .cloned()
+        .unwrap_or_default();
+    Some(UninstallArgs { svc_scope, machine_wide, keep, data_root, relaunch })
+}
+
+/// Dispatch the UNELEVATED entry `--linux-app-uninstall` — the one the Node
+/// server spawns (via `systemd-run --user --collect`). Returns `Some(exit_code)`
+/// when it owns the invocation, `None` to let the next dispatcher try.
+pub fn handle(args: &[String]) -> Option<i32> {
+    if !args.iter().any(|a| a == "--linux-app-uninstall") {
+        return None;
+    }
+    let a = match parse_args(args) {
+        Some(v) => v,
+        None => {
+            log::error("linux-app-uninstall: missing/invalid args");
+            return Some(2);
+        }
+    };
+    Some(run_unelevated(&a))
+}
+
+/// Dispatch the ELEVATED entry `--linux-app-uninstall-elevated` — the pkexec
+/// re-invoke lands here as root and runs ONLY the privileged group. Returns
+/// `Some(exit_code)` when it owns the invocation, `None` otherwise.
+pub fn handle_elevated(args: &[String]) -> Option<i32> {
+    if !args.iter().any(|a| a == "--linux-app-uninstall-elevated") {
+        return None;
+    }
+    let a = match parse_args(args) {
+        Some(v) => v,
+        None => {
+            log::error("linux-app-uninstall-elevated: missing/invalid args");
+            return Some(2);
+        }
+    };
+    Some(run_elevated(&a))
+}
+
+/// Unelevated run: the privileged group FIRST under ONE pkexec (re-invoking the
+/// launcher as root), then the best-effort `user_owned` group. A pkexec decline
+/// (126/127), a privileged failure, or a spawn error aborts the teardown and
+/// relaunches the local AppImage, returning 0 — the privileged group is all-or-
+/// nothing (it never partially ran), so the user keeps a working local app.
+fn run_unelevated(a: &UninstallArgs) -> i32 {
+    log::info(&format!(
+        "linux-app-uninstall: scope={:?} machine_wide={} keep={}",
+        a.svc_scope, a.machine_wide, a.keep
+    ));
+    let plan = plan_for(a);
+
+    // 1. Privileged group FIRST, under ONE pkexec (re-invoke self as root). An
+    //    empty privileged group (purely-local install) skips elevation entirely.
+    if !plan.privileged.is_empty() {
+        let pkexec = format!("{}/pkexec", tool_dir("pkexec"));
+        let exe = match std::env::current_exe() {
+            Ok(p) => p,
+            Err(e) => {
+                log::error(&format!(
+                    "uninstall: cannot resolve self exe for pkexec re-invoke ({e}) — aborting + relaunching local"
+                ));
+                relaunch(&a.relaunch);
+                return 0;
+            }
+        };
+        let scope_arg = match a.svc_scope {
+            Some(Scope::User) => "user",
+            Some(Scope::System) => "system",
+            None => "none",
+        };
+        let mw_arg = if a.machine_wide { "1" } else { "0" };
+        let keep_arg = if a.keep { "--keep" } else { "--wipe" };
+        // argv all the way (no `sh -c`): re-invoke ourselves under pkexec with the
+        // same inputs MINUS --relaunch (the elevated half never relaunches).
+        match std::process::Command::new(&pkexec)
+            .arg(&exe)
+            .args([
+                "--linux-app-uninstall-elevated",
+                "--scope",
+                scope_arg,
+                "--machine-wide",
+                mw_arg,
+                keep_arg,
+                "--data-root",
+                a.data_root.as_str(),
+            ])
+            .status()
+        {
+            Ok(s) if s.success() => log::info("uninstall: privileged group complete (pkexec)"),
+            Ok(s) if declined(s) => {
+                log::error("uninstall: pkexec declined — aborting + relaunching local");
+                relaunch(&a.relaunch);
+                return 0;
+            }
+            Ok(s) => {
+                log::error(&format!(
+                    "uninstall: privileged step failed ({:?}) — aborting + relaunching local",
+                    s.code()
+                ));
+                relaunch(&a.relaunch);
+                return 0;
+            }
+            Err(e) => {
+                log::error(&format!(
+                    "uninstall: pkexec spawn failed ({e}) — aborting + relaunching local"
+                ));
+                relaunch(&a.relaunch);
+                return 0;
+            }
+        }
+    }
+
+    // 2. Unelevated group (kills our own processes + tears down the user data
+    //    root). Best-effort: log non-zero, KEEP GOING (mirrors linux_service::run).
+    for argv in plan.user_owned {
+        let (cmd, rest) = argv.split_first().expect("non-empty argv");
+        match std::process::Command::new(cmd).args(rest).status() {
+            Ok(s) if s.success() => log::info(&format!("uninstall ok: {}", argv.join(" "))),
+            Ok(s) => log::error(&format!("uninstall non-zero ({:?}): {}", s.code(), argv.join(" "))),
+            Err(e) => log::error(&format!("uninstall spawn failed: {} ({e})", argv.join(" "))),
+        }
+    }
+    0
+}
+
+/// Elevated run (under pkexec, as root): the privileged group ONLY, best-effort
+/// (log non-zero, keep going). The unelevated instance runs the `user_owned`
+/// half; same builder + same args on both sides → an identical split.
+fn run_elevated(a: &UninstallArgs) -> i32 {
+    log::info(&format!(
+        "linux-app-uninstall-elevated: scope={:?} machine_wide={} keep={}",
+        a.svc_scope, a.machine_wide, a.keep
+    ));
+    let plan = plan_for(a);
+    for argv in plan.privileged {
+        let (cmd, rest) = argv.split_first().expect("non-empty argv");
+        match std::process::Command::new(cmd).args(rest).status() {
+            Ok(s) if s.success() => log::info(&format!("uninstall (root) ok: {}", argv.join(" "))),
+            Ok(s) => log::error(&format!("uninstall (root) non-zero ({:?}): {}", s.code(), argv.join(" "))),
+            Err(e) => log::error(&format!("uninstall (root) spawn failed: {} ({e})", argv.join(" "))),
+        }
+    }
+    0
+}
+
+/// Build the teardown plan from parsed args, resolving `bindir` + XDG from the
+/// live environment. BOTH entries call this with the SAME `a`, so the
+/// privileged / user_owned split is identical on the two sides — each then runs
+/// only its own half. (XDG only feeds `user_owned`; the elevated side, which
+/// runs only `privileged`, is unaffected by whatever value root's env carries.)
+fn plan_for(a: &UninstallArgs) -> UninstallPlan {
+    let bindir = tool_dir("systemctl");
+    let xdg = std::env::var("XDG_RUNTIME_DIR").ok();
+    app_uninstall_commands(
+        a.svc_scope,
+        a.machine_wide,
+        a.keep,
+        &bindir,
+        &a.data_root,
+        xdg.as_deref(),
+    )
+}
+
+/// pkexec exit codes meaning auth was NOT granted: 126 = the user dismissed /
+/// cancelled the auth dialog, 127 = authorization could not be obtained. Either
+/// is treated as a decline → abort the uninstall and relaunch local.
+fn declined(status: std::process::ExitStatus) -> bool {
+    matches!(status.code(), Some(126 | 127))
+}
+
+/// Relaunch the currently-running AppImage in its OWN transient unit so it
+/// survives this helper's exit — the same `systemd-run --user --collect <path>`
+/// seam as `linux_service::run`. Best-effort: log ok/err, never fail over it.
+/// Skipped when `path` is empty (no `--relaunch` was supplied).
+fn relaunch(path: &str) {
+    if path.is_empty() {
+        log::info("uninstall: no --relaunch target supplied; skipping local relaunch");
+        return;
+    }
+    let systemd_run = format!("{}/systemd-run", tool_dir("systemd-run"));
+    match std::process::Command::new(&systemd_run)
+        .args(["--user", "--collect", path])
+        .status()
+    {
+        Ok(s) => log::info(&format!(
+            "uninstall: relaunched local {path} via systemd-run (exit {:?})",
+            s.code()
+        )),
+        Err(e) => log::error(&format!("uninstall: relaunch via systemd-run failed: {e}")),
+    }
 }
 
 #[cfg(test)]
@@ -407,5 +668,114 @@ mod tests {
         assert!(!p.iter().any(|c| c.contains("/logs")));
         // data root handled ONCE, in privileged — user_owned must not touch /var/opt.
         assert!(!joined(&plan.user_owned).iter().any(|c| c.contains("/var/opt")));
+    }
+
+    // ── Task 2: pure arg-parsing. The run fns shell out (and aren't even compiled
+    //    on the Windows dev host), so `parse_args` is the only unit-testable part. ──
+
+    #[test]
+    fn parse_args_round_trips_full_valid() {
+        let args: Vec<String> = [
+            "--linux-app-uninstall",
+            "--scope",
+            "system",
+            "--machine-wide",
+            "1",
+            "--wipe",
+            "--data-root",
+            "/var/opt/ws-scrcpy-web",
+            "--relaunch",
+            "/home/u/Apps/App.AppImage",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert_eq!(
+            parse_args(&args),
+            Some(UninstallArgs {
+                svc_scope: Some(Scope::System),
+                machine_wide: true,
+                keep: false,
+                data_root: "/var/opt/ws-scrcpy-web".to_string(),
+                relaunch: "/home/u/Apps/App.AppImage".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn parse_args_scope_none_and_user() {
+        // A full, otherwise-valid vector with only --scope varying.
+        let with_scope = |scope: &str| -> Vec<String> {
+            [
+                "--linux-app-uninstall",
+                "--scope",
+                scope,
+                "--machine-wide",
+                "0",
+                "--keep",
+                "--data-root",
+                "/home/u/.local/share/WsScrcpyWeb",
+                "--relaunch",
+                "/home/u/Apps/App.AppImage",
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect()
+        };
+        // --scope none is VALID and maps to svc_scope: None (no service installed).
+        assert_eq!(parse_args(&with_scope("none")).unwrap().svc_scope, None);
+        assert_eq!(
+            parse_args(&with_scope("user")).unwrap().svc_scope,
+            Some(Scope::User)
+        );
+    }
+
+    #[test]
+    fn parse_args_requires_exactly_one_of_keep_wipe() {
+        // Base vector WITHOUT --keep / --wipe; the test appends the combination.
+        let with_flags = |flags: &[&str]| -> Vec<String> {
+            let mut v: Vec<String> = [
+                "--linux-app-uninstall",
+                "--scope",
+                "user",
+                "--machine-wide",
+                "0",
+                "--data-root",
+                "/home/u/.local/share/WsScrcpyWeb",
+                "--relaunch",
+                "/home/u/Apps/App.AppImage",
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+            v.extend(flags.iter().map(|s| s.to_string()));
+            v
+        };
+        // both present → parse error; neither present → parse error.
+        assert_eq!(parse_args(&with_flags(&["--keep", "--wipe"])), None);
+        assert_eq!(parse_args(&with_flags(&[])), None);
+        // exactly one → ok, with the expected keep bool (sanity).
+        assert!(parse_args(&with_flags(&["--keep"])).unwrap().keep);
+        assert!(!parse_args(&with_flags(&["--wipe"])).unwrap().keep);
+    }
+
+    #[test]
+    fn parse_args_rejects_invalid_scope() {
+        let args: Vec<String> = [
+            "--linux-app-uninstall",
+            "--scope",
+            "bogus",
+            "--machine-wide",
+            "1",
+            "--wipe",
+            "--data-root",
+            "/var/opt/ws-scrcpy-web",
+            "--relaunch",
+            "/home/u/Apps/App.AppImage",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert_eq!(parse_args(&args), None);
     }
 }

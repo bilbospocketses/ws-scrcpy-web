@@ -113,6 +113,26 @@ fn main() {
         std::process::exit(code);
     }
 
+    // In-app "complete uninstall" (beta.49). MUST come before service-defer and
+    // the /opt bootstrapper below: an uninstall invocation carries its own flags
+    // and must not be diverted into a service-defer browser-open or an /opt
+    // re-exec that would drop those flags. The UNELEVATED entry (spawned by Node
+    // via `systemd-run --user --collect`) runs the user-owned teardown group and
+    // re-invokes the launcher under ONE pkexec for the privileged group.
+    #[cfg(target_os = "linux")]
+    if let Some(code) = linux_app_uninstall::handle(&args) {
+        log::info(&format!("linux-app-uninstall exiting with code {code}"));
+        std::process::exit(code);
+    }
+
+    // The ELEVATED entry the above pkexec re-invoke lands on (as root): runs ONLY
+    // the privileged (root-owned) teardown group, then exits.
+    #[cfg(target_os = "linux")]
+    if let Some(code) = linux_app_uninstall::handle_elevated(&args) {
+        log::info(&format!("linux-app-uninstall-elevated exiting with code {code}"));
+        std::process::exit(code);
+    }
+
     // Service-defer: if an ACTIVE system-scope service owns the app, open the
     // browser at its URL and exit instead of spawning a duplicate local server.
     #[cfg(target_os = "linux")]
