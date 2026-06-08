@@ -5,11 +5,12 @@
 
 ## Goal
 
-Three changes to **Settings → App**, bringing the Windows and Linux variants closer:
+Four changes to **Settings → App**, bringing the Windows and Linux variants closer:
 
 1. **Reorder** the App-section rows (per-OS).
 2. Move the **uninstall confirmation** from an inline panel to an **overlay modal**.
 3. Add an **in-app Windows uninstall** — Windows has no in-app uninstall today (only Add/Remove Programs); give it the same "uninstall ws-scrcpy-web" button Linux has.
+4. **Fix the Windows "stop server & exit" teardown** — the tray (`ws-scrcpy-web-tray.exe`) is left resident, and adb is only `kill-server`'d (missing the `taskkill /F /IM adb.exe /T` belt-and-braces the update path uses), so stray adb can linger. node + launcher do exit.
 
 ## Current state
 
@@ -91,3 +92,20 @@ The helper is the win32 analog of `linux_app_uninstall.rs`: a pure command/step 
 ### 8. Open item (VM-gated)
 
 `Update.exe --uninstall` vs `msiexec /x {ProductCode}` — which produces a clean MSI uninstall (hook fires **and** ARP entry removed, no orphan). Resolved on the Win11 VM during the smoke; the helper is structured so the command choice is a one-line swap.
+
+### 9. Windows tray reap on "stop server & exit" (item 4)
+
+**Symptom:** on Windows, "stop server & exit" exits node + launcher + adb cleanly but leaves `ws-scrcpy-web-tray.exe` resident. Smoke 12.3 (SE-1) expected the reap; it was never runtime-verified on Windows.
+
+**What's already there (verified by inspection):** the reap is wired — after `supervisor::run()` returns, `main.rs:391` calls `tray_supervisor::reap_tray_on_terminal_exit(data_root)`, which (gated only by `apply-update-pending` / `uninstall-pending` markers under `<dataRoot>/control/`) runs `taskkill /F /IM ws-scrcpy-web-tray.exe`. `data_root_from_env()` always returns `Some` on Windows (PROGRAMDATA-based), so the call site IS reached. `should_reap_tray_on_exit` is pure + unit-tested.
+
+**Root cause — diagnose on the VM, then fix.** Candidates, in likely order:
+1. **Respawn race (strongest):** the tray-supervisor poll thread (`tray_supervisor_loop`, 10 s) re-spawns a missing tray and is never signalled to stop before the reap. Its `stop_flag` exists but is unused (`let _stop = start_background(...)` in `supervisor.rs`). **Hardening regardless:** thread the `stop_flag` up so the supervisor/`main` sets it BEFORE the reap, so the loop can't respawn the tray the reap just killed.
+2. **Stale marker:** a leftover `apply-update-pending` / `uninstall-pending` under `control/` skips the reap. Confirm none is present on a plain stop-exit.
+3. **taskkill miss:** the kill doesn't reach the tray (image-name/session). Confirm it runs + exits 0.
+
+**Method:** on the Win11 VM, stop-exit then read `…\WsScrcpyWeb\logs\launcher.log` — is the `tray-supervisor: terminal exit; reaping tray helper` line present? is a marker present (the "leaving tray for relaunch" line)? Then fix the identified cause. Keep `should_reap_tray_on_exit` coverage; add a unit test for whatever pure decision the fix introduces (e.g. a `stop_flag`-set-before-reap ordering helper).
+
+**adb — verified code gap (not just a runtime question).** `gracefulShutdown` (`src/server/index.ts:283`, the stop-exit teardown) runs **`adb kill-server` only**. The in-app *update* path (`UpdateService.ts:689-697` preApply hygiene) runs kill-server **plus** a Windows `taskkill /F /IM adb.exe /T` belt-and-braces — added precisely because kill-server alone leaves stray `adb.exe` (stuck transport, in-flight forward; the daemon is spawned `detached` to escape Node's job object). So stop-exit is missing that reap → stray adb survives on Windows. **Fix:** after `killServer()` in `gracefulShutdown`, add a win32-only `execFileAsync('C:\\Windows\\System32\\taskkill.exe', ['/F','/IM','adb.exe','/T'])` (non-zero = no-match = ok), mirroring the update path exactly. Unit-testable: pin win32, mock `execFileAsync`, assert the taskkill is issued.
+
+**Note:** independent of the App-section UI work, but bundled into this pass + beta per the user's request.
