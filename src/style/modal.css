@@ -701,6 +701,12 @@ dialog.settings-modal .settings-btn-danger {
     border-color: #ff6b6b;
 }
 
+dialog.settings-modal .settings-btn-danger-outline {
+    color: #f06c75;
+    border-color: #f06c75;
+    background: transparent;
+}
+
 dialog.settings-modal .settings-status {
     margin: 0.25rem 0 0;
     color: var(--text-color-light, #888);

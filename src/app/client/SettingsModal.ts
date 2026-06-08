@@ -1,6 +1,7 @@
 import { Modal } from '../ui/Modal';
 import { AdminConfirmModal, type AdminConfirmOptions } from './AdminConfirmModal';
 import { ConfirmModal } from './ConfirmModal';
+import { UninstallConfirmModal } from './UninstallConfirmModal';
 import { ServiceOperationModal } from './ServiceOperationModal';
 import { runUpgradingHandoff } from './UpgradingOverlay';
 import type { AppConfigEnvelope, AppConfigPatchResponse, UpdateChannel } from '../../common/ConfigEvents';
@@ -313,100 +314,36 @@ export function buildInstallAllUsersControl(opts: { reload: () => void }): {
 }
 
 /**
- * Build the Linux-only "uninstall ws-scrcpy-web" control: a danger trigger
- * button plus an inline confirm panel (the same settings-confirm-panel pattern
- * the reset-prompts row uses). The trigger toggles the panel; the panel holds a
- * warning line, a "keep my settings & logs" checkbox (unchecked by default), and
- * confirm/cancel buttons. Confirm POSTs /api/service/uninstall-app with
- * `{ keep: <checkbox> }`; on success it invokes `onUninstalled` (the terminal
- * "uninstalled — close this tab" message, since the server tears itself down);
- * on failure it surfaces an inline error inside the panel. Self-contained DOM +
- * wiring (no network until confirm is clicked) so it is unit-testable.
+ * Build the "uninstall ws-scrcpy-web" trigger button. When clicked, opens
+ * UninstallConfirmModal (a top-layer <dialog>) instead of an inline panel.
+ * On confirmation, POSTs /api/service/uninstall-app with { keep } and calls
+ * opts.onUninstalled on success. Self-contained DOM + wiring; no network call
+ * until the modal is confirmed.
  */
 export function buildUninstallControl(opts: { onUninstalled: () => void }): {
     button: HTMLButtonElement;
-    confirmPanel: HTMLElement;
-    keepCheckbox: HTMLInputElement;
-    confirmButton: HTMLButtonElement;
-    cancelButton: HTMLButtonElement;
 } {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'settings-btn settings-btn-danger';
     button.textContent = 'uninstall…';
 
-    const confirmPanel = document.createElement('div');
-    confirmPanel.className = 'settings-confirm-panel';
-
-    const warning = document.createElement('p');
-    warning.textContent = 'this completely removes ws-scrcpy-web, including any installed service.';
-    confirmPanel.appendChild(warning);
-
-    const keepLabel = document.createElement('label');
-    keepLabel.className = 'settings-radio-label';
-    const keepCheckbox = document.createElement('input');
-    keepCheckbox.type = 'checkbox';
-    keepLabel.appendChild(keepCheckbox);
-    keepLabel.appendChild(document.createTextNode('keep my settings & logs'));
-    confirmPanel.appendChild(keepLabel);
-
-    const errorNote = document.createElement('p');
-    errorNote.className = 'settings-status settings-status-error';
-    errorNote.hidden = true;
-    confirmPanel.appendChild(errorNote);
-
-    const confirmButtons = document.createElement('div');
-    confirmButtons.className = 'settings-confirm-buttons';
-
-    const cancelButton = document.createElement('button');
-    cancelButton.type = 'button';
-    cancelButton.className = 'settings-btn';
-    cancelButton.textContent = 'cancel';
-    cancelButton.addEventListener('click', () => {
-        confirmPanel.classList.remove('expanded');
-    });
-    confirmButtons.appendChild(cancelButton);
-
-    const confirmButton = document.createElement('button');
-    confirmButton.type = 'button';
-    confirmButton.className = 'settings-btn settings-btn-primary';
-    confirmButton.textContent = 'uninstall';
-    confirmButton.addEventListener('click', () => {
-        const keep = keepCheckbox.checked;
-        confirmButton.disabled = true;
-        cancelButton.disabled = true;
-        confirmButton.textContent = 'uninstalling…';
-        errorNote.hidden = true;
+    button.addEventListener('click', () => {
         void (async () => {
-            try {
-                const res = await fetch('/api/service/uninstall-app', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ keep }),
-                });
-                if (res.ok) {
-                    opts.onUninstalled();
-                    return;
-                }
-                errorNote.textContent = 'uninstall failed — see the server logs and try again.';
-            } catch {
-                errorNote.textContent = 'uninstall failed — could not reach the server.';
-            }
-            errorNote.hidden = false;
-            confirmButton.disabled = false;
-            cancelButton.disabled = false;
-            confirmButton.textContent = 'uninstall';
+            const r = await UninstallConfirmModal.confirm();
+            if (!r.confirmed) return;
+            button.disabled = true;
+            button.textContent = 'uninstalling…';
+            await fetch('/api/service/uninstall-app', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ keep: r.keep }),
+            });
+            opts.onUninstalled();
         })();
     });
-    confirmButtons.appendChild(confirmButton);
 
-    confirmPanel.appendChild(confirmButtons);
-
-    button.addEventListener('click', () => {
-        confirmPanel.classList.toggle('expanded');
-    });
-
-    return { button, confirmPanel, keepCheckbox, confirmButton, cancelButton };
+    return { button };
 }
 
 /**
@@ -449,7 +386,6 @@ export class SettingsModal extends Modal {
     private installAllUsersNote: HTMLElement | null = null;
     private uninstallRow: HTMLElement | null = null;
     private uninstallButton: HTMLButtonElement | null = null;
-    private uninstallConfirmPanel: HTMLElement | null = null;
 
     // ── Updates section state ─────────────────────────────────────────────
     private updatesBody!: HTMLElement;
@@ -1683,11 +1619,10 @@ export class SettingsModal extends Modal {
 
         // ── uninstall ws-scrcpy-web (Linux + win32) ──────────────────────
         // Always enabled when shown (NOT gated on service mode — uninstalling is how you
-        // remove a service). Reuses the confirm-panel pattern; confirm POSTs
+        // remove a service). Opens UninstallConfirmModal on click; confirm POSTs
         // /api/service/uninstall-app { keep }.
         const uninstall = buildUninstallControl({ onUninstalled: () => this.showUninstalledOverlay() });
         this.uninstallButton = uninstall.button;
-        this.uninstallConfirmPanel = uninstall.confirmPanel;
         const uninstallRow = this.buildRow('uninstall ws-scrcpy-web', uninstall.button);
         uninstallRow.style.display = 'none';
         this.uninstallRow = uninstallRow;
@@ -1702,9 +1637,8 @@ export class SettingsModal extends Modal {
         // 3. stop the server and close the app + note
         body.appendChild(this.buildRow('stop the server and close the app', stopBtn));
         body.appendChild(stopNote);
-        // 4. uninstall ws-scrcpy-web + confirm panel (Linux + win32, hidden until revealed)
+        // 4. uninstall ws-scrcpy-web (Linux + win32, hidden until revealed)
         body.appendChild(uninstallRow);
-        body.appendChild(uninstall.confirmPanel);
 
         return section;
     }
@@ -1753,10 +1687,6 @@ export class SettingsModal extends Modal {
             // (unlike "stop server & exit"); uninstalling is how you tear a service
             // down. Asserting it here documents and enforces that invariant.
             this.uninstallButton.disabled = false;
-        }
-        // Collapse a left-open confirm panel if the row is being hidden (non-Linux).
-        if (!state.showUninstall && this.uninstallConfirmPanel) {
-            this.uninstallConfirmPanel.classList.remove('expanded');
         }
     }
 

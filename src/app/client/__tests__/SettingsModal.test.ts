@@ -17,6 +17,7 @@ import {
     buildUninstallControl,
     SettingsModal,
 } from '../SettingsModal';
+import * as UninstallConfirmModalModule from '../UninstallConfirmModal';
 
 /** Flush microtasks + a macrotask so the awaited fetch handlers settle. */
 const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
@@ -306,55 +307,72 @@ describe('buildInstallAllUsersControl', () => {
 });
 
 describe('buildUninstallControl', () => {
-    it('clicking the trigger expands the inline confirm panel', () => {
-        const { button, confirmPanel } = buildUninstallControl({ onUninstalled: vi.fn() });
-        expect(confirmPanel.classList.contains('settings-confirm-panel')).toBe(true);
-        expect(confirmPanel.classList.contains('expanded')).toBe(false);
-        button.click();
-        expect(confirmPanel.classList.contains('expanded')).toBe(true);
+    it('returns only { button } — no confirmPanel, keepCheckbox, confirmButton, cancelButton', () => {
+        const result = buildUninstallControl({ onUninstalled: vi.fn() });
+        expect(result).toHaveProperty('button');
+        expect(result).not.toHaveProperty('confirmPanel');
+        expect(result).not.toHaveProperty('keepCheckbox');
+        expect(result).not.toHaveProperty('confirmButton');
+        expect(result).not.toHaveProperty('cancelButton');
     });
 
-    it('confirm with "keep" checked POSTs /api/service/uninstall-app with {keep:true}', async () => {
+    it('button click opens UninstallConfirmModal (calls confirm)', async () => {
+        const confirmSpy = vi.spyOn(UninstallConfirmModalModule.UninstallConfirmModal, 'confirm')
+            .mockResolvedValue({ confirmed: false, keep: true });
+        const { button } = buildUninstallControl({ onUninstalled: vi.fn() });
+        button.click();
+        await flush();
+        expect(confirmSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('on confirmed=true,keep=true POSTs /api/service/uninstall-app with {keep:true} and calls onUninstalled', async () => {
         const fetchMock = vi.fn().mockResolvedValue({ ok: true });
         vi.stubGlobal('fetch', fetchMock);
+        const onUninstalled = vi.fn();
+        vi.spyOn(UninstallConfirmModalModule.UninstallConfirmModal, 'confirm')
+            .mockResolvedValue({ confirmed: true, keep: true });
 
-        const { button, keepCheckbox, confirmButton } = buildUninstallControl({ onUninstalled: vi.fn() });
+        const { button } = buildUninstallControl({ onUninstalled });
         button.click();
-        keepCheckbox.checked = true;
-        confirmButton.click();
+        await flush();
 
         expect(fetchMock).toHaveBeenCalledTimes(1);
         const [url, init] = fetchMock.mock.calls[0]! as [string, RequestInit];
         expect(url).toBe('/api/service/uninstall-app');
         expect(init.method).toBe('POST');
         expect(JSON.parse(init.body as string)).toEqual({ keep: true });
-        await flush();
+        expect(onUninstalled).toHaveBeenCalledTimes(1);
     });
 
-    it('confirm with "keep" unchecked POSTs {keep:false}', async () => {
-        const fetchMock = vi.fn().mockResolvedValue({ ok: true });
-        vi.stubGlobal('fetch', fetchMock);
-
-        const { button, confirmButton } = buildUninstallControl({ onUninstalled: vi.fn() });
-        button.click();
-        confirmButton.click();
-
-        const [, init] = fetchMock.mock.calls[0]! as [string, RequestInit];
-        expect(JSON.parse(init.body as string)).toEqual({ keep: false });
-        await flush();
-    });
-
-    it('invokes onUninstalled (the terminal message) after a successful uninstall', async () => {
+    it('on confirmed=true,keep=false POSTs {keep:false} and calls onUninstalled', async () => {
         const fetchMock = vi.fn().mockResolvedValue({ ok: true });
         vi.stubGlobal('fetch', fetchMock);
         const onUninstalled = vi.fn();
+        vi.spyOn(UninstallConfirmModalModule.UninstallConfirmModal, 'confirm')
+            .mockResolvedValue({ confirmed: true, keep: false });
 
-        const { button, confirmButton } = buildUninstallControl({ onUninstalled });
+        const { button } = buildUninstallControl({ onUninstalled });
         button.click();
-        confirmButton.click();
         await flush();
 
+        const [, init] = fetchMock.mock.calls[0]! as [string, RequestInit];
+        expect(JSON.parse(init.body as string)).toEqual({ keep: false });
         expect(onUninstalled).toHaveBeenCalledTimes(1);
+    });
+
+    it('on confirmed=false does NOT POST and does NOT call onUninstalled', async () => {
+        const fetchMock = vi.fn();
+        vi.stubGlobal('fetch', fetchMock);
+        const onUninstalled = vi.fn();
+        vi.spyOn(UninstallConfirmModalModule.UninstallConfirmModal, 'confirm')
+            .mockResolvedValue({ confirmed: false, keep: true });
+
+        const { button } = buildUninstallControl({ onUninstalled });
+        button.click();
+        await flush();
+
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(onUninstalled).not.toHaveBeenCalled();
     });
 });
 
