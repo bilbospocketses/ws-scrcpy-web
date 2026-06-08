@@ -9,6 +9,7 @@ import {
     WS_SCRCPY_SERVICE_DESCRIPTION,
     WS_SCRCPY_SERVICE_DISPLAY_NAME,
     WS_SCRCPY_SERVICE_NAME,
+    type AppUninstallRequest,
     type ServiceActionFailure,
     type ServiceActionSuccess,
     type ServiceInstallRequest,
@@ -38,6 +39,43 @@ const log = Logger.for('ServiceApi');
  */
 export function systemServiceNeedsMigration(input: { dataRootEnv?: string; oldDataDirExists: boolean }): boolean {
     return input.dataRootEnv === '/opt/ws-scrcpy-web/data' || input.oldDataDirExists;
+}
+
+/**
+ * Build the `systemd-run` arg vector that spawns the detached Rust app-uninstall
+ * helper (`--linux-app-uninstall`). Pure so the spawn shape is unit-testable
+ * without mocking process/systemd.
+ *
+ * Transient-unit scope mirrors the service-teardown handoff: as root we target
+ * the SYSTEM manager (`--collect`, no `--user`); unprivileged we target the
+ * per-user manager (`--user --collect`). The helper then self-elevates as needed
+ * (root → direct; non-root → pkexec; declined → relaunch local), so the spawn
+ * itself stays unelevated regardless.
+ *
+ * The helper flags forwarded:
+ *   --scope <user|system|none>  installed service scope to tear down (none = no service)
+ *   --machine-wide <0|1>        whether the shared /opt machine-wide AppImage exists
+ *   --keep | --wipe             preserve config.json + logs/ vs. remove all state
+ *   --data-root <abs>           writable-state root to wipe/preserve
+ *   --relaunch <abs>            home AppImage to re-launch in local mode ('' = none)
+ */
+export function buildUninstallHelperArgs(o: {
+    isRoot: boolean;
+    unit: string;
+    helper: string;
+    scope: 'user' | 'system' | 'none';
+    machineWide: boolean;
+    keep: boolean;
+    dataRoot: string;
+    relaunch: string;
+}): string[] {
+    // root → system transient unit (`--collect`); non-root → user manager (`--user --collect`).
+    const prefix = o.isRoot ? ['--collect'] : ['--user', '--collect'];
+    return [
+        ...prefix, o.unit, o.helper, '--linux-app-uninstall',
+        '--scope', o.scope, '--machine-wide', o.machineWide ? '1' : '0',
+        o.keep ? '--keep' : '--wipe', '--data-root', o.dataRoot, '--relaunch', o.relaunch,
+    ];
 }
 
 /**
@@ -125,6 +163,9 @@ export class ServiceApi {
             }
             if (req.method === 'POST' && url === '/api/service/migrate-system') {
                 return await this.handleMigrateSystem(res);
+            }
+            if (req.method === 'POST' && url === '/api/service/uninstall-app') {
+                return await this.handleAppUninstall(req, res);
             }
 
             res.writeHead(404);
@@ -922,6 +963,89 @@ export class ServiceApi {
         } finally {
             try { fs.unlinkSync(tmpFile); } catch { /* best-effort cleanup */ }
         }
+        return true;
+    }
+
+    /**
+     * POST /api/service/uninstall-app — Linux-only. Spawn the detached Rust
+     * uninstall helper (`--linux-app-uninstall`) and exit the local instance so
+     * the out-of-cgroup helper can tear the app down from underneath us.
+     *
+     * `keep` (request body) preserves config.json + logs/ (`--keep`) vs. wiping
+     * all state (`--wipe`). On keep we ALSO reset installMode to null up front so
+     * the preserved config.json boots in local mode next time rather than a
+     * phantom service mode with no backing service.
+     *
+     * Scope/machine-wide context is resolved here and forwarded so the helper
+     * tears down the right pieces:
+     *   - scope: the installed systemd unit scope (user/system) or 'none'.
+     *   - machineWide: whether the shared /opt machine-wide AppImage exists.
+     * The helper self-elevates (root → direct; non-root → pkexec; declined →
+     * relaunch local), so this spawn stays unelevated. Mirrors the systemd-run
+     * teardown handoff in handleUninstall.
+     */
+    private async handleAppUninstall(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+        const result = this.factory();
+        if (result.platform !== 'linux') {
+            res.writeHead(200);
+            res.end(JSON.stringify({ ok: false, reason: 'unsupported', error: 'app uninstall is linux-only' }));
+            return true;
+        }
+
+        const reqBody = await readJsonBody(req);
+        const keep = Boolean((reqBody as Partial<AppUninstallRequest>).keep);
+
+        const cfg = Config.getInstance();
+        const dataRoot = cfg.dataRoot ?? path.dirname(cfg.dependenciesPath);
+        // Same staged out-of-mount helper UpdateService.applyUpdate uses — note
+        // the `.exe` suffix is the fixed staged name even on Linux.
+        const helper = path.join(dataRoot, 'control', 'operation-server', 'ws-scrcpy-web-launcher.exe');
+        if (!this.existsCheck(helper)) {
+            const failure: ServiceActionFailure = {
+                ok: false,
+                error: `uninstall helper not found at ${helper}`,
+                reason: 'unknown',
+            };
+            res.writeHead(500);
+            res.end(JSON.stringify(failure));
+            return true;
+        }
+
+        // Installed service scope (Linux-only getInstalledScope; SystemdClient
+        // implements it). null → no service unit on disk → 'none'.
+        const svc = result.client.getInstalledScope
+            ? await result.client.getInstalledScope(WS_SCRCPY_SERVICE_NAME)
+            : null;
+        const scope: 'user' | 'system' | 'none' = svc === 'system' ? 'system' : svc === 'user' ? 'user' : 'none';
+
+        const machineWide = this.existsCheck(`${STAGED_SYSTEM_DIR}/${STAGED_SYSTEM_APPIMAGE}`);
+        const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
+        const relaunch = process.env['APPIMAGE'] ?? '';
+
+        // keep=true: reset installMode to null BEFORE spawning so the preserved
+        // config.json comes back up in local mode, not a phantom service mode.
+        // Best-effort — log and proceed; the teardown still goes ahead.
+        if (keep) {
+            try {
+                cfg.updateAppConfig({ installMode: null });
+            } catch (err) {
+                log.warn(`app-uninstall: installMode reset failed (continuing): ${(err as Error).message}`);
+            }
+        }
+
+        const systemdRun = resolveSystemTool('systemd-run');
+        const unit = `--unit=wsscrcpy-uninstall-${Date.now()}`;
+        this.spawnDetached(
+            systemdRun,
+            buildUninstallHelperArgs({ isRoot, unit, helper, scope, machineWide, keep, dataRoot, relaunch }),
+        );
+        this.scheduleExit(() => {
+            log.info('app-uninstall: local instance exiting → detached teardown');
+            process.exit(0);
+        }, 1_500);
+
+        res.writeHead(200);
+        res.end(JSON.stringify({ ok: true, status: 'uninstalling' }));
         return true;
     }
 

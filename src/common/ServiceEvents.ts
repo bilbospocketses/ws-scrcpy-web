@@ -159,6 +159,11 @@ export interface ServiceInstallRequest {
     scope?: 'user' | 'system';
 }
 
+/** Request body for POST /api/service/uninstall-app. `keep` preserves config.json + logs/. */
+export interface AppUninstallRequest {
+    keep: boolean;
+}
+
 /** Canonical Windows service name registered with Servy / SCM. */
 export const WS_SCRCPY_SERVICE_NAME = 'WsScrcpyWeb';
 export const WS_SCRCPY_SERVICE_DISPLAY_NAME = 'ws-scrcpy-web';

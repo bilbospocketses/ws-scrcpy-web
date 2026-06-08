@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ServiceApi, systemServiceNeedsMigration } from '../api/ServiceApi';
+import { ServiceApi, buildUninstallHelperArgs, systemServiceNeedsMigration } from '../api/ServiceApi';
 import { Config } from '../Config';
 import { EnvName } from '../EnvName';
 import {
@@ -1558,6 +1558,161 @@ describe('ServiceApi', () => {
             const body = JSON.parse((res as any).getBody());
             expect(body.ok).toBe(false);
             expect(body.reason).toBe('uac-declined');
+        });
+    });
+
+    // ── app-uninstall (POST /api/service/uninstall-app) — beta.49 ─────────────
+    //
+    // Linux-only endpoint that spawns the detached Rust uninstall helper via
+    // systemd-run. The arg vector is built by the pure buildUninstallHelperArgs
+    // (unit-tested below without any process/systemd mocking); the handler wires
+    // it to the live spawn + schedules the local-instance exit. On keep=true the
+    // handler also resets installMode to null so the preserved config.json comes
+    // back up in local mode (not phantom service mode) on next launch.
+
+    describe('buildUninstallHelperArgs (pure)', () => {
+        const base = {
+            unit: '--unit=wsscrcpy-uninstall-123',
+            helper: '/home/jamie/.local/share/WsScrcpyWeb/control/operation-server/ws-scrcpy-web-launcher.exe',
+            dataRoot: '/home/jamie/.local/share/WsScrcpyWeb',
+            relaunch: '/home/jamie/Applications/WsScrcpyWeb.AppImage',
+        };
+
+        it('non-root: --user --collect prefix, --wipe when keep=false, machine-wide 0, scope none', () => {
+            const args = buildUninstallHelperArgs({
+                isRoot: false, scope: 'none', machineWide: false, keep: false, ...base,
+            });
+            // Non-root → user manager: leading --user --collect, then unit, helper, mode flag.
+            expect(args.slice(0, 5)).toEqual([
+                '--user', '--collect', base.unit, base.helper, '--linux-app-uninstall',
+            ]);
+            expect(args).toContain('--wipe');
+            expect(args).not.toContain('--keep');
+            // Each value-flag is immediately followed by its value.
+            expect(args[args.indexOf('--machine-wide') + 1]).toBe('0');
+            expect(args[args.indexOf('--scope') + 1]).toBe('none');
+            expect(args[args.indexOf('--data-root') + 1]).toBe(base.dataRoot);
+            expect(args[args.indexOf('--relaunch') + 1]).toBe(base.relaunch);
+        });
+
+        it('non-root: --keep when keep=true, machine-wide 1, scope user', () => {
+            const args = buildUninstallHelperArgs({
+                isRoot: false, scope: 'user', machineWide: true, keep: true, ...base,
+            });
+            expect(args).toContain('--keep');
+            expect(args).not.toContain('--wipe');
+            expect(args[args.indexOf('--machine-wide') + 1]).toBe('1');
+            expect(args[args.indexOf('--scope') + 1]).toBe('user');
+        });
+
+        it('root: --collect prefix with NO --user, scope system', () => {
+            const args = buildUninstallHelperArgs({
+                isRoot: true, scope: 'system', machineWide: true, keep: false, ...base,
+            });
+            // Root → system manager: leading --collect (no --user).
+            expect(args.slice(0, 4)).toEqual([
+                '--collect', base.unit, base.helper, '--linux-app-uninstall',
+            ]);
+            expect(args).not.toContain('--user');
+            expect(args[args.indexOf('--scope') + 1]).toBe('system');
+        });
+    });
+
+    describe('app-uninstall handler (POST /api/service/uninstall-app)', () => {
+        it('POST /uninstall-app {keep:true} on linux → 200 uninstalling, spawns systemd-run helper with --keep + --scope user', async () => {
+            const client = fakeClient({
+                getInstalledScope: vi.fn(async () => 'user' as const),
+            });
+            const factoryResult: ServiceClientFactoryResult = {
+                client,
+                supported: true,
+                platform: 'linux',
+            };
+            let spawnedCmd = '';
+            let spawnedArgs: string[] = [];
+            const spawnMock = vi.fn((cmd: string, args: string[]) => { spawnedCmd = cmd; spawnedArgs = args; });
+            // existsCheck → helper present; scheduleExit → no-op (don't sacrifice the worker).
+            const api = new ServiceApi(() => factoryResult, () => 'user', () => true, spawnMock, () => {});
+            const { req, res } = makeReqRes('/api/service/uninstall-app', 'POST', JSON.stringify({ keep: true }));
+            await api.handle(req, res);
+
+            expect((res as any).getStatus()).toBe(200);
+            const body = JSON.parse((res as any).getBody());
+            expect(body).toEqual({ ok: true, status: 'uninstalling' });
+
+            expect(spawnMock).toHaveBeenCalledTimes(1);
+            // systemd-run resolved via resolveSystemTool — falls back to the bare name on a non-Linux host.
+            expect(spawnedCmd).toMatch(/systemd-run/);
+            expect(spawnedArgs).toContain('--linux-app-uninstall');
+            expect(spawnedArgs).toContain('--keep');
+            expect(spawnedArgs).toContain('--scope');
+            expect(spawnedArgs).toContain('user');
+            // Helper path is the operation-server staged launcher (same .exe suffix even on Linux).
+            const helperArg = spawnedArgs.find((a) => a.endsWith('ws-scrcpy-web-launcher.exe'));
+            expect(helperArg).toBeDefined();
+            expect(helperArg).toContain('operation-server');
+            expect(client.getInstalledScope).toHaveBeenCalledWith('WsScrcpyWeb');
+        });
+
+        it('POST /uninstall-app {keep:true} resets installMode to null (preserved config returns in local mode)', async () => {
+            const client = fakeClient({
+                getInstalledScope: vi.fn(async () => 'user' as const),
+            });
+            const factoryResult: ServiceClientFactoryResult = {
+                client,
+                supported: true,
+                platform: 'linux',
+            };
+            Config.getInstance().updateAppConfig({ installMode: 'user-service' });
+            const spawnMock = vi.fn();
+            const api = new ServiceApi(() => factoryResult, () => 'user', () => true, spawnMock, () => {});
+            const { req, res } = makeReqRes('/api/service/uninstall-app', 'POST', JSON.stringify({ keep: true }));
+            await api.handle(req, res);
+            expect((res as any).getStatus()).toBe(200);
+            // keep=true must reset installMode to null so the preserved config.json
+            // boots in local mode, not a phantom service mode with no service.
+            expect(Config.getInstance().getAppConfig().installMode).toBeNull();
+        });
+
+        it('POST /uninstall-app returns 500 when the helper is missing, does NOT spawn', async () => {
+            const client = fakeClient({
+                getInstalledScope: vi.fn(async () => 'user' as const),
+            });
+            const factoryResult: ServiceClientFactoryResult = {
+                client,
+                supported: true,
+                platform: 'linux',
+            };
+            const spawnMock = vi.fn();
+            // existsCheck → false: the staged helper is absent (dev/from-source run).
+            const api = new ServiceApi(() => factoryResult, () => 'user', () => false, spawnMock, () => {});
+            const { req, res } = makeReqRes('/api/service/uninstall-app', 'POST', JSON.stringify({ keep: false }));
+            await api.handle(req, res);
+
+            expect((res as any).getStatus()).toBe(500);
+            const body = JSON.parse((res as any).getBody());
+            expect(body.ok).toBe(false);
+            expect(body.error).toMatch(/ws-scrcpy-web-launcher\.exe/);
+            expect(spawnMock).not.toHaveBeenCalled();
+        });
+
+        it('POST /uninstall-app on non-linux → 200 unsupported, does NOT spawn', async () => {
+            const client = fakeClient();
+            const factoryResult: ServiceClientFactoryResult = {
+                client,
+                supported: true,
+                platform: 'win32',
+            };
+            const spawnMock = vi.fn();
+            const api = new ServiceApi(() => factoryResult, () => 'user', () => true, spawnMock, () => {});
+            const { req, res } = makeReqRes('/api/service/uninstall-app', 'POST', JSON.stringify({ keep: true }));
+            await api.handle(req, res);
+
+            expect((res as any).getStatus()).toBe(200);
+            const body = JSON.parse((res as any).getBody());
+            expect(body.ok).toBe(false);
+            expect(body.reason).toBe('unsupported');
+            expect(spawnMock).not.toHaveBeenCalled();
         });
     });
 
