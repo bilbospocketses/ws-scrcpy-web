@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.49] - 2026-06-08
+
 ### Added
 
 - **Install for all users — now available any time from Settings (Linux).** Previously a machine-wide `/opt` install could only be chosen at the first-run prompt. The App section of Settings now has an explicit **install for all users** action that relocates the app to `/opt` under a single administrator prompt; once it's installed system-wide the control greys out and shows that it's already installed for all users (`/opt`).
