@@ -8,15 +8,23 @@
 // unit-path / sbin helpers from `linux_service` so the two stay in lockstep.
 //
 // Dispatch (Task 2): the UNELEVATED entry `handle` (`--linux-app-uninstall`,
-// spawned by the Node server via `systemd-run --user --collect`) re-invokes the
-// launcher under ONE pkexec for the `privileged` group FIRST (so a declined
-// prompt aborts before anything is removed), then runs the unelevated
-// `user_owned` group. That pkexec lands on the ELEVATED entry `handle_elevated`
-// (`--linux-app-uninstall-elevated`), which runs ONLY the `privileged` group as
-// root. Both sides feed the SAME args to the SAME builder, so the split is
-// identical and each instance runs exactly its own half. On a pkexec decline
-// (126/127) or a privileged failure the uninstall aborts and the running
-// AppImage is relaunched locally so the user is never stranded.
+// spawned by the server via `systemd-run --user --collect`) runs the
+// `privileged` group FIRST (so a declined/failed elevation aborts before
+// anything is removed), then the `user_owned` group. HOW the privileged group
+// runs depends on the server's uid — mirroring the service-update path's
+// `getuid()==0 ? direct : pkexec` split (the decision is the pure
+// `privileged_mode`):
+//   * already root (the ROOT system-service launched the helper): run the
+//     privileged group DIRECTLY, no pkexec (it would prompt redundantly). A
+//     complete uninstall, so this path never relaunches.
+//   * non-root (local / user-scope service): re-invoke the launcher under ONE
+//     pkexec; that lands on the ELEVATED entry `handle_elevated`
+//     (`--linux-app-uninstall-elevated`), which runs ONLY the `privileged` group
+//     as root. A pkexec decline (126/127) or a privileged failure aborts the
+//     uninstall and relaunches the running AppImage locally so the user is never
+//     stranded.
+// The direct and the pkexec-elevated executions feed the SAME args to the SAME
+// builder, so the privileged/user_owned split is identical either way.
 //
 // Local-Dependencies-Only: every tool is resolved under `bindir` (sbin tools via
 // `sbindir_from(bindir)`) — never a bare name and never via PATH.
@@ -298,11 +306,18 @@ pub fn handle_elevated(args: &[String]) -> Option<i32> {
     Some(run_elevated(&a))
 }
 
-/// Unelevated run: the privileged group FIRST under ONE pkexec (re-invoking the
-/// launcher as root), then the best-effort `user_owned` group. A pkexec decline
-/// (126/127), a privileged failure, or a spawn error aborts the teardown and
-/// relaunches the local AppImage, returning 0 — the privileged group is all-or-
-/// nothing (it never partially ran), so the user keeps a working local app.
+/// Unelevated run, invoked from the (possibly non-root) server. The privileged
+/// group runs FIRST, then the best-effort `user_owned` group runs on EVERY path.
+/// `privileged_mode` picks HOW the privileged group runs — mirroring the
+/// service-update path's `getuid()==0 ? direct : pkexec` split:
+///   * `Skip`   — empty group (purely-local install): no elevation at all.
+///   * `Direct` — already root (the root system-service launched us): run the
+///     group DIRECTLY, best-effort (same idiom as `user_owned`); pkexec would
+///     prompt redundantly. A complete uninstall, so it never relaunches.
+///   * `Pkexec` — non-root: re-invoke self under ONE pkexec. A decline (126/127),
+///     a privileged failure, or a spawn error aborts + relaunches the local
+///     AppImage and returns 0 (the privileged group is all-or-nothing there — it
+///     never partially ran — so the user keeps a working local app).
 fn run_unelevated(a: &UninstallArgs) -> i32 {
     log::info(&format!(
         "linux-app-uninstall: scope={:?} machine_wide={} keep={}",
@@ -310,63 +325,81 @@ fn run_unelevated(a: &UninstallArgs) -> i32 {
     ));
     let plan = plan_for(a);
 
-    // 1. Privileged group FIRST, under ONE pkexec (re-invoke self as root). An
-    //    empty privileged group (purely-local install) skips elevation entirely.
-    if !plan.privileged.is_empty() {
-        let pkexec = format!("{}/pkexec", tool_dir("pkexec"));
-        let exe = match std::env::current_exe() {
-            Ok(p) => p,
-            Err(e) => {
-                log::error(&format!(
-                    "uninstall: cannot resolve self exe for pkexec re-invoke ({e}) — aborting + relaunching local"
-                ));
-                relaunch(&a.relaunch);
-                return 0;
+    // 1. Privileged group FIRST. Already root -> run it directly (no pkexec);
+    //    non-root -> re-invoke self under ONE pkexec; empty -> skip elevation.
+    let is_root = rustix::process::getuid().is_root();
+    match privileged_mode(is_root, plan.privileged.is_empty()) {
+        PrivMode::Skip => {}
+        PrivMode::Direct => {
+            // Already root (system-service mode): run the privileged group
+            // DIRECTLY, best-effort (mirrors linux_service::run / the user_owned
+            // loop). No relaunch — a complete uninstall never relaunches.
+            log::info("uninstall: already root (system-service) — running privileged group directly");
+            for argv in &plan.privileged {
+                let (cmd, rest) = argv.split_first().expect("non-empty argv");
+                match std::process::Command::new(cmd).args(rest).status() {
+                    Ok(s) if s.success() => log::info(&format!("uninstall (root) ok: {}", argv.join(" "))),
+                    Ok(s) => log::error(&format!("uninstall (root) non-zero ({:?}): {}", s.code(), argv.join(" "))),
+                    Err(e) => log::error(&format!("uninstall (root) spawn failed: {} ({e})", argv.join(" "))),
+                }
             }
-        };
-        let scope_arg = match a.svc_scope {
-            Some(Scope::User) => "user",
-            Some(Scope::System) => "system",
-            None => "none",
-        };
-        let mw_arg = if a.machine_wide { "1" } else { "0" };
-        let keep_arg = if a.keep { "--keep" } else { "--wipe" };
-        // argv all the way (no `sh -c`): re-invoke ourselves under pkexec with the
-        // same inputs MINUS --relaunch (the elevated half never relaunches).
-        match std::process::Command::new(&pkexec)
-            .arg(&exe)
-            .args([
-                "--linux-app-uninstall-elevated",
-                "--scope",
-                scope_arg,
-                "--machine-wide",
-                mw_arg,
-                keep_arg,
-                "--data-root",
-                a.data_root.as_str(),
-            ])
-            .status()
-        {
-            Ok(s) if s.success() => log::info("uninstall: privileged group complete (pkexec)"),
-            Ok(s) if declined(s) => {
-                log::error("uninstall: pkexec declined — aborting + relaunching local");
-                relaunch(&a.relaunch);
-                return 0;
-            }
-            Ok(s) => {
-                log::error(&format!(
-                    "uninstall: privileged step failed ({:?}) — aborting + relaunching local",
-                    s.code()
-                ));
-                relaunch(&a.relaunch);
-                return 0;
-            }
-            Err(e) => {
-                log::error(&format!(
-                    "uninstall: pkexec spawn failed ({e}) — aborting + relaunching local"
-                ));
-                relaunch(&a.relaunch);
-                return 0;
+        }
+        PrivMode::Pkexec => {
+            let pkexec = format!("{}/pkexec", tool_dir("pkexec"));
+            let exe = match std::env::current_exe() {
+                Ok(p) => p,
+                Err(e) => {
+                    log::error(&format!(
+                        "uninstall: cannot resolve self exe for pkexec re-invoke ({e}) — aborting + relaunching local"
+                    ));
+                    relaunch(&a.relaunch);
+                    return 0;
+                }
+            };
+            let scope_arg = match a.svc_scope {
+                Some(Scope::User) => "user",
+                Some(Scope::System) => "system",
+                None => "none",
+            };
+            let mw_arg = if a.machine_wide { "1" } else { "0" };
+            let keep_arg = if a.keep { "--keep" } else { "--wipe" };
+            // argv all the way (no `sh -c`): re-invoke ourselves under pkexec with
+            // the same inputs MINUS --relaunch (the elevated half never relaunches).
+            match std::process::Command::new(&pkexec)
+                .arg(&exe)
+                .args([
+                    "--linux-app-uninstall-elevated",
+                    "--scope",
+                    scope_arg,
+                    "--machine-wide",
+                    mw_arg,
+                    keep_arg,
+                    "--data-root",
+                    a.data_root.as_str(),
+                ])
+                .status()
+            {
+                Ok(s) if s.success() => log::info("uninstall: privileged group complete (pkexec)"),
+                Ok(s) if declined(s) => {
+                    log::error("uninstall: pkexec declined — aborting + relaunching local");
+                    relaunch(&a.relaunch);
+                    return 0;
+                }
+                Ok(s) => {
+                    log::error(&format!(
+                        "uninstall: privileged step failed ({:?}) — aborting + relaunching local",
+                        s.code()
+                    ));
+                    relaunch(&a.relaunch);
+                    return 0;
+                }
+                Err(e) => {
+                    log::error(&format!(
+                        "uninstall: pkexec spawn failed ({e}) — aborting + relaunching local"
+                    ));
+                    relaunch(&a.relaunch);
+                    return 0;
+                }
             }
         }
     }
@@ -402,6 +435,35 @@ fn run_elevated(a: &UninstallArgs) -> i32 {
         }
     }
     0
+}
+
+/// How `run_unelevated` runs the privileged teardown group — the
+/// `getuid()==0 ? direct : pkexec` decision, made pure so its three outcomes are
+/// unit-testable even though the run fns themselves shell out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PrivMode {
+    /// Empty privileged group (purely-local install): no elevation at all.
+    Skip,
+    /// Already root (the root system-service launched the helper): run the group
+    /// directly, no pkexec.
+    Direct,
+    /// Non-root (local / user-scope server): re-invoke self under ONE pkexec.
+    Pkexec,
+}
+
+/// Decide how to run the privileged group: `Skip` when it's empty (no root-owned
+/// footprint), else `Direct` when already root (pkexec would prompt redundantly /
+/// wrongly when the root system-service launched us), else `Pkexec`. Pure — the
+/// caller passes `is_root` from `getuid().is_root()` — so all three branches are
+/// unit-testable.
+fn privileged_mode(is_root: bool, privileged_empty: bool) -> PrivMode {
+    if privileged_empty {
+        PrivMode::Skip
+    } else if is_root {
+        PrivMode::Direct
+    } else {
+        PrivMode::Pkexec
+    }
 }
 
 /// Build the teardown plan from parsed args, resolving `bindir` + XDG from the
@@ -778,5 +840,16 @@ mod tests {
         .map(|s| s.to_string())
         .collect();
         assert_eq!(parse_args(&args), None);
+    }
+
+    #[test]
+    fn privileged_mode_skip_direct_pkexec() {
+        // Empty privileged group → no elevation at all, whatever the uid.
+        assert_eq!(privileged_mode(false, true), PrivMode::Skip);
+        assert_eq!(privileged_mode(true, true), PrivMode::Skip);
+        // Non-empty + already root → run directly (no pkexec).
+        assert_eq!(privileged_mode(true, false), PrivMode::Direct);
+        // Non-empty + non-root → pkexec re-invoke.
+        assert_eq!(privileged_mode(false, false), PrivMode::Pkexec);
     }
 }
