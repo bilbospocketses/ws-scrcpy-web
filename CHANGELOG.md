@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.47] - 2026-06-08
+
 ### Fixed
 
 - **Installing for all users no longer pops a redundant browser tab.** The post-install relaunch from `/opt` (and any in-app update relaunch) now tells the freshly-launched instance to skip opening a browser — your existing tab reconnects on its own, so you no longer end up with a second one.
