@@ -1592,6 +1592,8 @@ The uninstall flow avoids UAC by deferring privileged work to a `post-stop.bat` 
 | GET | `/api/service/status` | Returns current service state (installed, running, mode). Always 200. |
 | POST | `/api/service/install` | Install the service. Triggers UAC. Returns 501 if not a Velopack install. |
 | POST | `/api/service/uninstall` | Uninstall the service via the operation-server pattern (no UAC). |
+| POST | `/api/service/install-system-wide` | (Linux) Relocate a local install to a machine-wide `/opt` install under one `pkexec` prompt; re-execs from `/opt`. |
+| POST | `/api/service/uninstall-app` `{keep}` | (Linux) Complete app uninstall — cascades through any service + `/opt` in one pass; `keep` preserves `config.json` + logs. |
 
 ### 19.4 Config.json Port Discovery
 
@@ -1620,6 +1622,8 @@ The unit body (`renderUnitFile`) is `Type=simple`, `Restart=on-failure` / `Resta
 
 **Uninstall — out-of-cgroup teardown.** Calling `systemctl stop` from inside the service unit's own cgroup would kill the calling process mid-operation (item 32). So `ServiceApi` launches the launcher helper via `systemd-run` (its own transient unit / separate cgroup) with `--linux-service-teardown --scope <user|system> --unit <name>`; `linux_service.rs` then runs, best-effort: `stop` → `disable` → `reset-failed` → remove the unit file → (system scope) `rm -rf /opt/ws-scrcpy-web` + `semanage fcontext -d` the `bin_t` rule → `daemon-reload` → reap the escaped adb daemon. **User scope** then relaunches the home AppImage in local mode via `systemd-run --user --collect` (path read from the `<dataRoot>/control/local-appimage` marker); **system scope** does not auto-relaunch (the admin relaunches their own AppImage).
 
+**Complete uninstall (beta.49).** Distinct from the service teardown above, `POST /api/service/uninstall-app {keep}` removes the *entire* app — any user/system service, a machine-wide `/opt` install, the user data root, the start-menu `.desktop` + icon, and the SELinux fcontext rules — in a single pass. `app_uninstall_commands` (`launcher/src/linux_app_uninstall.rs`) is a pure builder splitting the teardown into a `privileged` group (root-owned: `/opt`, `/var/opt`, `.desktop`/icon, fcontext) and an unelevated `user_owned` group (stray processes, user-scope unit, the `~/.local` data root). `--linux-app-uninstall` runs `user_owned` directly and elevates `privileged` per uid (mirroring the service-update split): a root system-service runs them directly; a non-root caller re-invokes the launcher under **one** `pkexec` (`--linux-app-uninstall-elevated`), and a declined prompt aborts before anything is removed, relaunching the app so the user is never stranded. `keep=true` deletes only the regenerable `dependencies`/`bin`/`control` subdirs — preserving `config.json` + `logs/` (at the data root's owner, `~/.local` or `/var/opt`) — and resets `installMode` so a later reinstall comes up clean.
+
 ### 19.6 Components
 
 | File | Purpose |
@@ -1633,6 +1637,7 @@ The unit body (`renderUnitFile`) is `Type=simple`, `Restart=on-failure` / `Resta
 | `src/app/client/SettingsModal.ts` | Service install/uninstall controls + scope radios in the Settings panel |
 | `launcher/src/operation_server.rs` | Rust binary that serves the transition page during uninstall/update (Windows) |
 | `launcher/src/elevated_runner.rs` | Generates `post-stop.bat` with uninstall/update-apply logic (Windows) |
+| `launcher/src/linux_app_uninstall.rs` | (Linux, beta.49) Pure `app_uninstall_commands` builder + `--linux-app-uninstall` dispatch for the in-app complete uninstall (getuid-aware `pkexec` elevation) |
 | `launcher/src/linux_service.rs` | Out-of-cgroup systemd teardown + user-scope local relaunch (Linux) |
 
 ---

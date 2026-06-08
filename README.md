@@ -273,6 +273,8 @@ The first-run welcome modal offers to install ws-scrcpy-web as a systemd service
 
 You can also install/uninstall the service later from Settings → Service.
 
+**Settings → App (Linux)** has two further actions. **Install for all users** relocates the app to a machine-wide `/opt` install under a single `pkexec` prompt (the control greys out once it's installed system-wide). **Uninstall…** completely removes ws-scrcpy-web — including any installed user- or system-scope service and a machine-wide `/opt` install — in a single pass, with at most one `pkexec` prompt; a **keep my settings & logs** option preserves your `config.json` and logs (so a later reinstall reuses your saved port) while still removing the program and its bundled dependencies.
+
 #### AppImage placement caveat
 
 For a **user-scope** service the systemd unit's `ExecStart=` points at the AppImage where it lived at install time, so **do not move or rename the AppImage after installing a user-scope service** — it will fail to start on next login. If you need to relocate it, uninstall the service first, move the file, then re-install. A **system-scope** service is unaffected: the installer stages a copy of the AppImage to `/opt/ws-scrcpy-web/` (labelled `bin_t` for SELinux) and points `ExecStart=` there, so moving your home AppImage does not break it.
