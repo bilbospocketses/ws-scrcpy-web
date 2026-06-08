@@ -186,6 +186,20 @@ The App section adds three Settings → **App** affordances on Linux: a one-clic
 | **14.6** `[Linux]` Uninstall — keep settings & logs | Uninstall with **"keep my settings & logs" checked**. | `config.json` + `logs/` **survive** at the data root (`~/.local/share/WsScrcpyWeb` local, or `/var/opt/ws-scrcpy-web` system); `dependencies/` is **gone either way**; a reinstall reuses the saved port. |
 | **14.7** `[Linux]` Uninstall — SELinux clean | After any uninstall, inspect fcontext + the AVC monitor. | `sudo semanage fcontext -l \| grep ws-scrcpy-web` → **empty**; zero AVC. |
 
+## Module 15 — Windows App-section uninstall + stop-exit cleanup
+
+In-app **uninstall** now works on Windows (parity with Linux), and "stop server & exit" fully reaps the tray + stray adb. The uninstall triggers Velopack's `Update.exe --uninstall`; **the elevation path and the running-helper self-deletion are the things to settle on the VM** (flagged rows).
+
+| Test | How to perform | Expected + verify |
+|---|---|---|
+| **15.1** `[Win]` In-app uninstall — keep | MSI install → Settings → **App** → **uninstall** → modal with **keep checked** (default) → uninstall. | **One UAC prompt** (Update.exe self-elevates); `C:\Program Files\WsScrcpyWeb\` gone; service gone (`sc query WsScrcpyWeb` → not found); **tray gone**; **Add/Remove-Programs entry gone** (no orphan); `config.json` + `logs/` **survive** under `%ProgramData%\WsScrcpyWeb`, `dependencies/` gone; reinstall reuses the saved port. |
+| **15.2** `[Win]` In-app uninstall — wipe | Same, but **uncheck** keep. | As 15.1 but the **whole `%ProgramData%\WsScrcpyWeb` is gone**. ⚠️ **Watch:** the helper runs from `…\control\operation-server\` and Windows can't delete a running exe — confirm the wipe doesn't leave that dir behind (if it does → self-deleting-helper follow-up). |
+| **15.3** `[Win]` Uninstall modal UX | Open the uninstall modal. | Top-layer overlay above Settings; **cancel** white-outline, **uninstall** red text + red border; keep checkbox **checked by default**; cancel / Esc / backdrop = no action. |
+| **15.4** `[Win]` Stop-exit reaps tray + adb *(item 4)* | Local mode, device + stream live → Settings → **App** → **stop server & exit**. | Tab closes / "app stopped"; Task Manager shows **no** lingering `ws-scrcpy-web-launcher.exe` / `node.exe` / `ws-scrcpy-web-tray.exe` / `adb.exe` — the tray is reaped (poll thread stopped first) **and** stray adb is `taskkill`'d. |
+| **15.5** `[Win]` App-section order | Settings → App. | Order top→bottom: **reset prompts → stop server & exit → uninstall ws-scrcpy-web** (no "install for all users" on Windows). |
+
+> **VM decisions to settle (beta.51):** (a) does `Update.exe --uninstall` self-elevate when launched by the unelevated staged launcher (15.1 UAC)? If it needs an already-elevated caller, route the Node spawn through the launcher's `--request-uac` / `--elevate-and-run` seam with a new `windows-app-uninstall` command. (b) Does the wipe fully clear the dataRoot despite the running helper (15.2)? If it orphans `control\operation-server\`, add a self-deleting step.
+
 ---
 
 ## Global pass criteria

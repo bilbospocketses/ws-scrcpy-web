@@ -17,6 +17,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Uninstall ws-scrcpy-web from inside the app on Windows.** The Settings → App **uninstall** action — previously Linux-only (on Windows you had to use Add/Remove Programs) — now works on Windows too: it runs the Velopack uninstaller (`Update.exe --uninstall`, which removes the install and stops/removes any installed service and the tray), with the same **keep my settings & logs** option (checked by default; unchecking also deletes config, logs, and dependencies).
+
+### Changed
+
+- **Reordered the Settings → App section and moved the uninstall confirmation to an overlay modal.** The rows are now, top to bottom: reset prompts → install for all users (Linux only) → stop server & exit → uninstall, on both Windows and Linux. The uninstall confirmation is now a top-layer modal (instead of an inline panel) with a **keep my settings & logs** checkbox that defaults to checked, a white **cancel** and a red **uninstall** button.
+
+### Fixed
+
+- **"Stop server & exit" now fully cleans up on Windows.** It previously left the tray (`ws-scrcpy-web-tray.exe`) resident and only ran `adb kill-server`, which can leave stray `adb.exe` processes behind. The tray-supervisor poll thread is now stopped before the tray is reaped (so it can't respawn the tray that was just killed), and the shutdown also runs `taskkill /F /IM adb.exe /T` to catch any stray adb — the same belt-and-braces the in-app update path already uses.
+
 ## [0.1.30-beta.50] - 2026-06-08
 
 ### Changed
