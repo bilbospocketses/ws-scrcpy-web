@@ -44,6 +44,22 @@ pub fn decide_restart(exit_code: i32, marker_exists: bool) -> Option<RestartReas
     }
 }
 
+/// Returns true when a helper-refresh error is the benign "text file busy"
+/// (ETXTBSY) case: the destination helper is currently being executed, so it
+/// can't be overwritten right now — and need not be. This is expected on
+/// service start, where the operation-server helper IS the running launcher
+/// binary; the live copy stays in use until it exits, then the next supervisor
+/// start refreshes it. That path logs at WARN, not ERROR. Any other failure
+/// (permissions, missing source, disk full) is a genuine ERROR.
+fn refresh_error_is_benign_busy(e: &std::io::Error) -> bool {
+    // ETXTBSY is errno 26 on Linux/Unix. Matching the raw errno keeps this on
+    // stable Rust (vs the newer ErrorKind::ExecutableFileBusy) without pulling
+    // in libc/rustix for a single constant. On Windows a running binary
+    // surfaces a different code, so this correctly stays ERROR there — the
+    // ETXTBSY refresh case is Linux service-mode only.
+    e.raw_os_error() == Some(26)
+}
+
 /// Main supervisor entry. Returns the final exit code to bubble to OS.
 pub fn run() -> Result<i32> {
     let paths = Paths::from_env()?;
@@ -123,6 +139,9 @@ pub fn run() -> Result<i32> {
         match crate::operation_server::refresh_helper_binary(&paths.data_root) {
             Ok(p) => log::info(&format!(
                 "supervisor: refreshed operation-server helper at {p:?}"
+            )),
+            Err(e) if refresh_error_is_benign_busy(&e) => log::warn(&format!(
+                "supervisor: operation-server helper is in use (text file busy); keeping the running copy — it refreshes on the next start when free: {e}"
             )),
             Err(e) => log::error(&format!(
                 "supervisor: could not refresh operation-server helper (operation-server spawn will use stale binary or fail): {e}"
@@ -401,6 +420,32 @@ mod tests {
         // If both signals are present, marker wins (matches start.cmd's
         // ordering — marker checked before exit code).
         assert_eq!(decide_restart(75, true), Some(RestartReason::RestartMarker));
+    }
+
+    #[test]
+    fn benign_busy_detects_etxtbsy() {
+        // ETXTBSY (errno 26): the helper binary is currently executing —
+        // benign (the running copy stays in use), so it logs at WARN.
+        let e = std::io::Error::from_raw_os_error(26);
+        assert!(refresh_error_is_benign_busy(&e));
+    }
+
+    #[test]
+    fn benign_busy_rejects_other_os_errors() {
+        // EACCES (13) and ENOENT (2) are genuine refresh failures → ERROR.
+        assert!(!refresh_error_is_benign_busy(
+            &std::io::Error::from_raw_os_error(13)
+        ));
+        assert!(!refresh_error_is_benign_busy(
+            &std::io::Error::from_raw_os_error(2)
+        ));
+    }
+
+    #[test]
+    fn benign_busy_rejects_non_os_error() {
+        // A synthesized error with no raw OS code is not benign.
+        let e = std::io::Error::other("synthetic");
+        assert!(!refresh_error_is_benign_busy(&e));
     }
 
 }

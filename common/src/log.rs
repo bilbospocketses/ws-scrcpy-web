@@ -120,6 +120,10 @@ pub fn info(msg: &str) {
     append("INFO", msg);
 }
 
+pub fn warn(msg: &str) {
+    append("WARN", msg);
+}
+
 pub fn error(msg: &str) {
     append("ERROR", msg);
 }

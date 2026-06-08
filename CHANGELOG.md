@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Linux service start no longer logs a spurious `ERROR … text file busy`.** On service start the launcher refreshes its bundled operation-server helper by copying the current binary over it — but in service mode that helper *is* the binary already running, so the copy fails with `ETXTBSY` ("text file busy"). The failure is harmless (the running copy is already the current version; the next start refreshes it while it's free), so it is now logged as a warning instead of an alarming error.
+
 ## [0.1.30-beta.49] - 2026-06-08
 
 ### Added
