@@ -371,6 +371,9 @@ fn main() {
     let _ = data_root; // keep the load above visible to the compiler; supervisor reads its own env probe
     let _ = install_root;
 
+    // tray_stop_flag is consumed only by the Windows tray-reap block below; on
+    // other platforms it is intentionally unused (allow it so `-D warnings` passes).
+    #[cfg_attr(not(windows), allow(unused_variables))]
     let (exit_code, tray_stop_flag) = match supervisor::run() {
         Ok(pair) => pair,
         Err(e) => {
