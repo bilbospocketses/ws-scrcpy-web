@@ -1,28 +1,40 @@
-# ws-scrcpy-web — v0.1.30-beta.48 Smoke Run-Sheet
+# ws-scrcpy-web — Smoke Run-Sheet
+
+> **Smoke target: `v0.1.30-beta.50`** — bump this one line each release; everything below is version-agnostic.
 
 Execution-ordered, tickable checklist for the 0.1.30 Linux smoke gate. Regroups the canonical rows from
-[`v0.1.30-beta.44-full.md`](./v0.1.30-beta.44-full.md) by **app state** — the order you actually run them; that doc
-stays the module-organized reference. Wherever a row shows a version, expect **`0.1.30-beta.48`** (the doc's "beta.44"
-strings are the item-46 refresh).
+[`smoke-full.md`](./smoke-full.md) by **app state** — the order you actually run them; that doc
+stays the module-organized reference. Wherever a row shows a version, expect the **smoke-target version** (top of this doc),
+which carries the beta.48 port-discovery fix plus the App-section UX (batch #15).
 
 **Legend:** ✅ passed · ☐ to run · 🧩 needs setup (fresh snapshot / 2nd user / 2nd admin / beta.40 artifact / no-libfuse2 host) · 📱 needs a real device · 🪟 Windows pass (separate snapshot)
 
-Clear the slate before a run with [`clear-install.sh`](./clear-install.sh).
+## Before each run — reset to a clean slate
+
+1. **Wipe prior state** with [`clear-install.sh`](./clear-install.sh) (user + system service, `/opt` + `/var/opt`, dataRoot, autostart, `.desktop`, all fcontext rules, the lock, stray procs → prints `CLEAN SLATE ✓`).
+2. **Re-download the latest** — the `~/Downloads` AppImage is stale; **no `chmod +x`** (GUI double-click of a non-`+x` AppImage is the realistic path):
+   ```bash
+   gh release download --repo bilbospocketses/ws-scrcpy-web --pattern '*linux-beta.AppImage' --dir ~/Downloads
+   ```
+
+Boxes start unticked — this is a fresh pass (prior beta.48 ✅ live in the breadcrumb/todo).
 
 ---
 
-## #6 — Confirmed on beta.48 ✅
+## #6 — First install + the beta.48 port-discovery re-confirm
+
+> Run this batch **first** on the fresh download (breadcrumb step 1). 1.2 + 4.2-user passed on beta.48; the smoke-target leaves that install/service code unchanged, so this is a quick re-confirm on the new binary.
 
 | Test | How to perform | Expected + verify |
 |---|---|---|
-| ✅ **1.2** `[L]` Accept "all users" | GUI double-click the non-`+x` AppImage → **yes, all users** → one pkexec | Binary at `/opt/ws-scrcpy-web/`; `/opt/VERSION` = `0.1.30-beta.48`; system `.desktop` present; original `~/Downloads` AppImage **gone** |
-| ✅ **4.2-user** `[L]` Install user service | Settings → service → **user** scope → install (no elevation) | Service active on 8000; stable ExecStart; **no "port discovery timed out"** (the beta.48 fix) |
+| ☐ **1.2** `[L]` Accept "all users" | GUI double-click the non-`+x` AppImage → **yes, all users** → one pkexec | Binary at `/opt/ws-scrcpy-web/`; `/opt/VERSION` = the smoke-target version; system `.desktop` present; original `~/Downloads` AppImage **gone** |
+| ☐ **4.2-user** `[L]` Install user service | Settings → service → **user** scope → install (no elevation) | Service active on 8000; stable ExecStart; **no "port discovery timed out"** (the beta.48 fix) |
 
 ## #7 — Current install checks ▶ active *(machine-wide + user-service in place, no teardown)*
 
 | Test | How to perform | Expected + verify |
 |---|---|---|
-| ✅ **2.1** `[L]` Binary/deps labels | `ls -Z /opt/ws-scrcpy-web` | → **bin_t** — confirmed: `VERSION` + `WsScrcpyWeb.AppImage` both `unconfined_u:object_r:bin_t:s0` |
+| ☐ **2.1** `[L]` Binary/deps labels | `ls -Z /opt/ws-scrcpy-web` | → **bin_t** — `VERSION` + `WsScrcpyWeb.AppImage` both `unconfined_u:object_r:bin_t:s0` |
 | ☐ **2.4** `[L]` Zero AVC | Watch `sudo journalctl -f \| grep -i avc` across the installs | **No** AVC denials |
 | ☐ **4.1** `[L]` System-scope gate | Settings → service → pick **system** scope | Now **enabled** (was greyed before machine-wide); user scope available in both modes |
 | ☐ **4.4** `[L]` Scope-radio legibility | Reopen Settings | Selected dot a **clear blue**; radios non-interactive (`pointer-events:none` + `tabindex=-1`, **not** `disabled`); **user** scope shown selected |
@@ -49,10 +61,10 @@ Clear the slate before a run with [`clear-install.sh`](./clear-install.sh).
 |---|---|---|
 | ☐ **4.2-system** `[L]` Install system service | Settings → service → **system** scope → install (pkexec) | `/opt` ExecStart **as root**; state in `/var/opt`; zero AVC |
 | ☐ **2.2** `[L]` State labels | `ls -Z /var/opt/ws-scrcpy-web` | → **var_lib_t** |
-| ☐ **2.3** `[L]` fcontext rules | `semanage fcontext -l \| grep ws-scrcpy-web` | **Both** the `/opt` bin_t rule and the `/var/opt` var_lib_t rule |
+| ☐ **2.3** `[L]` fcontext rules | `sudo semanage fcontext -l \| grep ws-scrcpy-web` | **Both** the `/opt` bin_t rule and the `/var/opt` var_lib_t rule |
 | ☐ **3.3** `[L]` Service-defer | System service running → launch locally | Defers to the service (opens its URL); no 2nd server |
 | ☐ **5.1** `[L]` Same-user uninstall → relaunch | Uninstall as the active user | App reappears in that session, **same port**, visible "relaunching…" |
-| ☐ **5.4** `[L]` fcontext cleanup | After uninstall: `semanage fcontext -l \| grep ws-scrcpy-web` | **Empty** (both rules gone) |
+| ☐ **5.4** `[L]` fcontext cleanup | After uninstall: `sudo semanage fcontext -l \| grep ws-scrcpy-web` | **Empty** (both rules gone) |
 | ☐ **5.9** `[L]` Uninstall message | After a no-active-session uninstall | **Neutral** info line — not red, no "retry" button |
 
 ## #10 — First-run variants 🧩 *(needs fresh snapshot / 2nd user / 2nd admin)*
@@ -72,8 +84,8 @@ Get the from-build first: `gh run download 26859605903 --repo bilbospocketses/ws
 
 | Test | How to perform | Expected + verify |
 |---|---|---|
-| ☐ **6.1** `[B]` Update check | Settings → Updates → Check | beta.40 **offers beta.48**; beta.48 = up-to-date; no log spam |
-| ☐ **6.2** `[L]` Local update apply | beta.40 home (local mode) → Apply | Verifies + swaps + **auto-relaunches** to beta.48; reconnects |
+| ☐ **6.1** `[B]` Update check | Settings → Updates → Check | beta.40 **offers the latest**; the latest = up-to-date; no log spam |
+| ☐ **6.2** `[L]` Local update apply | beta.40 home (local mode) → Apply | Verifies + swaps + **auto-relaunches** to the latest; reconnects |
 | ☐ **6.3** `[L]` No-service /opt update | Machine-wide `/opt`, no service → update | One pkexec; **rename**-swap; relabel bin_t; **no ETXTBSY**; FUSE intact |
 | ☐ **6.4** `[L]` Newer home over /opt | `/opt` beta.40 + newer home AppImage → launch | Offers system-wide update → swap → next launch runs updated `/opt` |
 | ☐ **6.5** `[L]` User-service update | User-service → Apply | Unit stops, home swaps, restarts **same port**, **no prompt** |
@@ -84,7 +96,7 @@ Get the from-build first: `gh run download 26859605903 --repo bilbospocketses/ws
 
 | Test | How to perform | Expected + verify |
 |---|---|---|
-| ☐ **11.1** `[L]` No-libfuse2 launch | Run the beta.48 AppImage on a host without `libfuse2` | Launches (type-2 FUSE embedded); no "dlopen libfuse" error |
+| ☐ **11.1** `[L]` No-libfuse2 launch | Run the smoke-target AppImage on a host without `libfuse2` | Launches (type-2 FUSE embedded); no "dlopen libfuse" error |
 | ☐ **11.2** `[L]` No-libfuse2 update | In-app update from that host | Succeeds → **clears item 31 step 3** (then remove the 5 gate files) |
 | ☐ **11.3** `[L]` Locator-fix watch | During 6.3 / 6.4 / 6.6 apply + relaunch | No Velopack locator root-path regression (velopack#921) |
 
@@ -106,7 +118,7 @@ Get the from-build first: `gh run download 26859605903 --repo bilbospocketses/ws
 
 | Test | How to perform | Expected + verify |
 |---|---|---|
-| ☐ **1.5** `[W]` Fresh MSI install | Install `WsScrcpyWeb-beta.msi` as Admin | Auto-opens; WelcomeModal; About = beta.48; `C:\Program Files\WsScrcpyWeb\` |
+| ☐ **1.5** `[W]` Fresh MSI install | Install `WsScrcpyWeb-beta.msi` as Admin | Auto-opens; WelcomeModal; About = the smoke-target version; `C:\Program Files\WsScrcpyWeb\` |
 | ☐ **1.6** `[W]` Reinstall reuses config | After 5.7, reinstall the MSI | Existing `config.json` detected + reused; same saved port |
 | ☐ **3.4** `[W]` Per-session tray | Service installed; Fast User Switch Admin→User1→User2 | Exactly **one** tray/session (~2s); "Open" → same backend port |
 | ☐ **3.5** `[W]` 2nd tray rejected | Launch a 2nd `ws-scrcpy-web-tray.exe` | No 2nd tray; spawned proc exits ~100ms |
@@ -121,9 +133,9 @@ Get the from-build first: `gh run download 26859605903 --repo bilbospocketses/ws
 | ☐ **11.4** `[W]` PerMachine intact | After the MSI install, check the location | `C:\Program Files\WsScrcpyWeb\` (PerMachine) |
 | ☐ **12.3** `[W]` Stop-exit reaps tray | Local mode → stop server & exit | Tray disappears; no lingering launcher/node/tray/adb; **cancel** leaves running |
 
-## #15 — beta.49 App-section UX (Linux)
+## #15 — App-section UX (Linux)
 
-beta.49 App-section additions (no module-doc counterpart): the one-click **install for all users**, the machine-wide start-menu icon, and the in-app **uninstall** flows.
+App-section additions (no module-doc counterpart): the one-click **install for all users**, the machine-wide start-menu icon, and the in-app **uninstall** flows.
 
 | Test | How to perform | Expected + verify |
 |---|---|---|
@@ -133,7 +145,7 @@ beta.49 App-section additions (no module-doc counterpart): the one-click **insta
 | ☐ **15.4** `[L]` uninstall — user-service cascade | User-scope service installed (machine-wide `/opt` binary) → Settings → **App** → **uninstall…** → confirm. | **One pkexec** (for the `/opt` removal); the `--user` unit is **gone** AND the app is **removed in one pass**; **no relaunch**. |
 | ☐ **15.5** `[L]` uninstall — system-service cascade | System-scope service installed → **uninstall…** (runs from the root service context). | Runs **as root, NO pkexec**; `/opt/ws-scrcpy-web` + `/var/opt/ws-scrcpy-web` + the systemd unit are **all gone**; **zero AVC**. |
 | ☐ **15.6** `[L]` uninstall — keep settings & logs | Uninstall with **"keep my settings & logs" checked**. | `config.json` + `logs/` **survive** at the data root (`~/.local/share/WsScrcpyWeb` local, or `/var/opt/ws-scrcpy-web` system); `dependencies/` is **gone either way**; a **reinstall reuses the saved port**. |
-| ☐ **15.7** `[L]` uninstall — SELinux clean | After any uninstall, inspect the fcontext rules + the AVC monitor. | `semanage fcontext -l \| grep ws-scrcpy-web` → **empty**; **zero AVC**. |
+| ☐ **15.7** `[L]` uninstall — SELinux clean | After any uninstall, inspect the fcontext rules + the AVC monitor. | `sudo semanage fcontext -l \| grep ws-scrcpy-web` → **empty**; **zero AVC**. |
 
 ---
 
@@ -141,7 +153,7 @@ beta.49 App-section additions (no module-doc counterpart): the one-click **insta
 
 | Criterion | Holds when |
 |---|---|
-| **SELinux clean** `[L]` | Zero AVC all session; `semanage fcontext -l \| grep ws-scrcpy-web` empty after every uninstall |
+| **SELinux clean** `[L]` | Zero AVC all session; `sudo semanage fcontext -l \| grep ws-scrcpy-web` empty after every uninstall |
 | **Single instance** | Never two trays (Win) / two servers (Linux) per user/session |
 | **Relaunch fidelity** | Every uninstall→relaunch lands on the **same port**; no orphaned processes |
 | **Updates apply everywhere** | local, machine-wide `/opt` (no-service), user-service, system-service (headless) all swap + relaunch on the same port; **zero AVC** on the system-service path |

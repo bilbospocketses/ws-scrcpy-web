@@ -1,8 +1,10 @@
-# ws-scrcpy-web — Smoke Test Runbook (plain-English) · v0.1.30-beta.44
+# ws-scrcpy-web — Smoke Test Runbook (plain-English)
+
+> **Smoke target: `v0.1.30-beta.50`** — bump this one line each release; everything below is version-agnostic.
 
 **What this is.** A step-by-step manual test pass for the **ws-scrcpy-web** app. Completing it is the agreed gate before cutting the **0.1.30 final** release — the "prove it really installs, updates, and streams on Windows + Linux" check. You run it by hand on your test VMs plus a real Android device; it can't be automated from a chat.
 
-**Source of truth.** This is the plain-English twin of `docs/smoke-tests/v0.1.30-beta.44-full.md` in the repo. Same 62 tests, jargon spelled out, laid out as fixed-width tables you can keep open and tick through. If the two ever disagree, **the repo doc wins** — tell me and I'll re-sync this one.
+**Source of truth.** This is the plain-English twin of `docs/smoke-tests/smoke-full.md` in the repo. Same 69 tests, jargon spelled out, laid out as fixed-width tables you can keep open and tick through. If the two ever disagree, **the repo doc wins** — tell me and I'll re-sync this one.
 
 ## How to use this runbook
 
@@ -70,7 +72,7 @@ This is **setup, not tests** — nothing here passes or fails the app; it just g
 2. Create two extra accounts: a **2nd normal user** and a **2nd admin (sudo) user**. (For the multi-user tests and the "different admin uninstalls" test.)
 3. Confirm a clean slate — this must print **nothing**:
    ```bash
-   semanage fcontext -l | grep ws-scrcpy-web
+   sudo semanage fcontext -l | grep ws-scrcpy-web
    ```
    (If it prints rules, an old test left residue — clean it with the recovery block at the bottom before starting.)
 4. In a spare terminal, start the live denial monitor and leave it running all session:
@@ -78,18 +80,15 @@ This is **setup, not tests** — nothing here passes or fails the app; it just g
    sudo journalctl -f | grep -i avc
    ```
    (Ideally nothing ever scrolls by.)
-5. Download `WsScrcpyWeb-linux-beta.AppImage` from the `v0.1.30-beta.44` GitHub release, then make it runnable:
-   ```bash
-   chmod +x WsScrcpyWeb-linux-beta.AppImage
-   ```
+5. Download `WsScrcpyWeb-linux-beta.AppImage` from the latest GitHub release. **Leave it non-executable** — double-clicking a NON-`chmod +x` AppImage straight from the file manager is the realistic path most users take, and it's exactly what surfaced the Linux service-mode bug. (Marking it runnable with `chmod +x WsScrcpyWeb-linux-beta.AppImage` is optional — only needed if you'd rather launch it from a terminal.)
 
 ### B. The older "update-from" build (only for the Module 6 update tests)
-The update tests need an **older** version installed first, then updated *to* beta.44. The releases page only has beta.44 now, so pull the older **beta.40** build from its saved CI artifact:
+The update tests need an **older** version installed first, then updated *to* the latest. The releases page now lists only the latest, so pull the older **beta.40** build from its saved CI artifact:
 ```bash
 gh run download 26859605903 --repo bilbospocketses/ws-scrcpy-web --name linux-final --dir ./beta40
 chmod +x ./beta40/WsScrcpyWeb-linux-beta.AppImage
 ```
-(beta.40 = your "before", beta.44 = your "after". The Windows MSI is in the same run under `--name windows-final`. Artifacts are kept ~90 days from 2026-06-03.)
+(beta.40 = your "before", the smoke-target = your "after". The Windows MSI is in the same run under `--name windows-final`. Artifacts are kept ~90 days from 2026-06-03.)
 
 ### C. Android device
 An Android phone/tablet with **Wireless debugging** on (Settings → Developer options, Android 11+), reachable from the VM. Optionally one **USB**-connected device on Windows (for the single USB test, 7.3).
@@ -132,10 +131,10 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
 │ 1.2 Accept ->        │ Lin  │ Click "yes, all users";      │ Exactly one password prompt. App lands in        │ [ ]  │
 │ install + delete     │      │ enter your password at the   │ /opt/ws-scrcpy-web/; the file                    │      │
-│ original             │      │ single prompt.               │ /opt/ws-scrcpy-web/VERSION reads 0.1.30-beta.44; │      │
-│                      │      │                              │ a system menu entry exists; the app runs. NEW:   │      │
-│                      │      │                              │ the AppImage you launched (in Downloads) is      │      │
-│                      │      │                              │ deleted afterward.                               │      │
+│ original             │      │ single prompt.               │ /opt/ws-scrcpy-web/VERSION matches the           │      │
+│                      │      │                              │ smoke-target version; a system menu entry        │      │
+│                      │      │                              │ exists; the app runs. NEW: the AppImage you      │      │
+│                      │      │                              │ launched (in Downloads) is deleted afterward.    │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
 │ 1.3 Decline +        │ Lin  │ On a fresh machine, or as a  │ Runs from your home folder (~/.local). The NEXT  │ [ ]  │
 │ remember             │      │ 2nd user, choose "no, me     │ launch does NOT ask again. The downloaded        │      │
@@ -146,8 +145,8 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
 │ 1.5 Fresh MSI        │ Win  │ On a clean snapshot as       │ Installs cleanly; a browser opens                │ [ ]  │
 │ install              │      │ Admin, run                   │ http://localhost:<port>; the welcome dialog      │      │
-│                      │      │ WsScrcpyWeb-beta.msi.        │ shows; Settings > About = 0.1.30-beta.44; files  │      │
-│                      │      │                              │ in C:\Program Files\WsScrcpyWeb\.                │      │
+│                      │      │ WsScrcpyWeb-beta.msi.        │ shows; Settings > About = the smoke-target       │      │
+│                      │      │                              │ version; files in C:\Program Files\WsScrcpyWeb\. │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
 │ 1.6 Reinstall reuses │ Win  │ After the full uninstall in  │ Installs cleanly and REUSES your old settings    │ [ ]  │
 │ config               │      │ test 5.7, install the MSI    │ file (config.json) instead of overwriting it;    │      │
@@ -268,8 +267,8 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 │ uninstall            │      │ logged into the desktop.     │ message; nothing left running; no crash.         │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
 │ 5.4 Security rules   │ Lin  │ After any uninstall:         │ Returns NOTHING - both SELinux rules were        │ [ ]  │
-│ cleaned up           │      │ semanage fcontext -l | grep  │ removed.                                         │      │
-│                      │      │ ws-scrcpy-web                │                                                  │      │
+│ cleaned up           │      │ sudo semanage fcontext -l    │ removed.                                         │      │
+│                      │      │ | grep ws-scrcpy-web         │                                                  │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
 │ 5.5 Win uninstall +  │ Win  │ Service mode, Settings as    │ Button shows "uninstalling..."; if handoff takes │ [ ]  │
 │ handoff message      │      │ Admin > "uninstall service"  │ >5s you see "still waiting for user session..."; │      │
@@ -305,21 +304,21 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 ```
 
 ### Module 6 — Updates
-*beta.44 is the newest, so every row updates **to** it. Get the beta.40 "from" build first (Pre-flight B).*
+*The smoke-target build is the newest, so every row updates **to** it. Get the beta.40 "from" build first (Pre-flight B).*
 
 ```text
 ┌──────────────────────┬──────┬──────────────────────────────┬──────────────────────────────────────────────────┬──────┐
 │ Test                 │ OS   │ Do this                      │ Pass - what you should see                       │ Done │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
-│ 6.1 Update check     │ Both │ Settings > Updates > "Check  │ A beta.40 install OFFERS beta.44; a beta.44      │ [ ]  │
+│ 6.1 Update check     │ Both │ Settings > Updates > "Check  │ A beta.40 install offers the latest; the latest  │ [ ]  │
 │                      │      │ for updates".                │ install says "up to date". No error spam in the  │      │
 │                      │      │                              │ server/launcher logs.                            │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
 │ 6.2 Local (home)     │ Lin  │ Start from the beta.40       │ It downloads, verifies the checksum, shows an    │ [ ]  │
-│ update +             │      │ AppImage in plain local mode │ "updating..." overlay, swaps itself to beta.44   │      │
-│ auto-relaunch        │      │ (no service). Settings >     │ and relaunches on its own; the browser           │      │
-│                      │      │ Updates > Apply.             │ reconnects; About = beta.44. Also confirm on a   │      │
-│                      │      │                              │ copy just relaunched after a user-scope service  │      │
+│ update +             │      │ AppImage in plain local mode │ "updating..." overlay, swaps to the latest and   │      │
+│ auto-relaunch        │      │ (no service). Settings >     │ relaunches on its own; the browser reconnects;   │      │
+│                      │      │ Updates > Apply.             │ About = the new version. Also confirm on a copy  │      │
+│                      │      │                              │ just relaunched after a user-scope service       │      │
 │                      │      │                              │ uninstall.                                       │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
 │ 6.3 Machine-wide     │ Lin  │ Machine-wide /opt install    │ One password prompt; the /opt binary is swapped  │ [ ]  │
@@ -328,7 +327,7 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 │                      │      │                              │ relaunches as you and reconnects.                │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
 │ 6.4 Newer home copy  │ Lin  │ With /opt at beta.40, drop a │ It runs the home copy, then offers "update the   │ [ ]  │
-│ over /opt            │      │ newer beta.44 AppImage in    │ system-wide install to vX"; accept > it swaps    │      │
+│ over /opt            │      │ newer AppImage in            │ system-wide install to vX"; accept > it swaps    │      │
 │                      │      │ your home folder and launch  │ /opt; the next launch runs the updated /opt.     │      │
 │                      │      │ it.                          │                                                  │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
@@ -345,7 +344,7 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 │ 6.7 Migrate an old   │ Lin  │ Fresh snapshot > install     │ A notice "the system service must be reinstalled │ [ ]  │
 │ beta.40 system       │      │ beta.40 > install the system │ for the new layout" + a [reinstall now] button > │      │
 │ install              │      │ service (old layout) >       │ it uninstalls + reinstalls at /var/opt, keeping  │      │
-│                      │      │ update to beta.44 FROM a     │ your port + install settings; the service is     │      │
+│                      │      │ update to the latest FROM a  │ your port + install settings; the service is     │      │
 │                      │      │ normal local copy, NOT from  │ active; zero denials; only the new /var/opt rule │      │
 │                      │      │ inside the running service.  │ remains.                                         │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
@@ -454,8 +453,8 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
 │ 11.1 Runs without    │ Lin  │ On a minimal                 │ It launches (the newer AppImage bundles its own  │ [ ]  │
 │ libfuse2             │      │ distro/container with NO     │ FUSE); no "libfuse.so.2"/dlopen error.           │      │
-│                      │      │ libfuse2, run the beta.44    │                                                  │      │
-│                      │      │ AppImage.                    │                                                  │      │
+│                      │      │ libfuse2, run the            │                                                  │      │
+│                      │      │ smoke-target AppImage.       │                                                  │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
 │ 11.2 Updates without │ Lin  │ From that same no-libfuse2   │ The update succeeds. (Passing this lets the old  │ [ ]  │
 │ libfuse2             │      │ machine, run an in-app       │ libfuse2 special-case code be deleted.)          │      │
@@ -522,6 +521,55 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 └──────────────────────┴──────┴──────────────────────────────┴──────────────────────────────────────────────────┴──────┘
 ```
 
+### Module 14 — Linux App section UX
+*The App section adds three Settings → App affordances on Linux: a one-click "install for all users" button, a machine-wide start-menu icon, and an always-available in-app "complete uninstall". The uninstall cascades through any installed service in one pass — it runs root-direct under a system service, otherwise self-elevates via ONE pkexec — and offers a "keep my settings & logs" option.*
+
+```text
+┌──────────────────────┬──────┬──────────────────────────────┬──────────────────────────────────────────────────┬──────┐
+│ Test                 │ OS   │ Do this                      │ Pass - what you should see                       │ Done │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 14.1 Install for     │ Lin  │ From a local (me-only)       │ Exactly one pkexec prompt. The binary            │ [ ]  │
+│ all users            │      │ install: Settings > App >    │ relocates to /opt/ws-scrcpy-web/; the            │      │
+│                      │      │ click 'install for all       │ button then greys/disables, reading              │      │
+│                      │      │ users'; authenticate the     │ 'already installed for all users                 │      │
+│                      │      │ single prompt.               │ (/opt)'; the app keeps serving on the            │      │
+│                      │      │                              │ same port.                                       │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 14.2 Start-menu      │ Lin  │ After a machine-wide         │ The ws-scrcpy-web icon shows in the menu         │ [ ]  │
+│ icon                 │      │ install, open the desktop    │ (not a generic placeholder). On disk,            │      │
+│                      │      │ apps menu.                   │ /usr/share/icons/hicolor/256x256/apps            │      │
+│                      │      │                              │ /ws-scrcpy-web.png exists.                       │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 14.3 Uninstall -     │ Lin  │ Settings > App >             │ App removed; the browser tab shows               │ [ ]  │
+│ local mode           │      │ 'uninstall...' > confirm     │ 'uninstalled - close this tab'. Running          │      │
+│                      │      │ with 'keep my settings &     │ clear-install.sh verifies a CLEAN SLATE:         │      │
+│                      │      │ logs' UNCHECKED.             │ no leftover binary, dependencies,                │      │
+│                      │      │                              │ config, or decline marker.                       │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 14.4 Uninstall -     │ Lin  │ With a user-scope service    │ Exactly ONE pkexec (for the /opt removal);       │ [ ]  │
+│ user-service         │      │ installed on a machine-wide  │ the per-user systemd unit is gone AND            │      │
+│ cascade              │      │ /opt binary, click           │ the app is removed in one pass; no               │      │
+│                      │      │ uninstall.                   │ relaunch.                                        │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 14.5 Uninstall -     │ Lin  │ With a system-scope          │ Runs as root with NO pkexec;                     │ [ ]  │
+│ system-service       │      │ service installed, run       │ /opt/ws-scrcpy-web,                              │      │
+│ cascade              │      │ uninstall from the root      │ /var/opt/ws-scrcpy-web, and the                  │      │
+│                      │      │ service context.             │ systemd unit are all gone; zero                  │      │
+│                      │      │                              │ SELinux AVC denials.                             │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 14.6 Uninstall -     │ Lin  │ Run uninstall with 'keep     │ config.json and logs/ survive at the data        │ [ ]  │
+│ keep settings        │      │ my settings & logs'          │ root: ~/.local/share/WsScrcpyWeb for a           │      │
+│ & logs               │      │ CHECKED.                     │ local install, or /var/opt/ws-scrcpy-web         │      │
+│                      │      │                              │ for a system service); dependencies/ is          │      │
+│                      │      │                              │ removed either way; a later reinstall            │      │
+│                      │      │                              │ reuses the saved port.                           │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 14.7 Uninstall -     │ Lin  │ After any uninstall, run     │ The output is empty - the fcontext list          │ [ ]  │
+│ SELinux clean        │      │ sudo semanage fcontext -l    │ has no ws-scrcpy-web rules - and there           │      │
+│                      │      │ | grep ws-scrcpy-web.        │ are zero AVC denials.                            │      │
+└──────────────────────┴──────┴──────────────────────────────┴──────────────────────────────────────────────────┴──────┘
+```
+
 ---
 
 ## Global pass criteria
@@ -558,4 +606,4 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 
 **If any Linux SELinux/lifecycle test (Modules 2, 4, 5, the service-update rows 6.5/6.6, or migration 6.7) — or the core-flow criterion — fails:** stop, capture `journalctl` / `ausearch` and the app logs, and report it before promoting 0.1.30 to stable. Cosmetic/polish failures: note and triage later. **Module 11 (no-libfuse2)** is optional — a failure there just means keep the libfuse2 code; it doesn't block 0.1.30.
 
-*Plain-English companion to [`v0.1.30-beta.44-full.md`](./v0.1.30-beta.44-full.md), the canonical machine-precise checklist. Same 62 tests with the jargon spelled out; if the two ever diverge, the full doc wins.*
+*Plain-English companion to [`smoke-full.md`](./smoke-full.md), the canonical machine-precise checklist. Same 69 tests with the jargon spelled out; if the two ever diverge, the full doc wins.*
