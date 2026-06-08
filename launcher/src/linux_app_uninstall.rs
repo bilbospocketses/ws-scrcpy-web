@@ -8,9 +8,10 @@
 // unit-path / sbin helpers from `linux_service` so the two stay in lockstep.
 //
 // Dispatch (Task 2): the UNELEVATED entry `handle` (`--linux-app-uninstall`,
-// spawned by the Node server via `systemd-run --user --collect`) runs the
-// `user_owned` group, then re-invokes the launcher under ONE pkexec for the
-// `privileged` group. That pkexec lands on the ELEVATED entry `handle_elevated`
+// spawned by the Node server via `systemd-run --user --collect`) re-invokes the
+// launcher under ONE pkexec for the `privileged` group FIRST (so a declined
+// prompt aborts before anything is removed), then runs the unelevated
+// `user_owned` group. That pkexec lands on the ELEVATED entry `handle_elevated`
 // (`--linux-app-uninstall-elevated`), which runs ONLY the `privileged` group as
 // root. Both sides feed the SAME args to the SAME builder, so the split is
 // identical and each instance runs exactly its own half. On a pkexec decline
