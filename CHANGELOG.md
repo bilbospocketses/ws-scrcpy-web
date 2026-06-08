@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.50] - 2026-06-08
+
 ### Changed
 
 - **Shortened the Settings → App "install for all users" button.** It now reads **install for all users** instead of "install ws-scrcpy-web for all users" — the App section already makes the app clear, so the name was redundant. (The **uninstall ws-scrcpy-web** action keeps its name.)
