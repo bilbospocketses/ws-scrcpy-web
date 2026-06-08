@@ -23,6 +23,8 @@ mod operation_server;
 mod linux_apply;
 #[cfg(target_os = "linux")]
 mod linux_service;
+#[cfg(target_os = "linux")]
+mod linux_app_uninstall;
 #[cfg(windows)]
 mod user_session_spawn;
 
