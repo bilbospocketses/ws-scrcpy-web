@@ -205,6 +205,42 @@ describe('buildMachineWideInstallScript', () => {
         expect(s).not.toContain('systemctl');      // no service install here
         expect(s).toContain('rm -f "/home/u/Downloads/WsScrcpyWeb-linux-beta.AppImage"');  // final step: delete the original (true relocate)
     });
+
+    it('installs the menu icon into the hicolor theme + refreshes the icon cache when iconSource is given', () => {
+        const s = buildMachineWideInstallScript(
+            {
+                sourceAppImage: '/home/u/Downloads/WsScrcpyWeb-linux-beta.AppImage',
+                version: '0.1.31-beta.1',
+                iconSource: '/tmp/.mount_x/.DirIcon',
+            },
+            (t) => `/usr/bin/${t}`, (t) => `/usr/sbin/${t}`,
+        );
+        // icon staged into the hicolor 256x256 apps dir under the name the
+        // .desktop's `Icon=ws-scrcpy-web` resolves to (also the path the launcher
+        // uninstaller's SYS_ICON teardown removes).
+        expect(s).toContain('mkdir -p /usr/share/icons/hicolor/256x256/apps');
+        expect(s).toContain('cp "/tmp/.mount_x/.DirIcon" /usr/share/icons/hicolor/256x256/apps/ws-scrcpy-web.png');
+        expect(s).toContain('/usr/share/icons/hicolor/256x256/apps/ws-scrcpy-web.png');
+        // best-effort cache refresh, mirroring the update-desktop-database subshell.
+        expect(s).toContain('gtk-update-icon-cache');
+        expect(s).toMatch(/\(\s*\/usr\/bin\/gtk-update-icon-cache -f \/usr\/share\/icons\/hicolor \|\| true\s*\)/);
+        // ordering: icon install lands AFTER the .desktop write and BEFORE the home-AppImage delete.
+        const desktopIdx = s.indexOf('/usr/share/applications/ws-scrcpy-web.desktop');
+        const iconIdx = s.indexOf('/usr/share/icons/hicolor/256x256/apps/ws-scrcpy-web.png');
+        const rmIdx = s.indexOf('rm -f "/home/u/Downloads/WsScrcpyWeb-linux-beta.AppImage"');
+        expect(desktopIdx).toBeGreaterThanOrEqual(0);
+        expect(desktopIdx).toBeLessThan(iconIdx);
+        expect(iconIdx).toBeLessThan(rmIdx);
+    });
+
+    it('skips the icon steps entirely when no iconSource is given (graceful skip)', () => {
+        const s = buildMachineWideInstallScript(
+            { sourceAppImage: '/home/u/Downloads/WsScrcpyWeb-linux-beta.AppImage', version: '0.1.31-beta.1' },
+            (t) => `/usr/bin/${t}`, (t) => `/usr/sbin/${t}`,
+        );
+        expect(s).not.toContain('/usr/share/icons/hicolor');
+        expect(s).not.toContain('gtk-update-icon-cache');
+    });
 });
 
 describe('buildMachineWideUpdateScript', () => {

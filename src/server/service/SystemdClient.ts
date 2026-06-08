@@ -88,6 +88,13 @@ export const SYSTEM_STATE_DIR = '/var/opt/ws-scrcpy-web';
 export const SYSTEM_OPT_VERSION_FILE = `${STAGED_SYSTEM_DIR}/VERSION`;
 /** System-wide .desktop entry for all users (machine-wide install only). */
 export const SYSTEM_DESKTOP_FILE = '/usr/share/applications/ws-scrcpy-web.desktop';
+/** hicolor theme apps dir for the machine-wide menu icon (256x256). */
+export const SYSTEM_ICON_DIR = '/usr/share/icons/hicolor/256x256/apps';
+/** Machine-wide menu icon file — its basename matches the .desktop's
+ *  `Icon=ws-scrcpy-web` so the launcher entry resolves to a real icon, and the
+ *  full path matches the launcher uninstaller's SYS_ICON teardown
+ *  (launcher/src/linux_app_uninstall.rs). */
+export const SYSTEM_ICON_FILE = `${SYSTEM_ICON_DIR}/ws-scrcpy-web.png`;
 /**
  * Root-owned dependencies dir for the system-scope service (node/adb/
  * scrcpy-server). Under the bin_t-labelled /opt tree so init_t may exec them,
@@ -355,14 +362,18 @@ export function buildSystemInstallScript(
  * Build the privileged shell script for a machine-wide install. Runs under a
  * single pkexec prompt. Relocates ONLY the AppImage binary to /opt (no deps,
  * no systemd unit) — deps stay per-user in ~/.local. Writes VERSION, drops a
- * system-wide .desktop entry for all users, and refreshes the menu cache. As the
- * final step it DELETES the original (home) AppImage — a true relocate — so the
- * user can't end up running a stale home copy alongside the /opt one.
+ * system-wide .desktop entry for all users, and refreshes the menu cache. When
+ * `iconSource` is supplied it also installs that icon file into the hicolor theme
+ * (so the .desktop's `Icon=ws-scrcpy-web` resolves to a real icon, not a generic
+ * placeholder) and refreshes the icon cache — best-effort, omitted entirely when
+ * absent. As the final step it DELETES the original (home) AppImage — a true
+ * relocate — so the user can't end up running a stale home copy alongside the
+ * /opt one.
  * `binTool`/`sbinTool` are injectable for testing; production resolves absolute
  * paths via systemTools (Local-Dependencies-Only — no bare-name $PATH lookup).
  */
 export function buildMachineWideInstallScript(
-    args: { sourceAppImage: string; version: string },
+    args: { sourceAppImage: string; version: string; iconSource?: string | undefined },
     binTool: (t: string) => string = (t) => resolveSystemTool(t),
     sbinTool: (t: string) => string = (t) => resolveSystemTool(t),
 ): string {
@@ -384,7 +395,7 @@ export function buildMachineWideInstallScript(
         'Icon=ws-scrcpy-web',
         'Categories=Utility;',
     ].join('\\n');
-    return [
+    const steps = [
         `${mkdir} -p ${STAGED_SYSTEM_DIR}`,
         `${cp} "${args.sourceAppImage}" "${staged}"`,
         `${chmod} 0755 "${staged}"`,
@@ -392,14 +403,31 @@ export function buildMachineWideInstallScript(
         `( ( ${semanage} fcontext -a -t bin_t '${STAGED_SYSTEM_DIR}(/.*)?' && ${restorecon} -Rv "${STAGED_SYSTEM_DIR}" ) || ${chcon} -t bin_t "${staged}" || true )`,
         `( ${printf} '${desktop}\\n' > ${SYSTEM_DESKTOP_FILE} || true )`,
         `( ${updateDesktopDb} /usr/share/applications || true )`,
-        // Final step — remove the original (home) AppImage now that the binary
-        // lives in /opt: a true relocate. Runs as root (pkexec), so it can unlink
-        // the user's file; unlinking is safe while the home AppImage is still the
-        // running process (the inode stays alive for the live FUSE mount until it
-        // exits / re-execs to /opt). `|| true` so a failed cleanup never aborts an
-        // otherwise-successful install.
-        `( ${rm} -f "${args.sourceAppImage}" || true )`,
-    ].join(' && ');
+    ];
+    // Install the launcher icon into the hicolor theme so the .desktop's
+    // `Icon=ws-scrcpy-web` resolves to a real icon instead of a generic
+    // placeholder. The icon ships embedded in the AppImage (vpk `--icon
+    // assets/tray-icon.png` → the AppImage's `.DirIcon`); the caller passes its
+    // mounted path. Omitted (graceful skip) when no `iconSource` is supplied.
+    // Wrapped in ONE best-effort group (trailing `|| true`, like the SELinux line
+    // above): POSIX sh gives `&&`/`||` EQUAL left-assoc precedence, so a missing
+    // `.DirIcon` (cp fails) must not break the outer `&&` chain and skip the
+    // home-AppImage delete below — the relocate must still complete. Teardown
+    // removes this file (launcher/src/linux_app_uninstall.rs — SYS_ICON).
+    if (args.iconSource) {
+        const iconCache = binTool('gtk-update-icon-cache');
+        steps.push(
+            `( ${mkdir} -p ${SYSTEM_ICON_DIR} && ${cp} "${args.iconSource}" ${SYSTEM_ICON_FILE} && ( ${iconCache} -f /usr/share/icons/hicolor || true ) || true )`,
+        );
+    }
+    // Final step — remove the original (home) AppImage now that the binary
+    // lives in /opt: a true relocate. Runs as root (pkexec), so it can unlink
+    // the user's file; unlinking is safe while the home AppImage is still the
+    // running process (the inode stays alive for the live FUSE mount until it
+    // exits / re-execs to /opt). `|| true` so a failed cleanup never aborts an
+    // otherwise-successful install.
+    steps.push(`( ${rm} -f "${args.sourceAppImage}" || true )`);
+    return steps.join(' && ');
 }
 
 /**

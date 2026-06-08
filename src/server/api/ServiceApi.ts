@@ -840,7 +840,17 @@ export class ServiceApi {
             return true;
         }
         const version = getAppVersion();
-        const script = buildMachineWideInstallScript({ sourceAppImage: appImage, version });
+        // Resolve the launcher icon from the mounted AppImage so the machine-wide
+        // install can drop it into the hicolor theme (the system .desktop entry
+        // references `Icon=ws-scrcpy-web`). vpk embeds the icon as the AppImage's
+        // `.DirIcon` (built from `--icon assets/tray-icon.png`); `$APPDIR` is the
+        // FUSE-mount root of the running AppImage. This in-AppImage path is a
+        // runtime assumption (vpk's AppDir layout) verified in the smoke; the
+        // script's cp is best-effort, so a miss never fails the install. Gated on
+        // `$APPDIR` being set — when absent the icon step is skipped entirely.
+        const appDir = process.env['APPDIR'];
+        const iconSource = appDir ? path.join(appDir, '.DirIcon') : undefined;
+        const script = buildMachineWideInstallScript({ sourceAppImage: appImage, version, iconSource });
         try {
             await this.runPkexecFn(script, 'install-system-wide');
             // F5: the running instance launched from the home AppImage (now
