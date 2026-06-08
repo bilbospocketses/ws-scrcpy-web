@@ -17,6 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Install for all users — now available any time from Settings (Linux).** Previously a machine-wide `/opt` install could only be chosen at the first-run prompt. The App section of Settings now has an explicit **install for all users** action that relocates the app to `/opt` under a single administrator prompt; once it's installed system-wide the control greys out and shows that it's already installed for all users (`/opt`).
+- **The machine-wide app now shows a proper icon in the apps menu (Linux).** Installing for all users also drops the app's icon into the system icon theme, so its launcher entry shows the ws-scrcpy-web icon instead of a generic placeholder.
+- **Uninstall ws-scrcpy-web from inside the app (Linux).** The App section adds a complete **uninstall…** action that removes the app — including a machine-wide `/opt` install and any installed user- or system-scope service — in a single pass, with at most one administrator prompt. A **keep my settings & logs** option preserves your `config.json` and logs (so a later reinstall reuses your saved port) while still removing the program and its bundled dependencies.
+
 ## [0.1.30-beta.48] - 2026-06-08
 
 ### Fixed
