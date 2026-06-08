@@ -977,28 +977,98 @@ export class ServiceApi {
     }
 
     /**
-     * POST /api/service/uninstall-app — Linux-only. Spawn the detached Rust
-     * uninstall helper (`--linux-app-uninstall`) and exit the local instance so
-     * the out-of-cgroup helper can tear the app down from underneath us.
+     * POST /api/service/uninstall-app — Linux + win32. Spawn the detached Rust
+     * uninstall helper and sacrifice the local instance so the out-of-process
+     * helper can tear the app down from underneath us.
+     *
+     * Linux (`--linux-app-uninstall`, via systemd-run): forwards scope /
+     * machine-wide / relaunch so the helper tears down the right pieces; the
+     * helper self-elevates (root → direct; non-root → pkexec; declined →
+     * relaunch local), so this spawn stays unelevated.
+     *
+     * win32 (`--windows-app-uninstall`): the helper runs
+     * `<installRoot>\Update.exe --uninstall` (fires Velopack's --veloapp-uninstall
+     * hook → service/tray teardown + ARP cleanup) then removes the dataRoot
+     * targets. Elevation is delegated to Update.exe (a PerMachine install's
+     * Update.exe self-elevates via UAC) — the same "elevation lives in the
+     * launcher binary" model as the §30 --request-uac path; this spawn itself
+     * stays unelevated. Both branches mirror the detached teardown handoff in
+     * handleUninstall.
      *
      * `keep` (request body) preserves config.json + logs/ (`--keep`) vs. wiping
      * all state (`--wipe`). On keep we ALSO reset installMode to null up front so
      * the preserved config.json boots in local mode next time rather than a
      * phantom service mode with no backing service.
-     *
-     * Scope/machine-wide context is resolved here and forwarded so the helper
-     * tears down the right pieces:
-     *   - scope: the installed systemd unit scope (user/system) or 'none'.
-     *   - machineWide: whether the shared /opt machine-wide AppImage exists.
-     * The helper self-elevates (root → direct; non-root → pkexec; declined →
-     * relaunch local), so this spawn stays unelevated. Mirrors the systemd-run
-     * teardown handoff in handleUninstall.
      */
     private async handleAppUninstall(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
         const result = this.factory();
+
+        // win32: spawn the detached Rust uninstall helper (--windows-app-uninstall)
+        // and sacrifice the local instance so it can remove the running install.
+        if (result.platform === 'win32') {
+            const winBody = await readJsonBody(req);
+            const keep = Boolean((winBody as Partial<AppUninstallRequest>).keep);
+
+            const cfg = Config.getInstance();
+            const dataRoot = cfg.dataRoot ?? path.dirname(cfg.dependenciesPath);
+            // Staged operation-server launcher copy: lives under dataRoot
+            // (Velopack-untouchable) so it survives the Program Files removal —
+            // the same copy the win32 service-uninstall handoff + UpdateService
+            // spawn. The current/ launcher would be deleted mid-uninstall.
+            const helper = path.join(dataRoot, 'control', 'operation-server', 'ws-scrcpy-web-launcher.exe');
+            if (!this.existsCheck(helper)) {
+                const failure: ServiceActionFailure = {
+                    ok: false,
+                    error: `uninstall helper not found at ${helper}`,
+                    reason: 'unknown',
+                };
+                res.writeHead(500);
+                res.end(JSON.stringify(failure));
+                return true;
+            }
+
+            // Velopack install root = parent of current/ (where Update.exe lives).
+            // Resolved the same way UpdateService anchors installRoot: at the
+            // webpack bundle location (__dirname = <installRoot>/current/dist), NOT
+            // process.cwd()/execPath (which point inside current/ or the deps tree).
+            const installRoot = path.resolve(__dirname, '..', '..');
+            const updateExe = path.join(installRoot, 'Update.exe');
+
+            // keep=true: reset installMode to null BEFORE spawning so the preserved
+            // config.json comes back up in local mode, not a phantom service mode.
+            // Best-effort — log and proceed; the teardown still goes ahead.
+            if (keep) {
+                try {
+                    cfg.updateAppConfig({ installMode: null });
+                } catch (err) {
+                    log.warn(`app-uninstall(win32): installMode reset failed (continuing): ${(err as Error).message}`);
+                }
+            }
+
+            // Detached spawn of the staged launcher with the raw uninstall argv
+            // (absolute paths only — Local-Dependencies-Only: no PATH/env binary
+            // resolution). Elevation is delegated to Update.exe; this spawn stays
+            // unelevated, mirroring the linux helper's pkexec self-elevation, and
+            // reuses the same spawnDetached seam the linux teardown uses.
+            this.spawnDetached(helper, [
+                '--windows-app-uninstall',
+                keep ? '--keep' : '--wipe',
+                '--data-root', dataRoot,
+                '--update-exe', updateExe,
+            ]);
+            this.scheduleExit(() => {
+                log.info('app-uninstall(win32): local instance exiting → detached teardown');
+                process.exit(0);
+            }, 1_500);
+
+            res.writeHead(200);
+            res.end(JSON.stringify({ ok: true, status: 'uninstalling' }));
+            return true;
+        }
+
         if (result.platform !== 'linux') {
             res.writeHead(200);
-            res.end(JSON.stringify({ ok: false, reason: 'unsupported', error: 'app uninstall is linux-only' }));
+            res.end(JSON.stringify({ ok: false, reason: 'unsupported', error: 'app uninstall is not supported on this platform' }));
             return true;
         }
 

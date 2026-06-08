@@ -1696,12 +1696,101 @@ describe('ServiceApi', () => {
             expect(spawnMock).not.toHaveBeenCalled();
         });
 
-        it('POST /uninstall-app on non-linux → 200 unsupported, does NOT spawn', async () => {
+        // ── win32 branch (mirrors the linux structure: spawn the detached Rust
+        //    helper, 200 uninstalling, scheduleExit). The staged launcher carries
+        //    raw `--windows-app-uninstall` argv; elevation is delegated to
+        //    Update.exe (PerMachine UAC manifest) at runtime, the same
+        //    "elevation lives in the launcher" model as the §30 --request-uac
+        //    path and the linux helper's pkexec self-elevation.
+
+        it('POST /uninstall-app {keep:false} on win32 → 200 uninstalling, spawns the staged launcher with --windows-app-uninstall --wipe + Update.exe', async () => {
             const client = fakeClient();
             const factoryResult: ServiceClientFactoryResult = {
                 client,
                 supported: true,
                 platform: 'win32',
+            };
+            let spawnedCmd = '';
+            let spawnedArgs: string[] = [];
+            const spawnMock = vi.fn((cmd: string, args: string[]) => { spawnedCmd = cmd; spawnedArgs = args; });
+            const scheduleExit = vi.fn();
+            // existsCheck → staged helper present.
+            const api = new ServiceApi(() => factoryResult, () => 'user', () => true, spawnMock, scheduleExit);
+            const { req, res } = makeReqRes('/api/service/uninstall-app', 'POST', JSON.stringify({ keep: false }));
+            await api.handle(req, res);
+
+            expect((res as any).getStatus()).toBe(200);
+            const body = JSON.parse((res as any).getBody());
+            expect(body).toEqual({ ok: true, status: 'uninstalling' });
+
+            // Local instance sacrifices itself to the detached teardown.
+            expect(scheduleExit).toHaveBeenCalledTimes(1);
+
+            expect(spawnMock).toHaveBeenCalledTimes(1);
+            // Spawns the operation-server staged launcher copy (survives Program
+            // Files removal) — same path the win32 service-uninstall handoff uses.
+            expect(spawnedCmd).toMatch(/ws-scrcpy-web-launcher\.exe$/);
+            expect(spawnedCmd).toContain('operation-server');
+            // Raw argv carries the windows-app-uninstall flags.
+            expect(spawnedArgs).toContain('--windows-app-uninstall');
+            expect(spawnedArgs).toContain('--wipe');
+            expect(spawnedArgs).not.toContain('--keep');
+            // --data-root <dataRoot> (same accessor the rest of ServiceApi uses).
+            const cfg = Config.getInstance();
+            const dataRoot = cfg.dataRoot ?? path.dirname(cfg.dependenciesPath);
+            expect(spawnedArgs[spawnedArgs.indexOf('--data-root') + 1]).toBe(dataRoot);
+            // --update-exe <installRoot>\Update.exe (Velopack root = parent of current/).
+            const updateExe = spawnedArgs[spawnedArgs.indexOf('--update-exe') + 1];
+            expect(updateExe).toMatch(/Update\.exe$/);
+        });
+
+        it('POST /uninstall-app {keep:true} on win32 → spawns with --keep (preserves config + logs)', async () => {
+            const client = fakeClient();
+            const factoryResult: ServiceClientFactoryResult = {
+                client,
+                supported: true,
+                platform: 'win32',
+            };
+            let spawnedArgs: string[] = [];
+            const spawnMock = vi.fn((_cmd: string, args: string[]) => { spawnedArgs = args; });
+            const api = new ServiceApi(() => factoryResult, () => 'user', () => true, spawnMock, () => {});
+            const { req, res } = makeReqRes('/api/service/uninstall-app', 'POST', JSON.stringify({ keep: true }));
+            await api.handle(req, res);
+
+            expect((res as any).getStatus()).toBe(200);
+            const body = JSON.parse((res as any).getBody());
+            expect(body).toEqual({ ok: true, status: 'uninstalling' });
+            expect(spawnedArgs).toContain('--keep');
+            expect(spawnedArgs).not.toContain('--wipe');
+        });
+
+        it('POST /uninstall-app on win32 returns 500 when the staged launcher is missing, does NOT spawn', async () => {
+            const client = fakeClient();
+            const factoryResult: ServiceClientFactoryResult = {
+                client,
+                supported: true,
+                platform: 'win32',
+            };
+            const spawnMock = vi.fn();
+            // existsCheck → false: the staged helper is absent (dev/from-source run).
+            const api = new ServiceApi(() => factoryResult, () => 'user', () => false, spawnMock, () => {});
+            const { req, res } = makeReqRes('/api/service/uninstall-app', 'POST', JSON.stringify({ keep: false }));
+            await api.handle(req, res);
+
+            expect((res as any).getStatus()).toBe(500);
+            const body = JSON.parse((res as any).getBody());
+            expect(body.ok).toBe(false);
+            expect(body.error).toMatch(/ws-scrcpy-web-launcher\.exe/);
+            expect(spawnMock).not.toHaveBeenCalled();
+        });
+
+        it('POST /uninstall-app on an unsupported platform (darwin) → 200 unsupported, does NOT spawn', async () => {
+            const client = fakeClient();
+            const factoryResult: ServiceClientFactoryResult = {
+                client,
+                supported: false,
+                platform: 'darwin',
+                unsupportedReason: 'macOS service mode unsupported',
             };
             const spawnMock = vi.fn();
             const api = new ServiceApi(() => factoryResult, () => 'user', () => true, spawnMock, () => {});
