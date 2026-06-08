@@ -1680,7 +1680,7 @@ export class SettingsModal extends Modal {
         const install = buildInstallAllUsersControl({ reload: () => window.location.reload() });
         this.installAllUsersButton = install.button;
         this.installAllUsersNote = install.note;
-        const installRow = this.buildRow('install ws-scrcpy-web for all users', install.button);
+        const installRow = this.buildRow('install for all users', install.button);
         installRow.style.display = 'none';
         this.installAllUsersRow = installRow;
         body.appendChild(installRow);
