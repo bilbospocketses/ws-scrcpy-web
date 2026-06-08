@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.51] - 2026-06-08
+
 ### Added
 
 - **Uninstall ws-scrcpy-web from inside the app on Windows.** The Settings → App **uninstall** action — previously Linux-only (on Windows you had to use Add/Remove Programs) — now works on Windows too: it runs the Velopack uninstaller (`Update.exe --uninstall`, which removes the install and stops/removes any installed service and the tray), with the same **keep my settings & logs** option (checked by default; unchecking also deletes config, logs, and dependencies).
