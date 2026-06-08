@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
     uninstallFollowupMessage,
     classifyInstallPoll,
@@ -12,7 +12,18 @@ import {
     systemServiceInstallGate,
     applySystemInstallGate,
     migrationNotice,
+    appSectionButtonsState,
+    buildInstallAllUsersControl,
+    buildUninstallControl,
 } from '../SettingsModal';
+
+/** Flush microtasks + a macrotask so the awaited fetch handlers settle. */
+const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+
+afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+});
 
 describe('uninstallFollowupMessage', () => {
     it('user scope -> reconnect/relaunch message', () => {
@@ -218,5 +229,117 @@ describe('migrationNotice', () => {
     });
     it('show=false with empty text when serviceMigrationNeeded is undefined', () => {
         expect(migrationNotice({})).toEqual({ show: false, text: '' });
+    });
+});
+
+describe('appSectionButtonsState', () => {
+    it('linux, not machine-wide -> both rows shown, install enabled with no note', () => {
+        expect(appSectionButtonsState({ platform: 'linux', machineWideInstalled: false })).toEqual({
+            showInstallAllUsers: true,
+            installAllUsersDisabled: false,
+            installAllUsersNote: null,
+            showUninstall: true,
+        });
+    });
+
+    it('linux, machine-wide -> install disabled with an "already installed" note, uninstall still shown', () => {
+        const s = appSectionButtonsState({ platform: 'linux', machineWideInstalled: true });
+        expect(s.showInstallAllUsers).toBe(true);
+        expect(s.installAllUsersDisabled).toBe(true);
+        expect(s.installAllUsersNote).toMatch(/already installed for all users/i);
+        expect(s.showUninstall).toBe(true);
+    });
+
+    it('non-linux (win32) -> both rows hidden, nothing disabled, no note', () => {
+        expect(appSectionButtonsState({ platform: 'win32', machineWideInstalled: false })).toEqual({
+            showInstallAllUsers: false,
+            installAllUsersDisabled: false,
+            installAllUsersNote: null,
+            showUninstall: false,
+        });
+    });
+});
+
+describe('buildInstallAllUsersControl', () => {
+    it('clicking install POSTs /api/service/install-system-wide and reloads on ok', async () => {
+        const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+        vi.stubGlobal('fetch', fetchMock);
+        const reload = vi.fn();
+
+        const { button } = buildInstallAllUsersControl({ reload });
+        button.click();
+
+        // fetch is invoked synchronously, before the first await in the handler.
+        expect(fetchMock).toHaveBeenCalledWith('/api/service/install-system-wide', { method: 'POST' });
+
+        await flush();
+        expect(reload).toHaveBeenCalledTimes(1);
+    });
+
+    it('shows an inline error note and does NOT reload when the server rejects', async () => {
+        const fetchMock = vi.fn().mockResolvedValue({ ok: false });
+        vi.stubGlobal('fetch', fetchMock);
+        const reload = vi.fn();
+
+        const { button, note } = buildInstallAllUsersControl({ reload });
+        button.click();
+        await flush();
+
+        expect(reload).not.toHaveBeenCalled();
+        expect(note.hidden).toBe(false);
+        expect(note.textContent).toMatch(/install/i);
+    });
+});
+
+describe('buildUninstallControl', () => {
+    it('clicking the trigger expands the inline confirm panel', () => {
+        const { button, confirmPanel } = buildUninstallControl({ onUninstalled: vi.fn() });
+        expect(confirmPanel.classList.contains('settings-confirm-panel')).toBe(true);
+        expect(confirmPanel.classList.contains('expanded')).toBe(false);
+        button.click();
+        expect(confirmPanel.classList.contains('expanded')).toBe(true);
+    });
+
+    it('confirm with "keep" checked POSTs /api/service/uninstall-app with {keep:true}', async () => {
+        const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+        vi.stubGlobal('fetch', fetchMock);
+
+        const { button, keepCheckbox, confirmButton } = buildUninstallControl({ onUninstalled: vi.fn() });
+        button.click();
+        keepCheckbox.checked = true;
+        confirmButton.click();
+
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        const [url, init] = fetchMock.mock.calls[0]! as [string, RequestInit];
+        expect(url).toBe('/api/service/uninstall-app');
+        expect(init.method).toBe('POST');
+        expect(JSON.parse(init.body as string)).toEqual({ keep: true });
+        await flush();
+    });
+
+    it('confirm with "keep" unchecked POSTs {keep:false}', async () => {
+        const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+        vi.stubGlobal('fetch', fetchMock);
+
+        const { button, confirmButton } = buildUninstallControl({ onUninstalled: vi.fn() });
+        button.click();
+        confirmButton.click();
+
+        const [, init] = fetchMock.mock.calls[0]! as [string, RequestInit];
+        expect(JSON.parse(init.body as string)).toEqual({ keep: false });
+        await flush();
+    });
+
+    it('invokes onUninstalled (the terminal message) after a successful uninstall', async () => {
+        const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+        vi.stubGlobal('fetch', fetchMock);
+        const onUninstalled = vi.fn();
+
+        const { button, confirmButton } = buildUninstallControl({ onUninstalled });
+        button.click();
+        confirmButton.click();
+        await flush();
+
+        expect(onUninstalled).toHaveBeenCalledTimes(1);
     });
 });

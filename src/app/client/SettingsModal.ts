@@ -154,6 +154,40 @@ export function stopServerButtonState(resp: ScopeRadioInputs): {
         : { disabled: false, note: null };
 }
 
+/**
+ * Derive visibility/enabled state for the two Linux-only App-section rows —
+ * "install for all users" and "uninstall ws-scrcpy-web". Pure (no DOM) so it is
+ * unit-testable; mirrors stopServerButtonState's shape and is driven from
+ * renderServiceState once /api/service/status resolves.
+ *
+ * - Both rows are Linux-only (hidden on win32/other).
+ * - "install for all users" is disabled once the shared /opt machine-wide
+ *   install already exists (the root service execs that binary; re-installing it
+ *   is a no-op), with an explanatory note in that state.
+ * - "uninstall" is ALWAYS enabled on Linux (unlike "stop server & exit" it is
+ *   NOT gated on service mode — uninstalling is exactly how you tear a service
+ *   down). Fields admit `undefined` so the full ServiceStatusResponse is
+ *   assignable under exactOptionalPropertyTypes.
+ */
+export function appSectionButtonsState(resp: {
+    platform?: string | null | undefined;
+    machineWideInstalled?: boolean | undefined;
+}): {
+    showInstallAllUsers: boolean;
+    installAllUsersDisabled: boolean;
+    installAllUsersNote: string | null;
+    showUninstall: boolean;
+} {
+    const linux = resp.platform === 'linux';
+    const machineWide = resp.machineWideInstalled === true;
+    return {
+        showInstallAllUsers: linux,
+        installAllUsersDisabled: linux && machineWide,
+        installAllUsersNote: linux && machineWide ? 'already installed for all users (/opt)' : null,
+        showUninstall: linux,
+    };
+}
+
 export interface SystemServiceInstallGate { enabled: boolean; note: string | null; }
 /**
  * Derive whether the migration reinstall notice should be shown. Pure (no DOM)
@@ -228,6 +262,153 @@ export function buildServiceInfoRow(message: string): HTMLElement {
 }
 
 /**
+ * Build the Linux-only "install for all users" control: an "install" button
+ * plus its full-width status note. Clicking POSTs /api/service/install-system-wide
+ * (the server runs pkexec, relocates to /opt, and re-execs — the OS pkexec prompt
+ * IS the confirmation, so there is no extra modal); on success the server is
+ * about to re-exec, so the page reloads; on failure the note shows an inline
+ * error. `reload` is injected so the unit test can observe it without navigating.
+ * Self-contained DOM + wiring (no network until clicked) so it is unit-testable
+ * like buildServiceInfoRow. Show/hide + the machine-wide disabled+note state are
+ * applied separately via appSectionButtonsState (from renderServiceState).
+ */
+export function buildInstallAllUsersControl(opts: { reload: () => void }): {
+    button: HTMLButtonElement;
+    note: HTMLElement;
+} {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'settings-btn settings-btn-primary';
+    button.textContent = 'install';
+
+    const note = document.createElement('p');
+    note.className = 'settings-status';
+    note.style.gridColumn = '1 / -1';
+    note.hidden = true;
+
+    button.addEventListener('click', () => {
+        button.disabled = true;
+        button.textContent = 'installing…';
+        note.hidden = true;
+        void (async () => {
+            try {
+                const res = await fetch('/api/service/install-system-wide', { method: 'POST' });
+                if (res.ok) {
+                    // The server is re-execing from /opt — reload onto the new instance.
+                    opts.reload();
+                    return;
+                }
+                note.textContent = 'install failed — see the server logs and try again.';
+            } catch {
+                note.textContent = 'install failed — could not reach the server.';
+            }
+            note.hidden = false;
+            button.disabled = false;
+            button.textContent = 'install';
+        })();
+    });
+
+    return { button, note };
+}
+
+/**
+ * Build the Linux-only "uninstall ws-scrcpy-web" control: a danger trigger
+ * button plus an inline confirm panel (the same settings-confirm-panel pattern
+ * the reset-prompts row uses). The trigger toggles the panel; the panel holds a
+ * warning line, a "keep my settings & logs" checkbox (unchecked by default), and
+ * confirm/cancel buttons. Confirm POSTs /api/service/uninstall-app with
+ * `{ keep: <checkbox> }`; on success it invokes `onUninstalled` (the terminal
+ * "uninstalled — close this tab" message, since the server tears itself down);
+ * on failure it surfaces an inline error inside the panel. Self-contained DOM +
+ * wiring (no network until confirm is clicked) so it is unit-testable.
+ */
+export function buildUninstallControl(opts: { onUninstalled: () => void }): {
+    button: HTMLButtonElement;
+    confirmPanel: HTMLElement;
+    keepCheckbox: HTMLInputElement;
+    confirmButton: HTMLButtonElement;
+    cancelButton: HTMLButtonElement;
+} {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'settings-btn settings-btn-danger';
+    button.textContent = 'uninstall…';
+
+    const confirmPanel = document.createElement('div');
+    confirmPanel.className = 'settings-confirm-panel';
+
+    const warning = document.createElement('p');
+    warning.textContent = 'this completely removes ws-scrcpy-web, including any installed service.';
+    confirmPanel.appendChild(warning);
+
+    const keepLabel = document.createElement('label');
+    keepLabel.className = 'settings-radio-label';
+    const keepCheckbox = document.createElement('input');
+    keepCheckbox.type = 'checkbox';
+    keepLabel.appendChild(keepCheckbox);
+    keepLabel.appendChild(document.createTextNode('keep my settings & logs'));
+    confirmPanel.appendChild(keepLabel);
+
+    const errorNote = document.createElement('p');
+    errorNote.className = 'settings-status settings-status-error';
+    errorNote.hidden = true;
+    confirmPanel.appendChild(errorNote);
+
+    const confirmButtons = document.createElement('div');
+    confirmButtons.className = 'settings-confirm-buttons';
+
+    const cancelButton = document.createElement('button');
+    cancelButton.type = 'button';
+    cancelButton.className = 'settings-btn';
+    cancelButton.textContent = 'cancel';
+    cancelButton.addEventListener('click', () => {
+        confirmPanel.classList.remove('expanded');
+    });
+    confirmButtons.appendChild(cancelButton);
+
+    const confirmButton = document.createElement('button');
+    confirmButton.type = 'button';
+    confirmButton.className = 'settings-btn settings-btn-primary';
+    confirmButton.textContent = 'uninstall';
+    confirmButton.addEventListener('click', () => {
+        const keep = keepCheckbox.checked;
+        confirmButton.disabled = true;
+        cancelButton.disabled = true;
+        confirmButton.textContent = 'uninstalling…';
+        errorNote.hidden = true;
+        void (async () => {
+            try {
+                const res = await fetch('/api/service/uninstall-app', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ keep }),
+                });
+                if (res.ok) {
+                    opts.onUninstalled();
+                    return;
+                }
+                errorNote.textContent = 'uninstall failed — see the server logs and try again.';
+            } catch {
+                errorNote.textContent = 'uninstall failed — could not reach the server.';
+            }
+            errorNote.hidden = false;
+            confirmButton.disabled = false;
+            cancelButton.disabled = false;
+            confirmButton.textContent = 'uninstall';
+        })();
+    });
+    confirmButtons.appendChild(confirmButton);
+
+    confirmPanel.appendChild(confirmButtons);
+
+    button.addEventListener('click', () => {
+        confirmPanel.classList.toggle('expanded');
+    });
+
+    return { button, confirmPanel, keepCheckbox, confirmButton, cancelButton };
+}
+
+/**
  * Settings modal — unified two-column grid layout.
  *
  * Every section is built from the same primitive:
@@ -260,6 +441,14 @@ export class SettingsModal extends Modal {
     // ── App section state ─────────────────────────────────────────────────
     private stopServerButton: HTMLButtonElement | null = null;
     private stopServerNote: HTMLElement | null = null;
+    // Linux-only rows (hidden on win32). Shown/disabled via appSectionButtonsState
+    // from renderServiceState once /api/service/status resolves.
+    private installAllUsersRow: HTMLElement | null = null;
+    private installAllUsersButton: HTMLButtonElement | null = null;
+    private installAllUsersNote: HTMLElement | null = null;
+    private uninstallRow: HTMLElement | null = null;
+    private uninstallButton: HTMLButtonElement | null = null;
+    private uninstallConfirmPanel: HTMLElement | null = null;
 
     // ── Updates section state ─────────────────────────────────────────────
     private updatesBody!: HTMLElement;
@@ -1029,6 +1218,8 @@ export class SettingsModal extends Modal {
         this.servicePlatform = (resp.platform as 'win32' | 'linux') ?? null;
         // Gate the App-section "stop server & exit" button off in service mode.
         this.applyStopServerButtonState(resp);
+        // Reveal/disable the Linux-only "install for all users" + "uninstall" rows.
+        this.applyAppSectionButtonsState(resp);
 
         if (!resp.supported) {
             const notice = document.createElement('p');
@@ -1478,6 +1669,35 @@ export class SettingsModal extends Modal {
             confirmPanel.classList.toggle('expanded');
         });
 
+        // §beta.49 — two Linux-only rows. Built hidden (display:none overrides the
+        // .settings-row { display: contents } rule via inline style) and revealed
+        // only on Linux by applyAppSectionButtonsState once /api/service/status
+        // resolves, so they never flash on Windows.
+
+        // "install for all users": POST /api/service/install-system-wide (pkexec
+        // → relocate to /opt → re-exec). The OS pkexec dialog is the confirmation,
+        // so no extra modal — just reload onto the re-execed instance on success.
+        const install = buildInstallAllUsersControl({ reload: () => window.location.reload() });
+        this.installAllUsersButton = install.button;
+        this.installAllUsersNote = install.note;
+        const installRow = this.buildRow('install ws-scrcpy-web for all users', install.button);
+        installRow.style.display = 'none';
+        this.installAllUsersRow = installRow;
+        body.appendChild(installRow);
+        body.appendChild(install.note);
+
+        // "uninstall ws-scrcpy-web": always enabled on Linux (NOT gated on service
+        // mode — uninstalling is how you remove a service). Reuses the confirm-panel
+        // pattern; confirm POSTs /api/service/uninstall-app { keep }.
+        const uninstall = buildUninstallControl({ onUninstalled: () => this.showUninstalledOverlay() });
+        this.uninstallButton = uninstall.button;
+        this.uninstallConfirmPanel = uninstall.confirmPanel;
+        const uninstallRow = this.buildRow('uninstall ws-scrcpy-web', uninstall.button);
+        uninstallRow.style.display = 'none';
+        this.uninstallRow = uninstallRow;
+        body.appendChild(uninstallRow);
+        body.appendChild(uninstall.confirmPanel);
+
         return section;
     }
 
@@ -1494,6 +1714,41 @@ export class SettingsModal extends Modal {
         if (this.stopServerNote) {
             this.stopServerNote.textContent = state.note ?? '';
             this.stopServerNote.hidden = state.note === null;
+        }
+    }
+
+    /**
+     * Reflect the (unit-tested) appSectionButtonsState decision onto the two
+     * Linux-only App-section rows. Called from renderServiceState once
+     * /api/service/status resolves: reveals the rows on Linux (inline display
+     * overrides the .settings-row { display: contents } rule), disables the
+     * "install for all users" button with an explanatory note once the machine-wide
+     * /opt install exists, and keeps the uninstall row always enabled on Linux.
+     */
+    private applyAppSectionButtonsState(resp: ServiceStatusResponse): void {
+        const state = appSectionButtonsState(resp);
+        if (this.installAllUsersRow) {
+            this.installAllUsersRow.style.display = state.showInstallAllUsers ? '' : 'none';
+        }
+        if (this.installAllUsersButton) {
+            this.installAllUsersButton.disabled = state.installAllUsersDisabled;
+        }
+        if (this.installAllUsersNote) {
+            this.installAllUsersNote.textContent = state.installAllUsersNote ?? '';
+            this.installAllUsersNote.hidden = state.installAllUsersNote === null;
+        }
+        if (this.uninstallRow) {
+            this.uninstallRow.style.display = state.showUninstall ? '' : 'none';
+        }
+        if (this.uninstallButton) {
+            // Uninstall is ALWAYS enabled on Linux — never gated on service mode
+            // (unlike "stop server & exit"); uninstalling is how you tear a service
+            // down. Asserting it here documents and enforces that invariant.
+            this.uninstallButton.disabled = false;
+        }
+        // Collapse a left-open confirm panel if the row is being hidden (non-Linux).
+        if (!state.showUninstall && this.uninstallConfirmPanel) {
+            this.uninstallConfirmPanel.classList.remove('expanded');
         }
     }
 
@@ -1533,6 +1788,18 @@ export class SettingsModal extends Modal {
             'padding:1rem;text-align:center;opacity:0.85;';
         const msg = document.createElement('p');
         msg.textContent = 'app stopped — you can close this tab.';
+        overlay.appendChild(msg);
+        document.body.replaceChildren(overlay);
+    }
+
+    /** Blank the page with a terminal "uninstalled" notice after uninstall succeeds. */
+    private showUninstalledOverlay(): void {
+        const overlay = document.createElement('div');
+        overlay.style.cssText =
+            'position:fixed;inset:0;display:flex;align-items:center;justify-content:center;' +
+            'padding:1rem;text-align:center;opacity:0.85;';
+        const msg = document.createElement('p');
+        msg.textContent = 'ws-scrcpy-web uninstalled — you can close this tab.';
         overlay.appendChild(msg);
         document.body.replaceChildren(overlay);
     }
