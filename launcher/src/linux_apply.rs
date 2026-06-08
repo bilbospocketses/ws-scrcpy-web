@@ -218,6 +218,9 @@ fn relaunch(target: &Path) {
     let mut command = std::process::Command::new(cmd);
     command
         .args(rest)
+        // G1: suppress the browser-open on relaunch (the direct-exec path; the
+        // systemd-run path carries it via --setenv in relaunch_command).
+        .env("WS_SCRCPY_NO_BROWSER", "1")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
@@ -256,8 +259,17 @@ fn under_systemd() -> bool {
 pub fn relaunch_command(target: &Path, under_systemd: bool, systemd_run: &str) -> Vec<String> {
     let t = target.to_string_lossy().into_owned();
     if under_systemd {
-        vec![systemd_run.to_string(), "--user".into(), "--collect".into(), t]
+        // G1: suppress the browser-open on relaunch — the user already has a tab
+        // that reconnects, so the relaunched instance must not pop a new one.
+        vec![
+            systemd_run.to_string(),
+            "--user".into(),
+            "--collect".into(),
+            "--setenv=WS_SCRCPY_NO_BROWSER=1".into(),
+            t,
+        ]
     } else {
+        // Direct exec — relaunch() sets WS_SCRCPY_NO_BROWSER on the Command.
         vec![t]
     }
 }
@@ -363,7 +375,7 @@ mod tests {
         // survives this helper's exit (not in this helper's reaped cgroup).
         assert_eq!(
             relaunch_command(Path::new("/home/u/App.AppImage"), true, "/usr/bin/systemd-run"),
-            vec!["/usr/bin/systemd-run", "--user", "--collect", "/home/u/App.AppImage"]
+            vec!["/usr/bin/systemd-run", "--user", "--collect", "--setenv=WS_SCRCPY_NO_BROWSER=1", "/home/u/App.AppImage"]
         );
     }
 

@@ -211,7 +211,11 @@ reconcileWebPort()
             const appCfg = config.getAppConfig();
             const isServiceMode =
                 appCfg.installMode === 'user-service' || appCfg.installMode === 'system-service';
-            if (appCfg.firstRunComplete === false && !isServiceMode) {
+            // G1: a relaunch (the post-machine-wide-install /opt re-exec, or an
+            // in-app update relaunch) sets WS_SCRCPY_NO_BROWSER=1 — the user
+            // already has a tab that reconnects, so don't pop a redundant one.
+            const suppressBrowser = process.env['WS_SCRCPY_NO_BROWSER'] === '1';
+            if (appCfg.firstRunComplete === false && !isServiceMode && !suppressBrowser) {
                 const port = config.servers[0]?.port ?? appCfg.webPort;
                 openBrowser(`http://localhost:${port}`);
             }
