@@ -30,6 +30,7 @@ import { ScrcpyConnection } from './ScrcpyConnection';
 import { HttpServer } from './services/HttpServer';
 import type { Service, ServiceClass } from './services/Service';
 import { WebSocketServer } from './services/WebSocketServer';
+import { reapStrayAdbOnWindows } from './shutdownHelpers';
 
 // Velopack JS SDK init must run before any other side-effecting startup logic.
 // In dev mode (no install layout) this returns gracefully without altering state.
@@ -289,6 +290,8 @@ async function gracefulShutdown(): Promise<void> {
     } catch (err) {
         serverLog.warn(`adb kill-server during exit failed: ${(err as Error).message}`);
     }
+    serverLog.info('Stopping stray adb (taskkill) ...');
+    await reapStrayAdbOnWindows();
     runningServices.forEach((service: Service) => {
         const serviceName = service.getName();
         serverLog.info(`Stopping ${serviceName} ...`);

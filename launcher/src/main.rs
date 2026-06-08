@@ -371,11 +371,11 @@ fn main() {
     let _ = data_root; // keep the load above visible to the compiler; supervisor reads its own env probe
     let _ = install_root;
 
-    let exit_code = match supervisor::run() {
-        Ok(code) => code,
+    let (exit_code, tray_stop_flag) = match supervisor::run() {
+        Ok(pair) => pair,
         Err(e) => {
             log::error(&format!("launcher failed: {e:#}"));
-            1
+            (1, None)
         }
     };
 
@@ -400,9 +400,20 @@ fn main() {
     // exit on its own; without this a plain "stop server & exit" (or any clean
     // exit) leaves an orphaned tray pointing at a dead launcher. Marker-gated so
     // update-apply / uninstall handoffs (which relaunch) keep their tray.
+    //
+    // Signal the tray-supervisor poll thread BEFORE the taskkill reap so it
+    // cannot respawn the tray between the signal and the kill (the poll thread
+    // checks stop_flag at the top of each 10s iteration).
     #[cfg(windows)]
-    if let Some(dr) = common::config::data_root_from_env() {
-        tray_supervisor::reap_tray_on_terminal_exit(&dr);
+    {
+        use std::sync::atomic::Ordering;
+        if let Some(flag) = &tray_stop_flag {
+            log::info("tray-supervisor: signalling stop_flag before reap");
+            flag.store(true, Ordering::SeqCst);
+        }
+        if let Some(dr) = common::config::data_root_from_env() {
+            tray_supervisor::reap_tray_on_terminal_exit(&dr);
+        }
     }
 
     log::info(&format!("ws-scrcpy-web-launcher exiting with code {exit_code}"));

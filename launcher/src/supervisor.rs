@@ -60,8 +60,22 @@ fn refresh_error_is_benign_busy(e: &std::io::Error) -> bool {
     e.raw_os_error() == Some(26)
 }
 
-/// Main supervisor entry. Returns the final exit code to bubble to OS.
-pub fn run() -> Result<i32> {
+/// Main supervisor entry. Returns the final exit code alongside the tray-supervisor
+/// stop_flag (Windows-only; `None` on non-Windows platforms). The caller should
+/// signal the flag BEFORE reaping the tray so the poll thread cannot respawn
+/// the tray between the signal and the `taskkill`.
+pub fn run() -> Result<(i32, Option<Arc<AtomicBool>>)> {
+    // Windows: tray-supervisor stop_flag threaded out so main.rs can signal it
+    // BEFORE calling reap_tray_on_terminal_exit. Declared `mut` on Windows so
+    // the cfg(windows) block below can assign the flag returned by
+    // start_background; the initial None is immediately overwritten, hence the
+    // allow. Non-Windows: immutable None (tray-supervisor does not run there).
+    #[cfg_attr(windows, allow(unused_assignments))]
+    #[cfg(windows)]
+    let mut tray_stop_flag: Option<Arc<AtomicBool>> = None;
+    #[cfg(not(windows))]
+    let tray_stop_flag: Option<Arc<AtomicBool>> = None;
+
     let paths = Paths::from_env()?;
     log::info(&format!(
         "supervisor: install_root={:?} data_root={:?} deps_path={:?}",
@@ -114,14 +128,15 @@ pub fn run() -> Result<i32> {
         #[cfg(windows)]
         {
             let is_service_mode = cfg.is_service_mode() && !local_takeover_override;
-            let _stop = crate::tray_supervisor::start_background(
+            let stop_flag = crate::tray_supervisor::start_background(
                 &paths.install_root,
                 &paths.data_root,
                 is_service_mode,
             );
-            // We intentionally drop `_stop` — the thread runs for the
-            // lifetime of the process. If we ever need clean shutdown,
-            // keep the handle and signal it.
+            // Thread the stop_flag out so main.rs can signal it BEFORE
+            // reap_tray_on_terminal_exit, preventing the poll thread from
+            // respawning the tray between the signal and the taskkill.
+            tray_stop_flag = Some(stop_flag);
             log::info("supervisor: tray-supervisor background thread started");
         }
 
@@ -199,7 +214,7 @@ pub fn run() -> Result<i32> {
 
         if stop.load(Ordering::SeqCst) {
             log::info("supervisor: shutdown signal received; not restarting");
-            return Ok(code);
+            return Ok((code, tray_stop_flag.clone()));
         }
 
         // Launcher-driven service uninstall. When the uninstall-pending marker
@@ -253,7 +268,7 @@ pub fn run() -> Result<i32> {
                     log::error(&format!(
                         "supervisor: failed to write uninstall bat at {bat_path:?}: {e}; exiting (post-stop.bat is fallback)"
                     ));
-                    return Ok(code);
+                    return Ok((code, tray_stop_flag.clone()));
                 }
                 log::info(&format!("supervisor: wrote uninstall bat at {bat_path:?}"));
 
@@ -280,13 +295,13 @@ pub fn run() -> Result<i32> {
                             "supervisor: schtasks /create failed (exit {:?}); exiting (post-stop.bat is fallback)",
                             s.code()
                         ));
-                        return Ok(code);
+                        return Ok((code, tray_stop_flag.clone()));
                     }
                     Err(e) => {
                         log::error(&format!(
                             "supervisor: schtasks spawn failed: {e}; exiting (post-stop.bat is fallback)"
                         ));
-                        return Ok(code);
+                        return Ok((code, tray_stop_flag.clone()));
                     }
                 }
 
@@ -305,20 +320,20 @@ pub fn run() -> Result<i32> {
                             "supervisor: schtasks /run failed (exit {:?}); exiting (post-stop.bat is fallback)",
                             s.code()
                         ));
-                        return Ok(code);
+                        return Ok((code, tray_stop_flag.clone()));
                     }
                     Err(e) => {
                         log::error(&format!(
                             "supervisor: schtasks /run spawn failed: {e}; exiting (post-stop.bat is fallback)"
                         ));
-                        return Ok(code);
+                        return Ok((code, tray_stop_flag.clone()));
                     }
                 }
 
                 loop {
                     if stop.load(Ordering::SeqCst) {
                         log::info("supervisor: stop signal received during uninstall; exiting cleanly");
-                        return Ok(0);
+                        return Ok((0, tray_stop_flag.clone()));
                     }
                     thread::sleep(POLL_INTERVAL);
                 }
@@ -331,7 +346,7 @@ pub fn run() -> Result<i32> {
         match reason {
             None => {
                 log::info("supervisor: clean exit; not restarting");
-                return Ok(code);
+                return Ok((code, tray_stop_flag.clone()));
             }
             Some(RestartReason::RestartMarker) => {
                 let _ = std::fs::remove_file(&paths.restart_marker);
