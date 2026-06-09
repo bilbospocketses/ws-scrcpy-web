@@ -1,10 +1,10 @@
 # ws-scrcpy-web — Smoke Test Runbook (plain-English)
 
-> **Smoke target: `v0.1.30-beta.50`** — bump this one line each release; everything below is version-agnostic.
+> **Smoke target: `v0.1.30-beta.52`** — bump this one line each release; everything below is version-agnostic.
 
 **What this is.** A step-by-step manual test pass for the **ws-scrcpy-web** app. Completing it is the agreed gate before cutting the **0.1.30 final** release — the "prove it really installs, updates, and streams on Windows + Linux" check. You run it by hand on your test VMs plus a real Android device; it can't be automated from a chat.
 
-**Source of truth.** This is the plain-English twin of `docs/smoke-tests/smoke-full.md` in the repo. Same 69 tests, jargon spelled out, laid out as fixed-width tables you can keep open and tick through. If the two ever disagree, **the repo doc wins** — tell me and I'll re-sync this one.
+**Source of truth.** This is the plain-English twin of `docs/smoke-tests/smoke-full.md` in the repo. Same 74 tests, jargon spelled out, laid out as fixed-width tables you can keep open and tick through. If the two ever disagree, **the repo doc wins** — tell me and I'll re-sync this one.
 
 ## How to use this runbook
 
@@ -12,7 +12,7 @@
 2. Work through the modules **in order**, top to bottom — some rows rely on the state left by earlier rows in the same module.
 3. In the **Done** column mark each test: `x` = pass · `F` = fail · `-` = skipped / not applicable.
 4. The **OS** column says where to run it: `Lin` = the Fedora VM · `Win` = the Windows VM · `Both` = run it on each.
-5. **Stop rule:** if a Linux SELinux/lifecycle test — or the core flow (scan → connect → stream → shell) — **fails**, stop, save the logs, and report it before shipping. Cosmetic glitches: jot them down and keep going.
+5. **Stop rule:** if a Linux SELinux/lifecycle test — or the core flow (scan → connect → stream → shell) — **fails**, stop, **run `capture-logs.sh` / `capture-logs.ps1` (Pre-flight F)** to grab the evidence bundle, and report it before shipping. Cosmetic glitches: jot them down and keep going.
 
 ## Jargon key (read once, refer back as needed)
 
@@ -101,6 +101,13 @@ An Android phone/tablet with **Wireless debugging** on (Settings → Developer o
 
 ### E. No-libfuse2 host (optional — only for Module 11)
 A minimal Fedora container/VM **without** `libfuse2` installed. This only closes a cleanup item; it does **not** block 0.1.30 — safe to skip on a first pass.
+
+### F. Capture scripts — pull the logs at any checkpoint
+Beside this doc are two snapshot scripts. Run one **at every capture point, and the instant any test fails**, to collect a complete evidence bundle (a timestamped, labeled folder + an archive to attach):
+- **Linux:** `bash capture-logs.sh <test-id>` — e.g. `bash capture-logs.sh 5.8-after-uninstall`
+- **Windows:** `powershell -ExecutionPolicy Bypass -File capture-logs.ps1 <test-id>` — e.g. `... 15.2-wipe`
+
+Each grabs the AVC denials, the service journal + status, the SELinux rules + file labels, the running processes, the dataRoot / Program Files / temp listings, `config.json`, and the app logs. The numbered files map to the "Pass — what you should see" column, so a failure can be read (by you or me) without re-running it.
 
 ### If a stuck Linux system service ever needs a manual reset
 ```bash
@@ -570,6 +577,44 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 └──────────────────────┴──────┴──────────────────────────────┴──────────────────────────────────────────────────┴──────┘
 ```
 
+### Module 15 — Windows App section: uninstall + stop-exit
+*New on Windows in beta.51 (in-app uninstall), with the **wipe** fully fixed in beta.52. The uninstall cleaner runs with logging OFF by design, so the evidence is filesystem / registry / temp state — capture it with `capture-logs.ps1 <label>` (see Pre-flight) at each row, especially 15.2.*
+
+```text
+┌──────────────────────┬──────┬──────────────────────────────┬──────────────────────────────────────────────────┬──────┐
+│ Test                 │ OS   │ Do this                      │ Pass - what you should see                       │ Done │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 15.1 Uninstall -     │ Win  │ MSI install > Settings > App │ One UAC prompt (Update.exe self-elevates).       │ [ ]  │
+│ keep                 │      │ > "uninstall" > leave "keep  │ Program Files\WsScrcpyWeb gone; service gone (sc │      │
+│                      │      │ my settings & logs" CHECKED  │ query = not found); tray gone; the Add/Remove    │      │
+│                      │      │ (default) > uninstall.       │ Programs entry is gone. config.json + logs       │      │
+│                      │      │                              │ survive under ProgramData\WsScrcpyWeb;           │      │
+│                      │      │                              │ dependencies gone. A later reinstall reuses the  │      │
+│                      │      │                              │ saved port.                                      │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 15.2 Uninstall -     │ Win  │ Same, but UNCHECK "keep my   │ As 15.1, AND the WHOLE ProgramData\WsScrcpyWeb   │ [ ]  │
+│ wipe                 │      │ settings & logs".            │ is gone - nothing left behind, including         │      │
+│                      │      │                              │ control\operation-server\. (The beta.52 fix: a   │      │
+│                      │      │                              │ temp copy of the launcher does the delete after  │      │
+│                      │      │                              │ the original exits.) Run capture-logs.ps1        │      │
+│                      │      │                              │ 15.2-wipe and confirm 31-dataroot shows it       │      │
+│                      │      │                              │ absent.                                          │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 15.3 Uninstall       │ Win  │ Open the uninstall dialog.   │ A top-layer dialog over Settings; Cancel is      │ [ ]  │
+│ dialog               │      │                              │ white-outline, Uninstall is red; the "keep my    │      │
+│                      │      │                              │ settings & logs" box is checked by default;      │      │
+│                      │      │                              │ Cancel / Esc / clicking outside all do nothing.  │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 15.4 Stop-exit reaps │ Win  │ Local mode, a device +       │ The tab closes / shows "app stopped"; Task       │ [ ]  │
+│ all                  │      │ stream live > Settings > App │ Manager shows NO leftover launcher, node, tray,  │      │
+│                      │      │ > "stop server & exit".      │ or adb processes.                                │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 15.5 App section     │ Win  │ Open Settings > App.         │ Top to bottom: reset prompts > stop server &     │ [ ]  │
+│ order                │      │                              │ exit > uninstall ws-scrcpy-web. (No "install for │      │
+│                      │      │                              │ all users" on Windows.)                          │      │
+└──────────────────────┴──────┴──────────────────────────────┴──────────────────────────────────────────────────┴──────┘
+```
+
 ---
 
 ## Global pass criteria
@@ -604,6 +649,6 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 └──────────────────────┴────────────────────────────────────────────────────────────────┴──────┘
 ```
 
-**If any Linux SELinux/lifecycle test (Modules 2, 4, 5, the service-update rows 6.5/6.6, or migration 6.7) — or the core-flow criterion — fails:** stop, capture `journalctl` / `ausearch` and the app logs, and report it before promoting 0.1.30 to stable. Cosmetic/polish failures: note and triage later. **Module 11 (no-libfuse2)** is optional — a failure there just means keep the libfuse2 code; it doesn't block 0.1.30.
+**If any Linux SELinux/lifecycle test (Modules 2, 4, 5, the service-update rows 6.5/6.6, or migration 6.7) — or the core-flow criterion — fails:** stop, **run `capture-logs.sh <id>` (Pre-flight F; `.ps1` on Windows)** for the evidence bundle, and report it before promoting 0.1.30 to stable. Cosmetic/polish failures: note and triage later. **Module 11 (no-libfuse2)** is optional — a failure there just means keep the libfuse2 code; it doesn't block 0.1.30.
 
-*Plain-English companion to [`smoke-full.md`](./smoke-full.md), the canonical machine-precise checklist. Same 69 tests with the jargon spelled out; if the two ever diverge, the full doc wins.*
+*Plain-English companion to [`smoke-full.md`](./smoke-full.md), the canonical machine-precise checklist. Same 74 tests with the jargon spelled out; if the two ever diverge, the full doc wins.*

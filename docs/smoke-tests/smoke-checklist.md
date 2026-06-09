@@ -16,8 +16,15 @@ which carries the beta.48 port-discovery fix plus the App-section UX (batch #15)
    ```bash
    gh release download --repo bilbospocketses/ws-scrcpy-web --pattern '*linux-beta.AppImage' --dir ~/Downloads
    ```
+3. **Keep the capture scripts handy.** Beside this doc: [`capture-logs.sh`](./capture-logs.sh) (Linux) / [`capture-logs.ps1`](./capture-logs.ps1) (Windows). Run one at any checkpoint — **especially the instant a row fails** — to snapshot every log + state (AVC, service journal/status, fcontext, SELinux labels, processes, dataRoot / Program Files / temp listings, config, app logs) to a timestamped, labeled folder + archive to attach. The numbered output files map to the "Expected + verify" column.
+   ```bash
+   bash capture-logs.sh <test-id>                                       # Linux,   e.g.  ... 5.8-after-uninstall
+   ```
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File capture-logs.ps1 <test-id>  # Windows, e.g.  ... 15.2-wipe
+   ```
 
-Boxes start unticked — this is a fresh pass (prior beta.48 ✅ live in the breadcrumb/todo).
+Boxes start unticked — this is a fresh pass.
 
 ---
 
@@ -154,7 +161,7 @@ New in beta.51, the wipe self-deletion fixed in beta.52. Run on the clean Win11 
 | Test | How to perform | Expected + verify |
 |---|---|---|
 | ☐ **15.1** `[W]` In-app uninstall — keep | MSI install → Settings → **App** → **uninstall** → keep **checked** (default) → uninstall | **One UAC** (Update.exe self-elevates — VM decision #1); `C:\Program Files\WsScrcpyWeb\` gone; service gone (`sc query WsScrcpyWeb` → not found); tray gone; **ARP entry gone**; `config.json` + `logs\` **survive** under `%ProgramData%\WsScrcpyWeb`, `dependencies\` gone; reinstall reuses the saved port |
-| ☐ **15.2** `[W]` In-app uninstall — wipe | Same but **uncheck** keep | As 15.1, **and the whole `%ProgramData%\WsScrcpyWeb` is gone** — incl. `control\operation-server\` (the beta.52 fix: the temp-copy cleaner removes it after the original exits). Confirm **no** leftover dir |
+| ☐ **15.2** `[W]` In-app uninstall — wipe | Same but **uncheck** keep | As 15.1, **and the whole `%ProgramData%\WsScrcpyWeb` is gone** — incl. `control\operation-server\` (the beta.52 fix: the temp-copy cleaner removes it after the original exits). Confirm **no** leftover dir — `capture-logs.ps1 15.2-wipe`, then check `31-dataroot` |
 | ☐ **15.3** `[W]` Uninstall modal UX | Open the uninstall modal | Top-layer overlay above Settings; **cancel** white-outline, **uninstall** red text + border; keep checkbox **checked by default**; cancel / Esc / backdrop = no action |
 | ☐ **15.4** `[W]` Stop-exit reaps tray + adb | Local mode, device + stream live → Settings → **App** → **stop server & exit** | Tab closes / "app stopped"; Task Manager shows **no** lingering `ws-scrcpy-web-launcher.exe` / `node.exe` / `ws-scrcpy-web-tray.exe` / `adb.exe` |
 | ☐ **15.5** `[W]` App-section order | Settings → App | Order top→bottom: **reset prompts → stop server & exit → uninstall ws-scrcpy-web** (no "install for all users" on Windows) |
@@ -174,4 +181,4 @@ New in beta.51, the wipe self-deletion fixed in beta.52. Run on the clean Win11 
 | **Data preserved** | User config/deps/logs survive uninstall + reinstall |
 | **Core flow** | Scan → connect → stream (video + control) → shell works on both platforms |
 
-**Stop-and-report:** a `[Linux]` SELinux/lifecycle failure in Modules 2/4/5, the service-update rows 6.5/6.6, or migration 6.7 — capture `journalctl`/`ausearch`/logs and fix before promoting 0.1.30 stable. Cosmetic/polish → note as beta-territory. **Module 11 (no-libfuse2)** gates closing item 31, not 0.1.30-stable on its own.
+**Stop-and-report:** a `[Linux]` SELinux/lifecycle failure in Modules 2/4/5, the service-update rows 6.5/6.6, or migration 6.7 — run `capture-logs.sh <id>` (`.ps1` on Windows) for the evidence bundle, then fix before promoting 0.1.30 stable. Cosmetic/polish → note as beta-territory. **Module 11 (no-libfuse2)** gates closing item 31, not 0.1.30-stable on its own.
