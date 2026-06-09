@@ -360,6 +360,56 @@ fn run_bootstrap(a: &UninstallArgs) -> i32 {
     }
 }
 
+/// Best-effort wait for process `pid` to exit, up to `timeout_ms`. Opens the
+/// process for SYNCHRONIZE and waits on its handle. If the handle can't be
+/// opened (already exited, or PID reused), returns immediately — the caller's
+/// delete-retry is the actual guarantee that the lock has cleared.
+fn wait_for_pid(pid: u32, timeout_ms: u32) {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{
+        OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE,
+    };
+    unsafe {
+        if let Ok(handle) = OpenProcess(PROCESS_SYNCHRONIZE, false, pid) {
+            let _ = WaitForSingleObject(handle, timeout_ms);
+            let _ = CloseHandle(handle);
+        }
+    }
+}
+
+/// Phase 2 (runs from the temp copy, logging disabled, CWD in temp): wait for
+/// the originating helper to exit, run Update.exe --uninstall, then delete the
+/// dataRoot targets with a bounded retry. The copy then exits and remains in
+/// temp (self-managing). Returns 0 (best-effort throughout).
+fn run_cleaner(a: &RunArgs) -> i32 {
+    // No logging: append() would create_dir_all(<dataRoot>/logs) and resurrect
+    // the data root after the wipe. Must be the first thing we do.
+    log::disable();
+
+    // Wait for the originating helper (its exe lives under dataRoot\control) to
+    // exit so its image lock releases. 30s cap; the delete-retry below is the
+    // real guarantee, so a timeout or PID-reuse mismatch is non-fatal.
+    wait_for_pid(a.wait_pid, 30_000);
+
+    let plan = windows_app_uninstall_commands(&a.update_exe, &a.data_root, a.keep);
+    run_update_exe(&plan.update_exe_step);
+    // ~5s of retry (10 × 500ms) to absorb residual handle-release lag.
+    remove_targets(&plan.data_root_targets, 10);
+    0
+}
+
+/// Dispatch `--windows-app-uninstall-run` (the Phase-2 cleaner, the temp copy).
+/// Returns `Some(exit_code)` when it owns the invocation, `None` otherwise.
+pub fn handle_run(args: &[String]) -> Option<i32> {
+    if !args.iter().any(|a| a == "--windows-app-uninstall-run") {
+        return None;
+    }
+    match parse_run_args(args) {
+        Some(a) => Some(run_cleaner(&a)),
+        None => Some(2),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -691,5 +741,26 @@ mod tests {
         assert_eq!(temp_copy_filename(1234), "ws-scrcpy-web-uninstall-1234.exe");
         // Distinct pids → distinct names (so concurrent/retried uninstalls don't collide).
         assert_ne!(temp_copy_filename(1), temp_copy_filename(2));
+    }
+
+    #[test]
+    fn handle_run_returns_none_when_flag_absent() {
+        let args: Vec<String> = ["--some-other-flag", "--wipe"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(handle_run(&args), None);
+    }
+
+    #[test]
+    fn handle_run_returns_error_code_on_invalid_args() {
+        // Run flag present but missing --wait-pid / --data-root / --update-exe
+        // and no keep/wipe → parse_run_args None → exit code 2 (never reaches
+        // run_cleaner, so no I/O).
+        let args: Vec<String> = ["--windows-app-uninstall-run"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(handle_run(&args), Some(2));
     }
 }
