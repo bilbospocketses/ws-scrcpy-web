@@ -178,6 +178,12 @@ pub fn parse_run_args(args: &[String]) -> Option<RunArgs> {
     Some(RunArgs { wait_pid, update_exe, data_root, keep })
 }
 
+/// Filename for the temp copy of the launcher that performs the dataRoot
+/// deletion. PID-stamped so a retried/concurrent uninstall never collides.
+pub fn temp_copy_filename(pid: u32) -> String {
+    format!("ws-scrcpy-web-uninstall-{pid}.exe")
+}
+
 /// Dispatch `--windows-app-uninstall`. Returns `Some(exit_code)` when it
 /// owns the invocation, `None` to let the next dispatcher try.
 pub fn handle(args: &[String]) -> Option<i32> {
@@ -569,5 +575,12 @@ mod tests {
         ]
         .iter().map(|s| s.to_string()).collect();
         assert_eq!(parse_run_args(&argv), None);
+    }
+
+    #[test]
+    fn temp_copy_filename_is_pid_stamped() {
+        assert_eq!(temp_copy_filename(1234), "ws-scrcpy-web-uninstall-1234.exe");
+        // Distinct pids → distinct names (so concurrent/retried uninstalls don't collide).
+        assert_ne!(temp_copy_filename(1), temp_copy_filename(2));
     }
 }
