@@ -289,18 +289,21 @@ fn run_uninstall_in_place(a: &UninstallArgs) -> i32 {
 /// back to `GetTempPathW`. `None` if both fail (caller → in-place fallback).
 fn resolve_temp_dir() -> Option<std::path::PathBuf> {
     use windows::Win32::Storage::FileSystem::{GetTempPath2W, GetTempPathW};
-    // MAX_PATH (260) + 1; these calls return the length copied, excluding NUL.
+    // Buffer is MAX_PATH (260) + 1. On success these return the length copied
+    // (excluding NUL); if the buffer were too small they'd instead return the
+    // REQUIRED size (> buf.len()) WITHOUT filling it. The W variants cap the
+    // path at MAX_PATH so that can't happen here — but fail closed rather than
+    // slice out of bounds (panic=abort would kill the cleaner before it
+    // deletes) or read an unfilled buffer.
     let mut buf = [0u16; 261];
-    let mut len = unsafe { GetTempPath2W(Some(&mut buf)) };
+    let mut len = unsafe { GetTempPath2W(Some(&mut buf)) } as usize;
     if len == 0 {
-        len = unsafe { GetTempPathW(Some(&mut buf)) };
+        len = unsafe { GetTempPathW(Some(&mut buf)) } as usize;
     }
-    if len == 0 {
+    if len == 0 || len > buf.len() {
         return None;
     }
-    Some(std::path::PathBuf::from(String::from_utf16_lossy(
-        &buf[..len as usize],
-    )))
+    Some(std::path::PathBuf::from(String::from_utf16_lossy(&buf[..len])))
 }
 
 /// Phase 1: copy this launcher to temp and spawn it as the logging-disabled
@@ -310,8 +313,13 @@ fn resolve_temp_dir() -> Option<std::path::PathBuf> {
 /// if temp resolution / self-copy / spawn fails.
 fn run_bootstrap(a: &UninstallArgs) -> i32 {
     use std::os::windows::process::CommandExt;
-    // CREATE_NO_WINDOW = 0x08000000 (mirrors spawn.rs). The temp copy survives
-    // our exit: the uninstall helper runs outside any kill-on-job-close job.
+    use std::process::Stdio;
+    // Mirror the proven detached-survival idiom (tray_supervisor / operation_server):
+    // DETACHED_PROCESS breaks the parent-exit kill-chain + console inheritance,
+    // CREATE_NO_WINDOW gives no console window, and null stdio severs inherited
+    // handles. The cleaner MUST outlive our std::process::exit(0) below; the
+    // uninstall helper also runs outside any kill-on-job-close job.
+    const DETACHED_PROCESS: u32 = 0x0000_0008;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
     let pid = std::process::id();
@@ -347,7 +355,10 @@ fn run_bootstrap(a: &UninstallArgs) -> i32 {
     match std::process::Command::new(&dst)
         .args(&run_args)
         .current_dir(&temp_dir) // CWD in temp, never under dataRoot
-        .creation_flags(CREATE_NO_WINDOW)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .creation_flags(DETACHED_PROCESS | CREATE_NO_WINDOW)
         .spawn()
     {
         Ok(_child) => 0, // detached; do NOT wait — exit so the lock releases

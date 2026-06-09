@@ -57,6 +57,16 @@ fn main() {
         std::process::exit(0);
     }
 
+    // The Windows uninstall cleaner (--windows-app-uninstall-run) is spawned
+    // with --no-log: it must NEVER touch the dataRoot for logging, because
+    // log::append() does create_dir_all(<dataRoot>/logs) on every line, which
+    // would resurrect the very tree the cleaner is about to wipe. Disable HERE,
+    // before the first log::info below, so the cleaner is silent from its first
+    // instruction (honors the flag build_run_args emits).
+    if args.iter().any(|a| a == "--no-log") {
+        log::disable();
+    }
+
     log::info(&format!(
         "ws-scrcpy-web-launcher v{} starting",
         env!("CARGO_PKG_VERSION")
