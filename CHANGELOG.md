@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.54] - 2026-06-09
+
 ### Fixed
 
 - **The Linux app-menu shortcut now shows the app icon** instead of a blank placeholder. The machine-wide install resolved the menu icon from a `$APPDIR/.DirIcon` path that vpk's AppImage doesn't actually provide, so it never installed; the icon now ships bundled (`tray-icon.png`, resolved next to `package.json` like the version file) and installs reliably into the hicolor theme.
