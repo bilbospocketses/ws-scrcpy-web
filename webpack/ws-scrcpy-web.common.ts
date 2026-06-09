@@ -49,11 +49,11 @@ class GenerateDistPackageJsonPlugin {
     }
 }
 
-// Inline plugin: copies public/index.html into dist/public/
-class CopyIndexHtmlPlugin {
+// Inline plugin: copies a single file into dist/public/ (index.html, favicon, ...)
+class CopyFilePlugin {
     constructor(private src: string, private dest: string) {}
     apply(compiler: webpack.Compiler) {
-        compiler.hooks.afterEmit.tapAsync('CopyIndexHtmlPlugin', (_: webpack.Compilation, callback: () => void) => {
+        compiler.hooks.afterEmit.tapAsync(`CopyFilePlugin:${this.dest}`, (_: webpack.Compilation, callback: () => void) => {
             const fs = require('fs') as typeof import('fs');
             const destDir = path.dirname(this.dest);
             fs.mkdirSync(destDir, { recursive: true });
@@ -120,9 +120,16 @@ const front: webpack.Configuration = {
     externals: ['fs'],
     plugins: [
         new MiniCssExtractPlugin({ filename: 'bundle.css' }),
-        new CopyIndexHtmlPlugin(
+        new CopyFilePlugin(
             path.resolve(PROJECT_ROOT, 'public/index.html'),
             path.resolve(CLIENT_DIST_PATH, 'index.html'),
+        ),
+        // Favicon — derive it from the app icon (assets/tray-icon.png) so the
+        // browser tab shows our icon. Served from dist/public/favicon.png and
+        // referenced in public/index.html's <head>.
+        new CopyFilePlugin(
+            path.resolve(PROJECT_ROOT, 'assets/tray-icon.png'),
+            path.resolve(CLIENT_DIST_PATH, 'favicon.png'),
         ),
         new CopyHelpDirPlugin(),
     ],

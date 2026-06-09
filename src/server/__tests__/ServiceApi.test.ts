@@ -1394,8 +1394,10 @@ describe('ServiceApi', () => {
                 const scheduleExit = vi.fn();
                 let spawnedArgs: string[] = [];
                 const spawnDetached = vi.fn((_cmd: string, args: string[]) => { spawnedArgs = args; });
-                // existsCheck → relaunch helper present, so F5 hands off + exits.
-                const api = new ServiceApi(undefined, undefined, () => true, spawnDetached, scheduleExit, fakePkexec);
+                // existsCheck → true for the relaunch helper (F5 hands off + exits) but FALSE for
+                // kbuildsycoca, so refreshDesktopCaches no-ops (treated as non-KDE) and spawnDetached
+                // stays at exactly 1 (the relaunch helper) for the assertion below.
+                const api = new ServiceApi(undefined, undefined, (p: string) => !p.includes('kbuildsycoca'), spawnDetached, scheduleExit, fakePkexec);
                 const { req, res } = makeReqRes('/api/service/install-system-wide', 'POST');
                 await api.handle(req, res);
 

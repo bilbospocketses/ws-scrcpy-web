@@ -866,6 +866,7 @@ export class ServiceApi {
         const script = buildMachineWideInstallScript({ sourceAppImage: appImage, version, iconSource });
         try {
             await this.runPkexecFn(script, 'install-system-wide');
+            this.refreshDesktopCaches();
             // F5: the running instance launched from the home AppImage (now
             // deleted by the install) and never re-execs to /opt — it lingers on
             // the deleted FUSE mount and holds the per-user lock. Hand off to the
@@ -904,6 +905,35 @@ export class ServiceApi {
             }
         }
         return true;
+    }
+
+    /**
+     * Best-effort: refresh KDE's per-user desktop caches after a machine-wide install
+     * so the new menu entry + icon appear immediately. The root install already
+     * refreshed the SYSTEM icon-theme cache (gtk-update-icon-cache) + the .desktop db,
+     * but KDE's launcher keeps a stale PER-USER icon cache (~/.cache/icon-cache.kcache)
+     * that survives reinstalls — clearing it + rebuilding ksycoca is what makes the
+     * icon show without a re-login (item 51, confirmed in the beta.55 smoke). Runs as
+     * us (the Node server is the user's process). KDE-only (gated on kbuildsycoca); a
+     * no-op on GNOME/others, where the system gtk-update-icon-cache already covers it.
+     */
+    private refreshDesktopCaches(): void {
+        if (process.platform !== 'linux') return;
+        const kbuildsycoca = ['kbuildsycoca6', 'kbuildsycoca5']
+            .map((t) => `/usr/bin/${t}`)
+            .find((p) => this.existsCheck(p));
+        if (!kbuildsycoca) return; // not KDE — the system icon-cache refresh covers it
+        try {
+            const iconCache = path.join(os.homedir(), '.cache', 'icon-cache.kcache');
+            if (this.existsCheck(iconCache)) fs.rmSync(iconCache, { force: true });
+        } catch {
+            /* best-effort */
+        }
+        try {
+            this.spawnDetached(kbuildsycoca, []);
+        } catch {
+            /* best-effort */
+        }
     }
 
     private async handleDeclineSystemWide(res: ServerResponse): Promise<boolean> {

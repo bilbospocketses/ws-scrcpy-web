@@ -17,6 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The browser tab now shows the app's favicon** (derived from the app icon). The page had no favicon before, so the tab showed a generic/blank icon.
+
+### Fixed
+
+- **The Linux app-menu icon now appears immediately after a machine-wide install on KDE.** beta.55 installed the icon correctly, but KDE's launcher keeps a per-user icon cache that doesn't refresh on its own — so the install now rebuilds it (`kbuildsycoca` + clears the stale per-user icon cache) as your user, with no manual cache-clear or re-login needed. (No-op on GNOME/others, where the system icon-cache refresh already covers it.)
+
 ## [0.1.30-beta.55] - 2026-06-09
 
 ### Fixed
