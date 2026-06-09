@@ -19,6 +19,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.30-beta.53] - 2026-06-09
 
+### Fixed
+
+- **System-service install no longer fails when the app is already installed for all users.** A system-service install requires a prior install-for-all-users, so the running binary *is* the `/opt` copy — but the install script then copied that binary onto itself (`cp` rejects identical source and destination), aborting every system-service install. It no longer re-stages the binary; the service unit runs the existing `/opt` copy directly.
+- **Long error messages on the Settings screen now span the full width** instead of cramping into the narrow label column — matching how status messages already wrapped.
+- A benign `reset-failed` step during a Linux service uninstall no longer logs as an `ERROR` (it returns non-zero when the unit isn't in a failed state — the normal case after a clean stop).
+
+### Changed
+
+- **Settings notes and status/error text are now indented and bold-italic** so they read as sub-text of the setting they annotate — white for status, red for errors. The uninstall confirmation dialog's buttons are styled to match the rest of the app (white-outline cancel, red-outline uninstall).
+- Internal: the uninstall launcher's best-effort command runner and argument parsing were deduplicated (no behavior change).
+
 ## [0.1.30-beta.52] - 2026-06-09
 
 ### Fixed
