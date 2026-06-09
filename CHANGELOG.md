@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.56] - 2026-06-09
+
 ### Added
 
 - **The browser tab now shows the app's favicon** (derived from the app icon). The page had no favicon before, so the tab showed a generic/blank icon.
