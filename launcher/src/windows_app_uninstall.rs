@@ -119,6 +119,65 @@ pub fn parse_args(args: &[String]) -> Option<UninstallArgs> {
     Some(UninstallArgs { update_exe, data_root, keep })
 }
 
+/// Parsed `--windows-app-uninstall-run` invocation (the Phase-2 cleaner).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunArgs {
+    pub wait_pid: u32,
+    pub update_exe: String,
+    pub data_root: String,
+    pub keep: bool,
+}
+
+/// Build the Phase-2 argv the bootstrapper passes to the temp copy. Returns
+/// the args WITHOUT argv[0]; the caller does `Command::new(temp_exe).args(..)`.
+/// Always includes `--no-log` so the cleaner never writes into the data root.
+pub fn build_run_args(wait_pid: u32, keep: bool, data_root: &str, update_exe: &str) -> Vec<String> {
+    vec![
+        "--windows-app-uninstall-run".to_string(),
+        "--wait-pid".to_string(),
+        wait_pid.to_string(),
+        "--no-log".to_string(),
+        if keep { "--keep" } else { "--wipe" }.to_string(),
+        "--data-root".to_string(),
+        data_root.to_string(),
+        "--update-exe".to_string(),
+        update_exe.to_string(),
+    ]
+}
+
+/// Parse `--windows-app-uninstall-run` flags. `None` on absence/invalid input
+/// (mirrors `parse_args`). Requires the run flag, a numeric `--wait-pid`,
+/// `--data-root`, `--update-exe`, and exactly one of `--keep`/`--wipe`.
+pub fn parse_run_args(args: &[String]) -> Option<RunArgs> {
+    if !args.iter().any(|a| a == "--windows-app-uninstall-run") {
+        return None;
+    }
+    let keep = match (
+        args.iter().any(|a| a == "--keep"),
+        args.iter().any(|a| a == "--wipe"),
+    ) {
+        (true, false) => true,
+        (false, true) => false,
+        _ => return None,
+    };
+    let wait_pid = args
+        .iter()
+        .position(|a| a == "--wait-pid")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|s| s.parse::<u32>().ok())?;
+    let data_root = args
+        .iter()
+        .position(|a| a == "--data-root")
+        .and_then(|i| args.get(i + 1))
+        .cloned()?;
+    let update_exe = args
+        .iter()
+        .position(|a| a == "--update-exe")
+        .and_then(|i| args.get(i + 1))
+        .cloned()?;
+    Some(RunArgs { wait_pid, update_exe, data_root, keep })
+}
+
 /// Dispatch `--windows-app-uninstall`. Returns `Some(exit_code)` when it
 /// owns the invocation, `None` to let the next dispatcher try.
 pub fn handle(args: &[String]) -> Option<i32> {
@@ -450,5 +509,65 @@ mod tests {
             .map(|s| s.to_string())
             .collect();
         assert_eq!(handle(&args), Some(2));
+    }
+
+    // ── Phase-2 (--windows-app-uninstall-run) arg model ───────────────────
+
+    #[test]
+    fn build_run_args_round_trips_through_parse() {
+        for keep in [true, false] {
+            let argv = build_run_args(4321, keep, DATA_ROOT, UPDATE_EXE);
+            // The temp copy always gets --no-log and the run subcommand.
+            assert!(argv.contains(&"--windows-app-uninstall-run".to_string()));
+            assert!(argv.contains(&"--no-log".to_string()));
+            let parsed = parse_run_args(&argv).expect("round-trips");
+            assert_eq!(
+                parsed,
+                RunArgs {
+                    wait_pid: 4321,
+                    update_exe: UPDATE_EXE.to_string(),
+                    data_root: DATA_ROOT.to_string(),
+                    keep,
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn parse_run_args_requires_the_run_flag() {
+        // Same fields but the Phase-1 flag, not the run flag → not ours.
+        let argv: Vec<String> = [
+            "--windows-app-uninstall", "--wait-pid", "1", "--wipe",
+            "--data-root", DATA_ROOT, "--update-exe", UPDATE_EXE,
+        ]
+        .iter().map(|s| s.to_string()).collect();
+        assert_eq!(parse_run_args(&argv), None);
+    }
+
+    #[test]
+    fn parse_run_args_rejects_missing_or_bad_wait_pid() {
+        let no_pid: Vec<String> = [
+            "--windows-app-uninstall-run", "--wipe",
+            "--data-root", DATA_ROOT, "--update-exe", UPDATE_EXE,
+        ]
+        .iter().map(|s| s.to_string()).collect();
+        assert_eq!(parse_run_args(&no_pid), None);
+
+        let bad_pid: Vec<String> = [
+            "--windows-app-uninstall-run", "--wait-pid", "notanumber",
+            "--wipe", "--data-root", DATA_ROOT, "--update-exe", UPDATE_EXE,
+        ]
+        .iter().map(|s| s.to_string()).collect();
+        assert_eq!(parse_run_args(&bad_pid), None);
+    }
+
+    #[test]
+    fn parse_run_args_rejects_neither_keep_nor_wipe() {
+        let argv: Vec<String> = [
+            "--windows-app-uninstall-run", "--wait-pid", "1",
+            "--data-root", DATA_ROOT, "--update-exe", UPDATE_EXE,
+        ]
+        .iter().map(|s| s.to_string()).collect();
+        assert_eq!(parse_run_args(&argv), None);
     }
 }
