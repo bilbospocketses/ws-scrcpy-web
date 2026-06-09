@@ -410,9 +410,9 @@ export function buildMachineWideInstallScript(
     ];
     // Install the launcher icon into the hicolor theme so the .desktop's
     // `Icon=ws-scrcpy-web` resolves to a real icon instead of a generic
-    // placeholder. The icon ships embedded in the AppImage (vpk `--icon
-    // assets/tray-icon.png` → the AppImage's `.DirIcon`); the caller passes its
-    // mounted path. Omitted (graceful skip) when no `iconSource` is supplied.
+    // placeholder. The caller (ServiceApi) passes `iconSource` = the bundled
+    // tray-icon.png (publish/tray-icon.png, resolved via __dirname — same pattern
+    // as getAppVersion's package.json). Omitted (graceful skip) when absent.
     // Wrapped in ONE best-effort group (trailing `|| true`, like the SELinux line
     // above): POSIX sh gives `&&`/`||` EQUAL left-assoc precedence, so a missing
     // `.DirIcon` (cp fails) must not break the outer `&&` chain and skip the

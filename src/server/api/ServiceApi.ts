@@ -840,16 +840,17 @@ export class ServiceApi {
             return true;
         }
         const version = getAppVersion();
-        // Resolve the launcher icon from the mounted AppImage so the machine-wide
-        // install can drop it into the hicolor theme (the system .desktop entry
-        // references `Icon=ws-scrcpy-web`). vpk embeds the icon as the AppImage's
-        // `.DirIcon` (built from `--icon assets/tray-icon.png`); `$APPDIR` is the
-        // FUSE-mount root of the running AppImage. This in-AppImage path is a
-        // runtime assumption (vpk's AppDir layout) verified in the smoke; the
-        // script's cp is best-effort, so a miss never fails the install. Gated on
-        // `$APPDIR` being set — when absent the icon step is skipped entirely.
-        const appDir = process.env['APPDIR'];
-        const iconSource = appDir ? path.join(appDir, '.DirIcon') : undefined;
+        // Resolve the launcher icon for the system .desktop entry (Icon=ws-scrcpy-web)
+        // so the machine-wide install can copy it into the hicolor theme. The icon is
+        // BUNDLED next to package.json (stage-publish.mjs copies assets/tray-icon.png →
+        // publish/tray-icon.png), resolved the same way getAppVersion() finds
+        // package.json: `path.resolve(__dirname, '..')` is the app root in both the
+        // packaged (<installRoot>/current/) and dev layouts. This replaces the prior
+        // `$APPDIR/.DirIcon` approach, which assumed a vpk AppDir layout that doesn't
+        // hold — the icon never installed and the menu entry stayed blank (item 51).
+        // The install script's cp is still best-effort, so a miss never fails install.
+        const bundledIcon = path.resolve(__dirname, '..', 'tray-icon.png');
+        const iconSource = fs.existsSync(bundledIcon) ? bundledIcon : undefined;
         const script = buildMachineWideInstallScript({ sourceAppImage: appImage, version, iconSource });
         try {
             await this.runPkexecFn(script, 'install-system-wide');

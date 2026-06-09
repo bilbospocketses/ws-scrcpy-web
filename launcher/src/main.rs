@@ -324,6 +324,26 @@ fn main() {
         Ok(Some(guard)) => Some(guard),
         Ok(None) => {
             log::info("another ws-scrcpy-web-launcher instance is already running; exiting");
+            // §item50: reopen the running instance in the browser rather than a
+            // silent no-op — clicking the .desktop shortcut (or any second launch)
+            // should bring the app back up, not do nothing. Linux only: the running
+            // instance wrote its port to the per-user dataRoot config, so we open
+            // http://localhost:<port>. An active *system* service is handled by the
+            // defer block earlier in main(); this covers user-service + local-instance
+            // launches. (Windows keeps the no-op — the hidden-console launcher has no
+            // window/IPC channel to the original instance.)
+            #[cfg(target_os = "linux")]
+            {
+                if let Some(dr) = common::config::data_root_from_env() {
+                    let cfg = common::config::AppConfig::load(&dr);
+                    if let Some(port) = cfg.web_port {
+                        let url = format!("http://localhost:{port}");
+                        log::info(&format!("reopening already-running instance at {url}"));
+                        let xdg = format!("{}/xdg-open", linux_service::tool_dir("xdg-open"));
+                        let _ = std::process::Command::new(&xdg).arg(&url).status();
+                    }
+                }
+            }
             std::process::exit(0);
         }
         Err(e) => {
