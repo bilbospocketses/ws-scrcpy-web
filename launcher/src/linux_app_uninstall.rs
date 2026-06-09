@@ -335,14 +335,7 @@ fn run_unelevated(a: &UninstallArgs) -> i32 {
             // DIRECTLY, best-effort (mirrors linux_service::run / the user_owned
             // loop). No relaunch — a complete uninstall never relaunches.
             log::info("uninstall: already root (system-service) — running privileged group directly");
-            for argv in &plan.privileged {
-                let (cmd, rest) = argv.split_first().expect("non-empty argv");
-                match std::process::Command::new(cmd).args(rest).status() {
-                    Ok(s) if s.success() => log::info(&format!("uninstall (root) ok: {}", argv.join(" "))),
-                    Ok(s) => log::error(&format!("uninstall (root) non-zero ({:?}): {}", s.code(), argv.join(" "))),
-                    Err(e) => log::error(&format!("uninstall (root) spawn failed: {} ({e})", argv.join(" "))),
-                }
-            }
+            run_best_effort(&plan.privileged, "uninstall (root)");
         }
         PrivMode::Pkexec => {
             let pkexec = format!("{}/pkexec", tool_dir("pkexec"));
@@ -406,14 +399,7 @@ fn run_unelevated(a: &UninstallArgs) -> i32 {
 
     // 2. Unelevated group (kills our own processes + tears down the user data
     //    root). Best-effort: log non-zero, KEEP GOING (mirrors linux_service::run).
-    for argv in plan.user_owned {
-        let (cmd, rest) = argv.split_first().expect("non-empty argv");
-        match std::process::Command::new(cmd).args(rest).status() {
-            Ok(s) if s.success() => log::info(&format!("uninstall ok: {}", argv.join(" "))),
-            Ok(s) => log::error(&format!("uninstall non-zero ({:?}): {}", s.code(), argv.join(" "))),
-            Err(e) => log::error(&format!("uninstall spawn failed: {} ({e})", argv.join(" "))),
-        }
-    }
+    run_best_effort(&plan.user_owned, "uninstall");
     0
 }
 
@@ -426,15 +412,22 @@ fn run_elevated(a: &UninstallArgs) -> i32 {
         a.svc_scope, a.machine_wide, a.keep
     ));
     let plan = plan_for(a);
-    for argv in plan.privileged {
+    run_best_effort(&plan.privileged, "uninstall (root)");
+    0
+}
+
+/// Run a best-effort command group: log each step's outcome and KEEP GOING on
+/// failure (never aborts the teardown). `label` distinguishes the privileged
+/// (root) group from the user-owned group in the log lines.
+fn run_best_effort(group: &[Vec<String>], label: &str) {
+    for argv in group {
         let (cmd, rest) = argv.split_first().expect("non-empty argv");
         match std::process::Command::new(cmd).args(rest).status() {
-            Ok(s) if s.success() => log::info(&format!("uninstall (root) ok: {}", argv.join(" "))),
-            Ok(s) => log::error(&format!("uninstall (root) non-zero ({:?}): {}", s.code(), argv.join(" "))),
-            Err(e) => log::error(&format!("uninstall (root) spawn failed: {} ({e})", argv.join(" "))),
+            Ok(s) if s.success() => log::info(&format!("{label} ok: {}", argv.join(" "))),
+            Ok(s) => log::error(&format!("{label} non-zero ({:?}): {}", s.code(), argv.join(" "))),
+            Err(e) => log::error(&format!("{label} spawn failed: {} ({e})", argv.join(" "))),
         }
     }
-    0
 }
 
 /// How `run_unelevated` runs the privileged teardown group — the

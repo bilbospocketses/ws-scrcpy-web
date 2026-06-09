@@ -30,11 +30,12 @@ Boxes start unticked — this is a fresh pass.
 
 ## #6 — First install + the beta.48 port-discovery re-confirm
 
-> Run this batch **first** on the fresh download (breadcrumb step 1). 1.2 + 4.2-user passed on beta.48; the smoke-target leaves that install/service code unchanged, so this is a quick re-confirm on the new binary.
+> Run this batch **first** on the fresh download (breadcrumb step 1). **Order matters — check 4.1 in the no-service window (after 1.2, before 4.2-user): installing any service flips `scopeRadioState.locked`, locking the scope radios read-only, so "system becomes selectable" is only observable before any service exists.** 1.2 + 4.2-user passed on beta.48; the smoke-target leaves that install/service code unchanged, so this is a quick re-confirm.
 
 | Test | How to perform | Expected + verify |
 |---|---|---|
 | ☐ **1.2** `[L]` Accept "all users" | GUI double-click the non-`+x` AppImage → **yes, all users** → one pkexec | Binary at `/opt/ws-scrcpy-web/`; `/opt/VERSION` = the smoke-target version; system `.desktop` present; original `~/Downloads` AppImage **gone** |
+| ☐ **4.1** `[L]` System-scope gate un-greys | **Before installing any service** (a service install flips `scopeRadioState.locked` → radios go read-only; see 4.4): Settings → service → select **system** scope | Now **selectable** + its install **un-greyed** now that you're machine-wide; was gated *"requires installing system-wide for all users first"* before 1.2 |
 | ☐ **4.2-user** `[L]` Install user service | Settings → service → **user** scope → install (no elevation) | Service active on 8000; stable ExecStart; **no "port discovery timed out"** (the beta.48 fix) |
 
 ## #7 — Current install checks ▶ active *(machine-wide + user-service in place, no teardown)*
@@ -43,8 +44,7 @@ Boxes start unticked — this is a fresh pass.
 |---|---|---|
 | ☐ **2.1** `[L]` Binary/deps labels | `ls -Z /opt/ws-scrcpy-web` | → **bin_t** — `VERSION` + `WsScrcpyWeb.AppImage` both `unconfined_u:object_r:bin_t:s0` |
 | ☐ **2.4** `[L]` Zero AVC | Watch `sudo journalctl -f \| grep -i avc` across the installs | **No** AVC denials |
-| ☐ **4.1** `[L]` System-scope gate | Settings → service → pick **system** scope | Now **enabled** (was greyed before machine-wide); user scope available in both modes |
-| ☐ **4.4** `[L]` Scope-radio legibility | Reopen Settings | Selected dot a **clear blue**; radios non-interactive (`pointer-events:none` + `tabindex=-1`, **not** `disabled`); **user** scope shown selected |
+| ☐ **4.4** `[L]` Scope-radio legibility *(locked-radios state — counterpart to 4.1)* | Reopen Settings | Selected dot a **clear blue**; radios non-interactive (`pointer-events:none` + `tabindex=-1`, **not** `disabled`); **user** scope shown selected |
 | ☐ **4.5** `[B]` Confirm-dialog buttons | Open the install/uninstall "privileges required" confirm | Cancel/confirm are **white-outline + white-text** |
 | ☐ **4.6** `[L]` Unit hygiene | `journalctl --user -u WsScrcpyWeb`; `pgrep -fa WsScrcpyWeb` | **No** `Unknown key 'StartLimitIntervalSec'`; **only the service** runs (no leftover home instance); no false timeout toast |
 | ☐ **3.2** `[L]` Single-instance flock | Launch a 2nd copy from `/opt` **and** from `~/Downloads` | 2nd launch **blocked** (flock on `$XDG_RUNTIME_DIR`); no 2nd server; existing URL opens |

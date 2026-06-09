@@ -575,6 +575,22 @@ dialog.settings-modal .settings-row {
     display: contents;
 }
 
+/*
+ * Error rows stretch out. The error message is rendered on the row's label,
+ * which normally lives in the fixed 20rem [labels] column — too narrow for the
+ * longer service/update errors. When a row's label carries .settings-status-error,
+ * lift the whole row out of `display: contents` into a full-width block spanning
+ * both columns so the error wraps across the full width; the retry/save button
+ * drops beneath it. (Status notes already span via grid-column:1/-1 on a <p>.)
+ */
+dialog.settings-modal .settings-row:has(.settings-status-error) {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.25rem;
+    grid-column: 1 / -1;
+}
+
 dialog.settings-modal .settings-label {
     grid-column: labels;
     color: var(--text-color-light, #888);
@@ -645,12 +661,12 @@ dialog.settings-modal .settings-control .settings-radio-label.settings-radio-loc
  * than .settings-btn-primary so it overrides when both classes are
  * present (used in the Updates section's dual-purpose button).
  */
-dialog.settings-modal .settings-btn.settings-btn-ready {
+dialog.modal .settings-btn.settings-btn-ready {
     color: #4caf50;
     border-color: #4caf50;
 }
 
-dialog.settings-modal .settings-btn.settings-btn-ready:hover {
+dialog.modal .settings-btn.settings-btn-ready:hover {
     background: rgba(76, 175, 80, 0.08);
 }
 
@@ -676,7 +692,7 @@ dialog.settings-modal .settings-input:focus {
     border-color: rgba(0, 0, 0, 0.15);
 }
 
-dialog.settings-modal .settings-btn {
+dialog.modal .settings-btn {
     border: 0.5px solid var(--text-color, #ddd);
     border-radius: 6px;
     background: transparent;
@@ -686,22 +702,22 @@ dialog.settings-modal .settings-btn {
     font: inherit;
 }
 
-dialog.settings-modal .settings-btn:disabled {
+dialog.modal .settings-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
 }
 
-dialog.settings-modal .settings-btn-primary {
+dialog.modal .settings-btn-primary {
     color: #5b9aff;
     border-color: #5b9aff;
 }
 
-dialog.settings-modal .settings-btn-danger {
+dialog.modal .settings-btn-danger {
     color: #ff6b6b;
     border-color: #ff6b6b;
 }
 
-dialog.settings-modal .settings-btn-danger-outline {
+dialog.modal .settings-btn-danger-outline {
     color: #f06c75;
     border-color: #f06c75;
     background: transparent;
@@ -709,9 +725,15 @@ dialog.settings-modal .settings-btn-danger-outline {
 
 dialog.settings-modal .settings-status {
     margin: 0.25rem 0 0;
+    /* Notes + status read as sub-text of the setting they annotate: indented +
+       bold-italic to set them apart. Errors add red via .settings-status-error
+       (layered on top, so they inherit this indent/weight/style). */
+    padding-left: 1.25rem;
     color: var(--text-color-light, #888);
     font-size: 13px;
     min-height: 1em;
+    font-style: italic;
+    font-weight: 600;
 }
 
 dialog.settings-modal .settings-status-error {
@@ -730,9 +752,11 @@ dialog.settings-modal .settings-status-ready {
 
 dialog.settings-modal .settings-stub-note {
     margin: 0;
+    padding-left: 1.25rem;
     color: var(--text-color-light, #888);
     font-size: 13px;
     font-style: italic;
+    font-weight: 600;
 }
 
 /*

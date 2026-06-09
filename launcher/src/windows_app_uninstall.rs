@@ -92,31 +92,33 @@ pub struct UninstallArgs {
 /// validation contract). Returning `None` signals the caller to log an error
 /// and return exit code 2.
 pub fn parse_args(args: &[String]) -> Option<UninstallArgs> {
-    // --keep XOR --wipe (exactly one required)
-    let keep = match (
+    let keep = parse_keep_flag(args)?;
+    let data_root = flag_value(args, "--data-root")?;
+    let update_exe = flag_value(args, "--update-exe")?;
+
+    Some(UninstallArgs { update_exe, data_root, keep })
+}
+
+/// Exactly one of `--keep` / `--wipe`. `Some(true)` = keep, `Some(false)` =
+/// wipe, `None` if neither or both are present (invalid).
+fn parse_keep_flag(args: &[String]) -> Option<bool> {
+    match (
         args.iter().any(|a| a == "--keep"),
         args.iter().any(|a| a == "--wipe"),
     ) {
-        (true, false) => true,
-        (false, true) => false,
-        _ => return None,
-    };
+        (true, false) => Some(true),
+        (false, true) => Some(false),
+        _ => None,
+    }
+}
 
-    // --data-root <abs path> (required)
-    let data_root = args
-        .iter()
-        .position(|a| a == "--data-root")
+/// Value following `flag` in `args` (e.g. the path after `--data-root`).
+/// `None` if the flag is absent or has no following value.
+fn flag_value(args: &[String], flag: &str) -> Option<String> {
+    args.iter()
+        .position(|a| a == flag)
         .and_then(|i| args.get(i + 1))
-        .cloned()?;
-
-    // --update-exe <abs path> (required)
-    let update_exe = args
-        .iter()
-        .position(|a| a == "--update-exe")
-        .and_then(|i| args.get(i + 1))
-        .cloned()?;
-
-    Some(UninstallArgs { update_exe, data_root, keep })
+        .cloned()
 }
 
 /// Parsed `--windows-app-uninstall-run` invocation (the Phase-2 cleaner).
@@ -152,29 +154,10 @@ pub fn parse_run_args(args: &[String]) -> Option<RunArgs> {
     if !args.iter().any(|a| a == "--windows-app-uninstall-run") {
         return None;
     }
-    let keep = match (
-        args.iter().any(|a| a == "--keep"),
-        args.iter().any(|a| a == "--wipe"),
-    ) {
-        (true, false) => true,
-        (false, true) => false,
-        _ => return None,
-    };
-    let wait_pid = args
-        .iter()
-        .position(|a| a == "--wait-pid")
-        .and_then(|i| args.get(i + 1))
-        .and_then(|s| s.parse::<u32>().ok())?;
-    let data_root = args
-        .iter()
-        .position(|a| a == "--data-root")
-        .and_then(|i| args.get(i + 1))
-        .cloned()?;
-    let update_exe = args
-        .iter()
-        .position(|a| a == "--update-exe")
-        .and_then(|i| args.get(i + 1))
-        .cloned()?;
+    let keep = parse_keep_flag(args)?;
+    let wait_pid = flag_value(args, "--wait-pid").and_then(|s| s.parse::<u32>().ok())?;
+    let data_root = flag_value(args, "--data-root")?;
+    let update_exe = flag_value(args, "--update-exe")?;
     Some(RunArgs { wait_pid, update_exe, data_root, keep })
 }
 
@@ -234,10 +217,11 @@ fn remove_targets(targets: &[String], attempts: u32) {
     let attempts = attempts.max(1);
     for target in targets {
         let path = std::path::Path::new(target);
-        let mut last_err: Option<std::io::Error> = None;
+        // Ok(true) = we removed it; Ok(false) = it was already absent; Err = failed.
+        let mut outcome: Result<bool, std::io::Error> = Ok(false);
         for attempt in 0..attempts {
             if !path.exists() {
-                last_err = None;
+                outcome = Ok(false);
                 break;
             }
             let result = if path.is_dir() {
@@ -247,20 +231,23 @@ fn remove_targets(targets: &[String], attempts: u32) {
             };
             match result {
                 Ok(()) => {
-                    last_err = None;
+                    outcome = Ok(true);
                     break;
                 }
                 Err(e) => {
-                    last_err = Some(e);
+                    outcome = Err(e);
                     if attempt + 1 < attempts {
                         std::thread::sleep(std::time::Duration::from_millis(500));
                     }
                 }
             }
         }
-        match last_err {
-            None => log::info(&format!("windows-app-uninstall: removed {target}")),
-            Some(e) => log::error(&format!(
+        match outcome {
+            Ok(true) => log::info(&format!("windows-app-uninstall: removed {target}")),
+            Ok(false) => log::info(&format!(
+                "windows-app-uninstall: {target} already absent — nothing to remove"
+            )),
+            Err(e) => log::error(&format!(
                 "windows-app-uninstall: could not remove {target}: {e}"
             )),
         }
