@@ -236,6 +236,17 @@ fn main() {
         std::process::exit(code);
     }
 
+    // Phase 2 of the Windows in-app uninstall: the temp copy staged by
+    // windows_app_uninstall::handle. Logging-disabled; waits for the original
+    // to exit, runs Update.exe --uninstall, then deletes the dataRoot targets.
+    // Distinct exact flag (--windows-app-uninstall-run) so it never collides
+    // with the Phase-1 --windows-app-uninstall match above.
+    #[cfg(windows)]
+    if let Some(code) = windows_app_uninstall::handle_run(&args) {
+        log::info(&format!("windows-app-uninstall-run exiting with code {code}"));
+        std::process::exit(code);
+    }
+
     // Elevate-and-run dispatch comes BEFORE Velopack hooks because the
     // helper is invoked through a UAC prompt and is a single-shot
     // operation — no need to bring up the supervisor, no need to register
