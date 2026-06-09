@@ -255,6 +255,15 @@ fn home_for_uid(uid: u32) -> Option<String> {
     String::from_utf8_lossy(&out.stdout).lines().next()?.split(':').nth(5).map(str::to_string)
 }
 
+/// A non-zero exit from a teardown step is benign — WARN, not ERROR — only for
+/// `reset-failed`: systemctl returns non-zero there when the unit isn't in a
+/// failed state, which is the normal case after a clean stop+disable. Every
+/// other step's non-zero is a genuine teardown error. (Mirrors the
+/// benign-error pattern in supervisor.rs's helper-refresh ETXTBSY handling.)
+fn teardown_failure_is_benign(argv: &[String]) -> bool {
+    argv.iter().any(|a| a == "reset-failed")
+}
+
 fn run(scope: Scope, unit: &str) -> i32 {
     let bd = tool_dir("systemctl");
     log::info(&format!("linux-service-teardown: scope={scope:?} unit={unit}"));
@@ -264,6 +273,13 @@ fn run(scope: Scope, unit: &str) -> i32 {
         let (cmd, rest) = argv.split_first().expect("non-empty argv");
         match std::process::Command::new(cmd).args(rest).status() {
             Ok(s) if s.success() => log::info(&format!("teardown ok: {}", argv.join(" "))),
+            // `reset-failed` exits non-zero when the unit isn't in a failed state
+            // (the normal case after a clean stop+disable) — benign, log at WARN.
+            Ok(s) if teardown_failure_is_benign(&argv) => log::warn(&format!(
+                "teardown: {} exited {:?} (benign — unit was not in a failed state)",
+                argv.join(" "),
+                s.code()
+            )),
             Ok(s) => log::error(&format!("teardown non-zero ({:?}): {}", s.code(), argv.join(" "))),
             Err(e) => log::error(&format!("teardown spawn failed: {} ({e})", argv.join(" "))),
         }
@@ -482,6 +498,29 @@ fn read_local_appimage_marker() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reset_failed_nonzero_is_benign() {
+        // systemctl reset-failed exits non-zero when the unit isn't failed —
+        // the normal case after a clean stop+disable; must NOT log as ERROR.
+        let argv = ["/usr/bin/systemctl", "--user", "reset-failed", "WsScrcpyWeb.service"]
+            .map(String::from)
+            .to_vec();
+        assert!(teardown_failure_is_benign(&argv));
+    }
+
+    #[test]
+    fn other_teardown_steps_nonzero_are_real_errors() {
+        for step in ["stop", "disable", "daemon-reload"] {
+            let argv = ["/usr/bin/systemctl", "--user", step, "WsScrcpyWeb.service"]
+                .map(String::from)
+                .to_vec();
+            assert!(
+                !teardown_failure_is_benign(&argv),
+                "{step} non-zero should be a real error, not benign"
+            );
+        }
+    }
 
     #[test]
     fn user_scope_teardown_sequence() {
