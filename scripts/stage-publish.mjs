@@ -123,6 +123,20 @@ function main() {
         copyFileSync(pkgLock, join(PUBLISH, 'package-lock.json')),
     );
 
+    // 5b. Linux menu icon — bundle the 256x256 tray-icon.png alongside
+    // package.json so the machine-wide install can copy it into the hicolor theme
+    // for the system .desktop entry (Icon=ws-scrcpy-web). Resolved at runtime via
+    // path.resolve(__dirname, '..', 'tray-icon.png') — the same bundled-file pattern
+    // getAppVersion() uses for package.json. (vpk's --icon embeds the icon in the
+    // AppImage too, but that copy is NOT reliably reachable as $APPDIR/.DirIcon —
+    // the prior approach, which left the menu icon blank.)
+    const trayIcon = join(REPO_ROOT, 'assets', 'tray-icon.png');
+    if (existsSync(trayIcon)) {
+        step('Copy tray-icon.png', () => copyFileSync(trayIcon, join(PUBLISH, 'tray-icon.png')));
+    } else {
+        console.log('  tray-icon.png skip (assets/tray-icon.png not present)');
+    }
+
     // 6. Install production deps into publish/.
     // execFileSync with explicit args array — no user input, no injection
     // surface. cmd.exe wrapper avoids the .cmd-execFile restriction
