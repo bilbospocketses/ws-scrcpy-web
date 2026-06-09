@@ -709,9 +709,15 @@ dialog.modal .settings-btn-danger-outline {
 
 dialog.settings-modal .settings-status {
     margin: 0.25rem 0 0;
+    /* Notes + status read as sub-text of the setting they annotate: indented +
+       bold-italic to set them apart. Errors add red via .settings-status-error
+       (layered on top, so they inherit this indent/weight/style). */
+    padding-left: 1.25rem;
     color: var(--text-color-light, #888);
     font-size: 13px;
     min-height: 1em;
+    font-style: italic;
+    font-weight: 600;
 }
 
 dialog.settings-modal .settings-status-error {
@@ -730,9 +736,11 @@ dialog.settings-modal .settings-status-ready {
 
 dialog.settings-modal .settings-stub-note {
     margin: 0;
+    padding-left: 1.25rem;
     color: var(--text-color-light, #888);
     font-size: 13px;
     font-style: italic;
+    font-weight: 600;
 }
 
 /*
