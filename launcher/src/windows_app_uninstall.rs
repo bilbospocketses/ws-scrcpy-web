@@ -197,7 +197,7 @@ pub fn handle(args: &[String]) -> Option<i32> {
             return Some(2);
         }
     };
-    Some(run_uninstall_in_place(&a))
+    Some(run_bootstrap(&a))
 }
 
 /// Run `Update.exe --uninstall` (Velopack: Program Files + ARP + the
@@ -281,6 +281,83 @@ fn run_uninstall_in_place(a: &UninstallArgs) -> i32 {
     run_update_exe(&plan.update_exe_step);
     remove_targets(&plan.data_root_targets, 1);
     0
+}
+
+/// Resolve the context-appropriate temp directory: the user's temp under a
+/// user token, the hardened `C:\Windows\SystemTemp` under a SYSTEM/system-
+/// service token. `GetTempPath2W` is the SYSTEM-safe API (Win10 1903+); fall
+/// back to `GetTempPathW`. `None` if both fail (caller → in-place fallback).
+fn resolve_temp_dir() -> Option<std::path::PathBuf> {
+    use windows::Win32::Storage::FileSystem::{GetTempPath2W, GetTempPathW};
+    // MAX_PATH (260) + 1; these calls return the length copied, excluding NUL.
+    let mut buf = [0u16; 261];
+    let mut len = unsafe { GetTempPath2W(Some(&mut buf)) };
+    if len == 0 {
+        len = unsafe { GetTempPathW(Some(&mut buf)) };
+    }
+    if len == 0 {
+        return None;
+    }
+    Some(std::path::PathBuf::from(String::from_utf16_lossy(
+        &buf[..len as usize],
+    )))
+}
+
+/// Phase 1: copy this launcher to temp and spawn it as the logging-disabled
+/// cleaner (Phase 2) with the uninstall params + our own pid as `--wait-pid`,
+/// then return so the process can exit — releasing the running-exe lock on the
+/// staged launcher under dataRoot. Falls back to the legacy in-place uninstall
+/// if temp resolution / self-copy / spawn fails.
+fn run_bootstrap(a: &UninstallArgs) -> i32 {
+    use std::os::windows::process::CommandExt;
+    // CREATE_NO_WINDOW = 0x08000000 (mirrors spawn.rs). The temp copy survives
+    // our exit: the uninstall helper runs outside any kill-on-job-close job.
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    let pid = std::process::id();
+
+    let temp_dir = match resolve_temp_dir() {
+        Some(d) => d,
+        None => {
+            log::error("windows-app-uninstall: temp dir unresolved; in-place fallback");
+            return run_uninstall_in_place(a);
+        }
+    };
+    let src = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(e) => {
+            log::error(&format!(
+                "windows-app-uninstall: current_exe failed: {e}; in-place fallback"
+            ));
+            return run_uninstall_in_place(a);
+        }
+    };
+    let dst = temp_dir.join(temp_copy_filename(pid));
+    if let Err(e) = std::fs::copy(&src, &dst) {
+        log::error(&format!(
+            "windows-app-uninstall: self-copy to {dst:?} failed: {e}; in-place fallback"
+        ));
+        return run_uninstall_in_place(a);
+    }
+
+    let run_args = build_run_args(pid, a.keep, &a.data_root, &a.update_exe);
+    log::info(&format!(
+        "windows-app-uninstall: staged cleaner at {dst:?}; spawning + exiting"
+    ));
+    match std::process::Command::new(&dst)
+        .args(&run_args)
+        .current_dir(&temp_dir) // CWD in temp, never under dataRoot
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+    {
+        Ok(_child) => 0, // detached; do NOT wait — exit so the lock releases
+        Err(e) => {
+            log::error(&format!(
+                "windows-app-uninstall: spawn cleaner failed: {e}; in-place fallback"
+            ));
+            run_uninstall_in_place(a)
+        }
+    }
 }
 
 #[cfg(test)]
