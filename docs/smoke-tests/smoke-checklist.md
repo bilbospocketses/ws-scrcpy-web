@@ -1,6 +1,6 @@
 # ws-scrcpy-web — Smoke Run-Sheet
 
-> **Smoke target: `v0.1.30-beta.50`** — bump this one line each release; everything below is version-agnostic.
+> **Smoke target: `v0.1.30-beta.52`** — bump this one line each release; everything below is version-agnostic.
 
 Execution-ordered, tickable checklist for the 0.1.30 Linux smoke gate. Regroups the canonical rows from
 [`smoke-full.md`](./smoke-full.md) by **app state** — the order you actually run them; that doc
@@ -146,6 +146,18 @@ App-section additions (no module-doc counterpart): the one-click **install for a
 | ☐ **15.5** `[L]` uninstall — system-service cascade | System-scope service installed → **uninstall…** (runs from the root service context). | Runs **as root, NO pkexec**; `/opt/ws-scrcpy-web` + `/var/opt/ws-scrcpy-web` + the systemd unit are **all gone**; **zero AVC**. |
 | ☐ **15.6** `[L]` uninstall — keep settings & logs | Uninstall with **"keep my settings & logs" checked**. | `config.json` + `logs/` **survive** at the data root (`~/.local/share/WsScrcpyWeb` local, or `/var/opt/ws-scrcpy-web` system); `dependencies/` is **gone either way**; a **reinstall reuses the saved port**. |
 | ☐ **15.7** `[L]` uninstall — SELinux clean | After any uninstall, inspect the fcontext rules + the AVC monitor. | `sudo semanage fcontext -l \| grep ws-scrcpy-web` → **empty**; **zero AVC**. |
+
+## #16 — Windows App-section: in-app uninstall + stop-exit 🪟 *(drive from smoke-full Module 15)*
+
+New in beta.51, the wipe self-deletion fixed in beta.52. Run on the clean Win11 snapshot after the MSI install. The `[W]` tag distinguishes these from the Linux `15.x` rows in #15.
+
+| Test | How to perform | Expected + verify |
+|---|---|---|
+| ☐ **15.1** `[W]` In-app uninstall — keep | MSI install → Settings → **App** → **uninstall** → keep **checked** (default) → uninstall | **One UAC** (Update.exe self-elevates — VM decision #1); `C:\Program Files\WsScrcpyWeb\` gone; service gone (`sc query WsScrcpyWeb` → not found); tray gone; **ARP entry gone**; `config.json` + `logs\` **survive** under `%ProgramData%\WsScrcpyWeb`, `dependencies\` gone; reinstall reuses the saved port |
+| ☐ **15.2** `[W]` In-app uninstall — wipe | Same but **uncheck** keep | As 15.1, **and the whole `%ProgramData%\WsScrcpyWeb` is gone** — incl. `control\operation-server\` (the beta.52 fix: the temp-copy cleaner removes it after the original exits). Confirm **no** leftover dir |
+| ☐ **15.3** `[W]` Uninstall modal UX | Open the uninstall modal | Top-layer overlay above Settings; **cancel** white-outline, **uninstall** red text + border; keep checkbox **checked by default**; cancel / Esc / backdrop = no action |
+| ☐ **15.4** `[W]` Stop-exit reaps tray + adb | Local mode, device + stream live → Settings → **App** → **stop server & exit** | Tab closes / "app stopped"; Task Manager shows **no** lingering `ws-scrcpy-web-launcher.exe` / `node.exe` / `ws-scrcpy-web-tray.exe` / `adb.exe` |
+| ☐ **15.5** `[W]` App-section order | Settings → App | Order top→bottom: **reset prompts → stop server & exit → uninstall ws-scrcpy-web** (no "install for all users" on Windows) |
 
 ---
 

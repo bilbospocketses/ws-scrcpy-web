@@ -57,6 +57,16 @@ fn main() {
         std::process::exit(0);
     }
 
+    // The Windows uninstall cleaner (--windows-app-uninstall-run) is spawned
+    // with --no-log: it must NEVER touch the dataRoot for logging, because
+    // log::append() does create_dir_all(<dataRoot>/logs) on every line, which
+    // would resurrect the very tree the cleaner is about to wipe. Disable HERE,
+    // before the first log::info below, so the cleaner is silent from its first
+    // instruction (honors the flag build_run_args emits).
+    if args.iter().any(|a| a == "--no-log") {
+        log::disable();
+    }
+
     log::info(&format!(
         "ws-scrcpy-web-launcher v{} starting",
         env!("CARGO_PKG_VERSION")
@@ -233,6 +243,17 @@ fn main() {
     #[cfg(windows)]
     if let Some(code) = windows_app_uninstall::handle(&args) {
         log::info(&format!("windows-app-uninstall exiting with code {code}"));
+        std::process::exit(code);
+    }
+
+    // Phase 2 of the Windows in-app uninstall: the temp copy staged by
+    // windows_app_uninstall::handle. Logging-disabled; waits for the original
+    // to exit, runs Update.exe --uninstall, then deletes the dataRoot targets.
+    // Distinct exact flag (--windows-app-uninstall-run) so it never collides
+    // with the Phase-1 --windows-app-uninstall match above.
+    #[cfg(windows)]
+    if let Some(code) = windows_app_uninstall::handle_run(&args) {
+        log::info(&format!("windows-app-uninstall-run exiting with code {code}"));
         std::process::exit(code);
     }
 

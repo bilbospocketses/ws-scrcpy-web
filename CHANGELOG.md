@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The Windows in-app uninstall now fully removes the data root.** When you unchecked "keep my settings & logs", the uninstall could leave `%ProgramData%\WsScrcpyWeb` behind. The helper that does the cleanup ran from *inside* that folder (`…\control\operation-server\`), and Windows can't delete a running program — and even after a successful delete, the helper's own logging immediately recreated the `logs` folder. The helper now copies itself to the system temp folder and that copy — with logging turned off, and after waiting for the original to exit — runs the uninstaller and deletes the data root, so nothing is left behind. Keeping settings still preserves `config.json` and `logs`.
+
 ## [0.1.30-beta.51] - 2026-06-08
 
 ### Added
