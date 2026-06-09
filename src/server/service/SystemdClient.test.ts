@@ -33,7 +33,6 @@ describe('system-scope staging', () => {
 
 describe('buildSystemInstallScript', () => {
     const args = {
-        sourceAppImage: '/home/u/Apps/WsScrcpyWeb-linux-beta.AppImage',
         unitTmpPath: '/tmp/WsScrcpyWeb.service.tmp',
         unitPath: '/etc/systemd/system/WsScrcpyWeb.service',
         name: 'WsScrcpyWeb',
@@ -41,7 +40,6 @@ describe('buildSystemInstallScript', () => {
 
     it('stages the launcher helper into /opt alongside the AppImage (bin_t via the fcontext rule)', () => {
         const script = buildSystemInstallScript({
-            sourceAppImage: '/home/u/Apps/WsScrcpyWeb-linux-beta.AppImage',
             sourceHelper: '/home/u/.local/share/WsScrcpyWeb/control/operation-server/ws-scrcpy-web-launcher.exe',
             unitTmpPath: '/tmp/WsScrcpyWeb.service.tmp',
             unitPath: '/etc/systemd/system/WsScrcpyWeb.service',
@@ -56,15 +54,15 @@ describe('buildSystemInstallScript', () => {
 
     it('omits the helper cp when no sourceHelper is provided (from-source / unavailable)', () => {
         const script = buildSystemInstallScript({
-            sourceAppImage: '/a.AppImage', unitTmpPath: '/t', unitPath: '/u', name: 'WsScrcpyWeb',
+            unitTmpPath: '/t', unitPath: '/u', name: 'WsScrcpyWeb',
         });
         expect(script).not.toContain('ws-scrcpy-web-launcher.exe');
     });
 
-    it('stages the AppImage to /opt, chmods, labels bin_t, then installs the unit', () => {
+    it('prepares /opt, chmods the (already-staged) binary, labels bin_t, then installs the unit', () => {
         const script = buildSystemInstallScript(args);
         expect(script).toContain('mkdir -p /opt/ws-scrcpy-web');
-        expect(script).toContain('cp "/home/u/Apps/WsScrcpyWeb-linux-beta.AppImage" "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"');
+        // the AppImage is NOT re-copied (machine-wide precondition) — only chmod'd
         expect(script).toContain('chmod 0755 "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"');
         expect(script).toContain("semanage fcontext -a -t bin_t '/opt/ws-scrcpy-web(/.*)?'");
         expect(script).toContain('restorecon -Rv "/opt/ws-scrcpy-web"');
@@ -96,7 +94,6 @@ describe('buildSystemInstallScript', () => {
 
     it('copies the user deps into /opt and seeds the data config (#36)', () => {
         const script = buildSystemInstallScript({
-            sourceAppImage: '/home/u/Apps/WsScrcpyWeb-linux-beta.AppImage',
             sourceDeps: '/home/u/.local/share/WsScrcpyWeb/dependencies',
             seedConfigTmpPath: '/tmp/WsScrcpyWeb.seed.json',
             unitTmpPath: '/tmp/WsScrcpyWeb.service.tmp',
@@ -123,6 +120,17 @@ describe('buildSystemInstallScript', () => {
         expect(script).not.toContain('cp -a');
         expect(script).not.toContain('config.json');
     });
+
+    it('does NOT stage/copy the AppImage into /opt (machine-wide is a precondition — the binary is already there, so copying self-copies)', () => {
+        // The system-service install is gated behind a machine-wide install, so
+        // /opt/ws-scrcpy-web/WsScrcpyWeb.AppImage already exists AND is the
+        // running binary ($APPIMAGE). Re-staging it is a `cp X X` self-copy that
+        // GNU cp refuses ("are the same file"), aborting the pkexec script. The
+        // install must not copy the AppImage — the unit's ExecStart already
+        // points at the existing /opt binary.
+        const script = buildSystemInstallScript(args);
+        expect(script).not.toMatch(/cp\s+"[^"]*"\s+"\/opt\/ws-scrcpy-web\/WsScrcpyWeb\.AppImage"/);
+    });
 });
 
 describe('SYSTEM_STATE_DIR — FHS /var/opt retargeting', () => {
@@ -143,7 +151,7 @@ describe('SYSTEM_STATE_DIR — FHS /var/opt retargeting', () => {
 
     it('system install seeds config + labels state under /var/opt (var_lib_t)', () => {
         const script = buildSystemInstallScript(
-            { sourceAppImage: '/home/u/App.AppImage', seedConfigTmpPath: '/tmp/seed.json',
+            { seedConfigTmpPath: '/tmp/seed.json',
               unitTmpPath: '/tmp/u.service', unitPath: '/etc/systemd/system/WsScrcpyWeb.service', name: 'WsScrcpyWeb' },
             (t) => `/usr/bin/${t}`, (t) => `/usr/sbin/${t}`,
         );

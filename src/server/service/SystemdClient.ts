@@ -288,7 +288,6 @@ export function renderUnitFile(opts: ServiceInstallOptions, scope: SystemdScope)
  */
 export function buildSystemInstallScript(
     args: {
-        sourceAppImage: string;
         sourceHelper?: string;
         sourceDeps?: string;
         seedConfigTmpPath?: string;
@@ -316,7 +315,12 @@ export function buildSystemInstallScript(
         //    The deps dir is added below only when we have deps to copy.
         `${mkdir} -p ${STAGED_SYSTEM_DIR}`,
         `${mkdir} -p ${SYSTEM_STATE_DIR}`,
-        `${cp} "${args.sourceAppImage}" "${staged}"`,
+        // The AppImage is intentionally NOT staged here. A system-service install
+        // is gated on a prior machine-wide install (systemServiceInstallGate), so
+        // /opt/ws-scrcpy-web/WsScrcpyWeb.AppImage already exists AND is the running
+        // binary — copying it onto itself is a `cp X X` self-copy that GNU cp
+        // refuses ("are the same file"), aborting the pkexec script. We only ensure
+        // it's executable; the unit's ExecStart points at this existing /opt binary.
         `${chmod} 0755 "${staged}"`,
     ];
     // 1b. optionally stage the teardown helper alongside the AppImage so the
@@ -705,7 +709,6 @@ export class SystemdClient implements ServiceClient {
             }
             try {
                 const cmd = buildSystemInstallScript({
-                    sourceAppImage: opts.binPath,
                     ...(opts.linuxHelperSource ? { sourceHelper: opts.linuxHelperSource } : {}),
                     ...(opts.sourceDeps ? { sourceDeps: opts.sourceDeps } : {}),
                     ...(seedTmpFile ? { seedConfigTmpPath: seedTmpFile } : {}),
