@@ -30,10 +30,26 @@
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 static LOG_NAME: OnceLock<String> = OnceLock::new();
+static LOG_DISABLED: AtomicBool = AtomicBool::new(false);
+
+/// Turn off all logging (file + stderr) for this process. Used by the
+/// Windows in-app uninstall cleaner: every `append()` calls
+/// `create_dir_all(<dataRoot>/logs)`, which would resurrect the data root
+/// after a `--wipe`. The cleaner calls this once at startup so deletion is
+/// final. Idempotent; intentionally no re-enable.
+pub fn disable() {
+    LOG_DISABLED.store(true, Ordering::Relaxed);
+}
+
+/// True once `disable()` has been called in this process.
+pub fn is_disabled() -> bool {
+    LOG_DISABLED.load(Ordering::Relaxed)
+}
 
 /// Set the log file basename for this process. Should be called once
 /// at startup, before any [`info`]/[`error`] calls, with the binary's
@@ -107,6 +123,9 @@ fn civil_from_days(z: i64) -> (i32, u32, u32) {
 }
 
 fn append(prefix: &str, msg: &str) {
+    if is_disabled() {
+        return;
+    }
     let ts = format_timestamp_utc(SystemTime::now());
     if let Some(path) = log_path() {
         if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&path) {
@@ -168,5 +187,16 @@ mod tests {
         // test must run before any init() in the same test binary; the
         // common test process never calls init() so this is safe.
         assert_eq!(log_basename(), "launcher");
+    }
+
+    #[test]
+    fn disable_silences_logging() {
+        // The Windows uninstall cleaner must be able to turn off all logging so
+        // that append()'s create_dir_all(<dataRoot>/logs) never resurrects the
+        // data root after a wipe. disable() is process-global and irreversible;
+        // no other common-crate test reads is_disabled(), so ordering is safe.
+        assert!(!is_disabled(), "logging starts enabled");
+        disable();
+        assert!(is_disabled(), "disable() must set the gate");
     }
 }
