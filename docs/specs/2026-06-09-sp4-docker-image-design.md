@@ -105,6 +105,8 @@ VOLUME /data
 - **Settings → Updates:** the "check for updates now" control hidden; replaced with *"update via `docker pull bilbospocketses/ws-scrcpy-web:latest`."* (locked copy, verbatim).
 - **libfuse2 banner:** always hidden (Velopack-specific; no Docker relevance).
 
+**Note styling:** the Service + Updates informational copy above adopts the shared **indented bold-italic** Settings-note convention (todo item 47, surfaced in the beta.52 smoke) so it reads as a sub-note, set apart from the settings.
+
 ## 9. Local-Dependencies-Only compliance
 
 - adb / node / scrcpy-server resolve **only** from `/data/dependencies`. The old stub `Dockerfile`'s `apt-get install android-tools-adb` is **deleted** — it was a direct violation (system-package adb).
