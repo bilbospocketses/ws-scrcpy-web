@@ -840,17 +840,29 @@ export class ServiceApi {
             return true;
         }
         const version = getAppVersion();
-        // Resolve the launcher icon for the system .desktop entry (Icon=ws-scrcpy-web)
-        // so the machine-wide install can copy it into the hicolor theme. The icon is
-        // BUNDLED next to package.json (stage-publish.mjs copies assets/tray-icon.png →
-        // publish/tray-icon.png), resolved the same way getAppVersion() finds
-        // package.json: `path.resolve(__dirname, '..')` is the app root in both the
-        // packaged (<installRoot>/current/) and dev layouts. This replaces the prior
-        // `$APPDIR/.DirIcon` approach, which assumed a vpk AppDir layout that doesn't
-        // hold — the icon never installed and the menu entry stayed blank (item 51).
-        // The install script's cp is still best-effort, so a miss never fails install.
+        // Launcher icon for the system .desktop entry (Icon=ws-scrcpy-web). It ships
+        // BUNDLED next to package.json (stage-publish.mjs → publish/tray-icon.png),
+        // resolved like getAppVersion() finds package.json: path.resolve(__dirname, '..').
+        //
+        // CRITICAL: the install runs as ROOT (pkexec), but we run from a per-user
+        // FUSE-mounted AppImage — and root CANNOT read that mount (mounts are private
+        // to the mounting user; no allow_other/allow_root). Handing root a mount-path
+        // iconSource makes the privileged `cp` fail silently → blank menu icon (item 51,
+        // confirmed in the smoke: `sudo test -r <mount>/usr/bin/tray-icon.png` → cannot
+        // read). Fix: WE (the mounting user) copy the icon to a root-readable temp in
+        // os.tmpdir() first; the install script copies from there into the hicolor theme.
+        // Removed in `finally`. Best-effort throughout — a miss never fails the install.
         const bundledIcon = path.resolve(__dirname, '..', 'tray-icon.png');
-        const iconSource = fs.existsSync(bundledIcon) ? bundledIcon : undefined;
+        let iconSource: string | undefined;
+        if (fs.existsSync(bundledIcon)) {
+            try {
+                const stagedIcon = path.join(os.tmpdir(), `ws-scrcpy-web-menu-icon-${process.pid}.png`);
+                fs.copyFileSync(bundledIcon, stagedIcon);
+                iconSource = stagedIcon;
+            } catch {
+                iconSource = undefined;
+            }
+        }
         const script = buildMachineWideInstallScript({ sourceAppImage: appImage, version, iconSource });
         try {
             await this.runPkexecFn(script, 'install-system-wide');
@@ -884,6 +896,12 @@ export class ServiceApi {
             const declined = /dismissed/i.test(msg);
             res.writeHead(declined ? 403 : 500);
             res.end(JSON.stringify({ ok: false, error: msg, reason: declined ? 'uac-declined' : 'unknown' }));
+        } finally {
+            // Remove the root-readable temp icon (best-effort; the privileged install
+            // script has already copied it into the hicolor theme by now).
+            if (iconSource) {
+                try { fs.rmSync(iconSource, { force: true }); } catch { /* best-effort */ }
+            }
         }
         return true;
     }

@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The Linux app-menu icon now actually renders** (completing the beta.54 fix). beta.54 bundled the icon correctly, but the machine-wide install runs as root (`pkexec`) and can't read it from the *per-user FUSE-mounted* AppImage — the privileged `cp` failed silently and the menu entry stayed blank. The icon is now staged to a root-readable temp (`os.tmpdir()`) before the install copies it into the hicolor theme.
+
 ## [0.1.30-beta.54] - 2026-06-09
 
 ### Fixed
