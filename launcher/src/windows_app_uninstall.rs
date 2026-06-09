@@ -197,57 +197,89 @@ pub fn handle(args: &[String]) -> Option<i32> {
             return Some(2);
         }
     };
-    Some(run_uninstall(&a))
+    Some(run_uninstall_in_place(&a))
 }
 
-/// Execute the uninstall plan. Best-effort: log + continue on errors.
-fn run_uninstall(a: &UninstallArgs) -> i32 {
-    log::info(&format!(
-        "windows-app-uninstall: update_exe={:?} data_root={:?} keep={}",
-        a.update_exe, a.data_root, a.keep
-    ));
-    let plan = windows_app_uninstall_commands(&a.update_exe, &a.data_root, a.keep);
-
-    // 1. Run Update.exe --uninstall FIRST. This fires Velopack's uninstaller
-    //    which triggers --veloapp-uninstall → service/tray teardown + ARP
-    //    cleanup. Local-Dependencies-Only: absolute path, no PATH resolution.
-    let argv = &plan.update_exe_step;
-    let (cmd, rest) = argv.split_first().expect("update_exe_step is always non-empty");
+/// Run `Update.exe --uninstall` (Velopack: Program Files + ARP + the
+/// --veloapp-uninstall service/tray hook). `update_exe_step` is the argv the
+/// builder produced (`[update_exe, "--uninstall"]`). Best-effort: logs (if
+/// logging is enabled) and returns regardless — the app is being removed
+/// either way. Local-Dependencies-Only: absolute path, no PATH resolution.
+fn run_update_exe(update_exe_step: &[String]) {
+    let (cmd, rest) = update_exe_step
+        .split_first()
+        .expect("update_exe_step is always non-empty");
     match std::process::Command::new(cmd).args(rest).status() {
-        Ok(s) if s.success() => {
-            log::info(&format!("windows-app-uninstall: Update.exe ok ({})", argv.join(" ")))
-        }
+        Ok(s) if s.success() => log::info(&format!(
+            "windows-app-uninstall: Update.exe ok ({})",
+            update_exe_step.join(" ")
+        )),
         Ok(s) => log::error(&format!(
             "windows-app-uninstall: Update.exe non-zero ({:?}): {}",
             s.code(),
-            argv.join(" ")
+            update_exe_step.join(" ")
         )),
         Err(e) => log::error(&format!(
             "windows-app-uninstall: Update.exe spawn failed: {} ({e})",
-            argv.join(" ")
+            update_exe_step.join(" ")
         )),
     }
+}
 
-    // 2. Remove dataRoot targets via std::fs (compiled-in; no PATH tools).
-    for target in &plan.data_root_targets {
+/// Remove each dataRoot target via std::fs (compiled-in; no PATH tools),
+/// retrying up to `attempts` times with a 500ms delay between tries to absorb
+/// residual handle-release lag (e.g. the originating helper exiting). Best-
+/// effort: logs and continues on failure.
+fn remove_targets(targets: &[String], attempts: u32) {
+    let attempts = attempts.max(1);
+    for target in targets {
         let path = std::path::Path::new(target);
-        if !path.exists() {
-            log::info(&format!("windows-app-uninstall: target absent, skipping: {target}"));
-            continue;
+        let mut last_err: Option<std::io::Error> = None;
+        for attempt in 0..attempts {
+            if !path.exists() {
+                last_err = None;
+                break;
+            }
+            let result = if path.is_dir() {
+                std::fs::remove_dir_all(path)
+            } else {
+                std::fs::remove_file(path)
+            };
+            match result {
+                Ok(()) => {
+                    last_err = None;
+                    break;
+                }
+                Err(e) => {
+                    last_err = Some(e);
+                    if attempt + 1 < attempts {
+                        std::thread::sleep(std::time::Duration::from_millis(500));
+                    }
+                }
+            }
         }
-        let result = if path.is_dir() {
-            std::fs::remove_dir_all(path)
-        } else {
-            std::fs::remove_file(path)
-        };
-        match result {
-            Ok(()) => log::info(&format!("windows-app-uninstall: removed {target}")),
-            Err(e) => log::error(&format!(
+        match last_err {
+            None => log::info(&format!("windows-app-uninstall: removed {target}")),
+            Some(e) => log::error(&format!(
                 "windows-app-uninstall: could not remove {target}: {e}"
             )),
         }
     }
+}
 
+/// Legacy in-place uninstall: run Update.exe then delete the dataRoot targets
+/// from THIS process. Used ONLY as the Phase-1 fallback when the temp-copy
+/// cleaner cannot be staged (temp unresolved / self-copy / spawn failure).
+/// Known to orphan the running helper's own directory on --wipe (Windows can't
+/// delete a running exe) — no worse than pre-fix behavior, hence fallback-only.
+fn run_uninstall_in_place(a: &UninstallArgs) -> i32 {
+    log::info(&format!(
+        "windows-app-uninstall(in-place fallback): update_exe={:?} data_root={:?} keep={}",
+        a.update_exe, a.data_root, a.keep
+    ));
+    let plan = windows_app_uninstall_commands(&a.update_exe, &a.data_root, a.keep);
+    run_update_exe(&plan.update_exe_step);
+    remove_targets(&plan.data_root_targets, 1);
     0
 }
 
