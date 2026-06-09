@@ -645,12 +645,12 @@ dialog.settings-modal .settings-control .settings-radio-label.settings-radio-loc
  * than .settings-btn-primary so it overrides when both classes are
  * present (used in the Updates section's dual-purpose button).
  */
-dialog.settings-modal .settings-btn.settings-btn-ready {
+dialog.modal .settings-btn.settings-btn-ready {
     color: #4caf50;
     border-color: #4caf50;
 }
 
-dialog.settings-modal .settings-btn.settings-btn-ready:hover {
+dialog.modal .settings-btn.settings-btn-ready:hover {
     background: rgba(76, 175, 80, 0.08);
 }
 
@@ -676,7 +676,7 @@ dialog.settings-modal .settings-input:focus {
     border-color: rgba(0, 0, 0, 0.15);
 }
 
-dialog.settings-modal .settings-btn {
+dialog.modal .settings-btn {
     border: 0.5px solid var(--text-color, #ddd);
     border-radius: 6px;
     background: transparent;
@@ -686,22 +686,22 @@ dialog.settings-modal .settings-btn {
     font: inherit;
 }
 
-dialog.settings-modal .settings-btn:disabled {
+dialog.modal .settings-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
 }
 
-dialog.settings-modal .settings-btn-primary {
+dialog.modal .settings-btn-primary {
     color: #5b9aff;
     border-color: #5b9aff;
 }
 
-dialog.settings-modal .settings-btn-danger {
+dialog.modal .settings-btn-danger {
     color: #ff6b6b;
     border-color: #ff6b6b;
 }
 
-dialog.settings-modal .settings-btn-danger-outline {
+dialog.modal .settings-btn-danger-outline {
     color: #f06c75;
     border-color: #f06c75;
     background: transparent;
