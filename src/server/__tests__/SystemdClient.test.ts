@@ -255,7 +255,20 @@ describe('SystemdClient', () => {
             const sysCalls = execFileSyncMock.mock.calls.filter((c) => c[0] === 'systemctl');
             expect(sysCalls).toHaveLength(2);
             expect(sysCalls[0]![1]).toEqual(['daemon-reload']);
-            expect(sysCalls[1]![1]).toEqual(['enable', '--now', 'WsScrcpyWeb.service']);
+            // B1: enable (persist) but NOT --now — the local instance still holds the
+            // web port; a rootful handoff helper starts the service after it exits.
+            expect(sysCalls[1]![1]).toEqual(['enable', 'WsScrcpyWeb.service']);
+
+            // B1: the rootful systemd-run install-handoff is spawned (transient unit
+            // name carries Date.now(), so assert the stable flags + helper + scope).
+            const handoffCalls = execFileSyncMock.mock.calls.filter((c) => c[0] === 'systemd-run');
+            expect(handoffCalls).toHaveLength(1);
+            const handoffArgs = (handoffCalls[0]![1] as string[]).join(' ');
+            expect(handoffArgs).toContain('--collect');
+            expect(handoffArgs).toContain('--setenv=DATA_ROOT=/var/opt/ws-scrcpy-web');
+            expect(handoffArgs).toContain(
+                '/opt/ws-scrcpy-web/ws-scrcpy-web-launcher.exe --linux-service-install-handoff --scope system --unit WsScrcpyWeb',
+            );
 
             const loginctlCalls = execFileSyncMock.mock.calls.filter(
                 (c) => c[0] === 'loginctl',
