@@ -29,13 +29,15 @@
 
 use std::fs::{self, OpenOptions};
 use std::io::{IsTerminal, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 static LOG_NAME: OnceLock<String> = OnceLock::new();
 static LOG_DISABLED: AtomicBool = AtomicBool::new(false);
+
+const MAX_LOG_SIZE: u64 = 10 * 1024 * 1024; // 10MB
 
 /// Turn off all logging (file + stderr) for this process. Used by the
 /// Windows in-app uninstall cleaner: every `append()` calls
@@ -137,12 +139,47 @@ fn append(prefix: &str, msg: &str) {
     }
     let ts = format_timestamp_utc(SystemTime::now());
     if let Some(path) = log_path() {
+        rotate_by_rename_if_large(&path, MAX_LOG_SIZE);
         if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&path) {
             let _ = writeln!(f, "{ts} [{prefix}] {msg}");
         }
     }
     if should_echo_stderr(std::io::stderr().is_terminal()) {
         eprintln!("{ts} [{prefix}] {msg}");
+    }
+}
+
+/// Append ".1" to a path's full filename (so `launcher.log` -> `launcher.log.1`,
+/// not `Path::with_extension`'s `launcher.1`).
+fn dot_one(path: &Path) -> PathBuf {
+    let mut s = path.as_os_str().to_owned();
+    s.push(".1");
+    PathBuf::from(s)
+}
+
+/// Rotate by RENAME when `path` is at/over `max_bytes`. Safe only for files
+/// WE open per-write (no persistent fd) — launcher.log / tray.log / server.log
+/// between spawns. Best-effort; never panics.
+pub fn rotate_by_rename_if_large(path: &Path, max_bytes: u64) {
+    if let Ok(meta) = fs::metadata(path) {
+        if meta.len() >= max_bytes {
+            let backup = dot_one(path);
+            let _ = fs::remove_file(&backup); // Windows rename won't replace
+            let _ = fs::rename(path, &backup);
+        }
+    }
+}
+
+/// Rotate by COPY-TRUNCATE when `path` is at/over `max_bytes`. The logrotate
+/// `copytruncate` technique: copy -> `.1`, then truncate the original in place.
+/// Required for files an EXTERNAL writer holds open in append mode (systemd
+/// service.log) — a rename would orphan that fd. Best-effort; never panics.
+pub fn copy_truncate_if_large(path: &Path, max_bytes: u64) {
+    if let Ok(meta) = fs::metadata(path) {
+        if meta.len() >= max_bytes {
+            let _ = fs::copy(path, dot_one(path));
+            let _ = OpenOptions::new().write(true).truncate(true).open(path);
+        }
     }
 }
 
@@ -215,5 +252,35 @@ mod tests {
     fn should_echo_stderr_follows_is_terminal() {
         assert!(super::should_echo_stderr(true));
         assert!(!super::should_echo_stderr(false));
+    }
+
+    #[test]
+    fn rename_rotation_moves_oversized_file_to_dot_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("launcher.log");
+        std::fs::write(&f, vec![0u8; 11]).unwrap();
+        super::rotate_by_rename_if_large(&f, 10);
+        assert!(dir.path().join("launcher.log.1").exists());
+        assert!(!f.exists(), "original renamed away; next append recreates it");
+    }
+
+    #[test]
+    fn rename_rotation_leaves_small_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("launcher.log");
+        std::fs::write(&f, vec![0u8; 5]).unwrap();
+        super::rotate_by_rename_if_large(&f, 10);
+        assert!(!dir.path().join("launcher.log.1").exists());
+        assert!(f.exists());
+    }
+
+    #[test]
+    fn copy_truncate_preserves_inode_and_backs_up() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("service.log");
+        std::fs::write(&f, vec![b'x'; 11]).unwrap();
+        super::copy_truncate_if_large(&f, 10);
+        assert_eq!(std::fs::read(dir.path().join("service.log.1")).unwrap().len(), 11);
+        assert_eq!(std::fs::metadata(&f).unwrap().len(), 0);
     }
 }
