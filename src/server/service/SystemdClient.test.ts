@@ -131,6 +131,23 @@ describe('buildSystemInstallScript', () => {
         const script = buildSystemInstallScript(args);
         expect(script).not.toMatch(/cp\s+"[^"]*"\s+"\/opt\/ws-scrcpy-web\/WsScrcpyWeb\.AppImage"/);
     });
+
+    it('with a staged helper: enables (not --now) and spawns a rootful system handoff (beta.57)', () => {
+        const script = buildSystemInstallScript(
+            { sourceHelper: '/home/u/.local/share/WsScrcpyWeb/control/operation-server/ws-scrcpy-web-launcher.exe',
+              unitTmpPath: '/tmp/u', unitPath: '/etc/systemd/system/WsScrcpyWeb.service',
+              name: 'WsScrcpyWeb', handoffUnit: 'wsscrcpy-install-123' },
+            (t) => `/usr/bin/${t}`, (t) => `/usr/sbin/${t}`,
+        );
+        // never start under the local instance's still-live port (the beta.56 self-defer):
+        expect(script).not.toContain('enable --now');
+        expect(script).toContain('/usr/bin/systemctl enable WsScrcpyWeb.service');
+        // rootful, out-of-cgroup handoff that waits for the port to free, then starts + verifies:
+        expect(script).toContain(
+            '/usr/bin/systemd-run --collect --unit=wsscrcpy-install-123 --setenv=DATA_ROOT=/var/opt/ws-scrcpy-web ' +
+            '"/opt/ws-scrcpy-web/ws-scrcpy-web-launcher.exe" --linux-service-install-handoff --scope system --unit WsScrcpyWeb'
+        );
+    });
 });
 
 describe('SYSTEM_STATE_DIR — FHS /var/opt retargeting', () => {

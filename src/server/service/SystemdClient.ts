@@ -294,6 +294,8 @@ export function buildSystemInstallScript(
         unitTmpPath: string;
         unitPath: string;
         name: string;
+        /** Transient unit name for the rootful install-handoff (e.g. `wsscrcpy-install-<ts>`). Used only when sourceHelper is staged. */
+        handoffUnit?: string;
     },
     binTool: (t: string) => string = (t) => resolveSystemTool(t),
     sbinTool: (t: string) => string = (t) => resolveSystemTool(t),
@@ -307,6 +309,7 @@ export function buildSystemInstallScript(
     const systemctl = binTool('systemctl');
     const semanage = sbinTool('semanage');
     const restorecon = sbinTool('restorecon');
+    const systemdRun = binTool('systemd-run');
     const steps: string[] = [
         // 1. stage dirs: the /opt root for binaries + deps, plus the FHS-correct
         //    writable state dir at /var/opt (always — the system service writes
@@ -354,11 +357,29 @@ export function buildSystemInstallScript(
         //    silently skip the unit cp + enable below.
         //    restorecon covers the whole dir — labels the helper bin_t too when present.
         `( ( ${semanage} fcontext -a -t bin_t '${STAGED_SYSTEM_DIR}(/.*)?' && ${semanage} fcontext -a -t var_lib_t '${SYSTEM_STATE_DIR}(/.*)?' && ${restorecon} -Rv "${STAGED_SYSTEM_DIR}" && ${restorecon} -Rv "${SYSTEM_STATE_DIR}" ) || ${chcon} -t bin_t "${staged}" || true )`,
-        // 3. install + enable the unit (ExecStart already points at ${staged})
+        // 3. install the unit (ExecStart already points at ${staged}).
         `${cp} "${args.unitTmpPath}" "${args.unitPath}"`,
         `${systemctl} daemon-reload`,
-        `${systemctl} enable --now ${args.name}.service`,
     );
+    // 4. start the service. With a staged handoff helper (real install), do NOT
+    //    start it now (--now): the local instance that triggered this install still
+    //    holds the web port, so starting now makes the freshly forked service probe
+    //    the live port and self-defer (beta.56) or EADDRINUSE-loop into the
+    //    StartLimit. Instead enable (persist) + spawn a rootful, out-of-cgroup
+    //    handoff (transient SYSTEM unit, survives this pkexec via --collect) that
+    //    waits for the local instance to release the port, then starts + verifies
+    //    the service. Mirror of user-scope F4. DATA_ROOT lets the helper read the
+    //    service web port from /var/opt config. No staged helper (from-source /
+    //    unavailable) -> legacy --now (nothing to hand off to).
+    if (args.sourceHelper) {
+        const handoffUnit = args.handoffUnit ?? 'wsscrcpy-install-handoff';
+        steps.push(
+            `${systemctl} enable ${args.name}.service`,
+            `${systemdRun} --collect --unit=${handoffUnit} --setenv=DATA_ROOT=${SYSTEM_STATE_DIR} "${stagedHelper}" --linux-service-install-handoff --scope system --unit ${args.name}`,
+        );
+    } else {
+        steps.push(`${systemctl} enable --now ${args.name}.service`);
+    }
     return steps.join(' && ');
 }
 
