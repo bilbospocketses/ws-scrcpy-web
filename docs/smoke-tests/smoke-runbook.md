@@ -249,7 +249,7 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
 │ 4.6 Clean service    │ Lin  │ After a user-scope install:  │ No "Unknown key StartLimitIntervalSec" warning;  │ [ ]  │
 │ unit                 │      │ journalctl --user -u         │ the temporary local copy that installed has      │      │
-│                      │      │ WsScrcpyWeb and pgrep.       │ exited (only the service runs); no false "port   │      │
+│                      │      │ WsScrcpyWeb -b and pgrep.    │ exited (only the service runs); no false "port   │      │
 │                      │      │                              │ discovery timed out" message on a same-port      │      │
 │                      │      │                              │ reinstall.                                       │      │
 └──────────────────────┴──────┴──────────────────────────────┴──────────────────────────────────────────────────┴──────┘

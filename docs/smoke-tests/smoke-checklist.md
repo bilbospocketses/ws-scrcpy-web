@@ -46,7 +46,7 @@ Boxes start unticked — this is a fresh pass.
 | ☐ **2.4** `[L]` Zero AVC | Watch `sudo journalctl -f \| grep -i avc` across the installs | **No** AVC denials |
 | ☐ **4.4** `[L]` Scope-radio legibility *(locked-radios state — counterpart to 4.1)* | Reopen Settings | Selected dot a **clear blue**; radios non-interactive (`pointer-events:none` + `tabindex=-1`, **not** `disabled`); **user** scope shown selected |
 | ☐ **4.5** `[B]` Confirm-dialog buttons | Open the install/uninstall "privileges required" confirm | Cancel/confirm are **white-outline + white-text** |
-| ☐ **4.6** `[L]` Unit hygiene | `journalctl --user -u WsScrcpyWeb`; `pgrep -fa WsScrcpyWeb` | **No** `Unknown key 'StartLimitIntervalSec'`; **only the service** runs (no leftover home instance); no false timeout toast |
+| ☐ **4.6** `[L]` Unit hygiene | `cat ~/.config/systemd/user/WsScrcpyWeb.service` (StartLimit* under **[Unit]**); `journalctl --user -u WsScrcpyWeb -b` (**current boot only**); `pgrep -fa WsScrcpyWeb` | **No** `Unknown key 'StartLimitIntervalSec'` — must use **`-b`**: the persisted journal keeps stale pre-fix warnings from old installs that false-fail a whole-history grep; **only the service** runs (no leftover home instance); no false timeout toast |
 | ☐ **3.2** `[L]` Single-instance flock | Launch a 2nd copy from `/opt` **and** from `~/Downloads` | 2nd launch **blocked** (flock on `$XDG_RUNTIME_DIR`); no 2nd server; existing URL opens |
 | ☐ **10.1** `[B]` Status API | Browse `/api/service/status` | JSON with correct `platform`, `supported`, `status` |
 | ☐ **10.3** `[L]` Logs clean | Tail `~/.local/share/WsScrcpyWeb/logs` | No error spam; teardown logs on stop |
