@@ -737,6 +737,7 @@ export class SystemdClient implements ServiceClient {
                     unitTmpPath: tmpFile,
                     unitPath,
                     name: opts.name,
+                    handoffUnit: `wsscrcpy-install-${Date.now()}`,
                 });
                 await runPkexec(cmd, 'install (system scope)');
             } finally {
@@ -752,21 +753,41 @@ export class SystemdClient implements ServiceClient {
 
             const baseArgs = scope === 'user' ? ['--user'] : [];
             runSystemctl([...baseArgs, 'daemon-reload'], 'daemon-reload');
-            // F4: user scope must NOT start the service here — the local app still
-            // holds the per-user single-instance lock, so the service would exit
-            // "already running" before binding. Just `enable` (persist); ServiceApi
-            // spawns a detached install-handoff helper that starts it after the
-            // local instance exits and frees the lock. Root/system starts normally.
-            if (scope === 'user') {
-                runSystemctl(
-                    [...baseArgs, 'enable', `${opts.name}.service`],
-                    `enable ${opts.name}.service`,
-                );
-            } else {
-                runSystemctl(
-                    [...baseArgs, 'enable', '--now', `${opts.name}.service`],
-                    `enable --now ${opts.name}.service`,
-                );
+            // F4 (user) + B1 (system): never start with `--now` while the local
+            // instance still holds the per-user lock / web port — the service would
+            // exit "already running" or self-defer / EADDRINUSE-loop before binding.
+            // Just `enable` (persist); a detached out-of-cgroup install-handoff helper
+            // starts it AFTER the local instance exits and frees the port. (user
+            // scope: ServiceApi spawns the --user helper. system scope when already
+            // root: spawn the rootful helper here — the pkexec script does it on the
+            // non-root path.)
+            runSystemctl(
+                [...baseArgs, 'enable', `${opts.name}.service`],
+                `enable ${opts.name}.service`,
+            );
+            if (scope === 'system') {
+                // Already root → spawn the rootful handoff directly. `systemd-run
+                // --collect` registers a transient SYSTEM unit and returns immediately
+                // (fire-and-forget), so execFileSync doesn't block. Best-effort: a
+                // spawn failure logs + leaves the (enabled) unit for a manual start.
+                const stagedHelper = `${STAGED_SYSTEM_DIR}/${STAGED_SYSTEM_HELPER}`;
+                try {
+                    execFileSync(
+                        resolveSystemTool('systemd-run'),
+                        [
+                            '--collect',
+                            `--unit=wsscrcpy-install-${Date.now()}`,
+                            `--setenv=DATA_ROOT=${SYSTEM_STATE_DIR}`,
+                            stagedHelper,
+                            '--linux-service-install-handoff',
+                            '--scope', 'system',
+                            '--unit', opts.name,
+                        ],
+                        { stdio: ['ignore', 'pipe', 'pipe'] },
+                    );
+                } catch (err) {
+                    log.warn(`root-direct system install-handoff spawn failed (unit enabled; manual start may be needed): ${(err as Error).message}`);
+                }
             }
         }
 
