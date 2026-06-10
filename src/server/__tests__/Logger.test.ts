@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { Logger, shouldLogToConsole } from '../Logger';
+import { Logger, shouldLogToConsole, rotateIfNeeded } from '../Logger';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 
 describe('shouldLogToConsole', () => {
     it('returns true for a TTY, false otherwise', () => {
@@ -37,5 +40,27 @@ describe('Logger console gating', () => {
         Logger.for('Test').error('boom');
         expect(log).toHaveBeenCalledOnce();
         expect(err).toHaveBeenCalledOnce();
+    });
+});
+
+describe('rotateIfNeeded', () => {
+    it('renames the log to .1 when it is at/over the threshold, every call', () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wssw-log-'));
+        const file = path.join(dir, 'ws-scrcpy-web.log');
+        fs.writeFileSync(file, Buffer.alloc(11));
+        rotateIfNeeded(file, 10); // 10-byte threshold, file is 11 bytes
+        expect(fs.existsSync(`${file}.1`)).toBe(true);
+        expect(fs.existsSync(file)).toBe(false); // renamed away; next append recreates
+        fs.rmSync(dir, { recursive: true, force: true });
+    });
+
+    it('does not rotate when under the threshold', () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wssw-log-'));
+        const file = path.join(dir, 'ws-scrcpy-web.log');
+        fs.writeFileSync(file, Buffer.alloc(5));
+        rotateIfNeeded(file, 10);
+        expect(fs.existsSync(`${file}.1`)).toBe(false);
+        expect(fs.existsSync(file)).toBe(true);
+        fs.rmSync(dir, { recursive: true, force: true });
     });
 });

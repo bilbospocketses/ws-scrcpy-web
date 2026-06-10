@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
-const MAX_LOG_SIZE = 5 * 1024 * 1024; // 5MB
+const MAX_LOG_SIZE = 10 * 1024 * 1024; // 10MB
 
 /**
  * Compute the log file path. Per Local-Dependencies-Only architecture
@@ -37,31 +37,26 @@ function resolveLogFilePath(): string {
 }
 
 const LOG_FILE = resolveLogFilePath();
-const BACKUP_FILE = `${LOG_FILE}.1`;
 
-let rotationChecked = false;
-
-function rotateIfNeeded(): void {
-    if (rotationChecked) return;
-    rotationChecked = true;
-    // Ensure the log directory exists. dataRoot itself is created by the
-    // install hook on Windows, but on first launch / fresh dev checkouts
-    // there's a possible window where the directory hasn't been touched
-    // yet. mkdir is idempotent so this is cheap.
+/**
+ * Rotate `logFile` to `logFile.1` when it reaches `maxBytes`. Called on EVERY
+ * write (no once-per-process guard) so a long-running process stays bounded.
+ * Single backup; a prior `.1` is overwritten by renameSync. All failures are
+ * swallowed — logging must never crash the server.
+ */
+export function rotateIfNeeded(logFile: string, maxBytes: number): void {
     try {
-        fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true });
+        fs.mkdirSync(path.dirname(logFile), { recursive: true });
     } catch {
-        // If we can't even create the directory, the appendFileSync below
-        // will fail and writeToFile will silently swallow — same behavior
-        // as before this defense was added.
+        // directory uncreatable — the appendFileSync below will no-op too
     }
     try {
-        const stats = fs.statSync(LOG_FILE);
-        if (stats.size >= MAX_LOG_SIZE) {
-            fs.renameSync(LOG_FILE, BACKUP_FILE);
+        const stats = fs.statSync(logFile);
+        if (stats.size >= maxBytes) {
+            fs.renameSync(logFile, `${logFile}.1`);
         }
     } catch {
-        // File doesn't exist yet — nothing to rotate
+        // file doesn't exist yet — nothing to rotate
     }
 }
 
@@ -70,7 +65,7 @@ function timestamp(): string {
 }
 
 function writeToFile(line: string): void {
-    rotateIfNeeded();
+    rotateIfNeeded(LOG_FILE, MAX_LOG_SIZE);
     try {
         fs.appendFileSync(LOG_FILE, line + '\n');
     } catch {
