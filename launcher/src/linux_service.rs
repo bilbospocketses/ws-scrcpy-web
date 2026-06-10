@@ -497,6 +497,30 @@ fn run_install_handoff(scope: Scope, unit: &str) -> i32 {
             Err(e) => log::error(&format!("install-handoff rollback: relaunch failed: {e}")),
         }
     }
+    if scope == Scope::System {
+        // System scope: relaunch_target returns None (no home marker), so the
+        // user-scope block above is a no-op. Mirror the uninstall->relaunch path —
+        // discover the active graphical user and relaunch the /opt binary AS them
+        // (systemd-run --uid, NOT --user: this helper runs as root). Without this, a
+        // failed system install leaves the user with no app running.
+        let systemd_run = format!("{}/systemd-run", tool_dir("systemd-run"));
+        let appimage = "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage";
+        let web_port = common::config::AppConfig::load(std::path::Path::new("/var/opt/ws-scrcpy-web")).web_port;
+        match (discover_active_graphical_uid(), web_port) {
+            (Some(uid), Some(port)) => match home_for_uid(uid) {
+                Some(home) => {
+                    let argv = system_relaunch_command(&systemd_run, uid, &home, port, appimage);
+                    let (cmd, rest) = argv.split_first().expect("non-empty argv");
+                    match std::process::Command::new(cmd).args(rest).status() {
+                        Ok(s) => log::info(&format!("install-handoff rollback: relaunched {appimage} as uid {uid} on port {port} (exit {:?})", s.code())),
+                        Err(e) => log::error(&format!("install-handoff rollback: relaunch failed: {e}")),
+                    }
+                }
+                None => log::error(&format!("install-handoff rollback: no home for uid {uid}; skipping relaunch")),
+            },
+            _ => log::error("install-handoff rollback: no active graphical session / web port; admin can relaunch manually"),
+        }
+    }
     0
 }
 
