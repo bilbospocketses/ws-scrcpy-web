@@ -178,6 +178,59 @@ fn fail(code: i32, msg: &str) -> ElevatedResult {
     }
 }
 
+/// Build the servy-cli `install` argv. Extracted for unit-testing the flag
+/// shape. `--enableSizeRotation` (presence) + `--rotationSize 10` +
+/// `--maxRotations 1` bound service.log natively (servy owns the append fd, so
+/// the app can't rename/truncate it — servy rotates it itself; size rotation
+/// takes precedence over date rotation per servy 8.2).
+fn build_servy_install_args(args: &InstallServiceArgs, post_stop_bat: Option<&PathBuf>) -> Vec<String> {
+    let mut servy_args = vec![
+        "install".to_string(),
+        "--name".to_string(),
+        args.name.clone(),
+        "--displayName".to_string(),
+        args.display_name.clone(),
+        "--description".to_string(),
+        args.description.clone(),
+        "--path".to_string(),
+        args.bin_path.clone(),
+        "--startupDir".to_string(),
+        args.startup_dir.clone(),
+        "--startupType".to_string(),
+        args.startup_type.clone(),
+        "--recoveryAction".to_string(),
+        "RestartProcess".to_string(),
+        "--maxRestartAttempts".to_string(),
+        args.max_restart_attempts.to_string(),
+        "--envVars".to_string(),
+        args.env_vars.clone(),
+        "--stdout".to_string(),
+        args.log_path.clone(),
+        "--stderr".to_string(),
+        args.log_path.clone(),
+        "--enableSizeRotation".to_string(),
+        "--rotationSize".to_string(),
+        "10".to_string(),
+        "--maxRotations".to_string(),
+        "1".to_string(),
+    ];
+    if let Some(bat_path) = post_stop_bat {
+        let bat_path_str = bat_path.to_string_lossy().into_owned();
+        servy_args.push("--postStopPath".to_string());
+        servy_args.push(r"C:\Windows\System32\cmd.exe".to_string());
+        servy_args.push("--postStopParams".to_string());
+        servy_args.push(format!("/c \"{bat_path_str}\""));
+        servy_args.push("--postStopStartupDir".to_string());
+        servy_args.push(
+            bat_path
+                .parent()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|| args.startup_dir.clone()),
+        );
+    }
+    servy_args
+}
+
 fn install_service(args: &InstallServiceArgs) -> ElevatedResult {
     log::info(&format!("install-service: name={}", args.name));
 
@@ -223,50 +276,7 @@ fn install_service(args: &InstallServiceArgs) -> ElevatedResult {
         }
     };
 
-    let mut servy_args = vec![
-        "install".to_string(),
-        "--name".to_string(),
-        args.name.clone(),
-        "--displayName".to_string(),
-        args.display_name.clone(),
-        "--description".to_string(),
-        args.description.clone(),
-        "--path".to_string(),
-        args.bin_path.clone(),
-        "--startupDir".to_string(),
-        args.startup_dir.clone(),
-        "--startupType".to_string(),
-        args.startup_type.clone(),
-        "--recoveryAction".to_string(),
-        "RestartProcess".to_string(),
-        "--maxRestartAttempts".to_string(),
-        args.max_restart_attempts.to_string(),
-        "--envVars".to_string(),
-        args.env_vars.clone(),
-        "--stdout".to_string(),
-        args.log_path.clone(),
-        "--stderr".to_string(),
-        args.log_path.clone(),
-    ];
-
-    if let Some(bat_path) = &post_stop_bat {
-        let bat_path_str = bat_path.to_string_lossy().into_owned();
-        // cmd.exe is at the fixed Windows OS location; cannot be affected by
-        // Velopack or any other update.
-        servy_args.push("--postStopPath".to_string());
-        servy_args.push(r"C:\Windows\System32\cmd.exe".to_string());
-        // Two-token form parses cleanly per local servy-cli probe (the issue
-        // we hit with the launcher-flag approach was values starting with `--`).
-        servy_args.push("--postStopParams".to_string());
-        servy_args.push(format!("/c \"{bat_path_str}\""));
-        servy_args.push("--postStopStartupDir".to_string());
-        servy_args.push(
-            bat_path
-                .parent()
-                .map(|p| p.to_string_lossy().into_owned())
-                .unwrap_or_else(|| args.startup_dir.clone()),
-        );
-    }
+    let servy_args = build_servy_install_args(args, post_stop_bat.as_ref());
 
     let install_out = match run_capture(&args.servy_path, &servy_args) {
         Ok(out) => out,
@@ -592,6 +602,38 @@ pub(crate) fn write_post_stop_bat(
         format!("write {bat_path:?} failed: {e}")
     })?;
     Ok(bat_path)
+}
+
+#[cfg(test)]
+mod rotation_tests {
+    use super::*;
+
+    fn sample_args() -> InstallServiceArgs {
+        InstallServiceArgs {
+            servy_path: "servy-cli.exe".into(),
+            name: "WsScrcpyWeb".into(),
+            display_name: "ws-scrcpy-web".into(),
+            description: "desc".into(),
+            bin_path: "C:/app/launcher.exe".into(),
+            startup_dir: "C:/app".into(),
+            startup_type: "Automatic".into(),
+            max_restart_attempts: 3,
+            env_vars: "K=V".into(),
+            log_path: "C:/data/logs/service.log".into(),
+            tray_helper_path: None,
+            data_root: None,
+        }
+    }
+
+    #[test]
+    fn servy_install_args_enable_size_rotation_10mb_one_backup() {
+        let argv = build_servy_install_args(&sample_args(), None);
+        assert!(argv.iter().any(|a| a == "--enableSizeRotation"));
+        let pos = argv.iter().position(|a| a == "--rotationSize").expect("--rotationSize present");
+        assert_eq!(argv[pos + 1], "10");
+        let mpos = argv.iter().position(|a| a == "--maxRotations").expect("--maxRotations present");
+        assert_eq!(argv[mpos + 1], "1");
+    }
 }
 
 #[cfg(test)]
