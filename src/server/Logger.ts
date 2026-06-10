@@ -78,6 +78,18 @@ function writeToFile(line: string): void {
     }
 }
 
+/**
+ * Whether Logger should echo to the console. True only when the target stream
+ * is a terminal (dev). Under the launcher, stdout/stderr are redirected to a
+ * file (server.log), so isTTY is falsy and we skip the console echo — that
+ * echo would only duplicate ws-scrcpy-web.log into server.log. Keyed on the
+ * OS truth (isTTY), never an env var, so it can never drift from the actual
+ * capture state.
+ */
+export function shouldLogToConsole(isTty: boolean): boolean {
+    return isTty;
+}
+
 export class Logger {
     private readonly tag: string;
 
@@ -97,7 +109,9 @@ export class Logger {
         // redirected stdout/stderr from the Node child) shows timestamps,
         // matching launcher.log. Pre-v0.1.17 only ws-scrcpy-web.log got
         // timestamps; server.log was bare [tag] message.
-        console.log(`${ts} ${this.tag}`, ...args);
+        if (shouldLogToConsole(Boolean(process.stdout.isTTY))) {
+            console.log(`${ts} ${this.tag}`, ...args);
+        }
         writeToFile(line);
     }
 
@@ -105,7 +119,9 @@ export class Logger {
         const ts = timestamp();
         const message = args.map(String).join(' ');
         const line = `${ts} ${this.tag} WARN ${message}`;
-        console.warn(`${ts} ${this.tag} WARN`, ...args);
+        if (shouldLogToConsole(Boolean(process.stderr.isTTY))) {
+            console.warn(`${ts} ${this.tag} WARN`, ...args);
+        }
         writeToFile(line);
     }
 
@@ -113,7 +129,9 @@ export class Logger {
         const ts = timestamp();
         const message = args.map(String).join(' ');
         const line = `${ts} ${this.tag} ERROR ${message}`;
-        console.error(`${ts} ${this.tag} ERROR`, ...args);
+        if (shouldLogToConsole(Boolean(process.stderr.isTTY))) {
+            console.error(`${ts} ${this.tag} ERROR`, ...args);
+        }
         writeToFile(line);
     }
 }
