@@ -148,6 +148,20 @@ describe('buildSystemInstallScript', () => {
             '"/opt/ws-scrcpy-web/ws-scrcpy-web-launcher.exe" --linux-service-install-handoff --scope system --unit WsScrcpyWeb'
         );
     });
+
+    it('makes the SELinux fcontext adds idempotent (-a || -m) so a pre-existing /opt bin_t rule cannot short-circuit the var_lib_t add + restorecons (beta.57 #9 2.2/2.3)', () => {
+        const script = buildSystemInstallScript(args);
+        // A system-service install is gated on machine-wide-first, so the /opt bin_t
+        // fcontext rule ALWAYS pre-exists. A bare `semanage fcontext -a` then errors
+        // "already defined" and the `&&` chain skips the /var/opt var_lib_t add + both
+        // restorecons -> /var/opt mislabelled usr_t (smoke 2.2/2.3). Each add must be
+        // `-a || -m` (add, or modify-if-already-defined) so it can't fail-and-cascade.
+        expect(script).toContain("semanage fcontext -m -t bin_t '/opt/ws-scrcpy-web(/.*)?'");
+        expect(script).toContain("semanage fcontext -m -t var_lib_t '/var/opt/ws-scrcpy-web(/.*)?'");
+        // the var_lib_t add + the /var/opt restorecon still happen (not skipped):
+        expect(script).toContain("semanage fcontext -a -t var_lib_t '/var/opt/ws-scrcpy-web(/.*)?'");
+        expect(script).toContain('restorecon -Rv "/var/opt/ws-scrcpy-web"');
+    });
 });
 
 describe('SYSTEM_STATE_DIR — FHS /var/opt retargeting', () => {
@@ -266,6 +280,17 @@ describe('buildMachineWideInstallScript', () => {
         expect(s).not.toContain('/usr/share/icons/hicolor');
         expect(s).not.toContain('gtk-update-icon-cache');
     });
+
+    it('makes the /opt bin_t fcontext add idempotent (-a || -m) so a re-install over an existing rule still restorecons (no &&-cascade)', () => {
+        const s = buildMachineWideInstallScript(
+            { sourceAppImage: '/home/u/Downloads/WsScrcpyWeb-linux-beta.AppImage', version: '0.1.31-beta.1' },
+            (t) => `/usr/bin/${t}`, (t) => `/usr/sbin/${t}`,
+        );
+        // a re-install (or any path hitting a pre-existing /opt rule) makes a bare
+        // `semanage -a` error "already defined" and the `&&` skips restorecon. The
+        // `-a || -m` form keeps it idempotent. (Sibling of the #9 2.2/2.3 bug.)
+        expect(s).toContain("semanage fcontext -m -t bin_t '/opt/ws-scrcpy-web(/.*)?'");
+    });
 });
 
 describe('buildMachineWideUpdateScript', () => {
@@ -359,6 +384,11 @@ describe('buildSystemMigrationScript', () => {
         expect(script).toContain('cp "/tmp/WsScrcpyWeb.service.tmp" "/etc/systemd/system/WsScrcpyWeb.service"');
         expect(script).toContain('systemctl daemon-reload');
         expect(script).toContain('systemctl enable --now WsScrcpyWeb.service');
+    });
+
+    it('makes the var_lib_t fcontext add idempotent (-a || -m) — consistent with the install scripts, robust to a re-run over an existing rule', () => {
+        const script = buildSystemMigrationScript(args);
+        expect(script).toContain("semanage fcontext -m -t var_lib_t '/var/opt/ws-scrcpy-web(/.*)?'");
     });
 
     it('carries the seeded webPort into /var/opt/.../config.json', () => {

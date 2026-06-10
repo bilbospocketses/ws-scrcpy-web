@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Installing the Linux *system-wide* service now labels its data folder correctly under SELinux.** On SELinux systems (e.g. Fedora) the install registers two file-context rules — `bin_t` for the program under `/opt`, `var_lib_t` for the writable data under `/var/opt` — then relabels both. But a system-wide service install requires a machine-wide install first, which had *already* registered the `/opt` rule; re-adding it errored "already defined", and because the steps were chained with `&&`, that error skipped the `/var/opt` rule and both relabel steps — leaving `/var/opt` mislabelled `usr_t`. (The service still ran and served, because the unit is unconfined, so nothing was actually blocked.) Each file-context registration is now idempotent — add, or modify if it already exists — so a pre-existing rule can no longer short-circuit the rest. The machine-wide install and the legacy-layout migration were hardened the same way.
+
 ## [0.1.30-beta.57] - 2026-06-10
 
 ### Fixed

@@ -356,7 +356,13 @@ export function buildSystemInstallScript(
         //    erroring on a non-SELinux fs) would break the outer `&&` chain and
         //    silently skip the unit cp + enable below.
         //    restorecon covers the whole dir — labels the helper bin_t too when present.
-        `( ( ${semanage} fcontext -a -t bin_t '${STAGED_SYSTEM_DIR}(/.*)?' && ${semanage} fcontext -a -t var_lib_t '${SYSTEM_STATE_DIR}(/.*)?' && ${restorecon} -Rv "${STAGED_SYSTEM_DIR}" && ${restorecon} -Rv "${SYSTEM_STATE_DIR}" ) || ${chcon} -t bin_t "${staged}" || true )`,
+        //    Each `semanage fcontext -a` is paired with `|| …-m` (add, or modify-if-
+        //    already-defined): a system install is GATED on machine-wide-first, so the
+        //    /opt bin_t rule ALWAYS pre-exists — a bare `-a` errors "already defined",
+        //    and because the inner steps are `&&`-chained that failure would skip the
+        //    /var/opt var_lib_t add + both restorecons, leaving /var/opt mislabelled
+        //    usr_t (the beta.57 #9 2.2/2.3 bug). `-a || -m` makes each add idempotent.
+        `( ( ( ${semanage} fcontext -a -t bin_t '${STAGED_SYSTEM_DIR}(/.*)?' || ${semanage} fcontext -m -t bin_t '${STAGED_SYSTEM_DIR}(/.*)?' ) && ( ${semanage} fcontext -a -t var_lib_t '${SYSTEM_STATE_DIR}(/.*)?' || ${semanage} fcontext -m -t var_lib_t '${SYSTEM_STATE_DIR}(/.*)?' ) && ${restorecon} -Rv "${STAGED_SYSTEM_DIR}" && ${restorecon} -Rv "${SYSTEM_STATE_DIR}" ) || ${chcon} -t bin_t "${staged}" || true )`,
         // 3. install the unit (ExecStart already points at ${staged}).
         `${cp} "${args.unitTmpPath}" "${args.unitPath}"`,
         `${systemctl} daemon-reload`,
@@ -425,7 +431,7 @@ export function buildMachineWideInstallScript(
         `${cp} "${args.sourceAppImage}" "${staged}"`,
         `${chmod} 0755 "${staged}"`,
         `${printf} '%s' '${args.version}' > ${SYSTEM_OPT_VERSION_FILE}`,
-        `( ( ${semanage} fcontext -a -t bin_t '${STAGED_SYSTEM_DIR}(/.*)?' && ${restorecon} -Rv "${STAGED_SYSTEM_DIR}" ) || ${chcon} -t bin_t "${staged}" || true )`,
+        `( ( ( ${semanage} fcontext -a -t bin_t '${STAGED_SYSTEM_DIR}(/.*)?' || ${semanage} fcontext -m -t bin_t '${STAGED_SYSTEM_DIR}(/.*)?' ) && ${restorecon} -Rv "${STAGED_SYSTEM_DIR}" ) || ${chcon} -t bin_t "${staged}" || true )`,
         `( ${printf} '${desktop}\\n' > ${SYSTEM_DESKTOP_FILE} || true )`,
         `( ${updateDesktopDb} /usr/share/applications || true )`,
     ];
@@ -584,7 +590,7 @@ export function buildSystemMigrationScript(
         // label the state dir var_lib_t + restorecon. Best-effort subshell with a
         // chcon transient fallback + trailing `|| true` so a non-SELinux host still
         // proceeds to install the unit — mirrors buildSystemInstallScript.
-        `( ( ${semanage} fcontext -a -t var_lib_t '${SYSTEM_STATE_DIR}(/.*)?' && ${restorecon} -Rv "${SYSTEM_STATE_DIR}" ) || ${chcon} -t var_lib_t "${SYSTEM_STATE_DIR}" || true )`,
+        `( ( ( ${semanage} fcontext -a -t var_lib_t '${SYSTEM_STATE_DIR}(/.*)?' || ${semanage} fcontext -m -t var_lib_t '${SYSTEM_STATE_DIR}(/.*)?' ) && ${restorecon} -Rv "${SYSTEM_STATE_DIR}" ) || ${chcon} -t var_lib_t "${SYSTEM_STATE_DIR}" || true )`,
         // reinstall the unit (ExecStart still points at the in-place /opt AppImage;
         // env now carries DATA_ROOT=/var/opt) + reload + enable.
         `${cp} "${args.unitTmpPath}" "${args.unitPath}"`,
