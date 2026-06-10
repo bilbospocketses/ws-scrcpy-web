@@ -27,10 +27,11 @@ This was confirmed at runtime during the beta.57 Linux re-smoke (#7 test 10.3: `
 3. Keep **dev** logging (no launcher) completely unchanged.
 4. Make the mechanism **robust** — the decision to suppress a duplicate must not depend on ambient environment that can drift from the actual condition.
 5. Symmetric across Windows / Linux / local / service / dev.
+6. Bound **every** log file (10 MB, one `.1` backup) so none grows unbounded.
 
 ## Non-goals
 
-- No change to where logs live (`<dataRoot>/logs/`), to the file names, or to the capture plumbing itself (`spawn.rs` redirect, the systemd unit `append:`, servy `--stdout/--stderr`, `ServiceApi` logPath all stay).
+- No change to where logs live (`<dataRoot>/logs/`) or to the primary file names. The capture *targets* stay (`spawn.rs` still redirects to `server.log`, the systemd unit keeps `append:service.log`, servy keeps `--stdout/--stderr service.log`, `ServiceApi` logPath unchanged) — rotation is layered onto them, not a re-route. (New `.1` backups are the only added files.)
 - No in-app log viewer/download (none exists; confirmed no programmatic reader of any `.log` in the server).
 - No change to `--print-active-session` stdout output.
 
@@ -84,18 +85,36 @@ These land in `server.log` only, never the canonical `ws-scrcpy-web.log`. Route 
   ```
 - Effect: under a service (stderr → `service.log` file, not a terminal) the echo is suppressed → `service.log` holds only raw launcher panics. In a local terminal the echo is preserved. For the tray (`windows_subsystem = "windows"`, no console) `is_terminal()` is false → the previously NUL-bound `eprintln!` is suppressed; `tray.log` (file) is unaffected.
 
-### Log rotation (catch ⑥, folded in)
+### Log rotation (catch ⑥, folded in — ALL log files bounded)
 
-`common/log.rs` currently never rotates — `launcher.log` and `tray.log` grow unbounded. Add rotation symmetric with `Logger.ts` (rename to `<name>.log.1` at 5 MB, single backup), so the canonical launcher/tray logs are bounded. Implementation: before/at first write in `append()` (a `OnceLock<()>` "rotation-checked" guard mirroring `Logger.ts::rotateIfNeeded`'s once-per-process check), `stat` the file and `rename` to `.1` if `>= 5 MB`. `server.log`/`service.log` remain unrotated by design (now thin crash-catchers; minimal growth).
+Every log file is bounded at **10 MB with a single `.1` backup**. The rotation *mechanism* is dictated by who owns the file's open handle:
 
-## What is deliberately unchanged
+**1. Files our loggers write — rename-rotate, size-checked on every write (10 MB).**
+These are opened per-write (`appendFileSync` / Rust `OpenOptions…append` per call), holding no persistent handle, so a rename is safe.
+- `Logger.ts`: change `rotateIfNeeded` from once-per-process (`rotationChecked` short-circuit removed) to a `statSync` + rename check on **every** `writeToFile`; threshold 5 MB → **10 MB**. Covers `ws-scrcpy-web.log`.
+- `common/log.rs`: add the same per-write `stat` + `rename` to `<name>.log.1` at 10 MB inside `append()` (after `is_disabled()`, before the write). Covers `launcher.log` + `tray.log`.
 
-- `launcher/src/spawn.rs` — keeps redirecting the Node child's stdout/stderr to `server.log` (now thin).
-- `SystemdClient.renderUnitFile` — keeps `StandardOutput/StandardError=append:service.log`.
-- servy `--stdout/--stderr` (`elevated_runner.rs`) and `ServiceApi` `logPath` — keep `service.log`.
+**2. `server.log` — rename-rotate at launcher open (10 MB).**
+Node holds the `server.log` fd *during* a run, but it is free *between* spawns, and `spawn.rs::open_server_log` reopens it on each (re)spawn. So at open: `stat`; if `>= 10 MB`, `rename` to `server.log.1`; then open fresh and hand to Node. Per-spawn cadence; adequate because `server.log` is now thin (only non-logger crash/native output, which barely accumulates in normal operation).
+
+**3. `service.log` — the service manager owns the append fd, so rename would orphan it.**
+- **Windows (servy):** pass servy's native rotation flags at install — `--enableSizeRotation --rotationSize 10 --maxRotations 1` (added in the servy install argv: `elevated_runner.rs` / `ServyClient`). servy rotates `service.log` itself.
+- **Linux (systemd `append:`):** systemd has no native rotation. The launcher, at startup, performs a **copy-truncate** on `<dataRoot>/logs/service.log` if `>= 10 MB` (copy → `service.log.1`, then `truncate` to 0). systemd's `O_APPEND` fd continues writing into the now-empty file (next append lands at offset 0) — the held-open-file-safe technique (logrotate's `copytruncate`). Guarded by a simple path+size check (no env needed; a stale `service.log` when not service-run is harmless to copy-truncate). Per-startup cadence; adequate because Linux `service.log` is panic-only (StartLimit-bounded) and barely grows.
+
+This bounds **every** log file; nothing grows unbounded.
+
+## What changes vs. stays
+
+**Capture plumbing stays (only rotation is added to it):**
+- `launcher/src/spawn.rs` — keeps redirecting Node stdout/stderr to `server.log`; **gains** the rename-rotate-at-open (rotation §2).
+- `SystemdClient.renderUnitFile` — keeps `StandardOutput/StandardError=append:service.log` (no unit change; Linux rotation is the launcher's copy-truncate).
+- servy capture (`elevated_runner.rs` / `ServyClient`) — keeps `--stdout/--stderr service.log`; **gains** `--enableSizeRotation --rotationSize 10 --maxRotations 1` (rotation §3).
+- `ServiceApi` `logPath` — unchanged.
+
+**Genuinely untouched:**
 - The uninstall logs keep-list (`hooks.rs`) — all files still exist, so keep/wipe logic is unaffected.
 - `launcher/src/main.rs:51` `println!` for `--print-active-session` — intentional **stdout** command output (consumed by the caller), NOT logging; the gate is stderr-only, so it is untouched.
-- `capture-logs.{sh,ps1}` and the smoke docs — all four files still exist, so **no retargeting**; only descriptive relabeling (see below).
+- `capture-logs.{sh,ps1}` and the smoke docs — all files still exist (now thin + rotated), so **no retargeting**; only descriptive relabeling (see below). Note: a `.1` backup may now appear alongside each log — capture scripts may optionally also grab `*.log.1`.
 
 ## File inventory (after)
 
@@ -133,7 +152,9 @@ A dev who pipes stdout (`npm start | tee out.txt`, `> out.txt`) gets console out
 - **`Logger`:** writes the file in both console states (spy `fs.appendFileSync` or assert file contents); console gated by the injected/stubbed `isTTY`.
 - **`Config`-via-`Logger`:** the `[Config] adbPath` line is produced through `Logger` (lands in the `ws-scrcpy-web.log` path), not raw `console`.
 - **`common::log`:** file write happens when not a terminal (existing `disable_silences_logging` pattern extended); `should_echo_stderr` pure unit.
-- **Rotation (new, Rust side):** a `common::log` file `>= 5 MB` is renamed to `<name>.log.1` once per process. (`Logger.ts` already rotates `ws-scrcpy-web.log`; unchanged.)
+- **Rotation — logger files (per write, 10 MB):** `Logger.ts` renames `ws-scrcpy-web.log` → `.1` on a write past 10 MB and on a write below it does not (the once-per-process short-circuit is gone); `common::log` likewise for `launcher.log`/`tray.log` (Rust unit with a tempdir).
+- **Rotation — `server.log` (at open, 10 MB):** `open_server_log` renames to `.1` when the existing file is `>= 10 MB`, else leaves it (Rust unit).
+- **Rotation — `service.log`:** Windows servy argv includes `--enableSizeRotation --rotationSize 10 --maxRotations 1` (TS unit on the install argv, alongside the existing flag-shape assertions); Linux copy-truncate helper copies → `.1` then truncates to 0 at `>= 10 MB` (Rust unit with a tempdir).
 - **Full gates:** `vitest` + `tsc --noEmit` + launcher `cross test` + `cross clippy -D warnings`.
 
 ## Rollout
