@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Production logs no longer duplicate, and every log file is bounded at 10 MB.** Previously each log line was written twice on disk — the app log to both `ws-scrcpy-web.log` and `server.log`, and (under a service) the launcher log to both `launcher.log` and `service.log`. Now each logger writes only its own file when its output is being captured to disk (detected via whether the stream is a real terminal — so `npm start` in a terminal still prints to the console), and `server.log`/`service.log` keep only crash/native output the loggers don't produce. All five logs (`ws-scrcpy-web.log`, `launcher.log`, the Windows `tray.log`, plus the `server.log`/`service.log` crash catchers) now rotate at 10 MB with a single `.1` backup.
+
 ## [0.1.30-beta.58] - 2026-06-10
 
 ### Fixed
