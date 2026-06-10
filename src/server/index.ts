@@ -290,7 +290,12 @@ async function gracefulShutdown(): Promise<void> {
     } catch (err) {
         serverLog.warn(`adb kill-server during exit failed: ${(err as Error).message}`);
     }
-    serverLog.info('Stopping stray adb (taskkill) ...');
+    // taskkill is the Windows-only reaper (reapStrayAdbOnWindows no-ops elsewhere);
+    // only log it where it actually runs, so Linux/macOS logs don't carry a
+    // Windows-command line that does nothing.
+    if (process.platform === 'win32') {
+        serverLog.info('Stopping stray adb (taskkill) ...');
+    }
     await reapStrayAdbOnWindows();
     runningServices.forEach((service: Service) => {
         const serviceName = service.getName();

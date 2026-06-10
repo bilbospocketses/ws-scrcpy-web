@@ -12,10 +12,14 @@ export class FileListing extends Mw {
     protected override name = 'FileListing';
 
     public static override processChannel(ws: Multiplexer, code: string, data: ArrayBuffer): Mw | undefined {
-        FileListing.log.info(`processChannel: code="${code}", dataLen=${data?.byteLength ?? 0}`);
+        // Only log channels WE handle (FSLS). The Mw framework calls every registered
+        // processChannel with every code, so logging before this guard spammed the log
+        // with other middlewares' codes (HSTS/GTRC) on every page load — even with no
+        // device connected.
         if (code !== ChannelCode.FSLS) {
             return;
         }
+        FileListing.log.info(`processChannel: code="${code}", dataLen=${data?.byteLength ?? 0}`);
         if (!data || data.byteLength < 4) {
             FileListing.log.error('processChannel: data too short');
             return;
