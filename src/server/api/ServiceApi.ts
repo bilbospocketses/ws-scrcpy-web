@@ -543,6 +543,33 @@ export class ServiceApi {
             return true;
         }
 
+        // B1: Linux SYSTEM scope mirrors user-scope F4. install() enabled the unit
+        // (not --now) and spawned a rootful, out-of-cgroup handoff helper (transient
+        // system unit — from inside the pkexec script, or directly when already root)
+        // that waits for THIS local instance to release the web port, then starts +
+        // verifies the service and rolls back on failure. So we just exit promptly to
+        // free the port; the helper owns verify/rollback (no in-handler verify here —
+        // that path is win32-only). Without this, enable --now started the service
+        // while we still held the port → self-defer / EADDRINUSE (beta.56).
+        if (result.platform === 'linux' && scope === 'system') {
+            log.info('install-flow(linux system): handoff helper spawned by installer; exiting local to free the port');
+            this.scheduleExit(() => {
+                log.info('install-flow: local instance exiting (handoff to system service)');
+                process.exit(0);
+            }, 1_500);
+            const disk = this.readDiskConfig();
+            const body: ServiceActionSuccess = {
+                ok: true,
+                status: 'shutting-down',
+                installMode: newInstallMode,
+                ...(disk.configMtime != null ? { configMtime: disk.configMtime } : {}),
+                ...(disk.diskWebPort != null ? { diskWebPort: disk.diskWebPort } : {}),
+            };
+            res.writeHead(200);
+            res.end(JSON.stringify(body));
+            return true;
+        }
+
         // F3: verify the service actually started before sacrificing this local
         // instance. install() does NOT throw on a failed start (systemd
         // Type=simple reports "started" on fork, before execve fails), so a
@@ -580,14 +607,12 @@ export class ServiceApi {
         const status = await result.client.status(WS_SCRCPY_SERVICE_NAME);
         const disk = this.readDiskConfig();
 
-        // Schedule local-Node exit. This instance is useless once the service
-        // is running; it also holds the web port. The frontend navigates to the
-        // service port once it detects config.json mtime change — this timer is
-        // a safety cap, not a timing mechanism. Fire on win32 AND linux: the
-        // local instance lingers on Linux too, causing concurrent-instance and
-        // port-discovery-timeout symptoms (beta.31 fix #3). win32 behavior is
-        // byte-for-byte identical to before (same 15 s, same log message).
-        if (result.platform === 'win32' || result.platform === 'linux') {
+        // Schedule local-Node exit (win32 only — both Linux scopes hand off + return
+        // above: user scope at the F4 branch, system scope at the B1 branch). This
+        // instance is useless once the service is running; it also holds the web port.
+        // The frontend navigates to the service port once it detects config.json mtime
+        // change — this timer is a safety cap, not a timing mechanism.
+        if (result.platform === 'win32') {
             this.scheduleExit(() => {
                 log.info('install-flow: local instance exiting (service is running)');
                 process.exit(0);

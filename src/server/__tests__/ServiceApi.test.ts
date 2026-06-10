@@ -714,6 +714,30 @@ describe('ServiceApi', () => {
             expect(opts?.scope).toBe('system');
         });
 
+        it('POST /install Linux system scope hands off (status shutting-down), no in-handler verify (beta.57)', async () => {
+            Object.defineProperty(process, 'getuid', { value: () => 1000, configurable: true });
+            const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(async () => undefined);
+            const statusFn = vi.fn(async () => 'running' as const);
+            const client = fakeClient({ install: installFn, status: statusFn });
+            const factoryResult: ServiceClientFactoryResult = {
+                client,
+                supported: true,
+                platform: 'linux',
+            };
+            const api = new ServiceApi(() => factoryResult, () => 'user');
+            const { req, res } = makeReqRes('/api/service/install', 'POST', JSON.stringify({ scope: 'system' }));
+            await api.handle(req, res);
+            expect((res as any).getStatus()).toBe(200);
+            const body = JSON.parse((res as any).getBody());
+            expect(body.ok).toBe(true);
+            expect(body.installMode).toBe('system-service');
+            // B1: mirror user-scope — return shutting-down + exit to free the port; the
+            // rootful handoff helper (spawned by the installer) owns verify/rollback.
+            expect(body.status).toBe('shutting-down');
+            // no in-handler verify poll (win32-only now) → client.status not called.
+            expect(statusFn).not.toHaveBeenCalled();
+        });
+
         it('POST /install on Linux with $APPIMAGE set writes local-appimage marker to <dataRoot>/control/local-appimage', async () => {
             const appImagePath = '/home/jamie/Applications/WsScrcpyWeb.AppImage';
             const savedAppImage = process.env['APPIMAGE'];
