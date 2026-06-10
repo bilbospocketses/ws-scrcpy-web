@@ -67,6 +67,19 @@ fn main() {
         log::disable();
     }
 
+    // Rotate the Linux systemd service.log (the launcher's own stderr captured
+    // by `StandardError=append:`). systemd holds the O_APPEND fd, so we MUST
+    // copy-truncate (a rename would orphan that fd). No-op off-Linux, when the
+    // file is absent/small, or when not service-run (harmless on a stale file).
+    // Windows service.log is rotated by servy natively (see elevated_runner).
+    #[cfg(target_os = "linux")]
+    if let Some(data_root) = common::config::data_root_from_env() {
+        common::log::copy_truncate_if_large(
+            &data_root.join("logs").join("service.log"),
+            10 * 1024 * 1024,
+        );
+    }
+
     log::info(&format!(
         "ws-scrcpy-web-launcher v{} starting",
         env!("CARGO_PKG_VERSION")
