@@ -331,16 +331,16 @@ A few advanced switches are only available via environment variables:
 
 ## Logging
 
-The server logs all output to `ws-scrcpy-web.log`. Every line includes an ISO 8601 timestamp and a module tag (e.g., `[ScrcpyConnection]`, `[Server]`). The log file rotates on startup when it exceeds 5MB, keeping one backup (`.log.1`). Console output is preserved alongside the file -- you still see everything in the terminal.
+The server logs all output to `ws-scrcpy-web.log`. Every line includes an ISO 8601 timestamp and a module tag (e.g., `[ScrcpyConnection]`, `[Server]`). The log file rotates at 10 MB (per write), keeping one backup (`.log.1`). In dev (`npm start`, no launcher) console output is preserved in the terminal; under the launcher the console echo is suppressed and `ws-scrcpy-web.log` is the single source of truth.
 
 **Log file locations:**
 
-- **Installed (Velopack MSI):** `C:\ProgramData\WsScrcpyWeb\logs\` holds all four logs:
-  - `launcher.log` — Rust launcher
-  - `server.log` — Node child stdout/stderr
-  - `ws-scrcpy-web.log` — Node app Logger output (this section's subject)
-  - `service.log` — Servy service-mode stdio capture
-- **Dev / `npm start`:** `ws-scrcpy-web.log` lands at the project root (legacy dev fallback).
+- **Installed (Velopack MSI):** `C:\ProgramData\WsScrcpyWeb\logs\` holds all logs — each rotated at 10 MB (one `.1` backup):
+  - `ws-scrcpy-web.log` — **canonical Node-server log** (the `Logger` file)
+  - `launcher.log` — **canonical launcher log** (Rust `common::log` file); `tray.log` is the same for the tray helper
+  - `server.log` — **thin crash-catcher**: launcher redirects Node child stdout/stderr here, but `Logger` suppresses its own echo under the launcher (`isTTY` gate), so this file only fills on raw crashes / native failures
+  - `service.log` — **thin crash-catcher** (service mode only): service manager captures launcher stderr here, but the launcher suppresses normal lines under a service (`is_terminal()` gate), so this file only fills on raw launcher panics
+- **Dev / `npm start`:** `ws-scrcpy-web.log` lands at the project root (legacy dev fallback); `server.log` / `service.log` are absent.
 
 See `docs/TECHNICAL_GUIDE.md` section 15 for details on the Logger utility and adding logging to new modules.
 

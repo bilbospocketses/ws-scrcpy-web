@@ -26,6 +26,16 @@
 //! review can't tell whether two adjacent entries were a few seconds
 //! apart or hours — which made v0.1.6 service-mode debugging slower
 //! than it should have been.
+//!
+//! ## stderr echo gating + rotation
+//!
+//! The stderr echo (the `eprintln!` inside [`append`]) is gated on
+//! `std::io::stderr().is_terminal()` so that under a service (where the
+//! service manager redirects stderr to `service.log`) only raw panics /
+//! unhandled output reach that file — `service.log` stays a thin
+//! crash-catcher rather than a duplicate of `launcher.log`. The log file
+//! itself is rename-rotated per write at 10 MB (one `.1` backup), which
+//! keeps `launcher.log` / `tray.log` bounded even on long-running installs.
 
 use std::fs::{self, OpenOptions};
 use std::io::{IsTerminal, Write};

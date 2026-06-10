@@ -100,10 +100,9 @@ export class Logger {
         const ts = timestamp();
         const message = args.map(String).join(' ');
         const line = `${ts} ${this.tag} ${message}`;
-        // v0.1.17: prefix console output too so server.log (launcher-
-        // redirected stdout/stderr from the Node child) shows timestamps,
-        // matching launcher.log. Pre-v0.1.17 only ws-scrcpy-web.log got
-        // timestamps; server.log was bare [tag] message.
+        // Console echo is gated on isTTY (dev terminal only); under the
+        // launcher stdout is redirected so isTTY is falsy and server.log
+        // stays a thin crash-catcher rather than a mirror of this file.
         if (shouldLogToConsole(Boolean(process.stdout.isTTY))) {
             console.log(`${ts} ${this.tag}`, ...args);
         }

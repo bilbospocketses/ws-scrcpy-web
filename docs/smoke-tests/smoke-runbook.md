@@ -438,16 +438,17 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 │                      │      │ http://localhost:<port>/api/ │ and status fields.                               │      │
 │                      │      │ service/status in a browser. │                                                  │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
-│ 10.2 Windows logs    │ Win  │ Tail the Windows logs        │ No ERR / Error: lines, apart from the known      │ [ ]  │
-│ clean                │      │ (launcher.log + server.log   │ harmless node-pty "AttachConsole" noise.         │      │
-│                      │      │ under                        │                                                  │      │
-│                      │      │ ProgramData\WsScrcpyWeb\logs │                                                  │      │
-│                      │      │ ) during use.                │                                                  │      │
+│ 10.2 Windows logs    │ Win  │ Tail launcher.log +          │ No ERR / Error: lines, apart from the known      │ [ ]  │
+│ clean                │      │ ws-scrcpy-web.log under      │ harmless node-pty "AttachConsole" noise.         │      │
+│                      │      │ ProgramData\WsScrcpyWeb\logs │ server.log / service.log are thin crash-catchers │      │
+│                      │      │ during use (canonical logs). │ — normal lines live in the canonical files; a    │      │
+│                      │      │                              │ .1 backup may appear; all files are tail-able.   │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
-│ 10.3 Linux logs      │ Lin  │ Tail the logs under          │ No error spam; shutdown messages appear when you │ [ ]  │
-│ clean                │      │ ~/.local/share/.../logs (or  │ stop the app.                                    │      │
-│                      │      │ /var/opt/.../logs for a      │                                                  │      │
-│                      │      │ system install).             │                                                  │      │
+│ 10.3 Linux logs      │ Lin  │ Tail launcher.log +          │ No error spam; shutdown messages appear when you │ [ ]  │
+│ clean                │      │ ws-scrcpy-web.log under      │ stop the app. server.log / service.log are thin  │      │
+│                      │      │ ~/.local/share/.../logs (or  │ crash-catchers; a .1 backup may appear; all      │      │
+│                      │      │ /var/opt/.../logs for        │ files are tail-able.                             │      │
+│                      │      │ system installs).            │                                                  │      │
 └──────────────────────┴──────┴──────────────────────────────┴──────────────────────────────────────────────────┴──────┘
 ```
 

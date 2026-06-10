@@ -142,8 +142,8 @@ Get the "update from" build first (Pre-flight build-prep: the beta.40 artifact).
 | Test | How to perform | Expected + verify |
 |---|---|---|
 | **10.1** `[Both]` Service status API | Browse `http://localhost:<port>/api/service/status`. | JSON with correct `platform`, `supported`, `status`. |
-| **10.2** `[Win]` Logs clean | Tail `C:\ProgramData\WsScrcpyWeb\logs\{launcher,server}.log` during normal use. | No `ERR` / `Error:` except known cosmetic node-pty AttachConsole noise. |
-| **10.3** `[Linux]` Logs clean | Tail logs under `~/.local/share/.../logs` (or `/var/opt/.../logs` for system). | No error spam; teardown logs present on stop. |
+| **10.2** `[Win]` Logs clean | Tail `C:\ProgramData\WsScrcpyWeb\logs\{launcher,ws-scrcpy-web}.log` during normal use (canonical logs). `server.log` / `service.log` are thin crash-catchers — normal lines live in the canonical files; a `.1` backup may appear; all files are tail-able. | No `ERR` / `Error:` except known cosmetic node-pty AttachConsole noise. |
+| **10.3** `[Linux]` Logs clean | Tail `launcher.log` + `ws-scrcpy-web.log` under `~/.local/share/.../logs` (or `/var/opt/.../logs` for system) — these are the canonical logs. `server.log` / `service.log` are thin crash-catchers; a `.1` backup may appear; all files are tail-able. | No error spam; teardown logs present on stop. |
 
 ## Module 11 — Velopack 1.2.0 / item-31
 

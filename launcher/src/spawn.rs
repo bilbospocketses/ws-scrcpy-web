@@ -69,13 +69,15 @@ pub fn resolve_server_entry_with(exe_dir: &Path) -> Result<PathBuf> {
 
 /// Open the server.log file in append mode for stdout/stderr redirection.
 ///
-/// Without this redirection, the Node child's output goes to the void in
-/// release builds (no attached console). Server-side crashes (e.g., port
-/// already bound, native module load failures, unhandled rejections in
-/// startup) become silent and undebuggable. The v0.1.6 "service runs but
-/// app unreachable" + "no port bound, no idea why" debugging tonight was
-/// only possible by manually running Node from PowerShell — now the same
-/// information is captured automatically.
+/// server.log is a THIN crash-catcher: the launcher still plumbs the Node
+/// child's stdout/stderr here so raw crashes / native output are preserved,
+/// but `Logger` no longer echoes its lines to the console under the launcher
+/// (gated on `process.stdout/stderr.isTTY`). Normal application output lives
+/// exclusively in `ws-scrcpy-web.log`; server.log only fills on unhandled
+/// panics, port-already-bound errors, native module failures, etc.
+///
+/// The file is rename-rotated at open (10 MB) — safe because the prior Node
+/// child has released its fd between spawns.
 ///
 /// Returns `Ok(None)` if we couldn't open the log file (we still spawn the
 /// child with stdio inherited so the user's terminal sees output if any).
@@ -127,9 +129,9 @@ pub fn spawn_server(deps_path: &Path, data_root: &Path) -> Result<Child> {
         .env("DATA_ROOT", data_root)
         .creation_flags(CREATE_NO_WINDOW);
 
-    // Plumb the child's stdout AND stderr into <deps>/server.log so a
-    // crashed startup leaves a forensic trail. Both go to the same file
-    // (interleaved); separating them is rarely worth the duplicate I/O.
+    // Plumb the child's stdout AND stderr into server.log (thin crash-catcher).
+    // Logger no longer echoes normal lines here, so this only fills on raw
+    // crashes/native failures. Both streams go to the same file (interleaved).
     if let Some(log) = open_server_log(data_root) {
         let log_clone = log.try_clone().ok();
         cmd.stdout(std::process::Stdio::from(log));

@@ -86,9 +86,9 @@ After the MSI install completes, verify:
 
 If something is broken after migrating, the most useful diagnostics are:
 
-- `C:\ProgramData\WsScrcpyWeb\dependencies\server.log` (Node-side log)
+- `C:\ProgramData\WsScrcpyWeb\dependencies\server.log` (thin crash-catcher: raw Node crashes/native failures; pre-beta.3 path)
 - `C:\ProgramData\WsScrcpyWeb\ws-scrcpy-web-launcher.log` (Rust launcher log)
-- `C:\ProgramData\WsScrcpyWeb\ws-scrcpy-web.log` (Logger output, v0.1.23+)
+- `C:\ProgramData\WsScrcpyWeb\ws-scrcpy-web.log` (canonical Node app log — `Logger` output, v0.1.23+)
 - `C:\Program Files\WsScrcpyWeb\velopack.log` (Velopack lifecycle log)
 
 Open an issue on https://github.com/bilbospocketses/ws-scrcpy-web with the
