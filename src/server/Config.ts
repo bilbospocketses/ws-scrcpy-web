@@ -11,6 +11,7 @@ import {
 } from '../common/ConfigEvents';
 import type { ServerItem } from '../types/Configuration';
 import { EnvName } from './EnvName';
+import { Logger } from './Logger';
 
 const DEFAULT_SCAN_CONCURRENCY = 64;
 const DEFAULT_SCAN_TCP_TIMEOUT_MS = 300;
@@ -417,7 +418,8 @@ export class Config {
     public static getInstance(): Config {
         if (!this.instance) {
             const envConfigPath = process.env[EnvName.CONFIG_PATH];
-            const warn = (msg: string) => console.warn(`[Config] ${msg}`);
+            const log = Logger.for('Config');
+            const warn = (msg: string) => log.warn(msg);
 
             // Phase 1: writable state lives at <dataRoot> (ProgramData on
             // Windows). Compute it once here and thread it through both the
@@ -458,7 +460,7 @@ export class Config {
             // No system-PATH fallback by design.
             const adbResolution = resolveAdbPath(fileConfig, dependenciesPath);
             const adbPath = adbResolution.path;
-            console.info(`[Config] adbPath=${adbPath} (source=${adbResolution.source})`);
+            log.info(`adbPath=${adbPath} (source=${adbResolution.source})`);
 
             const scanConcurrency = Number.parseInt(process.env['SCAN_CONCURRENCY'] ?? '', 10) || fileConfig.scanConcurrency || DEFAULT_SCAN_CONCURRENCY;
             const scanTcpTimeoutMs = Number.parseInt(process.env['SCAN_TCP_TIMEOUT_MS'] ?? '', 10) || fileConfig.scanTcpTimeoutMs || DEFAULT_SCAN_TCP_TIMEOUT_MS;
