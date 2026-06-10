@@ -28,7 +28,7 @@
 //! than it should have been.
 
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
@@ -49,6 +49,15 @@ pub fn disable() {
 /// True once `disable()` has been called in this process.
 pub fn is_disabled() -> bool {
     LOG_DISABLED.load(Ordering::Relaxed)
+}
+
+/// Whether the launcher/tray should echo a log line to stderr. True only when
+/// stderr is a terminal. Under a service the service manager redirects stderr
+/// to a file (service.log) — not a terminal — so we skip the echo, which would
+/// only duplicate launcher.log into service.log. Keyed on the OS truth, never
+/// an env var.
+pub fn should_echo_stderr(is_terminal: bool) -> bool {
+    is_terminal
 }
 
 /// Set the log file basename for this process. Should be called once
@@ -132,7 +141,9 @@ fn append(prefix: &str, msg: &str) {
             let _ = writeln!(f, "{ts} [{prefix}] {msg}");
         }
     }
-    eprintln!("{ts} [{prefix}] {msg}");
+    if should_echo_stderr(std::io::stderr().is_terminal()) {
+        eprintln!("{ts} [{prefix}] {msg}");
+    }
 }
 
 pub fn info(msg: &str) {
@@ -198,5 +209,11 @@ mod tests {
         assert!(!is_disabled(), "logging starts enabled");
         disable();
         assert!(is_disabled(), "disable() must set the gate");
+    }
+
+    #[test]
+    fn should_echo_stderr_follows_is_terminal() {
+        assert!(super::should_echo_stderr(true));
+        assert!(!super::should_echo_stderr(false));
     }
 }
