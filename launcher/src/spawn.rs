@@ -89,6 +89,11 @@ fn open_server_log(data_root: &Path) -> Option<std::fs::File> {
     if let Some(parent) = log_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
+    // Rotate at 10 MB. server.log is free between spawns (the prior Node child
+    // released its fd), so a rename is safe here. It is now a thin crash-catcher
+    // (Logger no longer echoes to console under the launcher), so this cadence
+    // is ample.
+    crate::log::rotate_by_rename_if_large(&log_path, 10 * 1024 * 1024);
     OpenOptions::new()
         .create(true)
         .append(true)
@@ -288,6 +293,18 @@ mod tests {
 
         let err = resolve_server_entry_with(&exe_dir).unwrap_err();
         assert!(err.to_string().contains("Server entry not found"));
+    }
+
+    #[test]
+    fn open_server_log_rotates_when_oversized() {
+        let dir = tempdir().unwrap();
+        let logs = dir.path().join("logs");
+        fs::create_dir_all(&logs).unwrap();
+        let server_log = logs.join("server.log");
+        // Write 10 MB + 1 so it's at/over threshold.
+        fs::write(&server_log, vec![0u8; 10 * 1024 * 1024 + 1]).unwrap();
+        let _f = open_server_log(dir.path());
+        assert!(logs.join("server.log.1").exists(), "oversized server.log rotated to .1");
     }
 
 }
