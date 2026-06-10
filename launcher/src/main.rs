@@ -147,15 +147,20 @@ fn main() {
 
     // Service-defer: if an ACTIVE system-scope service owns the app, open the
     // browser at its URL and exit instead of spawning a duplicate local server.
+    // GUARD: never defer when WE ARE the service (systemd ExecStart sets
+    // WS_SCRCPY_SERVICE=1) — otherwise, during the system-scope install handoff, the
+    // outgoing local instance still holds the port and we'd defer to it, then exit,
+    // leaving nothing serving (the beta.56 self-defer).
     #[cfg(target_os = "linux")]
     {
+        let running_as_service = matches!(std::env::var("WS_SCRCPY_SERVICE").as_deref(), Ok("1"));
         let cfg = common::config::AppConfig::load(std::path::Path::new("/var/opt/ws-scrcpy-web"));
         if let (Some(mode), Some(port)) = (cfg.install_mode.as_deref(), cfg.web_port) {
             let live = std::net::TcpStream::connect_timeout(
                 &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
                 std::time::Duration::from_millis(200),
             ).is_ok();
-            if let Some(url) = linux_service::service_defer_url(Some(mode), Some(port), live) {
+            if let Some(url) = linux_service::service_defer_url(Some(mode), Some(port), live, running_as_service) {
                 log::info(&format!("service-defer: active system service; opening {url}"));
                 let xdg = format!("{}/xdg-open", linux_service::tool_dir("xdg-open"));
                 let _ = std::process::Command::new(&xdg).arg(&url).status();
