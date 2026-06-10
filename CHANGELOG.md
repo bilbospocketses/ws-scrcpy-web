@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.57] - 2026-06-10
+
 ### Fixed
 
 - **Installing the Linux *system-wide* service now serves the app instead of timing out.** The install started the service with `systemctl enable --now` while the app you triggered it from was still holding the web port — so the freshly-started service saw the port already in use, assumed another instance owned it, opened that URL, and exited immediately. Nothing ended up serving, and the settings screen reported *"service is running but port discovery timed out."* The system-service install now works the same way the per-user service already did: it registers the service without starting it, hands off to a privileged helper that waits for the original app to exit and free the port, then starts and verifies the service. As a safety net, the launcher also no longer mistakes itself for an already-running service to defer to — and if the service still can't start, the app you launched it from is brought back, so a failed install never leaves you with nothing running.
