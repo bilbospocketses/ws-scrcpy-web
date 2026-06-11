@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Linux system-wide service install now labels its state directory correctly under SELinux.** A flaw in the install script's SELinux labeling could leave `/var/opt/ws-scrcpy-web` mislabeled on enforcing systems like Fedora; the labeling steps are now independent, so one failing step can no longer skip the rest (and the bundled dependencies get relabeled too).
+- **Linux system-wide service uninstall now actually removes the service.** The uninstall spawned a helper that crashed on startup — before tearing anything down — so the service kept running while the UI reported it removed. The helper now starts correctly, and the in-app uninstall verifies the service is really gone before reporting success (and tells you if it isn't).
+
 ## [0.1.30-beta.60] - 2026-06-11
 
 ### Changed
