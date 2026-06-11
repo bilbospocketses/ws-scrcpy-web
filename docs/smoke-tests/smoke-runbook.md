@@ -1,6 +1,6 @@
 # ws-scrcpy-web — Smoke Test Runbook (plain-English)
 
-> **Smoke target: `v0.1.30-beta.60`** — bump this one line each release; everything below is version-agnostic.
+> **Smoke target: `v0.1.30-beta.61`** — bump this one line each release; everything below is version-agnostic.
 
 **What this is.** A step-by-step manual test pass for the **ws-scrcpy-web** app. Completing it is the agreed gate before cutting the **0.1.30 final** release — the "prove it really installs, updates, and streams on Windows + Linux" check. You run it by hand on your test VMs plus a real Android device; it can't be automated from a chat.
 

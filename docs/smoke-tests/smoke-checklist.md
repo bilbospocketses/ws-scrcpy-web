@@ -1,6 +1,6 @@
 # ws-scrcpy-web — Smoke Run-Sheet
 
-> **Smoke target: `v0.1.30-beta.60`** — bump this one line each release; everything below is version-agnostic.
+> **Smoke target: `v0.1.30-beta.61`** — bump this one line each release; everything below is version-agnostic.
 
 Execution-ordered, tickable checklist for the 0.1.30 Linux smoke gate. Regroups the canonical rows from
 [`smoke-full.md`](./smoke-full.md) by **app state** — the order you actually run them; that doc
