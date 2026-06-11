@@ -121,7 +121,7 @@ fn version_cmp(a: &str, b: &str) -> std::cmp::Ordering {
 }
 
 /// `self_version` = the running (home) AppImage's version; `opt_version` = parsed
-/// /opt/VERSION (None if absent/unreadable). Pure.
+/// /opt/ws-scrcpy-web/VERSION (None if absent/unreadable). Pure.
 pub fn bootstrap_decision(opt_exists: bool, appimage_env: Option<&str>, self_version: &str, opt_version: Option<&str>) -> BootstrapAction {
     let opt = PathBuf::from("/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage");
     let is_self_opt = appimage_env.map(|p| p == opt.to_string_lossy()).unwrap_or(false);

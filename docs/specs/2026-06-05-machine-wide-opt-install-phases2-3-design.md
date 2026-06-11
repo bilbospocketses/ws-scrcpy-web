@@ -62,13 +62,13 @@ System service installed → uninstall **(a) as the same user** and **(b) via pk
 
 ### 3b — Machine-wide-no-service app update (`pkexec` the swap only)
 The user runs `/opt` locally (no service); a Velopack update must write the root-owned `/opt`.
-- **`pkexec` *only* the file swap** — reuse Phase 1's machine-wide-install elevated step: `cp` staged AppImage → `/opt/.../WsScrcpyWeb.AppImage`, re-label `bin_t` + `restorecon`, bump `/opt/VERSION`. **One prompt.**
+- **`pkexec` *only* the file swap** — reuse Phase 1's machine-wide-install elevated step: `cp` staged AppImage → `/opt/.../WsScrcpyWeb.AppImage`, re-label `bin_t` + `restorecon`, bump `/opt/ws-scrcpy-web/VERSION`. **One prompt.**
 - **Relaunch in the user's context** — the `pkexec` covers *only* the swap; after it, the user-context process re-execs the new `/opt` (as the user, **never root**). Browser reconnects (same port, local config).
 - **Unchanged:** run-in-place home installs update with zero elevation (existing `linux_apply`); system-service installs self-update prompt-free (item 39).
 
 ### 3c — Bootstrapper version-compare + offer-update
 Phase 1's bootstrapper just execs `/opt` if present. Phase 3 makes it version-aware so a manually-downloaded newer AppImage isn't silently ignored:
-- The launcher reads `/opt/VERSION` and its own `CARGO_PKG_VERSION`, semver-compares.
+- The launcher reads `/opt/ws-scrcpy-web/VERSION` and its own `CARGO_PKG_VERSION`, semver-compares.
 - **home ≤ /opt** → exec `/opt` (normal).
 - **home > /opt** → run the **home** AppImage in place (the newer one) and flag it for the app, which **offers** *"update the system-wide install to vX? [update]"* → POST → the **3b** `pkexec` swap using the home AppImage as source. Next launch execs the updated `/opt`.
 - Reuses 3b's swap; the offer lives in the frontend (the launcher can't draw UI).
@@ -86,7 +86,7 @@ Machine-wide-no-service `/opt` install → in-app update → **one** pkexec → 
 
 ## Cross-cutting
 - **Linux-only** (Windows is already PerMachine).
-- Phase 2 depends only on Phase 1's `/opt` layout (shipped). Phase 3's update + version-compare depend on Phase 1's `buildMachineWideInstallScript` + `/opt/VERSION` (shipped).
+- Phase 2 depends only on Phase 1's `/opt` layout (shipped). Phase 3's update + version-compare depend on Phase 1's `buildMachineWideInstallScript` + `/opt/ws-scrcpy-web/VERSION` (shipped).
 - Build order for the plan: **Phase 2** (relaunch) is independent and smaller → first; **Phase 3** (migration + update + version-compare) second.
 
 ## Open risks (carry into the plan)

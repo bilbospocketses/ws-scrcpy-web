@@ -46,7 +46,7 @@ sudo systemctl daemon-reload
 | Test | How to perform | Expected + verify |
 |---|---|---|
 | **1.1** `[Linux]` First-run modal | Run the home AppImage on a machine with no prior install/decline marker. | "install for all users?" modal: 3 stacked lines + buttons **yes, all users** / **no, me only**; **no ×**; **Esc** and **click-outside do nothing** (forced choice). |
-| **1.2** `[Linux]` Accept → install + **delete original** | Click **yes, all users**; authenticate the one prompt. | One pkexec; binary at `/opt/ws-scrcpy-web/`; `/opt/VERSION` = the smoke-target version; system `.desktop` present; app runs. **NEW:** the original home AppImage (the file you launched) is **gone** — `ls ~/Downloads/WsScrcpyWeb*.AppImage` → not found. |
+| **1.2** `[Linux]` Accept → install + **delete original** | Click **yes, all users**; authenticate the one prompt. | One pkexec; binary at `/opt/ws-scrcpy-web/`; `/opt/ws-scrcpy-web/VERSION` = the smoke-target version; system `.desktop` present; app runs. **NEW:** the original home AppImage (the file you launched) is **gone** — `ls ~/Downloads/WsScrcpyWeb*.AppImage` → not found. |
 | **1.3** `[Linux]` Decline + remember | Fresh state / 2nd user → **no, me only**. | Runs in place from `~/.local`; **next launch does NOT re-prompt**; original AppImage **kept**. |
 | **1.4** `[Linux]` Headless first-run | Launch over SSH / no display. | No hang; graceful fallback, no crash. |
 | **1.5** `[Win]` Fresh MSI install | Clean snapshot, log in `Admin`; install `WsScrcpyWeb-beta.msi`. | Installs clean; browser auto-opens `http://localhost:<port>`; WelcomeModal shows; Settings → About = the smoke-target version; installs to `C:\Program Files\WsScrcpyWeb\`. |
