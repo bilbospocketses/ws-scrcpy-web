@@ -455,13 +455,14 @@ export class SettingsModal extends Modal {
     }
 
     private fillBody(container: HTMLElement): void {
-        // v0.1.23: Updates first (most-touched section in practice),
-        // then Server (host port), Service (install/uninstall),
-        // App (rare-use reset).
+        // beta.62: Updates first (most-touched), then Service (install/
+        // uninstall), then Server — the consolidated app/server section. The
+        // former standalone "App" section (reset, install-for-all-users, stop &
+        // exit, uninstall) was folded into "Server", which also keeps the web
+        // port row; there is no longer a separate "App" section.
         container.appendChild(this.buildUpdatesSection());
-        container.appendChild(this.buildServerSection());
         container.appendChild(this.buildServiceSection());
-        container.appendChild(this.buildAppSection());
+        container.appendChild(this.buildServerSection());
     }
 
     // ── Layout primitives ──────────────────────────────────────────────────
@@ -535,34 +536,84 @@ export class SettingsModal extends Modal {
     private buildServerSection(): HTMLElement {
         const { section, body } = this.buildSection('Server');
 
+        // 1. reset welcome & bookmark prompts — opens ResetConfirmModal, then
+        //    clears the first-run / bookmark flags and reloads so the relevant
+        //    modal re-fires.
+        const reset = buildResetControl({ reload: () => window.location.reload() });
+        body.appendChild(this.buildRow('reset welcome and bookmark prompts', reset.button));
+
+        // 2. web port — number input with the SAVE button INLINE to its right
+        //    (same control cell). The status line below the row is EMPTY at rest
+        //    and only fills on save (saving → restarting/redirecting, "no change",
+        //    or an error) via setServerStatus / onSavePort.
         this.webPortInput = document.createElement('input');
         this.webPortInput.type = 'number';
         this.webPortInput.min = '1024';
         this.webPortInput.max = '65535';
         this.webPortInput.className = 'settings-input';
         this.webPortInput.style.maxWidth = '120px';
-        body.appendChild(this.buildRow('web port', this.webPortInput));
 
-        // Save row: label = redirect-note (wraps in left column), control =
-        // save button (left-aligned in right column like every other control).
-        // The label text is dynamic — starts with the redirect explainer
-        // and swaps to "saving…" / "saved." / error during onSavePort.
         this.serverSaveBtn = document.createElement('button');
         this.serverSaveBtn.type = 'button';
         this.serverSaveBtn.className = 'settings-btn settings-btn-primary';
         this.serverSaveBtn.textContent = 'save';
+        this.serverSaveBtn.style.marginLeft = '0.5rem';
         this.serverSaveBtn.addEventListener('click', () => {
             void this.onSavePort();
         });
-        const { row: saveRow, labelEl: saveLabelEl } = this.buildDynamicLabelRow(
-            'save restarts & redirects',
-            this.serverSaveBtn,
-        );
-        body.appendChild(saveRow);
-        // setServerStatus mutates this label to show progress / errors.
-        // We keep the original element type as <span> so it lines up with
-        // every other label in the modal — no extra <p> wrapper.
-        this.webPortStatus = saveLabelEl as unknown as HTMLElement;
+
+        const portControl = document.createDocumentFragment();
+        portControl.appendChild(this.webPortInput);
+        portControl.appendChild(this.serverSaveBtn);
+        body.appendChild(this.buildRow('web port', portControl));
+
+        this.webPortStatus = document.createElement('p');
+        this.webPortStatus.className = 'settings-status';
+        this.webPortStatus.style.gridColumn = '1 / -1';
+        this.webPortStatus.hidden = true;
+        body.appendChild(this.webPortStatus);
+
+        // 3. install for all users (Linux-only) — hidden until
+        //    applyAppSectionButtonsState reveals it on Linux. POSTs
+        //    /api/service/install-system-wide (pkexec → /opt → re-exec); the OS
+        //    pkexec dialog is the confirmation, so on success just reload.
+        const install = buildInstallAllUsersControl({ reload: () => window.location.reload() });
+        this.installAllUsersButton = install.button;
+        this.installAllUsersNote = install.note;
+        const installRow = this.buildRow('install for all users', install.button);
+        installRow.style.display = 'none';
+        this.installAllUsersRow = installRow;
+        body.appendChild(installRow);
+        body.appendChild(install.note);
+
+        // 4. stop the server and close the app — §27 graceful shutdown (exit 0,
+        //    the launcher supervisor will NOT restart it). Gated off in service
+        //    mode by applyStopServerButtonState once /api/service/status resolves.
+        const stopBtn = document.createElement('button');
+        stopBtn.type = 'button';
+        stopBtn.className = 'settings-btn settings-btn-primary';
+        stopBtn.textContent = 'stop server & exit';
+        stopBtn.addEventListener('click', () => void this.onStopServerExit(stopBtn));
+        this.stopServerButton = stopBtn;
+        body.appendChild(this.buildRow('stop the server and close the app', stopBtn));
+
+        const stopNote = document.createElement('p');
+        stopNote.className = 'settings-status';
+        stopNote.style.gridColumn = '1 / -1';
+        stopNote.hidden = true;
+        this.stopServerNote = stopNote;
+        body.appendChild(stopNote);
+
+        // 5. uninstall ws-scrcpy-web (Linux + win32) — hidden until revealed.
+        //    Always enabled when shown (uninstalling is how you remove a
+        //    service). Opens UninstallConfirmModal; confirm POSTs
+        //    /api/service/uninstall-app { keep }.
+        const uninstall = buildUninstallControl({ onUninstalled: () => this.showUninstalledOverlay() });
+        this.uninstallButton = uninstall.button;
+        const uninstallRow = this.buildRow('uninstall ws-scrcpy-web', uninstall.button);
+        uninstallRow.style.display = 'none';
+        this.uninstallRow = uninstallRow;
+        body.appendChild(uninstallRow);
 
         return section;
     }
@@ -577,10 +628,9 @@ export class SettingsModal extends Modal {
             const env = (await r.json()) as AppConfigEnvelope;
             this.currentWebPort = env.config.webPort;
             this.webPortInput.value = String(env.config.webPort);
-            // Default note: explain the redirect-on-save behavior so the
-            // user knows clicking save isn't a static config change but a
-            // server restart with auto-redirect to the new URL.
-            this.setServerStatus('save restarts & redirects');
+            // No at-rest hint: the status line below the web-port row stays
+            // empty until a save (then: saving → restarting/redirecting, a
+            // "no change" note, or an error).
         } catch {
             this.setServerStatus("couldn't reach server", true);
         }
@@ -643,6 +693,9 @@ export class SettingsModal extends Modal {
 
     private setServerStatus(msg: string, isError = false): void {
         this.webPortStatus.textContent = msg;
+        // The status line lives BELOW the web-port row and is empty at rest —
+        // hide it when there is no message so it doesn't reserve a blank row.
+        this.webPortStatus.hidden = msg.length === 0;
         this.webPortStatus.classList.toggle('settings-status-error', isError);
     }
 
@@ -1580,73 +1633,9 @@ export class SettingsModal extends Modal {
     }
 
     // ── App section ────────────────────────────────────────────────────────
-    private buildAppSection(): HTMLElement {
-        const { section, body } = this.buildSection('App');
-
-        // ── reset welcome & bookmark prompts ─────────────────────────────
-        // Extracted builder (mirrors buildUninstallControl): the reset button
-        // opens ResetConfirmModal and, on confirm, clears the first-run /
-        // bookmark flags and reloads so the appropriate modal re-fires.
-        const reset = buildResetControl({ reload: () => window.location.reload() });
-        const resetBtn = reset.button;
-
-        // ── install for all users (Linux-only) ───────────────────────────
-        // §beta.49 — hidden (display:none overrides the .settings-row { display: contents }
-        // rule via inline style) and revealed only on Linux by applyAppSectionButtonsState
-        // once /api/service/status resolves, so it never flashes on Windows.
-        // POST /api/service/install-system-wide (pkexec → relocate to /opt → re-exec).
-        // The OS pkexec dialog is the confirmation, so no extra modal — just reload onto
-        // the re-execed instance on success.
-        const install = buildInstallAllUsersControl({ reload: () => window.location.reload() });
-        this.installAllUsersButton = install.button;
-        this.installAllUsersNote = install.note;
-        const installRow = this.buildRow('install for all users', install.button);
-        installRow.style.display = 'none';
-        this.installAllUsersRow = installRow;
-
-        // ── stop the server and exit the app ─────────────────────────────
-        // §27 — backs the /api/server/shutdown endpoint (which now runs graceful teardown
-        // before exiting 0 — a clean exit the launcher supervisor will NOT restart).
-        // Gated off in service mode (the OS service manager owns the lifecycle) by
-        // applyStopServerButtonState, driven from renderServiceState once
-        // /api/service/status resolves.
-        const stopBtn = document.createElement('button');
-        stopBtn.type = 'button';
-        stopBtn.className = 'settings-btn settings-btn-primary';
-        stopBtn.textContent = 'stop server & exit';
-        stopBtn.addEventListener('click', () => void this.onStopServerExit(stopBtn));
-        this.stopServerButton = stopBtn;
-
-        const stopNote = document.createElement('p');
-        stopNote.className = 'settings-status';
-        stopNote.style.gridColumn = '1 / -1';
-        stopNote.hidden = true;
-        this.stopServerNote = stopNote;
-
-        // ── uninstall ws-scrcpy-web (Linux + win32) ──────────────────────
-        // Always enabled when shown (NOT gated on service mode — uninstalling is how you
-        // remove a service). Opens UninstallConfirmModal on click; confirm POSTs
-        // /api/service/uninstall-app { keep }.
-        const uninstall = buildUninstallControl({ onUninstalled: () => this.showUninstalledOverlay() });
-        this.uninstallButton = uninstall.button;
-        const uninstallRow = this.buildRow('uninstall ws-scrcpy-web', uninstall.button);
-        uninstallRow.style.display = 'none';
-        this.uninstallRow = uninstallRow;
-
-        // ── DOM order (top → bottom) ──────────────────────────────────────
-        // 1. reset welcome & bookmark (confirm now lives in ResetConfirmModal)
-        body.appendChild(this.buildRow('reset welcome and bookmark prompts', resetBtn));
-        // 2. install for all users + note (Linux-only, hidden until revealed)
-        body.appendChild(installRow);
-        body.appendChild(install.note);
-        // 3. stop the server and close the app + note
-        body.appendChild(this.buildRow('stop the server and close the app', stopBtn));
-        body.appendChild(stopNote);
-        // 4. uninstall ws-scrcpy-web (Linux + win32, hidden until revealed)
-        body.appendChild(uninstallRow);
-
-        return section;
-    }
+    // The former "App" section (reset, install-for-all-users, stop & exit,
+    // uninstall) was folded into the Server section — see buildServerSection
+    // (beta.62).
 
     /**
      * Reflect the (unit-tested) stopServerButtonState decision onto the App

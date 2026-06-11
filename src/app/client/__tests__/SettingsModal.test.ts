@@ -449,11 +449,11 @@ describe('buildResetControl', () => {
     });
 });
 
-describe('App section row order (Part B)', () => {
+describe('Server section row order (folded App, beta.62)', () => {
     /** Flush microtasks so SettingsModal.fillBody() runs (it is queued via queueMicrotask). */
     const flushMicrotasks = (): Promise<void> => new Promise((resolve) => queueMicrotask(resolve));
 
-    it('App section rows appear in order: reset, install-for-all-users, stop-server, uninstall', async () => {
+    it('Server-section rows appear in order: reset, install-for-all-users, stop-server, uninstall', async () => {
         // Stub fetch so the refresh* calls inside the constructor never settle
         // (we only need the base DOM structure, not service-status overlays).
         vi.stubGlobal('fetch', vi.fn().mockReturnValue(new Promise(() => undefined)));
@@ -486,5 +486,42 @@ describe('App section row order (Part B)', () => {
         expect(resetIdx, 'reset must come before install-for-all-users').toBeLessThan(installIdx);
         expect(installIdx, 'install-for-all-users must come before stop').toBeLessThan(stopIdx);
         expect(stopIdx, 'stop must come before uninstall').toBeLessThan(uninstallIdx);
+    });
+});
+
+describe('Settings section restructure (beta.62)', () => {
+    const flushMicrotasks = (): Promise<void> => new Promise((resolve) => queueMicrotask(resolve));
+
+    it('renders sections in order Updates, Service, Server — no standalone App section', async () => {
+        document.body.replaceChildren();
+        vi.stubGlobal('fetch', vi.fn().mockReturnValue(new Promise(() => undefined)));
+        HTMLDialogElement.prototype.showModal = vi.fn();
+
+        new SettingsModal();
+        await flushMicrotasks();
+
+        const headings = Array.from(
+            document.body.querySelectorAll<HTMLElement>('.settings-section-heading'),
+        ).map((el) => el.textContent ?? '');
+        expect(headings).toEqual(['Updates', 'Service', 'Server']);
+    });
+
+    it('places the web-port save button inline with the input in the same control cell', async () => {
+        document.body.replaceChildren();
+        vi.stubGlobal('fetch', vi.fn().mockReturnValue(new Promise(() => undefined)));
+        HTMLDialogElement.prototype.showModal = vi.fn();
+
+        new SettingsModal();
+        await flushMicrotasks();
+
+        const rows = Array.from(document.body.querySelectorAll<HTMLElement>('.settings-row'));
+        const portRow = rows.find(
+            (r) => r.querySelector('.settings-label')?.textContent === 'web port',
+        );
+        expect(portRow, 'web port row missing').toBeTruthy();
+        const control = portRow?.querySelector('.settings-control');
+        expect(control?.querySelector('input'), 'port input missing').toBeTruthy();
+        const inlineBtn = control?.querySelector('button');
+        expect(inlineBtn?.textContent, 'inline save button missing').toBe('save');
     });
 });
