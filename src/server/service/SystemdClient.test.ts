@@ -59,17 +59,32 @@ describe('buildSystemInstallScript', () => {
         expect(script).not.toContain('ws-scrcpy-web-launcher.exe');
     });
 
-    it('prepares /opt, chmods the (already-staged) binary, labels bin_t, then installs the unit', () => {
+    it('prepares /opt, chmods the (already-staged) binary, then installs the unit', () => {
         const script = buildSystemInstallScript(args);
         expect(script).toContain('mkdir -p /opt/ws-scrcpy-web');
         // the AppImage is NOT re-copied (machine-wide precondition) — only chmod'd
         expect(script).toContain('chmod 0755 "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"');
-        expect(script).toContain("semanage fcontext -a -t bin_t '/opt/ws-scrcpy-web(/.*)?'");
         expect(script).toContain('restorecon -Rv "/opt/ws-scrcpy-web"');
-        expect(script).toContain('chcon -t bin_t "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"');
         expect(script).toContain('cp "/tmp/WsScrcpyWeb.service.tmp" "/etc/systemd/system/WsScrcpyWeb.service"');
         expect(script).toContain('systemctl daemon-reload');
         expect(script).toContain('systemctl enable --now WsScrcpyWeb.service');
+    });
+
+    it('labels /var/opt var_lib_t + restorecons both trees as independent steps (no && chain, no chcon)', () => {
+        // beta.60 #9 2.2/2.3 gate: the old `&&` chain short-circuited at the redundant
+        // /opt bin_t re-add (`-a` "already defined" + `-m`-to-unchanged both fail on this
+        // Fedora's semanage), so the var_lib_t add + both restorecons never ran and
+        // /var/opt came out usr_t. The labeling steps must be independent.
+        const script = buildSystemInstallScript(args);
+        expect(script).toContain("semanage fcontext -a -t var_lib_t '/var/opt/ws-scrcpy-web(/.*)?'");
+        expect(script).toContain('restorecon -Rv "/opt/ws-scrcpy-web"');
+        expect(script).toContain('restorecon -Rv "/var/opt/ws-scrcpy-web"');
+        // the redundant /opt bin_t re-add is gone (it poisoned the chain)
+        expect(script).not.toContain("semanage fcontext -a -t bin_t '/opt/ws-scrcpy-web(/.*)?'");
+        // the chcon fallback is gone (masked failures, only relabeled one file)
+        expect(script).not.toContain('chcon -t bin_t');
+        // var_lib_t labeling is NOT gated behind a bin_t step via && (independence)
+        expect(script).not.toMatch(/bin_t[^;]*&&[^;]*var_lib_t/);
     });
 
     it('staging precedes the unit copy (so ExecStart target exists before enable)', () => {
@@ -149,18 +164,21 @@ describe('buildSystemInstallScript', () => {
         );
     });
 
-    it('makes the SELinux fcontext adds idempotent (-a || -m) so a pre-existing /opt bin_t rule cannot short-circuit the var_lib_t add + restorecons (beta.57 #9 2.2/2.3)', () => {
+    it('var_lib_t labeling cannot be short-circuited — independent steps, no /opt bin_t re-add (beta.58/60 #9 2.2/2.3)', () => {
         const script = buildSystemInstallScript(args);
-        // A system-service install is gated on machine-wide-first, so the /opt bin_t
-        // fcontext rule ALWAYS pre-exists. A bare `semanage fcontext -a` then errors
-        // "already defined" and the `&&` chain skips the /var/opt var_lib_t add + both
-        // restorecons -> /var/opt mislabelled usr_t (smoke 2.2/2.3). Each add must be
-        // `-a || -m` (add, or modify-if-already-defined) so it can't fail-and-cascade.
-        expect(script).toContain("semanage fcontext -m -t bin_t '/opt/ws-scrcpy-web(/.*)?'");
-        expect(script).toContain("semanage fcontext -m -t var_lib_t '/var/opt/ws-scrcpy-web(/.*)?'");
-        // the var_lib_t add + the /var/opt restorecon still happen (not skipped):
+        // The OLD `&&` chain led with a redundant /opt bin_t re-add whose `-a` errored
+        // "already defined" (machine-wide-first gate => the rule always pre-exists) AND
+        // `-m`-to-unchanged ALSO failed on Fedora's semanage — short-circuiting the
+        // var_lib_t add + both restorecons, so /var/opt came out usr_t (the beta.58 fix
+        // that this test used to "verify" was string-only and never caught it). /opt is
+        // already bin_t (machine-wide install), so the re-add is GONE and the labeling
+        // steps are `;`-separated — structurally un-short-circuitable.
         expect(script).toContain("semanage fcontext -a -t var_lib_t '/var/opt/ws-scrcpy-web(/.*)?'");
+        // `-m` fallback keeps re-installs idempotent:
+        expect(script).toContain("semanage fcontext -m -t var_lib_t '/var/opt/ws-scrcpy-web(/.*)?'");
         expect(script).toContain('restorecon -Rv "/var/opt/ws-scrcpy-web"');
+        // the /opt bin_t re-add (and the chcon fallback) that poisoned the chain are gone:
+        expect(script).not.toContain('-t bin_t');
     });
 });
 

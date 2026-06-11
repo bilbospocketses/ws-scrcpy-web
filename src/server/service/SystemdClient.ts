@@ -305,7 +305,6 @@ export function buildSystemInstallScript(
     const mkdir = binTool('mkdir');
     const cp = binTool('cp');
     const chmod = binTool('chmod');
-    const chcon = binTool('chcon');
     const systemctl = binTool('systemctl');
     const semanage = sbinTool('semanage');
     const restorecon = sbinTool('restorecon');
@@ -347,22 +346,18 @@ export function buildSystemInstallScript(
         steps.push(`${cp} "${args.seedConfigTmpPath}" "${SYSTEM_STATE_DIR}/config.json"`);
     }
     steps.push(
-        // 2. label bin_t so init_t can exec it. Persistent rule (semanage) when
-        //    available; restorecon applies it; chcon is the transient fallback
-        //    for minimal images without policycoreutils-python-utils. The whole
-        //    step is a best-effort subshell with a trailing `|| true`: POSIX sh
-        //    gives `&&`/`||` EQUAL precedence (left-assoc), so without isolation
-        //    a label failure on a non-SELinux host (semanage absent + chcon
-        //    erroring on a non-SELinux fs) would break the outer `&&` chain and
-        //    silently skip the unit cp + enable below.
-        //    restorecon covers the whole dir — labels the helper bin_t too when present.
-        //    Each `semanage fcontext -a` is paired with `|| …-m` (add, or modify-if-
-        //    already-defined): a system install is GATED on machine-wide-first, so the
-        //    /opt bin_t rule ALWAYS pre-exists — a bare `-a` errors "already defined",
-        //    and because the inner steps are `&&`-chained that failure would skip the
-        //    /var/opt var_lib_t add + both restorecons, leaving /var/opt mislabelled
-        //    usr_t (the beta.57 #9 2.2/2.3 bug). `-a || -m` makes each add idempotent.
-        `( ( ( ${semanage} fcontext -a -t bin_t '${STAGED_SYSTEM_DIR}(/.*)?' || ${semanage} fcontext -m -t bin_t '${STAGED_SYSTEM_DIR}(/.*)?' ) && ( ${semanage} fcontext -a -t var_lib_t '${SYSTEM_STATE_DIR}(/.*)?' || ${semanage} fcontext -m -t var_lib_t '${SYSTEM_STATE_DIR}(/.*)?' ) && ${restorecon} -Rv "${STAGED_SYSTEM_DIR}" && ${restorecon} -Rv "${SYSTEM_STATE_DIR}" ) || ${chcon} -t bin_t "${staged}" || true )`,
+        // 2. SELinux labels — INDEPENDENT steps (`;`-separated, whole subshell `|| true`)
+        //    so no single `semanage` call can short-circuit the rest. The beta.58/60 #9
+        //    2.2/2.3 gate failure: the old `&&` chain LED with a redundant `/opt` bin_t
+        //    re-add whose `-a` errored "already defined" (machine-wide-first gate means
+        //    the rule ALWAYS pre-exists) AND `-m`-to-unchanged-type ALSO failed on
+        //    Fedora's semanage — breaking the chain before the var_lib_t add + both
+        //    restorecons ever ran, so /var/opt came out usr_t. `/opt` is already bin_t
+        //    (the machine-wide install created the rule + ran restorecon), so we do NOT
+        //    re-add it; `restorecon -Rv /opt` below just relabels the freshly-copied deps
+        //    (`cp -a` preserved their data_home_t) using the existing rule. No `chcon`
+        //    fallback — it masked failures and only ever relabeled one file.
+        `( ${semanage} fcontext -a -t var_lib_t '${SYSTEM_STATE_DIR}(/.*)?' || ${semanage} fcontext -m -t var_lib_t '${SYSTEM_STATE_DIR}(/.*)?' ; ${restorecon} -Rv "${STAGED_SYSTEM_DIR}" ; ${restorecon} -Rv "${SYSTEM_STATE_DIR}" ) || true`,
         // 3. install the unit (ExecStart already points at ${staged}).
         `${cp} "${args.unitTmpPath}" "${args.unitPath}"`,
         `${systemctl} daemon-reload`,
