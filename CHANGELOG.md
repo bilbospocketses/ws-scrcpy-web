@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.62] - 2026-06-11
+
 ### Changed
 
 - **The Settings panel's "App" section has been merged into "Server".** Settings now has three sections — Updates, Service, and Server — instead of four. The reset-prompts, "install for all users", "stop the server and close the app", and "uninstall" controls moved into a single "Server" section at the bottom, alongside the web-port setting. The web-port **save** button now sits directly beside the port box, and the "saving… / restarting…" status appears just below it only while a save is in progress.
