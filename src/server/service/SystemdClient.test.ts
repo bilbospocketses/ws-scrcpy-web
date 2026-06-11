@@ -309,6 +309,16 @@ describe('buildMachineWideInstallScript', () => {
         // `-a || -m` form keeps it idempotent. (Sibling of the #9 2.2/2.3 bug.)
         expect(s).toContain("semanage fcontext -m -t bin_t '/opt/ws-scrcpy-web(/.*)?'");
     });
+
+    it('restorecon runs independently of the bin_t add (;-separated), no chcon fallback (beta.61)', () => {
+        const s = buildMachineWideInstallScript(
+            { sourceAppImage: '/home/u/Downloads/WsScrcpyWeb-linux-beta.AppImage', version: '0.1.31-beta.1' },
+        );
+        expect(s).toContain('restorecon -Rv "/opt/ws-scrcpy-web"');
+        expect(s).not.toContain('chcon -t bin_t');
+        // bin_t add + restorecon are `;`-separated, not `&&`-chained (can't short-circuit)
+        expect(s).not.toMatch(/-a -t bin_t[^;]*&&[^;]*restorecon/);
+    });
 });
 
 describe('buildMachineWideUpdateScript', () => {
@@ -407,6 +417,13 @@ describe('buildSystemMigrationScript', () => {
     it('makes the var_lib_t fcontext add idempotent (-a || -m) — consistent with the install scripts, robust to a re-run over an existing rule', () => {
         const script = buildSystemMigrationScript(args);
         expect(script).toContain("semanage fcontext -m -t var_lib_t '/var/opt/ws-scrcpy-web(/.*)?'");
+    });
+
+    it('restorecon runs independently of the var_lib_t add (;-separated), no chcon fallback (beta.61)', () => {
+        const script = buildSystemMigrationScript(args);
+        expect(script).toContain('restorecon -Rv "/var/opt/ws-scrcpy-web"');
+        expect(script).not.toContain('chcon -t var_lib_t');
+        expect(script).not.toMatch(/var_lib_t[^;]*&&[^;]*restorecon/);
     });
 
     it('carries the seeded webPort into /var/opt/.../config.json', () => {

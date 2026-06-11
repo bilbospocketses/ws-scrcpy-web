@@ -407,7 +407,6 @@ export function buildMachineWideInstallScript(
     const mkdir = binTool('mkdir');
     const cp = binTool('cp');
     const chmod = binTool('chmod');
-    const chcon = binTool('chcon');
     const printf = binTool('printf');
     const semanage = sbinTool('semanage');
     const restorecon = sbinTool('restorecon');
@@ -426,7 +425,10 @@ export function buildMachineWideInstallScript(
         `${cp} "${args.sourceAppImage}" "${staged}"`,
         `${chmod} 0755 "${staged}"`,
         `${printf} '%s' '${args.version}' > ${SYSTEM_OPT_VERSION_FILE}`,
-        `( ( ( ${semanage} fcontext -a -t bin_t '${STAGED_SYSTEM_DIR}(/.*)?' || ${semanage} fcontext -m -t bin_t '${STAGED_SYSTEM_DIR}(/.*)?' ) && ${restorecon} -Rv "${STAGED_SYSTEM_DIR}" ) || ${chcon} -t bin_t "${staged}" || true )`,
+        // bin_t add + restorecon as INDEPENDENT `;`-separated steps (whole subshell
+        // `|| true`) so neither a re-install's "already defined" nor the `-m`-to-
+        // unchanged failure can short-circuit the restorecon (beta.61 #9 fix). No chcon.
+        `( ${semanage} fcontext -a -t bin_t '${STAGED_SYSTEM_DIR}(/.*)?' || ${semanage} fcontext -m -t bin_t '${STAGED_SYSTEM_DIR}(/.*)?' ; ${restorecon} -Rv "${STAGED_SYSTEM_DIR}" ) || true`,
         `( ${printf} '${desktop}\\n' > ${SYSTEM_DESKTOP_FILE} || true )`,
         `( ${updateDesktopDb} /usr/share/applications || true )`,
     ];
@@ -555,7 +557,6 @@ export function buildSystemMigrationScript(
     const cp = binTool('cp');
     const rm = binTool('rm');
     const printf = binTool('printf');
-    const chcon = binTool('chcon');
     const systemctl = binTool('systemctl');
     const semanage = sbinTool('semanage');
     const restorecon = sbinTool('restorecon');
@@ -582,10 +583,11 @@ export function buildSystemMigrationScript(
         // webPort is auditable in the script). Written BEFORE the relabel so
         // restorecon labels it var_lib_t.
         `${printf} '%s' '${args.seedConfigJson}' > ${SYSTEM_STATE_DIR}/config.json`,
-        // label the state dir var_lib_t + restorecon. Best-effort subshell with a
-        // chcon transient fallback + trailing `|| true` so a non-SELinux host still
-        // proceeds to install the unit — mirrors buildSystemInstallScript.
-        `( ( ( ${semanage} fcontext -a -t var_lib_t '${SYSTEM_STATE_DIR}(/.*)?' || ${semanage} fcontext -m -t var_lib_t '${SYSTEM_STATE_DIR}(/.*)?' ) && ${restorecon} -Rv "${SYSTEM_STATE_DIR}" ) || ${chcon} -t var_lib_t "${SYSTEM_STATE_DIR}" || true )`,
+        // label the state dir var_lib_t + restorecon as INDEPENDENT `;`-separated steps
+        // (whole subshell `|| true`) so no semanage quirk can short-circuit the
+        // restorecon — mirrors buildSystemInstallScript (beta.61 #9 2.2/2.3 fix). No
+        // chcon fallback (it masked failures).
+        `( ${semanage} fcontext -a -t var_lib_t '${SYSTEM_STATE_DIR}(/.*)?' || ${semanage} fcontext -m -t var_lib_t '${SYSTEM_STATE_DIR}(/.*)?' ; ${restorecon} -Rv "${SYSTEM_STATE_DIR}" ) || true`,
         // reinstall the unit (ExecStart still points at the in-place /opt AppImage;
         // env now carries DATA_ROOT=/var/opt) + reload + enable.
         `${cp} "${args.unitTmpPath}" "${args.unitPath}"`,
