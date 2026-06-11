@@ -32,8 +32,6 @@ The locked direction (item 36, user 2026-06-01) is **one SQLite store** in `data
 ## Non-goals
 
 - **No `rusqlite` in the launcher/tray** and no change to `common/src/config.rs` (see the boot-skeleton decision). The boot trio is the explicit carve-out from "SQLite for all."
-- **No self-service password change** in v1 (admin resets passwords). Deferred — see Open items.
-- **No "disable auth" / un-lock** flow in v1 (locking is one-way). Deferred.
 - **No per-user *device-stream* sharing model beyond udid+user** — per-device settings are keyed `(user, udid, scope)`; there is no cross-user sharing or inheritance.
 - No in-browser SQLite access — the browser talks HTTP only; the Node server owns the DB.
 - No Docker-specific work (item 2 is a separate release).
@@ -49,10 +47,12 @@ The locked direction (item 36, user 2026-06-01) is **one SQLite store** in `data
 | D3 | **Most settings are per-user**, not global/shared: theme, device naming, per-device stream/audio, icon size, scan-subnet list, dismissed prompts. (Refines items 34/37, which assumed shared/udid-keyed.) | User direction 2026-06-11. |
 | D4 | **Admin-only (global / instance-wide):** `webPort`, updates/channel, **Dependencies** (Node/adb/scrcpy-server management), service install, app uninstall, global `app_settings` (incl. scan-tuning knobs). Device **scanning** (quick + full subnet) is available to **all** users. | User direction 2026-06-11. Admin-only Settings sections are **hidden entirely** from regular users, not merely disabled. |
 | D5 | **Airtight admin password.** Adding the first real user *requires* the admin to set their password in the same flow; the lock engages only once a real admin password exists — **no password-less window**. | User pick 2026-06-11. Honors "the admin needs a password to lock the app down" literally. |
-| D6 | **Admin sets initial passwords** for new users (and can reset them). No first-login-set flow. | User pick 2026-06-11. |
+| D6 | **Admin sets initial passwords** for new users (and can reset them); **users can change their own password** from Settings. No first-login-set flow. | User pick 2026-06-11 (self-service change added same day). |
 | D7 | **DB-backed opaque sessions** (httpOnly cookie holds a random token; the server stores its hash). Not stateless JWT. | Real revocation, no signing-key management, survives restart. |
 | D8 | **Shared `devices` observed-metadata table is in v1** (item 34's richer tracking — manufacturer/model/last-seen/address), distinct from the per-user `device_labels`. | User direction 2026-06-11. |
 | D9 | **Engine: `node:sqlite`** (`DatabaseSync`), gated by an up-front **verification spike** on the bundled Node 24.15.0. | Local-Deps. Fallback `better-sqlite3` reintroduces the node-pty prebuilt-matrix problem, so it is the design target, not the default. |
+| D10 | **Account controls in v1:** admin can **disable** a user (checkbox; can't disable the last enabled admin); **login lockout** after 5 failed attempts in a rolling 5-min window, auto-unlock after 15 min of no attempts; **admin can clear a lockout immediately** (override the 15-min wait). | User direction 2026-06-11. |
+| D11 | **Reversible lock:** an explicit `app_settings.authEnabled` flag gates enforcement; an admin can turn login back **off** (return to open mode) and on again (re-enable requires ≥1 enabled admin with a password). | User direction 2026-06-11 (supersedes the earlier "one-way" lock). |
 
 ---
 
@@ -87,7 +87,11 @@ erDiagram
         integer id PK
         text    username "UNIQUE NOCASE"
         text    role "CHECK (user|admin)"
-        text    password_hash "NULL = no password yet (open-mode admin only); else scrypt PHC"
+        text    password_hash "NULL = no password yet; else scrypt PHC"
+        integer disabled "0|1 admin-disabled"
+        integer failed_attempts
+        integer lockout_window_start "NULL"
+        integer locked_until "NULL — brute-force lock"
         integer created_at
         integer last_login_at "NULL"
     }
@@ -131,12 +135,16 @@ erDiagram
 
 ```sql
 CREATE TABLE users (
-    id            INTEGER PRIMARY KEY,
-    username      TEXT    NOT NULL COLLATE NOCASE UNIQUE,
-    role          TEXT    NOT NULL CHECK (role IN ('user','admin')),
-    password_hash TEXT,                 -- NULL only for the implicit admin before lockdown
-    created_at    INTEGER NOT NULL,
-    last_login_at INTEGER
+    id                   INTEGER PRIMARY KEY,
+    username             TEXT    NOT NULL COLLATE NOCASE UNIQUE,
+    role                 TEXT    NOT NULL CHECK (role IN ('user','admin')),
+    password_hash        TEXT,            -- NULL only for the implicit admin before lockdown
+    disabled             INTEGER NOT NULL DEFAULT 0,   -- admin-disabled account
+    failed_attempts      INTEGER NOT NULL DEFAULT 0,
+    lockout_window_start INTEGER,         -- start of the current 5-min failed-attempt window
+    locked_until         INTEGER,         -- when set and now < it, login is locked
+    created_at           INTEGER NOT NULL,
+    last_login_at        INTEGER
 );
 
 CREATE TABLE sessions (
@@ -186,6 +194,9 @@ CREATE TABLE app_settings (
 -- Seed the implicit admin (open mode: no password → no login).
 INSERT INTO users (id, username, role, password_hash, created_at)
 VALUES (1, 'admin', 'admin', NULL, <unixMillis>);
+
+-- Auth starts disabled (open mode) until the lockdown flow enables it.
+INSERT INTO app_settings (key, value) VALUES ('authEnabled', 'false');
 ```
 
 **Design choices:**
@@ -210,7 +221,9 @@ Identity is the `users` table; it is **independent of OS accounts** (relevant in
 | Own **file-browser icon size** | ✓ | ✓ |
 | Own **scan-subnet list** | ✓ | ✓ |
 | Own **dismissed prompts** + **reset my settings** | ✓ | ✓ |
-| **Users management** (add/remove/role/reset pw) | — | ✓ |
+| **Change own password** | ✓ | ✓ |
+| **Users management** (add/remove/role/reset pw, **disable**, **unlock**) | — | ✓ |
+| **Enable/disable auth** (open-mode toggle) | — | ✓ |
 | `webPort` | — | ✓ |
 | Updates / channel / check-for-updates | — | ✓ |
 | **Dependencies** (Node/adb/scrcpy-server) | — | ✓ |
@@ -223,11 +236,11 @@ Admin-only Settings sections are **hidden** for regular users (not just disabled
 
 ## Auth subsystem
 
-**Identity model.** A `users` row exists from first run: the **implicit admin** (`id=1`, `role=admin`, `password_hash=NULL`, default username `admin`).
-- **Open mode** = the sole admin has no password → no login (today's behavior). Every request is implicitly `user_id=1`, so pre-auth prefs already live where they'll stay.
-- **Locked mode** = the derived predicate `EXISTS(SELECT 1 FROM users WHERE password_hash IS NOT NULL)` — no separate flag to desync. Locking is **one-way** in v1.
+**Identity model.** A `users` row exists from first run: the **implicit admin** (`id=1`, `role=admin`, `password_hash=NULL`, default username `admin`). Enforcement is governed by an explicit **`app_settings.authEnabled`** flag (default `false`).
+- **Open mode** (`authEnabled=false`) = no login required (today's behavior). Every request is implicitly `user_id=1` (the admin), so its settings apply and pre-auth prefs already live where they'll stay. If other user rows exist (auth was turned back off), they're **dormant** until re-enabled.
+- **Locked mode** (`authEnabled=true`) = every HTTP route and WS upgrade requires a session. Set `true` by the lockdown transaction; an admin can flip it back to `false` to return to open mode, or on again — **re-enabling requires ≥1 enabled admin with a password**, so you can never lock everyone out.
 
-**Lockdown flow (airtight — D5).** Admin → Settings → Users → "Add user." Because no admin password exists yet, the flow first presents **"Secure the admin account"**: confirm admin username + set password (single field, closed/open **eye toggle**). Required. On submit, **one transaction**: hash + store the admin password, create the new user (username + role + admin-set password), → locked. The admin's pre-lock settings (already at `user_id=1`) carry over seamlessly. After this, every HTTP route and WS upgrade requires a session.
+**Lockdown flow (airtight — D5).** Admin → Settings → Users → "Add user." Because no admin password exists yet, the flow first presents **"Secure the admin account"**: confirm admin username + set password (single field, closed/open **eye toggle**). Required. On submit, **one transaction**: hash + store the admin password, create the new user (username + role + admin-set password), set `authEnabled=true` → locked. The admin's pre-lock settings (already at `user_id=1`) carry over seamlessly. After this, every HTTP route and WS upgrade requires a session.
 
 **Sessions (D7).** `POST /api/auth/login {username,password}` verifies the scrypt hash (timing-safe). On success: mint a 256-bit random token, store `SHA-256(token)` in `sessions` with a **sliding 30-day** expiry (`last_seen_at` refreshed on use), set cookie `wsscrcpy_sid=<token>` — **httpOnly, SameSite=Lax, `Secure` when the server is https**, `Path=/`. Every request: middleware reads the cookie, hashes, looks up the session, checks expiry, attaches `req.user`. `POST /api/auth/logout` deletes the row + clears the cookie. Deleting a user cascades their sessions (instant revoke).
 
@@ -237,16 +250,24 @@ Admin-only Settings sections are **hidden** for regular users (not just disabled
 
 **Password hashing.** `node:crypto` `scrypt` — `N=16384, r=8, p=1`, 64-byte key, 16-byte random salt — stored PHC-style `scrypt$16384$8$1$<saltB64>$<hashB64>`; verified with `crypto.timingSafeEqual`. Compiled into Node → Local-Deps clean. (Cost parameters tunable; documented in code.)
 
+**Account controls (v1).**
+- **Self-service password change** — `POST /api/auth/change-password {currentPassword,newPassword}` for any authenticated user; verifies the current password (timing-safe), stores the new scrypt hash. Surfaced as a control in the Settings modal.
+- **Disable user** — admin sets `users.disabled=1` via `PATCH /api/users/:id {disabled}`; a disabled user fails login and has their sessions deleted immediately (instant kick). The **last enabled admin** cannot be disabled or deleted.
+- **Login lockout (brute-force)** — tracked on `users` (`failed_attempts`, `lockout_window_start`, `locked_until`). Per attempt: (1) unknown username or `disabled` → generic reject; (2) `locked_until` set and `now < locked_until` → reject **and** push `locked_until = now + 15min` (the inactivity timer resets on every attempt while locked); (3) `locked_until` set and `now ≥ locked_until` → lock expired, clear counters, proceed; (4) verify — **success** clears counters + sets `last_login_at`; **failure** starts a fresh 5-min window if none/expired (`lockout_window_start=now, failed_attempts=1`) else increments, and at `failed_attempts ≥ 5` sets `locked_until = now + 15min`. Net: 5 fails within 5 minutes lock the account; it auto-unlocks after 15 minutes with no attempts. Exact transitions pinned by TDD. **Admin override:** an admin can clear a user's lockout immediately via `PATCH /api/users/:id {unlock:true}` (resets `locked_until` + `failed_attempts` + `lockout_window_start`) so the user can retry without waiting — locked-out users rarely wait the 15 minutes.
+- **Reversible auth toggle** — admin `POST /api/auth/disable` (→ `authEnabled=false`, return to open mode) / `POST /api/auth/enable` (→ `true`; guarded by ≥1 enabled admin with a password). Sessions are left intact on disable (ignored in open mode) and honored again on re-enable.
+
 **API surface (new).**
 | Method · path | Role | Purpose |
 |---|---|---|
 | `POST /api/auth/login` | (open) | Authenticate, set session cookie |
 | `POST /api/auth/logout` | any | Destroy session |
-| `GET /api/auth/me` | any | Current user `{username, role}` + lock state |
-| `GET /api/users` | admin | List `{id, username, role, hasPassword, lastLogin}` |
+| `POST /api/auth/change-password` | any | Change own password (verifies current) |
+| `GET /api/auth/me` | any | Current user `{username, role}` + `authEnabled` |
+| `POST /api/auth/enable` · `/disable` | admin | Toggle `authEnabled` (lock / return to open mode) |
+| `GET /api/users` | admin | List `{id, username, role, hasPassword, disabled, lockedUntil, lastLogin}` |
 | `POST /api/users` | admin | Create `{username, role, password}` (the lockdown transaction when first) |
-| `PATCH /api/users/:id` | admin | Change role / reset password |
-| `DELETE /api/users/:id` | admin | Delete (refused if it would remove the last admin) |
+| `PATCH /api/users/:id` | admin | Change role / reset password / disable / **unlock** (clear lockout) |
+| `DELETE /api/users/:id` | admin | Delete (refused if it would remove the last enabled admin) |
 | `POST /api/settings/reset` | any | Clear the **caller's** `user_settings` + `device_labels` + `device_settings` (not the account) |
 
 **Service mode (root, multi-user Linux).** App-level auth is **orthogonal** to which OS user the systemd service runs as. The `users` table is app identity; the DB lives in the service's `dataRoot` (`/var/opt/ws-scrcpy-web` for system scope). One served app instance, one user table — no interaction with OS accounts.
@@ -290,7 +311,7 @@ Admin-only Settings sections are **hidden** for regular users (not just disabled
 
 - **Migrations:** v0→v1 produces the expected tables/indexes; re-open is idempotent (no double-import); `user_version` bumps; a `user_version`-from-the-future aborts.
 - **Repositories:** `UserStore` (create/find/role/last-login; can't-delete-last-admin); `SessionStore` (mint/validate/expire/revoke; stores the **hash** not the raw token); `UserSettingsStore`/`DeviceStore` per-user **isolation** (user A cannot read user B's rows); reset clears only the caller.
-- **Auth:** scrypt hash/verify (known vectors + `timingSafeEqual`); the locked predicate; the **atomic** lockdown transaction (admin pw + new user + lock, all-or-nothing); cookie parse/validate/expiry.
+- **Auth:** scrypt hash/verify (known vectors + `timingSafeEqual`); the `authEnabled` gate; the **atomic** lockdown transaction (admin pw + new user + enable, all-or-nothing); cookie parse/validate/expiry; **login lockout** transitions (5-in-5-min locks; 15-min inactivity auto-unlock; success resets; **admin unlock** clears it); **disable user** blocks login + revokes sessions; **change-password** verifies current; **auth disable/enable** toggle (disable → `req.user=id1`; enable guarded by an admin-with-password).
 - **Gating:** `AuthGate` HTTP (allow-list vs 401/login; admin-only → 403 for `user`); WS connection handler rejects an invalid/absent cookie with `4401` and accepts a valid one.
 - **Import:** config.json fields land in the right tables (global → `app_settings`, prompts → user 1); device-labels.json → `device_labels` user 1 + `devices` seed; the client localStorage→per-user key mapping; theme first-paint order (prefers-color-scheme → DB).
 - **Integrity:** corrupt file → move-aside + recreate + re-import; missing file → fresh + seed admin.
@@ -305,7 +326,7 @@ Each phase is its own plan in `docs/plans/` (per D1) and its own beta.
 1. **Store foundation.** `node:sqlite` verification spike (task 1); `Db` + PRAGMAs + migration framework + full v1 schema (all tables, incl. `sessions`); repository layer (`UserStore`/`UserSettingsStore`/`DeviceStore`/`AppSettingsStore` — the `sessions` table ships in the v1 schema but its `SessionStore` repository + wiring land in phase 4); seed implicit admin; integrity + backup; `Config.ts` boot-trio split + `config.json`/`config.example.json` trim; **server-side import** (config.json non-boot fields + device-labels.json). **No user-visible change** — settings are just served from SQLite now.
 2. **Device store.** Retarget `DeviceLabelStore` callers to the per-user `DeviceStore` (labels); wire shared `devices` upserts from the scanner / device tracker; surface model/last-seen in the device list.
 3. **Settings migration.** Move the five localStorage groups to the per-user store via `SettingsApi`; the client-side localStorage import + clear; the theme first-paint rework; per-user **reset-my-settings**.
-4. **Auth.** `SessionStore` wiring; `AuthApi`/`UsersApi`; `AuthGate` (HTTP + WS); role/capability gating + admin-only **section hiding**; the **Users modal**; the **lockdown flow** (set-admin-password + first user); login page.
+4. **Auth.** `SessionStore` wiring; `AuthApi`/`UsersApi`; `AuthGate` (HTTP + WS); role/capability gating + admin-only **section hiding**; the **Users modal** (add/role/reset, **disable** + **unlock** controls); the **lockdown flow** (set-admin-password + first user); **self-service change-password** (Settings); **login lockout** (5-in-5-min → 15-min inactivity unlock, admin override); the **reversible auth toggle** (disable/enable → open mode); login page.
 
 **Dependencies:** phases 2 and 3 each depend only on phase 1 (they operate in open mode against the implicit admin); phase 4 depends on phase 1 and lands **last** so gating + section-hiding cover the finished settings surface. 2 and 3 are independent of each other.
 
@@ -324,8 +345,6 @@ Each phase is its own plan in `docs/plans/` (per D1) and its own beta.
 
 ## Open items (deferred, tracked)
 
-- **Self-service password change** (a user changing their own password from Settings) — out of v1 per D6; easy add later.
-- **Disable-auth / un-lock** flow — locking is one-way in v1 (D5/identity model).
 - **Shared `devices` cleanup / retention** — pruning stale observed rows (no `last_seen` in N days) is a later nicety.
 - **Stricter WS handshake rejection** (`verifyClient`/`noServer`) over the connection-handler close — a hardening option if pre-handshake rejection is ever required.
 - **`node:sqlite` stability** — if the verification spike finds it unworkable on 24.15.0, the fallback decision (`better-sqlite3` + a vendored prebuilt matrix) returns to the user before Phase 1 locks.
