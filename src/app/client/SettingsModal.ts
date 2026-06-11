@@ -5,6 +5,7 @@ import { UninstallConfirmModal } from './UninstallConfirmModal';
 import { ResetConfirmModal } from './ResetConfirmModal';
 import { ServiceOperationModal } from './ServiceOperationModal';
 import { runUpgradingHandoff } from './UpgradingOverlay';
+import { pollServiceUninstalled } from './pollServiceUninstalled';
 import type { AppConfigEnvelope, AppConfigPatchResponse, UpdateChannel } from '../../common/ConfigEvents';
 import type {
     ServiceStatusResponse,
@@ -1472,12 +1473,25 @@ export class SettingsModal extends Modal {
                 const isSystemUninstall =
                     data.installMode === 'system' || data.installMode === 'system-service';
                 if (isLinux && isSystemUninstall) {
-                    // System scope on Linux: teardown helper stops the unit but
-                    // does NOT relaunch a local instance. Nothing to poll for.
+                    // System scope on Linux: the out-of-cgroup teardown helper runs
+                    // ASYNCHRONOUSLY. Do NOT claim success blindly — beta.60 #9 5.1: the
+                    // helper could core-dump (missing DATA_ROOT) while ServiceApi already
+                    // returned `shutting-down`, leaving the service running but the UI
+                    // saying "removed". Poll /api/service/status until the service is
+                    // actually gone, and surface a failure if it never does.
                     modal.close();
+                    this.renderServiceInfo('removing the system service…');
+                    const outcome = await pollServiceUninstalled();
                     btn.disabled = false;
                     btn.textContent = prevText;
-                    this.renderServiceInfo(uninstallFollowupMessage('system'));
+                    if (outcome === 'uninstalled') {
+                        this.renderServiceInfo(uninstallFollowupMessage('system'));
+                    } else {
+                        this.renderServiceError(
+                            'the system service is still running — uninstall may not have completed. check the service logs and try again.',
+                            () => void this.refreshService(),
+                        );
+                    }
                     return;
                 }
                 // User scope on Linux (or Windows): a fresh local instance is
