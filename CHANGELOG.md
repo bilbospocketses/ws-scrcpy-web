@@ -17,6 +17,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The Settings panel's "App" section has been merged into "Server".** Settings now has three sections — Updates, Service, and Server — instead of four. The reset-prompts, "install for all users", "stop the server and close the app", and "uninstall" controls moved into a single "Server" section at the bottom, alongside the web-port setting. The web-port **save** button now sits directly beside the port box, and the "saving… / restarting…" status appears just below it only while a save is in progress.
+
+### Fixed
+
+- **Launching the app now opens a browser tab every time — not only on the very first run.** Starting the app fresh from its shortcut booted the server but didn't open a tab (you had to click the shortcut a second time). It now opens your browser to the app on every fresh launch, while still avoiding a duplicate tab on an update relaunch or a port-change restart.
+- **Shutdown log lines now appear on the console when you stop the server from Settings.** Using "stop the server and close the app" wrote its teardown lines (e.g. "Stopping adb daemon…") to the log file but, on Windows, dropped them from the console; they now show in both, matching a Ctrl+C shutdown.
+
 ## [0.1.30-beta.61] - 2026-06-11
 
 ### Fixed
