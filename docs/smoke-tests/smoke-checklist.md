@@ -45,7 +45,6 @@ Boxes start unticked — this is a fresh pass.
 | ☐ **2.1** `[L]` Binary/deps labels | `ls -Z /opt/ws-scrcpy-web` | → **bin_t** — `VERSION` + `WsScrcpyWeb.AppImage` both `unconfined_u:object_r:bin_t:s0` |
 | ☐ **2.4** `[L]` Zero AVC | Watch `sudo journalctl -f \| grep -i avc` across the installs | **No** AVC denials |
 | ☐ **4.4** `[L]` Scope-radio legibility *(locked-radios state — counterpart to 4.1)* | Reopen Settings | Selected dot a **clear blue**; radios non-interactive (`pointer-events:none` + `tabindex=-1`, **not** `disabled`); **user** scope shown selected |
-| ☐ **4.5** `[B]` Confirm-dialog buttons | Open the install/uninstall "privileges required" confirm | Cancel/confirm are **white-outline + white-text** |
 | ☐ **4.6** `[L]` Unit hygiene | `cat ~/.config/systemd/user/WsScrcpyWeb.service` (StartLimit* under **[Unit]**); `journalctl --user -u WsScrcpyWeb -b` (**current boot only**); `pgrep -fa WsScrcpyWeb` | **No** `Unknown key 'StartLimitIntervalSec'` — must use **`-b`**: the persisted journal keeps stale pre-fix warnings from old installs that false-fail a whole-history grep; **only the service** runs (no leftover home instance); no false timeout toast |
 | ☐ **3.2** `[L]` Single-instance flock | Launch a 2nd copy from `/opt` **and** from `~/Downloads` | 2nd launch **blocked** (flock on `$XDG_RUNTIME_DIR`); no 2nd server; existing URL opens |
 | ☐ **10.1** `[B]` Status API | Browse `/api/service/status` | JSON with correct `platform`, `supported`, `status` |
@@ -67,6 +66,7 @@ Boxes start unticked — this is a fresh pass.
 | Test | How to perform | Expected + verify |
 |---|---|---|
 | ☐ **4.2-system** `[L]` Install system service | Settings → service → **system** scope → install (pkexec) | `/opt` ExecStart **as root**; state in `/var/opt`; zero AVC |
+| ☐ **4.5** `[B]` Confirm-dialog buttons *(Linux: system-scope only)* | When you click install (or uninstall) on **system** scope, eyeball the **"Root Privileges Required"** confirm before the pkexec prompt (user-scope shows none) | **cancel** / **continue** are **white-outline + white-text** |
 | ☐ **2.2** `[L]` State labels | `ls -Z /var/opt/ws-scrcpy-web` | → **var_lib_t** |
 | ☐ **2.3** `[L]` fcontext rules | `sudo semanage fcontext -l \| grep ws-scrcpy-web` | **Both** the `/opt` bin_t rule and the `/var/opt` var_lib_t rule |
 | ☐ **3.3** `[L]` Service-defer | System service running → launch locally | Defers to the service (opens its URL); no 2nd server |
