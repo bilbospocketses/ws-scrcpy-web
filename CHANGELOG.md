@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.60] - 2026-06-11
+
 ### Changed
 
 - **The "reset welcome and bookmark prompts" confirmation is now a dialog instead of an inline panel.** Clicking "reset" in Settings → App opens a small overlay that explains what reset does and asks you to confirm — matching the uninstall confirmation in the same section. What reset actually does is unchanged.
