@@ -10,6 +10,7 @@ import { ServerShutdownApi } from './api/ServerShutdownApi';
 import { ServiceApi } from './api/ServiceApi';
 import { UpdatesApi } from './api/UpdatesApi';
 import { WhoamiApi } from './api/WhoamiApi';
+import { forceBlockingStdio } from './util/forceBlockingStdio';
 import { Config } from './Config';
 import { UpdateService } from './UpdateService';
 import { DependencyManager } from './DependencyManager';
@@ -102,7 +103,15 @@ HttpServer.addApiHandler(configApi);
 const serviceApi = new ServiceApi();
 HttpServer.addApiHandler(serviceApi);
 
-const shutdownApi = new ServerShutdownApi({ cleanup: gracefulShutdown });
+const shutdownApi = new ServerShutdownApi({
+    // SE-3: flush stdio to blocking BEFORE the teardown logs run so a button/
+    // tray quit's "Stopping ..." lines reach the console (Windows TTY
+    // async-drop), matching the signal-quit path in exit().
+    cleanup: async () => {
+        forceBlockingStdio();
+        await gracefulShutdown();
+    },
+});
 HttpServer.addApiHandler(shutdownApi);
 
 const updateService = new UpdateService();
@@ -306,23 +315,10 @@ async function gracefulShutdown(): Promise<void> {
 
 let interrupted = false;
 function exit(signal: string) {
-    // Force stdout/stderr to blocking mode so every subsequent log line
-    // is synchronous-to-the-TTY. After fd4944d removed the readline-pin,
-    // shutdown got fast enough that async Windows-TTY writes (per Node
-    // docs — "TTYs are asynchronous on Windows") were being dropped
-    // before flushing — console showed only "Received signal SIGINT"
-    // then nothing, even though the file log (Logger.writeToFile uses
-    // appendFileSync) had every line. Internal API but a well-established
-    // Node pattern; wrapped in try/catch so a missing _handle on a
-    // future Node version degrades to today's behavior, not a crash.
-    try {
-        const stdoutHandle = (process.stdout as { _handle?: { setBlocking?: (b: boolean) => void } })._handle;
-        const stderrHandle = (process.stderr as { _handle?: { setBlocking?: (b: boolean) => void } })._handle;
-        stdoutHandle?.setBlocking?.(true);
-        stderrHandle?.setBlocking?.(true);
-    } catch {
-        /* best-effort — internal API */
-    }
+    // Flush stdout/stderr to blocking so every teardown line reaches the
+    // console before exit (Windows TTY async-drop). Same helper the button/
+    // tray-quit path uses (ServerShutdownApi cleanup) — see forceBlockingStdio.
+    forceBlockingStdio();
     serverLog.info(`Received signal ${signal}`);
     if (interrupted) {
         serverLog.info('Force exit');
@@ -335,7 +331,7 @@ function exit(signal: string) {
     // entirely, so the daemon stays alive across supervisor-driven restarts —
     // see gracefulShutdown's doc.
     void gracefulShutdown();
-    // setBlocking(true) at top of exit() makes the console.log calls in
+    // forceBlockingStdio() at the top of exit() makes the console.log calls in
     // serverLog / Logger synchronous-to-the-TTY, so by the time control
     // reaches here every "Stopping X" line is already on the console.
     //
