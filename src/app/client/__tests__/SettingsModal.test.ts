@@ -15,9 +15,11 @@ import {
     appSectionButtonsState,
     buildInstallAllUsersControl,
     buildUninstallControl,
+    buildResetControl,
     SettingsModal,
 } from '../SettingsModal';
 import * as UninstallConfirmModalModule from '../UninstallConfirmModal';
+import * as ResetConfirmModalModule from '../ResetConfirmModal';
 
 /** Flush microtasks + a macrotask so the awaited fetch handlers settle. */
 const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
@@ -373,6 +375,77 @@ describe('buildUninstallControl', () => {
 
         expect(fetchMock).not.toHaveBeenCalled();
         expect(onUninstalled).not.toHaveBeenCalled();
+    });
+});
+
+describe('buildResetControl', () => {
+    it('returns only { button } — no inline confirmPanel/note', () => {
+        const result = buildResetControl({ reload: vi.fn() });
+        expect(result).toHaveProperty('button');
+        expect(result).not.toHaveProperty('confirmPanel');
+        expect(result).not.toHaveProperty('note');
+    });
+
+    it('button is the primary "reset" button', () => {
+        const { button } = buildResetControl({ reload: vi.fn() });
+        expect(button.textContent).toBe('reset');
+        expect(button.classList.contains('settings-btn')).toBe(true);
+        expect(button.classList.contains('settings-btn-primary')).toBe(true);
+    });
+
+    it('button click opens ResetConfirmModal (calls confirm)', async () => {
+        const confirmSpy = vi
+            .spyOn(ResetConfirmModalModule.ResetConfirmModal, 'confirm')
+            .mockResolvedValue(false);
+        const { button } = buildResetControl({ reload: vi.fn() });
+        button.click();
+        await flush();
+        expect(confirmSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('on confirm=true PATCHes /api/config with resetPromptsPayload and reloads', async () => {
+        const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+        vi.stubGlobal('fetch', fetchMock);
+        const reload = vi.fn();
+        vi.spyOn(ResetConfirmModalModule.ResetConfirmModal, 'confirm').mockResolvedValue(true);
+
+        const { button } = buildResetControl({ reload });
+        button.click();
+        await flush();
+
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        const [url, init] = fetchMock.mock.calls[0]! as [string, RequestInit];
+        expect(url).toBe('/api/config');
+        expect(init.method).toBe('PATCH');
+        expect(JSON.parse(init.body as string)).toEqual(resetPromptsPayload());
+        expect(reload).toHaveBeenCalledTimes(1);
+    });
+
+    it('on confirm=false does NOT PATCH and does NOT reload', async () => {
+        const fetchMock = vi.fn();
+        vi.stubGlobal('fetch', fetchMock);
+        const reload = vi.fn();
+        vi.spyOn(ResetConfirmModalModule.ResetConfirmModal, 'confirm').mockResolvedValue(false);
+
+        const { button } = buildResetControl({ reload });
+        button.click();
+        await flush();
+
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(reload).not.toHaveBeenCalled();
+    });
+
+    it('reloads even when the PATCH rejects (reset always reloads)', async () => {
+        const fetchMock = vi.fn().mockRejectedValue(new Error('network'));
+        vi.stubGlobal('fetch', fetchMock);
+        const reload = vi.fn();
+        vi.spyOn(ResetConfirmModalModule.ResetConfirmModal, 'confirm').mockResolvedValue(true);
+
+        const { button } = buildResetControl({ reload });
+        button.click();
+        await flush();
+
+        expect(reload).toHaveBeenCalledTimes(1);
     });
 });
 

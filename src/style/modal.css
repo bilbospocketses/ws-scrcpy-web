@@ -530,7 +530,11 @@ dialog.list-files-modal .modal-body {
    modals (AdminConfirmModal etc.) stay narrow. */
 dialog.settings-modal .modal-frame {
     width: clamp(460px, 66vw, 820px);
-    max-height: 85vh;
+    /* 95vh (not the base 80vh / prior 85vh): the App + Updates + Service
+       sections together are tall enough that 85vh forced an inner scrollbar on
+       smaller viewports. 95vh leaves a ~2.5% margin top/bottom so the frame
+       doesn't kiss the screen edges; long sections still scroll inside. */
+    max-height: 95vh;
 }
 
 dialog.settings-modal .settings-section {
@@ -771,36 +775,6 @@ dialog.settings-modal .settings-stub-note {
  * Section-specific input widths handled inline (max-width on the
  * .settings-input itself).
  */
-
-/* App section: reset-prompts confirm panel (collapsed by default). */
-dialog.settings-modal .settings-confirm-panel {
-    grid-column: 1 / -1;
-    display: none;
-    flex-direction: column;
-    gap: 0.5rem;
-    padding: 0.75rem;
-    border-radius: 6px;
-    background: rgba(91, 154, 255, 0.08);
-    border-left: 3px solid #5b9aff;
-    margin-top: 0.5rem;
-}
-
-dialog.settings-modal .settings-confirm-panel.expanded {
-    display: flex;
-}
-
-dialog.settings-modal .settings-confirm-panel p {
-    margin: 0;
-    color: var(--text-color-light, #888);
-    font-size: 13px;
-    line-height: 1.5;
-}
-
-dialog.settings-modal .settings-confirm-panel .settings-confirm-buttons {
-    display: flex;
-    gap: 0.75rem;
-    justify-content: flex-end;
-}
 
 /* --- Service operation modal (Phase 3) --- */
 

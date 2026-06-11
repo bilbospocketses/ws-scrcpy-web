@@ -2,6 +2,7 @@ import { Modal } from '../ui/Modal';
 import { AdminConfirmModal, type AdminConfirmOptions } from './AdminConfirmModal';
 import { ConfirmModal } from './ConfirmModal';
 import { UninstallConfirmModal } from './UninstallConfirmModal';
+import { ResetConfirmModal } from './ResetConfirmModal';
 import { ServiceOperationModal } from './ServiceOperationModal';
 import { runUpgradingHandoff } from './UpgradingOverlay';
 import type { AppConfigEnvelope, AppConfigPatchResponse, UpdateChannel } from '../../common/ConfigEvents';
@@ -340,6 +341,42 @@ export function buildUninstallControl(opts: { onUninstalled: () => void }): {
                 body: JSON.stringify({ keep: r.keep }),
             });
             opts.onUninstalled();
+        })();
+    });
+
+    return { button };
+}
+
+/**
+ * Build the "reset welcome and bookmark prompts" trigger button. When clicked,
+ * opens ResetConfirmModal (a top-layer <dialog>) instead of expanding an inline
+ * panel — mirroring buildUninstallControl. On confirmation, PATCHes /api/config
+ * with resetPromptsPayload() (clearing the first-run / bookmark flags) and calls
+ * opts.reload so the appropriate modal re-fires. The reload runs regardless of
+ * the PATCH outcome (the page reload re-reads config either way). Self-contained
+ * DOM + wiring; no network call until the modal is confirmed.
+ */
+export function buildResetControl(opts: { reload: () => void }): {
+    button: HTMLButtonElement;
+} {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'settings-btn settings-btn-primary';
+    button.textContent = 'reset';
+
+    button.addEventListener('click', () => {
+        void (async () => {
+            const confirmed = await ResetConfirmModal.confirm();
+            if (!confirmed) return;
+            // Reset reloads regardless of the PATCH outcome; swallow any network
+            // error so it does not surface as an unhandled rejection (the page
+            // reload re-reads config either way).
+            await fetch('/api/config', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(resetPromptsPayload()),
+            }).catch(() => undefined);
+            opts.reload();
         })();
     });
 
@@ -1533,56 +1570,11 @@ export class SettingsModal extends Modal {
         const { section, body } = this.buildSection('App');
 
         // ── reset welcome & bookmark prompts ─────────────────────────────
-        const resetBtn = document.createElement('button');
-        resetBtn.type = 'button';
-        resetBtn.className = 'settings-btn settings-btn-primary';
-        resetBtn.textContent = 'reset';
-
-        // Confirm panel — hidden by default, expands inside the grid below
-        // the reset row when the button is clicked. Spans both columns.
-        const confirmPanel = document.createElement('div');
-        confirmPanel.className = 'settings-confirm-panel';
-
-        const confirmText = document.createElement('p');
-        confirmText.textContent =
-            'this resets the welcome modal, service-mode modal, the per-port bookmark ' +
-            'reminder, and the global bookmark dismissal. the page will reload so the ' +
-            'appropriate modal can re-fire. it does not affect install mode, audio ' +
-            'preferences, or scan history.';
-        confirmPanel.appendChild(confirmText);
-
-        const confirmButtons = document.createElement('div');
-        confirmButtons.className = 'settings-confirm-buttons';
-
-        const cancelBtn = document.createElement('button');
-        cancelBtn.type = 'button';
-        cancelBtn.className = 'settings-btn';
-        cancelBtn.textContent = 'cancel';
-        cancelBtn.addEventListener('click', () => {
-            confirmPanel.classList.remove('expanded');
-        });
-        confirmButtons.appendChild(cancelBtn);
-
-        const confirmBtn = document.createElement('button');
-        confirmBtn.type = 'button';
-        confirmBtn.className = 'settings-btn settings-btn-primary';
-        confirmBtn.textContent = 'confirm reset';
-        confirmBtn.addEventListener('click', () => {
-            fetch('/api/config', {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(resetPromptsPayload()),
-            }).finally(() => {
-                window.location.reload();
-            });
-        });
-        confirmButtons.appendChild(confirmBtn);
-
-        confirmPanel.appendChild(confirmButtons);
-
-        resetBtn.addEventListener('click', () => {
-            confirmPanel.classList.toggle('expanded');
-        });
+        // Extracted builder (mirrors buildUninstallControl): the reset button
+        // opens ResetConfirmModal and, on confirm, clears the first-run /
+        // bookmark flags and reloads so the appropriate modal re-fires.
+        const reset = buildResetControl({ reload: () => window.location.reload() });
+        const resetBtn = reset.button;
 
         // ── install for all users (Linux-only) ───────────────────────────
         // §beta.49 — hidden (display:none overrides the .settings-row { display: contents }
@@ -1628,9 +1620,8 @@ export class SettingsModal extends Modal {
         this.uninstallRow = uninstallRow;
 
         // ── DOM order (top → bottom) ──────────────────────────────────────
-        // 1. reset welcome & bookmark (+ inline confirm panel)
+        // 1. reset welcome & bookmark (confirm now lives in ResetConfirmModal)
         body.appendChild(this.buildRow('reset welcome and bookmark prompts', resetBtn));
-        body.appendChild(confirmPanel);
         // 2. install for all users + note (Linux-only, hidden until revealed)
         body.appendChild(installRow);
         body.appendChild(install.note);

@@ -1,6 +1,6 @@
 # ws-scrcpy-web — Full Smoke Test
 
-> **Smoke target: `v0.1.30-beta.57`** — bump this one line each release; everything below is version-agnostic.
+> **Smoke target: `v0.1.30-beta.60`** — bump this one line each release; everything below is version-agnostic.
 
 All-encompassing manual smoke, grouped by function and tagged by platform (`[Win]` / `[Linux]` / `[Both]`). Each row is a single test: **what to verify**, **how to perform it**, and the **expected result + how to verify**. Walk top to bottom; some rows depend on state from earlier rows in the same module.
 
