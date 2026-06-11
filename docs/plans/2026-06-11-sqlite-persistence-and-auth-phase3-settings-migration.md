@@ -141,31 +141,35 @@ describe('SettingsApi', () => {
     it('PATCH then GET global settings for the implicit admin', async () => {
         const dir = root(); process.env['DATA_ROOT'] = dir; Config.getInstance();
         const api = new SettingsApi();
-        await api.handle(...makeReqRes('PATCH', '/api/settings', { theme: 'dark', scanSubnets: ['10.0.0.0/24'] }).asArgs());
+        const patch = makeReqRes('PATCH', '/api/settings', { theme: 'dark', scanSubnets: ['10.0.0.0/24'] });
+        await api.handle(patch.req, patch.res);
         expect(Db.getInstance(dir).userSettings.get(IMPLICIT_ADMIN_ID, 'theme')).toBe('dark');
-        const { res, getJson } = makeReqRes('GET', '/api/settings');
-        await api.handle(...[res].length ? (makeReqRes('GET', '/api/settings').asArgs()) : []);
-        expect(getJson()).toMatchObject({ theme: 'dark', scanSubnets: ['10.0.0.0/24'] });
+        const get = makeReqRes('GET', '/api/settings');
+        await api.handle(get.req, get.res);
+        expect(get.getJson()).toMatchObject({ theme: 'dark', scanSubnets: ['10.0.0.0/24'] });
     });
 
-    it('reset clears user_settings + device data for the caller', async () => {
+    it('reset clears user_settings + labels + device_settings for the caller', async () => {
         const dir = root(); process.env['DATA_ROOT'] = dir; Config.getInstance();
         const db = Db.getInstance(dir);
         db.userSettings.set(IMPLICIT_ADMIN_ID, 'theme', 'dark');
         db.devices.setLabel(IMPLICIT_ADMIN_ID, 'S1', 'TV');
+        db.devices.setDeviceSetting(IMPLICIT_ADMIN_ID, 'UDID1', 'audio', { source: 'mic' });
         const api = new SettingsApi();
-        await api.handle(...makeReqRes('POST', '/api/settings/reset', {}).asArgs());
+        const r = makeReqRes('POST', '/api/settings/reset', {});
+        await api.handle(r.req, r.res);
         expect(db.userSettings.getAll(IMPLICIT_ADMIN_ID)).toEqual({});
         expect(db.devices.getAllLabels(IMPLICIT_ADMIN_ID)).toEqual({});
+        expect(db.devices.getDeviceSettings(IMPLICIT_ADMIN_ID, 'UDID1')).toEqual({}); // device_settings cleared too
     });
 });
 ```
 
-> Use whatever shape the repo's existing API tests use to invoke `handle(req, res)` and read the response — adapt `makeReqRes` accordingly (the pseudo-`.asArgs()`/`.getJson()` above is illustrative; match `capabilitiesApi.test.ts`).
+> `makeReqRes(method, url, body?)` is the body-capable shared helper defined in Phase 2 Task 2 (`src/server/__tests__/helpers/httpMock.ts`) — import it; do not re-invent it.
 
 - [ ] **Step 2: Run → FAIL.** `npx vitest run src/server/__tests__/settingsApi.test.ts`
 
-- [ ] **Step 3: Implement** `SettingsApi` following the `ApiHandler` interface (`handle(req, res): Promise<boolean>`) and the routing pattern of the existing `ConfigApi` (method + pathname switch; return `false` for unmatched paths so other handlers run). For each matched route, compute `userId = resolveUserId(req)` and `db = Db.getInstance(Config.getInstance().dataRoot ?? Config.getInstance().dependenciesPath)`, then call the store methods above; respond `200` JSON. Reuse the repo's existing request-body JSON parse + `sendJson` helpers used by `ConfigApi` (DRY — do not hand-roll a second body parser).
+- [ ] **Step 3: Implement** `SettingsApi` following the `ApiHandler` interface (`handle(req, res): Promise<boolean>`) and the routing pattern of the existing `ConfigApi` (method + pathname switch; return `false` for unmatched paths so other handlers run). For each matched route, compute `userId = resolveUserId(req)` and `db = Db.getInstance(dbDir(Config.getInstance()))` (the canonical resolver, Phase 1 Task 12). **Parse bodies with `readJsonBody(req)` from `src/server/api/utils.ts`** (the real shared helper — there is no `ConfigApi.sendJson`; ConfigApi's reader is private). Respond as `ConfigApi` does: `res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(...))`.
 
 - [ ] **Step 4: Register** in `index.ts`: `const settingsApi = new SettingsApi(); HttpServer.addApiHandler(settingsApi);` (next to the other `addApiHandler` calls).
 
@@ -289,6 +293,8 @@ export async function migrateLocalStorage(ls: Storage, sink: SettingsSink): Prom
 }
 ```
 
+> **Retry-safety + scope (audit finding).** The clear-keys + set-flag happen only AFTER all `patchGlobal`/`patchDevice` POSTs resolve, so a mid-sequence failure leaves the legacy keys intact and the flag unset → a clean re-run next load (KV writes are idempotent, so a re-POST of already-imported settings is harmless). The caller MUST `await migrateLocalStorage(...)` inside a `try` and proceed only on success; on throw, do not read settings yet (fall back to defaults for that session). The guard flag is **per-browser-origin** while the data lands **per-DB-user** — acceptable because each install is single-user (the implicit admin) until lockdown. Tracked edge: a *different* browser profile on the same machine that still holds stale legacy keys would import them into whichever user is active when it first loads post-lockdown; documented as a known low-risk edge (the keys are this-machine's own prefs).
+
 ```ts
 // src/app/client/SettingsService.ts — the production SettingsSink + cache over /api/settings.
 export class SettingsService {
@@ -311,7 +317,13 @@ export class SettingsService {
 }
 ```
 
-> **Confirm at execution:** the exact `ICON_SIZE_KEY` string (`ListFilesModal.ts:122`) and `BasePlayer`'s video-storage key shape (`~233-299`), and update `LEGACY_KEYS.iconSize`/`videoPrefix` to match byte-for-byte before relying on the import.
+> **⚠ HARD PREREQUISITE — Step 0 (do this BEFORE writing `LEGACY_KEYS`).** The `videoPrefix`/`iconSize` literals above are **provisional and currently WRONG** (audit finding): the real `BasePlayer` video keys are **not** `ws-scrcpy-web:video:*` — they are prefixed by the **player class name** (`'WebCodecsPlayer'`, `'BaseCanvasBasedPlayer'`, etc.), shaped `<PlayerClass>:<udid>:<innerWxH>[:<displayId>:<WxH>]`, **plus a separate `<fullKey>:fit` boolean sibling**, plus a legacy short key `<PlayerClass>:<udid>`. A `ws-scrcpy-web:video:` `startsWith` filter matches **zero** keys and silently migrates nothing. So:
+> 1. Open `src/app/googDevice/client/ListFilesModal.ts` and copy the literal `ICON_SIZE_KEY` string → set `LEGACY_KEYS.iconSize`.
+> 2. Open `src/app/player/BasePlayer.ts` (+ the player subclasses) and copy the exact video-key construction (`get/putVideoSettingsToStorage`) and the `:fit` sibling key.
+> 3. **Decide the video `device_settings` scope with the real scheme in hand.** Recommended: **collapse per-viewport video settings to one `video` scope per udid** (key `device_settings(user, udid, 'video')`), taking the most recent stored value — this preserves the user's codec/bitrate/encoder/fps choices and drops only the brittle viewport-dimension keying (which is re-learned on next view). Migrate the `:fit` flag into that same JSON value. Update the spec's localStorage table row to match.
+> 4. Replace the `videoPrefix` branch in `migrateLocalStorage` to iterate **all** keys and match the player-class prefixes (not `ws-scrcpy-web:video:`), pairing each settings key with its `:fit` sibling. Add a migration test using a **real captured key string** so a future scheme change fails the test instead of silently dropping data.
+>
+> The audio (`ws-scrcpy-web:audio:<udid>`), scan-subnets (`ws-scrcpy-web:scan-subnets`), and theme (`ws-scrcpy-web-theme`) keys are confirmed accurate from the spec table and need no change.
 
 - [ ] **Step 4: Run → PASS.**
 - [ ] **Step 5: Commit**
@@ -385,9 +397,10 @@ git commit -m "feat(settings): theme first-paint via prefers-color-scheme; DB au
 
 Phase 1 parked the prompt flags (`bookmarkDismissedForPort`, `bookmarkDismissedGlobally`, `serviceFirstRunSeen`) in `Config`'s composition for compatibility. They are per-user, so they belong on `SettingsApi`.
 
-**Files:**
-- Modify: `src/server/Config.ts` (drop prompt keys from composition + `updateAppConfig` routing; remove from `AppConfig`/`FlatConfig` if no longer referenced elsewhere)
-- Modify: `src/app/client/PortChangeModal.ts` (`:21`), `src/common/ConfigEvents.ts` (`:42`), and the service-first-run flow — read/write the flags via `SettingsService` instead of `/api/config`
+**Files (corrected per audit — `ConfigEvents.ts` is a TYPES file, not a runtime consumer; the real third consumer is `ServiceFirstRunModal.ts`):**
+- Modify: `src/server/Config.ts` — drop prompt keys from composition + `updateAppConfig` routing.
+- Modify: `src/common/ConfigEvents.ts` — **type edit**: remove `bookmarkDismissedForPort`/`bookmarkDismissedGlobally`/`serviceFirstRunSeen` from the `AppConfig`/`FlatConfig` interfaces (they no longer ride `/api/config`).
+- Modify the **runtime consumers** (read + write): `src/app/client/PortChangeModal.ts` (writes BOTH `bookmarkDismissedGlobally` and `bookmarkDismissedForPort`), `src/app/client/ServiceFirstRunModal.ts` (writes `serviceFirstRunSeen`), and **the boot gating in `src/server/index.ts` / the client that currently READS these flags from the `GET /api/config` envelope** to decide whether to show each modal — repoint reads to `SettingsService.loadGlobal()` and writes to `SettingsService.patchGlobal({...})`.
 - Test: `src/server/__tests__/config.noPrompts.test.ts`
 
 - [ ] **Step 1: Failing test** — `getAppConfig()` no longer carries prompt keys; they are served by `SettingsApi`.
@@ -413,7 +426,7 @@ describe('Config without prompt flags', () => {
 ```
 
 - [ ] **Step 2: Run → FAIL.** `npx vitest run src/server/__tests__/config.noPrompts.test.ts`
-- [ ] **Step 3: Implement** — remove the prompt keys from `Config`'s composition + routing (Phase 1 Task 13) and from the `AppConfig`/`FlatConfig` types; retarget the three client consumers to `SettingsService` (`loadGlobal()` / `patchGlobal({ bookmarkDismissedGlobally: true })` etc.). The server-side reset (Task 2) already clears these (they are user_settings rows).
+- [ ] **Step 3: Implement** — remove the prompt keys from `Config`'s composition + routing (Phase 1 Task 13) and from the `AppConfig`/`FlatConfig` interfaces (`ConfigEvents.ts`). Retarget the runtime consumers off the `/api/config` envelope: `PortChangeModal` (`patchGlobal({ bookmarkDismissedGlobally })` / `{ bookmarkDismissedForPort }`), `ServiceFirstRunModal` (`patchGlobal({ serviceFirstRunSeen: true })`), and **every place that READS these flags from the `GET /api/config` response to gate a modal** → read from `SettingsService.loadGlobal()` instead (the flags leave the config envelope entirely). The server-side reset (Task 2) already clears these (they are `user_settings` rows).
 - [ ] **Step 4: Gate** `npm run -s tsc && npx vitest run` → clean + green (update any existing test that asserted prompt keys on `/api/config`).
 - [ ] **Step 5: Commit**
 

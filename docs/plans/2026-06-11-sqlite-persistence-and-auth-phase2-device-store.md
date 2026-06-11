@@ -19,7 +19,7 @@
 | File | Change |
 |---|---|
 | `src/server/auth/currentUser.ts` | **Create.** `resolveUserId(req?)` → `IMPLICIT_ADMIN_ID` for now; Phase 4 extends it to read the session user. The single seam for per-user resolution. |
-| `src/server/api/DeviceDiscoveryApi.ts` | **Modify.** Retarget the six `DeviceLabelStore` call sites (lines 31/67/87/92/154/168) to `Db.getInstance(dataRoot).devices` via `resolveUserId(req)`; upsert observed devices when building the list. |
+| `src/server/api/DeviceDiscoveryApi.ts` | **Modify.** Retarget **every** `DeviceLabelStore.getInstance().{get,set,getAll,delete}` reference (verify `grep DeviceLabelStore` → 0) to `Db.getInstance(dbDir(config)).devices` via `resolveUserId(req)`; upsert observed devices when building the list. |
 | `src/server/index.ts` | **Modify.** `labelFor` (line 151) reads `DeviceStore.getLabel(IMPLICIT_ADMIN_ID, key)`. Remove the `DeviceLabelStore` import (line 17). |
 | `src/server/goog-device/services/ControlCenter.ts` (or `DeviceTracker` mw) | **Modify.** Upsert observed `{ serial, manufacturer, model }` when a goog device's props are known. (Exact site pinned at execution — the goog device props handler.) |
 | `src/server/DeviceLabelStore.ts` | **Delete** once all consumers are retargeted. |
@@ -88,12 +88,12 @@ git commit -m "feat(device): add resolveUserId seam (open mode → implicit admi
 
 | Current (`DeviceLabelStore`) | New (`DeviceStore` via `resolveUserId(req)`) |
 |---|---|
-| `DeviceLabelStore.getInstance().get(serial)` (index.ts) | `db.devices.getLabel(userId, serial)` |
-| `DeviceLabelStore.getInstance().set(serial, label)` (:67/:87/:92) | `db.devices.setLabel(userId, serial, label)` |
-| `DeviceLabelStore.getInstance().getAll()` (:154) | `db.devices.getAllLabels(userId)` |
-| `DeviceLabelStore.getInstance()` …`.delete(serial)` (:168) | `db.devices.deleteLabel(userId, serial)` |
+| `labelStore.get(serial)` (`DeviceDiscoveryApi.ts:42`, local from `:31`) | `db.devices.getLabel(userId, serial)` |
+| `DeviceLabelStore.getInstance().set(serial, label)` (the set sites — `:67/:87/:92` + any others) | `db.devices.setLabel(userId, serial, label)` |
+| `DeviceLabelStore.getInstance().getAll()` (`:154`) | `db.devices.getAllLabels(userId)` |
+| `DeviceLabelStore.getInstance()` …`.delete(serial)` (delete sites) | `db.devices.deleteLabel(userId, serial)` |
 
-where `const db = Db.getInstance(Config.getInstance().dataRoot ?? <dev-fallback>)` and `const userId = resolveUserId(req)`.
+where `const db = Db.getInstance(dbDir(Config.getInstance()))` (the canonical resolver, Phase 1 Task 12) and `const userId = resolveUserId(req)`. The line numbers are indicative from the pre-beta.62 tree — **drive off `grep DeviceLabelStore` → 0**, not the exact lines (`index.ts:151`'s separate `labelFor` read is handled in Task 3).
 
 - [ ] **Step 1: Failing test** — drive the API surface that sets + lists labels and assert it lands in `device_labels` for user 1.
 
@@ -118,19 +118,40 @@ describe('DeviceDiscoveryApi labels via DeviceStore', () => {
         process.env['DATA_ROOT'] = dir;
         Config.getInstance(); // initializes Db for this dataRoot
         const api = new DeviceDiscoveryApi();
-        const { req, res, body } = makeReqRes('POST', '/api/devices/label', { serial: 'S1', label: 'Living Room' });
+        const { req, res } = makeReqRes('POST', '/api/devices/label', { serial: 'S1', label: 'Living Room' });
         await api.handle(req, res);
         expect(Db.getInstance(dir).devices.getLabel(IMPLICIT_ADMIN_ID, 'S1')).toBe('Living Room');
-        void body;
     });
 });
 ```
 
-> `makeReqRes` helper: if the repo lacks an HTTP mock helper, create `src/server/__tests__/helpers/httpMock.ts` returning a minimal `IncomingMessage`/`ServerResponse` pair (method, url, JSON body stream, captured status/payload). Mirror whatever pattern `capabilitiesApi.test.ts` / `ServiceApi.test.ts` already use — reuse theirs rather than inventing a second one (DRY). Pin the exact request path/shape to the existing label endpoint in `DeviceDiscoveryApi`.
+> **Shared HTTP mock — define it ONCE here; Phases 2/3/4 all import it.** The repo's existing test stub (`capabilitiesApi.test.ts:16`) builds `req = { url, method }` with **no EventEmitter**, so any handler that reads a body via `req.on('data')`/`req.on('end')` (every POST/PATCH handler — see `src/server/api/utils.ts:readJsonBody`) would **hang** against it. Create `src/server/__tests__/helpers/httpMock.ts` with a body-capable `req` (a real `Readable`):
+>
+> ```ts
+> import { Readable } from 'stream';
+> import type { IncomingMessage, ServerResponse } from 'http';
+>
+> export function makeReqRes(method: string, url: string, body?: unknown, headers: Record<string, string> = {}): {
+>     req: IncomingMessage; res: ServerResponse; getStatus(): number; getJson(): unknown;
+> } {
+>     const req = Readable.from(body === undefined ? [] : [JSON.stringify(body)]) as unknown as IncomingMessage;
+>     req.method = method; req.url = url;
+>     req.headers = { 'content-type': 'application/json', ...headers }; // e.g. pass a Cookie header for auth tests
+>     let status = 0; const chunks: string[] = [];
+>     const res = {
+>         writeHead(s: number) { status = s; return res; },
+>         setHeader() { /* no-op */ },
+>         end(c?: string) { if (c) chunks.push(c); },
+>     } as unknown as ServerResponse;
+>     return { req, res, getStatus: () => status, getJson: () => (chunks.length ? JSON.parse(chunks.join('')) : undefined) };
+> }
+> ```
+>
+> Signature is `makeReqRes(method, url, body?, headers?)` → `{ req, res, getStatus, getJson }`. Call: `const { req, res, getStatus } = makeReqRes('POST', '/api/devices/label', { serial: 'S1', label: 'Living Room' }); await api.handle(req, res);`. Pin the exact request path/shape to the real label endpoint in `DeviceDiscoveryApi` at execution.
 
 - [ ] **Step 2: Run → FAIL.** `npx vitest run src/server/__tests__/deviceDiscoveryApi.labels.test.ts`
 
-- [ ] **Step 3: Implement** the retarget: at the top of `DeviceDiscoveryApi`, import `Db`, `Config`, `resolveUserId`; in each handler that previously used `DeviceLabelStore`, compute `const db = Db.getInstance(Config.getInstance().dataRoot ?? <fallback>)` and `const userId = resolveUserId(req)`, then call the `db.devices.*Label*` method per the retarget map. Remove the `DeviceLabelStore` import.
+- [ ] **Step 3: Implement** the retarget: at the top of `DeviceDiscoveryApi`, import `Db` + `dbDir` (from `../db/Db`), `Config`, `resolveUserId`; in each handler that previously used `DeviceLabelStore`, compute `const db = Db.getInstance(dbDir(Config.getInstance()))` and `const userId = resolveUserId(req)`, then call the `db.devices.*Label*` method per the retarget map. Remove the `DeviceLabelStore` import.
 
 - [ ] **Step 4: Run → PASS.**
 - [ ] **Step 5: Commit**
@@ -151,7 +172,7 @@ git commit -m "feat(device): retarget device-label API to per-user DeviceStore"
 - [ ] **Step 1: Change `labelFor`** in `index.ts` from `DeviceLabelStore.getInstance().get(key)` to:
 
 ```ts
-labelFor: (key: string) => Db.getInstance(config.dataRoot ?? config.dependenciesPath).devices.getLabel(IMPLICIT_ADMIN_ID, key),
+labelFor: (key: string) => Db.getInstance(dbDir(config)).devices.getLabel(IMPLICIT_ADMIN_ID, key),
 ```
 
 > `labelFor` is a background (non-request) callback feeding scan results sent to all clients, so it uses `IMPLICIT_ADMIN_ID` directly. **Phase 4 note (flagged):** with multiple users, scan-result labels must be applied per-recipient. Phase 4 moves label overlay out of the shared scan into the per-connection delivery (the device list is labeled with the session user's labels when sent). Recorded as a Phase 4 task; in open mode user 1 is correct.

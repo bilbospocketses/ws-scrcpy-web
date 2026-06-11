@@ -38,7 +38,7 @@
 | `src/server/db/import/importLegacy.ts` | `importLegacyIfNeeded(db, paths, now)`: guarded one-time orchestration; trims `config.json` on success. |
 | `src/server/Config.ts` | **Modified.** Boot-trio read/write in JSON; everything else composed from the stores. |
 | `config.example.json` | **Modified.** Trim to the boot trio + a comment. |
-| `src/server/index.ts` | **Modified.** `Db.getInstance()` before `Config`; `gracefulShutdown` calls `Db.getInstance().backup(...)`. |
+| `src/server/index.ts` | **Modified.** `gracefulShutdown` calls `Db.getInstance(dbDir(config)).backup(...)`. (No "Db before Config" — `Config.getInstance()` *constructs* the Db with its resolved dir; see Task 12's `dbDir`.) |
 | `launcher/src/spawn.rs`, `scripts/dev-supervisor.mjs` | **Modified.** Add `--disable-warning=ExperimentalWarning` to the node argv (cosmetic; from the spike). |
 
 ---
@@ -1132,17 +1132,49 @@ export function openDatabase(dbPath: string): DatabaseSync {
         runMigrations(db);
         return db;
     } catch (err) {
-        // Corrupt or unreadable: move aside and recreate. Losing settings/users is recoverable.
-        Logger.for('Db').error(`wsscrcpy.db unusable (${(err as Error).message}); moving aside and recreating`);
+        // Corrupt or unreadable. Recovery order: (1) move the corrupt file + its WAL sidecars
+        // aside; (2) restore the last-good `.bak` (VACUUM-INTO snapshot from graceful shutdown)
+        // if it opens clean — this preserves settings the migration moved OUT of the (now-trimmed)
+        // config.json, which a fresh+re-import would lose; (3) only if no valid backup, create a
+        // fresh schema (settings reset to defaults — the caller's legacy files were already trimmed).
+        Logger.for('Db').error(`wsscrcpy.db unusable (${(err as Error).message}); attempting recovery`);
         try { db!.close(); } catch { /* best effort */ }
-        if (fs.existsSync(dbPath)) {
-            const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-            fs.renameSync(dbPath, `${dbPath}.corrupt-${stamp}`);
+        moveAsideCorrupt(dbPath); // renames dbPath, dbPath-wal, dbPath-shm to *.corrupt-<ts>
+
+        const bak = `${dbPath}.bak`;
+        if (fs.existsSync(bak)) {
+            try {
+                const probe = new DatabaseSync(bak);
+                const ok = (probe.prepare('PRAGMA integrity_check').get() as { integrity_check: string }).integrity_check === 'ok';
+                probe.close();
+                if (ok) {
+                    fs.copyFileSync(bak, dbPath);
+                    Logger.for('Db').error('restored wsscrcpy.db from wsscrcpy.db.bak');
+                }
+            } catch { /* fall through to fresh */ }
         }
         const fresh = new DatabaseSync(dbPath);
         configure(fresh);
-        runMigrations(fresh);
+        if (!integrityOk(fresh)) { // backup copy somehow bad → start clean
+            fresh.close();
+            moveAsideCorrupt(dbPath);
+            const blank = new DatabaseSync(dbPath);
+            configure(blank);
+            runMigrations(blank);
+            return blank;
+        }
+        runMigrations(fresh); // a restored backup may be an older schema version → migrate it forward
         return fresh;
+    }
+}
+
+function moveAsideCorrupt(dbPath: string): void {
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    for (const suffix of ['', '-wal', '-shm']) {
+        const p = `${dbPath}${suffix}`;
+        if (fs.existsSync(p)) {
+            try { fs.renameSync(p, `${p}.corrupt-${stamp}`); } catch { try { fs.rmSync(p, { force: true }); } catch { /* best effort */ } }
+        }
     }
 }
 ```
@@ -1258,7 +1290,24 @@ export class Db {
 }
 ```
 
-> `Db.getInstance(dataRoot)` requires the dataRoot. In production it is `Config`/`resolveDataRoot`. On a host with a `null` dataRoot (non-Windows dev with no `DATA_ROOT`), `Config` falls back as today (Task 13); the Db path mirrors that fallback.
+Add the **canonical directory resolver** so every call site opens the SAME file (audit finding: inconsistent `dataRoot ?? dependenciesPath` fallbacks across phases would open two different DBs on a `null`-dataRoot host → split-brain). Append to `Db.ts`:
+
+```ts
+import type { Config as ConfigType } from '../Config';
+
+/**
+ * THE one resolver for the Db directory. Every `Db.getInstance(...)` call across all phases
+ * MUST pass `dbDir(Config.getInstance())` — never an ad-hoc `dataRoot ?? dependenciesPath`.
+ * Mirrors `resolveDataRoot` precedence; on a null dataRoot (non-Windows dev) it falls back to
+ * the parent of the dependencies path (matching `Config.restartMarkerPath`'s fallback), so the
+ * DB sits beside the other writable state.
+ */
+export function dbDir(config: ConfigType): string {
+    return config.dataRoot ?? path.dirname(config.dependenciesPath);
+}
+```
+
+> `Db.getInstance(dir)` caches on first call and ignores the argument afterward (singleton). Because every site routes through `dbDir(Config.getInstance())`, they all resolve identically. Add a test asserting two `getInstance` calls with the same `dbDir` return one handle, and (dev, null dataRoot) that `dbDir` is stable across calls.
 
 - [ ] **Step 4: Run → PASS.**
 - [ ] **Step 5: Commit**
@@ -1326,7 +1375,7 @@ describe('Config store-backed composition', () => {
 - [ ] **Step 2: Run → FAIL.** Run: `npx vitest run src/server/__tests__/config.storeBacked.test.ts`
 
 - [ ] **Step 3: Implement the split.** In `Config.ts`:
-  1. In `getInstance()`, after computing `dataRoot`, obtain `const db = Db.getInstance(dataRoot ?? <fallback>)`. (Use the same fallback the dependencies path uses for a null dataRoot — the repo-root in dev; pass that directory to `Db.getInstance`.)
+  1. In `getInstance()`: resolve `dependenciesPath`/`adbPath` via the EXISTING `resolveDependenciesPath`/`resolveAdbPath` (env `DEPS_PATH` → computed default) **first, pre-DB** — so the Db directory never depends on a value stored *in* the Db (no load-order cycle). Then `const db = Db.getInstance(dbDir(/* the Config being built */))`. Any `app_settings` override of `adbPath`/`dependenciesPath` (imported in Task 8) is overlaid onto the resolved `AppConfig` **after** the Db opens, for downstream consumers (the adb spawn path) — it does **not** relocate the Db or the boot deps folder. Add a test: a trimmed `config.json` (no `adbPath`) still yields a resolved `adbPath` (bundled default or the `app_settings` override).
   2. Replace the single `sanitizeAppConfig(fileConfig)` with a composition: read the **trio** from the JSON `fileConfig`, read globals from `db.appSettings.getAll()`, read prompts from `db.userSettings.getAll(IMPLICIT_ADMIN_ID)`, then build `AppConfig` by overlaying trio + globals + prompts onto `APP_CONFIG_DEFAULTS` (validate each via the existing `validateField`).
   3. `saveToDisk()` writes **only** the trio (`installMode`, `webPort`, `firstRunComplete`) to `config.json`.
   4. `updateAppConfig(partial)`: for each key, validate, then route — trio keys update the in-memory trio + `saveToDisk()`; `GLOBAL_KEYS` → `db.appSettings.set(key, value)`; `PROMPT_KEYS` → `db.userSettings.set(IMPLICIT_ADMIN_ID, key, value)`. Keep `restartRequired = merged.webPort !== previous.webPort`. Return `{ config: this.getAppConfig fresh, restartRequired }`.

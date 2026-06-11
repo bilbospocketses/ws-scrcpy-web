@@ -400,10 +400,11 @@ describe('authState', () => {
         expect(parseCookie(undefined)).toEqual({});
     });
     it('allow-lists the login page + login endpoint only', () => {
-        expect(isAllowlisted('/login')).toBe(true);
         expect(isAllowlisted('/api/auth/login')).toBe(true);
+        expect(isAllowlisted('/api/whoami')).toBe(true);   // install port-discovery handshake stays reachable under lockdown
+        expect(isAllowlisted('/api/auth/me')).toBe(true);  // login page reads authEnabled pre-login
         expect(isAllowlisted('/api/devices')).toBe(false);
-        expect(isAllowlisted('/')).toBe(false);
+        expect(isAllowlisted('/')).toBe(false);            // app shell is gated → AuthGate serves the login page inline
     });
 });
 ```
@@ -419,8 +420,11 @@ import { AUTH_ENABLED_KEY } from '../db/constants';
 
 export const SESSION_COOKIE = 'wsscrcpy_sid';
 
-const ALLOWLIST_EXACT = new Set(['/login', '/api/auth/login']);
-const ALLOWLIST_PREFIX = ['/login-assets/']; // static assets the login page needs
+// `/login` is NOT here: AuthGate serves the login page body itself (see Task 8) so it never
+// falls through to the SPA catch-all (`createStaticHandler` serves index.html for any non-file
+// path — Auditor finding: app-shell leak). whoami + me are public reads (no secret).
+const ALLOWLIST_EXACT = new Set(['/api/auth/login', '/api/auth/me', '/api/whoami']);
+const ALLOWLIST_PREFIX = ['/login-assets/']; // the login page's own self-contained assets
 
 export function isAuthEnabled(db: Db): boolean {
     return db.appSettings.get(AUTH_ENABLED_KEY) === true;
@@ -690,8 +694,10 @@ export class AuthGate {
                 res.writeHead(401, { 'content-type': 'application/json' });
                 res.end(JSON.stringify({ error: 'unauthorized' }));
             } else {
-                res.writeHead(302, { Location: '/login' });
-                res.end();
+                // Serve the self-contained login page INLINE — do NOT redirect to /login and
+                // let it fall through to createStaticHandler's index.html SPA fallback (that
+                // would leak the app shell at /login). The page pulls only /login-assets/*.
+                serveLoginPage(res);
             }
             return true; // handled → short-circuit
         }
@@ -699,7 +705,18 @@ export class AuthGate {
         return false; // authenticated → let the real handler run
     }
 }
+
+// Reads the bundled login page (its own HTML referencing only /login-assets/*) and writes it
+// with 200. The login HTML + assets are emitted by webpack to <public>/login.html +
+// <public>/login-assets/ (add a CopyFilePlugin/entry; mirror how favicon.png is emitted).
+function serveLoginPage(res: ServerResponse): void {
+    const html = readFileSync(join(__dirname, '..', 'public', 'login.html'), 'utf-8');
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    res.end(html);
+}
 ```
+
+> Add the imports `readFileSync` (`fs`) + `join` (`path`) at the top of `AuthGate.ts`. The webpack build must emit `public/login.html` + `public/login-assets/*` (a standalone bundle, like the existing favicon copy) so the login page never depends on the main app bundle (which is gated). `GET /api/auth/me` returns `{ authEnabled, user: null }` when there is no session (it is allow-listed) so the login page can branch without a 401.
 
 - [ ] **Step 4: Extend `resolveUserId`** (currentUser.ts):
 
@@ -720,7 +737,7 @@ export function resolveUserId(req?: IncomingMessage): number {
 
 **Files:** Create `src/server/api/AuthApi.ts`, `src/server/api/UsersApi.ts`; Modify `src/server/index.ts`; Tests `src/server/__tests__/authApi.test.ts`, `usersApi.test.ts`
 
-Follow the `ConfigApi` handler pattern (method + pathname switch, shared body-parse + `sendJson`). All write the session cookie / read `resolveUserId(req)` as needed. Compute `db = Db.getInstance(Config.getInstance().dataRoot ?? <fallback>)`.
+Follow the `ConfigApi` handler pattern (method + pathname switch). **Parse request bodies with `readJsonBody(req)` from `src/server/api/utils.ts`** (the real shared helper — there is NO `ConfigApi.sendJson`; ConfigApi's body reader is private/duplicated). Respond as `ConfigApi` does: `res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(...))` (or add a `sendJson` to `utils.ts` in this task if you want it shared). All write the session cookie / read `resolveUserId(req)` as needed. Compute `db = Db.getInstance(dbDir(Config.getInstance()))` (the canonical resolver — Phase 1 Task 12).
 
 **AuthApi routes:**
 - `POST /api/auth/login` → `login(db, username, password, Date.now())`; on `ok`, `Set-Cookie: wsscrcpy_sid=<token>; HttpOnly; SameSite=Lax; Path=/[; Secure]` (Secure when the server is https) and `200`; on `locked`/`disabled`/`invalid` → `401` with a generic message (the body may say "locked" for UX, per spec).
@@ -736,7 +753,7 @@ Follow the `ConfigApi` handler pattern (method + pathname switch, shared body-pa
 - `PATCH /api/users/:id` → any of: `role` (`setRole`), `password` (reset → `setPasswordHash(id, hashPassword(...))`), `disabled` (`setDisabled` + on disable `new SessionStore(db.sqlite).deleteForUser(id)`), `unlock:true` (`clearLockout(id)`). Guard: refuse to disable/demote the **last enabled admin** (`countEnabledAdmins() <= 1` and the target is that admin).
 - `DELETE /api/users/:id` → refuse if it would remove the last enabled admin; else `delete` (sessions cascade via FK).
 
-- [ ] **Step 1: Failing tests** — at minimum: login sets a cookie + me returns the user; change-password rejects a wrong current; the first `POST /api/users` performs lockdown and flips `authEnabled`; disabling a user deletes their sessions; deleting the last admin is refused; `enable` is refused with no admin-with-password.
+- [ ] **Step 1: Failing tests** — at minimum: login sets a cookie + me returns the user; `GET /api/auth/me` returns `{ authEnabled, user: null }` when unauthenticated (allow-listed); change-password rejects a wrong current; the first `POST /api/users` performs lockdown and flips `authEnabled`; disabling a user deletes their sessions; deleting the last enabled admin is refused; **demoting the last enabled admin to `user` (via `PATCH {role:'user'}`) is refused** (same guard as disable/delete); `enable` is refused with no admin-with-password; admin `unlock` clears a locked-out user.
 
 ```ts
 // authApi.test.ts (representative)
@@ -755,7 +772,8 @@ it('first POST /api/users runs lockdown and enables auth', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wsua-')); dirs.push(dir); process.env['DATA_ROOT'] = dir;
     Config.getInstance();
     const api = new UsersApi();
-    await api.handle(...makeReqRes('POST', '/api/users', { adminUsername: 'owner', adminPassword: 'pw1', username: 'bob', role: 'user', password: 'pw2' }).asArgs());
+    const r = makeReqRes('POST', '/api/users', { adminUsername: 'owner', adminPassword: 'pw1', username: 'bob', role: 'user', password: 'pw2' });
+    await api.handle(r.req, r.res);
     expect(isAuthEnabled(Db.getInstance(dir))).toBe(true);
     expect(Db.getInstance(dir).users.getByUsername('bob')).toBeTruthy();
 });
@@ -766,6 +784,67 @@ it('first POST /api/users runs lockdown and enables auth', async () => {
 - [ ] **Step 2: Run → FAIL.** `npx vitest run src/server/__tests__/authApi.test.ts src/server/__tests__/usersApi.test.ts`
 - [ ] **Step 3: Implement** both handlers per the route specs above; register both in `index.ts`.
 - [ ] **Step 4: Run → PASS; full gate.** **Step 5: Commit** `git commit -m "feat(auth): AuthApi + UsersApi (login/users/lockdown/lockout/toggle)"`
+
+---
+
+## Task 9b: role-gate the EXISTING admin endpoints (server-side authorization)
+
+> **Critical (audit finding).** `AuthGate` only authenticates; it attaches `req.user` but does not check role. Admin-only capabilities from the spec's capability map live in **pre-existing** handlers that have no role check. UI section-hiding (Task 11) is cosmetic — a logged-in regular `user` could still `curl` these. This task adds server-side authorization.
+
+**Admin-only routes** (verified handlers): `ConfigApi` `PATCH /api/config` (port change → `process.exit(75)`); `DependencyApi` `/api/dependencies/*`; `ServiceApi` `/api/service/*` (incl. `uninstall-app`, `install-system-wide`); `UpdatesApi` `/api/updates/*` (incl. `/apply`, channel); `ServerShutdownApi` `/api/server/shutdown`. (`UsersApi` already self-checks; `SettingsApi`, the device-label writes, and `/api/auth/*` are per-user, not admin.)
+
+**Files:** Create `src/server/auth/requireAdmin.ts`; Modify each admin handler above; Test `src/server/__tests__/adminAuthorization.test.ts`.
+
+- [ ] **Step 1: Failing test** — each admin route returns 403 for a non-admin session and proceeds for an admin (drive through the handler with a `req.user` set to a `user` vs `admin`).
+
+```ts
+import { describe, it, expect } from 'vitest';
+import { requireAdmin } from '../auth/requireAdmin';
+
+describe('requireAdmin', () => {
+    it('403s a non-admin and returns false (handled)', () => {
+        let status = 0;
+        const res = { writeHead: (s: number) => { status = s; }, end: () => {} } as unknown as import('http').ServerResponse;
+        const req = { user: { id: 2, role: 'user' } } as unknown as import('http').IncomingMessage;
+        expect(requireAdmin(req, res)).toBe(false);
+        expect(status).toBe(403);
+    });
+    it('passes an admin (returns true) and open mode (no user → implicit admin)', () => {
+        const res = { writeHead: () => {}, end: () => {} } as unknown as import('http').ServerResponse;
+        expect(requireAdmin({ user: { id: 1, role: 'admin' } } as never, res)).toBe(true);
+        expect(requireAdmin({} as never, res)).toBe(true); // open mode: resolveUserId → implicit admin (role admin)
+    });
+});
+```
+
+- [ ] **Step 2: Run → FAIL.** `npx vitest run src/server/__tests__/adminAuthorization.test.ts`
+
+- [ ] **Step 3: Implement the guard** (reads the role of `resolveUserId(req)`; in open mode that is the implicit admin → allowed):
+
+```ts
+// src/server/auth/requireAdmin.ts
+import type { IncomingMessage, ServerResponse } from 'http';
+import { Db } from '../db/Db';
+import { Config } from '../Config';
+import { dbDir } from '../db/Db';            // canonical resolver (Phase 1 Task 12 fix)
+import { resolveUserId } from './currentUser';
+
+/** Returns true if the request's acting user is an admin; otherwise writes 403 and returns false. */
+export function requireAdmin(req: IncomingMessage, res: ServerResponse): boolean {
+    const db = Db.getInstance(dbDir(Config.getInstance()));
+    const user = db.users.getById(resolveUserId(req));
+    if (user?.role === 'admin') return true;
+    res.writeHead(403, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ error: 'forbidden' }));
+    return false;
+}
+```
+
+- [ ] **Step 4: Wire the guard** into each admin handler: at the very top of the matched-route branch (after method/path match, before doing the work), `if (!requireAdmin(req, res)) return true;` (return handled = true to short-circuit). Add a focused test per handler asserting a `user` session gets 403 and an `admin` session proceeds.
+
+> Open-mode correctness: when `authEnabled=false`, `resolveUserId(req)` is the implicit admin (role `admin`), so `requireAdmin` passes — today's open behavior is preserved. Only once locked does a non-admin session hit 403.
+
+- [ ] **Step 5: Run → PASS; full gate.** **Step 6: Commit** `git commit -m "feat(auth): server-side admin authorization on existing admin endpoints"`
 
 ---
 
@@ -802,21 +881,26 @@ describe('wsSessionUserId', () => {
 ```
 
 - [ ] **Step 2: Run → FAIL.** `npx vitest run src/server/__tests__/wsAuthGate.test.ts`
-- [ ] **Step 3: Implement** the helper + wire it into `attachToServer`'s `connection` handler **before** path/MW dispatch:
+- [ ] **Step 3: Implement** the helper + wire it into `attachToServer`'s `connection` handler. **The check MUST be the first thing after the `request.url` guard and BEFORE the `this.pathHandlers.get(url.pathname)` block** (`WebSocketServer.ts:51`) — `SCAN_WS_PATH` is a registered path handler that dispatches first, so a check placed after it would let an unauthenticated socket reach `ScanMw.attach` (audit finding: scan-path bypass).
 
 ```ts
-// exported helper
+// exported helper (add imports: Db, Config, dbDir, SessionStore, isAuthEnabled, parseCookie,
+// SESSION_COOKIE, IMPLICIT_ADMIN_ID)
 export function wsSessionUserId(db: Db, cookieHeader: string | undefined): number | undefined {
     if (!isAuthEnabled(db)) return IMPLICIT_ADMIN_ID;
     const token = parseCookie(cookieHeader)[SESSION_COOKIE];
     const s = token ? new SessionStore(db.sqlite).findValid(token, Date.now()) : undefined;
     return s?.userId;
 }
-// in wss.on('connection', (ws, request) => { ... before dispatch:
+
+// inside wss.on('connection', (ws, request) => { ...
+//   after:   if (!request.url) { ws.close(4001, ...); return; }
+//            const url = new URL(request.url, 'https://example.org/');
+//   and BEFORE: const pathHandler = this.pathHandlers.get(url.pathname);
+const db = Db.getInstance(dbDir(Config.getInstance()));   // canonical resolver (Phase 1 Task 12)
 const userId = wsSessionUserId(db, request.headers.cookie);
 if (userId === undefined) { ws.close(4401, 'unauthorized'); return; }
-// stash for per-recipient label overlay:
-(ws as WS & { userId?: number }).userId = userId;
+(ws as WS & { userId?: number }).userId = userId; // stash for per-recipient label overlay (Step 4)
 ```
 
 - [ ] **Step 4: Per-user label delivery** (resolves the Phase 2 flag). Where the device list is sent to a connection, overlay labels from `db.devices.getAllLabels(userId)` for **that** socket's `userId` rather than the shared `labelFor`. Exact site = the device-list emit in the goog `DeviceTracker` mw / `HostTracker`; pin at execution.
@@ -854,4 +938,4 @@ if (userId === undefined) { ws.close(4401, 'unauthorized'); return; }
 - [ ] **Spec coverage:** sessions (hashed token, sliding) ✓; HTTP gate (allow-list, 401/redirect, admin 403 in APIs) ✓; WS gate (4401) ✓; roles + admin-only hiding ✓; lockdown (airtight, atomic, sets `authEnabled`) ✓; password hashing (scrypt, timing-safe) ✓; self-service change ✓; disable user + session revoke ✓; lockout (5/5min, 15-min unlock, admin override) ✓; reversible toggle + enable guard ✓; per-user label delivery ✓; service-mode orthogonality (identity is the users table) ✓.
 - [ ] **Placeholder scan:** server/auth code concrete; client task names exact files + helpers (rebase note is a coordination fact, not a placeholder).
 - [ ] **Type consistency:** `login()`/`LoginResult`, `SessionStore.{create,findValid,delete,deleteForUser}`, `hashToken`, `isAuthEnabled`/`setAuthEnabled`, `parseCookie`/`SESSION_COOKIE`, `resolveUserId`, `UserStore` auth methods, `lockdown()` — consistent across tasks and with Phases 1–3 (`Db`, `IMPLICIT_ADMIN_ID`, `AUTH_ENABLED_KEY`).
-- [ ] **Security review:** raw token never stored; generic login errors; admin-only endpoints 403; last-enabled-admin guard on disable/demote/delete; enable-auth guarded by an admin-with-password; WS refused pre-dispatch.
+- [ ] **Security review:** raw token never stored; generic login errors; **server-side admin authorization on the existing admin endpoints (Task 9b — not just UI hiding)**; last-enabled-admin guard on disable/**demote**/delete; enable-auth guarded by an admin-with-password; **WS check before `pathHandlers` dispatch** (scan path not bypassable); login page served inline (no SPA-shell leak at `/login`); `/api/whoami` + `/api/auth/me` allow-listed (install handshake + login-page state). Open mode preserved: `resolveUserId` → implicit admin, so `requireAdmin` passes when `authEnabled=false`.
