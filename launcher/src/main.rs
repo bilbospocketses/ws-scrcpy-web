@@ -72,8 +72,13 @@ fn main() {
     // copy-truncate (a rename would orphan that fd). No-op off-Linux, when the
     // file is absent/small, or when not service-run (harmless on a stale file).
     // Windows service.log is rotated by servy natively (see elevated_runner).
+    // try_ (NON-panicking): a teardown helper spawned via `systemd-run --system`
+    // (uninstall) has no DATA_ROOT/HOME/XDG, and the panicking data_root_from_env()
+    // would abort the process HERE — before reaching the teardown dispatch below
+    // (the beta.60 #9 5.1 core-dump that made uninstall a no-op). None → just skip
+    // the best-effort rotation.
     #[cfg(target_os = "linux")]
-    if let Some(data_root) = common::config::data_root_from_env() {
+    if let Some(data_root) = common::config::try_data_root_from_env() {
         common::log::copy_truncate_if_large(
             &data_root.join("logs").join("service.log"),
             10 * 1024 * 1024,

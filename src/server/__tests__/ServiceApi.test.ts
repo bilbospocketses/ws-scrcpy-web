@@ -143,6 +143,23 @@ describe('ServiceApi', () => {
         expect(await api.handle(req, res)).toBe(false);
     });
 
+    it('system-scope uninstall: teardown spawn sets DATA_ROOT (else the helper panics in data_root_for_linux at startup — beta.60 #9 5.1)', async () => {
+        const spawned: { cmd: string; args: string[] }[] = [];
+        const api = new ServiceApi(
+            () => ({ supported: true, platform: 'linux', client: { getInstalledScope: async () => 'system' } } as any),
+            () => 'system',
+            () => true,
+            (cmd, args) => { spawned.push({ cmd, args }); },
+        );
+        const { req, res } = makeReqRes('/api/service/uninstall', 'POST');
+        await api.handle(req, res);
+        expect(spawned).toHaveLength(1);
+        // a `systemd-run --system` transient unit has no HOME/XDG either, so without
+        // DATA_ROOT the launcher panics before running any teardown command.
+        expect(spawned[0]!.args).toContain('--setenv=DATA_ROOT=/var/opt/ws-scrcpy-web');
+        expect(spawned[0]!.args).toContain('--linux-service-teardown');
+    });
+
     it('GET /status returns supported=false envelope on unsupported platforms', async () => {
         const factoryResult: ServiceClientFactoryResult = {
             client: fakeClient(),

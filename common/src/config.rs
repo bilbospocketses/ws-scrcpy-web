@@ -73,6 +73,38 @@ pub fn data_root_from_env() -> Option<PathBuf> {
     }
 }
 
+/// Non-panicking sibling of `data_root_for_linux` for BEST-EFFORT callers (e.g. the
+/// launcher's startup `service.log` rotation, which a teardown transient unit hits
+/// without any `DATA_ROOT`/`HOME`/`XDG_DATA_HOME`). Returns `None` instead of
+/// panicking when none is set — the hard panic stays in `data_root_for_linux` for the
+/// supervisor path, where a persistent data root is genuinely mandatory.
+pub fn try_data_root_for_linux(
+    data_root: Option<&str>,
+    xdg_data_home: Option<&str>,
+    home: Option<&str>,
+) -> Option<PathBuf> {
+    if data_root.filter(|s| !s.is_empty()).is_none()
+        && xdg_data_home.filter(|s| !s.is_empty()).is_none()
+        && home.filter(|s| !s.is_empty()).is_none()
+    {
+        return None;
+    }
+    Some(data_root_for_linux(data_root, xdg_data_home, home))
+}
+
+/// Non-panicking env wrapper. `Some` when a data root is resolvable, `None` when
+/// nothing is set (best-effort callers skip rather than crash). On Windows it always
+/// resolves (PROGRAMDATA has a default), so this delegates to `data_root_from_env`.
+pub fn try_data_root_from_env() -> Option<PathBuf> {
+    if cfg!(windows) {
+        return data_root_from_env();
+    }
+    let data_root = std::env::var("DATA_ROOT").ok();
+    let xdg = std::env::var("XDG_DATA_HOME").ok();
+    let home = std::env::var("HOME").ok();
+    try_data_root_for_linux(data_root.as_deref(), xdg.as_deref(), home.as_deref())
+}
+
 #[derive(Debug, Deserialize, Default, PartialEq, Eq)]
 #[serde(default)]
 pub struct AppConfig {
@@ -305,6 +337,26 @@ mod tests {
         // #36 defense: the old `None => /tmp/WsScrcpyWeb` silently landed a
         // no-HOME root service in ephemeral /tmp. It now fails loudly instead.
         let _ = data_root_for_linux(None, None, None);
+    }
+
+    #[test]
+    fn try_data_root_for_linux_is_none_when_nothing_set() {
+        // Non-panicking sibling for best-effort callers (e.g. the service.log rotation
+        // in a teardown transient unit with no DATA_ROOT/HOME/XDG — beta.60 #9 5.1).
+        assert_eq!(try_data_root_for_linux(None, None, None), None);
+    }
+
+    #[test]
+    fn try_data_root_for_linux_is_some_when_data_root_set() {
+        assert_eq!(
+            try_data_root_for_linux(Some("/explicit/root"), None, None),
+            Some(PathBuf::from("/explicit/root")),
+        );
+    }
+
+    #[test]
+    fn try_data_root_for_linux_ignores_empty_strings() {
+        assert_eq!(try_data_root_for_linux(Some(""), Some(""), Some("")), None);
     }
 
     #[test]
