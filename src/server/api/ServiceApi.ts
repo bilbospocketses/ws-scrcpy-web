@@ -686,6 +686,12 @@ export class ServiceApi {
                 const optHelper = `${STAGED_SYSTEM_DIR}/${STAGED_SYSTEM_HELPER}`;
                 const runArgs = [
                     '--system', '--collect', teardownUnit,
+                    // DATA_ROOT is MANDATORY: a `systemd-run --system` transient unit has no
+                    // HOME/XDG either, so without it the launcher panics in data_root_for_linux
+                    // (config.rs) at startup — before running ANY teardown command (the beta.60
+                    // #9 5.1 core-dump that made uninstall a silent no-op). Mirrors the install
+                    // handoff's --setenv.
+                    `--setenv=DATA_ROOT=${SYSTEM_STATE_DIR}`,
                     optHelper, '--linux-service-teardown', '--scope', 'system', '--unit', WS_SCRCPY_SERVICE_NAME,
                 ];
                 if (process.getuid?.() === 0) {
