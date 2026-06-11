@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.61] - 2026-06-11
+
 ### Fixed
 
 - **Linux system-wide service install now labels its state directory correctly under SELinux.** A flaw in the install script's SELinux labeling could leave `/var/opt/ws-scrcpy-web` mislabeled on enforcing systems like Fedora; the labeling steps are now independent, so one failing step can no longer skip the rest (and the bundled dependencies get relabeled too).
