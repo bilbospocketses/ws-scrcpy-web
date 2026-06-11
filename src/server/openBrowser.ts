@@ -58,3 +58,35 @@ export function openBrowser(url: string): void {
         log.info(`browser open failed (best-effort): ${(err as Error).message}`);
     }
 }
+
+/**
+ * Decide whether the server should auto-open a browser tab at startup. Pure, so
+ * it is unit-testable.
+ *
+ * Opens when EITHER the native launcher signalled a fresh user launch
+ * (`launcherFreshLaunch` ← WS_SCRCPY_OPEN_BROWSER=1, set by the supervisor on
+ * its FIRST Node spawn — so a cold start PAST first-run still gets a tab; D1)
+ * OR this is the very first run (`firstRunComplete === false` — the original
+ * v0.1.9 welcome-modal open, and the dev/no-launcher fallback).
+ *
+ * NEVER opens in service mode (session-0 service instances are reached via the
+ * install-handoff redirect) or when a relaunch asked for suppression
+ * (`suppressBrowser` ← WS_SCRCPY_NO_BROWSER=1 — the user already has a
+ * reconnecting tab). Suppression overrides BOTH open signals, so a relaunch
+ * that happens to also carry the fresh-launch flag still won't double-pop.
+ *
+ * Supervisor restarts (webPort change, crash) are NOT first spawns, so they
+ * carry neither signal and (past first-run) do not re-open a tab.
+ */
+export function shouldAutoOpenBrowser(opts: {
+    firstRunComplete: boolean | undefined;
+    isServiceMode: boolean;
+    suppressBrowser: boolean;
+    launcherFreshLaunch: boolean;
+}): boolean {
+    if (opts.isServiceMode || opts.suppressBrowser) {
+        return false;
+    }
+    const isFirstRun = opts.firstRunComplete === false;
+    return opts.launcherFreshLaunch || isFirstRun;
+}

@@ -113,7 +113,7 @@ fn open_server_log(data_root: &Path) -> Option<std::fs::File> {
 ///
 /// Returns the child handle so the caller (supervisor) can wait on it.
 #[cfg(windows)]
-pub fn spawn_server(deps_path: &Path, data_root: &Path) -> Result<Child> {
+pub fn spawn_server(deps_path: &Path, data_root: &Path, _open_browser: bool) -> Result<Child> {
     use std::os::windows::process::CommandExt;
 
     let exe = std::env::current_exe()?;
@@ -158,7 +158,7 @@ pub fn spawn_server(deps_path: &Path, data_root: &Path) -> Result<Child> {
 }
 
 #[cfg(not(windows))]
-pub fn spawn_server(deps_path: &Path, data_root: &Path) -> Result<Child> {
+pub fn spawn_server(deps_path: &Path, data_root: &Path, open_browser: bool) -> Result<Child> {
     let exe = std::env::current_exe()?;
     let work_dir = exe.parent().context("exe has no parent dir")?.to_path_buf();
     let deps_str = deps_path.to_str().context("deps_path is not valid UTF-8")?;
@@ -170,6 +170,15 @@ pub fn spawn_server(deps_path: &Path, data_root: &Path) -> Result<Child> {
         .current_dir(&work_dir)
         .env("DEPS_PATH", deps_path)
         .env("DATA_ROOT", data_root);
+
+    // D1: on the launcher's FIRST spawn of a fresh user launch, tell the Node
+    // server to open a browser tab once it is listening (the launcher can't open
+    // it itself — Node isn't bound yet). Supervisor restarts pass false, so a
+    // webPort-change / crash restart doesn't re-pop a tab. A relaunch's
+    // WS_SCRCPY_NO_BROWSER (set by linux_apply) overrides this on the Node side.
+    if open_browser {
+        cmd.env("WS_SCRCPY_OPEN_BROWSER", "1");
+    }
 
     if let Some(log) = open_server_log(data_root) {
         let log_clone = log.try_clone().ok();

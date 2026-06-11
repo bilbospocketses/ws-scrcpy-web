@@ -202,10 +202,16 @@ pub fn run() -> Result<(i32, Option<Arc<AtomicBool>>)> {
     // install Node / ADB / scrcpy-server.
     log::info(&format!("supervisor: deps_path resolved to {:?} (passed to Node child)", paths.deps_path));
 
+    // D1: only the FIRST Node spawn of this fresh launch should tell Node to open
+    // a browser tab (WS_SCRCPY_OPEN_BROWSER, non-Windows). Subsequent loop
+    // iterations are restarts (webPort change, crash) — the user already has a
+    // tab, so they must NOT re-pop one.
+    let mut first_spawn = true;
     loop {
         cleanup_old_node(&paths.old_node);
 
-        let mut child = spawn::spawn_server(&paths.deps_path, &paths.data_root)?;
+        let mut child = spawn::spawn_server(&paths.deps_path, &paths.data_root, first_spawn)?;
+        first_spawn = false;
         log::info(&format!("supervisor: server started (pid {})", child.id()));
 
         let status = wait_with_signal(&mut child, &stop)?;

@@ -18,7 +18,7 @@ import { findAvailablePort, webPortOverride } from './PortPicker';
 import { DeviceLabelStore } from './DeviceLabelStore';
 import { DeviceProbe } from './DeviceProbe';
 import { Logger } from './Logger';
-import { openBrowser } from './openBrowser';
+import { openBrowser, shouldAutoOpenBrowser } from './openBrowser';
 import { HostTracker } from './mw/HostTracker';
 import type { MwFactory } from './mw/Mw';
 import { ScanMw } from './mw/ScanMw';
@@ -225,7 +225,20 @@ reconcileWebPort()
             // in-app update relaunch) sets WS_SCRCPY_NO_BROWSER=1 — the user
             // already has a tab that reconnects, so don't pop a redundant one.
             const suppressBrowser = process.env['WS_SCRCPY_NO_BROWSER'] === '1';
-            if (appCfg.firstRunComplete === false && !isServiceMode && !suppressBrowser) {
+            // D1: the native launcher's supervisor sets WS_SCRCPY_OPEN_BROWSER=1
+            // on its FIRST Node spawn (a fresh user launch), so a cold start past
+            // first-run still opens a tab — not only on first run. Supervisor
+            // restarts (webPort change, crash) don't set it, so they don't re-pop
+            // a tab; dev (no launcher) falls back to the first-run-only open.
+            const launcherFreshLaunch = process.env['WS_SCRCPY_OPEN_BROWSER'] === '1';
+            if (
+                shouldAutoOpenBrowser({
+                    firstRunComplete: appCfg.firstRunComplete,
+                    isServiceMode,
+                    suppressBrowser,
+                    launcherFreshLaunch,
+                })
+            ) {
                 const port = config.servers[0]?.port ?? appCfg.webPort;
                 openBrowser(`http://localhost:${port}`);
             }
