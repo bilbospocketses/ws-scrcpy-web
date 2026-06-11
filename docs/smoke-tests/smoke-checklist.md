@@ -55,7 +55,7 @@ Boxes start unticked — this is a fresh pass.
 
 | Test | How to perform | Expected + verify |
 |---|---|---|
-| ☐ **5.8** `[L]` Uninstall → relaunch local | Uninstall the user service **as that user** | Unit file gone (`~/.config/systemd/user/WsScrcpyWeb.service`); no straggler (`pgrep -fa "adb\|scrcpy-server\|WsScrcpyWeb"` clean); relaunches **local mode**; Settings shows not-installed |
+| ☐ **5.8** `[L]` Uninstall → relaunch local | Uninstall the user service **as that user** | Unit file gone (`~/.config/systemd/user/WsScrcpyWeb.service`); after relaunch **only the single local instance** runs (launcher + node + its pre-warmed adb daemon) — **no service procs, no 2nd instance, no `scrcpy-server`** (`pgrep -fa "adb\|scrcpy-server\|WsScrcpyWeb"`); relaunches **local mode**; Settings shows not-installed |
 | ☐ **12.1** `[L]` Clean exit + adb teardown | Local mode, device + stream → Settings → App → "stop server & exit" | Tab self-closes/"app stopped"; process tree exits clean; log shows "Stopping adb daemon"; launcher **exit 0** (no 75 restart) |
 | ☐ **12.4** `[L]` DATA_ROOT override | Launch with `DATA_ROOT=/tmp/wssw-dataroot` exported | Config/deps/logs land there (Node **and** launcher agree) |
 | ☐ **13.1** `[B]` Bookmark global-dismiss | Bookmark/port-change reminder → check "don't show again — ever" | Supersedes + disables the per-port checkbox; persists `bookmarkDismissedGlobally` |

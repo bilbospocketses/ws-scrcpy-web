@@ -70,9 +70,9 @@ else
 fi
 
 # 20. service journals + status (user + system)
-journalctl --user -u "$UNIT" --no-pager -n 500 > "$OUT/20-journal-user.txt"   2>&1
+journalctl --user -u "$UNIT" -b --no-pager -n 500 > "$OUT/20-journal-user.txt"   2>&1
 systemctl  --user status "$UNIT" --no-pager      > "$OUT/21-status-user.txt"   2>&1
-sudo journalctl -u "$UNIT" --no-pager -n 500     > "$OUT/22-journal-system.txt" 2>&1
+sudo journalctl -u "$UNIT" -b --no-pager -n 500     > "$OUT/22-journal-system.txt" 2>&1
 sudo systemctl status "$UNIT" --no-pager         > "$OUT/23-status-system.txt"  2>&1
 
 # 30. SELinux fcontext rules + file labels + recursive dataRoot listing (catches leftovers)
@@ -99,7 +99,7 @@ sudo cp "$SYS_UNIT"  "$OUT/61-system-unit.service" 2>/dev/null || true
 
 # 70. app logs (local + system) — prefixed so the two trees never clash
 for f in "$DATA_ROOT"/logs/*.log;   do [ -e "$f" ] && cp      "$f" "$OUT/70-local-$(basename "$f")"  2>/dev/null; done
-for f in "$VAR_OPT_DIR"/logs/*.log; do [ -e "$f" ] && sudo cp "$f" "$OUT/71-system-$(basename "$f")" 2>/dev/null; done
+sudo find "$VAR_OPT_DIR/logs" -maxdepth 1 -type f -name '*.log*' 2>/dev/null | while IFS= read -r f; do sudo cp "$f" "$OUT/71-system-$(basename "$f")" 2>/dev/null; done
 
 # bundle it for easy attachment
 tar czf "$OUT.tar.gz" -C "$(dirname "$OUT")" "$(basename "$OUT")" 2>/dev/null && note "bundle: $OUT.tar.gz"
