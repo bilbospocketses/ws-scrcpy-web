@@ -259,12 +259,13 @@ export function renderUnitFile(opts: ServiceInstallOptions, scope: SystemdScope)
     return [
         '[Unit]',
         `Description=${opts.description}`,
-        'After=network.target',
+        scope === 'system' ? 'After=network-online.target' : 'After=network.target',
+        ...(scope === 'system' ? ['Wants=network-online.target'] : []),
         // systemd reads StartLimit* from [Unit], NOT [Service] (it silently
         // ignores them in [Service] -> the restart cap never applies).
-        // StartLimitIntervalSec=300 means: count restart attempts in a rolling
-        // 5-minute window; if maxRestartAttempts is exceeded, systemd gives up.
-        'StartLimitIntervalSec=300',
+        // System scope: 60 s window (takeover-retry scenario — fail fast within
+        // the handoff window). User scope: 300 s (5-minute window).
+        scope === 'system' ? 'StartLimitIntervalSec=60' : 'StartLimitIntervalSec=300',
         `StartLimitBurst=${opts.maxRestartAttempts}`,
         '',
         '[Service]',
@@ -272,7 +273,7 @@ export function renderUnitFile(opts: ServiceInstallOptions, scope: SystemdScope)
         `ExecStart=${execStart}`,
         `WorkingDirectory=${workingDir}`,
         'Restart=on-failure',
-        'RestartSec=5',
+        scope === 'system' ? 'RestartSec=2' : 'RestartSec=5',
         ...(envLines ? [envLines] : []),
         `StandardOutput=append:${opts.logPath}`,
         `StandardError=append:${opts.logPath}`,

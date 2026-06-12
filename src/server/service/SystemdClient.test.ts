@@ -221,10 +221,35 @@ describe('renderUnitFile', () => {
         const unit = renderUnitFile(baseOpts, 'system');
         const unitSection = unit.slice(unit.indexOf('[Unit]'), unit.indexOf('[Service]'));
         const serviceSection = unit.slice(unit.indexOf('[Service]'), unit.indexOf('[Install]'));
-        expect(unitSection).toContain('StartLimitIntervalSec=300');
+        expect(unitSection).toContain('StartLimitIntervalSec=60');
         expect(unitSection).toContain('StartLimitBurst=3');
         expect(serviceSection).not.toContain('StartLimitIntervalSec');
         expect(serviceSection).not.toContain('StartLimitBurst');
+    });
+});
+
+describe('renderUnitFile — system scope unit', () => {
+    const sysOpts = {
+        name: 'WsScrcpyWeb',
+        description: 'ws-scrcpy-web',
+        binPath: '/home/u/.local/share/WsScrcpyWeb/bin/WsScrcpyWeb.AppImage',
+        startupDir: '/home/u',
+        maxRestartAttempts: 10,
+        envVars: { DATA_ROOT: '/var/lib/ws-scrcpy-web', DEPS_PATH: '/opt/ws-scrcpy-web/dependencies', WS_SCRCPY_SERVICE: '1', WS_SCRCPY_WEB_PORT: '8000' },
+        logPath: '/var/lib/ws-scrcpy-web/logs/service.log',
+    } as unknown as Parameters<typeof renderUnitFile>[0];
+
+    it('puts StartLimit* in [Unit], Restart=on-failure/RestartSec=2 in [Service], and execs the /opt binary', () => {
+        const unit = renderUnitFile(sysOpts, 'system');
+        const unitSection = unit.split('[Service]')[0];
+        expect(unitSection).toContain('StartLimitIntervalSec=60');
+        expect(unitSection).toContain('StartLimitBurst=10');
+        const serviceSection = (unit.split('[Service]')[1] ?? '').split('[Install]')[0] ?? '';
+        expect(serviceSection).not.toContain('StartLimit');
+        expect(serviceSection).toContain('Restart=on-failure');
+        expect(serviceSection).toContain('RestartSec=2');
+        expect(serviceSection).toContain('ExecStart=/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage');
+        expect(unit).toContain('WantedBy=multi-user.target');
     });
 });
 
