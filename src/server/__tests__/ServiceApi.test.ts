@@ -667,8 +667,9 @@ describe('ServiceApi', () => {
             expect(opts?.scope).toBe('user');
         });
 
-        it('POST /install on Linux with {scope: "system"} as root installs system scope', async () => {
-            Object.defineProperty(process, 'getuid', { value: () => 0, configurable: true });
+        it('POST /install on Linux with {scope: "system"} uses awaited pkexec path (client.install NOT called)', async () => {
+            // New behavior: system-scope install elevates the whole app via awaited
+            // pkexec <appimage> --install-system-service, never enters client.install().
             const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(async () => undefined);
             const client = fakeClient({
                 install: installFn,
@@ -679,7 +680,13 @@ describe('ServiceApi', () => {
                 supported: true,
                 platform: 'linux',
             };
-            const api = new ServiceApi(() => factoryResult, () => 'user');
+            const runElevated = vi.fn(async (_argv: string[]) => ({ code: 0, stdout: '', stderr: '' }));
+            // Constructor: (factory, scope, existsCheck, spawnDetached, scheduleExit, runPkexecFn, verifyServiceActive, runElevated)
+            const api = new ServiceApi(
+                () => factoryResult, () => 'user', () => false,
+                () => {}, () => {}, async () => '', async () => true,
+                runElevated,
+            );
             const { req, res } = makeReqRes(
                 '/api/service/install',
                 'POST',
@@ -689,22 +696,16 @@ describe('ServiceApi', () => {
             expect((res as any).getStatus()).toBe(200);
             const body = JSON.parse((res as any).getBody());
             expect(body.installMode).toBe('system-service');
-            const opts = installFn.mock.calls[0]?.[0];
-            expect(opts?.scope).toBe('system');
-            expect((opts as { account?: unknown })?.account).toBeUndefined();
+            expect(body.status).toBe('shutting-down');
+            // New: runElevated called, client.install NOT called
+            expect(runElevated).toHaveBeenCalledOnce();
+            expect(installFn).not.toHaveBeenCalled();
         });
 
-        it('POST /install on Linux with {scope: "system"} as non-root forwards to client (SystemdClient handles pkexec)', async () => {
-            // Pre-PR #211 the API short-circuited with 403 here. Post-#211
-            // the API forwards the request to SystemdClient.install(), which
-            // internally writes the unit to a tmp path and uses pkexec to
-            // copy + daemon-reload + enable in one password prompt. The API
-            // mock here just confirms the install path is exercised; pkexec
-            // mechanics are SystemdClient's responsibility.
-            Object.defineProperty(process, 'getuid', {
-                value: () => 1000,
-                configurable: true,
-            });
+        it('POST /install on Linux with {scope: "system"} elevates via awaited pkexec (no client.install call)', async () => {
+            // Task 7: system-scope install now calls runElevated([pkexec, binPath,
+            // '--install-system-service', '--port', N]) instead of client.install().
+            // The injected runElevated succeeds; assert client.install is never reached.
             const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(async () => undefined);
             const client = fakeClient({
                 install: installFn,
@@ -715,7 +716,12 @@ describe('ServiceApi', () => {
                 supported: true,
                 platform: 'linux',
             };
-            const api = new ServiceApi(() => factoryResult, () => 'user');
+            const runElevated = vi.fn(async (_argv: string[]) => ({ code: 0, stdout: '', stderr: '' }));
+            const api = new ServiceApi(
+                () => factoryResult, () => 'user', () => false,
+                () => {}, () => {}, async () => '', async () => true,
+                runElevated,
+            );
             const { req, res } = makeReqRes(
                 '/api/service/install',
                 'POST',
@@ -726,13 +732,15 @@ describe('ServiceApi', () => {
             const body = JSON.parse((res as any).getBody());
             expect(body.ok).toBe(true);
             expect(body.installMode).toBe('system-service');
-            expect(installFn).toHaveBeenCalledOnce();
-            const opts = installFn.mock.calls[0]?.[0];
-            expect(opts?.scope).toBe('system');
+            expect(body.status).toBe('shutting-down');
+            expect(runElevated).toHaveBeenCalledOnce();
+            expect(installFn).not.toHaveBeenCalled();
         });
 
-        it('POST /install Linux system scope hands off (status shutting-down), no in-handler verify (beta.57)', async () => {
-            Object.defineProperty(process, 'getuid', { value: () => 1000, configurable: true });
+        it('POST /install Linux system scope hands off via pkexec (status shutting-down), no client.install, no in-handler verify', async () => {
+            // Task 7: system-scope install goes through runElevated, not client.install.
+            // Response is still shutting-down; no verifyServiceActive poll needed since
+            // the rootful core (running as root via pkexec) handles enable+start.
             const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(async () => undefined);
             const statusFn = vi.fn(async () => 'running' as const);
             const client = fakeClient({ install: installFn, status: statusFn });
@@ -741,18 +749,165 @@ describe('ServiceApi', () => {
                 supported: true,
                 platform: 'linux',
             };
-            const api = new ServiceApi(() => factoryResult, () => 'user');
+            const runElevated = vi.fn(async (_argv: string[]) => ({ code: 0, stdout: '', stderr: '' }));
+            const api = new ServiceApi(
+                () => factoryResult, () => 'user', () => false,
+                () => {}, () => {}, async () => '', async () => true,
+                runElevated,
+            );
             const { req, res } = makeReqRes('/api/service/install', 'POST', JSON.stringify({ scope: 'system' }));
             await api.handle(req, res);
             expect((res as any).getStatus()).toBe(200);
             const body = JSON.parse((res as any).getBody());
             expect(body.ok).toBe(true);
             expect(body.installMode).toBe('system-service');
-            // B1: mirror user-scope — return shutting-down + exit to free the port; the
-            // rootful handoff helper (spawned by the installer) owns verify/rollback.
             expect(body.status).toBe('shutting-down');
-            // no in-handler verify poll (win32-only now) → client.status not called.
+            // runElevated called; client.install and client.status NOT called
+            expect(runElevated).toHaveBeenCalledOnce();
+            expect(installFn).not.toHaveBeenCalled();
             expect(statusFn).not.toHaveBeenCalled();
+        });
+
+        // ── Linux system-scope install: awaited pkexec <appimage> --install-system-service ──
+        //
+        // The new path: instead of calling client.install() (which ran pkexec sh -c
+        // "<inline-script>" with a kill timeout), we elevate the WHOLE APP once via an
+        // awaited pkexec so the root core (installSystemService) handles staging + unit.
+        // The local copy exits to free the port; the unit's Restart=on-failure covers
+        // the port takeover. No timeout, no kill, no EPERM class.
+
+        it('POST /install Linux system scope: runElevated called with pkexec argv, client.install NOT called, response shutting-down', async () => {
+            const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(async () => undefined);
+            const client = fakeClient({ install: installFn, status: vi.fn(async () => 'running' as const) });
+            const factoryResult: ServiceClientFactoryResult = { client, supported: true, platform: 'linux' };
+
+            const savedAppImage = process.env['APPIMAGE'];
+            process.env['APPIMAGE'] = '/home/jamie/Applications/WsScrcpyWeb.AppImage';
+            try {
+                const elevatedArgv: string[][] = [];
+                const runElevated = vi.fn(async (argv: string[]) => {
+                    elevatedArgv.push(argv);
+                    return { code: 0, stdout: '', stderr: '' };
+                });
+
+                // Constructor: (factory, scope, existsCheck, spawnDetached, scheduleExit, runPkexecFn, verifyServiceActive, runElevated)
+                const api = new ServiceApi(
+                    () => factoryResult,
+                    () => 'user',
+                    () => false,
+                    () => { /* no spawn */ },
+                    () => { /* no-op scheduleExit — never calls process.exit */ },
+                    async () => '',
+                    async () => true,
+                    runElevated,
+                );
+                const { req, res } = makeReqRes('/api/service/install', 'POST', JSON.stringify({ scope: 'system' }));
+                await api.handle(req, res);
+
+                // (a) runElevated called once
+                expect(runElevated).toHaveBeenCalledOnce();
+
+                // (b) argv[0] matches /pkexec$/ (resolved absolute path via resolveSystemTool)
+                const argv = elevatedArgv[0]!;
+                expect(argv[0]).toMatch(/pkexec$/);
+
+                // (c) argv contains the appimage binary as next element
+                expect(argv[1]).toBe('/home/jamie/Applications/WsScrcpyWeb.AppImage');
+
+                // (d) argv contains the CLI flags
+                expect(argv).toContain('--install-system-service');
+                expect(argv).toContain('--port');
+
+                // (e) client.install must NOT be called (system scope exits early)
+                expect(installFn).not.toHaveBeenCalled();
+
+                // (f) response: 200, ok:true, status:shutting-down
+                expect((res as any).getStatus()).toBe(200);
+                const body = JSON.parse((res as any).getBody());
+                expect(body.ok).toBe(true);
+                expect(body.status).toBe('shutting-down');
+                expect(body.installMode).toBe('system-service');
+            } finally {
+                if (savedAppImage === undefined) delete process.env['APPIMAGE'];
+                else process.env['APPIMAGE'] = savedAppImage;
+            }
+        });
+
+        it('POST /install Linux system scope: runElevated returns code 126 → 403 uac-declined + installMode reverted', async () => {
+            const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(async () => undefined);
+            const client = fakeClient({ install: installFn, status: vi.fn(async () => 'not-installed' as const) });
+            const factoryResult: ServiceClientFactoryResult = { client, supported: true, platform: 'linux' };
+
+            const runElevated = vi.fn(async (_argv: string[]) => ({ code: 126, stdout: '', stderr: '' }));
+
+            const api = new ServiceApi(
+                () => factoryResult,
+                () => 'user',
+                () => false,
+                () => { /* no spawn */ },
+                () => { /* no-op scheduleExit */ },
+                async () => '',
+                async () => true,
+                runElevated,
+            );
+
+            // Persist a known initial installMode so we can verify revert
+            Config.getInstance().updateAppConfig({ installMode: 'user' });
+
+            const { req, res } = makeReqRes('/api/service/install', 'POST', JSON.stringify({ scope: 'system' }));
+            await api.handle(req, res);
+
+            // (a) runElevated called
+            expect(runElevated).toHaveBeenCalledOnce();
+
+            // (b) 403 with uac-declined reason
+            expect((res as any).getStatus()).toBe(403);
+            const body = JSON.parse((res as any).getBody());
+            expect(body.ok).toBe(false);
+            expect(body.reason).toBe('uac-declined');
+
+            // (c) installMode reverted back to 'user' (not 'system-service')
+            expect(Config.getInstance().getAppConfig().installMode).toBe('user');
+
+            // (d) client.install never called
+            expect(installFn).not.toHaveBeenCalled();
+        });
+
+        it('POST /install Linux system scope: runElevated returns code 1 with stderr → 500 servy-failure + installMode reverted', async () => {
+            const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(async () => undefined);
+            const client = fakeClient({ install: installFn, status: vi.fn(async () => 'not-installed' as const) });
+            const factoryResult: ServiceClientFactoryResult = { client, supported: true, platform: 'linux' };
+
+            const runElevated = vi.fn(async (_argv: string[]) => ({ code: 1, stdout: '', stderr: 'boom: unit enable failed' }));
+
+            const api = new ServiceApi(
+                () => factoryResult,
+                () => 'user',
+                () => false,
+                () => { /* no spawn */ },
+                () => { /* no-op scheduleExit */ },
+                async () => '',
+                async () => true,
+                runElevated,
+            );
+
+            Config.getInstance().updateAppConfig({ installMode: 'user' });
+
+            const { req, res } = makeReqRes('/api/service/install', 'POST', JSON.stringify({ scope: 'system' }));
+            await api.handle(req, res);
+
+            // (a) 500 with servy-failure reason
+            expect((res as any).getStatus()).toBe(500);
+            const body = JSON.parse((res as any).getBody());
+            expect(body.ok).toBe(false);
+            expect(body.reason).toBe('servy-failure');
+            expect(body.error).toContain('boom');
+
+            // (b) installMode reverted
+            expect(Config.getInstance().getAppConfig().installMode).toBe('user');
+
+            // (c) client.install never called
+            expect(installFn).not.toHaveBeenCalled();
         });
 
         it('POST /install on Linux with $APPIMAGE set writes local-appimage marker to <dataRoot>/control/local-appimage', async () => {
@@ -887,15 +1042,14 @@ describe('ServiceApi', () => {
             }
         });
 
-        // ── Linux system-scope install: launcher helper staging (#2 install) ───
+        // ── Linux system-scope install: pkexec path (linuxHelperSource removed, Task 7) ───
         //
-        // At system-scope install, ServiceApi resolves the home launcher helper
-        // from <dataRoot>/control/operation-server/ws-scrcpy-web-launcher.exe and
-        // passes it as linuxHelperSource to client.install(). The existing
-        // /opt/ws-scrcpy-web fcontext rule then labels it bin_t alongside the
-        // AppImage so init_t can exec it during uninstall teardown (SELinux AVC fix).
+        // Task 7: system-scope install now uses runElevated([pkexec, binPath,
+        // '--install-system-service', '--port', N]) and never calls client.install().
+        // linuxHelperSource is no longer resolved or passed; the root core
+        // (installSystemService) stages /opt directly.
 
-        it('POST /install on Linux system scope passes linuxHelperSource when the helper candidate exists', async () => {
+        it('POST /install on Linux system scope uses runElevated, client.install NOT called (helper candidate irrelevant)', async () => {
             const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(async () => undefined);
             const client = fakeClient({
                 install: installFn,
@@ -907,15 +1061,19 @@ describe('ServiceApi', () => {
                 platform: 'linux',
             };
 
-            // Create the helper candidate in the tmp dataRoot so existsCheck hits.
+            // Even if the helper candidate exists, system scope goes via runElevated now.
             const cfg = Config.getInstance();
             const dataRoot = cfg.dataRoot ?? path.dirname(cfg.dependenciesPath);
             const helperDir = path.join(dataRoot, 'control', 'operation-server');
             fs.mkdirSync(helperDir, { recursive: true });
-            const helperPath = path.join(helperDir, 'ws-scrcpy-web-launcher.exe');
-            fs.writeFileSync(helperPath, '', 'utf8');
+            fs.writeFileSync(path.join(helperDir, 'ws-scrcpy-web-launcher.exe'), '', 'utf8');
 
-            const api = new ServiceApi(() => factoryResult, () => 'user');
+            const runElevated = vi.fn(async (_argv: string[]) => ({ code: 0, stdout: '', stderr: '' }));
+            const api = new ServiceApi(
+                () => factoryResult, () => 'user', () => true,
+                () => {}, () => {}, async () => '', async () => true,
+                runElevated,
+            );
             const { req, res } = makeReqRes(
                 '/api/service/install',
                 'POST',
@@ -924,12 +1082,13 @@ describe('ServiceApi', () => {
             await api.handle(req, res);
             expect((res as any).getStatus()).toBe(200);
 
-            const opts = installFn.mock.calls[0]?.[0];
-            expect(opts?.scope).toBe('system');
-            expect(opts?.linuxHelperSource).toBe(helperPath);
+            expect(runElevated).toHaveBeenCalledOnce();
+            expect(installFn).not.toHaveBeenCalled();
+            const body = JSON.parse((res as any).getBody());
+            expect(body.status).toBe('shutting-down');
         });
 
-        it('POST /install on Linux system scope passes undefined linuxHelperSource when helper is absent', async () => {
+        it('POST /install on Linux system scope uses runElevated regardless of helper absence', async () => {
             const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(async () => undefined);
             const client = fakeClient({
                 install: installFn,
@@ -941,8 +1100,13 @@ describe('ServiceApi', () => {
                 platform: 'linux',
             };
 
-            // Do NOT create the helper — existsCheck returns false.
-            const api = new ServiceApi(() => factoryResult, () => 'user');
+            // No helper candidate — existsCheck returns false. Still uses runElevated.
+            const runElevated = vi.fn(async (_argv: string[]) => ({ code: 0, stdout: '', stderr: '' }));
+            const api = new ServiceApi(
+                () => factoryResult, () => 'user', () => false,
+                () => {}, () => {}, async () => '', async () => true,
+                runElevated,
+            );
             const { req, res } = makeReqRes(
                 '/api/service/install',
                 'POST',
@@ -951,12 +1115,12 @@ describe('ServiceApi', () => {
             await api.handle(req, res);
             expect((res as any).getStatus()).toBe(200);
 
-            const opts = installFn.mock.calls[0]?.[0];
-            expect(opts?.scope).toBe('system');
-            expect(opts?.linuxHelperSource).toBeUndefined();
+            expect(runElevated).toHaveBeenCalledOnce();
+            expect(installFn).not.toHaveBeenCalled();
         });
 
-        it('POST /install on Linux user scope does NOT pass linuxHelperSource (user scope has no /opt staging)', async () => {
+        it('POST /install on Linux user scope does NOT use runElevated (user scope calls client.install)', async () => {
+            // User scope is unchanged — still calls client.install() directly.
             const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(async () => undefined);
             const client = fakeClient({
                 install: installFn,
@@ -968,15 +1132,12 @@ describe('ServiceApi', () => {
                 platform: 'linux',
             };
 
-            // Create helper so we can confirm it is NOT passed for user scope.
-            const cfg = Config.getInstance();
-            const dataRoot = cfg.dataRoot ?? path.dirname(cfg.dependenciesPath);
-            const helperDir = path.join(dataRoot, 'control', 'operation-server');
-            fs.mkdirSync(helperDir, { recursive: true });
-            const helperPath = path.join(helperDir, 'ws-scrcpy-web-launcher.exe');
-            fs.writeFileSync(helperPath, '', 'utf8');
-
-            const api = new ServiceApi(() => factoryResult, () => 'user');
+            const runElevated = vi.fn(async (_argv: string[]) => ({ code: 0, stdout: '', stderr: '' }));
+            const api = new ServiceApi(
+                () => factoryResult, () => 'user', () => false,
+                () => {}, () => {}, async () => '', async () => true,
+                runElevated,
+            );
             const { req, res } = makeReqRes(
                 '/api/service/install',
                 'POST',
@@ -987,7 +1148,10 @@ describe('ServiceApi', () => {
 
             const opts = installFn.mock.calls[0]?.[0];
             expect(opts?.scope).toBe('user');
-            expect(opts?.linuxHelperSource).toBeUndefined();
+            // linuxHelperSource is no longer passed (removed in Task 7)
+            expect((opts as unknown as Record<string, unknown>)?.['linuxHelperSource']).toBeUndefined();
+            // runElevated must NOT be called for user scope
+            expect(runElevated).not.toHaveBeenCalled();
         });
 
         // ── Linux uninstall — systemd-run teardown handoff (item 32) ───────────
