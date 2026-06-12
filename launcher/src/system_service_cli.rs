@@ -35,44 +35,93 @@ pub fn owned_op(args: &[String]) -> Option<Op> {
     }
 }
 
-/// If this argv owns a system-service CLI op, resolve node, forward all flags
-/// (skipping argv[0]), run node in the foreground inheriting stdio, and return
-/// `Some(exit_code)`. Returns `None` when no op flag is present.
+/// If this argv owns a system-service CLI op, run it and return
+/// `Some(exit_code)`. Returns `None` ONLY when no op flag is present (so the
+/// caller in `main.rs` can fall through to the normal launcher path).
+///
+/// INVARIANT: once we own the op, this ALWAYS returns `Some` — every failure
+/// (current_exe, parent, Paths::from_env, node/entry resolution, spawn) is
+/// logged and surfaced as a non-zero exit. A `None` fall-through here would be
+/// indistinguishable from "not a system-service invocation", causing the
+/// launcher to start a root server in the foreground and hang the awaiting
+/// `pkexec`/`sudo` forever instead of surfacing the failure (spec §10).
 pub fn handle(args: &[String]) -> Option<i32> {
-    // Early-return None if we don't own any flag.
-    owned_op(args)?;
+    let op = owned_op(args)?; // None => not ours; caller falls through (correct).
+    Some(run_owned(op, args))
+}
 
-    let exe = std::env::current_exe().ok()?;
-    let work_dir = exe.parent()?.to_path_buf();
-
-    // Resolve node via the same path the production server-spawn uses:
-    // Paths::from_env() → deps_path (honours DEPS_PATH env override, falling
-    // back to data_root/dependencies) → resolve_node_with(Some(deps_path)).
-    // This guarantees the binary comes from the app's own dependencies/ or
-    // seed/ — never from the system PATH.
-    let paths = crate::paths::Paths::from_env().ok()?;
-    let node = resolve_node_with(paths.deps_path.to_str(), &work_dir).ok()?;
-    let entry = resolve_server_entry_with(&work_dir).ok()?;
+/// Execute an owned system-service op. ALWAYS returns an exit code — never
+/// silently bails. Resolves node via the same path the production server-spawn
+/// uses (Paths::from_env → deps_path, honouring the DEPS_PATH override and
+/// falling back to data_root/dependencies), so the binary comes from the app's
+/// own dependencies/ or seed/ — never the system PATH (Local-Dependencies-Only).
+fn run_owned(_op: Op, args: &[String]) -> i32 {
+    let exe = match std::env::current_exe() {
+        Ok(e) => e,
+        Err(e) => {
+            crate::log::error(&format!("system-service-cli: current_exe failed: {e}"));
+            return 1;
+        }
+    };
+    let Some(work_dir) = exe.parent().map(|p| p.to_path_buf()) else {
+        crate::log::error("system-service-cli: exe has no parent dir");
+        return 1;
+    };
+    let paths = match crate::paths::Paths::from_env() {
+        Ok(p) => p,
+        Err(e) => {
+            crate::log::error(&format!("system-service-cli: Paths::from_env failed: {e}"));
+            return 1;
+        }
+    };
+    let node = match resolve_node_with(paths.deps_path.to_str(), &work_dir) {
+        Ok(n) => n,
+        Err(e) => {
+            crate::log::error(&format!("system-service-cli: node not found: {e}"));
+            return 1;
+        }
+    };
+    let entry = match resolve_server_entry_with(&work_dir) {
+        Ok(e) => e,
+        Err(e) => {
+            crate::log::error(&format!("system-service-cli: server entry not found: {e}"));
+            return 1;
+        }
+    };
 
     // Forward everything past argv[0] verbatim to node (includes the
     // --install/uninstall/status flag and any extra flags such as --port).
     let forwarded: Vec<&String> = args.iter().skip(1).collect();
 
-    let status = Command::new(&node)
+    match Command::new(&node)
         .arg(&entry)
         .args(&forwarded)
         .current_dir(&work_dir)
-        .status();
-
-    match status {
-        Ok(s) => Some(s.code().unwrap_or(1)),
+        .status()
+    {
+        Ok(s) => exit_code_of(&s),
         Err(e) => {
-            crate::log::error(&format!(
-                "system-service-cli: spawn node failed: {e}"
-            ));
-            Some(1)
+            crate::log::error(&format!("system-service-cli: spawn node failed: {e}"));
+            1
         }
     }
+}
+
+/// Map node's exit status to a propagatable code. A normal exit forwards its
+/// code verbatim; a signal-killed node (SIGKILL/SIGSEGV/etc.) is surfaced as
+/// `128 + signal` (and logged) rather than masked as a plain 1 — important for
+/// a root install CLI where signal-death vs. error-exit is a real diagnostic
+/// distinction. Linux-gated module, so the unix ext is always available.
+fn exit_code_of(s: &std::process::ExitStatus) -> i32 {
+    use std::os::unix::process::ExitStatusExt;
+    if let Some(code) = s.code() {
+        return code;
+    }
+    if let Some(sig) = s.signal() {
+        crate::log::error(&format!("system-service-cli: node killed by signal {sig}"));
+        return 128 + sig;
+    }
+    1
 }
 
 #[cfg(test)]
