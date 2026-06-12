@@ -60,3 +60,27 @@ export async function installSystemService(opts: { port: number }, d: CoreDeps):
     log.info('system service installed + enabled');
 }
 
+export async function uninstallSystemService(opts: { keepState: boolean }, d: CoreDeps & { removeFile: (p: string) => void }): Promise<void> {
+    assertRoot(d.getuid);
+    const systemctl = d.tool('systemctl'), rm = d.tool('rm'), semanage = d.sbinTool('semanage'), restorecon = d.sbinTool('restorecon');
+    await d.run([systemctl, 'disable', '--now', `${WS_SCRCPY_SERVICE_NAME}.service`]).catch(() => undefined);
+    d.removeFile(UNIT_PATH);
+    await d.run([systemctl, 'daemon-reload']);
+    await d.run([semanage, 'fcontext', '-d', FCONTEXT_SPEC]).catch(() => undefined);
+    await d.run([restorecon, '-R', STAGED_SYSTEM_DIR]).catch(() => undefined);
+    await d.run([rm, '-rf', STAGED_SYSTEM_DIR]);
+    if (opts.keepState) {
+        for (const sub of ['dependencies', 'bin', 'control']) await d.run([rm, '-rf', `${SYSTEM_STATE_DIR}/${sub}`]);
+    } else {
+        await d.run([rm, '-rf', SYSTEM_STATE_DIR]);
+    }
+    log.info(`system service uninstalled (keepState=${opts.keepState})`);
+}
+
+export async function systemServiceStatus(d: CoreDeps & { existsCheck: (p: string) => boolean }): Promise<{ installed: boolean; active: boolean }> {
+    const installed = d.existsCheck(UNIT_PATH);
+    if (!installed) return { installed: false, active: false };
+    const r = await d.run([d.tool('systemctl'), 'is-active', `${WS_SCRCPY_SERVICE_NAME}.service`]).catch(() => ({ code: 1, stdout: '', stderr: '' } as CommandResult));
+    return { installed: true, active: r.stdout.trim() === 'active' };
+}
+
