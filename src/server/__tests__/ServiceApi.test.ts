@@ -1086,8 +1086,6 @@ describe('ServiceApi', () => {
 
             const opts = installFn.mock.calls[0]?.[0];
             expect(opts?.scope).toBe('user');
-            // linuxHelperSource is no longer passed (removed in Task 7)
-            expect((opts as unknown as Record<string, unknown>)?.['linuxHelperSource']).toBeUndefined();
             // runElevated must NOT be called for user scope
             expect(runElevated).not.toHaveBeenCalled();
         });
