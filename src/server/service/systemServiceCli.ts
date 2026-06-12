@@ -84,3 +84,64 @@ export async function systemServiceStatus(d: CoreDeps & { existsCheck: (p: strin
     return { installed: true, active: r.stdout.trim() === 'active' };
 }
 
+// ---------------------------------------------------------------------------
+// Arg parsing
+// ---------------------------------------------------------------------------
+
+export type ParsedSystemServiceArgs =
+    | { op: 'install'; port: number | undefined }
+    | { op: 'uninstall'; keepState: boolean }
+    | { op: 'status' };
+
+export function parseSystemServiceArgs(argv: string[]): ParsedSystemServiceArgs | null {
+    if (argv.includes('--install-system-service')) {
+        const portIdx = argv.indexOf('--port');
+        const portStr = portIdx !== -1 ? argv[portIdx + 1] : undefined;
+        const port = portStr !== undefined ? parseInt(portStr, 10) : undefined;
+        return { op: 'install', port };
+    }
+    if (argv.includes('--uninstall-system-service')) {
+        return { op: 'uninstall', keepState: argv.includes('--keep-state') };
+    }
+    if (argv.includes('--system-service-status')) {
+        return { op: 'status' };
+    }
+    return null;
+}
+
+// ---------------------------------------------------------------------------
+// CLI dispatch
+// ---------------------------------------------------------------------------
+
+type CliDeps = CoreDeps & {
+    removeFile: (p: string) => void;
+    existsCheck: (p: string) => boolean;
+    defaultPort: () => number;
+    log: (s: string) => void;
+};
+
+export async function runSystemServiceCli(parsed: ParsedSystemServiceArgs, deps: CliDeps): Promise<number> {
+    try {
+        switch (parsed.op) {
+            case 'install': {
+                const port = parsed.port ?? deps.defaultPort();
+                await installSystemService({ port }, deps);
+                return 0;
+            }
+            case 'uninstall': {
+                await uninstallSystemService({ keepState: parsed.keepState }, deps);
+                return 0;
+            }
+            case 'status': {
+                const s = await systemServiceStatus(deps);
+                deps.log(JSON.stringify(s));
+                return 0;
+            }
+        }
+    } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        deps.log(msg);
+        return 1;
+    }
+}
+

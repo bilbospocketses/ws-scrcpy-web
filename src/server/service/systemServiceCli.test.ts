@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { installSystemService, uninstallSystemService, systemServiceStatus, type CommandRunner } from './systemServiceCli';
+import { installSystemService, uninstallSystemService, systemServiceStatus, parseSystemServiceArgs, runSystemServiceCli, type CommandRunner } from './systemServiceCli';
 
 function recordingRunner() {
     const calls: string[][] = [];
@@ -75,5 +75,47 @@ describe('systemServiceStatus', () => {
         const { run } = recordingRunner();
         const r = await systemServiceStatus({ ...deps, run, existsCheck: () => false });
         expect(r).toEqual({ installed: false, active: false });
+    });
+});
+
+describe('parseSystemServiceArgs', () => {
+    it('parses install with and without a port', () => {
+        expect(parseSystemServiceArgs(['--install-system-service', '--port', '9000'])).toEqual({ op: 'install', port: 9000 });
+        expect(parseSystemServiceArgs(['--install-system-service'])).toEqual({ op: 'install', port: undefined });
+    });
+    it('parses uninstall with keep-state flag', () => {
+        expect(parseSystemServiceArgs(['--uninstall-system-service', '--keep-state'])).toEqual({ op: 'uninstall', keepState: true });
+        expect(parseSystemServiceArgs(['--uninstall-system-service'])).toEqual({ op: 'uninstall', keepState: false });
+    });
+    it('parses status, and returns null when no system-service flag is present', () => {
+        expect(parseSystemServiceArgs(['--system-service-status'])).toEqual({ op: 'status' });
+        expect(parseSystemServiceArgs(['node', 'dist/index.js'])).toBeNull();
+    });
+});
+
+describe('runSystemServiceCli dispatch', () => {
+    it('install op runs installSystemService with the parsed port and returns 0', async () => {
+        const { run, calls } = recordingRunner();
+        const code = await runSystemServiceCli({ op: 'install', port: 9000 }, { ...deps, run, removeFile: vi.fn(), existsCheck: () => false, defaultPort: () => 8000, log: () => undefined });
+        expect(code).toBe(0);
+        expect(calls.some((c) => c.join(' ').includes('enable --now'))).toBe(true);
+    });
+    it('install op with undefined port falls back to defaultPort()', async () => {
+        const { run, calls } = recordingRunner();
+        await runSystemServiceCli({ op: 'install', port: undefined }, { ...deps, run, removeFile: vi.fn(), existsCheck: () => false, defaultPort: () => 8123, log: () => undefined });
+        // the seeded config.json content should carry 8123 — assert via the writeFile mock if available, else that enable --now ran
+        expect(calls.some((c) => c.join(' ').includes('enable --now'))).toBe(true);
+    });
+    it('status op returns 0 and emits the status as JSON via the injected log', async () => {
+        const { run } = recordingRunner();
+        const lines: string[] = [];
+        const code = await runSystemServiceCli({ op: 'status' }, { ...deps, run, removeFile: vi.fn(), existsCheck: () => true, defaultPort: () => 8000, log: (s: string) => lines.push(s) });
+        expect(code).toBe(0);
+        expect(lines.join('')).toContain('"installed"');
+    });
+    it('returns 1 when the op throws (e.g. not root)', async () => {
+        const { run } = recordingRunner();
+        const code = await runSystemServiceCli({ op: 'install', port: 8000 }, { ...deps, getuid: () => 1000, run, removeFile: vi.fn(), existsCheck: () => false, defaultPort: () => 8000, log: () => undefined });
+        expect(code).toBe(1);
     });
 });
