@@ -11,7 +11,9 @@ import {
     DECLINE_MARKER_NAME,
     STAGED_SYSTEM_APPIMAGE,
     STAGED_SYSTEM_DIR,
+    SYSTEM_STATE_DIR,
 } from '../service/SystemdClient';
+import { WS_SCRCPY_SERVICE_NAME } from '../../common/ServiceEvents';
 import type {
     ServiceClient,
     ServiceClientFactoryResult,
@@ -609,6 +611,8 @@ describe('ServiceApi', () => {
     // pkexec path and surfaced "Relaunch the AppImage with sudo" instead of
     // a password prompt.
     describe('Linux scope branch', () => {
+        // The /opt-staged AppImage (bin_t) the system-scope teardown execs.
+        const expectedAppImage = `${STAGED_SYSTEM_DIR}/${STAGED_SYSTEM_APPIMAGE}`;
         let savedGetuid: typeof process.getuid | undefined;
         beforeEach(() => {
             savedGetuid = process.getuid;
@@ -1224,13 +1228,19 @@ describe('ServiceApi', () => {
             expect(spawnedCmd).toMatch(/systemd-run$/);
             expect(spawnedArgs).toContain('--system');
             expect(spawnedArgs).not.toContain('--user');
+            // --collect: reap the transient teardown unit (else it leaks persistently)
+            expect(spawnedArgs).toContain('--collect');
+            // DATA_ROOT MANDATORY: its omission caused the beta.60 #9 5.1 core-dump that
+            // silently no-op'd uninstall — a regression dropping it must fail here.
+            expect(spawnedArgs).toContain(`--setenv=DATA_ROOT=${SYSTEM_STATE_DIR}`);
             // Execs the /opt-staged AppImage (bin_t), NOT the un-staged launcher helper (.exe)
-            const expectedAppImage = `${STAGED_SYSTEM_DIR}/${STAGED_SYSTEM_APPIMAGE}`;
             expect(spawnedArgs).toContain(expectedAppImage);
             expect(spawnedArgs.some((a) => a.endsWith('.exe'))).toBe(false);
-            // --linux-service-teardown and --scope forwarded to the AppImage
+            // teardown args forwarded to the AppImage
             expect(spawnedArgs).toContain('--linux-service-teardown');
+            expect(spawnedArgs).toContain('--scope');
             expect(spawnedArgs).toContain('system');
+            expect(spawnedArgs).toContain(WS_SCRCPY_SERVICE_NAME);
 
             expect((res as any).getStatus()).toBe(200);
             const body = JSON.parse((res as any).getBody());
@@ -1268,10 +1278,20 @@ describe('ServiceApi', () => {
             expect(spawnedCmd).toMatch(/pkexec$/);
             expect(spawnedArgs[0]).toMatch(/systemd-run$/);
             expect(spawnedArgs).toContain('--system');
+            expect(spawnedArgs).not.toContain('--user');
+            // --collect: reap the transient teardown unit (else it leaks persistently)
+            expect(spawnedArgs).toContain('--collect');
+            // DATA_ROOT MANDATORY: its omission caused the beta.60 #9 5.1 core-dump that
+            // silently no-op'd uninstall — a regression dropping it must fail here.
+            expect(spawnedArgs).toContain(`--setenv=DATA_ROOT=${SYSTEM_STATE_DIR}`);
             // Execs the /opt-staged AppImage (bin_t), NOT the un-staged launcher helper (.exe)
-            const expectedAppImage = `${STAGED_SYSTEM_DIR}/${STAGED_SYSTEM_APPIMAGE}`;
             expect(spawnedArgs).toContain(expectedAppImage);
             expect(spawnedArgs.some((a) => a.endsWith('.exe'))).toBe(false);
+            // teardown args forwarded to the AppImage (same as the root branch)
+            expect(spawnedArgs).toContain('--linux-service-teardown');
+            expect(spawnedArgs).toContain('--scope');
+            expect(spawnedArgs).toContain('system');
+            expect(spawnedArgs).toContain(WS_SCRCPY_SERVICE_NAME);
 
             expect((res as any).getStatus()).toBe(200);
             const body = JSON.parse((res as any).getBody());
