@@ -67,14 +67,17 @@ Boxes start unticked — this is a fresh pass.
 
 | Test | How to perform | Expected + verify |
 |---|---|---|
-| ☐ **4.2-system** `[L]` Install system service | Settings → service → **system** scope → install (pkexec) | `/opt` ExecStart **as root**; state in `/var/lib`; zero AVC |
+| ☐ **4.2-system-cli** `[L]` Headless install | Root shell: `sudo ./WsScrcpyWeb --install-system-service` (no GUI) | Service active; `/opt/ws-scrcpy-web` ExecStart **as root**; state in `/var/lib/ws-scrcpy-web`; zero AVC; **survives a reboot** (`systemctl is-active WsScrcpyWeb` after reboot) |
+| ☐ **4.2-system-gui** `[L]` Desktop install + takeover | Settings → service → **system** scope → install → ONE awaited pkexec (no timeout, no kill) | UI shows **"switching to the system service…"**; local copy exits, systemd's `Restart=on-failure` retries bind the port (≤ ~2s); **exactly one tab reconnects** — no manual step, no kill/EPERM |
 | ☐ **4.5** `[B]` Confirm-dialog buttons *(Linux: system-scope only)* | When you click install (or uninstall) on **system** scope, eyeball the **"Root Privileges Required"** confirm before the pkexec prompt (user-scope shows none) | **cancel** / **continue** are **white-outline + white-text** |
-| ☐ **2.2** `[L]` State labels | `ls -Z /var/lib/ws-scrcpy-web` | → **var_lib_t** |
+| ☐ **2.2** `[L]` State labels | `ls -Z /var/lib/ws-scrcpy-web` | → **var_lib_t** (policy default — no custom fcontext rule for this path) |
 | ☐ **2.3** `[L]` fcontext rules | `sudo semanage fcontext -l \| grep ws-scrcpy-web` | **Only** the `/opt` bin_t rule — `/var/lib` is var_lib_t by the policy default (no custom rule) |
 | ☐ **3.3** `[L]` Service-defer | System service running → launch locally | Defers to the service (opens its URL); no 2nd server |
-| ☐ **5.1** `[L]` Same-user uninstall → relaunch | Uninstall as the active user | App reappears in that session, **same port**, visible "relaunching…" |
+| ☐ **5.1** `[L]` Same-user uninstall (served-by-service) | Settings → uninstall (ServiceApi spawns out-of-cgroup `systemd-run --system … <staged /opt AppImage> --linux-service-teardown --scope system`) | PASS = teardown: service **stopped + unit removed**, `/opt/ws-scrcpy-web` **and** `/var/lib/ws-scrcpy-web` both **gone**, `sudo semanage fcontext -l \| grep ws-scrcpy-web` → empty, zero AVC. Tab: **relaunch the app manually** if it doesn't reconnect (auto-relaunch is a tracked follow-up — do NOT pass/fail on it) |
 | ☐ **5.4** `[L]` fcontext cleanup | After uninstall: `sudo semanage fcontext -l \| grep ws-scrcpy-web` | **Empty** (the `/opt` rule gone; `/var/lib` never had one) |
 | ☐ **5.9** `[L]` Uninstall message | After a no-active-session uninstall | **Neutral** info line — not red, no "retry" button |
+| ☐ **5.x-keepstate** `[L]` Headless uninstall `--keep-state` | `sudo ./WsScrcpyWeb --uninstall-system-service --keep-state`, then reinstall | `config.json` + `logs/` preserved under `/var/lib/ws-scrcpy-web`; `dependencies/`, `bin/`, `control/` removed; reinstall **reuses the saved port** |
+| ☐ **4.2-system-ubuntu** `[L/Ubuntu]` Ubuntu install + boot + uninstall | Install, reboot, uninstall on an Ubuntu host (no SELinux) | All steps succeed; `semanage`/`restorecon` steps are no-ops (no SELinux policy, no AVC concept); AppArmor needs no per-path relabel |
 
 ## #10 — First-run variants 🧩 *(needs fresh snapshot / 2nd user / 2nd admin)*
 
@@ -84,8 +87,8 @@ Boxes start unticked — this is a fresh pass.
 | ☐ **1.3** `[L]` Decline + remember | Fresh state / 2nd user → **no, me only** | Runs in place from `~/.local`; next launch does **not** re-prompt; AppImage kept |
 | ☐ **1.4** `[L]` Headless first-run | Launch over SSH / no display | No hang; graceful fallback |
 | ☐ **3.1** `[L]` Per-user launch | 2nd user launches from the apps menu (`.desktop`) | Own `~/.local` data; "Open" reaches the same backend port |
-| ☐ **5.2** `[L]` Different-admin uninstall | Uninstall via **pkexec as a different admin** | App reappears in the **active desktop user's** session, same port |
-| ☐ **5.3** `[L]` Headless uninstall | Uninstall with no graphical session | No relaunch; manual fallback; no orphan; no `data_root_for_linux` panic |
+| ☐ **5.2** `[L]` Different-admin uninstall | Uninstall via **pkexec as a different admin** (triggers `systemd-run --system` teardown) | PASS = teardown: service stopped + unit removed, `/opt/ws-scrcpy-web` and `/var/lib/ws-scrcpy-web` gone, fcontext clean, zero AVC. Tab: **relaunch the app manually** if it doesn't reconnect (auto-relaunch is a tracked follow-up) |
+| ☐ **5.3** `[L]` Headless uninstall | `sudo ./WsScrcpyWeb --uninstall-system-service` (no graphical session) | No relaunch; manual fallback; no orphan; no `data_root_for_linux` panic; full teardown verified |
 
 ## #11 — Updates 🧩 *(needs the beta.40 "update-from" artifact)*
 
