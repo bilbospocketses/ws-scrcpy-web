@@ -17,6 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Headless install/uninstall of the Linux system-wide service.** The system service can now be managed from a root shell without the desktop UI: `sudo ./WsScrcpyWeb --install-system-service [--port N]`, `--uninstall-system-service [--keep-state]`, and `--system-service-status`. This is the supported path for a headless server that runs at boot, before anyone logs in.
+
+### Changed
+
+- **The Linux "install for all users" system service was reworked to elevate once and run the install to completion.** From the desktop it now hands the whole privileged operation to a single elevation that is awaited rather than supervised-and-killed (the previous approach ran an elevated shell script and force-terminated it on a timeout, which could leave the install half-finished). After a successful install the app switches over to the system service on its own — Settings briefly shows "switching to the system service…" while it hands off.
+
 ## [0.1.30-beta.64] - 2026-06-12
 
 ### Fixed

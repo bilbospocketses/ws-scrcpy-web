@@ -269,7 +269,7 @@ Linux releases ship as a single self-contained AppImage built with [Velopack](ht
 The first-run welcome modal offers to install ws-scrcpy-web as a systemd service. Two scopes are available:
 
 - **just for me (no sudo)** — installs to `~/.config/systemd/user/WsScrcpyWeb.service`. Starts at login. `loginctl enable-linger` is invoked best-effort so the service survives logout.
-- **all users (requires sudo)** — installs to `/etc/systemd/system/WsScrcpyWeb.service`. Starts at boot. The install API triggers a `pkexec` graphical password prompt to acquire root for the single shell command that writes the unit + runs `systemctl daemon-reload` + `systemctl enable --now`. No AppImage relaunch needed. Falls back gracefully if `pkexec` isn't installed: error message tells the user to install polkit (`sudo dnf install polkit` on Fedora) or pick user scope.
+- **all users (requires sudo)** — installs to `/etc/systemd/system/WsScrcpyWeb.service`. Starts at boot. From the desktop the install triggers a single `pkexec` graphical password prompt and runs the app once as root (`pkexec WsScrcpyWeb.AppImage --install-system-service`) to stage `/opt`, write the unit, and `systemctl enable --now`; the app then switches over to the service on its own. Falls back gracefully if `pkexec` isn't installed: the error tells you to install polkit (`sudo dnf install polkit` on Fedora) or pick user scope. On a headless server, install it directly from a root shell instead: `sudo ./WsScrcpyWeb-linux-*.AppImage --install-system-service` (also `--uninstall-system-service [--keep-state]` and `--system-service-status`).
 
 You can also install/uninstall the service later from Settings → Service.
 
