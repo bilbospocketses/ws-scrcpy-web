@@ -1420,6 +1420,12 @@ export class SettingsModal extends Modal {
             const pollInterval = 2000;
             const maxIterations = 30;
             let iterations = 0;
+            // §7 (system-service takeover): update the visible copy to
+            // reflect the hand-off window — local instance is exiting,
+            // systemd is restarting, service will bind the same port.
+            if (isSystemScope) {
+                btn.textContent = 'switching to the system service…';
+            }
             const poll = setInterval(async () => {
                 iterations++;
                 // A thrown/aborted fetch means whoever was answering has dropped —

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import {
     uninstallFollowupMessage,
     classifyInstallPoll,
@@ -19,6 +19,7 @@ import {
 } from '../SettingsModal';
 import * as UninstallConfirmModalModule from '../UninstallConfirmModal';
 import * as ResetConfirmModalModule from '../ResetConfirmModal';
+import * as AdminConfirmModalModule from '../AdminConfirmModal';
 
 /** Flush microtasks + a macrotask so the awaited fetch handlers settle. */
 const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
@@ -508,5 +509,177 @@ describe('Settings section restructure (beta.62)', () => {
         expect(control?.querySelector('input'), 'port input missing').toBeTruthy();
         const inlineBtn = control?.querySelector('button');
         expect(inlineBtn?.textContent, 'inline save button missing').toBe('save');
+    });
+});
+
+describe('onInstallService takeover copy (§7 system-service hand-off)', () => {
+    /**
+     * Drain all pending microtasks (Promise chains, queueMicrotask) without
+     * touching macrotask/timer queues — safe under vi.useFakeTimers().
+     * Multiple rounds handle chained awaits (fetch → .json() → handler body).
+     */
+    const drainMicrotasks = async (rounds = 8): Promise<void> => {
+        for (let i = 0; i < rounds; i++) {
+            await Promise.resolve();
+            await new Promise<void>((r) => queueMicrotask(r));
+        }
+    };
+
+    /** Build a resolved-JSON fetch response. */
+    const jsonResponse = (body: unknown, ok = true): Response =>
+        ({ ok, json: () => Promise.resolve(body), status: ok ? 200 : 500 }) as unknown as Response;
+
+    /** Linux not-installed status response — sets platform + scope radios. */
+    const linuxNotInstalled = {
+        supported: true,
+        status: 'not-installed',
+        platform: 'linux',
+        machineWideInstalled: true, // enables system-scope install gate
+    };
+
+    /** Successful install response (system-service scope). */
+    const installOkResponse = {
+        ok: true,
+        status: 'shutting-down',
+        installMode: 'system-service',
+        configMtime: 100,
+        diskWebPort: 8000,
+    };
+
+    /** Status poll response — service not yet serving. */
+    const statusNotYetServed = {
+        configMtime: 100,
+        diskWebPort: 8000,
+        servedByService: false,
+    };
+
+    /**
+     * Build a URL-dispatched fetch mock.
+     * - GET /api/service/status  → linuxNotInstalled (initial) or statusNotYetServed (poll)
+     * - POST /api/service/install → the given install response
+     * - All other URLs           → ok:false (refreshServer/refreshUpdates errors are harmless)
+     */
+    const makeInstallFetchMock = (installResponse: unknown, pollResponse: unknown = statusNotYetServed) => {
+        let installFired = false;
+        return vi.fn((url: string, init?: RequestInit): Promise<Response> => {
+            if (url === '/api/service/install' && init?.method === 'POST') {
+                installFired = true;
+                return Promise.resolve(jsonResponse(installResponse));
+            }
+            if (url === '/api/service/status') {
+                // Before install fires, return the initial not-installed state.
+                // After, return the poll response.
+                const body = installFired ? pollResponse : linuxNotInstalled;
+                return Promise.resolve(jsonResponse(body));
+            }
+            // /api/config, /api/updates/status — let them fail gracefully.
+            return Promise.resolve(jsonResponse(null, false));
+        });
+    };
+
+    beforeEach(() => {
+        document.body.replaceChildren();
+        HTMLDialogElement.prototype.showModal = vi.fn();
+        vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    /** Spin up a SettingsModal and drain until the service section is rendered. */
+    const buildModal = async (): Promise<void> => {
+        new SettingsModal();
+        // Drain the constructor's queueMicrotask (fillBody + three refresh* calls start).
+        await drainMicrotasks();
+        // Drain the fetch chains for refreshService (the one that matters for our DOM).
+        await drainMicrotasks();
+    };
+
+    it('system-scope install shows "switching to the system service…" on the install button while polling', async () => {
+        const fetchMock = makeInstallFetchMock(installOkResponse);
+        vi.stubGlobal('fetch', fetchMock);
+
+        // AdminConfirmModal.confirm is called for system scope; make it approve.
+        vi.spyOn(AdminConfirmModalModule.AdminConfirmModal, 'confirm').mockResolvedValue(true);
+
+        await buildModal();
+
+        // After renderServiceState, the install button should exist.
+        const installBtn = Array.from(
+            document.body.querySelectorAll<HTMLButtonElement>('button.settings-btn'),
+        ).find((b) => b.textContent === 'not installed — install?');
+        expect(installBtn, 'install button not found after initial render').toBeTruthy();
+
+        // Select system scope radio.
+        const systemRadio = document.body.querySelector<HTMLInputElement>(
+            'input[type="radio"][value="system"]',
+        );
+        expect(systemRadio, 'system scope radio not found').toBeTruthy();
+        systemRadio!.checked = true;
+
+        // Click install. For system scope, onInstallService awaits
+        // AdminConfirmModal.confirm (mocked → resolves true), then POSTs
+        // /api/service/install, then sets the takeover copy, then starts the poll.
+        installBtn!.click();
+        // Drain: confirm resolves → fetch POST called → response .json() → handler runs.
+        await drainMicrotasks(12);
+
+        // Install fetch must have fired.
+        const postCalls = fetchMock.mock.calls.filter(
+            (args) => args[0] === '/api/service/install' && args[1]?.method === 'POST',
+        );
+        expect(postCalls.length, 'install POST not called').toBeGreaterThanOrEqual(1);
+
+        // Takeover copy must be set before the first poll tick.
+        expect(installBtn!.textContent).toBe('switching to the system service…');
+
+        // Advance one poll interval (keep-polling outcome) — copy must persist.
+        await vi.advanceTimersByTimeAsync(2000);
+        await drainMicrotasks(8);
+        expect(installBtn!.textContent).toBe('switching to the system service…');
+    });
+
+    it('user-scope install does NOT show takeover copy — button stays "installing…" while polling', async () => {
+        const userInstallOk = { ...installOkResponse, installMode: 'user-service' };
+        const fetchMock = makeInstallFetchMock(userInstallOk);
+        vi.stubGlobal('fetch', fetchMock);
+
+        // User scope on Linux skips AdminConfirmModal entirely — no spy needed.
+
+        await buildModal();
+
+        const installBtn = Array.from(
+            document.body.querySelectorAll<HTMLButtonElement>('button.settings-btn'),
+        ).find((b) => b.textContent === 'not installed — install?');
+        expect(installBtn, 'install button not found').toBeTruthy();
+
+        // Ensure user radio is checked, system radio is not.
+        const userRadio = document.body.querySelector<HTMLInputElement>(
+            'input[type="radio"][value="user"]',
+        );
+        expect(userRadio, 'user scope radio not found').toBeTruthy();
+        userRadio!.checked = true;
+        const systemRadio = document.body.querySelector<HTMLInputElement>(
+            'input[type="radio"][value="system"]',
+        );
+        if (systemRadio) systemRadio.checked = false;
+
+        // Click install — Linux + user scope skips AdminConfirmModal.
+        installBtn!.click();
+        await drainMicrotasks(12);
+
+        const postCalls = fetchMock.mock.calls.filter(
+            (args) => args[0] === '/api/service/install' && args[1]?.method === 'POST',
+        );
+        expect(postCalls.length, 'install POST not called').toBeGreaterThanOrEqual(1);
+
+        // Button should show 'installing…' — NOT the takeover copy.
+        expect(installBtn!.textContent).toBe('installing…');
+
+        // After one poll tick, still 'installing…'.
+        await vi.advanceTimersByTimeAsync(2000);
+        await drainMicrotasks(8);
+        expect(installBtn!.textContent).toBe('installing…');
     });
 });
