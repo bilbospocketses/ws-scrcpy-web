@@ -25,6 +25,8 @@ mod linux_apply;
 mod linux_service;
 #[cfg(target_os = "linux")]
 mod linux_app_uninstall;
+#[cfg(target_os = "linux")]
+mod system_service_cli;
 #[cfg(windows)]
 mod user_session_spawn;
 #[cfg(windows)]
@@ -160,6 +162,17 @@ fn main() {
     #[cfg(target_os = "linux")]
     if let Some(code) = linux_app_uninstall::handle_elevated(&args) {
         log::info(&format!("linux-app-uninstall-elevated exiting with code {code}"));
+        std::process::exit(code);
+    }
+
+    // System-service CLI dispatcher (Task 6): routes --install-system-service /
+    // --uninstall-system-service / --system-service-status by spawning node in
+    // the FOREGROUND (inheriting stdio) and propagating its exit code. This is
+    // the entry point for `sudo ./WsScrcpyWeb --install-system-service` and
+    // `pkexec ./WsScrcpyWeb --install-system-service`.
+    #[cfg(target_os = "linux")]
+    if let Some(code) = system_service_cli::handle(&args) {
+        log::info(&format!("system-service-cli exiting with code {code}"));
         std::process::exit(code);
     }
 
