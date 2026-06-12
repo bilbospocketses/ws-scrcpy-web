@@ -1,10 +1,10 @@
 # ws-scrcpy-web — Smoke Test Runbook (plain-English)
 
-> **Smoke target: `v0.1.30-beta.63`** — bump this one line each release; everything below is version-agnostic.
+> **Smoke target: `v0.1.30-beta.64`** — bump this one line each release; everything below is version-agnostic.
 
 **What this is.** A step-by-step manual test pass for the **ws-scrcpy-web** app. Completing it is the agreed gate before cutting the **0.1.30 final** release — the "prove it really installs, updates, and streams on Windows + Linux" check. You run it by hand on your test VMs plus a real Android device; it can't be automated from a chat.
 
-**Source of truth.** This is the plain-English twin of `docs/smoke-tests/smoke-full.md` in the repo. Same 77 tests, jargon spelled out, laid out as fixed-width tables you can keep open and tick through. If the two ever disagree, **the repo doc wins** — tell me and I'll re-sync this one.
+**Source of truth.** This is the plain-English twin of `docs/smoke-tests/smoke-full.md` in the repo. Same 76 tests, jargon spelled out, laid out as fixed-width tables you can keep open and tick through. If the two ever disagree, **the repo doc wins** — tell me and I'll re-sync this one.
 
 ## How to use this runbook
 
@@ -33,7 +33,7 @@
 - **systemd-run --collect** — runs a one-off command as a temporary service and cleans it up after; used to relaunch the app inside a user's session.
 - **loginctl** — lists logged-in sessions; used to find the active desktop user to relaunch into.
 - **journalctl** — views the systemd log (where AVC denials and service messages show up).
-- **/opt · /var/opt · ~/.local** — standard spots: `/opt` = system-wide optional software · `/var/opt` = that software's writable data · `~/.local` = your personal per-user data.
+- **/opt · /var/lib · ~/.local** — standard spots: `/opt` = system-wide optional software · `/var/lib` = that software's writable data · `~/.local` = your personal per-user data.
 - **flock** — a file lock the app uses so only one copy runs per user.
 - **$XDG_RUNTIME_DIR** — a private per-login temp folder Linux gives each session; where the single-copy lock lives.
 - **ETXTBSY ("text file busy")** — the error from trying to overwrite a program that's running. The updater dodges it by *renaming* the new file into place instead of copying over the old one.
@@ -113,8 +113,8 @@ Each grabs the AVC denials, the service journal + status, the SELinux rules + fi
 ```bash
 sudo systemctl stop WsScrcpyWeb.service; sudo systemctl disable WsScrcpyWeb.service; sudo systemctl reset-failed WsScrcpyWeb.service
 sudo rm -f /etc/systemd/system/WsScrcpyWeb.service
-sudo rm -rf /opt/ws-scrcpy-web /var/opt/ws-scrcpy-web
-sudo semanage fcontext -d '/opt/ws-scrcpy-web(/.*)?'; sudo semanage fcontext -d '/var/opt/ws-scrcpy-web(/.*)?'
+sudo rm -rf /opt/ws-scrcpy-web /var/lib/ws-scrcpy-web
+sudo semanage fcontext -d '/opt/ws-scrcpy-web(/.*)?'; sudo semanage fcontext -d '/var/lib/ws-scrcpy-web(/.*)?'
 sudo systemctl daemon-reload
 ```
 
@@ -182,10 +182,10 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 │                      │      │ -Z /opt/ws-scrcpy-web        │                                                  │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
 │ 2.2 State labels     │ Lin  │ Run: ls -Z                   │ The label is var_lib_t (the "writable app data"  │ [ ]  │
-│                      │      │ /var/opt/ws-scrcpy-web       │ label - config, logs, deps the service writes).  │      │
+│                      │      │ /var/lib/ws-scrcpy-web       │ label - config, logs, deps the service writes).  │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
-│ 2.3 Security rules   │ Lin  │ After a system-service       │ You see BOTH rules - the /opt one (bin_t) and    │ [ ]  │
-│ registered           │      │ install: semanage fcontext   │ the /var/opt one (var_lib_t).                    │      │
+│ 2.3 Security rules   │ Lin  │ After a system-service       │ Only the /opt rule (bin_t) shows; /var/lib is    │ [ ]  │
+│ registered           │      │ install: semanage fcontext   │ var_lib_t by the policy default - no custom rule.│      │
 │                      │      │ -l | grep ws-scrcpy-web      │                                                  │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
 │ 2.4 No blocked       │ Lin  │ Watch your "journalctl ...   │ Nothing scrolls by - zero SELinux denials.       │ [ ]  │
@@ -238,7 +238,7 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
 │ 4.2 Install both     │ Lin  │ Install the service in each  │ user scope runs from your home folder; system    │ [ ]  │
 │ scopes               │      │ scope: user (no password)    │ scope runs as root from /opt with data in        │      │
-│                      │      │ and system (one password).   │ /var/opt. No SELinux denials either way.         │      │
+│                      │      │ and system (one password).   │ /var/lib. No SELinux denials either way.         │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
 │ 4.3 Install confirm  │ Win  │ Settings > "install          │ A confirm dialog ("Administrative Privileges     │ [ ]  │
 │ dialog (Win)         │      │ service". Try Cancel, Esc,   │ Required") appears. Cancel/Esc/backdrop close it │      │
@@ -357,13 +357,6 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 │                      │      │                              │ SELinux blocks a step, add a NARROW targeted     │      │
 │                      │      │                              │ rule only - never a blanket audit2allow.         │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
-│ 6.7 Migrate an old   │ Lin  │ Fresh snapshot > install     │ A notice "the system service must be reinstalled │ [ ]  │
-│ beta.40 system       │      │ beta.40 > install the system │ for the new layout" + a [reinstall now] button > │      │
-│ install              │      │ service (old layout) >       │ it uninstalls + reinstalls at /var/opt, keeping  │      │
-│                      │      │ update to the latest FROM a  │ your port + install settings; the service is     │      │
-│                      │      │ normal local copy, NOT from  │ active; zero denials; only the new /var/opt rule │      │
-│                      │      │ inside the running service.  │ remains.                                         │      │
-├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
 │ 6.8 Windows update   │ Win  │ From a prior installed build │ Updates cleanly; app reachable afterward; the    │ [ ]  │
 │ keeps the tray       │      │ (beta.40 MSI) > Settings >   │ tray icon SURVIVES the update - exactly one tray │      │
 │                      │      │ Updates > Apply.             │ once it settles, no duplicate or orphan.         │      │
@@ -456,7 +449,7 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 │ 10.3 Linux logs      │ Lin  │ Tail launcher.log +          │ No error spam; shutdown messages appear when you │ [ ]  │
 │ clean                │      │ ws-scrcpy-web.log under      │ stop the app. server.log / service.log are thin  │      │
 │                      │      │ ~/.local/share/.../logs (or  │ crash-catchers; a .1 backup may appear; all      │      │
-│                      │      │ /var/opt/.../logs for        │ files are tail-able.                             │      │
+│                      │      │ /var/lib/.../logs for        │ files are tail-able.                             │      │
 │                      │      │ system installs).            │                                                  │      │
 └──────────────────────┴──────┴──────────────────────────────┴──────────────────────────────────────────────────┴──────┘
 ```
@@ -577,13 +570,13 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
 │ 14.5 Uninstall -     │ Lin  │ With a system-scope          │ Runs as root with NO pkexec;                     │ [ ]  │
 │ system-service       │      │ service installed, run       │ /opt/ws-scrcpy-web,                              │      │
-│ cascade              │      │ uninstall from the root      │ /var/opt/ws-scrcpy-web, and the                  │      │
+│ cascade              │      │ uninstall from the root      │ /var/lib/ws-scrcpy-web, and the                  │      │
 │                      │      │ service context.             │ systemd unit are all gone; zero                  │      │
 │                      │      │                              │ SELinux AVC denials.                             │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
 │ 14.6 Uninstall -     │ Lin  │ Run uninstall with 'keep     │ config.json and logs/ survive at the data        │ [ ]  │
 │ keep settings        │      │ my settings & logs'          │ root: ~/.local/share/WsScrcpyWeb for a           │      │
-│ & logs               │      │ CHECKED.                     │ local install, or /var/opt/ws-scrcpy-web         │      │
+│ & logs               │      │ CHECKED.                     │ local install, or /var/lib/ws-scrcpy-web         │      │
 │                      │      │                              │ for a system service); dependencies/ is          │      │
 │                      │      │                              │ removed either way; a later reinstall            │      │
 │                      │      │                              │ reuses the saved port.                           │      │
@@ -653,9 +646,6 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 │                      │ system-service all update + relaunch on the same port; zero    │      │
 │                      │ denials on the system path.                                    │      │
 ├──────────────────────┼────────────────────────────────────────────────────────────────┼──────┤
-│ Migration            │ A beta.40 system install moves to /var/opt keeping its port +  │ [ ]  │
-│                      │ settings, zero denials.                                        │      │
-├──────────────────────┼────────────────────────────────────────────────────────────────┼──────┤
 │ Clean shutdown       │ "stop server & exit" shuts down adb (+ the Windows tray) with  │ [ ]  │
 │                      │ no leftovers; disabled in service mode.                        │      │
 ├──────────────────────┼────────────────────────────────────────────────────────────────┼──────┤
@@ -666,6 +656,6 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 └──────────────────────┴────────────────────────────────────────────────────────────────┴──────┘
 ```
 
-**If any Linux SELinux/lifecycle test (Modules 2, 4, 5, the service-update rows 6.5/6.6, or migration 6.7) — or the core-flow criterion — fails:** stop, **run `capture-logs.sh <id>` (Pre-flight F; `.ps1` on Windows)** for the evidence bundle, and report it before promoting 0.1.30 to stable. Cosmetic/polish failures: note and triage later. **Module 11 (no-libfuse2)** is optional — a failure there just means keep the libfuse2 code; it doesn't block 0.1.30.
+**If any Linux SELinux/lifecycle test (Modules 2, 4, 5, the service-update rows 6.5/6.6) — or the core-flow criterion — fails:** stop, **run `capture-logs.sh <id>` (Pre-flight F; `.ps1` on Windows)** for the evidence bundle, and report it before promoting 0.1.30 to stable. Cosmetic/polish failures: note and triage later. **Module 11 (no-libfuse2)** is optional — a failure there just means keep the libfuse2 code; it doesn't block 0.1.30.
 
-*Plain-English companion to [`smoke-full.md`](./smoke-full.md), the canonical machine-precise checklist. Same 77 tests with the jargon spelled out; if the two ever diverge, the full doc wins.*
+*Plain-English companion to [`smoke-full.md`](./smoke-full.md), the canonical machine-precise checklist. Same 76 tests with the jargon spelled out; if the two ever diverge, the full doc wins.*

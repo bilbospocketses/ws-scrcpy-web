@@ -61,17 +61,16 @@ pub fn teardown_commands(scope: Scope, name: &str, bindir: &str) -> Vec<Vec<Stri
         [vec![systemctl.clone()], pre.clone(), vec!["reset-failed".into(), unit.clone()]].concat(),
         vec![rm.clone(), "-f".into(), unit_file.to_string_lossy().into_owned()],
     ];
-    // system scope also removes the /opt staging + /var/opt state + BOTH fcontext rules
+    // system scope also removes the /opt staging + /var/lib state + the /opt fcontext rule
     if scope == Scope::System {
         let semanage = format!("{}/semanage", sbindir_from(bindir));
-        for dir in ["/opt/ws-scrcpy-web", "/var/opt/ws-scrcpy-web"] {
+        for dir in ["/opt/ws-scrcpy-web", "/var/lib/ws-scrcpy-web"] {
             cmds.push(vec![rm.clone(), "-rf".into(), dir.into()]);
         }
-        // remove BOTH fcontext rules the install added: the /opt bin_t tree rule
-        // AND the /var/opt var_lib_t state rule (else the rule lingers post-uninstall).
-        for pathspec in ["/opt/ws-scrcpy-web(/.*)?", "/var/opt/ws-scrcpy-web(/.*)?"] {
-            cmds.push(vec![semanage.clone(), "fcontext".into(), "-d".into(), pathspec.to_string()]);
-        }
+        // remove the /opt bin_t fcontext rule the install added. The /var/lib state
+        // needs NO custom rule (var_lib_t by the policy's default /var/lib(/.*)? rule),
+        // so there is nothing else to remove.
+        cmds.push(vec![semanage, "fcontext".into(), "-d".into(), "/opt/ws-scrcpy-web(/.*)?".into()]);
     }
     // reload
     cmds.push([vec![systemctl.clone()], pre.clone(), vec!["daemon-reload".into()]].concat());
@@ -197,7 +196,7 @@ pub fn relaunch_target(scope: Scope, marker: Option<String>) -> Option<PathBuf> 
 
 /// The service URL to open (then exit) when an ACTIVE system service owns the
 /// app, so a local launch doesn't spawn a duplicate. `install_mode` + `web_port`
-/// come from the /var/opt system-service config; `port_live` is a TCP-probe
+/// come from the /var/lib system-service config; `port_live` is a TCP-probe
 /// result the caller supplies. `running_as_service` is true when THIS process is
 /// the systemd service itself (ExecStart sets WS_SCRCPY_SERVICE=1) — it must NEVER
 /// defer (it would defer to the outgoing local instance during the install handoff
@@ -336,7 +335,7 @@ fn run(scope: Scope, unit: &str) -> i32 {
     if scope == Scope::System {
         let systemd_run = format!("{}/systemd-run", tool_dir("systemd-run"));
         let appimage = "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage";
-        let web_port = common::config::AppConfig::load(std::path::Path::new("/var/opt/ws-scrcpy-web")).web_port;
+        let web_port = common::config::AppConfig::load(std::path::Path::new("/var/lib/ws-scrcpy-web")).web_port;
         match (discover_active_graphical_uid(), web_port) {
             (Some(uid), Some(port)) => match home_for_uid(uid) {
                 Some(home) => {
@@ -505,7 +504,7 @@ fn run_install_handoff(scope: Scope, unit: &str) -> i32 {
         // failed system install leaves the user with no app running.
         let systemd_run = format!("{}/systemd-run", tool_dir("systemd-run"));
         let appimage = "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage";
-        let web_port = common::config::AppConfig::load(std::path::Path::new("/var/opt/ws-scrcpy-web")).web_port;
+        let web_port = common::config::AppConfig::load(std::path::Path::new("/var/lib/ws-scrcpy-web")).web_port;
         match (discover_active_graphical_uid(), web_port) {
             (Some(uid), Some(port)) => match home_for_uid(uid) {
                 Some(home) => {
@@ -593,16 +592,16 @@ mod tests {
     }
 
     #[test]
-    fn system_scope_teardown_removes_opt_and_var_opt() {
+    fn system_scope_teardown_removes_opt_and_var_lib() {
         let cmds = teardown_commands(Scope::System, "WsScrcpyWeb", "/usr/bin");
         let joined: Vec<String> = cmds.iter().map(|c| c.join(" ")).collect();
         let removes_dir = |d: &str| joined.iter().any(|c| c.contains("rm") && c.contains(d));
         let removes_fcontext = |spec: &str|
             joined.iter().any(|c| c.contains("semanage fcontext -d") && c.ends_with(spec));
         assert!(removes_dir("/opt/ws-scrcpy-web"));
-        assert!(removes_dir("/var/opt/ws-scrcpy-web"));
-        assert!(removes_fcontext("/opt/ws-scrcpy-web(/.*)?"));      // bin_t tree
-        assert!(removes_fcontext("/var/opt/ws-scrcpy-web(/.*)?"));  // var_lib_t state
+        assert!(removes_dir("/var/lib/ws-scrcpy-web"));
+        assert!(removes_fcontext("/opt/ws-scrcpy-web(/.*)?"));         // bin_t tree
+        assert!(!removes_fcontext("/var/lib/ws-scrcpy-web(/.*)?"));    // /var/lib: NO custom rule
     }
 
     #[test]

@@ -78,12 +78,16 @@ export const STAGED_SYSTEM_APPIMAGE = 'WsScrcpyWeb.AppImage';
 export const STAGED_SYSTEM_HELPER = 'ws-scrcpy-web-launcher.exe';
 
 /**
- * FHS-correct writable state dir for the system-scope service (config.json,
- * logs/). Lives under `/var/opt` (outside `/opt`) so it is writable by root
- * and correctly labelled `var_lib_t` by SELinux. The `/opt` restorecon does
- * NOT reach this tree — it gets its own `restorecon -Rv` step at install (#36).
+ * Writable state dir for the system-scope service (config.json, logs/). Lives
+ * under `/var/lib` — the policy's built-in `/var/lib(/.*)?` rule labels it
+ * `var_lib_t` automatically on creation, so NO custom `semanage` rule is needed
+ * (a guarded `restorecon -Rv` at install is just belt-and-suspenders). `/var/opt`
+ * was impossible on SELinux: Fedora's `file_contexts.subs_dist` aliases
+ * `/var/opt -> /opt`, so semanage rejects any label rule beneath it and the path
+ * inherits `/opt`'s `bin_t` — which broke the system-service install on every
+ * SELinux distro since beta.41 (proven: `matchpathcon /var/lib/... -> var_lib_t`).
  */
-export const SYSTEM_STATE_DIR = '/var/opt/ws-scrcpy-web';
+export const SYSTEM_STATE_DIR = '/var/lib/ws-scrcpy-web';
 /** VERSION file written into /opt at machine-wide install (binary-only relocate). */
 export const SYSTEM_OPT_VERSION_FILE = `${STAGED_SYSTEM_DIR}/VERSION`;
 /** System-wide .desktop entry for all users (machine-wide install only). */
@@ -306,14 +310,13 @@ export function buildSystemInstallScript(
     const cp = binTool('cp');
     const chmod = binTool('chmod');
     const systemctl = binTool('systemctl');
-    const semanage = sbinTool('semanage');
     const restorecon = sbinTool('restorecon');
     const systemdRun = binTool('systemd-run');
     const steps: string[] = [
-        // 1. stage dirs: the /opt root for binaries + deps, plus the FHS-correct
-        //    writable state dir at /var/opt (always — the system service writes
-        //    its config + logs there). The /opt restorecon does NOT reach /var/opt,
-        //    so the state dir gets its own restorecon step below.
+        // 1. stage dirs: the /opt root for binaries + deps, plus the writable
+        //    state dir at /var/lib (always — the system service writes its config
+        //    + logs there). The /opt restorecon does NOT reach /var/lib, so the
+        //    state dir gets its own restorecon step below.
         //    The deps dir is added below only when we have deps to copy.
         `${mkdir} -p ${STAGED_SYSTEM_DIR}`,
         `${mkdir} -p ${SYSTEM_STATE_DIR}`,
@@ -346,18 +349,15 @@ export function buildSystemInstallScript(
         steps.push(`${cp} "${args.seedConfigTmpPath}" "${SYSTEM_STATE_DIR}/config.json"`);
     }
     steps.push(
-        // 2. SELinux labels — INDEPENDENT steps (`;`-separated, whole subshell `|| true`)
-        //    so no single `semanage` call can short-circuit the rest. The beta.58/60 #9
-        //    2.2/2.3 gate failure: the old `&&` chain LED with a redundant `/opt` bin_t
-        //    re-add whose `-a` errored "already defined" (machine-wide-first gate means
-        //    the rule ALWAYS pre-exists) AND `-m`-to-unchanged-type ALSO failed on
-        //    Fedora's semanage — breaking the chain before the var_lib_t add + both
-        //    restorecons ever ran, so /var/opt came out usr_t. `/opt` is already bin_t
-        //    (the machine-wide install created the rule + ran restorecon), so we do NOT
-        //    re-add it; `restorecon -Rv /opt` below just relabels the freshly-copied deps
-        //    (`cp -a` preserved their data_home_t) using the existing rule. No `chcon`
-        //    fallback — it masked failures and only ever relabeled one file.
-        `( ${semanage} fcontext -a -t var_lib_t '${SYSTEM_STATE_DIR}(/.*)?' || ${semanage} fcontext -m -t var_lib_t '${SYSTEM_STATE_DIR}(/.*)?' ; ${restorecon} -Rv "${STAGED_SYSTEM_DIR}" ; ${restorecon} -Rv "${SYSTEM_STATE_DIR}" ) || true`,
+        // 2. SELinux relabel — best-effort subshell (`|| true` so a non-SELinux host
+        //    just no-ops). `/opt` relabels the freshly-copied deps to `bin_t` via the
+        //    machine-wide install's existing rule (`cp -a` preserved their source type).
+        //    `/var/lib` is `var_lib_t` by the policy's built-in `/var/lib(/.*)?` rule —
+        //    NO custom `semanage` rule (and `/var/opt` could not have one: Fedora's
+        //    `file_contexts.subs_dist` aliases `/var/opt -> /opt`, so semanage rejects
+        //    any rule beneath it — the bug that made the system install impossible).
+        //    restorecon here is belt-and-suspenders for the default label.
+        `( ${restorecon} -Rv "${STAGED_SYSTEM_DIR}" ; ${restorecon} -Rv "${SYSTEM_STATE_DIR}" ) || true`,
         // 3. install the unit (ExecStart already points at ${staged}).
         `${cp} "${args.unitTmpPath}" "${args.unitPath}"`,
         `${systemctl} daemon-reload`,
@@ -370,7 +370,7 @@ export function buildSystemInstallScript(
     //    handoff (transient SYSTEM unit, survives this pkexec via --collect) that
     //    waits for the local instance to release the port, then starts + verifies
     //    the service. Mirror of user-scope F4. DATA_ROOT lets the helper read the
-    //    service web port from /var/opt config. No staged helper (from-source /
+    //    service web port from /var/lib config. No staged helper (from-source /
     //    unavailable) -> legacy --now (nothing to hand off to).
     if (args.sourceHelper) {
         const handoffUnit = args.handoffUnit ?? 'wsscrcpy-install-handoff';
@@ -506,93 +506,6 @@ export function buildMachineWideUpdateScript(
         `${chmod} 0755 "${target}"`,
         `( ${restorecon} -v "${target}" || ${chcon} -t bin_t "${target}" || true )`,
         `${printf} '%s' '${args.version}' > ${SYSTEM_OPT_VERSION_FILE}`,
-    ].join(' && ');
-}
-
-/** Legacy beta.40 system-scope state dir (pre-/var/opt). Migrated away by
- *  buildSystemMigrationScript — `rm -rf`'d and its fcontext rule deleted. */
-export const LEGACY_SYSTEM_DATA_DIR = `${STAGED_SYSTEM_DIR}/data`;
-
-/**
- * Build the privileged shell script for a one-shot system-scope MIGRATION from
- * the legacy beta.40 `/opt/ws-scrcpy-web/data` state layout to the FHS-correct
- * `/var/opt/ws-scrcpy-web` layout. Runs under a single pkexec prompt.
- *
- * The /opt AppImage + deps are ALREADY staged and STAY PUT — this script only
- * relocates the writable state dir, fixes the SELinux fcontext rules, and
- * reinstalls the unit with `DATA_ROOT=/var/opt`. It does NOT re-copy the
- * AppImage or deps (avoids the out-of-process uninstall→reinstall coordination
- * problem: nothing is torn down except the unit + the old state dir).
- *
- * Two phases, `&&`-joined under one prompt:
- *   1. OLD cleanup — best-effort (`|| true`): a stopped/disabled/not-failed unit
- *      or a non-SELinux host must NOT abort the migration. stop + disable +
- *      reset-failed the unit; `rm -rf` the legacy `/opt/.../data` state; delete
- *      the legacy `var_lib_t` fcontext rule on `/opt/.../data`.
- *   2. NEW setup — authoritative (a failure aborts so we never `enable` a broken
- *      unit): mkdir the `/var/opt` state dir (+ logs/ for the unit's append:),
- *      seed `config.json` there (carries webPort + installMode=system-service),
- *      add the `var_lib_t` fcontext rule + restorecon (best-effort SELinux
- *      subshell with a chcon transient fallback, mirroring
- *      buildSystemInstallScript), install the new unit, daemon-reload, enable.
- *
- * `binTool`/`sbinTool` are injectable for testing; production resolves absolute
- * paths via systemTools (Local-Dependencies-Only — no bare-name $PATH lookup).
- */
-export function buildSystemMigrationScript(
-    args: {
-        /** Pre-stringified seed config (JSON) written inline to the new config.json. */
-        seedConfigJson: string;
-        /** Tmp path holding the freshly-rendered new (DATA_ROOT=/var/opt) unit body. */
-        unitTmpPath: string;
-        /** Destination unit path, e.g. /etc/systemd/system/WsScrcpyWeb.service. */
-        unitPath: string;
-        /** Canonical service name (e.g. 'WsScrcpyWeb'). */
-        name: string;
-    },
-    binTool: (t: string) => string = (t) => resolveSystemTool(t),
-    sbinTool: (t: string) => string = (t) => resolveSystemTool(t),
-): string {
-    const mkdir = binTool('mkdir');
-    const cp = binTool('cp');
-    const rm = binTool('rm');
-    const printf = binTool('printf');
-    const systemctl = binTool('systemctl');
-    const semanage = sbinTool('semanage');
-    const restorecon = sbinTool('restorecon');
-    const stateLogs = `${SYSTEM_STATE_DIR}/logs`;
-    return [
-        // ── 1. OLD cleanup (best-effort) ──────────────────────────────────────
-        // stop/disable/reset-failed may each fail benignly (unit not loaded /
-        // already disabled / not failed); `|| true` keeps the `&&` chain alive so
-        // the migration still proceeds to the new-layout setup. POSIX sh gives
-        // `&&`/`||` EQUAL left-assoc precedence, so `A || true && B` => `((A||true)&&B)`.
-        `${systemctl} stop ${args.name}.service || true`,
-        `${systemctl} disable ${args.name}.service || true`,
-        `${systemctl} reset-failed ${args.name}.service || true`,
-        // rm -rf is idempotent (exit 0 even when absent); drop the legacy state tree.
-        `${rm} -rf ${LEGACY_SYSTEM_DATA_DIR}`,
-        // delete the legacy var_lib_t rule on /opt/.../data — best-effort subshell
-        // (rule may be absent / host non-SELinux), isolated so it can't break the chain.
-        `( ${semanage} fcontext -d '${LEGACY_SYSTEM_DATA_DIR}(/.*)?' || true )`,
-        // ── 2. NEW setup (authoritative) ──────────────────────────────────────
-        // create the FHS state dir (+ logs/ so the unit's StandardOutput append:
-        // target's parent exists before enable --now starts the service).
-        `${mkdir} -p ${stateLogs}`,
-        // seed config.json inline (no tmp-seed file → atomic, and the carried
-        // webPort is auditable in the script). Written BEFORE the relabel so
-        // restorecon labels it var_lib_t.
-        `${printf} '%s' '${args.seedConfigJson}' > ${SYSTEM_STATE_DIR}/config.json`,
-        // label the state dir var_lib_t + restorecon as INDEPENDENT `;`-separated steps
-        // (whole subshell `|| true`) so no semanage quirk can short-circuit the
-        // restorecon — mirrors buildSystemInstallScript (beta.61 #9 2.2/2.3 fix). No
-        // chcon fallback (it masked failures).
-        `( ${semanage} fcontext -a -t var_lib_t '${SYSTEM_STATE_DIR}(/.*)?' || ${semanage} fcontext -m -t var_lib_t '${SYSTEM_STATE_DIR}(/.*)?' ; ${restorecon} -Rv "${SYSTEM_STATE_DIR}" ) || true`,
-        // reinstall the unit (ExecStart still points at the in-place /opt AppImage;
-        // env now carries DATA_ROOT=/var/opt) + reload + enable.
-        `${cp} "${args.unitTmpPath}" "${args.unitPath}"`,
-        `${systemctl} daemon-reload`,
-        `${systemctl} enable --now ${args.name}.service`,
     ].join(' && ');
 }
 

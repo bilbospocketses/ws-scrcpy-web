@@ -37,19 +37,19 @@ const UNIT_NAME: &str = "WsScrcpyWeb";
 /// (server, launcher, the standalone tray, and an escaped scrcpy-server).
 const PROC_PATTERN: &str = "WsScrcpyWeb|ws-scrcpy-web-tray|ws-scrcpy-web-launcher|scrcpy-server";
 /// Machine-wide install staging dir: binary + bundled deps, root-owned, ALWAYS
-/// fully removed (never "kept"). The system-service DATA root (/var/opt, holding
+/// fully removed (never "kept"). The system-service DATA root (/var/lib, holding
 /// config.json + logs) is deliberately NOT a const — it arrives as `data_root` so
 /// keep/wipe applies to it exactly like a user data root.
 const OPT_DIR: &str = "/opt/ws-scrcpy-web";
 /// System menu entry + icon a machine-wide install drops under /usr/share.
 const SYS_DESKTOP: &str = "/usr/share/applications/ws-scrcpy-web.desktop";
 const SYS_ICON: &str = "/usr/share/icons/hicolor/256x256/apps/ws-scrcpy-web.png";
-/// SELinux fcontext specs the install adds: the /opt bin_t tree, the /var/opt
-/// var_lib_t state, and the legacy beta.40 /opt/.../data rule (removed too so a
-/// stale rule never lingers post-uninstall). Matches clear-install.sh.
-const FCONTEXT_SPECS: [&str; 3] = [
+/// SELinux fcontext specs the install adds / may need cleaning: the /opt bin_t
+/// tree rule, plus the legacy beta.40 /opt/.../data rule (removed too so a stale
+/// rule never lingers). The /var/lib state needs NO rule (var_lib_t by the policy
+/// default `/var/lib(/.*)?`), so it is not listed. Matches clear-install.sh.
+const FCONTEXT_SPECS: [&str; 2] = [
     "/opt/ws-scrcpy-web(/.*)?",
-    "/var/opt/ws-scrcpy-web(/.*)?",
     "/opt/ws-scrcpy-web/data(/.*)?",
 ];
 
@@ -60,7 +60,7 @@ const FCONTEXT_SPECS: [&str; 3] = [
 #[derive(Debug, Clone)]
 pub struct UninstallPlan {
     /// Root-only steps: system service cascade, the /opt staging removal, the
-    /// system-service data root (/var/opt) keep/wipe, the .desktop + icon plus a
+    /// system-service data root (/var/lib) keep/wipe, the .desktop + icon plus a
     /// menu-cache refresh, and the SELinux fcontext rules.
     pub privileged: Vec<Vec<String>>,
     /// Unelevated steps: kill strays, user-scope service cascade, the instance
@@ -91,7 +91,7 @@ fn service_teardown(scope: Scope, bindir: &str) -> Vec<Vec<String>> {
 /// `keep=true` deletes ONLY the regenerable subdirs (dependencies/bin/control),
 /// preserving the root itself, config.json and logs/. `rm` is the resolved
 /// absolute rm path. Used for BOTH the user data root (~/.local/...) and the
-/// system-service data root (/var/opt/...) — whichever owns config.json + logs.
+/// system-service data root (/var/lib/...) — whichever owns config.json + logs.
 fn data_root_commands(rm: &str, data_root: &str, keep: bool) -> Vec<Vec<String>> {
     if keep {
         ["dependencies", "bin", "control"]
@@ -156,7 +156,7 @@ pub fn app_uninstall_commands(
     }
 
     // 4. data root — user-owned ONLY for local / user-scope installs (data_root is
-    //    ~/.local/...). A system service's data_root is /var/opt (root-owned), so
+    //    ~/.local/...). A system service's data_root is /var/lib (root-owned), so
     //    its keep/wipe is emitted in the privileged group instead — exactly once,
     //    in the group that owns it.
     if svc_scope != Some(Scope::System) {
@@ -174,8 +174,8 @@ pub fn app_uninstall_commands(
         }
         // 2. /opt staging: binary + bundled deps are ALWAYS fully removed (never kept).
         privileged.push(vec![rm.clone(), "-rf".into(), OPT_DIR.to_string()]);
-        // 2b. system-service data root (/var/opt) keep/wipe — root-owned, emitted
-        //     here (NOT in user_owned). No blanket /var/opt rm: that would delete the
+        // 2b. system-service data root (/var/lib) keep/wipe — root-owned, emitted
+        //     here (NOT in user_owned). No blanket /var/lib rm: that would delete the
         //     preserved config.json + logs on keep.
         if svc_scope == Some(Scope::System) {
             privileged.extend(data_root_commands(&rm, data_root, keep));
@@ -595,22 +595,22 @@ mod tests {
     #[test]
     fn system_install() {
         // system service + machine-wide, WIPE (keep=false): /opt fully removed AND
-        // /var/opt fully removed (the data root here IS /var/opt). All root-owned.
+        // /var/lib fully removed (the data root here IS /var/lib). All root-owned.
         let plan = app_uninstall_commands(
             Some(Scope::System),
             true,
             false,
             "/usr/bin",
-            "/var/opt/ws-scrcpy-web",
+            "/var/lib/ws-scrcpy-web",
             None,
         );
         let p = joined(&plan.privileged);
         // system service cascade (system prefix = empty, so NO --user).
         assert!(p.iter().any(|c| c.as_str() == "/usr/bin/systemctl stop WsScrcpyWeb.service"));
         assert!(!p.iter().any(|c| c.contains("--user")));
-        // /opt removed; /var/opt fully removed (bare rm -rf) because keep=false.
+        // /opt removed; /var/lib fully removed (bare rm -rf) because keep=false.
         assert!(p.iter().any(|c| c.as_str() == "/usr/bin/rm -rf /opt/ws-scrcpy-web"));
-        assert!(p.iter().any(|c| c.as_str() == "/usr/bin/rm -rf /var/opt/ws-scrcpy-web"));
+        assert!(p.iter().any(|c| c.as_str() == "/usr/bin/rm -rf /var/lib/ws-scrcpy-web"));
         // system menu entry, menu-cache refresh, icon.
         assert!(p
             .iter()
@@ -621,16 +621,15 @@ mod tests {
         assert!(p.iter().any(
             |c| c.as_str() == "/usr/bin/rm -f /usr/share/icons/hicolor/256x256/apps/ws-scrcpy-web.png"
         ));
-        // SELinux fcontext: both current specs + the legacy /opt/.../data rule, via sbin.
+        // SELinux fcontext: the /opt bin_t rule + the legacy /opt/.../data rule, via
+        // sbin. NO /var/lib rule is removed — the state dir needs none (var_lib_t default).
         assert!(p
             .iter()
             .any(|c| c.as_str() == "/usr/sbin/semanage fcontext -d /opt/ws-scrcpy-web(/.*)?"));
         assert!(p
             .iter()
-            .any(|c| c.as_str() == "/usr/sbin/semanage fcontext -d /var/opt/ws-scrcpy-web(/.*)?"));
-        assert!(p
-            .iter()
             .any(|c| c.as_str() == "/usr/sbin/semanage fcontext -d /opt/ws-scrcpy-web/data(/.*)?"));
+        assert!(!p.iter().any(|c| c.contains("fcontext -d /var/lib")));
     }
 
     #[test]
@@ -648,11 +647,11 @@ mod tests {
             .iter()
             .any(|c| c.as_str() == "/usr/bin/update-desktop-database /usr/share/applications"));
         assert!(p.iter().any(|c| c.contains("ws-scrcpy-web.png")));
-        // no service installed -> no systemctl, and no /var/opt DATA-ROOT removal
-        // (the fcontext -d /var/opt rule still stands as SELinux cleanup; only the
-        // `rm` of the /var/opt state dir is absent — there is no system service).
+        // no service installed -> no systemctl, and no system DATA-ROOT removal
+        // (the /opt fcontext -d still runs as machine-wide cleanup; only the `rm` of
+        // the /var/lib state dir is absent — there is no system service).
         assert!(!p.iter().any(|c| c.contains("systemctl")));
-        assert!(!p.iter().any(|c| c.contains("rm -rf /var/opt")));
+        assert!(!p.iter().any(|c| c.contains("rm -rf /var/lib")));
         // user_owned still wipes the (user) data root.
         assert!(joined(&plan.user_owned)
             .iter()
@@ -700,30 +699,30 @@ mod tests {
     }
 
     #[test]
-    fn system_keep_preserves_var_opt_config_logs() {
-        // system service + KEEP: /opt removed fully, but /var/opt gets the SELECTIVE
-        // subdir rm so /var/opt/config.json + /var/opt/logs survive.
+    fn system_keep_preserves_var_lib_config_logs() {
+        // system service + KEEP: /opt removed fully, but /var/lib gets the SELECTIVE
+        // subdir rm so /var/lib/config.json + /var/lib/logs survive.
         let plan = app_uninstall_commands(
             Some(Scope::System),
             true,
             true,
             "/usr/bin",
-            "/var/opt/ws-scrcpy-web",
+            "/var/lib/ws-scrcpy-web",
             None,
         );
         let p = joined(&plan.privileged);
         assert!(p.iter().any(|c| c.as_str() == "/usr/bin/rm -rf /opt/ws-scrcpy-web"));
         assert!(p
             .iter()
-            .any(|c| c.as_str() == "/usr/bin/rm -rf /var/opt/ws-scrcpy-web/dependencies"));
-        assert!(p.iter().any(|c| c.as_str() == "/usr/bin/rm -rf /var/opt/ws-scrcpy-web/bin"));
-        assert!(p.iter().any(|c| c.as_str() == "/usr/bin/rm -rf /var/opt/ws-scrcpy-web/control"));
-        // NO bare wipe of /var/opt (would delete the preserved config.json + logs).
-        assert!(!p.iter().any(|c| c.as_str() == "/usr/bin/rm -rf /var/opt/ws-scrcpy-web"));
+            .any(|c| c.as_str() == "/usr/bin/rm -rf /var/lib/ws-scrcpy-web/dependencies"));
+        assert!(p.iter().any(|c| c.as_str() == "/usr/bin/rm -rf /var/lib/ws-scrcpy-web/bin"));
+        assert!(p.iter().any(|c| c.as_str() == "/usr/bin/rm -rf /var/lib/ws-scrcpy-web/control"));
+        // NO bare wipe of /var/lib (would delete the preserved config.json + logs).
+        assert!(!p.iter().any(|c| c.as_str() == "/usr/bin/rm -rf /var/lib/ws-scrcpy-web"));
         assert!(!p.iter().any(|c| c.contains("config.json")));
         assert!(!p.iter().any(|c| c.contains("/logs")));
-        // data root handled ONCE, in privileged — user_owned must not touch /var/opt.
-        assert!(!joined(&plan.user_owned).iter().any(|c| c.contains("/var/opt")));
+        // data root handled ONCE, in privileged — user_owned must not touch /var/lib.
+        assert!(!joined(&plan.user_owned).iter().any(|c| c.contains("/var/lib")));
     }
 
     // ── Task 2: pure arg-parsing. The run fns shell out (and aren't even compiled
@@ -739,7 +738,7 @@ mod tests {
             "1",
             "--wipe",
             "--data-root",
-            "/var/opt/ws-scrcpy-web",
+            "/var/lib/ws-scrcpy-web",
             "--relaunch",
             "/home/u/Apps/App.AppImage",
         ]
@@ -752,7 +751,7 @@ mod tests {
                 svc_scope: Some(Scope::System),
                 machine_wide: true,
                 keep: false,
-                data_root: "/var/opt/ws-scrcpy-web".to_string(),
+                data_root: "/var/lib/ws-scrcpy-web".to_string(),
                 relaunch: "/home/u/Apps/App.AppImage".to_string(),
             })
         );
@@ -825,7 +824,7 @@ mod tests {
             "1",
             "--wipe",
             "--data-root",
-            "/var/opt/ws-scrcpy-web",
+            "/var/lib/ws-scrcpy-web",
             "--relaunch",
             "/home/u/Apps/App.AppImage",
         ]

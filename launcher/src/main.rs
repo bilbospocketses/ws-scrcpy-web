@@ -172,7 +172,7 @@ fn main() {
     #[cfg(target_os = "linux")]
     {
         let running_as_service = matches!(std::env::var("WS_SCRCPY_SERVICE").as_deref(), Ok("1"));
-        let cfg = common::config::AppConfig::load(std::path::Path::new("/var/opt/ws-scrcpy-web"));
+        let cfg = common::config::AppConfig::load(std::path::Path::new("/var/lib/ws-scrcpy-web"));
         if let (Some(mode), Some(port)) = (cfg.install_mode.as_deref(), cfg.web_port) {
             let live = std::net::TcpStream::connect_timeout(
                 &std::net::SocketAddr::from(([127, 0, 0, 1], port)),

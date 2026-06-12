@@ -132,9 +132,8 @@ function maybeShowWelcomeModal(): void {
 
 /**
  * Show a sticky banner notice with a single action button. Used for the
- * migration reinstall offer and the system-wide update offer — both are
- * status-driven banners that live above the main content (same as
- * FirstRunBanner), not full-screen modals.
+ * system-wide update offer — a status-driven banner that lives above the
+ * main content (same as FirstRunBanner), not a full-screen modal.
  *
  * Returns the container element so the caller can append it to the page.
  */
@@ -169,8 +168,7 @@ function showStatusBanner(text: string, actionLabel: string, onAction: () => voi
  * Linux, already installed, previously declined, or the status endpoint
  * unreachable) proceeds straight to maybeShowWelcomeModal.
  *
- * Also handles two status-driven offers introduced in P3c-2:
- * - serviceMigrationNeeded → migration reinstall banner (POST migrate-system → reload)
+ * Also handles a status-driven offer introduced in P3c-2:
  * - optUpdateAvailable → system-wide update banner (POST install-system-wide → reload)
  */
 function maybeShowFirstRunModal(): void {
@@ -180,20 +178,6 @@ function maybeShowFirstRunModal(): void {
         .then((r) => (r.ok ? (r.json() as Promise<ServiceStatusResponse>) : null))
         .then((status) => {
             if (status != null && status.platform === 'linux') {
-                // Migration reinstall offer (P3c-2): service uses old /opt/.../data
-                // layout → offer a one-click pkexec reinstall to /var/opt.
-                if (status.serviceMigrationNeeded === true) {
-                    showStatusBanner(
-                        'this service uses the old layout. reinstall it to update to the new layout.',
-                        'reinstall now',
-                        () => {
-                            void fetch('/api/service/migrate-system', { method: 'POST' })
-                                .then((r) => { if (r.ok) window.location.reload(); })
-                                .catch(() => {});
-                        },
-                    );
-                    // Fall through — still show the normal first-run flow below.
-                }
                 // System-wide update offer (P3c-2): a newer home AppImage is running
                 // over an older /opt copy → offer to update the system-wide install.
                 if (status.optUpdateAvailable === true) {

@@ -265,7 +265,7 @@ describe('SystemdClient', () => {
             expect(handoffCalls).toHaveLength(1);
             const handoffArgs = (handoffCalls[0]![1] as string[]).join(' ');
             expect(handoffArgs).toContain('--collect');
-            expect(handoffArgs).toContain('--setenv=DATA_ROOT=/var/opt/ws-scrcpy-web');
+            expect(handoffArgs).toContain('--setenv=DATA_ROOT=/var/lib/ws-scrcpy-web');
             expect(handoffArgs).toContain(
                 '/opt/ws-scrcpy-web/ws-scrcpy-web-launcher.exe --linux-service-install-handoff --scope system --unit WsScrcpyWeb',
             );

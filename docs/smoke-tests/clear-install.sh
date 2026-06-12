@@ -26,8 +26,11 @@ SYS_UNIT="/etc/systemd/system/$UNIT"
 AUTOSTART="$HOME/.config/autostart/ws-scrcpy-web-tray.desktop"
 SYS_DESKTOP="/usr/share/applications/ws-scrcpy-web.desktop"
 OPT_DIR="/opt/ws-scrcpy-web"
-VAR_OPT_DIR="/var/opt/ws-scrcpy-web"
+VAR_LIB_DIR="/var/lib/ws-scrcpy-web"
+LEGACY_VAR_OPT_DIR="/var/opt/ws-scrcpy-web"   # pre-beta.64 system-service state; defensively cleaned
 LOCK="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/ws-scrcpy-web.lock"
+# The /var/lib state dir needs NO fcontext rule (var_lib_t by the policy default). These
+# specs are the install's /opt bin_t rule + legacy rules (/var/opt, /opt/.../data) -d'd defensively.
 FCONTEXT_SPECS=( '/opt/ws-scrcpy-web(/.*)?' '/var/opt/ws-scrcpy-web(/.*)?' '/opt/ws-scrcpy-web/data(/.*)?' )
 PROC_PAT='WsScrcpyWeb|ws-scrcpy-web-tray|ws-scrcpy-web-launcher|scrcpy-server'
 
@@ -61,8 +64,8 @@ sudo systemctl reset-failed "$UNIT" 2>/dev/null || true
 sudo rm -f "$SYS_UNIT"
 sudo systemctl daemon-reload 2>/dev/null || true
 
-# 4. machine-wide /opt + system state /var/opt
-sudo rm -rf "$OPT_DIR" "$VAR_OPT_DIR"
+# 4. machine-wide /opt + system state /var/lib (+ legacy /var/opt, defensively)
+sudo rm -rf "$OPT_DIR" "$VAR_LIB_DIR" "$LEGACY_VAR_OPT_DIR"
 
 # 5. desktop entries
 sudo rm -f "$SYS_DESKTOP"
@@ -87,7 +90,7 @@ step "PHASE 2 — VERIFY (test it cleared)"
 [ ! -e "$USER_UNIT" ]   && ok "user unit removed"        || bad "user unit present: $USER_UNIT"
 [ ! -e "$SYS_UNIT"  ]   && ok "system unit removed"      || bad "system unit present: $SYS_UNIT"
 [ ! -e "$OPT_DIR"   ]   && ok "/opt removed"             || bad "/opt present: $OPT_DIR"
-[ ! -e "$VAR_OPT_DIR" ] && ok "/var/opt removed"         || bad "/var/opt present: $VAR_OPT_DIR"
+[ ! -e "$VAR_LIB_DIR" ] && ok "/var/lib removed"         || bad "/var/lib present: $VAR_LIB_DIR"
 [ ! -e "$DATA_ROOT" ]   && ok "dataRoot removed"         || bad "dataRoot present: $DATA_ROOT"
 [ ! -e "$AUTOSTART" ]   && ok "tray autostart removed"   || bad "autostart present: $AUTOSTART"
 [ ! -e "$SYS_DESKTOP" ] && ok "system .desktop removed"  || bad ".desktop present: $SYS_DESKTOP"

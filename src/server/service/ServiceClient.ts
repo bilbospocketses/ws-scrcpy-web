@@ -100,7 +100,7 @@ export interface ServiceInstallOptions {
 
     /**
      * Linux system-scope only (#36): the config.json seeded into the FHS state
-     * dir `/var/opt/ws-scrcpy-web` so the service boots with a correct,
+     * dir `/var/lib/ws-scrcpy-web` so the service boots with a correct,
      * persistent config (system-service mode, first-run-complete, the user's
      * web port) instead of a fresh one in ephemeral /tmp. Ignored elsewhere.
      */

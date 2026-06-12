@@ -1,6 +1,6 @@
 # ws-scrcpy-web — Smoke Run-Sheet
 
-> **Smoke target: `v0.1.30-beta.63`** — bump this one line each release; everything below is version-agnostic.
+> **Smoke target: `v0.1.30-beta.64`** — bump this one line each release; everything below is version-agnostic.
 
 Execution-ordered, tickable checklist for the 0.1.30 Linux smoke gate. Regroups the canonical rows from
 [`smoke-full.md`](./smoke-full.md) by **app state** — the order you actually run them; that doc
@@ -11,7 +11,7 @@ which carries the beta.48 port-discovery fix plus the Server-section UX (batch #
 
 ## Before each run — reset to a clean slate
 
-1. **Wipe prior state** with [`clear-install.sh`](./clear-install.sh) (user + system service, `/opt` + `/var/opt`, dataRoot, autostart, `.desktop`, all fcontext rules, the lock, stray procs → prints `CLEAN SLATE ✓`).
+1. **Wipe prior state** with [`clear-install.sh`](./clear-install.sh) (user + system service, `/opt` + `/var/lib`, dataRoot, autostart, `.desktop`, all fcontext rules, the lock, stray procs → prints `CLEAN SLATE ✓`).
 2. **Re-download the latest** — the `~/Downloads` AppImage is stale; **no `chmod +x`** (GUI double-click of a non-`+x` AppImage is the realistic path):
    ```bash
    gh release download --repo bilbospocketses/ws-scrcpy-web --pattern '*linux-beta.AppImage' --dir ~/Downloads
@@ -67,13 +67,13 @@ Boxes start unticked — this is a fresh pass.
 
 | Test | How to perform | Expected + verify |
 |---|---|---|
-| ☐ **4.2-system** `[L]` Install system service | Settings → service → **system** scope → install (pkexec) | `/opt` ExecStart **as root**; state in `/var/opt`; zero AVC |
+| ☐ **4.2-system** `[L]` Install system service | Settings → service → **system** scope → install (pkexec) | `/opt` ExecStart **as root**; state in `/var/lib`; zero AVC |
 | ☐ **4.5** `[B]` Confirm-dialog buttons *(Linux: system-scope only)* | When you click install (or uninstall) on **system** scope, eyeball the **"Root Privileges Required"** confirm before the pkexec prompt (user-scope shows none) | **cancel** / **continue** are **white-outline + white-text** |
-| ☐ **2.2** `[L]` State labels | `ls -Z /var/opt/ws-scrcpy-web` | → **var_lib_t** |
-| ☐ **2.3** `[L]` fcontext rules | `sudo semanage fcontext -l \| grep ws-scrcpy-web` | **Both** the `/opt` bin_t rule and the `/var/opt` var_lib_t rule |
+| ☐ **2.2** `[L]` State labels | `ls -Z /var/lib/ws-scrcpy-web` | → **var_lib_t** |
+| ☐ **2.3** `[L]` fcontext rules | `sudo semanage fcontext -l \| grep ws-scrcpy-web` | **Only** the `/opt` bin_t rule — `/var/lib` is var_lib_t by the policy default (no custom rule) |
 | ☐ **3.3** `[L]` Service-defer | System service running → launch locally | Defers to the service (opens its URL); no 2nd server |
 | ☐ **5.1** `[L]` Same-user uninstall → relaunch | Uninstall as the active user | App reappears in that session, **same port**, visible "relaunching…" |
-| ☐ **5.4** `[L]` fcontext cleanup | After uninstall: `sudo semanage fcontext -l \| grep ws-scrcpy-web` | **Empty** (both rules gone) |
+| ☐ **5.4** `[L]` fcontext cleanup | After uninstall: `sudo semanage fcontext -l \| grep ws-scrcpy-web` | **Empty** (the `/opt` rule gone; `/var/lib` never had one) |
 | ☐ **5.9** `[L]` Uninstall message | After a no-active-session uninstall | **Neutral** info line — not red, no "retry" button |
 
 ## #10 — First-run variants 🧩 *(needs fresh snapshot / 2nd user / 2nd admin)*
@@ -99,7 +99,6 @@ Get the from-build first: `gh run download 26859605903 --repo bilbospocketses/ws
 | ☐ **6.4** `[L]` Newer home over /opt | `/opt` beta.40 + newer home AppImage → launch | Offers system-wide update → swap → next launch runs updated `/opt` |
 | ☐ **6.5** `[L]` User-service update | User-service → Apply | Unit stops, home swaps, restarts **same port**, **no prompt** |
 | ☐ **6.6** `[L]` System-service update | System-service → Apply | **No polkit**; `/opt` swaps; restorecon bin_t; **zero AVC**; helper survives `systemctl stop` |
-| ☐ **6.7** `[L]` Migrate legacy beta.40 | beta.40 system install → update **from a local instance** | Reinstall to `/var/opt`, carry `webPort`/`installMode`, zero AVC, only the new fcontext rule |
 
 ## #12 — Velopack / no-libfuse2 🧩 *(needs a minimal Fedora host without libfuse2)*
 
@@ -153,8 +152,8 @@ Server-section additions (no module-doc counterpart): the one-click **install fo
 | ☐ **15.2** `[L]` start-menu icon | After a machine-wide install (15.1 or 1.2), open the desktop apps menu and find the **ws-scrcpy-web** entry; also check the icon on disk. | The launcher entry shows the **ws-scrcpy-web icon** (not a generic placeholder); `ls /usr/share/icons/hicolor/256x256/apps/ws-scrcpy-web.png` → **exists**. |
 | ☐ **15.3** `[L]` uninstall — local | Local mode → Settings → **Server** → **uninstall…** → confirm (leave **"keep my settings & logs" unchecked**). | App removed; tab shows **"uninstalled — close this tab"**; `docs/smoke-tests/clear-install.sh` verify → **CLEAN SLATE** (no leftover binary / deps / config / decline marker). |
 | ☐ **15.4** `[L]` uninstall — user-service cascade | User-scope service installed (machine-wide `/opt` binary) → Settings → **Server** → **uninstall…** → confirm. | **One pkexec** (for the `/opt` removal); the `--user` unit is **gone** AND the app is **removed in one pass**; **no relaunch**. |
-| ☐ **15.5** `[L]` uninstall — system-service cascade | System-scope service installed → **uninstall…** (runs from the root service context). | Runs **as root, NO pkexec**; `/opt/ws-scrcpy-web` + `/var/opt/ws-scrcpy-web` + the systemd unit are **all gone**; **zero AVC**. |
-| ☐ **15.6** `[L]` uninstall — keep settings & logs | Uninstall with **"keep my settings & logs" checked**. | `config.json` + `logs/` **survive** at the data root (`~/.local/share/WsScrcpyWeb` local, or `/var/opt/ws-scrcpy-web` system); `dependencies/` is **gone either way**; a **reinstall reuses the saved port**. |
+| ☐ **15.5** `[L]` uninstall — system-service cascade | System-scope service installed → **uninstall…** (runs from the root service context). | Runs **as root, NO pkexec**; `/opt/ws-scrcpy-web` + `/var/lib/ws-scrcpy-web` + the systemd unit are **all gone**; **zero AVC**. |
+| ☐ **15.6** `[L]` uninstall — keep settings & logs | Uninstall with **"keep my settings & logs" checked**. | `config.json` + `logs/` **survive** at the data root (`~/.local/share/WsScrcpyWeb` local, or `/var/lib/ws-scrcpy-web` system); `dependencies/` is **gone either way**; a **reinstall reuses the saved port**. |
 | ☐ **15.7** `[L]` uninstall — SELinux clean | After any uninstall, inspect the fcontext rules + the AVC monitor. | `sudo semanage fcontext -l \| grep ws-scrcpy-web` → **empty**; **zero AVC**. |
 
 ## #16 — Windows Server-section: in-app uninstall + stop-exit 🪟 *(drive from smoke-full Module 15)*
@@ -179,9 +178,8 @@ New in beta.51, the wipe self-deletion fixed in beta.52. Run on the clean Win11 
 | **Single instance** | Never two trays (Win) / two servers (Linux) per user/session |
 | **Relaunch fidelity** | Every uninstall→relaunch lands on the **same port**; no orphaned processes |
 | **Updates apply everywhere** | local, machine-wide `/opt` (no-service), user-service, system-service (headless) all swap + relaunch on the same port; **zero AVC** on the system-service path |
-| **Migration** | A beta.40 system install migrates to `/var/opt` carrying `webPort`/`installMode`, zero AVC |
 | **Clean shutdown** | "stop server & exit" tears down adb (+ Win tray) with no orphans; gated off in service mode |
 | **Data preserved** | User config/deps/logs survive uninstall + reinstall |
 | **Core flow** | Scan → connect → stream (video + control) → shell works on both platforms |
 
-**Stop-and-report:** a `[Linux]` SELinux/lifecycle failure in Modules 2/4/5, the service-update rows 6.5/6.6, or migration 6.7 — run `capture-logs.sh <id>` (`.ps1` on Windows) for the evidence bundle, then fix before promoting 0.1.30 stable. Cosmetic/polish → note as beta-territory. **Module 11 (no-libfuse2)** gates closing item 31, not 0.1.30-stable on its own.
+**Stop-and-report:** a `[Linux]` SELinux/lifecycle failure in Modules 2/4/5, the service-update rows 6.5/6.6 — run `capture-logs.sh <id>` (`.ps1` on Windows) for the evidence bundle, then fix before promoting 0.1.30 stable. Cosmetic/polish → note as beta-territory. **Module 11 (no-libfuse2)** gates closing item 31, not 0.1.30-stable on its own.

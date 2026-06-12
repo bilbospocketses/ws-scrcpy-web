@@ -1,10 +1,10 @@
 # ws-scrcpy-web — Full Smoke Test
 
-> **Smoke target: `v0.1.30-beta.63`** — bump this one line each release; everything below is version-agnostic.
+> **Smoke target: `v0.1.30-beta.64`** — bump this one line each release; everything below is version-agnostic.
 
 All-encompassing manual smoke, grouped by function and tagged by platform (`[Win]` / `[Linux]` / `[Both]`). Each row is a single test: **what to verify**, **how to perform it**, and the **expected result + how to verify**. Walk top to bottom; some rows depend on state from earlier rows in the same module.
 
-> **Consolidated 2026-06-06.** This doc absorbs the three former per-feature checklists — Linux service-mode (`beta.37`), stop-server-&-exit (`beta.39`), and the Windows multi-user / MSI pass (`v0.1.25-beta.3`) — so it is the **single gate for `0.1.30` final** (the first true Windows + Linux release). It covers every shipped feature to date: install/first-run, Linux layout & SELinux, multi-user & single-instance, service mode (incl. the beta.45–48 stable-ExecStart + install hand-off + post-install port-discovery fix), lifecycle, updates (local / machine-wide / user- & system-service / migration), devices, streaming, adb, logs, Velopack 1.2.0, stop-server-&-exit, settings prompts, and the **Linux Server-section UX** (install-for-all-users, start-menu icon, in-app complete uninstall — Module 14).
+> **Consolidated 2026-06-06.** This doc absorbs the three former per-feature checklists — Linux service-mode (`beta.37`), stop-server-&-exit (`beta.39`), and the Windows multi-user / MSI pass (`v0.1.25-beta.3`) — so it is the **single gate for `0.1.30` final** (the first true Windows + Linux release). It covers every shipped feature to date: install/first-run, Linux layout & SELinux, multi-user & single-instance, service mode (incl. the beta.45–48 stable-ExecStart + install hand-off + post-install port-discovery fix), lifecycle, updates (local / machine-wide / user- & system-service), devices, streaming, adb, logs, Velopack 1.2.0, stop-server-&-exit, settings prompts, and the **Linux Server-section UX** (install-for-all-users, start-menu icon, in-app complete uninstall — Module 14).
 
 ## Pre-flight
 
@@ -12,10 +12,10 @@ All-encompassing manual smoke, grouped by function and tagged by platform (`[Win
 - **Windows:** Win11 VM, clean snapshot; three accounts `Admin` / `User1` / `User2`; `regedit` + Task Manager → Startup tab handy. Download `WsScrcpyWeb-beta.msi` from the **latest** release.
 - **Devices:** an Android device with **Wireless debugging** enabled (Android 11+) reachable from the VM, plus (Windows) one USB device if available.
 
-**Build-prep — the "update from" build (Modules 6 + the migration row).** The releases page is curated to the latest only, so the update/migration rows need an older build to update *from*. Don't rebuild — download the still-retained **beta.40** CI artifact (the exact published beta.40 AppImage: Velopack 1.1.1, the old `/opt/.../data` system layout the migration row needs):
+**Build-prep — the "update from" build (Module 6).** The releases page is curated to the latest only, so the update rows need an older build to update *from*. Don't rebuild — download the still-retained **beta.40** CI artifact (the exact published beta.40 AppImage: Velopack 1.1.1):
 
 ```bash
-# Linux — the update/migration "from" build
+# Linux — the update "from" build
 gh run download 26859605903 --repo bilbospocketses/ws-scrcpy-web --name linux-final --dir ./beta40
 chmod +x ./beta40/WsScrcpyWeb-linux-beta.AppImage
 # Windows MSI (row 6.8 / the Windows pass): --name windows-final from the same run
@@ -25,7 +25,7 @@ Artifacts are retained ~90 days from 2026-06-03. **the latest release is feed-la
 
 - **No-libfuse2 host (Module 11.1/11.2):** a minimal Fedora container/distro **without** `libfuse2`. This is the gate for closing item 31, not a 0.1.30-stable blocker on its own.
 
-**Clean slate — `clear-install.sh` (recommended).** For a one-shot, verified teardown of the **entire** install footprint — user- *and* system-scope service, `/opt` + `/var/opt`, dataRoot, tray autostart, the system `.desktop`, **all** SELinux fcontext rules (incl. the legacy beta.40 `/opt/.../data`), the single-instance lock, and any stray processes — run `bash clear-install.sh` (sits beside this doc). It tears down, then prints a per-item PASS/FAIL ending in `CLEAN SLATE ✓` / `NOT CLEAN ✗` (exit 0/1); idempotent + safe on an already-clean VM.
+**Clean slate — `clear-install.sh` (recommended).** For a one-shot, verified teardown of the **entire** install footprint — user- *and* system-scope service, `/opt` + `/var/lib`, dataRoot, tray autostart, the system `.desktop`, **all** SELinux fcontext rules (incl. the legacy beta.40 `/opt/.../data`), the single-instance lock, and any stray processes — run `bash clear-install.sh` (sits beside this doc). It tears down, then prints a per-item PASS/FAIL ending in `CLEAN SLATE ✓` / `NOT CLEAN ✗` (exit 0/1); idempotent + safe on an already-clean VM.
 
 **Capture evidence — `capture-logs.sh` / `capture-logs.ps1` (run at every checkpoint).** Beside this doc: `capture-logs.sh` (Linux) / `capture-logs.ps1` (Windows). Run `bash capture-logs.sh <test-id>` or `powershell -ExecutionPolicy Bypass -File capture-logs.ps1 <test-id>` at each capture point — **especially the moment a row fails** — to snapshot all logs + state (AVC, service status/journal, fcontext, SELinux labels, processes, dataRoot / Program Files / temp listings, config, app logs) to a timestamped, labeled folder + archive. The numbered output files (`10-avc`, `30-fcontext`, `33-dataroot-ls` / `31-dataroot`, the `70-*.log` app logs, …) map directly to each row's verify step, so a failure can be diagnosed without re-running it.
 
@@ -34,8 +34,8 @@ Artifacts are retained ~90 days from 2026-06-03. **the latest release is feed-la
 ```bash
 sudo systemctl stop WsScrcpyWeb.service; sudo systemctl disable WsScrcpyWeb.service; sudo systemctl reset-failed WsScrcpyWeb.service
 sudo rm -f /etc/systemd/system/WsScrcpyWeb.service
-sudo rm -rf /opt/ws-scrcpy-web /var/opt/ws-scrcpy-web
-sudo semanage fcontext -d '/opt/ws-scrcpy-web(/.*)?'; sudo semanage fcontext -d '/var/opt/ws-scrcpy-web(/.*)?'
+sudo rm -rf /opt/ws-scrcpy-web /var/lib/ws-scrcpy-web
+sudo semanage fcontext -d '/opt/ws-scrcpy-web(/.*)?'; sudo semanage fcontext -d '/var/lib/ws-scrcpy-web(/.*)?'
 sudo systemctl daemon-reload
 ```
 
@@ -59,8 +59,8 @@ sudo systemctl daemon-reload
 | Test | How to perform | Expected + verify |
 |---|---|---|
 | **2.1** `[Linux]` Binary/deps labels | After a machine-wide (and/or system-service) install. | `ls -Z /opt/ws-scrcpy-web` → **bin_t**. |
-| **2.2** `[Linux]` State labels | Inspect the variable-state tree. | `ls -Z /var/opt/ws-scrcpy-web` → **var_lib_t** (config/logs/deps the service writes). |
-| **2.3** `[Linux]` fcontext rules registered | After a system-service install. | `sudo semanage fcontext -l \| grep ws-scrcpy-web` shows **both** the `/opt` bin_t rule and the `/var/opt` var_lib_t rule. |
+| **2.2** `[Linux]` State labels | Inspect the variable-state tree. | `ls -Z /var/lib/ws-scrcpy-web` → **var_lib_t** (config/logs/deps the service writes). |
+| **2.3** `[Linux]` fcontext rules registered | After a system-service install. | `sudo semanage fcontext -l \| grep ws-scrcpy-web` shows **only** the `/opt` bin_t rule. `/var/lib` is var_lib_t by the policy default — no custom rule. |
 | **2.4** `[Linux]` Zero AVC during install | Watch the `journalctl` monitor through 1.2 + a service install. | **No AVC** denials. |
 
 ## Module 3 — Multi-user & single-instance
@@ -78,7 +78,7 @@ sudo systemctl daemon-reload
 | Test | How to perform | Expected + verify |
 |---|---|---|
 | **4.1** `[Linux]` System-scope gate | App **not** machine-wide → Settings → service → pick **system** scope. | Install greyed + modal "requires installing system-wide first"; **user** scope available; after machine-wide install → system enabled. |
-| **4.2** `[Linux]` Install user + system scope | Install each scope (user via no-elevation; system via pkexec). | user → home ExecStart; system → `/opt` ExecStart running as root, state in `/var/opt`. Zero AVC. |
+| **4.2** `[Linux]` Install user + system scope | Install each scope (user via no-elevation; system via pkexec). | user → home ExecStart; system → `/opt` ExecStart running as root, state in `/var/lib`. Zero AVC. |
 | **4.3** `[Win]` Install confirm UX | Settings → "install service" → inspect modal; test **cancel**, **Esc**, **backdrop**, then **continue**. | AdminConfirmModal "Administrative Privileges Required"; cancel/Esc/backdrop all close with **no UAC, no fetch**; continue → UAC fires → service installs, redirects, no WelcomeModal. |
 | **4.4** `[Linux]` Scope-radio legibility + detection *(item 42)* | After a user- and a system-scope install, reopen Settings each time. | The selected scope radio's dot is a **clearly visible blue** (not washed-out grey); radios are non-interactive but legible (`pointer-events:none` + `tabindex=-1`, **not** the `disabled` attribute); the **correct** scope (user vs system) is the selected one (`resolveActiveScope` end-to-end). |
 | **4.5** `[Both]` Confirm-dialog button style *(item 35)* | Open the service install/uninstall "privileges required" confirms (and "end shell session"). **Linux:** the service confirm fires only for **system** scope (user-scope needs no elevation). | Cancel/confirm buttons use the shared **white-outline + white-text** style (transparent), matching the welcome/bookmark/service-first-run modals. |
@@ -91,7 +91,7 @@ sudo systemctl daemon-reload
 | **5.1** `[Linux]` Same-user uninstall → relaunch | System service installed, active user using app → uninstall **as that user**. | App reappears in the active user's session, **same port**, visible "relaunching…" wait. |
 | **5.2** `[Linux]` Different-admin uninstall | Uninstall via **pkexec as a different admin**. | App reappears in the **active desktop user's** session (not the admin's), same port. |
 | **5.3** `[Linux]` Headless uninstall | Uninstall with no active graphical session. | No relaunch; manual fallback; **no orphan**; no `data_root_for_linux` panic. |
-| **5.4** `[Linux]` fcontext cleanup *(fix a)* | After any uninstall. | `sudo semanage fcontext -l \| grep ws-scrcpy-web` → **empty** (both rules gone). |
+| **5.4** `[Linux]` fcontext cleanup *(fix a)* | After any uninstall. | `sudo semanage fcontext -l \| grep ws-scrcpy-web` → **empty** (the `/opt` rule gone; `/var/lib` never had one). |
 | **5.5** `[Win]` Uninstall + handoff affordance | Service mode, Settings as `Admin` → "uninstall service" → continue → Yes on UAC. | Button → "uninstalling…"; if handoff >5s → "still waiting for user session…"; ends at local-mode URL. |
 | **5.6** `[Win]` Uninstall handoff-failure guard | Service mode; kill all `ws-scrcpy-web-tray.exe`; then uninstall. | ~5s → "still waiting…"; ~30s → "couldn't reach the user session…"; button freed; **service STILL installed** (no silent direct uninstall). |
 | **5.7** `[Win]` Full uninstall | Add/Remove Programs → ws-scrcpy-web → Uninstall as `Admin`. | Service stops/unregisters; `HKLM\…\Run\WsScrcpyWebTray` removed; `Program Files\WsScrcpyWeb` cleared; **user data under dataRoot preserved**; admin tray disappears. |
@@ -111,7 +111,6 @@ Get the "update from" build first (Pre-flight build-prep: the beta.40 artifact).
 | **6.4** `[Linux]` Newer home over `/opt` | `/opt` at beta.40; place a newer home AppImage; launch. | Bootstrapper runs home in place → offers "update the system-wide install to vX" → accept → swap → next launch runs updated `/opt`. |
 | **6.5** `[Linux]` User-scope service update apply *(item 39)* | User-scope service installed → Settings → Updates → Apply. | The `--user` unit stops, the home `$APPIMAGE` swaps, the unit restarts on the **same** web port, browser reconnects via the overlay. **No prompt.** |
 | **6.6** `[Linux]` System-scope headless service update apply *(item 39 — the SELinux risk)* | System-scope service installed → Apply. | **No polkit prompt** (root self-update); `/opt` copy swaps; `restorecon` re-applies `bin_t`; unit restarts; **zero AVC**. The `systemd-run` apply helper **survives `systemctl stop`** of the unit it's restarting (out-of-cgroup); the FUSE unmount settles within the helper's ~15s swap-retry window (widen if the VM is slow). If SELinux blocks the `init_t` `/opt` write or relabel → **narrow targeted policy only, never broad `audit2allow`**. |
-| **6.7** `[Linux]` Migrate a legacy beta.40 system install *(Phase 3a)* | *Clean snapshot* → install **beta.40** → install **system-scope** service (old `/opt/ws-scrcpy-web/data` layout) → update to the latest **from a local instance, NOT from inside the running service**. | In-app notice *"the system service must be reinstalled for the new layout"* + **[reinstall now]** → uninstall→reinstall at `/var/opt`, **`webPort` + `installMode` carried over**, service active, **zero AVC**, `sudo semanage fcontext -l \| grep ws-scrcpy-web` shows only the new `/var/opt` rule. |
 | **6.8** `[Win]` In-app update apply + tray persists *(SE-2)* | From a prior installed build (beta.40 MSI) → Settings → Updates → Apply. | Applies clean; app reachable post-update; **the tray persists across the update** (the `apply-update-pending` marker gates the reap off; the relaunched launcher keeps it) — **one** tray after settling, no duplicate/orphan. |
 
 ## Module 7 — Devices: scan & connect
@@ -145,7 +144,7 @@ Get the "update from" build first (Pre-flight build-prep: the beta.40 artifact).
 |---|---|---|
 | **10.1** `[Both]` Service status API | Browse `http://localhost:<port>/api/service/status`. | JSON with correct `platform`, `supported`, `status`. |
 | **10.2** `[Win]` Logs clean | Tail `C:\ProgramData\WsScrcpyWeb\logs\{launcher,ws-scrcpy-web}.log` during normal use (canonical logs). `server.log` / `service.log` are thin crash-catchers — normal lines live in the canonical files; a `.1` backup may appear; all files are tail-able. | No `ERR` / `Error:` except known cosmetic node-pty AttachConsole noise. |
-| **10.3** `[Linux]` Logs clean | Tail `launcher.log` + `ws-scrcpy-web.log` under `~/.local/share/.../logs` (or `/var/opt/.../logs` for system) — these are the canonical logs. `server.log` / `service.log` are thin crash-catchers; a `.1` backup may appear; all files are tail-able. | No error spam; teardown logs present on stop. |
+| **10.3** `[Linux]` Logs clean | Tail `launcher.log` + `ws-scrcpy-web.log` under `~/.local/share/.../logs` (or `/var/lib/.../logs` for system) — these are the canonical logs. `server.log` / `service.log` are thin crash-catchers; a `.1` backup may appear; all files are tail-able. | No error spam; teardown logs present on stop. |
 
 ## Module 11 — Velopack 1.2.0 / item-31
 
@@ -187,8 +186,8 @@ The Server section adds three Settings → **Server** affordances on Linux: a on
 | **14.2** `[Linux]` Start-menu icon | After a machine-wide install (14.1 or 1.2), open the desktop apps menu; also check disk. | The launcher entry shows the **ws-scrcpy-web icon** (not a generic placeholder); `ls /usr/share/icons/hicolor/256x256/apps/ws-scrcpy-web.png` → exists. |
 | **14.3** `[Linux]` Complete uninstall — local | Local mode → Settings → **Server** → **uninstall…** → confirm with **"keep my settings & logs" unchecked**. | App removed; tab shows "uninstalled — close this tab"; `clear-install.sh` verifies a **CLEAN SLATE** (no leftover binary / deps / config / decline marker). |
 | **14.4** `[Linux]` Uninstall — user-service cascade | User-scope service installed (machine-wide `/opt` binary) → **uninstall…** → confirm. | **One pkexec** (for the `/opt` removal); the `--user` unit is **gone** AND the app is **removed in one pass**; no relaunch. |
-| **14.5** `[Linux]` Uninstall — system-service cascade | System-scope service installed → **uninstall…** (from the root service context). | Runs **as root, NO pkexec**; `/opt/ws-scrcpy-web` + `/var/opt/ws-scrcpy-web` + the systemd unit are **all gone**; zero AVC. |
-| **14.6** `[Linux]` Uninstall — keep settings & logs | Uninstall with **"keep my settings & logs" checked**. | `config.json` + `logs/` **survive** at the data root (`~/.local/share/WsScrcpyWeb` local, or `/var/opt/ws-scrcpy-web` system); `dependencies/` is **gone either way**; a reinstall reuses the saved port. |
+| **14.5** `[Linux]` Uninstall — system-service cascade | System-scope service installed → **uninstall…** (from the root service context). | Runs **as root, NO pkexec**; `/opt/ws-scrcpy-web` + `/var/lib/ws-scrcpy-web` + the systemd unit are **all gone**; zero AVC. |
+| **14.6** `[Linux]` Uninstall — keep settings & logs | Uninstall with **"keep my settings & logs" checked**. | `config.json` + `logs/` **survive** at the data root (`~/.local/share/WsScrcpyWeb` local, or `/var/lib/ws-scrcpy-web` system); `dependencies/` is **gone either way**; a reinstall reuses the saved port. |
 | **14.7** `[Linux]` Uninstall — SELinux clean | After any uninstall, inspect fcontext + the AVC monitor. | `sudo semanage fcontext -l \| grep ws-scrcpy-web` → **empty**; zero AVC. |
 
 ## Module 15 — Windows Server-section uninstall + stop-exit cleanup
@@ -215,9 +214,8 @@ In-app **uninstall** now works on Windows (parity with Linux), and "stop server 
 | **Single instance** | Never two trays (Win) / two servers (Linux) per user/session. |
 | **Relaunch fidelity** | Every uninstall→relaunch lands on the **same port**; no orphaned processes. |
 | **Updates apply everywhere** | local, machine-wide `/opt` (no-service), user-service, and system-service (headless) all swap + relaunch on the same port; **zero AVC** on the system-service path. |
-| **Migration** | A beta.40 system install migrates to `/var/opt` carrying `webPort`/`installMode`, zero AVC. |
 | **Clean shutdown** | "stop server & exit" tears down adb (+ Win tray) with no orphans; gated off in service mode. |
 | **Data preserved** | User config/deps/logs survive uninstall + reinstall. |
 | **Core flow** | Scan → connect → stream (video + control) → shell works on both platforms. |
 
-**If a `[Linux]` SELinux/lifecycle row (Modules 2, 4, 5, the service-mode update rows 6.5/6.6, the migration row 6.7, or the Module 14 uninstall-cascade rows 14.4–14.7) or the core-flow criterion fails:** stop, run `capture-logs.sh <id>` (`.ps1` on Windows) for the evidence bundle, report back — fix before promoting 0.1.30 stable. Cosmetic/polish failures: note and triage as beta-territory vs stable-blocker. **Module 11 (no-libfuse2)** is the gate for closing item 31, not a 0.1.30-stable blocker on its own — a failure there means keep the libfuse2 gate, don't remove it.
+**If a `[Linux]` SELinux/lifecycle row (Modules 2, 4, 5, the service-mode update rows 6.5/6.6, or the Module 14 uninstall-cascade rows 14.4–14.7) or the core-flow criterion fails:** stop, run `capture-logs.sh <id>` (`.ps1` on Windows) for the evidence bundle, report back — fix before promoting 0.1.30 stable. Cosmetic/polish failures: note and triage as beta-territory vs stable-blocker. **Module 11 (no-libfuse2)** is the gate for closing item 31, not a 0.1.30-stable blocker on its own — a failure there means keep the libfuse2 gate, don't remove it.

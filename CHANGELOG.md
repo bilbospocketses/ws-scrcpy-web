@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Installing the Linux service "for all users" (system-wide) now works on Fedora, RHEL, and other SELinux distributions.** It had been failing at the SELinux labelling step: the service's data folder lived under `/var/opt`, which Fedora's SELinux policy treats as an alias of `/opt`, so the writable-data label was rejected and the folder was mislabelled as a read-only program directory the service couldn't write to. The data now lives in `/var/lib/ws-scrcpy-web` — the standard location SELinux already labels as writable application data, so no custom rule is needed. (Ubuntu/Debian were unaffected; they don't use SELinux.) Existing system-service installs are not migrated, and the old one-click "reinstall to the new layout" prompt has been removed.
+
 ## [0.1.30-beta.63] - 2026-06-12
 
 ### Fixed

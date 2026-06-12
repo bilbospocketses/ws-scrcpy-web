@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ServiceApi, buildUninstallHelperArgs, systemServiceNeedsMigration } from '../api/ServiceApi';
+import { ServiceApi, buildUninstallHelperArgs } from '../api/ServiceApi';
 import { Config } from '../Config';
 import { EnvName } from '../EnvName';
 import {
@@ -156,7 +156,7 @@ describe('ServiceApi', () => {
         expect(spawned).toHaveLength(1);
         // a `systemd-run --system` transient unit has no HOME/XDG either, so without
         // DATA_ROOT the launcher panics before running any teardown command.
-        expect(spawned[0]!.args).toContain('--setenv=DATA_ROOT=/var/opt/ws-scrcpy-web');
+        expect(spawned[0]!.args).toContain('--setenv=DATA_ROOT=/var/lib/ws-scrcpy-web');
         expect(spawned[0]!.args).toContain('--linux-service-teardown');
     });
 
@@ -1510,100 +1510,6 @@ describe('ServiceApi', () => {
         });
     });
 
-    // ── migrate-system — one-pkexec /opt/.../data -> /var/opt migration (P3a-2) ──
-    describe('migrate-system', () => {
-        let savedPlatform: NodeJS.Platform;
-        beforeEach(() => {
-            savedPlatform = process.platform;
-            // Force linux so the platform guard passes on any test-host OS.
-            Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
-        });
-        afterEach(() => {
-            Object.defineProperty(process, 'platform', { value: savedPlatform, configurable: true });
-        });
-
-        it('POST /api/service/migrate-system invokes pkexec once with old-cleanup + /var/opt setup, carries the prior webPort, returns 200', async () => {
-            // The legacy /opt/.../data/config.json read fails on a non-Linux test
-            // host, so the endpoint falls back to the running instance's webPort —
-            // which the migration must carry forward into the new /var/opt config.
-            Config.getInstance().updateAppConfig({ webPort: 8123 });
-
-            const fakePkexec = vi.fn(async (_cmd: string, _label: string) => '');
-            const api = new ServiceApi(
-                undefined,
-                undefined,
-                undefined,
-                undefined,
-                undefined,
-                fakePkexec,
-            );
-            const { req, res } = makeReqRes('/api/service/migrate-system', 'POST');
-            await api.handle(req, res);
-
-            expect((res as any).getStatus()).toBe(200);
-            const body = JSON.parse((res as any).getBody());
-            expect(body.ok).toBe(true);
-
-            expect(fakePkexec).toHaveBeenCalledTimes(1);
-            const [script, label] = fakePkexec.mock.calls[0]!;
-            // old cleanup
-            expect(script).toContain('stop WsScrcpyWeb.service');
-            expect(script).toContain('disable WsScrcpyWeb.service');
-            expect(script).toContain('rm -rf /opt/ws-scrcpy-web/data');
-            expect(script).toContain("semanage fcontext -d '/opt/ws-scrcpy-web/data(/.*)?'");
-            // new /var/opt setup
-            expect(script).toContain('mkdir -p /var/opt/ws-scrcpy-web');
-            expect(script).toContain('/var/opt/ws-scrcpy-web/config.json');
-            expect(script).toContain("semanage fcontext -a -t var_lib_t '/var/opt/ws-scrcpy-web(/.*)?'");
-            expect(script).toContain('enable --now WsScrcpyWeb.service');
-            // carries the prior webPort into the seeded config
-            expect(script).toContain('"webPort":8123');
-            // does NOT re-copy the AppImage — the binary stays in /opt
-            expect(script).not.toContain('WsScrcpyWeb.AppImage');
-            expect(label).toBe('migrate-system');
-        });
-
-        it('POST /api/service/migrate-system on non-linux returns ok:false (unsupported), pkexec NOT called', async () => {
-            Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
-            const fakePkexec = vi.fn(async (_cmd: string, _label: string) => '');
-            const api = new ServiceApi(
-                undefined,
-                undefined,
-                undefined,
-                undefined,
-                undefined,
-                fakePkexec,
-            );
-            const { req, res } = makeReqRes('/api/service/migrate-system', 'POST');
-            await api.handle(req, res);
-
-            const body = JSON.parse((res as any).getBody());
-            expect(body.ok).toBe(false);
-            expect(fakePkexec).not.toHaveBeenCalled();
-        });
-
-        it('POST /api/service/migrate-system maps a dismissed pkexec prompt to 403 (uac-declined)', async () => {
-            const fakePkexec = vi.fn(async () => {
-                throw new Error('authentication was dismissed. service install cancelled.');
-            });
-            const api = new ServiceApi(
-                undefined,
-                undefined,
-                undefined,
-                undefined,
-                undefined,
-                fakePkexec,
-            );
-            const { req, res } = makeReqRes('/api/service/migrate-system', 'POST');
-            await api.handle(req, res);
-
-            expect((res as any).getStatus()).toBe(403);
-            const body = JSON.parse((res as any).getBody());
-            expect(body.ok).toBe(false);
-            expect(body.reason).toBe('uac-declined');
-        });
-    });
-
     // ── app-uninstall (POST /api/service/uninstall-app) — beta.49 ─────────────
     //
     // Linux-only endpoint that spawns the detached Rust uninstall helper via
@@ -1858,71 +1764,6 @@ describe('ServiceApi', () => {
         const { req, res } = makeReqRes('/api/service/bogus', 'GET');
         await api.handle(req, res);
         expect((res as any).getStatus()).toBe(404);
-    });
-
-    // ── serviceMigrationNeeded — pure helper + status flag (P3a-1) ────────────
-
-    describe('systemServiceNeedsMigration', () => {
-        it('true when DATA_ROOT is the legacy /opt/.../data', () => {
-            expect(systemServiceNeedsMigration({ dataRootEnv: '/opt/ws-scrcpy-web/data', oldDataDirExists: false })).toBe(true);
-        });
-        it('true when the legacy data dir exists', () => {
-            expect(systemServiceNeedsMigration({ oldDataDirExists: true })).toBe(true);
-        });
-        it('false otherwise', () => {
-            expect(systemServiceNeedsMigration({ dataRootEnv: '/var/opt/ws-scrcpy-web', oldDataDirExists: false })).toBe(false);
-            expect(systemServiceNeedsMigration({ oldDataDirExists: false })).toBe(false);
-        });
-    });
-
-    it('GET /status on linux with legacy /opt/.../data dir present sets serviceMigrationNeeded=true', async () => {
-        // existsCheck: the legacy dir (/opt/ws-scrcpy-web/data) is present
-        const legacyDataDir = '/opt/ws-scrcpy-web/data';
-        const existsCheck = vi.fn((p: string) => p === legacyDataDir);
-
-        const client = fakeClient({ status: vi.fn(async () => 'running' as const) });
-        const factoryResult: ServiceClientFactoryResult = {
-            client,
-            supported: true,
-            platform: 'linux',
-        };
-        const api = new ServiceApi(() => factoryResult, () => 'user', existsCheck);
-        const { req, res } = makeReqRes('/api/service/status');
-        await api.handle(req, res);
-        const body = JSON.parse((res as any).getBody());
-        expect(body.serviceMigrationNeeded).toBe(true);
-        expect(existsCheck).toHaveBeenCalledWith(legacyDataDir);
-    });
-
-    it('GET /status on linux with legacy /opt/.../data dir absent sets serviceMigrationNeeded=false', async () => {
-        // existsCheck: nothing exists (neither /opt AppImage nor legacy data dir)
-        const existsCheck = vi.fn((_p: string) => false);
-
-        const client = fakeClient({ status: vi.fn(async () => 'running' as const) });
-        const factoryResult: ServiceClientFactoryResult = {
-            client,
-            supported: true,
-            platform: 'linux',
-        };
-        const api = new ServiceApi(() => factoryResult, () => 'user', existsCheck);
-        const { req, res } = makeReqRes('/api/service/status');
-        await api.handle(req, res);
-        const body = JSON.parse((res as any).getBody());
-        expect(body.serviceMigrationNeeded).toBe(false);
-    });
-
-    it('GET /status on win32 omits serviceMigrationNeeded (linux-only field)', async () => {
-        const client = fakeClient({ status: vi.fn(async () => 'running' as const) });
-        const factoryResult: ServiceClientFactoryResult = {
-            client,
-            supported: true,
-            platform: 'win32',
-        };
-        const api = new ServiceApi(() => factoryResult, () => 'user', () => true);
-        const { req, res } = makeReqRes('/api/service/status');
-        await api.handle(req, res);
-        const body = JSON.parse((res as any).getBody());
-        expect(body.serviceMigrationNeeded).toBeUndefined();
     });
 
     // ── optUpdateAvailable — launcher env flag (P3c-2) ────────────────────────

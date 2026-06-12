@@ -27,14 +27,14 @@ DATA_ROOT="${XDG_DATA_HOME:-$HOME/.local/share}/WsScrcpyWeb"
 USER_UNIT="$HOME/.config/systemd/user/$UNIT"
 SYS_UNIT="/etc/systemd/system/$UNIT"
 OPT_DIR="/opt/ws-scrcpy-web"
-VAR_OPT_DIR="/var/opt/ws-scrcpy-web"
+VAR_LIB_DIR="/var/lib/ws-scrcpy-web"
 PROC_PAT='WsScrcpyWeb|ws-scrcpy-web-tray|ws-scrcpy-web-launcher|scrcpy-server'
 
 HAVE_SEMANAGE=0; command -v semanage >/dev/null 2>&1 && HAVE_SEMANAGE=1
 HAVE_AUSEARCH=0; command -v ausearch >/dev/null 2>&1 && HAVE_AUSEARCH=1
 
 note "capturing to $OUT"
-note "sudo is used for system-scope items (AVC, system journal, /var/opt, fcontext)"
+note "sudo is used for system-scope items (AVC, system journal, /var/lib, fcontext)"
 sudo -v 2>/dev/null || note "sudo unavailable — system-scope items will be partial"
 
 # 00. environment + version + key config fields
@@ -49,7 +49,7 @@ sudo -v 2>/dev/null || note "sudo unavailable — system-scope items will be par
   echo "#   20/21 user svc    journal + status (user scope)"
   echo "#   22/23 system svc  journal + status (system scope)"
   echo "#   30-fcontext       SELinux rules (want: empty after uninstall)"
-  echo "#   31/32/33 ls -Z    /opt, /var/opt, dataRoot labels + recursive listing (leftover check)"
+  echo "#   31/32/33 ls -Z    /opt, /var/lib, dataRoot labels + recursive listing (leftover check)"
   echo "#   40/41-config      config.json (local / system)"
   echo "#   50-procs          running ws-scrcpy-web processes"
   echo "#   60/61-unit        systemd unit files"
@@ -83,12 +83,12 @@ else
   echo "(semanage absent)" > "$OUT/30-fcontext.txt"
 fi
 ls -laZ  "$OPT_DIR"      > "$OUT/31-opt-ls.txt"      2>&1
-sudo ls -laZ "$VAR_OPT_DIR" > "$OUT/32-var-opt-ls.txt"  2>&1
+sudo ls -laZ "$VAR_LIB_DIR" > "$OUT/32-var-opt-ls.txt"  2>&1
 ls -laRZ "$DATA_ROOT"   > "$OUT/33-dataroot-ls.txt" 2>&1
 
 # 40. config.json (local + system)
 cp      "$DATA_ROOT/config.json"   "$OUT/40-config-local.json"  2>/dev/null || true
-sudo cp "$VAR_OPT_DIR/config.json" "$OUT/41-config-system.json" 2>/dev/null || true
+sudo cp "$VAR_LIB_DIR/config.json" "$OUT/41-config-system.json" 2>/dev/null || true
 
 # 50. running processes
 pgrep -fa "$PROC_PAT" > "$OUT/50-procs.txt" 2>&1 || echo "(no ws-scrcpy-web processes)" > "$OUT/50-procs.txt"
@@ -99,7 +99,7 @@ sudo cp "$SYS_UNIT"  "$OUT/61-system-unit.service" 2>/dev/null || true
 
 # 70. app logs (local + system) — prefixed so the two trees never clash
 for f in "$DATA_ROOT"/logs/*.log;   do [ -e "$f" ] && cp      "$f" "$OUT/70-local-$(basename "$f")"  2>/dev/null; done
-sudo find "$VAR_OPT_DIR/logs" -maxdepth 1 -type f -name '*.log*' 2>/dev/null | while IFS= read -r f; do sudo cp "$f" "$OUT/71-system-$(basename "$f")" 2>/dev/null; done
+sudo find "$VAR_LIB_DIR/logs" -maxdepth 1 -type f -name '*.log*' 2>/dev/null | while IFS= read -r f; do sudo cp "$f" "$OUT/71-system-$(basename "$f")" 2>/dev/null; done
 
 # bundle it for easy attachment
 tar czf "$OUT.tar.gz" -C "$(dirname "$OUT")" "$(basename "$OUT")" 2>/dev/null && note "bundle: $OUT.tar.gz"
