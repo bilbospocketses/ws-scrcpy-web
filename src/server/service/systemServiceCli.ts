@@ -1,8 +1,14 @@
+// biome-ignore lint/style/useNodejsImportProtocol: webpack externals
+import { execFile } from 'child_process';
+// biome-ignore lint/style/useNodejsImportProtocol: webpack externals
+import * as fs from 'fs';
 import {
     STAGED_SYSTEM_DIR, STAGED_SYSTEM_APPIMAGE, STAGED_SYSTEM_DEPS_DIR, SYSTEM_STATE_DIR,
     renderUnitFile, buildServiceUnitEnv, buildSystemSeedConfig,
 } from './SystemdClient';
+import { resolveSystemTool } from './systemTools';
 import { WS_SCRCPY_SERVICE_NAME, WS_SCRCPY_SERVICE_DESCRIPTION } from '../../common/ServiceEvents';
+import { Config } from '../Config';
 import { Logger } from '../Logger';
 
 const log = Logger.for('systemServiceCli');
@@ -143,5 +149,40 @@ export async function runSystemServiceCli(parsed: ParsedSystemServiceArgs, deps:
         deps.log(msg);
         return 1;
     }
+}
+
+// ---------------------------------------------------------------------------
+// Production deps factory
+// ---------------------------------------------------------------------------
+
+/**
+ * Wire the real OS dependencies for use at runtime (as opposed to test stubs).
+ * The CommandRunner receives fully-resolved absolute paths from `tool`/`sbinTool`
+ * (resolveSystemTool returns /usr/bin/<t> or bare name as last-resort fallback),
+ * so no system-PATH resolution occurs in the runner itself. execFile is invoked
+ * with NO timeout option — deliberately: long-running ops (cp -a of a large
+ * deps tree, daemon-reload) must not be killed mid-flight.
+ */
+export function makeProductionCoreDeps(): CliDeps {
+    const run: CommandRunner = (argv) => new Promise((resolve) => {
+        execFile(argv[0]!, argv.slice(1), { encoding: 'utf8' }, (err, stdout, stderr) => {
+            const e = err as (NodeJS.ErrnoException & { status?: number }) | null;
+            const code = e ? (typeof e.code === 'number' ? e.code : (e.status ?? 1)) : 0;
+            resolve({ code, stdout: stdout ?? '', stderr: stderr ?? '' });
+        });
+    });
+    return {
+        getuid: () => process.getuid?.() ?? 0,
+        run,
+        writeFile: (p, content, opts) => fs.writeFileSync(p, content, opts),
+        removeFile: (p) => { try { fs.unlinkSync(p); } catch { /* already gone */ } },
+        existsCheck: (p) => fs.existsSync(p),
+        appImageSource: process.env['APPIMAGE'] ?? process.execPath,
+        depsSource: Config.getInstance().dependenciesPath,
+        tool: (t) => resolveSystemTool(t),
+        sbinTool: (t) => resolveSystemTool(t),
+        defaultPort: () => Config.getInstance().getAppConfig().webPort,
+        log: (s) => { process.stdout.write(s + '\n'); },
+    };
 }
 
