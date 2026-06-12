@@ -1,10 +1,10 @@
 # ws-scrcpy-web — Full Smoke Test
 
-> **Smoke target: `v0.1.30-beta.62`** — bump this one line each release; everything below is version-agnostic.
+> **Smoke target: `v0.1.30-beta.63`** — bump this one line each release; everything below is version-agnostic.
 
 All-encompassing manual smoke, grouped by function and tagged by platform (`[Win]` / `[Linux]` / `[Both]`). Each row is a single test: **what to verify**, **how to perform it**, and the **expected result + how to verify**. Walk top to bottom; some rows depend on state from earlier rows in the same module.
 
-> **Consolidated 2026-06-06.** This doc absorbs the three former per-feature checklists — Linux service-mode (`beta.37`), stop-server-&-exit (`beta.39`), and the Windows multi-user / MSI pass (`v0.1.25-beta.3`) — so it is the **single gate for `0.1.30` final** (the first true Windows + Linux release). It covers every shipped feature to date: install/first-run, Linux layout & SELinux, multi-user & single-instance, service mode (incl. the beta.45–48 stable-ExecStart + install hand-off + post-install port-discovery fix), lifecycle, updates (local / machine-wide / user- & system-service / migration), devices, streaming, adb, logs, Velopack 1.2.0, stop-server-&-exit, settings prompts, and the **Linux App-section UX** (install-for-all-users, start-menu icon, in-app complete uninstall — Module 14).
+> **Consolidated 2026-06-06.** This doc absorbs the three former per-feature checklists — Linux service-mode (`beta.37`), stop-server-&-exit (`beta.39`), and the Windows multi-user / MSI pass (`v0.1.25-beta.3`) — so it is the **single gate for `0.1.30` final** (the first true Windows + Linux release). It covers every shipped feature to date: install/first-run, Linux layout & SELinux, multi-user & single-instance, service mode (incl. the beta.45–48 stable-ExecStart + install hand-off + post-install port-discovery fix), lifecycle, updates (local / machine-wide / user- & system-service / migration), devices, streaming, adb, logs, Velopack 1.2.0, stop-server-&-exit, settings prompts, and the **Linux Server-section UX** (install-for-all-users, start-menu icon, in-app complete uninstall — Module 14).
 
 ## Pre-flight
 
@@ -51,6 +51,8 @@ sudo systemctl daemon-reload
 | **1.4** `[Linux]` Headless first-run | Launch over SSH / no display. | No hang; graceful fallback, no crash. |
 | **1.5** `[Win]` Fresh MSI install | Clean snapshot, log in `Admin`; install `WsScrcpyWeb-beta.msi`. | Installs clean; browser auto-opens `http://localhost:<port>`; WelcomeModal shows; Settings → About = the smoke-target version; installs to `C:\Program Files\WsScrcpyWeb\`. |
 | **1.6** `[Win]` Reinstall reuses config *(H.2)* | After 5.7's full uninstall, reinstall `WsScrcpyWeb-beta.msi`. | Installs clean; existing `config.json` under dataRoot is **detected and reused** (no fresh skeleton overwrite); app reachable on the previously-saved port. |
+| **1.7** `[Linux]` Cold-start opens one tab *(D1, beta.62)* | App fully stopped (past first-run) → GUI-launch the `.desktop` / AppImage, still **no service**. | The server boots **and exactly one** browser tab opens (the beta.62 D1 fix — it previously took a 2nd click); a later web-port-change **restart** does **not** open a second tab. |
+| **1.8** `[Win]` Cold-start opens one tab *(D4, beta.63)* | App fully stopped → launch (Start-menu / exe), **no service**. | Exactly **one** browser tab opens (the beta.63 D4 fix); a web-port-change **restart** **and** an in-app **update relaunch** do **not** double-tab (the `suppress-browser-open` marker covers Velopack's relaunch). |
 
 ## Module 2 — Linux layout & SELinux
 
@@ -158,13 +160,13 @@ Velopack is at 1.2.0 (bumped in beta.44). These rows close out item 31 (the libf
 
 ## Module 12 — Stop server & exit (item 27)
 
-beta.39 added a "stop server & exit" button (Settings → App) with graceful teardown, service-mode gating, and (Windows) a tray reap.
+beta.39 added a "stop server & exit" button (Settings → Server) with graceful teardown, service-mode gating, and (Windows) a tray reap.
 
 | Test | How to perform | Expected + verify |
 |---|---|---|
-| **12.1** `[Linux]` Local-mode clean exit + adb teardown *(SE-3)* | Local mode, a device connected + a stream running → Settings → App → "stop server & exit" → confirm. | Browser tab self-closes or blanks to **"app stopped — you can close this tab"**; process tree exits clean (`pgrep -fa WsScrcpyWeb` / `pgrep -fa adb` show nothing from this instance); the log shows `Stopping adb daemon (kill-server)` (graceful teardown ran); the launcher does **not** restart (clean `exit 0`, not the 75 restart sentinel). |
-| **12.2** `[Both]` Service-mode gating *(SE-4)* | With a service installed (Win system; Linux user- or system-scope) → Settings → App. | The button is **disabled (greyed)** with a neutral note ("managed by the system service — stop it via your service manager, or uninstall the service"); clicking fires **no** shutdown POST. After **uninstalling** the service it becomes **enabled again** (re-gates on status refresh, no reload). |
-| **12.3** `[Win]` Local-mode reaps everything *(SE-1)* | Local mode, device + stream live, tray present → Settings → App → "stop server & exit" → ok. | Confirm dialog (title "stop server & exit", modal-styled ok/cancel); server exits (tab self-closes or "app stopped" page); **the tray icon disappears** (launcher reaped it); Task Manager shows **no** lingering `ws-scrcpy-web-launcher.exe` / `node.exe` / `ws-scrcpy-web-tray.exe` / bundled `adb.exe` from this instance; **cancel** leaves everything running. |
+| **12.1** `[Linux]` Local-mode clean exit + adb teardown *(SE-3)* | Local mode, a device connected + a stream running → Settings → Server → "stop server & exit" → confirm. | Browser tab self-closes or blanks to **"app stopped — you can close this tab"**; process tree exits clean (`pgrep -fa WsScrcpyWeb` / `pgrep -fa adb` show nothing from this instance); the log shows `Stopping adb daemon (kill-server)` (graceful teardown ran); the launcher does **not** restart (clean `exit 0`, not the 75 restart sentinel). |
+| **12.2** `[Both]` Service-mode gating *(SE-4)* | With a service installed (Win system; Linux user- or system-scope) → Settings → Server. | The button is **disabled (greyed)** with a neutral note ("managed by the system service — stop it via your service manager, or uninstall the service"); clicking fires **no** shutdown POST. After **uninstalling** the service it becomes **enabled again** (re-gates on status refresh, no reload). |
+| **12.3** `[Win]` Local-mode reaps everything *(SE-1)* | Local mode, device + stream live, tray present → Settings → Server → "stop server & exit" → ok. | Confirm dialog (title "stop server & exit", modal-styled ok/cancel); server exits (tab self-closes or "app stopped" page); **the tray icon disappears** (launcher reaped it); Task Manager shows **no** lingering `ws-scrcpy-web-launcher.exe` / `node.exe` / `ws-scrcpy-web-tray.exe` / bundled `adb.exe` from this instance; **cancel** leaves everything running. |
 | **12.4** `[Linux]` DATA_ROOT override honored *(optional, item 40a)* | Launch with `DATA_ROOT=/tmp/wssw-dataroot` exported. | Config/deps/logs land under `/tmp/wssw-dataroot` (Node side **and** launcher agree — same root for spawn and for adb-reap/tray paths). Mostly unit-covered; confirms the env wiring end-to-end. |
 
 ## Module 13 — Settings: bookmark & reset prompts
@@ -173,32 +175,33 @@ beta.39 added a "stop server & exit" button (Settings → App) with graceful tea
 |---|---|---|
 | **13.1** `[Both]` Bookmark global-dismiss *(beta.32)* | Reach the bookmark / port-change reminder → check "don't show again — ever, even when the port changes" → confirm. | The confirmation dialog uses the white-outline buttons; checking it **supersedes + disables** the per-port checkbox; persists (`bookmarkDismissedGlobally` in `config.json`). |
 | **13.2** `[Both]` Reset welcome & bookmark prompts *(beta.40 fix)* | Settings → "reset welcome and bookmark prompts". | Re-shows the welcome modal **and** clears the bookmark dismissal — both **per-port** and **global** — so the reminder can re-fire. Regression check: the welcome reset must **not** re-suppress the per-port bookmark (the eager `bookmarkDismissedForPort` re-stamp is gone). |
+| **13.3** `[Both]` Server-section layout + web-port inline save *(beta.62 restructure)* | Open Settings; inspect the **Server** section (3rd, after Updates + Service). | Top→bottom: **reset welcome & bookmark prompts → web port → [Linux-only] install for all users → stop server & exit → uninstall ws-scrcpy-web**. The **web port** row has an inline **save** button to its right; the status line below it is **empty at rest** (shows `saving…` / `saved.` / an error only after you click save). Change the port → **save** → it persists and the server restarts on the new port. |
 
-## Module 14 — Linux App-section UX
+## Module 14 — Linux Server-section UX
 
-The App section adds three Settings → **App** affordances on Linux: a one-click **install for all users**, a machine-wide **start-menu icon**, and an always-available in-app **complete uninstall** — it cascades through any installed service in one pass, runs root-direct under a system service (otherwise self-elevates via **one** pkexec), and offers a **"keep my settings & logs"** option.
+The Server section adds three Settings → **Server** affordances on Linux: a one-click **install for all users**, a machine-wide **start-menu icon**, and an always-available in-app **complete uninstall** — it cascades through any installed service in one pass, runs root-direct under a system service (otherwise self-elevates via **one** pkexec), and offers a **"keep my settings & logs"** option.
 
 | Test | How to perform | Expected + verify |
 |---|---|---|
-| **14.1** `[Linux]` Install-for-all-users button | Local (me-only) install running → Settings → **App** → **install for all users**; authenticate the one prompt. | One pkexec; the binary **relocates to `/opt/ws-scrcpy-web/`**; the button then **greys/disables** reading "already installed for all users (/opt)"; the app keeps serving on the same port. |
+| **14.1** `[Linux]` Install-for-all-users button | Local (me-only) install running → Settings → **Server** → **install for all users**; authenticate the one prompt. | One pkexec; the binary **relocates to `/opt/ws-scrcpy-web/`**; the button then **greys/disables** reading "already installed for all users (/opt)"; the app keeps serving on the same port. |
 | **14.2** `[Linux]` Start-menu icon | After a machine-wide install (14.1 or 1.2), open the desktop apps menu; also check disk. | The launcher entry shows the **ws-scrcpy-web icon** (not a generic placeholder); `ls /usr/share/icons/hicolor/256x256/apps/ws-scrcpy-web.png` → exists. |
-| **14.3** `[Linux]` Complete uninstall — local | Local mode → Settings → **App** → **uninstall…** → confirm with **"keep my settings & logs" unchecked**. | App removed; tab shows "uninstalled — close this tab"; `clear-install.sh` verifies a **CLEAN SLATE** (no leftover binary / deps / config / decline marker). |
+| **14.3** `[Linux]` Complete uninstall — local | Local mode → Settings → **Server** → **uninstall…** → confirm with **"keep my settings & logs" unchecked**. | App removed; tab shows "uninstalled — close this tab"; `clear-install.sh` verifies a **CLEAN SLATE** (no leftover binary / deps / config / decline marker). |
 | **14.4** `[Linux]` Uninstall — user-service cascade | User-scope service installed (machine-wide `/opt` binary) → **uninstall…** → confirm. | **One pkexec** (for the `/opt` removal); the `--user` unit is **gone** AND the app is **removed in one pass**; no relaunch. |
 | **14.5** `[Linux]` Uninstall — system-service cascade | System-scope service installed → **uninstall…** (from the root service context). | Runs **as root, NO pkexec**; `/opt/ws-scrcpy-web` + `/var/opt/ws-scrcpy-web` + the systemd unit are **all gone**; zero AVC. |
 | **14.6** `[Linux]` Uninstall — keep settings & logs | Uninstall with **"keep my settings & logs" checked**. | `config.json` + `logs/` **survive** at the data root (`~/.local/share/WsScrcpyWeb` local, or `/var/opt/ws-scrcpy-web` system); `dependencies/` is **gone either way**; a reinstall reuses the saved port. |
 | **14.7** `[Linux]` Uninstall — SELinux clean | After any uninstall, inspect fcontext + the AVC monitor. | `sudo semanage fcontext -l \| grep ws-scrcpy-web` → **empty**; zero AVC. |
 
-## Module 15 — Windows App-section uninstall + stop-exit cleanup
+## Module 15 — Windows Server-section uninstall + stop-exit cleanup
 
 In-app **uninstall** now works on Windows (parity with Linux), and "stop server & exit" fully reaps the tray + stray adb. The uninstall triggers Velopack's `Update.exe --uninstall`; **the elevation path and the running-helper self-deletion are the things to settle on the VM** (flagged rows).
 
 | Test | How to perform | Expected + verify |
 |---|---|---|
-| **15.1** `[Win]` In-app uninstall — keep | MSI install → Settings → **App** → **uninstall** → modal with **keep checked** (default) → uninstall. | **One UAC prompt** (Update.exe self-elevates); `C:\Program Files\WsScrcpyWeb\` gone; service gone (`sc query WsScrcpyWeb` → not found); **tray gone**; **Add/Remove-Programs entry gone** (no orphan); `config.json` + `logs/` **survive** under `%ProgramData%\WsScrcpyWeb`, `dependencies/` gone; reinstall reuses the saved port. |
+| **15.1** `[Win]` In-app uninstall — keep | MSI install → Settings → **Server** → **uninstall** → modal with **keep checked** (default) → uninstall. | **One UAC prompt** (Update.exe self-elevates); `C:\Program Files\WsScrcpyWeb\` gone; service gone (`sc query WsScrcpyWeb` → not found); **tray gone**; **Add/Remove-Programs entry gone** (no orphan); `config.json` + `logs/` **survive** under `%ProgramData%\WsScrcpyWeb`, `dependencies/` gone; reinstall reuses the saved port. |
 | **15.2** `[Win]` In-app uninstall — wipe | Same, but **uncheck** keep. | As 15.1 but the **whole `%ProgramData%\WsScrcpyWeb` is gone** — including `control\operation-server\` (the **beta.52** temp-copy-cleaner fix: the deleter runs from a temp copy after the original exits). Capture `capture-logs.ps1 15.2-wipe` and confirm `31-dataroot` shows it absent. |
 | **15.3** `[Win]` Uninstall modal UX | Open the uninstall modal. | Top-layer overlay above Settings; **cancel** white-outline, **uninstall** red text + red border; keep checkbox **checked by default**; cancel / Esc / backdrop = no action. |
-| **15.4** `[Win]` Stop-exit reaps tray + adb *(item 4)* | Local mode, device + stream live → Settings → **App** → **stop server & exit**. | Tab closes / "app stopped"; Task Manager shows **no** lingering `ws-scrcpy-web-launcher.exe` / `node.exe` / `ws-scrcpy-web-tray.exe` / `adb.exe` — the tray is reaped (poll thread stopped first) **and** stray adb is `taskkill`'d. |
-| **15.5** `[Win]` App-section order | Settings → App. | Order top→bottom: **reset prompts → stop server & exit → uninstall ws-scrcpy-web** (no "install for all users" on Windows). |
+| **15.4** `[Win]` Stop-exit reaps tray + adb *(item 4)* | Local mode, device + stream live → Settings → **Server** → **stop server & exit**. | Tab closes / "app stopped"; Task Manager shows **no** lingering `ws-scrcpy-web-launcher.exe` / `node.exe` / `ws-scrcpy-web-tray.exe` / `adb.exe` — the tray is reaped (poll thread stopped first) **and** stray adb is `taskkill`'d. |
+| **15.5** `[Win]` Server-section order | Settings → Server. | Order top→bottom: **reset prompts → web port → stop server & exit → uninstall ws-scrcpy-web** (no "install for all users" on Windows). |
 
 > **VM decision to settle (beta.51):** does `Update.exe --uninstall` self-elevate when launched by the unelevated staged launcher (15.1 UAC)? If it needs an already-elevated caller, route the Node spawn through the launcher's `--request-uac` / `--elevate-and-run` seam with a new `windows-app-uninstall` command. *(The earlier wipe-self-deletion concern — the helper orphaning `control\operation-server\` — is **fixed in beta.52**: the cleaner runs from a temp copy after the original exits; 15.2 confirms it.)*
 

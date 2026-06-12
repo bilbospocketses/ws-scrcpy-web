@@ -1,10 +1,10 @@
 # ws-scrcpy-web — Smoke Test Runbook (plain-English)
 
-> **Smoke target: `v0.1.30-beta.62`** — bump this one line each release; everything below is version-agnostic.
+> **Smoke target: `v0.1.30-beta.63`** — bump this one line each release; everything below is version-agnostic.
 
 **What this is.** A step-by-step manual test pass for the **ws-scrcpy-web** app. Completing it is the agreed gate before cutting the **0.1.30 final** release — the "prove it really installs, updates, and streams on Windows + Linux" check. You run it by hand on your test VMs plus a real Android device; it can't be automated from a chat.
 
-**Source of truth.** This is the plain-English twin of `docs/smoke-tests/smoke-full.md` in the repo. Same 74 tests, jargon spelled out, laid out as fixed-width tables you can keep open and tick through. If the two ever disagree, **the repo doc wins** — tell me and I'll re-sync this one.
+**Source of truth.** This is the plain-English twin of `docs/smoke-tests/smoke-full.md` in the repo. Same 77 tests, jargon spelled out, laid out as fixed-width tables you can keep open and tick through. If the two ever disagree, **the repo doc wins** — tell me and I'll re-sync this one.
 
 ## How to use this runbook
 
@@ -158,6 +158,15 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 │ 1.6 Reinstall reuses │ Win  │ After the full uninstall in  │ Installs cleanly and REUSES your old settings    │ [ ]  │
 │ config               │      │ test 5.7, install the MSI    │ file (config.json) instead of overwriting it;    │      │
 │                      │      │ again.                       │ the app returns on the port you had before.      │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 1.7 Cold-start tab   │ Lin  │ Fully quit (past first-run); │ The server boots AND exactly one browser tab     │ [ ]  │
+│ (D1)                 │      │ relaunch the menu entry /    │ opens (the beta.62 D1 fix - it took a 2nd click  │      │
+│                      │      │ AppImage, no service yet.    │ before); a later web-port-change restart adds no │      │
+│                      │      │                              │ second tab.                                      │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 1.8 Cold-start tab   │ Win  │ Fully quit, then relaunch    │ Exactly one browser tab opens (the beta.63 D4    │ [ ]  │
+│ (D4)                 │      │ (Start-menu / exe), no       │ fix); a web-port-change restart AND an in-app    │      │
+│                      │      │ service.                     │ update relaunch do NOT double-tab.               │      │
 └──────────────────────┴──────┴──────────────────────────────┴──────────────────────────────────────────────────┴──────┘
 ```
 
@@ -479,7 +488,7 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 ```
 
 ### Module 12 — Stop server & exit
-*The "stop server & exit" button in Settings → App.*
+*The "stop server & exit" button in Settings → Server.*
 
 ```text
 ┌──────────────────────┬──────┬──────────────────────────────┬──────────────────────────────────────────────────┬──────┐
@@ -487,19 +496,19 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
 │ 12.1 Clean exit +    │ Lin  │ Local mode, a device         │ The tab self-closes or shows "app stopped - you  │ [ ]  │
 │ adb shutdown (Linux) │      │ connected + a stream running │ can close this tab"; everything shuts down (no   │      │
-│                      │      │ > Settings > App > "stop     │ leftover app or adb processes); the log shows    │      │
+│                      │      │ > Settings > Server > "stop  │ leftover app or adb processes); the log shows    │      │
 │                      │      │ server & exit" > confirm.    │ "Stopping adb daemon (kill-server)"; the         │      │
 │                      │      │                              │ launcher does NOT restart (clean exit, not the   │      │
 │                      │      │                              │ restart code).                                   │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
 │ 12.2 Disabled in     │ Both │ With a service installed     │ The button is greyed with a note ("managed by    │ [ ]  │
 │ service mode         │      │ (Windows system; Linux user  │ the system service..."); clicking does nothing.  │      │
-│                      │      │ or system) > Settings > App. │ After you UNINSTALL the service it becomes       │      │
-│                      │      │                              │ usable again (no page reload).                   │      │
+│                      │      │ or system) > Settings >      │ After you UNINSTALL the service it becomes       │      │
+│                      │      │ Server.                      │ usable again (no page reload).                   │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
 │ 12.3 Windows reaps   │ Win  │ Local mode, device + stream  │ A confirm dialog; the server exits (tab closes / │ [ ]  │
 │ everything           │      │ live, tray present >         │ "app stopped" page); the TRAY ICON disappears;   │      │
-│                      │      │ Settings > App > "stop       │ Task Manager shows no leftover                   │      │
+│                      │      │ Settings > Server > "stop    │ Task Manager shows no leftover                   │      │
 │                      │      │ server & exit" > ok.         │ launcher/node/tray/adb; Cancel leaves everything │      │
 │                      │      │                              │ running.                                         │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
@@ -526,18 +535,25 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 │ prompts              │      │ and bookmark prompts".       │ reminder is cleared (both per-port and "ever"),  │      │
 │                      │      │                              │ so it can re-appear. Check it does NOT           │      │
 │                      │      │                              │ immediately re-suppress the per-port reminder.   │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 13.3 Server-section  │ Both │ Open Settings; look at the   │ Top to bottom: reset prompts > web port > [Linux │ [ ]  │
+│ layout               │      │ Server section (3rd, after   │ only] install for all users > stop server & exit │      │
+│                      │      │ Updates + Service).          │ > uninstall. The web port row has an inline      │      │
+│                      │      │                              │ 'save' button; the status line below it is empty │      │
+│                      │      │                              │ at rest (only saving... / saved. / an error after│      │
+│                      │      │                              │ you click save).                                 │      │
 └──────────────────────┴──────┴──────────────────────────────┴──────────────────────────────────────────────────┴──────┘
 ```
 
-### Module 14 — Linux App section UX
-*The App section adds three Settings → App affordances on Linux: a one-click "install for all users" button, a machine-wide start-menu icon, and an always-available in-app "complete uninstall". The uninstall cascades through any installed service in one pass — it runs root-direct under a system service, otherwise self-elevates via ONE pkexec — and offers a "keep my settings & logs" option.*
+### Module 14 — Linux Server section UX
+*The Server section adds three Settings → Server affordances on Linux: a one-click "install for all users" button, a machine-wide start-menu icon, and an always-available in-app "complete uninstall". The uninstall cascades through any installed service in one pass — it runs root-direct under a system service, otherwise self-elevates via ONE pkexec — and offers a "keep my settings & logs" option.*
 
 ```text
 ┌──────────────────────┬──────┬──────────────────────────────┬──────────────────────────────────────────────────┬──────┐
 │ Test                 │ OS   │ Do this                      │ Pass - what you should see                       │ Done │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
 │ 14.1 Install for     │ Lin  │ From a local (me-only)       │ Exactly one pkexec prompt. The binary            │ [ ]  │
-│ all users            │      │ install: Settings > App >    │ relocates to /opt/ws-scrcpy-web/; the            │      │
+│ all users            │      │ install: Settings > Server > │ relocates to /opt/ws-scrcpy-web/; the            │      │
 │                      │      │ click 'install for all       │ button then greys/disables, reading              │      │
 │                      │      │ users'; authenticate the     │ 'already installed for all users                 │      │
 │                      │      │ single prompt.               │ (/opt)'; the app keeps serving on the            │      │
@@ -548,7 +564,7 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 │                      │      │ apps menu.                   │ /usr/share/icons/hicolor/256x256/apps            │      │
 │                      │      │                              │ /ws-scrcpy-web.png exists.                       │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
-│ 14.3 Uninstall -     │ Lin  │ Settings > App >             │ App removed; the browser tab shows               │ [ ]  │
+│ 14.3 Uninstall -     │ Lin  │ Settings > Server >          │ App removed; the browser tab shows               │ [ ]  │
 │ local mode           │      │ 'uninstall...' > confirm     │ 'uninstalled - close this tab'. Running          │      │
 │                      │      │ with 'keep my settings &     │ clear-install.sh verifies a CLEAN SLATE:         │      │
 │                      │      │ logs' UNCHECKED.             │ no leftover binary, dependencies,                │      │
@@ -578,18 +594,18 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 └──────────────────────┴──────┴──────────────────────────────┴──────────────────────────────────────────────────┴──────┘
 ```
 
-### Module 15 — Windows App section: uninstall + stop-exit
+### Module 15 — Windows Server section: uninstall + stop-exit
 *New on Windows in beta.51 (in-app uninstall), with the **wipe** fully fixed in beta.52. The uninstall cleaner runs with logging OFF by design, so the evidence is filesystem / registry / temp state — capture it with `capture-logs.ps1 <label>` (see Pre-flight) at each row, especially 15.2.*
 
 ```text
 ┌──────────────────────┬──────┬──────────────────────────────┬──────────────────────────────────────────────────┬──────┐
 │ Test                 │ OS   │ Do this                      │ Pass - what you should see                       │ Done │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
-│ 15.1 Uninstall -     │ Win  │ MSI install > Settings > App │ One UAC prompt (Update.exe self-elevates).       │ [ ]  │
-│ keep                 │      │ > "uninstall" > leave "keep  │ Program Files\WsScrcpyWeb gone; service gone (sc │      │
-│                      │      │ my settings & logs" CHECKED  │ query = not found); tray gone; the Add/Remove    │      │
-│                      │      │ (default) > uninstall.       │ Programs entry is gone. config.json + logs       │      │
-│                      │      │                              │ survive under ProgramData\WsScrcpyWeb;           │      │
+│ 15.1 Uninstall -     │ Win  │ MSI install > Settings >     │ One UAC prompt (Update.exe self-elevates).       │ [ ]  │
+│ keep                 │      │ Server > "uninstall" > leave │ Program Files\WsScrcpyWeb gone; service gone (sc │      │
+│                      │      │ "keep my settings & logs"    │ query = not found); tray gone; the Add/Remove    │      │
+│                      │      │ CHECKED (default) >          │ Programs entry is gone. config.json + logs       │      │
+│                      │      │ uninstall.                   │ survive under ProgramData\WsScrcpyWeb;           │      │
 │                      │      │                              │ dependencies gone. A later reinstall reuses the  │      │
 │                      │      │                              │ saved port.                                      │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
@@ -606,13 +622,13 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 │                      │      │                              │ settings & logs" box is checked by default;      │      │
 │                      │      │                              │ Cancel / Esc / clicking outside all do nothing.  │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
-│ 15.4 Stop-exit reaps │ Win  │ Local mode, a device +       │ The tab closes / shows "app stopped"; Task       │ [ ]  │
-│ all                  │      │ stream live > Settings > App │ Manager shows NO leftover launcher, node, tray,  │      │
-│                      │      │ > "stop server & exit".      │ or adb processes.                                │      │
+│ 15.4 Stop-exit reaps │ Win  │ Local mode, a device + stream│ The tab closes / shows "app stopped"; Task       │ [ ]  │
+│ all                  │      │ live > Settings > Server >   │ Manager shows NO leftover launcher, node, tray,  │      │
+│                      │      │ "stop server & exit".        │ or adb processes.                                │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
-│ 15.5 App section     │ Win  │ Open Settings > App.         │ Top to bottom: reset prompts > stop server &     │ [ ]  │
-│ order                │      │                              │ exit > uninstall ws-scrcpy-web. (No "install for │      │
-│                      │      │                              │ all users" on Windows.)                          │      │
+│ 15.5 Server section  │ Win  │ Open Settings > Server.      │ Top to bottom: reset prompts > web port > stop   │ [ ]  │
+│ order                │      │                              │ server & exit > uninstall ws-scrcpy-web. (No     │      │
+│                      │      │                              │ "install for all users" on Windows.)             │      │
 └──────────────────────┴──────┴──────────────────────────────┴──────────────────────────────────────────────────┴──────┘
 ```
 
@@ -652,4 +668,4 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 
 **If any Linux SELinux/lifecycle test (Modules 2, 4, 5, the service-update rows 6.5/6.6, or migration 6.7) — or the core-flow criterion — fails:** stop, **run `capture-logs.sh <id>` (Pre-flight F; `.ps1` on Windows)** for the evidence bundle, and report it before promoting 0.1.30 to stable. Cosmetic/polish failures: note and triage later. **Module 11 (no-libfuse2)** is optional — a failure there just means keep the libfuse2 code; it doesn't block 0.1.30.
 
-*Plain-English companion to [`smoke-full.md`](./smoke-full.md), the canonical machine-precise checklist. Same 74 tests with the jargon spelled out; if the two ever diverge, the full doc wins.*
+*Plain-English companion to [`smoke-full.md`](./smoke-full.md), the canonical machine-precise checklist. Same 77 tests with the jargon spelled out; if the two ever diverge, the full doc wins.*

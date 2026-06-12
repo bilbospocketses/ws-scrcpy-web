@@ -1,11 +1,11 @@
 # ws-scrcpy-web — Smoke Run-Sheet
 
-> **Smoke target: `v0.1.30-beta.62`** — bump this one line each release; everything below is version-agnostic.
+> **Smoke target: `v0.1.30-beta.63`** — bump this one line each release; everything below is version-agnostic.
 
 Execution-ordered, tickable checklist for the 0.1.30 Linux smoke gate. Regroups the canonical rows from
 [`smoke-full.md`](./smoke-full.md) by **app state** — the order you actually run them; that doc
 stays the module-organized reference. Wherever a row shows a version, expect the **smoke-target version** (top of this doc),
-which carries the beta.48 port-discovery fix plus the App-section UX (batch #15).
+which carries the beta.48 port-discovery fix plus the Server-section UX (batch #15).
 
 **Legend:** ✅ passed · ☐ to run · 🧩 needs setup (fresh snapshot / 2nd user / 2nd admin / beta.40 artifact / no-libfuse2 host) · 📱 needs a real device · 🪟 Windows pass (separate snapshot)
 
@@ -36,6 +36,7 @@ Boxes start unticked — this is a fresh pass.
 |---|---|---|
 | ☐ **1.2** `[L]` Accept "all users" | GUI double-click the non-`+x` AppImage → **yes, all users** → one pkexec | Binary at `/opt/ws-scrcpy-web/`; `/opt/ws-scrcpy-web/VERSION` = the smoke-target version; system `.desktop` present; original `~/Downloads` AppImage **gone** |
 | ☐ **4.1** `[L]` System-scope gate un-greys | **Before installing any service** (a service install flips `scopeRadioState.locked` → radios go read-only; see 4.4): Settings → service → select **system** scope | Now **selectable** + its install **un-greyed** now that you're machine-wide; was gated *"requires installing system-wide for all users first"* before 1.2 |
+| ☐ **1.7** `[L]` Cold-start opens one tab *(D1)* | After 1.2, fully quit, then GUI-launch the menu entry / AppImage again (still **no service**) | Server boots **and exactly one** browser tab opens (beta.62 D1 — previously took a 2nd click); a web-port-change **restart** adds **no** 2nd tab |
 | ☐ **4.2-user** `[L]` Install user service | Settings → service → **user** scope → install (no elevation) | Service active on 8000; stable ExecStart; **no "port discovery timed out"** (the beta.48 fix) |
 
 ## #7 — Current install checks ▶ active *(machine-wide + user-service in place, no teardown)*
@@ -45,18 +46,19 @@ Boxes start unticked — this is a fresh pass.
 | ☐ **2.1** `[L]` Binary/deps labels | `ls -Z /opt/ws-scrcpy-web` | → **bin_t** — `VERSION` + `WsScrcpyWeb.AppImage` both `unconfined_u:object_r:bin_t:s0` |
 | ☐ **2.4** `[L]` Zero AVC | Watch `sudo journalctl -f \| grep -i avc` across the installs | **No** AVC denials |
 | ☐ **4.4** `[L]` Scope-radio legibility *(locked-radios state — counterpart to 4.1)* | Reopen Settings | Selected dot a **clear blue**; radios non-interactive (`pointer-events:none` + `tabindex=-1`, **not** `disabled`); **user** scope shown selected |
+| ☐ **13.3** `[B]` Server-section layout + web-port save | Reopen Settings → inspect the **Server** section (3rd, after Updates + Service) | Rows top→bottom: **reset prompts → web port → [L-only] install for all users → stop server & exit → uninstall**; **web port** has an inline **save** button; status below **empty at rest** (only `saving…`/`saved.`/error after save); change port → save → persists + restarts |
 | ☐ **4.6** `[L]` Unit hygiene | `cat ~/.config/systemd/user/WsScrcpyWeb.service` (StartLimit* under **[Unit]**); `journalctl --user -u WsScrcpyWeb -b` (**current boot only**); `pgrep -fa WsScrcpyWeb` | **No** `Unknown key 'StartLimitIntervalSec'` — must use **`-b`**: the persisted journal keeps stale pre-fix warnings from old installs that false-fail a whole-history grep; **only the service** runs (no leftover home instance); no false timeout toast |
 | ☐ **3.2** `[L]` Single-instance flock | Launch a 2nd copy from `/opt` **and** from `~/Downloads` | 2nd launch **blocked** (flock on `$XDG_RUNTIME_DIR`); no 2nd server; existing URL opens |
 | ☐ **10.1** `[B]` Status API | Browse `/api/service/status` | JSON with correct `platform`, `supported`, `status` |
 | ☐ **10.3** `[L]` Logs clean | Tail `~/.local/share/WsScrcpyWeb/logs` | No error spam; teardown logs on stop |
-| ☐ **12.2** `[B]` Stop-exit gating | Settings → App (service installed) | Button **greyed** + neutral note; clicking fires **no** shutdown POST; re-enables after uninstall |
+| ☐ **12.2** `[B]` Stop-exit gating | Settings → Server (service installed) | Button **greyed** + neutral note; clicking fires **no** shutdown POST; re-enables after uninstall |
 
 ## #8 — User-service uninstall → local mode
 
 | Test | How to perform | Expected + verify |
 |---|---|---|
 | ☐ **5.8** `[L]` Uninstall → relaunch local | Uninstall the user service **as that user** | Unit file gone (`~/.config/systemd/user/WsScrcpyWeb.service`); after relaunch **only the single local instance** runs (launcher + node + its pre-warmed adb daemon) — **no service procs, no 2nd instance, no `scrcpy-server`** (`pgrep -fa "adb\|scrcpy-server\|WsScrcpyWeb"`); relaunches **local mode**; Settings shows not-installed |
-| ☐ **12.1** `[L]` Clean exit + adb teardown | Local mode, device + stream → Settings → App → "stop server & exit" | Tab self-closes/"app stopped"; process tree exits clean; log shows "Stopping adb daemon"; launcher **exit 0** (no 75 restart) |
+| ☐ **12.1** `[L]` Clean exit + adb teardown | Local mode, device + stream → Settings → Server → "stop server & exit" | Tab self-closes/"app stopped"; process tree exits clean; log shows "Stopping adb daemon"; launcher **exit 0** (no 75 restart) |
 | ☐ **12.4** `[L]` DATA_ROOT override | Launch with `DATA_ROOT=/tmp/wssw-dataroot` exported | Config/deps/logs land there (Node **and** launcher agree) |
 | ☐ **13.1** `[B]` Bookmark global-dismiss | Bookmark/port-change reminder → check "don't show again — ever" | Supersedes + disables the per-port checkbox; persists `bookmarkDismissedGlobally` |
 | ☐ **13.2** `[B]` Reset prompts | Settings → "reset welcome and bookmark prompts" | Re-shows welcome **and** clears bookmark (per-port + global); welcome reset must **not** re-suppress the per-port bookmark |
@@ -127,6 +129,7 @@ Get the from-build first: `gh run download 26859605903 --repo bilbospocketses/ws
 |---|---|---|
 | ☐ **1.5** `[W]` Fresh MSI install | Install `WsScrcpyWeb-beta.msi` as Admin | Auto-opens; WelcomeModal; About = the smoke-target version; `C:\Program Files\WsScrcpyWeb\` |
 | ☐ **1.6** `[W]` Reinstall reuses config | After 5.7, reinstall the MSI | Existing `config.json` detected + reused; same saved port |
+| ☐ **1.8** `[W]` Cold-start opens one tab *(D4)* | Fully quit, then relaunch (Start-menu / exe), **no service** | Exactly **one** browser tab opens (beta.63 D4); a web-port-change **restart** and an in-app **update relaunch** do **not** double-tab |
 | ☐ **3.4** `[W]` Per-session tray | Service installed; Fast User Switch Admin→User1→User2 | Exactly **one** tray/session (~2s); "Open" → same backend port |
 | ☐ **3.5** `[W]` 2nd tray rejected | Launch a 2nd `ws-scrcpy-web-tray.exe` | No 2nd tray; spawned proc exits ~100ms |
 | ☐ **4.3** `[W]` Install confirm UX | Settings → install service → test cancel/Esc/backdrop, then continue | Cancel/Esc/backdrop = **no** UAC/no fetch; continue → UAC → installs, no WelcomeModal |
@@ -140,31 +143,31 @@ Get the from-build first: `gh run download 26859605903 --repo bilbospocketses/ws
 | ☐ **11.4** `[W]` PerMachine intact | After the MSI install, check the location | `C:\Program Files\WsScrcpyWeb\` (PerMachine) |
 | ☐ **12.3** `[W]` Stop-exit reaps tray | Local mode → stop server & exit | Tray disappears; no lingering launcher/node/tray/adb; **cancel** leaves running |
 
-## #15 — App-section UX (Linux)
+## #15 — Server-section UX (Linux)
 
-App-section additions (no module-doc counterpart): the one-click **install for all users**, the machine-wide start-menu icon, and the in-app **uninstall** flows.
+Server-section additions (no module-doc counterpart): the one-click **install for all users**, the machine-wide start-menu icon, and the in-app **uninstall** flows.
 
 | Test | How to perform | Expected + verify |
 |---|---|---|
-| ☐ **15.1** `[L]` install-for-all-users button | Local (me-only) install running → Settings → **App** → click **install for all users**; authenticate the one prompt. | One pkexec; binary **relocates to `/opt/ws-scrcpy-web/`**; the button then goes **greyed/disabled** reading **"already installed for all users (/opt)"**; app keeps serving on the same port. |
+| ☐ **15.1** `[L]` install-for-all-users button | Local (me-only) install running → Settings → **Server** → click **install for all users**; authenticate the one prompt. | One pkexec; binary **relocates to `/opt/ws-scrcpy-web/`**; the button then goes **greyed/disabled** reading **"already installed for all users (/opt)"**; app keeps serving on the same port. |
 | ☐ **15.2** `[L]` start-menu icon | After a machine-wide install (15.1 or 1.2), open the desktop apps menu and find the **ws-scrcpy-web** entry; also check the icon on disk. | The launcher entry shows the **ws-scrcpy-web icon** (not a generic placeholder); `ls /usr/share/icons/hicolor/256x256/apps/ws-scrcpy-web.png` → **exists**. |
-| ☐ **15.3** `[L]` uninstall — local | Local mode → Settings → **App** → **uninstall…** → confirm (leave **"keep my settings & logs" unchecked**). | App removed; tab shows **"uninstalled — close this tab"**; `docs/smoke-tests/clear-install.sh` verify → **CLEAN SLATE** (no leftover binary / deps / config / decline marker). |
-| ☐ **15.4** `[L]` uninstall — user-service cascade | User-scope service installed (machine-wide `/opt` binary) → Settings → **App** → **uninstall…** → confirm. | **One pkexec** (for the `/opt` removal); the `--user` unit is **gone** AND the app is **removed in one pass**; **no relaunch**. |
+| ☐ **15.3** `[L]` uninstall — local | Local mode → Settings → **Server** → **uninstall…** → confirm (leave **"keep my settings & logs" unchecked**). | App removed; tab shows **"uninstalled — close this tab"**; `docs/smoke-tests/clear-install.sh` verify → **CLEAN SLATE** (no leftover binary / deps / config / decline marker). |
+| ☐ **15.4** `[L]` uninstall — user-service cascade | User-scope service installed (machine-wide `/opt` binary) → Settings → **Server** → **uninstall…** → confirm. | **One pkexec** (for the `/opt` removal); the `--user` unit is **gone** AND the app is **removed in one pass**; **no relaunch**. |
 | ☐ **15.5** `[L]` uninstall — system-service cascade | System-scope service installed → **uninstall…** (runs from the root service context). | Runs **as root, NO pkexec**; `/opt/ws-scrcpy-web` + `/var/opt/ws-scrcpy-web` + the systemd unit are **all gone**; **zero AVC**. |
 | ☐ **15.6** `[L]` uninstall — keep settings & logs | Uninstall with **"keep my settings & logs" checked**. | `config.json` + `logs/` **survive** at the data root (`~/.local/share/WsScrcpyWeb` local, or `/var/opt/ws-scrcpy-web` system); `dependencies/` is **gone either way**; a **reinstall reuses the saved port**. |
 | ☐ **15.7** `[L]` uninstall — SELinux clean | After any uninstall, inspect the fcontext rules + the AVC monitor. | `sudo semanage fcontext -l \| grep ws-scrcpy-web` → **empty**; **zero AVC**. |
 
-## #16 — Windows App-section: in-app uninstall + stop-exit 🪟 *(drive from smoke-full Module 15)*
+## #16 — Windows Server-section: in-app uninstall + stop-exit 🪟 *(drive from smoke-full Module 15)*
 
 New in beta.51, the wipe self-deletion fixed in beta.52. Run on the clean Win11 snapshot after the MSI install. The `[W]` tag distinguishes these from the Linux `15.x` rows in #15.
 
 | Test | How to perform | Expected + verify |
 |---|---|---|
-| ☐ **15.1** `[W]` In-app uninstall — keep | MSI install → Settings → **App** → **uninstall** → keep **checked** (default) → uninstall | **One UAC** (Update.exe self-elevates — VM decision #1); `C:\Program Files\WsScrcpyWeb\` gone; service gone (`sc query WsScrcpyWeb` → not found); tray gone; **ARP entry gone**; `config.json` + `logs\` **survive** under `%ProgramData%\WsScrcpyWeb`, `dependencies\` gone; reinstall reuses the saved port |
+| ☐ **15.1** `[W]` In-app uninstall — keep | MSI install → Settings → **Server** → **uninstall** → keep **checked** (default) → uninstall | **One UAC** (Update.exe self-elevates — VM decision #1); `C:\Program Files\WsScrcpyWeb\` gone; service gone (`sc query WsScrcpyWeb` → not found); tray gone; **ARP entry gone**; `config.json` + `logs\` **survive** under `%ProgramData%\WsScrcpyWeb`, `dependencies\` gone; reinstall reuses the saved port |
 | ☐ **15.2** `[W]` In-app uninstall — wipe | Same but **uncheck** keep | As 15.1, **and the whole `%ProgramData%\WsScrcpyWeb` is gone** — incl. `control\operation-server\` (the beta.52 fix: the temp-copy cleaner removes it after the original exits). Confirm **no** leftover dir — `capture-logs.ps1 15.2-wipe`, then check `31-dataroot` |
 | ☐ **15.3** `[W]` Uninstall modal UX | Open the uninstall modal | Top-layer overlay above Settings; **cancel** white-outline, **uninstall** red text + border; keep checkbox **checked by default**; cancel / Esc / backdrop = no action |
-| ☐ **15.4** `[W]` Stop-exit reaps tray + adb | Local mode, device + stream live → Settings → **App** → **stop server & exit** | Tab closes / "app stopped"; Task Manager shows **no** lingering `ws-scrcpy-web-launcher.exe` / `node.exe` / `ws-scrcpy-web-tray.exe` / `adb.exe` |
-| ☐ **15.5** `[W]` App-section order | Settings → App | Order top→bottom: **reset prompts → stop server & exit → uninstall ws-scrcpy-web** (no "install for all users" on Windows) |
+| ☐ **15.4** `[W]` Stop-exit reaps tray + adb | Local mode, device + stream live → Settings → **Server** → **stop server & exit** | Tab closes / "app stopped"; Task Manager shows **no** lingering `ws-scrcpy-web-launcher.exe` / `node.exe` / `ws-scrcpy-web-tray.exe` / `adb.exe` |
+| ☐ **15.5** `[W]` Server-section order | Settings → Server | Order top→bottom: **reset prompts → web port → stop server & exit → uninstall ws-scrcpy-web** (no "install for all users" on Windows) |
 
 ---
 
