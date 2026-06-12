@@ -99,8 +99,8 @@ const defaultRunElevated: CommandRunner = (argv) =>
     new Promise((resolve) => {
         const [cmd, ...rest] = argv;
         execFile(cmd!, rest, { maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
-            const e = err as (NodeJS.ErrnoException & { code?: number }) | null;
-            const code = typeof e?.code === 'number' ? e.code : e ? 1 : 0;
+            const e = err as (NodeJS.ErrnoException & { code?: number; status?: number }) | null;
+            const code = e ? (typeof e.code === 'number' ? e.code : (e.status ?? 1)) : 0;
             resolve({ code, stdout: stdout?.toString() ?? '', stderr: stderr?.toString() ?? '' });
         });
     });
@@ -441,6 +441,11 @@ export class ServiceApi {
         if (result.platform === 'linux' && scope === 'system') {
             const port = cfg.getAppConfig().webPort;
             const pkexec = resolveSystemTool('pkexec');
+            // binPath here is the app's own AppImage ($APPIMAGE). From-source runs
+            // (where $APPIMAGE is unset and binPath falls back to process.execPath,
+            // i.e. bare Node) are NOT a supported system-scope install scenario —
+            // $APPIMAGE is always set in packaged installs, which is the only way
+            // this branch is reached from the desktop GUI.
             const r = await this.runElevated([pkexec, binPath, '--install-system-service', '--port', String(port)]);
             if (r.code !== 0) {
                 // revert installMode so the next load doesn't see a phantom service mode
@@ -588,7 +593,7 @@ export class ServiceApi {
         const disk = this.readDiskConfig();
 
         // Schedule local-Node exit (win32 only — both Linux scopes hand off + return
-        // above: user scope at the F4 branch, system scope at the B1 branch). This
+        // above: user scope at the F4 branch, system scope at the pkexec branch). This
         // instance is useless once the service is running; it also holds the web port.
         // The frontend navigates to the service port once it detects config.json mtime
         // change — this timer is a safety cap, not a timing mechanism.

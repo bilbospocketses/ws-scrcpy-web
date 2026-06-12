@@ -667,76 +667,6 @@ describe('ServiceApi', () => {
             expect(opts?.scope).toBe('user');
         });
 
-        it('POST /install on Linux with {scope: "system"} uses awaited pkexec path (client.install NOT called)', async () => {
-            // New behavior: system-scope install elevates the whole app via awaited
-            // pkexec <appimage> --install-system-service, never enters client.install().
-            const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(async () => undefined);
-            const client = fakeClient({
-                install: installFn,
-                status: vi.fn(async () => 'running' as const),
-            });
-            const factoryResult: ServiceClientFactoryResult = {
-                client,
-                supported: true,
-                platform: 'linux',
-            };
-            const runElevated = vi.fn(async (_argv: string[]) => ({ code: 0, stdout: '', stderr: '' }));
-            // Constructor: (factory, scope, existsCheck, spawnDetached, scheduleExit, runPkexecFn, verifyServiceActive, runElevated)
-            const api = new ServiceApi(
-                () => factoryResult, () => 'user', () => false,
-                () => {}, () => {}, async () => '', async () => true,
-                runElevated,
-            );
-            const { req, res } = makeReqRes(
-                '/api/service/install',
-                'POST',
-                JSON.stringify({ scope: 'system' }),
-            );
-            await api.handle(req, res);
-            expect((res as any).getStatus()).toBe(200);
-            const body = JSON.parse((res as any).getBody());
-            expect(body.installMode).toBe('system-service');
-            expect(body.status).toBe('shutting-down');
-            // New: runElevated called, client.install NOT called
-            expect(runElevated).toHaveBeenCalledOnce();
-            expect(installFn).not.toHaveBeenCalled();
-        });
-
-        it('POST /install on Linux with {scope: "system"} elevates via awaited pkexec (no client.install call)', async () => {
-            // Task 7: system-scope install now calls runElevated([pkexec, binPath,
-            // '--install-system-service', '--port', N]) instead of client.install().
-            // The injected runElevated succeeds; assert client.install is never reached.
-            const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(async () => undefined);
-            const client = fakeClient({
-                install: installFn,
-                status: vi.fn(async () => 'running' as const),
-            });
-            const factoryResult: ServiceClientFactoryResult = {
-                client,
-                supported: true,
-                platform: 'linux',
-            };
-            const runElevated = vi.fn(async (_argv: string[]) => ({ code: 0, stdout: '', stderr: '' }));
-            const api = new ServiceApi(
-                () => factoryResult, () => 'user', () => false,
-                () => {}, () => {}, async () => '', async () => true,
-                runElevated,
-            );
-            const { req, res } = makeReqRes(
-                '/api/service/install',
-                'POST',
-                JSON.stringify({ scope: 'system' }),
-            );
-            await api.handle(req, res);
-            expect((res as any).getStatus()).toBe(200);
-            const body = JSON.parse((res as any).getBody());
-            expect(body.ok).toBe(true);
-            expect(body.installMode).toBe('system-service');
-            expect(body.status).toBe('shutting-down');
-            expect(runElevated).toHaveBeenCalledOnce();
-            expect(installFn).not.toHaveBeenCalled();
-        });
-
         it('POST /install Linux system scope hands off via pkexec (status shutting-down), no client.install, no in-handler verify', async () => {
             // Task 7: system-scope install goes through runElevated, not client.install.
             // Response is still shutting-down; no verifyServiceActive poll needed since
@@ -814,9 +744,13 @@ describe('ServiceApi', () => {
                 // (c) argv contains the appimage binary as next element
                 expect(argv[1]).toBe('/home/jamie/Applications/WsScrcpyWeb.AppImage');
 
-                // (d) argv contains the CLI flags
+                // (d) argv contains the CLI flags, and --port is immediately
+                // followed by the configured webPort (forwarded verbatim).
                 expect(argv).toContain('--install-system-service');
-                expect(argv).toContain('--port');
+                const portFlagIdx = argv.indexOf('--port');
+                expect(portFlagIdx).toBeGreaterThanOrEqual(0);
+                const expectedPort = String(Config.getInstance().getAppConfig().webPort);
+                expect(argv[portFlagIdx + 1]).toBe(expectedPort);
 
                 // (e) client.install must NOT be called (system scope exits early)
                 expect(installFn).not.toHaveBeenCalled();
