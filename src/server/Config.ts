@@ -573,6 +573,23 @@ export class Config {
         return path.join(base, 'control', 'apply-update-pending');
     }
 
+    /**
+     * Canonical path for the consume-once `suppress-browser-open` marker.
+     * UpdateService.applyUpdate writes it before the app goes down to apply an
+     * update; the relaunched server already carries the user's tab (reconnect /
+     * redirect / reload), so it must NOT auto-open a new one. Node consumes
+     * (deletes) it at startup and honors it only when fresh. Lives under
+     * `control/` alongside the apply-update-pending marker. (D4 — needed on
+     * Windows local mode, where Velopack owns the relaunch and we can't set
+     * WS_SCRCPY_NO_BROWSER on it the way Linux's linux_apply does.)
+     */
+    public get suppressBrowserOpenMarkerPath(): string {
+        const base = this._dataRoot !== null
+            ? this._dataRoot
+            : path.dirname(this._dependenciesPath);
+        return path.join(base, 'control', 'suppress-browser-open');
+    }
+
     public get operationServerPortFilePath(): string {
         const base = this._dataRoot !== null
             ? this._dataRoot

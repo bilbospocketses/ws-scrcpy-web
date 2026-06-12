@@ -1,5 +1,7 @@
 // biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import { spawn } from 'child_process';
+// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
+import { rmSync, statSync } from 'fs';
 import { Logger } from './Logger';
 
 const log = Logger.for('OpenBrowser');
@@ -89,4 +91,36 @@ export function shouldAutoOpenBrowser(opts: {
     }
     const isFirstRun = opts.firstRunComplete === false;
     return opts.launcherFreshLaunch || isFirstRun;
+}
+
+/**
+ * Consume the post-update "suppress browser open" marker (see
+ * Config.suppressBrowserOpenMarkerPath). UpdateService.applyUpdate writes it
+ * before the app goes down to apply an update; the relaunched server already
+ * carries the user's tab (reconnect / redirect / reload), so it must not pop a
+ * NEW one — this is the Windows-local-mode equivalent of Linux's
+ * WS_SCRCPY_NO_BROWSER (Velopack owns that relaunch, so we can't set an env on
+ * it). Consume-once: the marker is ALWAYS deleted when present, and only honored
+ * when FRESH (a stale marker from a failed/abandoned update that never
+ * relaunched must not suppress a much-later manual launch). Returns true iff a
+ * fresh marker was present. Pure aside from fs; unit-tested with a real temp file.
+ */
+export function consumeSuppressBrowserMarker(
+    markerPath: string,
+    opts: { maxAgeMs?: number; now?: number } = {},
+): boolean {
+    const maxAgeMs = opts.maxAgeMs ?? 5 * 60_000;
+    let mtimeMs: number;
+    try {
+        mtimeMs = statSync(markerPath).mtimeMs;
+    } catch {
+        return false; // absent — nothing to consume
+    }
+    try {
+        rmSync(markerPath, { force: true });
+    } catch {
+        /* best-effort cleanup */
+    }
+    const now = opts.now ?? Date.now();
+    return now - mtimeMs <= maxAgeMs;
 }

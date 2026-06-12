@@ -18,7 +18,7 @@ import { findAvailablePort, webPortOverride } from './PortPicker';
 import { DeviceLabelStore } from './DeviceLabelStore';
 import { DeviceProbe } from './DeviceProbe';
 import { Logger } from './Logger';
-import { openBrowser, shouldAutoOpenBrowser } from './openBrowser';
+import { consumeSuppressBrowserMarker, openBrowser, shouldAutoOpenBrowser } from './openBrowser';
 import { HostTracker } from './mw/HostTracker';
 import type { MwFactory } from './mw/Mw';
 import { ScanMw } from './mw/ScanMw';
@@ -224,7 +224,15 @@ reconcileWebPort()
             // G1: a relaunch (the post-machine-wide-install /opt re-exec, or an
             // in-app update relaunch) sets WS_SCRCPY_NO_BROWSER=1 — the user
             // already has a tab that reconnects, so don't pop a redundant one.
-            const suppressBrowser = process.env['WS_SCRCPY_NO_BROWSER'] === '1';
+            const noBrowserEnv = process.env['WS_SCRCPY_NO_BROWSER'] === '1';
+            // D4: a Velopack update-relaunch (Windows local mode) carries no
+            // WS_SCRCPY_NO_BROWSER, so applyUpdate left a consume-once marker —
+            // honor + delete it so the post-update relaunch doesn't pop a 2nd tab
+            // on top of the user's reconnecting one.
+            const postUpdateRelaunch = consumeSuppressBrowserMarker(
+                config.suppressBrowserOpenMarkerPath,
+            );
+            const suppressBrowser = noBrowserEnv || postUpdateRelaunch;
             // D1: the native launcher's supervisor sets WS_SCRCPY_OPEN_BROWSER=1
             // on its FIRST Node spawn (a fresh user launch), so a cold start past
             // first-run still opens a tab — not only on first run. Supervisor

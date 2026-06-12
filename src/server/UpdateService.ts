@@ -453,6 +453,12 @@ export class UpdateService {
         const isServiceMode = installMode === 'user-service' || installMode === 'system-service';
 
         await this.writeApplyUpdatePendingMarker();
+        // D4: every applyUpdate brings the app down and the user's EXISTING tab is
+        // carried through (reconnect / redirect / reload), so the relaunched server
+        // must not auto-open a new tab. This consume-once marker tells it to skip
+        // the open — needed on Windows local mode (no WS_SCRCPY_NO_BROWSER on the
+        // Velopack relaunch); harmless elsewhere (Linux/service already suppress).
+        await this.writeSuppressBrowserOpenMarker();
 
         // Windows service mode keeps Velopack's apply (the operation-server
         // handoff below). Linux service mode falls through to the download-based
@@ -640,6 +646,22 @@ export class UpdateService {
                 `applyUpdate: failed to write apply-update-pending marker at ${markerPath}: ${(err as Error).message} ` +
                     `— service will not auto-restart after Velopack swap; user must restart manually.`,
             );
+        }
+    }
+
+    /**
+     * Write the consume-once `suppress-browser-open` marker (see
+     * Config.suppressBrowserOpenMarkerPath). Best-effort: a failure at worst
+     * yields one redundant browser tab on the post-update relaunch.
+     */
+    private async writeSuppressBrowserOpenMarker(): Promise<void> {
+        const markerPath = Config.getInstance().suppressBrowserOpenMarkerPath;
+        try {
+            await fs.promises.mkdir(path.dirname(markerPath), { recursive: true });
+            await fs.promises.writeFile(markerPath, '', 'utf8');
+            log.info(`applyUpdate: wrote suppress-browser-open marker at ${markerPath}`);
+        } catch (err) {
+            log.warn(`applyUpdate: failed to write suppress-browser-open marker at ${markerPath}: ${(err as Error).message}`);
         }
     }
 

@@ -1,5 +1,11 @@
-import { describe, expect, it } from 'vitest';
-import { shouldAutoOpenBrowser } from '../openBrowser';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+// biome-ignore lint/style/useNodejsImportProtocol: match the non-prefixed app-code import style
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
+// biome-ignore lint/style/useNodejsImportProtocol: match the non-prefixed app-code import style
+import { tmpdir } from 'os';
+// biome-ignore lint/style/useNodejsImportProtocol: match the non-prefixed app-code import style
+import { join } from 'path';
+import { consumeSuppressBrowserMarker, shouldAutoOpenBrowser } from '../openBrowser';
 
 /**
  * D1: a cold start PAST first-run must still open a browser tab. The native
@@ -47,5 +53,41 @@ describe('shouldAutoOpenBrowser', () => {
 
     it('treats undefined firstRunComplete as "not first run" (no spurious open)', () => {
         expect(shouldAutoOpenBrowser({ ...base, firstRunComplete: undefined })).toBe(false);
+    });
+});
+
+/**
+ * D4: a post-update relaunch (esp. Windows local mode, where Velopack owns the
+ * relaunch and carries no WS_SCRCPY_NO_BROWSER) must not pop a 2nd tab on top of
+ * the user's reconnecting one. applyUpdate leaves a consume-once marker; the
+ * relaunched server consumes it (always deletes; honored only when fresh).
+ */
+describe('consumeSuppressBrowserMarker', () => {
+    let dir: string;
+    beforeEach(() => {
+        dir = mkdtempSync(join(tmpdir(), 'wssw-suppress-'));
+    });
+    afterEach(() => {
+        rmSync(dir, { recursive: true, force: true });
+    });
+
+    it('returns false when the marker is absent', () => {
+        expect(consumeSuppressBrowserMarker(join(dir, 'suppress-browser-open'))).toBe(false);
+    });
+
+    it('returns true and deletes the marker when fresh', () => {
+        const p = join(dir, 'suppress-browser-open');
+        writeFileSync(p, '');
+        expect(consumeSuppressBrowserMarker(p)).toBe(true);
+        expect(existsSync(p), 'marker consumed (deleted)').toBe(false);
+    });
+
+    it('returns false but still deletes the marker when stale', () => {
+        const p = join(dir, 'suppress-browser-open');
+        writeFileSync(p, '');
+        // Evaluate "now" an hour ahead so the just-written mtime reads as stale.
+        const future = Date.now() + 60 * 60_000;
+        expect(consumeSuppressBrowserMarker(p, { now: future })).toBe(false);
+        expect(existsSync(p), 'stale marker still cleaned up').toBe(false);
     });
 });

@@ -113,7 +113,7 @@ fn open_server_log(data_root: &Path) -> Option<std::fs::File> {
 ///
 /// Returns the child handle so the caller (supervisor) can wait on it.
 #[cfg(windows)]
-pub fn spawn_server(deps_path: &Path, data_root: &Path, _open_browser: bool) -> Result<Child> {
+pub fn spawn_server(deps_path: &Path, data_root: &Path, open_browser: bool) -> Result<Child> {
     use std::os::windows::process::CommandExt;
 
     let exe = std::env::current_exe()?;
@@ -128,6 +128,15 @@ pub fn spawn_server(deps_path: &Path, data_root: &Path, _open_browser: bool) -> 
         .env("DEPS_PATH", deps_path)
         .env("DATA_ROOT", data_root)
         .creation_flags(CREATE_NO_WINDOW);
+
+    // D4: like the non-Windows path, the launcher's FIRST Node spawn of a fresh
+    // user launch tells Node to open a browser tab. A Velopack update-relaunch is
+    // suppressed Node-side (the post-update suppress-browser-open marker), since
+    // Velopack owns that relaunch and we can't set WS_SCRCPY_NO_BROWSER on it the
+    // way linux_apply does.
+    if open_browser {
+        cmd.env("WS_SCRCPY_OPEN_BROWSER", "1");
+    }
 
     // Plumb the child's stdout AND stderr into server.log (thin crash-catcher).
     // Logger no longer echoes normal lines here, so this only fills on raw
