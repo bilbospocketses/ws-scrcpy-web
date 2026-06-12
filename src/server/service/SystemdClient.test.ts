@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { SystemdClient, renderUnitFile, STAGED_SYSTEM_DIR, buildSystemInstallScript, systemctlArgv, buildServiceUnitEnv, buildMachineWideInstallScript, buildMachineWideUpdateScript } from './SystemdClient';
+import { SystemdClient, renderUnitFile, STAGED_SYSTEM_DIR, systemctlArgv, buildServiceUnitEnv, buildMachineWideInstallScript, buildMachineWideUpdateScript } from './SystemdClient';
 
 describe('system-scope staging', () => {
     const baseOpts = {
@@ -31,140 +31,6 @@ describe('system-scope staging', () => {
     });
 });
 
-describe('buildSystemInstallScript', () => {
-    const args = {
-        unitTmpPath: '/tmp/WsScrcpyWeb.service.tmp',
-        unitPath: '/etc/systemd/system/WsScrcpyWeb.service',
-        name: 'WsScrcpyWeb',
-    };
-
-    it('stages the launcher helper into /opt alongside the AppImage (bin_t via the fcontext rule)', () => {
-        const script = buildSystemInstallScript({
-            sourceHelper: '/home/u/.local/share/WsScrcpyWeb/control/operation-server/ws-scrcpy-web-launcher.exe',
-            unitTmpPath: '/tmp/WsScrcpyWeb.service.tmp',
-            unitPath: '/etc/systemd/system/WsScrcpyWeb.service',
-            name: 'WsScrcpyWeb',
-        });
-        expect(script).toContain('cp "/home/u/.local/share/WsScrcpyWeb/control/operation-server/ws-scrcpy-web-launcher.exe" "/opt/ws-scrcpy-web/ws-scrcpy-web-launcher.exe"');
-        expect(script).toContain('chmod 0755 "/opt/ws-scrcpy-web/ws-scrcpy-web-launcher.exe"');
-        const helperCp = script.indexOf('/opt/ws-scrcpy-web/ws-scrcpy-web-launcher.exe');
-        const relabel = script.indexOf('restorecon -Rv');
-        expect(helperCp).toBeLessThan(relabel);
-    });
-
-    it('omits the helper cp when no sourceHelper is provided (from-source / unavailable)', () => {
-        const script = buildSystemInstallScript({
-            unitTmpPath: '/t', unitPath: '/u', name: 'WsScrcpyWeb',
-        });
-        expect(script).not.toContain('ws-scrcpy-web-launcher.exe');
-    });
-
-    it('prepares /opt, chmods the (already-staged) binary, then installs the unit', () => {
-        const script = buildSystemInstallScript(args);
-        expect(script).toContain('mkdir -p /opt/ws-scrcpy-web');
-        // the AppImage is NOT re-copied (machine-wide precondition) — only chmod'd
-        expect(script).toContain('chmod 0755 "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"');
-        expect(script).toContain('restorecon -Rv "/opt/ws-scrcpy-web"');
-        expect(script).toContain('cp "/tmp/WsScrcpyWeb.service.tmp" "/etc/systemd/system/WsScrcpyWeb.service"');
-        expect(script).toContain('systemctl daemon-reload');
-        expect(script).toContain('systemctl enable --now WsScrcpyWeb.service');
-    });
-
-    it('emits NO var_lib_t rule and NO /var/opt — labels state via the /var/lib default, restorecons both trees', () => {
-        // The system install was IMPOSSIBLE on Fedora: `/var/opt` is policy-aliased to
-        // `/opt` (file_contexts.subs_dist), so `semanage -a -t var_lib_t /var/opt/...` is
-        // REJECTED and the path inherits /opt's bin_t. State now lives under /var/lib,
-        // which the policy's built-in /var/lib(/.*)? rule labels var_lib_t for free — so
-        // the install emits NO custom semanage rule at all. This guard is exactly what the
-        // old string-only tests lacked: they asserted the un-addable command WAS present,
-        // which is how the bug shipped green-but-broken 4×.
-        const script = buildSystemInstallScript(args);
-        expect(script).not.toContain('var_lib_t');     // no custom state-dir rule
-        expect(script).not.toContain('/var/opt');       // the aliased path is gone
-        expect(script).toContain('restorecon -Rv "/opt/ws-scrcpy-web"');       // relabel copied deps -> bin_t
-        expect(script).toContain('restorecon -Rv "/var/lib/ws-scrcpy-web"');   // assert the var_lib_t default
-        expect(script).not.toContain('chcon');           // no transient fallback
-        expect(script).not.toContain("semanage fcontext -a -t bin_t '/opt/ws-scrcpy-web(/.*)?'"); // no /opt re-add
-    });
-
-    it('staging precedes the unit copy (so ExecStart target exists before enable)', () => {
-        const script = buildSystemInstallScript(args);
-        expect(script.indexOf('/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage'))
-            .toBeLessThan(script.indexOf('enable --now'));
-    });
-
-    it('uses absolute tool paths (no bare names)', () => {
-        const script = buildSystemInstallScript(args, (t) => `/usr/bin/${t}`, (t) => `/usr/sbin/${t}`);
-        expect(script).toContain('/usr/bin/systemctl daemon-reload');
-        expect(script).toContain('/usr/sbin/restorecon -Rv');
-    });
-
-    it('label step is best-effort — a failed SELinux label does not abort the unit install', () => {
-        const script = buildSystemInstallScript(args);
-        // wrapped in a subshell + `|| true` so a non-SELinux host (semanage absent, chcon errors)
-        // still proceeds to cp unit + enable.
-        expect(script).toContain('|| true');
-        expect(script.indexOf('cp "/tmp/WsScrcpyWeb.service.tmp"')).toBeGreaterThan(script.indexOf('chcon'));
-    });
-
-    it('copies the user deps into /opt and seeds the state config (#36)', () => {
-        const script = buildSystemInstallScript({
-            sourceDeps: '/home/u/.local/share/WsScrcpyWeb/dependencies',
-            seedConfigTmpPath: '/tmp/WsScrcpyWeb.seed.json',
-            unitTmpPath: '/tmp/WsScrcpyWeb.service.tmp',
-            unitPath: '/etc/systemd/system/WsScrcpyWeb.service',
-            name: 'WsScrcpyWeb',
-        });
-        // writable state dir + deps dir created
-        expect(script).toContain('mkdir -p /var/lib/ws-scrcpy-web');
-        expect(script).toContain('mkdir -p /opt/ws-scrcpy-web/dependencies');
-        // deps copied from the user's dir into the app's OWN /opt tree (Local-Deps)
-        expect(script).toContain('cp -a "/home/u/.local/share/WsScrcpyWeb/dependencies/." "/opt/ws-scrcpy-web/dependencies/"');
-        // seed config written into the state dir (/var/lib)
-        expect(script).toContain('cp "/tmp/WsScrcpyWeb.seed.json" "/var/lib/ws-scrcpy-web/config.json"');
-        // NO custom var_lib_t rule — /var/lib is var_lib_t by the policy default
-        expect(script).not.toContain('var_lib_t');
-        // seed lands before the /var/lib restorecon (which asserts the default label)
-        expect(script.indexOf('config.json')).toBeLessThan(script.indexOf('restorecon -Rv "/var/lib/ws-scrcpy-web"'));
-    });
-
-    it('always prepares the writable state dir, but omits deps-copy + seed when not provided', () => {
-        const script = buildSystemInstallScript(args);
-        expect(script).toContain('mkdir -p /var/lib/ws-scrcpy-web');
-        expect(script).toContain('restorecon -Rv "/var/lib/ws-scrcpy-web"');
-        expect(script).not.toContain('cp -a');
-        expect(script).not.toContain('config.json');
-    });
-
-    it('does NOT stage/copy the AppImage into /opt (machine-wide is a precondition — the binary is already there, so copying self-copies)', () => {
-        // The system-service install is gated behind a machine-wide install, so
-        // /opt/ws-scrcpy-web/WsScrcpyWeb.AppImage already exists AND is the
-        // running binary ($APPIMAGE). Re-staging it is a `cp X X` self-copy that
-        // GNU cp refuses ("are the same file"), aborting the pkexec script. The
-        // install must not copy the AppImage — the unit's ExecStart already
-        // points at the existing /opt binary.
-        const script = buildSystemInstallScript(args);
-        expect(script).not.toMatch(/cp\s+"[^"]*"\s+"\/opt\/ws-scrcpy-web\/WsScrcpyWeb\.AppImage"/);
-    });
-
-    it('with a staged helper: enables (not --now) and spawns a rootful system handoff (beta.57)', () => {
-        const script = buildSystemInstallScript(
-            { sourceHelper: '/home/u/.local/share/WsScrcpyWeb/control/operation-server/ws-scrcpy-web-launcher.exe',
-              unitTmpPath: '/tmp/u', unitPath: '/etc/systemd/system/WsScrcpyWeb.service',
-              name: 'WsScrcpyWeb', handoffUnit: 'wsscrcpy-install-123' },
-            (t) => `/usr/bin/${t}`, (t) => `/usr/sbin/${t}`,
-        );
-        // never start under the local instance's still-live port (the beta.56 self-defer):
-        expect(script).not.toContain('enable --now');
-        expect(script).toContain('/usr/bin/systemctl enable WsScrcpyWeb.service');
-        // rootful, out-of-cgroup handoff that waits for the port to free, then starts + verifies:
-        expect(script).toContain(
-            '/usr/bin/systemd-run --collect --unit=wsscrcpy-install-123 --setenv=DATA_ROOT=/var/lib/ws-scrcpy-web ' +
-            '"/opt/ws-scrcpy-web/ws-scrcpy-web-launcher.exe" --linux-service-install-handoff --scope system --unit WsScrcpyWeb'
-        );
-    });
-
-});
 
 describe('SYSTEM_STATE_DIR — /var/lib retargeting', () => {
     it('system-scope unit env points DATA_ROOT at /var/lib (not /opt/.../data)', () => {
@@ -182,18 +48,6 @@ describe('SYSTEM_STATE_DIR — /var/lib retargeting', () => {
         expect(winEnv['WS_SCRCPY_SERVICE']).toBe('1');
     });
 
-    it('system install seeds config + labels state under /var/lib (var_lib_t by default)', () => {
-        const script = buildSystemInstallScript(
-            { seedConfigTmpPath: '/tmp/seed.json',
-              unitTmpPath: '/tmp/u.service', unitPath: '/etc/systemd/system/WsScrcpyWeb.service', name: 'WsScrcpyWeb' },
-            (t) => `/usr/bin/${t}`, (t) => `/usr/sbin/${t}`,
-        );
-        expect(script).toContain('mkdir -p /var/lib/ws-scrcpy-web');
-        expect(script).toContain('cp "/tmp/seed.json" "/var/lib/ws-scrcpy-web/config.json"');
-        expect(script).not.toContain('var_lib_t');
-        expect(script).toContain('restorecon -Rv "/var/lib/ws-scrcpy-web"');
-        expect(script).not.toContain('/opt/ws-scrcpy-web/data');
-    });
 });
 
 describe('absolute-path OS tools', () => {

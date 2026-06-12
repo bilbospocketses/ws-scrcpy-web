@@ -14,14 +14,13 @@
  *                  ws-scrcpy-web-tray.desktop` file is written to autostart
  *                  the tray helper at desktop login (best-effort).
  *
- *   - **system** — unit at `/etc/systemd/system/<name>.service`. Requires
- *                  root to write; when `process.getuid() !== 0`, elevation
- *                  goes through pkexec (PR #211) — the unit body is written
- *                  to a tmp path and `pkexec sh -c "cp ... && daemon-reload
- *                  && enable"` runs the privileged steps under a single
- *                  graphical password prompt. No tray autostart (system-scope
- *                  services typically run on headless servers without a
- *                  desktop session).
+ *   - **system** — unit at `/etc/systemd/system/<name>.service`. System-scope
+ *                  installs are no longer handled by this `install()` method;
+ *                  they go through `systemServiceCli.installSystemService`
+ *                  (the `--install-system-service` CLI core, elevated via one
+ *                  awaited `pkexec`). The old `pkexec sh -c` path was removed
+ *                  in the system-service redesign. `uninstall()` still supports
+ *                  system scope.
  *
  * Status is detected via `systemctl is-active` (machine-readable single
  * keyword) rather than `systemctl status` (verbose, locale-sensitive).
@@ -70,13 +69,6 @@ const TRAY_AUTOSTART_FILE = 'ws-scrcpy-web-tray.desktop';
 export const STAGED_SYSTEM_DIR = '/opt/ws-scrcpy-web';
 /** Stable, channel-agnostic filename for the staged system-scope AppImage. */
 export const STAGED_SYSTEM_APPIMAGE = 'WsScrcpyWeb.AppImage';
-/**
- * Stable filename for the staged launcher helper in /opt (system-scope).
- * Staged alongside the AppImage so the fcontext rule labels it bin_t —
- * allowing init_t to exec it during system-scope uninstall teardown.
- */
-export const STAGED_SYSTEM_HELPER = 'ws-scrcpy-web-launcher.exe';
-
 /**
  * Writable state dir for the system-scope service (config.json, logs/). Lives
  * under `/var/lib` — the policy's built-in `/var/lib(/.*)?` rule labels it
@@ -152,7 +144,6 @@ export async function runPkexec(shellCmd: string, label: string): Promise<string
     try {
         const { stdout } = await execFileAsync(resolveSystemTool('pkexec'), ['sh', '-c', shellCmd], {
             encoding: 'utf8',
-            timeout: 60_000,
         });
         return stdout;
     } catch (err) {
@@ -282,107 +273,6 @@ export function renderUnitFile(opts: ServiceInstallOptions, scope: SystemdScope)
         `WantedBy=${wantedBy}`,
         '',
     ].join('\n');
-}
-
-/**
- * Build the privileged shell script for a system-scope install. Runs under a
- * single pkexec prompt. Stages the AppImage into /opt (root-owned), labels it
- * bin_t so init_t may exec it (item 33), then installs + enables the unit.
- * `binTool`/`sbinTool` are injectable for testing; production resolves absolute
- * paths via systemTools (Local-Dependencies-Only — no bare-name $PATH lookup).
- */
-export function buildSystemInstallScript(
-    args: {
-        sourceHelper?: string;
-        sourceDeps?: string;
-        seedConfigTmpPath?: string;
-        unitTmpPath: string;
-        unitPath: string;
-        name: string;
-        /** Transient unit name for the rootful install-handoff (e.g. `wsscrcpy-install-<ts>`). Used only when sourceHelper is staged. */
-        handoffUnit?: string;
-    },
-    binTool: (t: string) => string = (t) => resolveSystemTool(t),
-    sbinTool: (t: string) => string = (t) => resolveSystemTool(t),
-): string {
-    const staged = `${STAGED_SYSTEM_DIR}/${STAGED_SYSTEM_APPIMAGE}`;
-    const stagedHelper = `${STAGED_SYSTEM_DIR}/${STAGED_SYSTEM_HELPER}`;
-    const mkdir = binTool('mkdir');
-    const cp = binTool('cp');
-    const chmod = binTool('chmod');
-    const systemctl = binTool('systemctl');
-    const restorecon = sbinTool('restorecon');
-    const systemdRun = binTool('systemd-run');
-    const steps: string[] = [
-        // 1. stage dirs: the /opt root for binaries + deps, plus the writable
-        //    state dir at /var/lib (always — the system service writes its config
-        //    + logs there). The /opt restorecon does NOT reach /var/lib, so the
-        //    state dir gets its own restorecon step below.
-        //    The deps dir is added below only when we have deps to copy.
-        `${mkdir} -p ${STAGED_SYSTEM_DIR}`,
-        `${mkdir} -p ${SYSTEM_STATE_DIR}`,
-        // The AppImage is intentionally NOT staged here. A system-service install
-        // is gated on a prior machine-wide install (systemServiceInstallGate), so
-        // /opt/ws-scrcpy-web/WsScrcpyWeb.AppImage already exists AND is the running
-        // binary — copying it onto itself is a `cp X X` self-copy that GNU cp
-        // refuses ("are the same file"), aborting the pkexec script. We only ensure
-        // it's executable; the unit's ExecStart points at this existing /opt binary.
-        `${chmod} 0755 "${staged}"`,
-    ];
-    // 1b. optionally stage the teardown helper alongside the AppImage so the
-    //     existing fcontext rule labels it bin_t — allowing init_t to exec it
-    //     during system-scope uninstall teardown (SELinux AVC fix, item #2).
-    if (args.sourceHelper) {
-        steps.push(`${cp} "${args.sourceHelper}" "${stagedHelper}"`);
-        steps.push(`${chmod} 0755 "${stagedHelper}"`);
-    }
-    // 1c. copy the installing user's deps into the app's OWN /opt tree so the
-    //     root service runs them (Local-Dependencies-Only) instead of reaching
-    //     into a user's home. restorecon below labels them bin_t (init_t exec).
-    if (args.sourceDeps) {
-        steps.push(`${mkdir} -p ${STAGED_SYSTEM_DEPS_DIR}`);
-        steps.push(`${cp} -a "${args.sourceDeps}/." "${STAGED_SYSTEM_DEPS_DIR}/"`);
-    }
-    // 1d. seed the system config so the service reads a correct, persistent
-    //     config on first boot (system-service mode, first-run-complete, the
-    //     user's web port). Written before restorecon so it gets var_lib_t.
-    if (args.seedConfigTmpPath) {
-        steps.push(`${cp} "${args.seedConfigTmpPath}" "${SYSTEM_STATE_DIR}/config.json"`);
-    }
-    steps.push(
-        // 2. SELinux relabel — best-effort subshell (`|| true` so a non-SELinux host
-        //    just no-ops). `/opt` relabels the freshly-copied deps to `bin_t` via the
-        //    machine-wide install's existing rule (`cp -a` preserved their source type).
-        //    `/var/lib` is `var_lib_t` by the policy's built-in `/var/lib(/.*)?` rule —
-        //    NO custom `semanage` rule (and `/var/opt` could not have one: Fedora's
-        //    `file_contexts.subs_dist` aliases `/var/opt -> /opt`, so semanage rejects
-        //    any rule beneath it — the bug that made the system install impossible).
-        //    restorecon here is belt-and-suspenders for the default label.
-        `( ${restorecon} -Rv "${STAGED_SYSTEM_DIR}" ; ${restorecon} -Rv "${SYSTEM_STATE_DIR}" ) || true`,
-        // 3. install the unit (ExecStart already points at ${staged}).
-        `${cp} "${args.unitTmpPath}" "${args.unitPath}"`,
-        `${systemctl} daemon-reload`,
-    );
-    // 4. start the service. With a staged handoff helper (real install), do NOT
-    //    start it now (--now): the local instance that triggered this install still
-    //    holds the web port, so starting now makes the freshly forked service probe
-    //    the live port and self-defer (beta.56) or EADDRINUSE-loop into the
-    //    StartLimit. Instead enable (persist) + spawn a rootful, out-of-cgroup
-    //    handoff (transient SYSTEM unit, survives this pkexec via --collect) that
-    //    waits for the local instance to release the port, then starts + verifies
-    //    the service. Mirror of user-scope F4. DATA_ROOT lets the helper read the
-    //    service web port from /var/lib config. No staged helper (from-source /
-    //    unavailable) -> legacy --now (nothing to hand off to).
-    if (args.sourceHelper) {
-        const handoffUnit = args.handoffUnit ?? 'wsscrcpy-install-handoff';
-        steps.push(
-            `${systemctl} enable ${args.name}.service`,
-            `${systemdRun} --collect --unit=${handoffUnit} --setenv=DATA_ROOT=${SYSTEM_STATE_DIR} "${stagedHelper}" --linux-service-install-handoff --scope system --unit ${args.name}`,
-        );
-    } else {
-        steps.push(`${systemctl} enable --now ${args.name}.service`);
-    }
-    return steps.join(' && ');
 }
 
 /**
@@ -622,120 +512,57 @@ export class SystemdClient implements ServiceClient {
                 'SystemdClient.install: scope is required (caller must pass user or system)',
             );
         }
-
-        // F1: user-scope services must ExecStart a STABLE, executable binary —
-        // never the volatile launch path ($APPIMAGE / ~/Downloads). Resolve it
-        // (prefer the machine-wide /opt binary; else stage a copy) before render.
-        const effectiveOpts = scope === 'user' ? this.withStableUserBin(opts) : opts;
-
-        const unitContent = renderUnitFile(effectiveOpts, scope);
-        const unitPath = scope === 'user'
-            ? this.userUnitPath(opts.name)
-            : this.systemUnitPath(opts.name);
-
-        if (scope === 'system' && process.getuid?.() !== 0) {
-            // Not root — use pkexec for graphical privilege escalation.
-            // Write unit to temp, then pkexec stages AppImage + labels bin_t +
-            // copies unit + enables — all under a single graphical prompt.
-            const tmpFile = path.join(os.tmpdir(), `${opts.name}.service.tmp`);
-            fs.writeFileSync(tmpFile, unitContent, { mode: 0o644 });
-            // Seed config -> temp file; the pkexec script cp's it into the staged
-            // /opt/.../data dir (root-owned) under the single graphical prompt.
-            let seedTmpFile: string | undefined;
-            if (opts.seedConfig) {
-                seedTmpFile = path.join(os.tmpdir(), `${opts.name}.seed.json`);
-                fs.writeFileSync(seedTmpFile, JSON.stringify(opts.seedConfig, null, 2) + '\n', { mode: 0o644 });
-            }
-            try {
-                const cmd = buildSystemInstallScript({
-                    ...(opts.linuxHelperSource ? { sourceHelper: opts.linuxHelperSource } : {}),
-                    ...(opts.sourceDeps ? { sourceDeps: opts.sourceDeps } : {}),
-                    ...(seedTmpFile ? { seedConfigTmpPath: seedTmpFile } : {}),
-                    unitTmpPath: tmpFile,
-                    unitPath,
-                    name: opts.name,
-                    handoffUnit: `wsscrcpy-install-${Date.now()}`,
-                });
-                await runPkexec(cmd, 'install (system scope)');
-            } finally {
-                try { fs.unlinkSync(tmpFile); } catch { /* best-effort cleanup */ }
-                if (seedTmpFile) {
-                    try { fs.unlinkSync(seedTmpFile); } catch { /* best-effort cleanup */ }
-                }
-            }
-        } else {
-            // User scope (no elevation) or already root.
-            fs.mkdirSync(path.dirname(unitPath), { recursive: true });
-            fs.writeFileSync(unitPath, unitContent, { mode: 0o644 });
-
-            const baseArgs = scope === 'user' ? ['--user'] : [];
-            runSystemctl([...baseArgs, 'daemon-reload'], 'daemon-reload');
-            // F4 (user) + B1 (system): never start with `--now` while the local
-            // instance still holds the per-user lock / web port — the service would
-            // exit "already running" or self-defer / EADDRINUSE-loop before binding.
-            // Just `enable` (persist); a detached out-of-cgroup install-handoff helper
-            // starts it AFTER the local instance exits and frees the port. (user
-            // scope: ServiceApi spawns the --user helper. system scope when already
-            // root: spawn the rootful helper here — the pkexec script does it on the
-            // non-root path.)
-            runSystemctl(
-                [...baseArgs, 'enable', `${opts.name}.service`],
-                `enable ${opts.name}.service`,
+        // System-scope installs now go through systemServiceCli.installSystemService
+        // (the `--install-system-service` CLI core, elevated via sudo or one awaited
+        // pkexec) — NOT this method. The old pkexec-sh-c path (buildSystemInstallScript
+        // + the kill-on-timeout runPkexec) was removed in the system-service redesign.
+        if (scope === 'system') {
+            throw new Error(
+                'SystemdClient.install no longer handles system scope — use systemServiceCli.installSystemService',
             );
-            if (scope === 'system') {
-                // Already root → spawn the rootful handoff directly. `systemd-run
-                // --collect` registers a transient SYSTEM unit and returns immediately
-                // (fire-and-forget), so execFileSync doesn't block. Best-effort: a
-                // spawn failure logs + leaves the (enabled) unit for a manual start.
-                const stagedHelper = `${STAGED_SYSTEM_DIR}/${STAGED_SYSTEM_HELPER}`;
-                try {
-                    execFileSync(
-                        resolveSystemTool('systemd-run'),
-                        [
-                            '--collect',
-                            `--unit=wsscrcpy-install-${Date.now()}`,
-                            `--setenv=DATA_ROOT=${SYSTEM_STATE_DIR}`,
-                            stagedHelper,
-                            '--linux-service-install-handoff',
-                            '--scope', 'system',
-                            '--unit', opts.name,
-                        ],
-                        { stdio: ['ignore', 'pipe', 'pipe'] },
-                    );
-                } catch (err) {
-                    log.warn(`root-direct system install-handoff spawn failed (unit enabled; manual start may be needed): ${(err as Error).message}`);
-                }
-            }
         }
 
-        if (scope === 'user') {
-            // Best-effort linger so the service survives a full logout.
-            // Common reasons this can fail: loginctl absent (non-systemd-logind
-            // systems), missing privileges on hardened distros. Service is
-            // already installed + running — degraded but functional.
-            try {
-                execFileSync(resolveSystemTool('loginctl'), ['enable-linger', os.userInfo().username], {
-                    stdio: ['ignore', 'pipe', 'pipe'],
-                });
-            } catch (err) {
-                log.warn(
-                    `loginctl enable-linger failed (service still installed): ${
-                        (err as Error).message
-                    }`,
-                );
-            }
+        // F1: user-scope services must ExecStart a STABLE, executable binary —
+        // never the volatile launch path ($APPIMAGE / ~/Downloads).
+        const effectiveOpts = this.withStableUserBin(opts);
+        const unitContent = renderUnitFile(effectiveOpts, scope);
+        const unitPath = this.userUnitPath(opts.name);
 
-            // Best-effort tray autostart. System scope skips this — headless
-            // server case dominant, no desktop session to autostart into.
-            try {
-                this.writeTrayAutostart();
-            } catch (err) {
-                log.warn(
-                    `tray autostart .desktop write failed (service install succeeded): ${
-                        (err as Error).message
-                    }`,
-                );
-            }
+        fs.mkdirSync(path.dirname(unitPath), { recursive: true });
+        fs.writeFileSync(unitPath, unitContent, { mode: 0o644 });
+        runSystemctl(['--user', 'daemon-reload'], 'daemon-reload');
+        // Never start with `--now` while the local instance still holds the per-user
+        // lock / web port — the service would exit "already running" before binding.
+        // Just `enable`; ServiceApi spawns the --user out-of-cgroup install-handoff
+        // helper that starts it after the local instance exits and frees the port.
+        runSystemctl(['--user', 'enable', `${opts.name}.service`], `enable ${opts.name}.service`);
+
+        // Best-effort linger so the service survives a full logout.
+        // Common reasons this can fail: loginctl absent (non-systemd-logind
+        // systems), missing privileges on hardened distros. Service is
+        // already installed + running — degraded but functional.
+        try {
+            execFileSync(resolveSystemTool('loginctl'), ['enable-linger', os.userInfo().username], {
+                stdio: ['ignore', 'pipe', 'pipe'],
+            });
+        } catch (err) {
+            log.warn(
+                `loginctl enable-linger failed (service still installed): ${
+                    (err as Error).message
+                }`,
+            );
+        }
+
+        // Best-effort tray autostart. System scope skips this — headless
+        // server case dominant, no desktop session to autostart into.
+        try {
+            this.writeTrayAutostart();
+        } catch (err) {
+            log.warn(
+                `tray autostart .desktop write failed (service install succeeded): ${
+                    (err as Error).message
+                }`,
+            );
         }
     }
 

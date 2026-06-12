@@ -237,60 +237,14 @@ describe('SystemdClient', () => {
             await expect(client.install({ ...baseOpts, scope: 'user' })).resolves.toBeUndefined();
         });
 
-        it('system scope as root: writes /etc unit, no --user flag, no loginctl', async () => {
-            Object.defineProperty(process, 'getuid', { value: () => 0, configurable: true });
-            existsSyncMock.mockReturnValue(false);
+        it('system scope: throws (system-scope install now goes through systemServiceCli, not this method)', async () => {
             const client = new SystemdClient();
-            await client.install({ ...baseOpts, scope: 'system' });
-
-            const unitWrites = writeFileSyncMock.mock.calls.filter((c) =>
-                String(c[0]).endsWith('WsScrcpyWeb.service'),
+            await expect(client.install({ ...baseOpts, scope: 'system' })).rejects.toThrow(
+                /no longer handles system scope/,
             );
-            expect(unitWrites).toHaveLength(1);
-            // path.join on win32 dev hosts produces backslashes; normalize.
-            expect(String(unitWrites[0]![0]).replace(/\\/g, '/')).toBe(
-                '/etc/systemd/system/WsScrcpyWeb.service',
-            );
-
-            const sysCalls = execFileSyncMock.mock.calls.filter((c) => c[0] === 'systemctl');
-            expect(sysCalls).toHaveLength(2);
-            expect(sysCalls[0]![1]).toEqual(['daemon-reload']);
-            // B1: enable (persist) but NOT --now — the local instance still holds the
-            // web port; a rootful handoff helper starts the service after it exits.
-            expect(sysCalls[1]![1]).toEqual(['enable', 'WsScrcpyWeb.service']);
-
-            // B1: the rootful systemd-run install-handoff is spawned (transient unit
-            // name carries Date.now(), so assert the stable flags + helper + scope).
-            const handoffCalls = execFileSyncMock.mock.calls.filter((c) => c[0] === 'systemd-run');
-            expect(handoffCalls).toHaveLength(1);
-            const handoffArgs = (handoffCalls[0]![1] as string[]).join(' ');
-            expect(handoffArgs).toContain('--collect');
-            expect(handoffArgs).toContain('--setenv=DATA_ROOT=/var/lib/ws-scrcpy-web');
-            expect(handoffArgs).toContain(
-                '/opt/ws-scrcpy-web/ws-scrcpy-web-launcher.exe --linux-service-install-handoff --scope system --unit WsScrcpyWeb',
-            );
-
-            const loginctlCalls = execFileSyncMock.mock.calls.filter(
-                (c) => c[0] === 'loginctl',
-            );
-            expect(loginctlCalls).toHaveLength(0);
-
-            // No autostart .desktop for system scope.
-            const desktopWrites = writeFileSyncMock.mock.calls.filter((c) =>
-                String(c[0]).endsWith('ws-scrcpy-web-tray.desktop'),
-            );
-            expect(desktopWrites).toHaveLength(0);
-        });
-
-        it('system scope as non-root: uses pkexec for privilege escalation', async () => {
-            Object.defineProperty(process, 'getuid', { value: () => 1000, configurable: true });
-            const client = new SystemdClient();
-            await client.install({ ...baseOpts, scope: 'system' });
-            // Should write tmp file then call execFile (pkexec), not execFileSync (direct systemctl)
-            expect(writeFileSyncMock).toHaveBeenCalled();
-            expect(execFileMock).toHaveBeenCalled();
-            const pkexecCall = execFileMock.mock.calls[0]!;
-            expect(pkexecCall[0]).toBe('pkexec');
+            // No side-effects: no file writes, no systemctl calls.
+            expect(writeFileSyncMock).not.toHaveBeenCalled();
+            expect(execFileSyncMock).not.toHaveBeenCalled();
         });
     });
 
