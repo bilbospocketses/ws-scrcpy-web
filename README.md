@@ -264,7 +264,7 @@ Linux releases ship as a single self-contained AppImage built with [Velopack](ht
 1. Download `WsScrcpyWeb-linux-stable.AppImage` (stable channel) or `WsScrcpyWeb-linux-beta.AppImage` (beta channel) from the [Releases](https://github.com/bilbospocketses/ws-scrcpy-web/releases) page.
 2. Make it executable: `chmod +x WsScrcpyWeb-linux-stable.AppImage`
 3. Run it: `./WsScrcpyWeb-linux-stable.AppImage`
-4. Open `http://localhost:8000` in your browser.
+4. It opens `http://localhost:8000` in your browser on launch — if it doesn't, open it yourself.
 
 The first-run welcome modal offers to install ws-scrcpy-web as a systemd service. Two scopes are available:
 
@@ -273,7 +273,7 @@ The first-run welcome modal offers to install ws-scrcpy-web as a systemd service
 
 You can also install/uninstall the service later from Settings → Service.
 
-**Settings → App (Linux)** has two further actions. **Install for all users** relocates the app to a machine-wide `/opt` install under a single `pkexec` prompt (the control greys out once it's installed system-wide). **Uninstall…** completely removes ws-scrcpy-web — including any installed user- or system-scope service and a machine-wide `/opt` install — in a single pass, with at most one `pkexec` prompt; a **keep my settings & logs** option preserves your `config.json` and logs (so a later reinstall reuses your saved port) while still removing the program and its bundled dependencies.
+**Settings → Server (Linux)** has two further actions. **Install for all users** relocates the app to a machine-wide `/opt` install under a single `pkexec` prompt (the control greys out once it's installed system-wide). **Uninstall…** completely removes ws-scrcpy-web — including any installed user- or system-scope service and a machine-wide `/opt` install — in a single pass, with at most one `pkexec` prompt; a **keep my settings & logs** option preserves your `config.json` and logs (so a later reinstall reuses your saved port) while still removing the program and its bundled dependencies.
 
 #### AppImage placement caveat
 
@@ -301,7 +301,7 @@ The **in-app updater** is the one remaining piece that still needs host `libfuse
 
 #### Tray icon
 
-ws-scrcpy-web does not currently expose a tray icon on Linux. On Windows the launcher provides a tray for quick stop/restart, but the Linux launcher has no tray surface yet — when one is added it will mirror the Windows behavior. For now use Settings → App → stop server & exit in the web UI to stop the app cleanly.
+ws-scrcpy-web does not currently expose a tray icon on Linux. On Windows the launcher provides a tray for quick stop/restart, but the Linux launcher has no tray surface yet — when one is added it will mirror the Windows behavior. For now use Settings → Server → stop the server and close the app in the web UI to stop the app cleanly.
 
 ## Configuration
 
@@ -317,7 +317,7 @@ Almost all configuration is managed through the in-app **Settings** panel (gear 
 | `channel` | `stable` | Settings → Updates → Channel |
 | `githubOwner` | `bilbospocketses` | Settings → Updates → GitHub owner (override for forks) |
 
-Not a stored field, but reached the same way: **Settings → App → stop server & exit** cleanly stops the server and quits the app — the primary clean-exit path on Linux (no tray there), disabled in service mode.
+Not a stored field, but reached the same way: **Settings → Server → stop the server and close the app** cleanly stops the server and quits the app — the primary clean-exit path on Linux (no tray there), disabled in service mode.
 
 **Update channels are baked into the installation.** Velopack tracks the channel (stable or beta) at the package level — it's part of the installed identity, not just a config preference. Changing the `channel` setting changes which feed the updater *queries*, but the in-app updater cannot cross from one channel to another. A beta installation will not successfully apply a stable update (or vice versa), even if the updater detects and downloads it. **To switch channels, uninstall the current version and fresh-install the desired channel's MSI/AppImage.** This is a Velopack platform constraint, not a ws-scrcpy-web limitation.
 

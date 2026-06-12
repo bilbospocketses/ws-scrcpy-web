@@ -1866,7 +1866,7 @@ The first-run and bookmark-dismissal flags are stored in `config.json` rather th
 | `bookmarkDismissedForPort` | `null` | PortChangeModal "got it" (stamps the current port) |
 | `bookmarkDismissedGlobally` | `false` | PortChangeModal "don't show again — ever" |
 
-This design means the state survives port changes, browser cache clears, and machine reboots (localStorage is unreliable on the Linux AppImage, which can treat each launch as a different origin). The **Settings → App** panel includes a **"reset welcome and bookmark prompts"** button (`resetPromptsPayload()`) that clears all four fields at once — `firstRunComplete` and `serviceFirstRunSeen` back to `false`, `bookmarkDismissedForPort` to `null`, and `bookmarkDismissedGlobally` to `false` — re-triggering the first-run flow.
+This design means the state survives port changes, browser cache clears, and machine reboots (localStorage is unreliable on the Linux AppImage, which can treat each launch as a different origin). The **Settings → Server** panel includes a **"reset welcome and bookmark prompts"** button (`resetPromptsPayload()`) that clears all four fields at once — `firstRunComplete` and `serviceFirstRunSeen` back to `false`, `bookmarkDismissedForPort` to `null`, and `bookmarkDismissedGlobally` to `false` — re-triggering the first-run flow.
 
 ### 23.5 Port Change Modal
 
