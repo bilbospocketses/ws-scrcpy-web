@@ -1194,7 +1194,7 @@ describe('ServiceApi', () => {
         // (not --user) so it escapes the service cgroup. Wraps in pkexec when the
         // serving process is NOT already root (system service itself runs as root).
 
-        it('system-scope uninstall execs the /opt helper (bin_t) via systemd-run --system, root → no pkexec', async () => {
+        it('system-scope uninstall execs the /opt staged AppImage (bin_t) via systemd-run --system, root → no pkexec', async () => {
             Object.defineProperty(process, 'getuid', { value: () => 0, configurable: true });
             const client = fakeClient({
                 uninstall: vi.fn(async () => undefined),
@@ -1224,9 +1224,12 @@ describe('ServiceApi', () => {
             expect(spawnedCmd).toMatch(/systemd-run$/);
             expect(spawnedArgs).toContain('--system');
             expect(spawnedArgs).not.toContain('--user');
-            // Execs the /opt-staged helper (bin_t), not the home copy (data_home_t)
-            expect(spawnedArgs.some((a) => a.endsWith('/opt/ws-scrcpy-web/ws-scrcpy-web-launcher.exe'))).toBe(true);
-            // --scope value forwarded to the helper
+            // Execs the /opt-staged AppImage (bin_t), NOT the un-staged launcher helper (.exe)
+            const expectedAppImage = `${STAGED_SYSTEM_DIR}/${STAGED_SYSTEM_APPIMAGE}`;
+            expect(spawnedArgs).toContain(expectedAppImage);
+            expect(spawnedArgs.some((a) => a.endsWith('.exe'))).toBe(false);
+            // --linux-service-teardown and --scope forwarded to the AppImage
+            expect(spawnedArgs).toContain('--linux-service-teardown');
             expect(spawnedArgs).toContain('system');
 
             expect((res as any).getStatus()).toBe(200);
@@ -1265,7 +1268,10 @@ describe('ServiceApi', () => {
             expect(spawnedCmd).toMatch(/pkexec$/);
             expect(spawnedArgs[0]).toMatch(/systemd-run$/);
             expect(spawnedArgs).toContain('--system');
-            expect(spawnedArgs.some((a) => a.endsWith('/opt/ws-scrcpy-web/ws-scrcpy-web-launcher.exe'))).toBe(true);
+            // Execs the /opt-staged AppImage (bin_t), NOT the un-staged launcher helper (.exe)
+            const expectedAppImage = `${STAGED_SYSTEM_DIR}/${STAGED_SYSTEM_APPIMAGE}`;
+            expect(spawnedArgs).toContain(expectedAppImage);
+            expect(spawnedArgs.some((a) => a.endsWith('.exe'))).toBe(false);
 
             expect((res as any).getStatus()).toBe(200);
             const body = JSON.parse((res as any).getBody());

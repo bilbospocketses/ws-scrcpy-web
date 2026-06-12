@@ -25,7 +25,7 @@ import {
     type ServiceClientFactoryResult,
 } from '../service';
 import { resolveSystemTool } from '../service/systemTools';
-import { STAGED_SYSTEM_DIR, STAGED_SYSTEM_APPIMAGE, STAGED_SYSTEM_HELPER, SYSTEM_STATE_DIR, buildServiceUnitEnv, buildMachineWideInstallScript, runPkexec, DECLINE_MARKER_NAME } from '../service/SystemdClient';
+import { STAGED_SYSTEM_DIR, STAGED_SYSTEM_APPIMAGE, SYSTEM_STATE_DIR, buildServiceUnitEnv, buildMachineWideInstallScript, runPkexec, DECLINE_MARKER_NAME } from '../service/SystemdClient';
 import type { CommandRunner } from '../service/systemServiceCli';
 import { getAppVersion } from '../appVersion';
 import { readJsonBody } from './utils';
@@ -664,11 +664,13 @@ export class ServiceApi {
             let cmd: string;
             let sdArgs: string[];
             if (scope === 'system') {
-                // System scope: exec the /opt-staged helper (bin_t — init_t may exec
+                // System scope: exec the /opt-staged AppImage (bin_t — init_t may exec
                 // it, unlike the data_home_t home copy SELinux blocks), out-of-cgroup
                 // via systemd-run --system, elevated by pkexec when the serving process
-                // isn't already root (the system service itself runs as root).
-                const optHelper = `${STAGED_SYSTEM_DIR}/${STAGED_SYSTEM_HELPER}`;
+                // isn't already root (the system service itself runs as root). The new
+                // install stages the AppImage (not a separate launcher helper), so we
+                // exec the bin_t-labeled staged AppImage directly.
+                const optAppImage = `${STAGED_SYSTEM_DIR}/${STAGED_SYSTEM_APPIMAGE}`;
                 const runArgs = [
                     '--system', '--collect', teardownUnit,
                     // DATA_ROOT is MANDATORY: a `systemd-run --system` transient unit has no
@@ -677,7 +679,7 @@ export class ServiceApi {
                     // #9 5.1 core-dump that made uninstall a silent no-op). Mirrors the install
                     // handoff's --setenv.
                     `--setenv=DATA_ROOT=${SYSTEM_STATE_DIR}`,
-                    optHelper, '--linux-service-teardown', '--scope', 'system', '--unit', WS_SCRCPY_SERVICE_NAME,
+                    optAppImage, '--linux-service-teardown', '--scope', 'system', '--unit', WS_SCRCPY_SERVICE_NAME,
                 ];
                 if (process.getuid?.() === 0) {
                     cmd = systemdRun;
