@@ -83,7 +83,7 @@ else
   echo "(semanage absent)" > "$OUT/30-fcontext.txt"
 fi
 ls -laZ  "$OPT_DIR"      > "$OUT/31-opt-ls.txt"      2>&1
-sudo ls -laZ "$VAR_LIB_DIR" > "$OUT/32-var-opt-ls.txt"  2>&1
+sudo ls -laZ "$VAR_LIB_DIR" > "$OUT/32-var-lib-ls.txt"  2>&1
 ls -laRZ "$DATA_ROOT"   > "$OUT/33-dataroot-ls.txt" 2>&1
 
 # 40. config.json (local + system)

@@ -57,7 +57,7 @@ Boxes start unticked — this is a fresh pass.
 
 | Test | How to perform | Expected + verify |
 |---|---|---|
-| ☐ **5.8** `[L]` Uninstall → relaunch local | Uninstall the user service **as that user** | Unit file gone (`~/.config/systemd/user/WsScrcpyWeb.service`); after relaunch **only the single local instance** runs (launcher + node + its pre-warmed adb daemon) — **no service procs, no 2nd instance, no `scrcpy-server`** (`pgrep -fa "adb\|scrcpy-server\|WsScrcpyWeb"`); relaunches **local mode**; Settings shows not-installed |
+| ☐ **5.8** `[L]` Uninstall → relaunch local | Uninstall the user service **as that user** | Unit file gone (`~/.config/systemd/user/WsScrcpyWeb.service`); after relaunch **only the single local instance** runs (launcher + node + its pre-warmed adb daemon) — **no service procs, no 2nd instance, no `scrcpy-server`** (`pgrep -fa WsScrcpyWeb` = one launcher + one node; `pgrep -x adb` = one; `pgrep -f scrcpy-server` = none); relaunches **local mode**; Settings shows not-installed |
 | ☐ **12.1** `[L]` Clean exit + adb teardown | Local mode, device + stream → Settings → Server → "stop server & exit" | Tab self-closes/"app stopped"; process tree exits clean; log shows "Stopping adb daemon"; launcher **exit 0** (no 75 restart) |
 | ☐ **12.4** `[L]` DATA_ROOT override | Launch with `DATA_ROOT=/tmp/wssw-dataroot` exported | Config/deps/logs land there (Node **and** launcher agree) |
 | ☐ **13.1** `[B]` Bookmark global-dismiss | Bookmark/port-change reminder → check "don't show again — ever" | Supersedes + disables the per-port checkbox; persists `bookmarkDismissedGlobally` |
@@ -98,7 +98,7 @@ Get the from-build first: `gh run download 26859605903 --repo bilbospocketses/ws
 | ☐ **6.3** `[L]` No-service /opt update | Machine-wide `/opt`, no service → update | One pkexec; **rename**-swap; relabel bin_t; **no ETXTBSY**; FUSE intact |
 | ☐ **6.4** `[L]` Newer home over /opt | `/opt` beta.40 + newer home AppImage → launch | Offers system-wide update → swap → next launch runs updated `/opt` |
 | ☐ **6.5** `[L]` User-service update | User-service → Apply | Unit stops, home swaps, restarts **same port**, **no prompt** |
-| ☐ **6.6** `[L]` System-service update | System-service → Apply | **No polkit**; `/opt` swaps; restorecon bin_t; **zero AVC**; helper survives `systemctl stop` |
+| ☐ **6.6** `[L]` System-service update | System-service → Apply | **No polkit**; `/opt` swaps; restorecon bin_t; **zero AVC**; helper survives `systemctl stop`; updated deps stay **bin_t** (`ls -Z /opt/ws-scrcpy-web/dependencies` — copied into the bin_t tree, no relabel) |
 
 ## #12 — Velopack / no-libfuse2 🧩 *(needs a minimal Fedora host without libfuse2)*
 
