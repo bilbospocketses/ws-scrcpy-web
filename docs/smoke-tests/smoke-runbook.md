@@ -293,10 +293,10 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 │                      │      │                              │ tray disappears.                                 │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
 │ 5.8 User-scope       │ Lin  │ User-scope service installed │ The user service is stopped/disabled/removed     │ [ ]  │
-│ uninstall -> back to │      │ and in use - uninstall AS    │ (unit file gone); nothing left running (no stray │      │
-│ local                │      │ that user.                   │ adb/scrcpy/app); the app relaunches in plain     │      │
-│                      │      │                              │ local mode and reconnects; Settings shows "not   │      │
-│                      │      │                              │ installed".                                      │      │
+│ uninstall -> back to │      │ and in use - uninstall AS    │ (unit file gone); after relaunch only the local  │      │
+│ local                │      │ that user.                   │ instance runs (launcher+node+pre-warmed adb)     │      │
+│                      │      │                              │ - no service procs, no 2nd instance, no scrcpy;  │      │
+│                      │      │                              │ reconnects; Settings shows "not installed".      │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
 │ 5.9 System uninstall │ Lin  │ After a system-scope         │ The "service removed - relaunch manually"        │ [ ]  │
 │ message is neutral   │      │ uninstall with nobody at the │ message is a plain neutral line - not red, no    │      │

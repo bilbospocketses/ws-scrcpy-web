@@ -414,7 +414,7 @@ export class SettingsModal extends Modal {
     private serviceScopeSystemRadio: HTMLInputElement | null = null;
     private servicePlatform: 'win32' | 'linux' | null = null;
 
-    // ── App section state ─────────────────────────────────────────────────
+    // ── Server section (folded App) state ────────────────────────────────
     private stopServerButton: HTMLButtonElement | null = null;
     private stopServerNote: HTMLElement | null = null;
     // Linux-only rows (hidden on win32). Shown/disabled via appSectionButtonsState
@@ -1632,10 +1632,8 @@ export class SettingsModal extends Modal {
         }
     }
 
-    // ── App section ────────────────────────────────────────────────────────
     // The former "App" section (reset, install-for-all-users, stop & exit,
-    // uninstall) was folded into the Server section — see buildServerSection
-    // (beta.62).
+    // uninstall) was folded into the Server section — see buildServerSection (beta.62).
 
     /**
      * Reflect the (unit-tested) stopServerButtonState decision onto the App
