@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.65] - 2026-06-12
+
 ### Added
 
 - **Headless install/uninstall of the Linux system-wide service.** The system service can now be managed from a root shell without the desktop UI: `sudo ./WsScrcpyWeb --install-system-service [--port N]`, `--uninstall-system-service [--keep-state]`, and `--system-service-status`. This is the supported path for a headless server that runs at boot, before anyone logs in.
