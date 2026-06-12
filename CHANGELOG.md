@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Launching the app on Windows now opens a browser tab too — not only on the very first run.** This matches the same fix on Linux: starting the app fresh from its shortcut now opens your browser to the app every time. A duplicate tab is still avoided when the app relaunches itself to apply an update.
+
 ## [0.1.30-beta.62] - 2026-06-11
 
 ### Changed
