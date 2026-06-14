@@ -26,7 +26,12 @@ export default class Util {
     }
 
     public static escapeUdid(udid: string): string {
-        return 'udid_' + udid.replace(/[. :]/g, '_');
+        // Replace everything that isn't a safe id character. This preserves the
+        // output for real udids (USB serials keep their '-', host:port becomes
+        // host_port as before) while neutralising HTML-dangerous characters in
+        // any id/name derived from the udid (defence in depth alongside the
+        // html`` quote-escaping).
+        return 'udid_' + udid.replace(/[^A-Za-z0-9_-]/g, '_');
     }
 
     public static parse(params: URLSearchParams, name: string, required?: boolean): string | null {

@@ -1,4 +1,5 @@
 import type { DependencyInfo, UpdateResult } from '../../common/DependencyTypes';
+import { escapeHtml } from '../htmlEscape';
 
 const POLL_INTERVAL_MS = 15_000;
 
@@ -187,12 +188,12 @@ export class DependencyPanel {
             row.className = `dep-row dep-status-${dep.status}`;
             row.innerHTML = `
                 <td>
-                    <strong>${dep.displayName}</strong>
-                    ${dep.pairedWith ? `<span class="dep-paired">+ ${dep.pairedWith}</span>` : ''}
-                    <div class="dep-description">${dep.description}</div>
+                    <strong>${escapeHtml(dep.displayName)}</strong>
+                    ${dep.pairedWith ? `<span class="dep-paired">+ ${escapeHtml(dep.pairedWith)}</span>` : ''}
+                    <div class="dep-description">${escapeHtml(dep.description)}</div>
                 </td>
-                <td class="dep-version">${dep.installedVersion || 'Not installed'}</td>
-                <td class="dep-version">${dep.latestVersion || '\u2014'}</td>
+                <td class="dep-version">${escapeHtml(dep.installedVersion || 'Not installed')}</td>
+                <td class="dep-version">${escapeHtml(dep.latestVersion || '\u2014')}</td>
                 <td class="dep-status">${this.statusLabel(dep)}</td>
                 <td class="dep-action">${this.actionButton(dep)}</td>
             `;
@@ -210,7 +211,7 @@ export class DependencyPanel {
             case 'update-available': return '<span class="dep-badge dep-warn">Update available</span>';
             case 'checking': return '<span class="dep-badge dep-info">Checking...</span>';
             case 'updating': return '<span class="dep-badge dep-info">Updating...</span>';
-            case 'error': return `<span class="dep-badge dep-error" title="${dep.errorMessage || ''}">Error</span>`;
+            case 'error': return `<span class="dep-badge dep-error" title="${escapeHtml(dep.errorMessage || '')}">Error</span>`;
             default: return '<span class="dep-badge dep-unknown">Unknown</span>';
         }
     }
@@ -223,7 +224,7 @@ export class DependencyPanel {
                 return `<button class="dep-btn dep-update" disabled title="${tooltip}">` +
                     `update (dev)</button>`;
             }
-            return `<button class="dep-btn dep-update" data-update="${dep.name}">update</button>`;
+            return `<button class="dep-btn dep-update" data-update="${escapeHtml(dep.name)}">update</button>`;
         }
         if (dep.status === 'updating') {
             return '<button class="dep-btn" disabled>updating...</button>';

@@ -68,12 +68,15 @@ export class FirstRunBanner {
         this.container.innerHTML = `
             <div class="first-run-banner-inner">
                 <span class="first-run-banner-icon">⚠</span>
-                <span class="first-run-banner-text">
-                    Setup incomplete — ${names} failed to download. Check your network connection.
-                </span>
+                <span class="first-run-banner-text"></span>
                 <button class="first-run-banner-retry" type="button">Retry</button>
             </div>
         `;
+        // Inject the (server-supplied) dependency names as text, never as markup.
+        const textEl = this.container.querySelector('.first-run-banner-text');
+        if (textEl) {
+            textEl.textContent = `Setup incomplete — ${names} failed to download. Check your network connection.`;
+        }
         this.retryButton = this.container.querySelector('.first-run-banner-retry');
         this.retryButton?.addEventListener('click', () => this.onRetry());
         this.container.style.display = 'block';

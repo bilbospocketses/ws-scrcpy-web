@@ -97,6 +97,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     private requestedPath = '';
     private downloads: Map<Multiplexer, Download> = new Map();
     private uploads: Map<string, Upload> = new Map();
+    private rowsByName: Map<string, HTMLElement> = new Map();
     private tableBody: HTMLElement;
     private channels: Set<Multiplexer> = new Set();
     constructor(params: ParamsFileListing) {
@@ -206,9 +207,9 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     }
 
     private findOrCreateEntryRow(fileName: string): HTMLElement {
-        const row = document.getElementById(`entry-${fileName}`);
-        if (row) {
-            return row;
+        const existing = this.rowsByName.get(fileName);
+        if (existing && existing.isConnected) {
+            return existing;
         }
         return this.addRow(true, fileName, 'file');
     }
@@ -216,12 +217,9 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     public onFilePushUpdate(data: PushUpdateParams): void {
         const { fileName, progress, error, message, finished } = data;
         let upload = this.uploads.get(fileName);
-        if (!upload || document.getElementById(upload.anchor.id) !== upload.anchor) {
+        if (!upload || !upload.anchor.isConnected) {
             const row = this.findOrCreateEntryRow(fileName);
             const anchor = row.getElementsByTagName('a')[0]!;
-            if (!anchor.id) {
-                anchor.id = `upload_${fileName}`;
-            }
             const progressEl = this.appendProgressElement(anchor);
             upload = { row, progressEl, anchor, timeout: null };
             this.uploads.set(fileName, upload);
@@ -358,6 +356,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
 
     protected clean(): void {
         this.tableBody.innerHTML = '';
+        this.rowsByName.clear();
         const header = document.getElementById('header');
         if (header) {
             header.innerText = `Content ${this.path}`;
@@ -515,8 +514,13 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
 
     protected addRow(push: boolean, name: string, typeClass: string, size = '', date = '', entryId = ''): HTMLElement {
         const row = document.createElement('tr');
-        row.id = `entry-${name}`;
+        // Track rows by name in a Map rather than encoding the untrusted file
+        // name into an element id, which enabled DOM clobbering and selector
+        // breakage. The name is stored as a data-* attribute (set safely, not
+        // parsed as HTML) for any styling/debugging hooks.
         row.classList.add('entry-row');
+        row.setAttribute('data-entry-name', name);
+        this.rowsByName.set(name, row);
         const nameTd = document.createElement('td');
         nameTd.classList.add('entry-name');
         const link = document.createElement('a');

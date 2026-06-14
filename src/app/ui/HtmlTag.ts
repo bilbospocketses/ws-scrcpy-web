@@ -1,3 +1,5 @@
+import { escapeHtml } from '../htmlEscape';
+
 type Value = any;
 
 function htmlValue(value: Value): string {
@@ -10,9 +12,11 @@ function htmlValue(value: Value): string {
     if (value === null) {
         return 'null';
     }
-    const e = document.createElement('dummy');
-    e.innerText = value.toString();
-    return e.innerHTML;
+    // Escape for both text and attribute context (quotes included) so an
+    // interpolated value cannot break out of an attribute and inject markup or
+    // an event handler. (The previous innerText round-trip did not escape
+    // quotes, leaving attribute interpolation injectable.)
+    return escapeHtml(value.toString());
 }
 
 export const html = function html(strings: TemplateStringsArray, ...values: ReadonlyArray<Value>): HTMLTemplateElement {
