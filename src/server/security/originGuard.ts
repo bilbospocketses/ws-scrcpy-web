@@ -48,7 +48,7 @@ function hostnameOf(host: string): string | null {
  * machine's own addresses, and still allows legitimate access by IP over the
  * LAN (e.g. http://192.168.1.5:8000).
  */
-function isHostAllowed(host: string | undefined): boolean {
+export function isHostAllowed(host: string | undefined): boolean {
     if (!host) {
         return false;
     }

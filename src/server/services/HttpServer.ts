@@ -6,7 +6,7 @@ import * as process from 'process';
 import { TypedEmitter } from '../../common/TypedEmitter';
 import { Config } from '../Config';
 import { EnvName } from '../EnvName';
-import { isRequestAllowed, requiresOriginCheck } from '../security/originGuard';
+import { evaluateHttpRequest } from '../security/requestGate';
 import { createStaticHandler } from '../StaticFileServer';
 import { Utils } from '../Utils';
 import type { Service } from './Service';
@@ -98,7 +98,7 @@ export class HttpServer extends TypedEmitter<HttpServerEvents> implements Servic
                 if (!serverItem.options) {
                     throw Error('Must provide option for secure server configuration');
                 }
-                const requestHandler = this.createRequestHandler(this.mainHandler);
+                const requestHandler = this.createRequestHandler(this.mainHandler, true);
                 server = https.createServer(serverItem.options, requestHandler);
                 proto = 'https';
             } else {
@@ -130,7 +130,7 @@ export class HttpServer extends TypedEmitter<HttpServerEvents> implements Servic
                         res.end();
                     };
                 } else {
-                    handler = this.createRequestHandler(this.mainHandler);
+                    handler = this.createRequestHandler(this.mainHandler, false);
                 }
                 server = http.createServer(options, handler);
             }
@@ -145,25 +145,34 @@ export class HttpServer extends TypedEmitter<HttpServerEvents> implements Servic
 
     private createRequestHandler(
         fallback?: (req: IncomingMessage, res: ServerResponse) => void,
+        secure = false,
     ): (req: IncomingMessage, res: ServerResponse) => void {
         return (req, res) => {
-            // Origin/Host allowlist — defend the otherwise-unauthenticated API
-            // surface against cross-site (CSRF) and DNS-rebinding attacks. Only
-            // the sensitive surface (the API + state-changing methods) is gated;
-            // static asset GETs pass through so the page can still bootstrap.
             let pathname = '/';
             try {
                 pathname = new URL(req.url || '/', 'http://localhost').pathname;
             } catch {
                 pathname = '/';
             }
-            if (requiresOriginCheck(req.method, pathname)) {
-                const verdict = isRequestAllowed(req.headers.origin, req.headers.host);
-                if (!verdict.allowed) {
-                    res.writeHead(403, { 'Content-Type': 'application/json' });
-                    res.end(JSON.stringify({ error: 'forbidden', reason: verdict.reason }));
-                    return;
-                }
+            // Defend the otherwise-unauthenticated API/WS surface: Origin + Host
+            // allowlist (CSRF / DNS-rebinding) plus a per-instance token, with
+            // the SPA's token cookie attached on document responses. See
+            // requestGate for the composed policy.
+            const decision = evaluateHttpRequest(
+                req.method,
+                pathname,
+                req.headers.origin,
+                req.headers.host,
+                req.headers.cookie,
+                secure,
+            );
+            if (!decision.allowed) {
+                res.writeHead(decision.status, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: 'forbidden', reason: decision.reason }));
+                return;
+            }
+            if (decision.setCookie) {
+                res.setHeader('Set-Cookie', decision.setCookie);
             }
             const tryHandlers = async () => {
                 for (const handler of HttpServer.apiHandlers) {

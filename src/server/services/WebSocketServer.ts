@@ -2,7 +2,7 @@ import type WS from 'ws';
 import { WebSocketServer as WSServer } from 'ws';
 import { Logger } from '../Logger';
 import type { MwFactory } from '../mw/Mw';
-import { isRequestAllowed } from '../security/originGuard';
+import { evaluateWsConnection } from '../security/requestGate';
 import { HttpServer, type ServerAndPort } from './HttpServer';
 import type { Service } from './Service';
 
@@ -44,13 +44,24 @@ export class WebSocketServer implements Service {
             // Origin/Host allowlist at the handshake — a WebSocket is not subject
             // to the same-origin policy and sends no CORS preflight, so without
             // this a malicious page could open a control channel to the device.
+            // Origin/Host allowlist + per-instance token at the handshake. A
+            // WebSocket is exempt from the same-origin policy and sends no CORS
+            // preflight, so without this a malicious page could open a control
+            // channel to the device. Every legitimate client is the browser,
+            // which carries the SameSite token cookie; a non-browser caller does
+            // not. (A server restart mints a new token, so an already-open page
+            // must reload to reconnect — expected for a per-instance secret.)
             verifyClient: (info, cb) => {
-                const verdict = isRequestAllowed(info.origin, info.req.headers.host);
-                if (!verdict.allowed) {
+                const decision = evaluateWsConnection(
+                    info.origin,
+                    info.req.headers.host,
+                    info.req.headers.cookie,
+                );
+                if (!decision.allowed) {
                     log.info(
                         `rejected WS connection (origin="${info.origin ?? ''}" host="${
                             info.req.headers.host ?? ''
-                        }"): ${verdict.reason}`,
+                        }"): ${decision.reason}`,
                     );
                     cb(false, 403, 'Forbidden');
                     return;

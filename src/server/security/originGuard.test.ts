@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isRequestAllowed, requiresOriginCheck } from './originGuard';
+import { isHostAllowed, isRequestAllowed, requiresOriginCheck } from './originGuard';
 
 describe('originGuard.isRequestAllowed', () => {
     describe('Host allowlist (DNS-rebinding defense)', () => {
@@ -68,6 +68,22 @@ describe('originGuard.isRequestAllowed', () => {
         it('is case-insensitive on the host portion', () => {
             expect(isRequestAllowed('http://LOCALHOST:8000', 'localhost:8000').allowed).toBe(true);
         });
+    });
+});
+
+describe('originGuard.isHostAllowed', () => {
+    it('allows localhost and IP-literal hosts', () => {
+        expect(isHostAllowed('localhost:8000')).toBe(true);
+        expect(isHostAllowed('127.0.0.1:8000')).toBe(true);
+        expect(isHostAllowed('[::1]:8000')).toBe(true);
+        expect(isHostAllowed('192.168.1.5')).toBe(true);
+    });
+
+    it('rejects domain hosts and missing/garbage values', () => {
+        expect(isHostAllowed('evil.com')).toBe(false);
+        expect(isHostAllowed('myserver.local')).toBe(false);
+        expect(isHostAllowed(undefined)).toBe(false);
+        expect(isHostAllowed('bad host!!')).toBe(false);
     });
 });
 
