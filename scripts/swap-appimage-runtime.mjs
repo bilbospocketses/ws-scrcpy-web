@@ -28,6 +28,7 @@
 //   node scripts/swap-appimage-runtime.mjs Releases/WsScrcpyWeb-linux.AppImage
 
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
     chmodSync,
     createReadStream,
@@ -39,12 +40,38 @@ import { open, rename, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
+import { pathToFileURL } from 'node:url';
 
 // Pin to a known-good URL. The continuous channel is built from main and
 // updates frequently. If reproducibility ever matters, swap to a tagged
 // release URL.
 const RUNTIME_URL =
     'https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64';
+
+// SHA-256 of the known-good runtime, verified before it is embedded into the
+// shipped .AppImage — this binary is the first code that runs on launch. The
+// continuous channel is rebuilt from main; when intentionally adopting a newer
+// runtime, download it from a trusted source, verify it, and update this
+// digest. The build refuses any runtime whose hash does not match.
+const RUNTIME_SHA256 =
+    'a2419dce47568395ae79c01ffa9a5a341dd339581352ff104d073527543177e5';
+
+/**
+ * Verify downloaded runtime bytes against an expected SHA-256, throwing on
+ * mismatch. Returns the buffer unchanged on success.
+ */
+export function verifyRuntimeBytes(buf, expectedSha = RUNTIME_SHA256) {
+    const actual = createHash('sha256').update(buf).digest('hex');
+    if (actual !== expectedSha) {
+        throw new Error(
+            `runtime SHA-256 mismatch: expected ${expectedSha}, got ${actual}. ` +
+                'Refusing to embed an unverified runtime. If the upstream runtime ' +
+                'was intentionally updated, re-pin RUNTIME_SHA256 after verifying ' +
+                'the new binary from a trusted source.',
+        );
+    }
+    return buf;
+}
 
 const SKIP = process.env.SKIP_APPIMAGE_RUNTIME_SWAP === '1';
 
@@ -125,6 +152,10 @@ async function downloadRuntime(url, destPath) {
     }
     const ab = await res.arrayBuffer();
     const buf = Buffer.from(ab);
+    // Supply-chain integrity: verify the pinned SHA-256 before trusting the
+    // runtime. The ELF magic check below is only a secondary sanity check —
+    // any attacker-supplied binary would satisfy the magic bytes.
+    verifyRuntimeBytes(buf);
     // Sanity check: verify ELF magic (0x7F 'E' 'L' 'F').
     if (
         buf.length < 4 ||
@@ -226,9 +257,12 @@ async function main() {
     }
 }
 
-try {
-    await main();
-} catch (e) {
-    err(`unexpected error: ${e.message}`);
-    process.exit(1);
+// Only run when invoked directly, so the module can be imported in tests.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+    try {
+        await main();
+    } catch (e) {
+        err(`unexpected error: ${e.message}`);
+        process.exit(1);
+    }
 }
