@@ -2,6 +2,7 @@ import { type ChildProcess, execFile, spawn } from 'child_process';
 import * as path from 'path';
 import { promisify } from 'util';
 import { AdbDaemonManager } from './AdbDaemonManager';
+import { assertSerial } from './security/deviceInput';
 
 const execFileAsync = promisify(execFile);
 
@@ -119,6 +120,11 @@ export class AdbClient {
     }
 
     private async exec(args: string[], opts: AdbExecOptions = {}): Promise<string> {
+        // Validate the target serial (argument injection: a leading "-" would be
+        // parsed by adb as an option, e.g. -L/-H to redirect to another server).
+        if (args[0] === '-s') {
+            assertSerial(args[1]);
+        }
         // Daemon coordination first — propagate any AdbExecError from the
         // manager (binary-missing, spawn-timeout) unchanged. Inside the try
         // block, the catch's err-classifier would unhelpfully rewrap an
@@ -163,6 +169,7 @@ export class AdbClient {
     }
 
     async shell(serial: string, command: string): Promise<string> {
+        assertSerial(serial);
         await this.daemon.ensureReady();
         const { stdout } = await execFileAsync(this.adbPath, ['-s', serial, 'shell', command], {
             maxBuffer: 10 * 1024 * 1024,
@@ -232,6 +239,7 @@ export class AdbClient {
      * pre-enumeration, this comment is the trip-wire to revisit the API.
      */
     shellSpawn(serial: string, command: string): ChildProcess {
+        assertSerial(serial);
         return spawn(this.adbPath, ['-s', serial, 'shell', command], {
             stdio: ['ignore', 'pipe', 'pipe'],
             cwd: this.cwd,

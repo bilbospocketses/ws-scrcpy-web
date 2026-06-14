@@ -1,3 +1,4 @@
+import { isSafeEncoderName } from './security/deviceInput';
 import type { ScrcpyOptions } from './ScrcpyOptions';
 
 /**
@@ -45,8 +46,11 @@ export function scrcpyOptionsFromQuery(params: URLSearchParams, scid: string): S
         }
     }
 
+    // videoEncoder is the only free-form string option, and it is serialized
+    // into the `app_process ...` string that runs via `adb shell`. Allowlist it
+    // to a safe charset so it cannot inject shell metacharacters.
     const videoEncoder = params.get('videoEncoder');
-    if (videoEncoder) {
+    if (videoEncoder && isSafeEncoderName(videoEncoder)) {
         options.videoEncoder = videoEncoder;
     }
 

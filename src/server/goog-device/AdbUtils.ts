@@ -6,6 +6,7 @@ import type { Multiplexer } from '../../packages/multiplexer/Multiplexer';
 import type { FileStats } from '../../types/FileStats';
 import { AdbClient } from '../AdbClient';
 import { Config } from '../Config';
+import { shArg } from '../security/deviceInput';
 
 const execFileAsync = promisify(execFile);
 
@@ -27,7 +28,7 @@ export class AdbUtils {
         // Use stat with format: mode (octal), size, mtime (epoch)
         const output = await adbClient.shell(
             serial,
-            `stat -c '%f %s %Y' "${pathString}" 2>/dev/null || stat -c '%a %s %Y' "${pathString}" 2>/dev/null`,
+            `stat -c '%f %s %Y' ${shArg(pathString)} 2>/dev/null || stat -c '%a %s %Y' ${shArg(pathString)} 2>/dev/null`,
         );
         const parts = output.trim().split(/\s+/);
         if (parts.length >= 3) {
@@ -41,7 +42,7 @@ export class AdbUtils {
 
     public static async readdir(serial: string, pathString: string): Promise<FileStats[]> {
         // Use ls -la to list directory contents
-        const output = await adbClient.shell(serial, `ls -la "${pathString}"`);
+        const output = await adbClient.shell(serial, `ls -la ${shArg(pathString)}`);
         const entries: FileStats[] = [];
         for (const line of output.split('\n')) {
             const trimmed = line.trim();
@@ -95,7 +96,7 @@ export class AdbUtils {
     public static async pipeReadDirToStream(serial: string, pathString: string, stream: Multiplexer): Promise<void> {
         try {
             // Use ls -la for listing, then stat each entry for mode/size/mtime
-            const output = await adbClient.shell(serial, `ls -1a "${pathString}"`);
+            const output = await adbClient.shell(serial, `ls -1a ${shArg(pathString)}`);
             const names = output
                 .split('\n')
                 .map((n) => n.trim())
@@ -114,7 +115,7 @@ export class AdbUtils {
                         mtime = stat.mtime;
                     } catch {
                         // If stat fails, try to determine if it's a directory from ls -la
-                        const laOutput = await adbClient.shell(serial, `ls -lad "${entryPath}" 2>/dev/null`);
+                        const laOutput = await adbClient.shell(serial, `ls -lad ${shArg(entryPath)} 2>/dev/null`);
                         if (laOutput.startsWith('d')) {
                             mode = 0o40755; // directory
                         } else {
@@ -147,7 +148,7 @@ export class AdbUtils {
     public static async pipePullFileToStream(serial: string, pathString: string, stream: Multiplexer): Promise<void> {
         try {
             // Use adb exec-out to stream binary file content
-            const { stdout } = await execFileAsync(Config.getInstance().adbPath, ['-s', serial, 'exec-out', `cat "${pathString}"`], {
+            const { stdout } = await execFileAsync(Config.getInstance().adbPath, ['-s', serial, 'exec-out', `cat ${shArg(pathString)}`], {
                 maxBuffer: 50 * 1024 * 1024,
                 encoding: 'buffer',
             });

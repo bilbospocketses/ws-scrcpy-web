@@ -4,6 +4,7 @@ import type { NetInterface } from '../../types/NetInterface';
 import { AdbClient } from '../AdbClient';
 import { Config } from '../Config';
 import { Logger } from '../Logger';
+import { shArg } from '../security/deviceInput';
 import { classifyDeviceKind } from './deviceKind';
 import { Properties } from './Properties';
 
@@ -99,6 +100,11 @@ export class Device extends TypedEmitter<DeviceEvents> {
     }
 
     public killProcess(pid: number): Promise<string> {
+        // Guard against a non-positive/non-integer pid reaching `kill` — a
+        // negative value would target a process group (e.g. `kill -1` = all).
+        if (!Number.isInteger(pid) || pid <= 0) {
+            return Promise.reject(new Error(`invalid pid: ${pid}`));
+        }
         const command = `kill ${pid}`;
         return this.runShellCommand(command);
     }
@@ -155,7 +161,7 @@ export class Device extends TypedEmitter<DeviceEvents> {
     }
 
     private async pidOf(processName: string): Promise<number[]> {
-        return this.runShellCommand(`pidof ${processName}`)
+        return this.runShellCommand(`pidof ${shArg(processName)}`)
             .then((output) => {
                 return output
                     .split(' ')
@@ -186,7 +192,7 @@ export class Device extends TypedEmitter<DeviceEvents> {
     }
 
     private async grepPs_A(processName: string): Promise<number[]> {
-        return this.runShellCommand(`ps -A | grep ${processName}`)
+        return this.runShellCommand(`ps -A | grep ${shArg(processName)}`)
             .then((output) => {
                 return this.filterPsOutput(processName, output);
             })
@@ -196,7 +202,7 @@ export class Device extends TypedEmitter<DeviceEvents> {
     }
 
     private async grepPs(processName: string): Promise<number[]> {
-        return this.runShellCommand(`ps | grep ${processName}`)
+        return this.runShellCommand(`ps | grep ${shArg(processName)}`)
             .then((output) => {
                 return this.filterPsOutput(processName, output);
             })
@@ -208,7 +214,7 @@ export class Device extends TypedEmitter<DeviceEvents> {
     private async listProc(processName: string): Promise<number[]> {
         const find = 'find /proc -maxdepth 2 -name cmdline  2>/dev/null';
         const lines = await this.runShellCommand(
-            `for L in \`${find}\`; do grep -sae '^${processName}' $L 2>&1 >/dev/null && echo $L; done`,
+            `for L in \`${find}\`; do grep -sae ${shArg(`^${processName}`)} $L 2>&1 >/dev/null && echo $L; done`,
         );
         const re = /\/proc\/([0-9]+)\/cmdline/;
         const list: number[] = [];

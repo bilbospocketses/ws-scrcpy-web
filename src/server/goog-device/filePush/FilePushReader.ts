@@ -6,6 +6,7 @@ import { FilePushResponseStatus } from '../../../app/googDevice/filePush/FilePus
 import { AdbClient } from '../../AdbClient';
 import { Config } from '../../Config';
 import { Logger } from '../../Logger';
+import { assertSafeRemotePath } from '../../security/deviceInput';
 
 enum State {
     INITIAL = 0,
@@ -101,7 +102,13 @@ export class FilePushReader {
                     return;
                 }
                 const { fileName, fileSize } = command;
-                if (!fileName) {
+                // The destination is passed to `adb push` as an argv element, so
+                // reject an empty/NUL value or a leading "-" (adb option injection)
+                // before using it.
+                let safeFileName: string;
+                try {
+                    safeFileName = assertSafeRemotePath(fileName);
+                } catch {
                     this.closeWithError(FilePushResponseStatus.ERROR_INVALID_NAME);
                     return;
                 }
@@ -109,7 +116,7 @@ export class FilePushReader {
                     this.closeWithError(FilePushResponseStatus.ERROR_INCORRECT_SIZE);
                     return;
                 }
-                this.fileName = fileName;
+                this.fileName = safeFileName;
                 this.state = State.START;
                 // Create a temp file to accumulate chunks
                 this.tempFilePath = path.join(os.tmpdir(), `adb_push_${this.pushId}_${Date.now()}`);

@@ -19,6 +19,9 @@ export class ScrcpyServer {
         if (!Array.isArray(list) || !list.length) return;
 
         for (const pid of list) {
+            if (!Number.isInteger(pid) || pid <= 0) {
+                continue;
+            }
             const output = await device.runShellCommand(`cat /proc/${pid}/cmdline`);
             const args = output.split('\0');
             if (args.includes(SERVER_PACKAGE)) {
