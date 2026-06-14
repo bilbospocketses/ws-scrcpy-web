@@ -17,6 +17,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **The HTTP API and WebSocket endpoints now enforce an Origin and Host allowlist.** Requests from another web origin, and requests whose `Host` header is not `localhost` or an IP literal (DNS-rebinding), are rejected — closing a cross-site path by which a malicious page could reach device control, file deletion, and service management.
+- **A per-instance token is now required on the sensitive API surface and on every WebSocket connection.** It is handed to the browser as a `SameSite=Strict`, `HttpOnly` cookie when the page loads, so normal use is unchanged; a non-browser caller that never loaded the page is rejected. (A server restart mints a new token, so an already-open page must reload to reconnect.)
+- **Values that reach `adb` and the device shell are now escaped and validated.** Device file paths and process names are single-quote-escaped before they reach `adb shell`, device serials are validated (blocking adb option injection), the `videoEncoder` stream option is allowlisted, and file-push destinations are checked — preventing command and argument injection against a connected device.
+- **The bundled AppImage runtime is verified against a pinned SHA-256 before it is embedded in the Linux build** (previously only its ELF magic bytes were checked), protecting the build from a tampered or substituted runtime.
+- **The binary stream parsers now bounds-check untrusted input.** The control-message reader and the AV1 sequence-header reader reject out-of-range lengths instead of reading past the buffer or fabricating values.
+- **Untrusted strings are escaped before being rendered into the page.** Dependency names and messages, device identifiers, and file names are HTML-escaped (or assigned as text), and file rows are tracked internally instead of by an attacker-influenced element id — closing DOM-based XSS and DOM-clobbering vectors.
+
 ## [0.1.30-beta.65] - 2026-06-12
 
 ### Added
