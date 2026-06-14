@@ -50,6 +50,9 @@ export function parseAv1ConfigRecord(data: Uint8Array): { codec: string } | null
 }
 
 export function parseAv1SequenceHeader(data: Uint8Array): Av1CodecInfo {
+    if (data.length < 1) {
+        throw new RangeError('AV1 sequence header: empty buffer');
+    }
     let pos = 0;
 
     // OBU header
@@ -173,6 +176,9 @@ function readLeb128(data: Uint8Array, pos: number): { value: number; newPos: num
     let i = 0;
     let byte: number;
     do {
+        if (pos >= data.length) {
+            throw new RangeError('AV1 leb128: out of bounds');
+        }
         byte = data[pos++]!;
         value |= (byte & 0x7f) << (i * 7);
         i++;
@@ -193,6 +199,9 @@ class Av1BitReader {
         let value = 0;
         for (let i = 0; i < n; i++) {
             const byteIdx = this.bitPos >> 3;
+            if (byteIdx >= this.data.length) {
+                throw new RangeError('Av1BitReader: out of bounds');
+            }
             const bitIdx = 7 - (this.bitPos & 7);
             value = (value << 1) | ((this.data[byteIdx]! >> bitIdx) & 1);
             this.bitPos++;
