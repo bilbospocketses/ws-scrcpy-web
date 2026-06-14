@@ -2,6 +2,7 @@ import type WS from 'ws';
 import { WebSocketServer as WSServer } from 'ws';
 import { Logger } from '../Logger';
 import type { MwFactory } from '../mw/Mw';
+import { isRequestAllowed } from '../security/originGuard';
 import { HttpServer, type ServerAndPort } from './HttpServer';
 import type { Service } from './Service';
 
@@ -38,7 +39,25 @@ export class WebSocketServer implements Service {
         const { server, port } = item;
         const TAG = `WebSocket Server {tcp:${port}}`;
         const log = Logger.for(TAG);
-        const wss = new WSServer({ server });
+        const wss = new WSServer({
+            server,
+            // Origin/Host allowlist at the handshake — a WebSocket is not subject
+            // to the same-origin policy and sends no CORS preflight, so without
+            // this a malicious page could open a control channel to the device.
+            verifyClient: (info, cb) => {
+                const verdict = isRequestAllowed(info.origin, info.req.headers.host);
+                if (!verdict.allowed) {
+                    log.info(
+                        `rejected WS connection (origin="${info.origin ?? ''}" host="${
+                            info.req.headers.host ?? ''
+                        }"): ${verdict.reason}`,
+                    );
+                    cb(false, 403, 'Forbidden');
+                    return;
+                }
+                cb(true);
+            },
+        });
         wss.on('connection', async (ws: WS, request) => {
             if (!request.url) {
                 ws.close(4001, `[${TAG}] Invalid url`);

@@ -6,6 +6,7 @@ import * as process from 'process';
 import { TypedEmitter } from '../../common/TypedEmitter';
 import { Config } from '../Config';
 import { EnvName } from '../EnvName';
+import { isRequestAllowed, requiresOriginCheck } from '../security/originGuard';
 import { createStaticHandler } from '../StaticFileServer';
 import { Utils } from '../Utils';
 import type { Service } from './Service';
@@ -146,6 +147,24 @@ export class HttpServer extends TypedEmitter<HttpServerEvents> implements Servic
         fallback?: (req: IncomingMessage, res: ServerResponse) => void,
     ): (req: IncomingMessage, res: ServerResponse) => void {
         return (req, res) => {
+            // Origin/Host allowlist — defend the otherwise-unauthenticated API
+            // surface against cross-site (CSRF) and DNS-rebinding attacks. Only
+            // the sensitive surface (the API + state-changing methods) is gated;
+            // static asset GETs pass through so the page can still bootstrap.
+            let pathname = '/';
+            try {
+                pathname = new URL(req.url || '/', 'http://localhost').pathname;
+            } catch {
+                pathname = '/';
+            }
+            if (requiresOriginCheck(req.method, pathname)) {
+                const verdict = isRequestAllowed(req.headers.origin, req.headers.host);
+                if (!verdict.allowed) {
+                    res.writeHead(403, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ error: 'forbidden', reason: verdict.reason }));
+                    return;
+                }
+            }
             const tryHandlers = async () => {
                 for (const handler of HttpServer.apiHandlers) {
                     const handled = await handler.handle(req, res);
