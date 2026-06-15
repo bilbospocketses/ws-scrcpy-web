@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **Removed the dead `resolveActiveSessionId` helper** (`src/server/util/active-session.ts` and its test). It was an orphan from the abandoned "Theory D" uninstall-handoff — its only caller was deleted in `0.1.25-beta.51` — so removing it has no behavioral effect, and it clears a latent `shell: true` process-spawn path the security review flagged. The launcher's `--print-active-session` capability is unaffected.
+
 ### Security
 
 - **The HTTP API and WebSocket endpoints now enforce an Origin and Host allowlist.** Requests from another web origin, and requests whose `Host` header is not `localhost` or an IP literal (DNS-rebinding), are rejected — closing a cross-site path by which a malicious page could reach device control, file deletion, and service management.
