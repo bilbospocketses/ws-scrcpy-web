@@ -178,7 +178,7 @@ pub fn bind_with_probe(
         };
         let bind_start = Instant::now();
         loop {
-            match TcpListener::bind(("0.0.0.0", port)) {
+            match TcpListener::bind(("127.0.0.1", port)) {
                 Ok(listener) => return Ok((listener, port)),
                 Err(e) => {
                     let is_in_use = e.kind() == std::io::ErrorKind::AddrInUse;
@@ -197,7 +197,7 @@ pub fn bind_with_probe(
                             return Err(3);
                         }
                         log::error(&format!(
-                            "operation-server: bind 0.0.0.0:{port} failed after {retry_timeout:?}: {e}"
+                            "operation-server: bind 127.0.0.1:{port} failed after {retry_timeout:?}: {e}"
                         ));
                         return Err(3);
                     }
@@ -354,7 +354,7 @@ fn run() -> i32 {
             }
 
             log::info(&format!(
-                "operation-server: §40 bound 0.0.0.0:{bound_port} (app port={port})"
+                "operation-server: §40 bound 127.0.0.1:{bound_port} (app port={port})"
             ));
 
             if let Err(e) = write_port_file(&data_root, bound_port) {
@@ -449,7 +449,7 @@ fn run() -> i32 {
         let bind_start = Instant::now();
         let mut first_busy_logged = false;
         loop {
-            match TcpListener::bind(("0.0.0.0", port)) {
+            match TcpListener::bind(("127.0.0.1", port)) {
                 Ok(l) => break l,
                 Err(e) => {
                     // First failure logs once at info level (expected when
@@ -457,13 +457,13 @@ fn run() -> i32 {
                     // Subsequent failures are silent to avoid log spam.
                     if !first_busy_logged {
                         log::info(&format!(
-                            "operation-server: bind 0.0.0.0:{port} busy ({e}), retrying every {BIND_RETRY_INTERVAL_MS}ms until port is free (timeout {BIND_RETRY_TIMEOUT_SECS}s)"
+                            "operation-server: bind 127.0.0.1:{port} busy ({e}), retrying every {BIND_RETRY_INTERVAL_MS}ms until port is free (timeout {BIND_RETRY_TIMEOUT_SECS}s)"
                         ));
                         first_busy_logged = true;
                     }
                     if bind_start.elapsed() >= Duration::from_secs(BIND_RETRY_TIMEOUT_SECS) {
                         log::error(&format!(
-                            "operation-server: bind 0.0.0.0:{port} failed after {BIND_RETRY_TIMEOUT_SECS}s of retries: {e} — giving up"
+                            "operation-server: bind 127.0.0.1:{port} failed after {BIND_RETRY_TIMEOUT_SECS}s of retries: {e} — giving up"
                         ));
                         return 3;
                     }
@@ -482,7 +482,7 @@ fn run() -> i32 {
     }
 
     log::info(&format!(
-        "operation-server: bound 0.0.0.0:{port}, serving updating page (max lifetime {MAX_LIFETIME_SECS}s)"
+        "operation-server: bound 127.0.0.1:{port}, serving updating page (max lifetime {MAX_LIFETIME_SECS}s)"
     ));
 
     let stop_flag = Arc::new(AtomicBool::new(false));
@@ -1046,9 +1046,9 @@ mod tests {
 
     #[test]
     fn bind_with_probe_skips_occupied_port() {
-        // bind_with_probe uses 0.0.0.0, so the blocker must also use 0.0.0.0
-        // to actually occupy the port on the same address.
-        let blocker = std::net::TcpListener::bind(("0.0.0.0", 0)).expect("bind blocker");
+        // bind_with_probe binds 127.0.0.1 (loopback only — #48), so the blocker
+        // uses 127.0.0.1 to occupy the port on the same address.
+        let blocker = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("bind blocker");
         let blocked_port = blocker.local_addr().expect("addr").port();
         let result = super::bind_with_probe(
             blocked_port,
@@ -1056,7 +1056,13 @@ mod tests {
             std::time::Duration::from_secs(1),
         );
         match result {
-            Ok((_listener, port)) => assert!(port > blocked_port, "should have skipped to a higher port"),
+            Ok((listener, port)) => {
+                assert!(port > blocked_port, "should have skipped to a higher port");
+                // #48: the operation-server must bind loopback only, never 0.0.0.0
+                // (which would expose the wait page + redirect to the LAN).
+                let ip = listener.local_addr().expect("addr").ip();
+                assert!(ip.is_loopback(), "bind_with_probe must bind loopback, got {ip}");
+            }
             Err(_) => panic!("bind_with_probe should have found a free port"),
         }
     }
