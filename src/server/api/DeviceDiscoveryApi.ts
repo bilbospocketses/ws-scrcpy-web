@@ -6,6 +6,7 @@ import { DeviceLabelStore } from '../DeviceLabelStore';
 import { Logger } from '../Logger';
 import { detectSubnet } from '../network/SubnetDetector';
 import { resolveMac } from '../network/MacResolver';
+import { assertDeletablePaths, shArg } from '../security/deviceInput';
 
 const log = Logger.for('DeviceDiscoveryApi');
 
@@ -179,16 +180,26 @@ export class DeviceDiscoveryApi {
             if (req.method === 'POST' && url === '/api/devices/files/delete') {
                 const body = await readBody(req);
                 const { udid, paths } = JSON.parse(body);
-                if (!udid || !Array.isArray(paths) || paths.length === 0) {
+                if (!udid) {
                     res.writeHead(400);
-                    res.end(JSON.stringify({ error: 'udid and paths[] are required' }));
+                    res.end(JSON.stringify({ error: 'udid is required' }));
+                    return true;
+                }
+                let safePaths: string[];
+                try {
+                    // Bound + validate the targets before any privileged delete:
+                    // refuses unbounded lists, traversal, and catastrophic roots
+                    // (/sdcard, /data, …). udid is serial-checked by adbClient.
+                    safePaths = assertDeletablePaths(paths);
+                } catch (e) {
+                    res.writeHead(400);
+                    res.end(JSON.stringify({ error: (e as Error).message }));
                     return true;
                 }
                 const errors: { path: string; error: string }[] = [];
-                for (const filePath of paths) {
+                for (const filePath of safePaths) {
                     try {
-                        const escaped = filePath.replace(/'/g, "'\\''");
-                        await this.adbClient.shell(udid, `rm -rf '${escaped}'`);
+                        await this.adbClient.shell(udid, `rm -rf ${shArg(filePath)}`);
                     } catch (err) {
                         errors.push({ path: filePath, error: (err as Error).message });
                     }

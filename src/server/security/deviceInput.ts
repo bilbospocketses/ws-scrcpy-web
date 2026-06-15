@@ -63,3 +63,61 @@ export function assertSafeRemotePath(name: unknown): string {
     }
     return name;
 }
+
+// Device storage/system roots whose recursive deletion would wipe user data or
+// brick the device. The file browser only ever deletes user-selected entries
+// *beneath* these, never the roots themselves, so we refuse them outright
+// (after normalising trailing slashes).
+const PROTECTED_ROOTS = new Set([
+    '/',
+    '/sdcard',
+    '/storage',
+    '/storage/emulated',
+    '/storage/emulated/0',
+    '/data',
+    '/system',
+    '/vendor',
+    '/mnt',
+    '/proc',
+    '/dev',
+]);
+
+// A multi-select delete of more than this many entries is treated as abuse
+// rather than a legitimate UI action.
+const MAX_DELETE_PATHS = 1000;
+
+/**
+ * Validate a list of device paths targeted for a privileged recursive delete
+ * (`rm -rf`). The op is auth-gated, but a bug or a same-origin script could
+ * still drive it, so we defend in depth: the list must be a bounded array of
+ * absolute, well-formed paths with no `.`/`..` traversal segments, and must not
+ * name a catastrophic storage/system root. Returns the validated paths, else
+ * throws.
+ */
+export function assertDeletablePaths(paths: unknown): string[] {
+    if (!Array.isArray(paths) || paths.length === 0) {
+        throw new Error('paths must be a non-empty array');
+    }
+    if (paths.length > MAX_DELETE_PATHS) {
+        throw new Error(`too many paths: ${paths.length} (max ${MAX_DELETE_PATHS})`);
+    }
+    for (const p of paths) {
+        if (typeof p !== 'string' || p.length === 0) {
+            throw new Error('each path must be a non-empty string');
+        }
+        if (p.includes('\0')) {
+            throw new Error('path contains NUL');
+        }
+        if (!p.startsWith('/')) {
+            throw new Error(`path must be absolute: ${JSON.stringify(p)}`);
+        }
+        if (p.split('/').some((seg) => seg === '.' || seg === '..')) {
+            throw new Error(`path may not contain "." or ".." segments: ${JSON.stringify(p)}`);
+        }
+        const normalized = p.replace(/\/+$/, '') || '/';
+        if (PROTECTED_ROOTS.has(normalized)) {
+            throw new Error(`refusing to delete a protected root: ${normalized}`);
+        }
+    }
+    return paths as string[];
+}

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+    assertDeletablePaths,
     assertSafeRemotePath,
     assertSerial,
     isSafeEncoderName,
@@ -93,6 +94,59 @@ describe('deviceInput', () => {
         it('rejects empty values and embedded NUL', () => {
             expect(() => assertSafeRemotePath('')).toThrow();
             expect(() => assertSafeRemotePath('a\0b')).toThrow();
+        });
+    });
+
+    describe('assertDeletablePaths', () => {
+        it('returns a bounded list of absolute paths unchanged', () => {
+            const paths = ['/sdcard/Download/a.jpg', '/sdcard/DCIM/b.mp4'];
+            expect(assertDeletablePaths(paths)).toEqual(paths);
+        });
+
+        it('rejects a non-array or empty array', () => {
+            expect(() => assertDeletablePaths(undefined)).toThrow();
+            expect(() => assertDeletablePaths('/sdcard/x' as unknown)).toThrow();
+            expect(() => assertDeletablePaths([])).toThrow();
+        });
+
+        it('rejects more paths than the cap', () => {
+            const tooMany = Array.from({ length: 1001 }, (_, i) => `/sdcard/f${i}`);
+            expect(() => assertDeletablePaths(tooMany)).toThrow();
+        });
+
+        it('rejects a non-string or empty element', () => {
+            expect(() => assertDeletablePaths(['/sdcard/ok', 123 as unknown])).toThrow();
+            expect(() => assertDeletablePaths(['/sdcard/ok', ''])).toThrow();
+        });
+
+        it('rejects a relative path', () => {
+            expect(() => assertDeletablePaths(['sdcard/x'])).toThrow();
+            expect(() => assertDeletablePaths(['./x'])).toThrow();
+        });
+
+        it('rejects path traversal ("." or "..") segments', () => {
+            expect(() => assertDeletablePaths(['/sdcard/../../system'])).toThrow();
+            expect(() => assertDeletablePaths(['/sdcard/.'])).toThrow();
+        });
+
+        it('rejects an embedded NUL', () => {
+            expect(() => assertDeletablePaths(['/sdcard/a\0b'])).toThrow();
+        });
+
+        it('refuses catastrophic storage/system roots', () => {
+            for (const root of ['/', '/sdcard', '/storage', '/storage/emulated/0', '/data', '/system']) {
+                expect(() => assertDeletablePaths([root])).toThrow();
+            }
+        });
+
+        it('refuses a protected root regardless of trailing slashes', () => {
+            expect(() => assertDeletablePaths(['/sdcard/'])).toThrow();
+            expect(() => assertDeletablePaths(['/sdcard///'])).toThrow();
+            expect(() => assertDeletablePaths(['///'])).toThrow();
+        });
+
+        it('allows entries beneath a protected root', () => {
+            expect(assertDeletablePaths(['/sdcard/Download'])).toEqual(['/sdcard/Download']);
         });
     });
 });
