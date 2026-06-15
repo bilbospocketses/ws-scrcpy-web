@@ -1,12 +1,40 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     consumeToken,
     issueToken,
     purgeExpiredTokens,
 } from '../service/resumeToken';
+
+// Wrap a few node:fs writers in spies that still call through to the real
+// implementation, so #30 can assert the *intent* (mode 0700/0600 + atomic
+// tmp→rename) OS-independently — Windows mode bits are synthetic, and ESM
+// namespaces can't be vi.spyOn'd directly.
+const fsSpies = vi.hoisted(() => ({
+    mkdirSync: vi.fn(),
+    writeFileSync: vi.fn(),
+    renameSync: vi.fn(),
+}));
+vi.mock('node:fs', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('node:fs')>();
+    return {
+        ...actual,
+        mkdirSync: (...args: Parameters<typeof actual.mkdirSync>) => {
+            fsSpies.mkdirSync(...args);
+            return actual.mkdirSync(...args);
+        },
+        writeFileSync: (...args: Parameters<typeof actual.writeFileSync>) => {
+            fsSpies.writeFileSync(...args);
+            return actual.writeFileSync(...args);
+        },
+        renameSync: (...args: Parameters<typeof actual.renameSync>) => {
+            fsSpies.renameSync(...args);
+            return actual.renameSync(...args);
+        },
+    };
+});
 
 describe('resumeToken', () => {
     let installRoot: string;
@@ -90,5 +118,27 @@ describe('resumeToken', () => {
     it('purgeExpiredTokens is a no-op when the token directory does not exist', () => {
         // Fresh installRoot has no .resume-tokens dir yet.
         expect(() => purgeExpiredTokens(installRoot)).not.toThrow();
+    });
+
+    it('writes the token atomically (tmp + rename) into an owner-restricted dir (#30)', () => {
+        fsSpies.mkdirSync.mockClear();
+        fsSpies.renameSync.mockClear();
+        fsSpies.writeFileSync.mockClear();
+        const token = issueToken(installRoot, 'uninstall-service');
+        // Directory created owner-only (0700).
+        expect(fsSpies.mkdirSync).toHaveBeenCalledWith(
+            path.join(installRoot, '.resume-tokens'),
+            expect.objectContaining({ recursive: true, mode: 0o700 }),
+        );
+        // Atomic write: a temp file renamed into place (never a partial token).
+        expect(fsSpies.renameSync).toHaveBeenCalledTimes(1);
+        // Token file written owner-only (0600).
+        expect(fsSpies.writeFileSync).toHaveBeenCalledWith(
+            expect.any(String),
+            expect.any(String),
+            expect.objectContaining({ mode: 0o600 }),
+        );
+        // Round-trip still works through the atomic write.
+        expect(consumeToken(installRoot, token, 'uninstall-service')).not.toBeNull();
     });
 });
