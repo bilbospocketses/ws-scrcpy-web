@@ -25,6 +25,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The bundled AppImage runtime is verified against a pinned SHA-256 before it is embedded in the Linux build** (previously only its ELF magic bytes were checked), protecting the build from a tampered or substituted runtime.
 - **The binary stream parsers now bounds-check untrusted input.** The control-message reader and the AV1 sequence-header reader reject out-of-range lengths instead of reading past the buffer or fabricating values.
 - **Untrusted strings are escaped before being rendered into the page.** Dependency names and messages, device identifiers, and file names are HTML-escaped (or assigned as text), and file rows are tracked internally instead of by an attacker-influenced element id — closing DOM-based XSS and DOM-clobbering vectors.
+- **Device file deletion is now bounded and validated.** A delete request must be a size-capped list of absolute paths and refuses the device's storage and system roots (e.g. `/sdcard`, `/data`), so it can't be driven into wiping arbitrary or catastrophic locations.
+- **The network device scan is restricted to private (LAN) address ranges.** A scan request for a public/internet range is rejected, so the device scanner can't be repurposed as an internal or external port scanner.
+- **Values interpolated into the privileged Linux install/uninstall scripts and the elevated Windows helper scripts are now escaped and validated.** Service names, paths, and the uninstall data-root are single-quoted or allow-listed before they reach a root `sh -c` or a SYSTEM `.bat`, and the system-service install verifies its target directories are real, root-owned, and not world-writable before copying or relabelling them — closing latent privilege-escalation and symlink/TOCTOU surfaces.
+- **The configuration endpoint rejects unknown and prototype-polluting keys.** A `PATCH /api/config` may only set known settings; arbitrary keys (and `__proto__` / `constructor` / `prototype`) are refused instead of being persisted.
+- **Request bodies are size-capped.** Oversized HTTP request bodies and scan messages are dropped instead of buffered without limit, removing an unauthenticated memory-exhaustion path.
+- **One-shot `adb shell` commands now run under a timeout.** A device command that never returns can no longer pin the server indefinitely.
+- **Network helper tools resolve to absolute system paths instead of via `PATH`.** The OS commands used for LAN/MAC discovery (`ip`, `arp`, `route`) resolve under the canonical system directories rather than the search path, closing a binary-hijack surface (the underlying tool resolver is now cross-platform; the remaining launcher utilities follow).
 
 ## [0.1.30-beta.65] - 2026-06-12
 
