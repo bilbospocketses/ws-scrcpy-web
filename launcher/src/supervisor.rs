@@ -253,6 +253,15 @@ pub fn run() -> Result<(i32, Option<Arc<AtomicBool>>)> {
 
                 let bat_path = paths.data_root.join("control").join("uninstall-now.bat");
                 let task_name = "WsScrcpyWebUninstall";
+                // Defense in depth (#13): refuse to write the elevated uninstall bat
+                // if any interpolated path carries a batch metacharacter.
+                if let Err(e) = crate::elevated_runner::assert_safe_bat_token(&log_dir.to_string_lossy(), "log_dir")
+                    .and_then(|()| crate::elevated_runner::assert_safe_bat_token(&servy_path.to_string_lossy(), "servy_path"))
+                    .and_then(|()| crate::elevated_runner::assert_safe_bat_token(&launcher_path.to_string_lossy(), "launcher_path"))
+                {
+                    log::error(&format!("supervisor: refusing to write uninstall bat: {e}"));
+                    return Ok((code, tray_stop_flag.clone()));
+                }
                 let bat_content = format!(
                     "@echo off\r\n\
                      echo %date% %time% [uninstall-now] starting >> \"{log}\\uninstall-now.log\"\r\n\

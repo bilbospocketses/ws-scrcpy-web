@@ -495,6 +495,31 @@ fn run_capture(exe: &str, args: &[impl AsRef<std::ffi::OsStr>]) -> Result<Captur
 //     TRAY_RUN_KEY, TRAY_RUN_VALUE, STALE_HKCU_TRAY_RUN_KEY
 //     (dropped in Phase 4 — 30+ betas with tray_supervisor means any
 //     stale Run-key entries have already been cleaned up)
+/// Reject any value that could break out of a `"..."` quoted batch token or
+/// inject a command when the generated .bat runs elevated (Servy `--postStopPath`
+/// / a SYSTEM scheduled task). cmd.exe does NOT treat double quotes as fully
+/// inert the way POSIX sh does — `%`/`!` still expand and a literal `"` ends the
+/// quoted run — so we refuse the metacharacters that matter in a batch context. (#13)
+pub(crate) fn assert_safe_bat_token(value: &str, what: &str) -> Result<(), String> {
+    const FORBIDDEN: &[char] = &['"', '&', '|', '<', '>', '^', '%', '!', '\r', '\n', '`'];
+    if let Some(c) = value.chars().find(|c| FORBIDDEN.contains(c)) {
+        return Err(format!("refusing to write bat: {what} contains an unsafe character {c:?}"));
+    }
+    Ok(())
+}
+
+/// A Servy/Windows service name is a server-derived constant, but it is
+/// interpolated UNQUOTED into `sc start <name>` / `--name <name>`, so pin it to
+/// a safe charset. (#13)
+pub(crate) fn assert_safe_service_name(name: &str) -> Result<(), String> {
+    if name.is_empty()
+        || !name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
+    {
+        return Err(format!("refusing to write bat: invalid service name {name:?}"));
+    }
+    Ok(())
+}
+
 /// §32 Part 4 — write the post-stop bat file at `<data_root>/post-stop/post-stop.bat`.
 /// This bat is invoked by Servy via `--postStopPath` every time the supervised
 /// launcher exits. The bat:
@@ -552,6 +577,21 @@ pub(crate) fn write_post_stop_bat(
 
     let log_dir = data_root.join("logs");
     let log_dir_str = log_dir.to_string_lossy();
+
+    // Validate everything interpolated into the elevated .bat before writing it,
+    // so a hostile value (e.g. from the install-args file) cannot inject a batch
+    // command that runs as SYSTEM. (#13)
+    assert_safe_service_name(service_name)?;
+    for (val, what) in [
+        (servy_path, "servy_path"),
+        (current_launcher_path, "current_launcher_path"),
+        (apply_marker_str.as_ref(), "apply_marker"),
+        (uninstall_marker_str.as_ref(), "uninstall_marker"),
+        (helper_path_str.as_ref(), "helper_path"),
+        (log_dir_str.as_ref(), "log_dir"),
+    ] {
+        assert_safe_bat_token(val, what)?;
+    }
 
     let bat = format!(
         "@echo off\r\n\
@@ -646,6 +686,39 @@ mod tests {
     fn handle_returns_none_when_flag_absent() {
         let args = vec!["launcher.exe".to_string(), "--unrelated".to_string()];
         assert!(handle(&args).is_none());
+    }
+
+    #[test]
+    fn assert_safe_bat_token_rejects_batch_metacharacters() {
+        for bad in [
+            "a\"b", "a&b", "a|b", "a<b", "a>b", "a^b", "a%b", "a!b", "a\rb", "a\nb", "a`b",
+        ] {
+            assert!(assert_safe_bat_token(bad, "x").is_err(), "expected {bad:?} rejected");
+        }
+        assert!(assert_safe_bat_token("C:/app/control/post-stop/post-stop.bat", "x").is_ok());
+    }
+
+    #[test]
+    fn assert_safe_service_name_pins_charset() {
+        assert!(assert_safe_service_name("WsScrcpyWeb").is_ok());
+        assert!(assert_safe_service_name("ws-scrcpy_web.1").is_ok());
+        assert!(assert_safe_service_name("a b").is_err());
+        assert!(assert_safe_service_name("a&start calc").is_err());
+        assert!(assert_safe_service_name("").is_err());
+    }
+
+    #[test]
+    fn write_post_stop_bat_rejects_an_injected_service_name() {
+        let dir = tempdir().unwrap();
+        let r = write_post_stop_bat(dir.path(), "Ws & calc", "C:/app/servy-cli.exe", "C:/app/launcher.exe");
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn write_post_stop_bat_writes_for_a_clean_service_name() {
+        let dir = tempdir().unwrap();
+        let r = write_post_stop_bat(dir.path(), "WsScrcpyWeb", "C:/app/servy-cli.exe", "C:/app/launcher.exe");
+        assert!(r.is_ok());
     }
 
     #[test]
