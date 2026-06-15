@@ -69,8 +69,16 @@ export function issueToken(
     const token = crypto.randomBytes(TOKEN_BYTES).toString('hex');
     const record: ResumeTokenRecord = { token, action, createdAt: now };
     const dir = tokenDir(installRoot);
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(tokenPath(installRoot, token), JSON.stringify(record), 'utf8');
+    // #30: restrict the token dir/file to the owner (0700/0600) and write it
+    // atomically (tmp + rename) so a crash or a concurrent reader never sees a
+    // partial token. POSIX perms; on Windows the per-user install root + ACLs
+    // govern and the mode/chmod calls are effectively no-ops.
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    try { fs.chmodSync(dir, 0o700); } catch { /* best-effort: pre-existing dir */ }
+    const finalPath = tokenPath(installRoot, token);
+    const tmpPath = `${finalPath}.tmp-${process.pid}-${crypto.randomBytes(4).toString('hex')}`;
+    fs.writeFileSync(tmpPath, JSON.stringify(record), { encoding: 'utf8', mode: 0o600 });
+    fs.renameSync(tmpPath, finalPath);
     log.info(`issued resume token for ${action}`);
     return token;
 }
