@@ -33,6 +33,7 @@
 import { execFile, spawn } from 'child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { randomBytes } from 'node:crypto';
 import { promisify } from 'util';
 import { Logger } from '../Logger';
 import { tempDir } from '../util/disposable';
@@ -54,6 +55,8 @@ export interface ElevatedResult {
     stdout: string;
     stderr: string;
     errorMessage?: string | undefined;
+    /** Per-call nonce echoed by the elevated helper; verified by pollForResultFile (#28). */
+    nonce?: string | undefined;
 }
 
 /**
@@ -158,6 +161,9 @@ export async function runElevated(
     using td = tempDir('ws-scrcpy-elev-');
     const argsPath = path.join(td.path, 'args.json');
     const resultPath = path.join(td.path, 'result.json');
+    // Per-call nonce: embedded in args.json (the elevated helper echoes it into
+    // result.json) so pollForResultFile can reject a spoofed/stale result. (#28)
+    const nonce = randomBytes(16).toString('hex');
 
     // The `spawn-user-launcher` command is only invoked from the
     // SERVICE-instance Node process, which is already running as Local
@@ -167,7 +173,7 @@ export async function runElevated(
     // entirely for this command and direct-spawn the launcher.
     const useDirect = command === 'spawn-user-launcher';
 
-    fs.writeFileSync(argsPath, JSON.stringify(wireArgs, null, 2), 'utf8');
+    fs.writeFileSync(argsPath, JSON.stringify({ ...wireArgs, nonce }, null, 2), 'utf8');
 
     // v0.1.8: switched from `Start-Process -Wait -PassThru` to a
     // result-file polling pattern. The previous design hung in
@@ -242,7 +248,7 @@ export async function runElevated(
         }
     }
 
-    const result = await pollForResultFile(resultPath, ELEVATION_TIMEOUT_MS);
+    const result = await pollForResultFile(resultPath, ELEVATION_TIMEOUT_MS, undefined, undefined, nonce);
     if (result === null) {
         return {
             ok: false,
@@ -279,6 +285,7 @@ export async function pollForResultFile(
     timeoutMs: number,
     intervalMs: number = POLL_INTERVAL_MS,
     sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
+    expectedNonce?: string,
 ): Promise<ElevatedResult | null> {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
@@ -301,6 +308,16 @@ export async function pollForResultFile(
                     /could not parse/i.test(parsed.errorMessage ?? '') &&
                     raw.length < 1024
                 ) {
+                    await sleep(intervalMs);
+                    continue;
+                }
+                // #28: reject a result whose nonce doesn't match this call — a
+                // spoofed or stale file. Keep polling so the real helper's write
+                // (which carries the correct nonce) is still picked up.
+                if (expectedNonce !== undefined && parsed.nonce !== expectedNonce) {
+                    log.warn(
+                        `pollForResultFile: result nonce mismatch (expected ${expectedNonce}, got ${parsed.nonce ?? 'none'}); ignoring`,
+                    );
                     await sleep(intervalMs);
                     continue;
                 }
@@ -347,6 +364,7 @@ export function parseResult(raw: string): ElevatedResult {
             stderr: String(get('stderr', 'stderr') ?? ''),
             errorMessage:
                 (get('error_message', 'errorMessage') as string | null | undefined) ?? undefined,
+            nonce: (get('nonce', 'nonce') as string | null | undefined) ?? undefined,
         };
     } catch (err) {
         return {

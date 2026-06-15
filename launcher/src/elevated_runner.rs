@@ -142,7 +142,8 @@ pub fn handle(args: &[String]) -> Option<i32> {
     };
 
     let final_code = result.exit_code;
-    if let Err(e) = write_result(&result_path, &result) {
+    let nonce = read_nonce(&args_path);
+    if let Err(e) = write_result(&result_path, &result, nonce.as_deref()) {
         log::error(&format!("could not write result JSON to {result_path:?}: {e}"));
         // Even a failed result-write doesn't change the exit code we
         // return; the caller will see "no result file present" and infer
@@ -161,11 +162,26 @@ fn read_args<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T, String> {
     serde_json::from_str::<T>(&raw).map_err(|e| e.to_string())
 }
 
-fn write_result(path: &Path, result: &ElevatedResult) -> Result<(), String> {
-    let json = serde_json::to_string_pretty(result).map_err(|e| e.to_string())?;
+fn write_result(path: &Path, result: &ElevatedResult, nonce: Option<&str>) -> Result<(), String> {
+    // Echo the per-call nonce (read from args.json) back into the result so the
+    // Node side can reject a spoofed or stale result file (#28). Injected at the
+    // JSON layer to avoid threading a field through every ElevatedResult literal.
+    let mut value = serde_json::to_value(result).map_err(|e| e.to_string())?;
+    if let (Some(n), Some(obj)) = (nonce, value.as_object_mut()) {
+        obj.insert("nonce".to_string(), serde_json::Value::String(n.to_string()));
+    }
+    let json = serde_json::to_string_pretty(&value).map_err(|e| e.to_string())?;
     let mut f = fs::File::create(path).map_err(|e| e.to_string())?;
     f.write_all(json.as_bytes()).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// Read the per-call nonce the Node side embeds in args.json (#28). Parsed
+/// generically so the typed arg structs are unchanged; absent → None.
+fn read_nonce(path: &Path) -> Option<String> {
+    let raw = fs::read_to_string(path).ok()?;
+    let value = serde_json::from_str::<serde_json::Value>(&raw).ok()?;
+    value.get("nonce")?.as_str().map(str::to_string)
 }
 
 fn fail(code: i32, msg: &str) -> ElevatedResult {
@@ -799,6 +815,30 @@ mod tests {
     }
 
     #[test]
+    fn handle_echoes_the_args_nonce_into_the_result() {
+        // #28: Node embeds a per-call nonce in args.json; the elevated helper
+        // must echo it into result.json so Node can reject a spoofed/stale file.
+        let dir = tempdir().unwrap();
+        let args_path = dir.path().join("args.json");
+        let result_path = dir.path().join("result.json");
+        fs::write(&args_path, r#"{"nonce":"nonce-xyz"}"#).unwrap();
+
+        let argv = vec![
+            "launcher.exe".to_string(),
+            "--elevate-and-run".to_string(),
+            "bogus-command".to_string(),
+            args_path.to_string_lossy().into_owned(),
+            result_path.to_string_lossy().into_owned(),
+        ];
+        handle(&argv).expect("flag matched");
+
+        let mut json = String::new();
+        fs::File::open(&result_path).unwrap().read_to_string(&mut json).unwrap();
+        assert!(json.contains("\"nonce\""), "result missing nonce field: {json}");
+        assert!(json.contains("nonce-xyz"), "result missing nonce value: {json}");
+    }
+
+    #[test]
     fn handle_returns_exit_code_3_when_args_json_missing() {
         let dir = tempdir().unwrap();
         let result_path = dir.path().join("result.json");
@@ -829,7 +869,7 @@ mod tests {
             stderr: "err".to_string(),
             error_message: None,
         };
-        write_result(&path, &r).unwrap();
+        write_result(&path, &r, None).unwrap();
 
         let mut s = String::new();
         fs::File::open(&path).unwrap().read_to_string(&mut s).unwrap();
