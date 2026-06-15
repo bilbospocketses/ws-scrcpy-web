@@ -78,7 +78,7 @@ pub(crate) fn reap_tray_on_terminal_exit(data_root: &Path) {
         return;
     }
     log::info("tray-supervisor: terminal exit; reaping tray helper");
-    let _ = crate::elevated_runner::silent_command("taskkill")
+    let _ = crate::elevated_runner::silent_os_tool("taskkill")
         .args(["/F", "/IM", TRAY_PROCESS_NAME])
         .output();
 }
@@ -170,7 +170,7 @@ fn tray_supervisor_loop(
                     if persisted_mode { "service" } else { "local" },
                     if cfg_install_mode { "service" } else { "local" },
                 ));
-                let _ = crate::elevated_runner::silent_command("taskkill")
+                let _ = crate::elevated_runner::silent_os_tool("taskkill")
                     .args(["/F", "/IM", TRAY_PROCESS_NAME])
                     .output();
             }

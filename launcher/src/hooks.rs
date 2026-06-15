@@ -229,7 +229,7 @@ fn grant_data_root_acl(data_root: &Path) {
     // /C = continue on per-file errors (defensive).
     // /Q = suppress success spam.
     let target = data_root.as_os_str();
-    let result = crate::elevated_runner::silent_command("icacls")
+    let result = crate::elevated_runner::silent_os_tool("icacls")
         .arg(target)
         .args(["/grant", "*S-1-5-11:(OI)(CI)M", "/T", "/C", "/Q"])
         // Suppress icacls's "Successfully processed N files" chatter —
@@ -277,7 +277,7 @@ fn grant_data_root_acl(_data_root: &Path) {
 #[cfg(windows)]
 fn grant_install_root_acl(install_root: &Path) {
     let target = install_root.as_os_str();
-    let result = crate::elevated_runner::silent_command("icacls")
+    let result = crate::elevated_runner::silent_os_tool("icacls")
         .arg(target)
         .args(["/grant", "*S-1-5-11:(OI)(CI)M", "/T", "/C", "/Q"])
         .stdout(std::process::Stdio::null())
@@ -432,7 +432,7 @@ fn on_uninstall(install_root: &Path, data_root: &Path) -> i32 {
     //     renamed file).
     //   - leaves an HKCU\...\Run\WsScrcpyWebTray entry pointing at a
     //     non-existent path, which is benign on next login but messy.
-    let _ = crate::elevated_runner::silent_command("taskkill")
+    let _ = crate::elevated_runner::silent_os_tool("taskkill")
         .args(["/F", "/IM", "ws-scrcpy-web-tray.exe"])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())

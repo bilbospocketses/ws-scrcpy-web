@@ -31,7 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The configuration endpoint rejects unknown and prototype-polluting keys.** A `PATCH /api/config` may only set known settings; arbitrary keys (and `__proto__` / `constructor` / `prototype`) are refused instead of being persisted.
 - **Request bodies are size-capped.** Oversized HTTP request bodies and scan messages are dropped instead of buffered without limit, removing an unauthenticated memory-exhaustion path.
 - **One-shot `adb shell` commands now run under a timeout.** A device command that never returns can no longer pin the server indefinitely.
-- **Network helper tools resolve to absolute system paths instead of via `PATH`.** The OS commands used for LAN/MAC discovery (`ip`, `arp`, `route`) resolve under the canonical system directories rather than the search path, closing a binary-hijack surface (the underlying tool resolver is now cross-platform; the remaining launcher utilities follow).
+- **OS helper tools resolve to absolute system paths instead of via `PATH`.** The system commands the app shells out to — `ip`/`arp`/`route` for LAN and MAC discovery, and the Windows launcher's own `taskkill`/`icacls` service utilities — now resolve under their canonical system directories (`%SystemRoot%\System32` on Windows, `/usr/bin` and friends on POSIX) rather than the executable search path, closing a binary-hijack surface.
 
 ## [0.1.30-beta.65] - 2026-06-12
 
