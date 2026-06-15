@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Request bodies are size-capped.** Oversized HTTP request bodies and scan messages are dropped instead of buffered without limit, removing an unauthenticated memory-exhaustion path.
 - **One-shot `adb shell` commands now run under a timeout.** A device command that never returns can no longer pin the server indefinitely.
 - **OS helper tools resolve to absolute system paths instead of via `PATH`.** The system commands the app shells out to — `ip`/`arp`/`route` for LAN and MAC discovery, and the Windows launcher's own `taskkill`/`icacls` service utilities — now resolve under their canonical system directories (`%SystemRoot%\System32` on Windows, `/usr/bin` and friends on POSIX) rather than the executable search path, closing a binary-hijack surface.
+- **The web server returns a proper `404` for missing files and sends anti-sniffing and anti-clickjacking headers.** A request for a path that doesn't exist used to return the app's HTML shell with `200 OK`; now only in-app route navigations fall back to the shell, while a missing asset (or an unknown API path) gets a `404`. Every static response also carries `X-Content-Type-Options: nosniff` (preventing MIME-sniffing) and `X-Frame-Options: SAMEORIGIN` (blocking cross-origin framing, while still allowing the documented same-origin embedding).
 
 ## [0.1.30-beta.65] - 2026-06-12
 
