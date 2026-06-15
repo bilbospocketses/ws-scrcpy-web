@@ -121,4 +121,36 @@ describe('ScanMw integration', () => {
         client.close();
         await new Promise<void>((r) => wss.close(() => server.close(() => r())));
     });
+
+    it('rejects scan.start targeting a public (non-RFC1918) subnet (SSRF guard)', async () => {
+        const scanner = new NetworkScanner({
+            adbDevices: async () => [],
+            adbMdnsServices: async () => [],
+            adbHandshakeProbe: async () => ({ isAdb: false }),
+            concurrency: 4,
+            progressInterval: 10,
+        });
+        ScanMw.setScanner(scanner);
+
+        const server = http.createServer();
+        const wss = new WebSocketServer({ server });
+        wss.on('connection', (ws, req) => {
+            if (req.url === SCAN_WS_PATH) ScanMw.attach(ws);
+        });
+        await new Promise<void>((r) => server.listen(0, r));
+        const port = (server.address() as any).port;
+
+        const client = new WebSocket(`ws://127.0.0.1:${port}${SCAN_WS_PATH}`);
+        await new Promise<void>((r) => client.once('open', r));
+
+        const collected = collectMessages(client, (m) => m.type === 'scan.error');
+        client.send(JSON.stringify({ type: 'scan.start', subnets: ['8.8.8.0/24'] }));
+        const messages = await collected;
+
+        expect(messages[0].type).toBe('scan.error');
+        expect((messages[0] as any).details?.[0]?.error).toMatch(/private|RFC ?1918/i);
+
+        client.close();
+        await new Promise<void>((r) => wss.close(() => server.close(() => r())));
+    });
 });

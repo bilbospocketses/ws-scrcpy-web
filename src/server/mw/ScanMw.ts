@@ -42,6 +42,14 @@ export class ScanMw {
                     const r = parseSubnetInput(raw);
                     if ('reason' in r) {
                         errors.push({ subnet: raw, error: (r as ParseError).reason });
+                    } else if (!r.isPrivate) {
+                        // SSRF / internal port-scan guard: only private (RFC1918)
+                        // targets may be scanned. The auto-detect path only ever
+                        // yields the local subnet; this gates the user-supplied one.
+                        errors.push({
+                            subnet: raw,
+                            error: `"${r.normalized}" is outside the private (RFC1918) ranges (10/8, 172.16/12, 192.168/16); scanning public addresses is not allowed.`,
+                        });
                     } else {
                         parsed.push(r);
                     }

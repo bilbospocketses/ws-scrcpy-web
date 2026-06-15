@@ -203,3 +203,42 @@ describe('parseSubnetInput — errors', () => {
         expect(r.reason).toMatch(/subnet cheat sheet/);
     });
 });
+
+describe('parseSubnetInput — RFC1918 private-range flag', () => {
+    it('flags the three private blocks as private', () => {
+        for (const input of ['10.0.0.0/16', '172.16.0.0/16', '192.168.1.0/24', '10.255.255.255', '172.31.255.255']) {
+            const r = parseSubnetInput(input);
+            if ('reason' in r) throw new Error(`${input}: ${r.reason}`);
+            expect(r.isPrivate).toBe(true);
+        }
+    });
+
+    it('flags public ranges as not private', () => {
+        for (const input of ['8.8.8.0/24', '1.1.1.1', '203.0.113.0/24']) {
+            const r = parseSubnetInput(input);
+            if ('reason' in r) throw new Error(`${input}: ${r.reason}`);
+            expect(r.isPrivate).toBe(false);
+        }
+    });
+
+    it('treats addresses just outside the private blocks as public', () => {
+        for (const input of ['11.0.0.0/24', '172.15.255.255', '172.32.0.0/16', '192.167.255.255', '192.169.0.0/16']) {
+            const r = parseSubnetInput(input);
+            if ('reason' in r) throw new Error(`${input}: ${r.reason}`);
+            expect(r.isPrivate).toBe(false);
+        }
+    });
+
+    it('flags a range that escapes a private block as public', () => {
+        // Starts private (192.168.255.250) but runs past 192.168/16 into public space.
+        const r = parseSubnetInput('192.168.255.250-192.169.0.5');
+        if ('reason' in r) throw new Error(r.reason);
+        expect(r.isPrivate).toBe(false);
+    });
+
+    it('flags a wholly-private cross-/24 range as private', () => {
+        const r = parseSubnetInput('192.168.1.10-192.168.2.10');
+        if ('reason' in r) throw new Error(r.reason);
+        expect(r.isPrivate).toBe(true);
+    });
+});

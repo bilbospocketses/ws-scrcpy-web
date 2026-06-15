@@ -8,6 +8,7 @@ function makeSubnet(hosts: string[]): ParsedSubnet {
         raw: 'test',
         normalized: `test/${hosts.length}`,
         hostCount: hosts.length,
+        isPrivate: true,
         *hosts() { for (const h of hosts) yield h; },
     };
 }

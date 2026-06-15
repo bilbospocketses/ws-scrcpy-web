@@ -4,6 +4,8 @@ export interface ParsedSubnet {
     raw: string;
     normalized: string;
     hostCount: number;
+    /** True only when every address the subnet covers is within RFC1918. */
+    isPrivate: boolean;
     hosts(): Generator<string>;
 }
 
@@ -23,10 +25,12 @@ export function parseSubnetInput(input: string): ParsedSubnet | ParseError {
 
     // Try bare IP
     if (isValidIp(raw)) {
+        const ipInt = ipToInt(raw);
         return {
             raw,
             normalized: `${raw}/32`,
             hostCount: 1,
+            isPrivate: isRangeWithinRfc1918(ipInt, ipInt),
             *hosts() {
                 yield raw;
             },
@@ -65,11 +69,14 @@ function parseCidr(input: string): ParsedSubnet | ParseError {
     const hostCount = prefix === 32 ? 1 : 2 ** maskBits - 2;
     // /31 is unusual (2 hosts) but legal — we allow it.
     const effectiveHostCount = prefix === 32 ? 1 : prefix === 31 ? 2 : hostCount;
+    const broadcastInt = (networkInt + 2 ** maskBits - 1) >>> 0;
+    const isPrivate = isRangeWithinRfc1918(networkInt, broadcastInt);
 
     return {
         raw: input,
         normalized,
         hostCount: effectiveHostCount,
+        isPrivate,
         *hosts() {
             if (prefix === 32) {
                 yield normalizedIp;
@@ -132,11 +139,13 @@ function parseRange(input: string): ParsedSubnet | ParseError {
     const scanStart = skipFirst ? startInt + 1 : startInt;
     const scanEnd = skipLast ? endInt - 1 : endInt;
     const hostCount = scanEnd >= scanStart ? scanEnd - scanStart + 1 : 0;
+    const isPrivate = isRangeWithinRfc1918(startInt, endInt);
 
     return {
         raw: input,
         normalized: `${startNorm}-${endNorm}`,
         hostCount,
+        isPrivate,
         *hosts() {
             for (let i = scanStart; i <= scanEnd; i++) {
                 yield intToIp(i >>> 0);
@@ -171,4 +180,18 @@ function ipToInt(ip: string): number {
 
 function intToIp(n: number): string {
     return [(n >>> 24) & 0xff, (n >>> 16) & 0xff, (n >>> 8) & 0xff, n & 0xff].join('.');
+}
+
+// RFC1918 private blocks as inclusive [low, high] unsigned-int bounds.
+const RFC1918_BLOCKS: ReadonlyArray<readonly [number, number]> = [
+    [ipToInt('10.0.0.0'), ipToInt('10.255.255.255')],
+    [ipToInt('172.16.0.0'), ipToInt('172.31.255.255')],
+    [ipToInt('192.168.0.0'), ipToInt('192.168.255.255')],
+];
+
+// A contiguous [lo, hi] address range is private only if it fits entirely
+// within ONE block. The blocks are disjoint and non-adjacent, so a range that
+// straddled two would necessarily include public space between them.
+function isRangeWithinRfc1918(loInt: number, hiInt: number): boolean {
+    return RFC1918_BLOCKS.some(([blockLo, blockHi]) => loInt >= blockLo && hiInt <= blockHi);
 }
