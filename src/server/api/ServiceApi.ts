@@ -95,10 +95,23 @@ async function defaultVerifyServiceActive(
  * AWAITED, with NO timeout option (no kill = no EPERM class).
  * Resolves with the exit code regardless of success/failure — never throws.
  */
-const defaultRunElevated: CommandRunner = (argv) =>
+export const defaultRunElevated: CommandRunner = (argv) =>
     new Promise((resolve) => {
         const [cmd, ...rest] = argv;
-        execFile(cmd!, rest, { maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
+        // The elevated runner refuses anything but an absolute, existing argv[0]:
+        // execFile would otherwise resolve a bare/relative command via $PATH / cwd,
+        // a binary-hijack surface in this privileged context (#26). Also covers
+        // resolveSystemTool's bare-name fallback — a non-absolute pkexec is rejected
+        // here rather than PATH-resolved.
+        if (!cmd || !path.isAbsolute(cmd) || !fs.existsSync(cmd)) {
+            resolve({
+                code: 127,
+                stdout: '',
+                stderr: `refusing to run elevated: argv[0] is not an absolute, existing path: ${JSON.stringify(cmd)}`,
+            });
+            return;
+        }
+        execFile(cmd, rest, { maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
             const e = err as (NodeJS.ErrnoException & { code?: number; status?: number }) | null;
             const code = e ? (typeof e.code === 'number' ? e.code : (e.status ?? 1)) : 0;
             resolve({ code, stdout: stdout?.toString() ?? '', stderr: stderr?.toString() ?? '' });
@@ -446,6 +459,24 @@ export class ServiceApi {
             // i.e. bare Node) are NOT a supported system-scope install scenario —
             // $APPIMAGE is always set in packaged installs, which is the only way
             // this branch is reached from the desktop GUI.
+            // The app binary is handed to pkexec to run as ROOT, so it must be an
+            // absolute path — a relative value would be resolved via the elevated
+            // process's cwd/$PATH (a hijack surface). Existence is NOT checked here:
+            // $APPIMAGE is the trusted path of the already-running AppImage, which
+            // packaged installs always set absolute (the supported entry to this
+            // branch). (#26)
+            if (!path.isAbsolute(binPath)) {
+                try { cfg.updateAppConfig({ installMode: previousMode ?? null }); }
+                catch (e) { log.warn(`installMode revert failed after binPath validation: ${(e as Error).message}`); }
+                const body: ServiceActionFailure = {
+                    ok: false,
+                    error: `service mode requires an absolute app binary path; got ${JSON.stringify(binPath)} (a relative $APPIMAGE is not a supported packaged install).`,
+                    reason: 'unknown',
+                };
+                res.writeHead(500);
+                res.end(JSON.stringify(body));
+                return true;
+            }
             const r = await this.runElevated([pkexec, binPath, '--install-system-service', '--port', String(port)]);
             if (r.code !== 0) {
                 // revert installMode so the next load doesn't see a phantom service mode

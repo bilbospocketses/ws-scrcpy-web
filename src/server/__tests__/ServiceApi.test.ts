@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ServiceApi, buildUninstallHelperArgs } from '../api/ServiceApi';
+import { ServiceApi, buildUninstallHelperArgs, defaultRunElevated } from '../api/ServiceApi';
 import { Config } from '../Config';
 import { EnvName } from '../EnvName';
 import {
@@ -143,6 +143,47 @@ describe('ServiceApi', () => {
         const api = new ServiceApi();
         const { req, res } = makeReqRes('/api/devices');
         expect(await api.handle(req, res)).toBe(false);
+    });
+
+    describe('defaultRunElevated argv[0] validation (#26)', () => {
+        it('refuses a non-absolute argv[0] instead of PATH-resolving it in the elevated runner', async () => {
+            const r = await defaultRunElevated(['pkexec', '/usr/bin/true']);
+            expect(r.code).not.toBe(0);
+            expect(r.stderr).toMatch(/absolute, existing path/i);
+        });
+
+        it('refuses an absolute but non-existent argv[0]', async () => {
+            const r = await defaultRunElevated([path.join(os.tmpdir(), 'definitely-missing-elevator-binary'), 'x']);
+            expect(r.code).not.toBe(0);
+            expect(r.stderr).toMatch(/absolute, existing path/i);
+        });
+    });
+
+    it('linux system-scope install: refuses to elevate when $APPIMAGE is not an absolute path (#26)', async () => {
+        const elevatedCalls: string[][] = [];
+        const savedAppImage = process.env['APPIMAGE'];
+        process.env['APPIMAGE'] = 'relative/WsScrcpyWeb.AppImage'; // non-absolute → guard fires before pkexec
+        try {
+            const api = new ServiceApi(
+                () => ({ supported: true, platform: 'linux', client: fakeClient() } as unknown as ServiceClientFactoryResult),
+                () => 'system',       // scope() — linux install reads requested scope from the body, so this is unused here
+                () => true,           // existsCheck (the binPath guard is absolute-only; existence is not checked)
+                () => {},             // spawnDetached
+                () => {},             // scheduleExit
+                async () => '',       // runPkexecFn
+                async () => true,     // verifyServiceActive
+                (argv) => { elevatedCalls.push(argv); return Promise.resolve({ code: 0, stdout: '', stderr: '' }); }, // runElevated
+            );
+            const { req, res } = makeReqRes('/api/service/install', 'POST', JSON.stringify({ scope: 'system' }));
+            await api.handle(req, res);
+            // The absolute-path guard fires BEFORE any elevation.
+            expect(elevatedCalls).toHaveLength(0);
+            expect((res as any).getStatus()).toBe(500);
+            expect((res as any).getBody()).toMatch(/absolute app binary/i);
+        } finally {
+            if (savedAppImage === undefined) delete process.env['APPIMAGE'];
+            else process.env['APPIMAGE'] = savedAppImage;
+        }
     });
 
     it('system-scope uninstall: teardown spawn sets DATA_ROOT (else the helper panics in data_root_for_linux at startup — beta.60 #9 5.1)', async () => {
