@@ -1,21 +1,39 @@
 /**
- * Resolve an OS tool to its absolute path, scanning the canonical bin/sbin
- * locations in priority order. Closes the PATH-hijack surface required by the
- * Local-Dependencies-Only rule: we never invoke systemctl/pkexec/etc. by bare
- * name (which would resolve via $PATH). Falls back to the bare name only when
- * no absolute candidate exists, so the failure surfaces as a clear ENOENT
+ * Resolve an OS tool to its absolute path, scanning the canonical system
+ * locations in priority order (POSIX: /usr/bin,/bin,/usr/sbin,/sbin; Windows:
+ * %SystemRoot%\System32). Closes the PATH-hijack surface flagged by review #20
+ * and required by the Local-Dependencies-Only rule: OS tools
+ * (systemctl/pkexec/taskkill/icacls/ip/arp/route/…) are never invoked by bare
+ * name, which would resolve via $PATH / %PATH%. Falls back to the bare name only
+ * when no absolute candidate exists, so the failure surfaces as a clear ENOENT
  * rather than a silent miss.
  */
 import * as fs from 'node:fs';
 
-/** Search order: user bins first (/usr/bin, /bin), then admin bins (/usr/sbin, /sbin). */
-const SEARCH_DIRS = ['/usr/bin', '/bin', '/usr/sbin', '/sbin'] as const;
+/** POSIX search order: user bins first (/usr/bin, /bin), then admin bins (/usr/sbin, /sbin). */
+const POSIX_SEARCH_DIRS = ['/usr/bin', '/bin', '/usr/sbin', '/sbin'] as const;
+
+/** Windows OS tools (taskkill, icacls, arp, route, …) live under %SystemRoot%\System32. */
+function windowsSystemDirs(): string[] {
+    const root = process.env['SystemRoot'] || process.env['windir'] || 'C:\\Windows';
+    return [`${root}\\System32`, root];
+}
 
 export function resolveSystemTool(
     tool: string,
     exists: (p: string) => boolean = fs.existsSync,
+    platform: NodeJS.Platform = process.platform,
 ): string {
-    for (const dir of SEARCH_DIRS) {
+    if (platform === 'win32') {
+        // OS tools live in System32; append .exe if the caller passed a bare name.
+        const exe = /\.(exe|cmd|bat)$/i.test(tool) ? tool : `${tool}.exe`;
+        for (const dir of windowsSystemDirs()) {
+            const candidate = `${dir}\\${exe}`;
+            if (exists(candidate)) return candidate;
+        }
+        return tool;
+    }
+    for (const dir of POSIX_SEARCH_DIRS) {
         const candidate = `${dir}/${tool}`;
         if (exists(candidate)) return candidate;
     }

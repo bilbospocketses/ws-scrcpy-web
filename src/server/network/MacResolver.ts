@@ -6,6 +6,7 @@
 
 import { execFile } from 'child_process';
 import { promisify } from 'util';
+import { resolveSystemTool } from '../service/systemTools';
 
 const execFileAsync = promisify(execFile);
 
@@ -16,7 +17,9 @@ export interface MacResolverDeps {
 
 const DEFAULT_DEPS: MacResolverDeps = {
     runCommand: async (bin, args) => {
-        const { stdout } = await execFileAsync(bin, args, { timeout: 2000, maxBuffer: 1024 * 1024 });
+        // Resolve the OS tool (arp/ip) to an absolute path so it can't be
+        // hijacked via $PATH / %PATH% (#20).
+        const { stdout } = await execFileAsync(resolveSystemTool(bin), args, { timeout: 2000, maxBuffer: 1024 * 1024 });
         return stdout;
     },
     platform: process.platform,

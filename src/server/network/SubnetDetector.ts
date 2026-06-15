@@ -1,6 +1,7 @@
 import { execFile } from 'child_process';
 import * as os from 'os';
 import { promisify } from 'util';
+import { resolveSystemTool } from '../service/systemTools';
 
 const execFileAsync = promisify(execFile);
 
@@ -22,7 +23,9 @@ const DEFAULT_DEPS: DetectorDeps = {
     runCommand: async (cmd: string) => {
         const [bin, ...args] = splitCommand(cmd);
         if (!bin) throw new Error('empty command');
-        const { stdout } = await execFileAsync(bin, args, { timeout: 3000, maxBuffer: 1024 * 1024 });
+        // Resolve the OS tool (ip/route) to an absolute path so it can't be
+        // hijacked via $PATH / %PATH% (#20).
+        const { stdout } = await execFileAsync(resolveSystemTool(bin), args, { timeout: 3000, maxBuffer: 1024 * 1024 });
         return stdout;
     },
     platform: process.platform,

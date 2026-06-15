@@ -1,25 +1,44 @@
 import { describe, it, expect } from 'vitest';
 import { resolveSystemTool, buildDetachedSpawn } from './systemTools';
 
-describe('resolveSystemTool', () => {
+describe('resolveSystemTool — POSIX', () => {
     it('returns the first candidate that exists', () => {
         const exists = (p: string) => p === '/usr/bin/systemctl';
-        expect(resolveSystemTool('systemctl', exists)).toBe('/usr/bin/systemctl');
+        expect(resolveSystemTool('systemctl', exists, 'linux')).toBe('/usr/bin/systemctl');
     });
 
     it('prefers /usr/bin over /bin when both exist', () => {
         const exists = (p: string) => p === '/usr/bin/pkexec' || p === '/bin/pkexec';
-        expect(resolveSystemTool('pkexec', exists)).toBe('/usr/bin/pkexec');
+        expect(resolveSystemTool('pkexec', exists, 'linux')).toBe('/usr/bin/pkexec');
     });
 
     it('checks sbin locations for admin tools (semanage/restorecon)', () => {
         const exists = (p: string) => p === '/usr/sbin/semanage';
-        expect(resolveSystemTool('semanage', exists)).toBe('/usr/sbin/semanage');
+        expect(resolveSystemTool('semanage', exists, 'linux')).toBe('/usr/sbin/semanage');
     });
 
     it('falls back to the bare name when no absolute path exists', () => {
         const exists = (_p: string) => false;
-        expect(resolveSystemTool('systemctl', exists)).toBe('systemctl');
+        expect(resolveSystemTool('systemctl', exists, 'linux')).toBe('systemctl');
+    });
+});
+
+describe('resolveSystemTool — Windows', () => {
+    it('resolves OS tools under System32 (PATH-hijack defense, #20)', () => {
+        const exists = (p: string) => p.toLowerCase().endsWith('system32\\taskkill.exe');
+        const resolved = resolveSystemTool('taskkill', exists, 'win32');
+        expect(resolved.toLowerCase()).toContain('system32');
+        expect(resolved.toLowerCase().endsWith('taskkill.exe')).toBe(true);
+    });
+
+    it('appends .exe when probing a bare Windows tool name', () => {
+        const seen: string[] = [];
+        resolveSystemTool('icacls', (p) => { seen.push(p); return false; }, 'win32');
+        expect(seen.some((p) => p.toLowerCase().endsWith('system32\\icacls.exe'))).toBe(true);
+    });
+
+    it('falls back to the bare tool name when absent', () => {
+        expect(resolveSystemTool('arp', () => false, 'win32')).toBe('arp');
     });
 });
 
