@@ -78,7 +78,7 @@ describe('DependencyManager.update() launcher-required gate', () => {
 
     it('returns reason=launcher-required for nodejs when launcher is unavailable', async () => {
         vi.doMock('../service/elevatedRunner', () => ({
-            launcherIsAvailable: () => false,
+            launcherIsAvailable: async () => false,
             resolveLauncherPath: () => '/fake/launcher.exe',
         }));
         const { DependencyManager: Mgr } = await import('../DependencyManager');
@@ -97,7 +97,7 @@ describe('DependencyManager.update() launcher-required gate', () => {
 
     it('does not gate scrcpy-server (no launcher needed)', async () => {
         vi.doMock('../service/elevatedRunner', () => ({
-            launcherIsAvailable: () => false,
+            launcherIsAvailable: async () => false,
             resolveLauncherPath: () => '/fake/launcher.exe',
         }));
         const { DependencyManager: Mgr } = await import('../DependencyManager');

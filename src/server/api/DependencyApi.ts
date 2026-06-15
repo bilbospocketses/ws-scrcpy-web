@@ -16,7 +16,7 @@ export class DependencyApi {
         try {
             // GET /api/dependencies — list all
             if (req.method === 'GET' && url === '/api/dependencies') {
-                const deps = this.manager.getAll();
+                const deps = await this.manager.getAll();
                 res.writeHead(200);
                 res.end(JSON.stringify(deps));
                 return true;
@@ -25,7 +25,7 @@ export class DependencyApi {
             // POST /api/dependencies/check — check all for updates
             if (req.method === 'POST' && url === '/api/dependencies/check') {
                 await this.manager.checkAll();
-                const deps = this.manager.getAll();
+                const deps = await this.manager.getAll();
                 res.writeHead(200);
                 res.end(JSON.stringify(deps));
                 return true;
@@ -56,7 +56,7 @@ export class DependencyApi {
             // POST /api/dependencies/retry-install — retry first-run bootstrap
             if (req.method === 'POST' && url === '/api/dependencies/retry-install') {
                 const before = new Map<string, { installedVersion: string | null }>();
-                for (const info of this.manager.getAll()) {
+                for (const info of await this.manager.getAll()) {
                     before.set(info.name, { installedVersion: info.installedVersion });
                 }
                 await this.manager.checkAll();
@@ -64,7 +64,7 @@ export class DependencyApi {
                 const installed: string[] = [];
                 const stillMissing: string[] = [];
                 const errors: Record<string, string> = {};
-                for (const info of this.manager.getAll()) {
+                for (const info of await this.manager.getAll()) {
                     const prev = before.get(info.name);
                     if (prev?.installedVersion === null && info.installedVersion !== null) {
                         installed.push(info.name);

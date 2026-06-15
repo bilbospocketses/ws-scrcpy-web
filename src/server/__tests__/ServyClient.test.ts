@@ -5,30 +5,39 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // elevated helper. Status still uses sc.exe (read-only, no admin) so we
 // keep an execFileSync mock for that path.
 const runElevatedMock = vi.fn();
-const launcherIsAvailableMock = vi.fn();
 vi.mock('../service/elevatedRunner', () => ({
     runElevated: (...args: unknown[]) => runElevatedMock(...args),
-    launcherIsAvailable: () => launcherIsAvailableMock(),
     resolveLauncherPath: () => 'C:\\fake\\install\\ws-scrcpy-web-launcher.exe',
 }));
 
-const execFileSyncMock = vi.fn();
+// status() now uses execFileAsync (promisify(execFile)) — #32. Mock execFile
+// callback-style; promisify resolves with the 2nd callback arg ({ stdout, stderr })
+// or rejects with the error when one is passed.
+const execFileMock = vi.fn(
+    (
+        _cmd: string,
+        _args: string[],
+        _opts: unknown,
+        cb: (err: Error | null, result: { stdout: string; stderr: string }) => void,
+    ) => cb(null, { stdout: '', stderr: '' }),
+);
 vi.mock('node:child_process', () => ({
-    execFileSync: (...args: unknown[]) => execFileSyncMock(...args),
+    execFile: (...args: unknown[]) => execFileMock(...(args as Parameters<typeof execFileMock>)),
 }));
 
-const existsSyncMock = vi.fn();
-vi.mock('node:fs', async () => {
-    const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
-    return {
-        ...actual,
-        existsSync: (...args: unknown[]) => existsSyncMock(...args),
-        default: {
-            ...actual,
-            existsSync: (...args: unknown[]) => existsSyncMock(...args),
-        },
-    };
-});
+// existsSync → fileExists (async, #32). Mock the helper directly so existence
+// is a resolved boolean, mirroring the prior existsSync mock's predicate.
+const fileExistsMock = vi.fn();
+vi.mock('../util/fsExists', () => ({
+    fileExists: (...args: unknown[]) => fileExistsMock(...args),
+}));
+
+// resolveSystemTool resolves OS tools (incl. Windows `sc`) to an absolute
+// System32 path; stub it deterministically so the status assertion is
+// host-independent and proves status() no longer uses a bare PATH name.
+vi.mock('../service/systemTools', () => ({
+    resolveSystemTool: (t: string) => `RESOLVED:${t}`,
+}));
 
 import { parseScQueryStatus, ServiceInstallError, ServyClient } from '../service/ServyClient';
 
@@ -36,13 +45,12 @@ describe('ServyClient', () => {
     beforeEach(() => {
         runElevatedMock.mockReset();
         runElevatedMock.mockResolvedValue({ ok: true, exitCode: 0, stdout: '', stderr: '' });
-        launcherIsAvailableMock.mockReset();
-        launcherIsAvailableMock.mockReturnValue(true);
-        execFileSyncMock.mockReset();
-        existsSyncMock.mockReset();
+        execFileMock.mockReset();
+        execFileMock.mockImplementation((_cmd, _args, _opts, cb) => cb(null, { stdout: '', stderr: '' }));
+        fileExistsMock.mockReset();
         // Default: launcher present, tray helper absent.
-        existsSyncMock.mockImplementation((p: unknown) =>
-            String(p).endsWith('ws-scrcpy-web-launcher.exe'),
+        fileExistsMock.mockImplementation((p: unknown) =>
+            Promise.resolve(String(p).endsWith('ws-scrcpy-web-launcher.exe')),
         );
     });
 
@@ -81,9 +89,9 @@ describe('ServyClient', () => {
             envVars: 'DEPS_PATH=C:\\deps;FOO=bar',
             logPath: 'C:\\app\\service.log',
         });
-        // No execFileSync calls — install no longer touches servy-cli or
+        // No execFile calls — install no longer touches servy-cli or
         // reg.exe directly; both go through the elevated helper.
-        expect(execFileSyncMock).not.toHaveBeenCalled();
+        expect(execFileMock).not.toHaveBeenCalled();
     });
 
     it('install throws ServiceInstallError when runElevated returns ok=false', async () => {
@@ -111,7 +119,7 @@ describe('ServyClient', () => {
     });
 
     it('install throws when packaged launcher is absent (dev runs)', async () => {
-        existsSyncMock.mockReturnValue(false);
+        fileExistsMock.mockResolvedValue(false);
         const client = new ServyClient('servy.exe');
         await expect(
             client.install({
@@ -130,11 +138,13 @@ describe('ServyClient', () => {
     });
 
     it('install passes trayHelperPath when the tray exe exists in install root', async () => {
-        existsSyncMock.mockImplementation((p: unknown) => {
+        fileExistsMock.mockImplementation((p: unknown) => {
             const s = String(p);
             // launcher AND tray helper both present
-            return s.endsWith('ws-scrcpy-web-launcher.exe') ||
-                s.endsWith('ws-scrcpy-web-tray.exe');
+            return Promise.resolve(
+                s.endsWith('ws-scrcpy-web-launcher.exe') ||
+                    s.endsWith('ws-scrcpy-web-tray.exe'),
+            );
         });
         const client = new ServyClient('servy.exe');
         await client.install({
@@ -192,49 +202,54 @@ describe('ServyClient', () => {
     });
 
     it('status uses sc.exe query and parses RUNNING', async () => {
-        execFileSyncMock.mockReturnValue([
+        const out = [
             'SERVICE_NAME: WsScrcpyWeb',
             '        TYPE               : 10  WIN32_OWN_PROCESS',
             '        STATE              : 4  RUNNING',
             '        WIN32_EXIT_CODE    : 0  (0x0)',
-        ].join('\r\n'));
+        ].join('\r\n');
+        execFileMock.mockImplementation((_cmd, _args, _opts, cb) => cb(null, { stdout: out, stderr: '' }));
         const client = new ServyClient('servy.exe');
         const status = await client.status('WsScrcpyWeb');
         expect(status).toBe('running');
-        const [cmd, args] = execFileSyncMock.mock.calls[0]!;
-        expect(cmd).toBe('sc.exe');
+        const [cmd, args] = execFileMock.mock.calls[0]!;
+        // #20-class fix: 'sc' resolves to an absolute System32 path via
+        // resolveSystemTool, never the bare PATH name (no binary-hijack on the poll).
+        expect(cmd).toBe('RESOLVED:sc');
         expect(args).toEqual(['query', 'WsScrcpyWeb']);
     });
 
     it('status returns stopped for STATE=1 (STOPPED)', async () => {
-        execFileSyncMock.mockReturnValue('STATE              : 1  STOPPED');
+        execFileMock.mockImplementation((_cmd, _args, _opts, cb) =>
+            cb(null, { stdout: 'STATE              : 1  STOPPED', stderr: '' }),
+        );
         const client = new ServyClient('servy.exe');
         expect(await client.status('WsScrcpyWeb')).toBe('stopped');
     });
 
     it('status returns not-installed when sc.exe exits 1060', async () => {
-        execFileSyncMock.mockImplementation(() => {
-            const err = new Error('Command failed') as NodeJS.ErrnoException & {
-                status: number;
+        execFileMock.mockImplementation((_cmd, _args, _opts, cb) => {
+            const err = new Error('Command failed') as Error & {
+                code: number;
                 stderr: string;
             };
-            err.status = 1060;
+            err.code = 1060;
             err.stderr = '[SC] EnumQueryServicesStatus:OpenService FAILED 1060:\nThe specified service does not exist as an installed service.';
-            throw err;
+            cb(err, { stdout: '', stderr: '' });
         });
         const client = new ServyClient('servy.exe');
         expect(await client.status('WsScrcpyWeb')).toBe('not-installed');
     });
 
     it('status rethrows other sc.exe errors', async () => {
-        execFileSyncMock.mockImplementation(() => {
-            const err = new Error('Command failed') as NodeJS.ErrnoException & {
-                status: number;
+        execFileMock.mockImplementation((_cmd, _args, _opts, cb) => {
+            const err = new Error('Command failed') as Error & {
+                code: number;
                 stderr: string;
             };
-            err.status = 5;
+            err.code = 5;
             err.stderr = 'Access is denied.';
-            throw err;
+            cb(err, { stdout: '', stderr: '' });
         });
         const client = new ServyClient('servy.exe');
         await expect(client.status('WsScrcpyWeb')).rejects.toThrow(/Access is denied/);

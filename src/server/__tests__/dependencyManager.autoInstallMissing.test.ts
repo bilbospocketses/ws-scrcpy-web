@@ -4,7 +4,7 @@ import * as elevatedRunnerModule from '../service/elevatedRunner';
 import { DependencyManager } from '../DependencyManager';
 
 vi.mock('../service/elevatedRunner', () => ({
-    launcherIsAvailable: vi.fn(() => true),
+    launcherIsAvailable: vi.fn(async () => true),
     resolveLauncherPath: () => '/fake/launcher.exe',
 }));
 
@@ -86,7 +86,7 @@ describe('DependencyManager.autoInstallMissing', () => {
     });
 
     it('skips launcher-required deps in dev mode (no launcher available)', async () => {
-        vi.mocked(elevatedRunnerModule.launcherIsAvailable).mockReturnValue(false);
+        vi.mocked(elevatedRunnerModule.launcherIsAvailable).mockResolvedValue(false);
 
         const nodejs = mgr.getByName('nodejs')!;
         nodejs.installedVersion = null;
@@ -103,6 +103,6 @@ describe('DependencyManager.autoInstallMissing', () => {
         // scrcpy-server still gets installed (no launcher needed)
         expect(updateSpy).toHaveBeenCalledWith('scrcpy-server');
 
-        vi.mocked(elevatedRunnerModule.launcherIsAvailable).mockReturnValue(true);
+        vi.mocked(elevatedRunnerModule.launcherIsAvailable).mockResolvedValue(true);
     });
 });
