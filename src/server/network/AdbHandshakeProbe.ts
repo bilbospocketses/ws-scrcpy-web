@@ -98,7 +98,9 @@ function extractModel(banner: string): string | undefined {
 }
 
 export function dedupModel(s: string): string {
-    const trimmed = s.trim();
+    // Cap before processing — the model comes from an attacker-controllable ADB
+    // banner, so bound the work (and the output) to a sane length. (#27)
+    const trimmed = s.trim().slice(0, 256);
     if (!trimmed) return '';
     // Full-string duplicate: "X X" where X may contain spaces.
     // Works when length is odd and the midpoint is a space separating two equal halves.
@@ -108,8 +110,17 @@ export function dedupModel(s: string): string {
         const right = trimmed.slice(mid + 1);
         if (left === right) return left;
     }
-    // Adjacent duplicate words: "Google Google Chromecast" → "Google Chromecast"
-    return trimmed.replace(/\b(\w[\w-]*)(\s+\1\b)+/gi, '$1');
+    // Adjacent duplicate words via a linear token walk: drop a token when it equals
+    // the previous one (case-insensitively), keeping the first occurrence's casing.
+    // Replaces a backreference regex (/\b(\w[\w-]*)(\s+\1\b)+/gi) that could backtrack
+    // catastrophically on a crafted banner — ReDoS over attacker input. (#27)
+    const out: string[] = [];
+    for (const tok of trimmed.split(/\s+/)) {
+        const prev = out[out.length - 1];
+        if (prev !== undefined && prev.toLowerCase() === tok.toLowerCase()) continue;
+        out.push(tok);
+    }
+    return out.join(' ');
 }
 
 /**

@@ -171,6 +171,14 @@ describe('dedupModel', () => {
     it('case-insensitive adjacent dedup', () => {
         expect(dedupModel('google Google Chromecast')).toBe('google Chromecast');
     });
+
+    it('caps the input length so a hostile ADB banner cannot blow up the dedup (#27)', () => {
+        // The model string comes from an attacker-controllable device banner; the
+        // result is bounded to the 256-char cap, and the dedup is a linear token
+        // walk rather than a catastrophic-backtracking regex.
+        expect(dedupModel('A'.repeat(5000)).length).toBeLessThanOrEqual(256);
+        expect(dedupModel(Array(500).fill('Pixel').join(' ')).length).toBeLessThanOrEqual(256);
+    });
 });
 
 describe('probeAdb (integration)', () => {
