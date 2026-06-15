@@ -15,6 +15,40 @@ const OS_WINDOWS = os.platform() === 'win32';
 const USE_BINARY = !OS_WINDOWS;
 const EVENT_TYPE_SHELL = 'shell';
 
+// #29 — allowlist of environment variables the device-shell PTY (the adb client
+// + the terminal) legitimately needs. Everything else in the server's
+// process.env — which may carry app/user secrets — is dropped rather than handed
+// to the shell. Matched case-insensitively (Windows uses `Path`, `SystemRoot`, …).
+const SHELL_ENV_ALLOW: readonly string[] = OS_WINDOWS
+    ? [
+          'PATH', 'SYSTEMROOT', 'WINDIR', 'TEMP', 'TMP', 'USERPROFILE',
+          'HOMEDRIVE', 'HOMEPATH', 'COMSPEC', 'PATHEXT', 'APPDATA', 'LOCALAPPDATA',
+          'NUMBER_OF_PROCESSORS', 'PROCESSOR_ARCHITECTURE',
+          'ANDROID_USER_HOME', 'ANDROID_SDK_HOME', 'ANDROID_ADB_SERVER_PORT', 'ANDROID_ADB_SERVER_SOCKET',
+      ]
+    : [
+          'PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TMPDIR',
+          'ANDROID_USER_HOME', 'ANDROID_SDK_HOME', 'ANDROID_ADB_SERVER_PORT', 'ANDROID_ADB_SERVER_SOCKET',
+      ];
+
+/**
+ * Build a minimal environment for the device-shell PTY instead of inheriting the
+ * server's full `process.env` (#29). Only OS/adb essentials pass through; the
+ * terminal vars are set explicitly.
+ */
+export function buildShellEnv(source: NodeJS.ProcessEnv = process.env): Record<string, string> {
+    const allow = new Set(SHELL_ENV_ALLOW);
+    const env: Record<string, string> = {};
+    for (const [key, value] of Object.entries(source)) {
+        if (value !== undefined && allow.has(key.toUpperCase())) {
+            env[key] = value;
+        }
+    }
+    env['TERM'] = 'xterm-256color';
+    env['COLORTERM'] = 'truecolor';
+    return env;
+}
+
 export class RemoteShell extends Mw {
     public static readonly TAG = 'RemoteShell';
     private static readonly log = Logger.for('RemoteShell');
@@ -49,8 +83,7 @@ export class RemoteShell extends Mw {
         if (!handle?.available || !handle.pty) {
             throw new Error(`node-pty not available: ${handle?.reason ?? 'resolver did not run'}`);
         }
-        const env = Object.assign({}, process.env) as any;
-        env['COLORTERM'] = 'truecolor';
+        const env = buildShellEnv();
         const { cols = 80, rows = 24 } = params;
         const cwd = process.cwd();
         // v0.1.12: resolve adb via Config.adbPath instead of bare 'adb.exe'.
