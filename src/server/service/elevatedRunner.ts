@@ -37,6 +37,7 @@ import { randomBytes } from 'node:crypto';
 import { promisify } from 'util';
 import { Logger } from '../Logger';
 import { tempDir } from '../util/disposable';
+import { fileExists } from '../util/fsExists';
 
 const execFileAsync = promisify(execFile);
 
@@ -128,8 +129,8 @@ export function resolveLauncherPath(): string {
     return path.join(process.cwd(), exeName);
 }
 
-export function launcherIsAvailable(): boolean {
-    return fs.existsSync(resolveLauncherPath());
+export async function launcherIsAvailable(): Promise<boolean> {
+    return fileExists(resolveLauncherPath());
 }
 
 /**
@@ -148,7 +149,7 @@ export async function runElevated(
         throw new Error('runElevated is Windows-only');
     }
     const launcherPath = resolveLauncherPath();
-    if (!fs.existsSync(launcherPath)) {
+    if (!(await fileExists(launcherPath))) {
         throw new Error(
             `runElevated requires the packaged launcher at ${launcherPath}, ` +
                 `which is not present (likely a dev/from-source run rather than a Velopack install)`,
@@ -173,7 +174,7 @@ export async function runElevated(
     // entirely for this command and direct-spawn the launcher.
     const useDirect = command === 'spawn-user-launcher';
 
-    fs.writeFileSync(argsPath, JSON.stringify({ ...wireArgs, nonce }, null, 2), 'utf8');
+    await fs.promises.writeFile(argsPath, JSON.stringify({ ...wireArgs, nonce }, null, 2), 'utf8');
 
     // v0.1.8: switched from `Start-Process -Wait -PassThru` to a
     // result-file polling pattern. The previous design hung in
@@ -289,14 +290,14 @@ export async function pollForResultFile(
 ): Promise<ElevatedResult | null> {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
-        if (fs.existsSync(resultPath)) {
+        if (await fileExists(resultPath)) {
             // File exists. Try to read+parse. If the helper is still
             // mid-write, parse may produce a malformed-JSON error; if
             // so, wait one more tick and try again. Once the file is
             // fully written and reads cleanly, return the parsed
             // result.
             try {
-                const raw = fs.readFileSync(resultPath, 'utf8');
+                const raw = await fs.promises.readFile(resultPath, 'utf8');
                 const parsed = parseResult(raw);
                 // Heuristic: if parseResult returned a "could not
                 // parse" error AND the file is < 1KB, it's probably
@@ -323,7 +324,7 @@ export async function pollForResultFile(
                 }
                 return parsed;
             } catch {
-                // File disappeared between existsSync and readFileSync,
+                // File disappeared between the access check and readFile,
                 // or some other I/O error. Treat as still-in-progress.
             }
         }

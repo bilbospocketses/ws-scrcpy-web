@@ -3,23 +3,27 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Call-through fs spies so #31 can assert the atomic tmp→rename staging
-// OS-independently (same pattern as resumeToken.test.ts).
+// Call-through fs.promises spies so #31 can assert the atomic tmp→rename staging
+// OS-independently (same pattern as resumeToken.test.ts). #32: staging is async,
+// so the spies sit on fs.promises.copyFile/rename, not the sync variants.
 const fsSpies = vi.hoisted(() => ({
-    copyFileSync: vi.fn(),
-    renameSync: vi.fn(),
+    copyFile: vi.fn(),
+    rename: vi.fn(),
 }));
 vi.mock('node:fs', async (importOriginal) => {
     const actual = await importOriginal<typeof import('node:fs')>();
     return {
         ...actual,
-        copyFileSync: (...args: Parameters<typeof actual.copyFileSync>) => {
-            fsSpies.copyFileSync(...args);
-            return actual.copyFileSync(...args);
-        },
-        renameSync: (...args: Parameters<typeof actual.renameSync>) => {
-            fsSpies.renameSync(...args);
-            return actual.renameSync(...args);
+        promises: {
+            ...actual.promises,
+            copyFile: (...args: Parameters<typeof actual.promises.copyFile>) => {
+                fsSpies.copyFile(...args);
+                return actual.promises.copyFile(...args);
+            },
+            rename: (...args: Parameters<typeof actual.promises.rename>) => {
+                fsSpies.rename(...args);
+                return actual.promises.rename(...args);
+            },
         },
     };
 });
@@ -65,10 +69,10 @@ describe('stageStableUserBin (#31)', () => {
         }
     });
 
-    it('stages the binary via an atomic temp + rename, not a direct copy (#31)', () => {
+    it('stages the binary via an atomic temp + rename, not a direct copy (#31)', async () => {
         // The /opt bin does not exist on the test host, so the staging path runs.
-        fsSpies.copyFileSync.mockClear();
-        fsSpies.renameSync.mockClear();
+        fsSpies.copyFile.mockClear();
+        fsSpies.rename.mockClear();
         const opts = {
             scope: 'user',
             name: 'WsScrcpyWeb',
@@ -79,11 +83,11 @@ describe('stageStableUserBin (#31)', () => {
             dataRoot,
         } as unknown as Parameters<typeof stageStableUserBin>[0];
 
-        const result = stageStableUserBin(opts);
+        const result = await stageStableUserBin(opts);
 
         // Atomic: copied to a temp path then renamed into the final ExecStart path.
-        expect(fsSpies.renameSync).toHaveBeenCalledTimes(1);
-        expect(fsSpies.copyFileSync).toHaveBeenCalledWith(source, expect.stringContaining('.tmp-'));
+        expect(fsSpies.rename).toHaveBeenCalledTimes(1);
+        expect(fsSpies.copyFile).toHaveBeenCalledWith(source, expect.stringContaining('.tmp-'));
         // Final binary is the complete source content at the stable path.
         expect(result.binPath.startsWith(`${dataRoot}/bin/`)).toBe(true);
         expect(fs.readFileSync(result.binPath, 'utf8')).toBe('BINARY-CONTENT');

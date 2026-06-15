@@ -27,11 +27,13 @@
  * lives in launcher/src/elevated_runner.rs) and adds elevation.
  */
 
-import { execFileSync } from 'node:child_process';
-import * as fs from 'node:fs';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import * as path from 'node:path';
 import { Logger } from '../Logger';
 import { resolveLauncherPath, runElevated } from './elevatedRunner';
+import { fileExists } from '../util/fsExists';
+import { resolveSystemTool } from './systemTools';
 import type {
     ServiceClient,
     ServiceInstallOptions,
@@ -39,6 +41,8 @@ import type {
 } from './ServiceClient';
 
 const log = Logger.for('ServyClient');
+
+const execFileAsync = promisify(execFile);
 
 /**
  * Resolve the absolute path of `servy-cli.exe`.
@@ -52,23 +56,23 @@ const log = Logger.for('ServyClient');
  *      Fall back to `<repoRoot>/publish/servy-cli.exe`.
  *
  * If neither exists, fall back to the bare name `servy-cli.exe` so the error
- * surface from execFileSync is "ENOENT: spawn servy-cli.exe" rather than a
+ * surface from execFileAsync is "ENOENT: spawn servy-cli.exe" rather than a
  * silent miss — easier to triage.
  */
-export function resolveServyPath(
+export async function resolveServyPath(
     cwd: string = process.cwd(),
     moduleDir: string = __dirname,
-    exists: (p: string) => boolean = fs.existsSync,
-): string {
+    exists: (p: string) => Promise<boolean> = fileExists,
+): Promise<string> {
     const installedCandidate = path.join(cwd, 'servy-cli.exe');
-    if (exists(installedCandidate)) return installedCandidate;
+    if (await exists(installedCandidate)) return installedCandidate;
     // dev / from-source: most reliable is cwd/publish/servy-cli.exe (npm start
     // runs from repo root, fetch-servy.mjs writes there).
     const cwdPublishCandidate = path.join(cwd, 'publish', 'servy-cli.exe');
-    if (exists(cwdPublishCandidate)) return cwdPublishCandidate;
+    if (await exists(cwdPublishCandidate)) return cwdPublishCandidate;
     // Source-layout fallback (only useful when running un-bundled): src/server/service/ -> ../../../publish/
     const sourceCandidate = path.resolve(moduleDir, '..', '..', '..', 'publish', 'servy-cli.exe');
-    if (exists(sourceCandidate)) return sourceCandidate;
+    if (await exists(sourceCandidate)) return sourceCandidate;
     return 'servy-cli.exe';
 }
 
@@ -108,10 +112,26 @@ export function parseScQueryStatus(output: string): ServiceStatus {
 }
 
 export class ServyClient implements ServiceClient {
-    private readonly servyPath: string;
+    private readonly servyPathOverride: string | undefined;
+    private servyPathPromise: Promise<string> | undefined;
 
     constructor(servyPath?: string) {
-        this.servyPath = servyPath ?? resolveServyPath();
+        this.servyPathOverride = servyPath;
+    }
+
+    /**
+     * Resolve `servy-cli.exe` lazily + memoize. `resolveServyPath` is async
+     * (#32 — non-blocking existence checks) so the path can't be resolved in
+     * the constructor; install/uninstall await this instead of reading a field.
+     */
+    private getServyPath(): Promise<string> {
+        if (this.servyPathOverride !== undefined) {
+            return Promise.resolve(this.servyPathOverride);
+        }
+        if (!this.servyPathPromise) {
+            this.servyPathPromise = resolveServyPath();
+        }
+        return this.servyPathPromise;
     }
 
     public async install(opts: ServiceInstallOptions): Promise<void> {
@@ -119,15 +139,15 @@ export class ServyClient implements ServiceClient {
         // The helper handles all argv translation + post-install start
         // + tray Run-key registration + tray spawn in the elevated
         // process. We just hand it the abstract operation params.
-        if (!fs.existsSync(resolveLauncherPath())) {
+        if (!(await fileExists(resolveLauncherPath()))) {
             throw new Error(
                 `service install requires the packaged launcher binary at ${resolveLauncherPath()}, ` +
                     `which is not present (likely a dev/from-source run)`,
             );
         }
-        const trayHelperPath = this.tryResolveTrayHelperPath();
+        const trayHelperPath = await this.tryResolveTrayHelperPath();
         const result = await runElevated('install-service', {
-            servyPath: this.servyPath,
+            servyPath: await this.getServyPath(),
             name: opts.name,
             displayName: opts.displayName,
             description: opts.description,
@@ -157,14 +177,14 @@ export class ServyClient implements ServiceClient {
         // v0.1.7: uninstall routes through the elevate-and-run helper too.
         // The helper stops the service first, then uninstalls, then
         // cleans up the tray Run-key, all in the elevated process.
-        if (!fs.existsSync(resolveLauncherPath())) {
+        if (!(await fileExists(resolveLauncherPath()))) {
             throw new Error(
                 `service uninstall requires the packaged launcher binary at ${resolveLauncherPath()}, ` +
                     `which is not present (likely a dev/from-source run)`,
             );
         }
         const result = await runElevated('uninstall-service', {
-            servyPath: this.servyPath,
+            servyPath: await this.getServyPath(),
             name,
         });
         if (!result.ok) {
@@ -188,12 +208,11 @@ export class ServyClient implements ServiceClient {
      */
     public async status(name: string): Promise<ServiceStatus> {
         try {
-            const out = execFileSync('sc.exe', ['query', name], {
-                stdio: ['ignore', 'pipe', 'pipe'],
+            const { stdout } = await execFileAsync(resolveSystemTool('sc'), ['query', name], {
                 encoding: 'utf8',
                 timeout: 5_000,
             });
-            return parseScQueryStatus(out);
+            return parseScQueryStatus(stdout);
         } catch (err) {
             // sc.exe returns exit 1060 (ERROR_SERVICE_DOES_NOT_EXIST)
             // when the named service isn't registered. Surfaced via
@@ -225,7 +244,7 @@ export class ServyClient implements ServiceClient {
     public async restart(_name: string): Promise<void> {
         // restart = stop + start, but Servy's `restart` is one round-trip.
         // Routes through elevation since it touches SCM control.
-        if (!fs.existsSync(resolveLauncherPath())) {
+        if (!(await fileExists(resolveLauncherPath()))) {
             throw new Error(
                 `service restart requires the packaged launcher binary at ${resolveLauncherPath()}`,
             );
@@ -259,11 +278,11 @@ export class ServyClient implements ServiceClient {
      * itself; we just hand it the path (or null) so it can no-op when
      * the helper isn't installed.
      */
-    private tryResolveTrayHelperPath(): string | undefined {
+    private async tryResolveTrayHelperPath(): Promise<string | undefined> {
         const installedCandidate = path.join(process.cwd(), 'ws-scrcpy-web-tray.exe');
-        if (fs.existsSync(installedCandidate)) return installedCandidate;
+        if (await fileExists(installedCandidate)) return installedCandidate;
         const cwdPublishCandidate = path.join(process.cwd(), 'publish', 'ws-scrcpy-web-tray.exe');
-        if (fs.existsSync(cwdPublishCandidate)) return cwdPublishCandidate;
+        if (await fileExists(cwdPublishCandidate)) return cwdPublishCandidate;
         return undefined;
     }
 }

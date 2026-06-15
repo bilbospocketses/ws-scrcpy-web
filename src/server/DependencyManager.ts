@@ -55,8 +55,8 @@ export class DependencyManager {
         }
     }
 
-    public getAll(): DependencyInfo[] {
-        const launcherAvail = launcherIsAvailable();
+    public async getAll(): Promise<DependencyInfo[]> {
+        const launcherAvail = await launcherIsAvailable();
         // In-place mutation: callers (incl. getByName) hold references to state
         // entries and mutate them; spread copies would orphan those mutations.
         for (const info of this.state.values()) {
@@ -133,7 +133,7 @@ export class DependencyManager {
         if (!def || !info) {
             return { success: false, errorMessage: `Unknown dependency: ${name}`, requiresRestart: false };
         }
-        if (def.requiresLauncher && !launcherIsAvailable()) {
+        if (def.requiresLauncher && !(await launcherIsAvailable())) {
             return {
                 success: false,
                 reason: 'launcher-required',
@@ -224,7 +224,7 @@ export class DependencyManager {
             log.warn(`seed-promote scrcpy-server failed: ${(err as Error).message}`);
         }
 
-        const launcherAvail = launcherIsAvailable();
+        const launcherAvail = await launcherIsAvailable();
         for (const info of this.state.values()) {
             if (info.installedVersion === null && info.latestVersion !== null) {
                 const def = this.definitions.find((d) => d.name === info.name);
@@ -474,7 +474,7 @@ export class DependencyManager {
         // The launcher binary is SHA-pinned-to-release and ships in
         // `current/` alongside this Node process, so no external binary
         // discovery is needed.
-        if (!launcherIsAvailable()) {
+        if (!(await launcherIsAvailable())) {
             throw new Error(
                 `extractZip requires the packaged launcher binary at ${resolveLauncherPath()}. ` +
                     `Dev mode should populate dependencies/ via scripts/fetch-node.mjs (Node) or ` +

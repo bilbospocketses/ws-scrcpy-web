@@ -32,7 +32,7 @@
  * See `docs/plans/sp3-p4b-contracts.md` for the full spec.
  */
 
-import { execFile, execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -46,6 +46,7 @@ import type {
 } from './ServiceClient';
 import { resolveSystemTool } from './systemTools';
 import { assertServiceName, shQuote } from './shellEscape';
+import { fileExists } from '../util/fsExists';
 
 const execFileAsync = promisify(execFile);
 
@@ -169,36 +170,34 @@ export async function runPkexec(shellCmd: string, label: string): Promise<string
  * If missing, return the package-manager install command for the detected
  * distro family (deb or rpm). Returns null if already present.
  */
-export function isLibfuse2Installed(): boolean {
+export async function isLibfuse2Installed(): Promise<boolean> {
     try {
-        const out = execFileSync(resolveSystemTool('ldconfig'), ['-p'], {
-            stdio: ['ignore', 'pipe', 'pipe'],
+        const { stdout } = await execFileAsync(resolveSystemTool('ldconfig'), ['-p'], {
             encoding: 'utf8',
         });
-        return out.includes('libfuse.so.2');
+        return stdout.includes('libfuse.so.2');
     } catch {
         return false;
     }
 }
 
-function libfuse2InstallCmd(): string | null {
+async function libfuse2InstallCmd(): Promise<string | null> {
     try {
-        const out = execFileSync(resolveSystemTool('ldconfig'), ['-p'], {
-            stdio: ['ignore', 'pipe', 'pipe'],
+        const { stdout } = await execFileAsync(resolveSystemTool('ldconfig'), ['-p'], {
             encoding: 'utf8',
         });
-        if (out.includes('libfuse.so.2')) return null;
+        if (stdout.includes('libfuse.so.2')) return null;
     } catch {
         // ldconfig not found or failed — assume libfuse2 is missing.
     }
 
-    if (fs.existsSync('/usr/bin/dnf')) {
+    if (await fileExists('/usr/bin/dnf')) {
         return 'dnf install -y fuse-libs';
     }
-    if (fs.existsSync('/usr/bin/apt-get')) {
+    if (await fileExists('/usr/bin/apt-get')) {
         return 'apt-get install -y libfuse2';
     }
-    if (fs.existsSync('/usr/bin/yum')) {
+    if (await fileExists('/usr/bin/yum')) {
         return 'yum install -y fuse-libs';
     }
     log.warn('libfuse2 missing but cannot detect package manager (no dnf, apt-get, or yum)');
@@ -210,20 +209,18 @@ function libfuse2InstallCmd(): string | null {
  * Uses pkexec for graphical privilege escalation if installation is needed.
  */
 export async function ensureLibfuse2(): Promise<void> {
-    const cmd = libfuse2InstallCmd();
+    const cmd = await libfuse2InstallCmd();
     if (!cmd) return;
     log.info(`libfuse2 not found; installing via: ${cmd}`);
     await runPkexec(cmd, 'install libfuse2');
     log.info('libfuse2 installed successfully');
 }
 
-function runSystemctl(args: string[], label: string): string {
+async function runSystemctl(args: string[], label: string): Promise<string> {
     try {
         const { bin, args: a } = systemctlArgv(args);
-        return execFileSync(bin, a, {
-            stdio: ['ignore', 'pipe', 'pipe'],
-            encoding: 'utf8',
-        });
+        const { stdout } = await execFileAsync(bin, a, { encoding: 'utf8' });
+        return stdout;
     } catch (err) {
         const e = err as NodeJS.ErrnoException & { stderr?: Buffer | string; stdout?: Buffer | string };
         const stderr = typeof e.stderr === 'string' ? e.stderr : e.stderr?.toString('utf8') ?? '';
@@ -430,14 +427,14 @@ export function buildSystemUninstallScript(name: string, unitPath: string, syste
  * warning — best-effort so a missing tray binary doesn't fail the service
  * install.
  */
-function resolveTrayHelperPath(
+async function resolveTrayHelperPath(
     cwd: string = process.cwd(),
-    exists: (p: string) => boolean = fs.existsSync,
-): string | null {
+    exists: (p: string) => Promise<boolean> = fileExists,
+): Promise<string | null> {
     const installedCandidate = path.join(cwd, TRAY_HELPER_BIN);
-    if (exists(installedCandidate)) return installedCandidate;
+    if (await exists(installedCandidate)) return installedCandidate;
     const devCandidate = path.join(cwd, 'publish', TRAY_HELPER_BIN);
-    if (exists(devCandidate)) return devCandidate;
+    if (await exists(devCandidate)) return devCandidate;
     return null;
 }
 
@@ -466,11 +463,11 @@ export function isSafeReusableBin(stat: fs.Stats): boolean {
  *
  * Returns `opts` with `binPath` + `startupDir` retargeted at the stable path.
  */
-export function stageStableUserBin(opts: ServiceInstallOptions): ServiceInstallOptions {
+export async function stageStableUserBin(opts: ServiceInstallOptions): Promise<ServiceInstallOptions> {
     const optBin = `${STAGED_SYSTEM_DIR}/${STAGED_SYSTEM_APPIMAGE}`;
     let optStat: fs.Stats | null = null;
     try {
-        optStat = fs.lstatSync(optBin);
+        optStat = await fs.promises.lstat(optBin);
     } catch {
         optStat = null;
     }
@@ -484,13 +481,13 @@ export function stageStableUserBin(opts: ServiceInstallOptions): ServiceInstallO
     }
     const binDir = `${opts.dataRoot}/bin`;
     const stableBin = `${binDir}/${STAGED_SYSTEM_APPIMAGE}`;
-    fs.mkdirSync(binDir, { recursive: true });
+    await fs.promises.mkdir(binDir, { recursive: true });
     // Atomic stage: copy to a temp file, make it executable, then rename into
     // place so a concurrent unit start never sees a partial / non-executable bin.
     const tmpBin = `${stableBin}.tmp-${process.pid}-${crypto.randomBytes(4).toString('hex')}`;
-    fs.copyFileSync(opts.binPath, tmpBin);
-    fs.chmodSync(tmpBin, 0o755);
-    fs.renameSync(tmpBin, stableBin);
+    await fs.promises.copyFile(opts.binPath, tmpBin);
+    await fs.promises.chmod(tmpBin, 0o755);
+    await fs.promises.rename(tmpBin, stableBin);
     return { ...opts, binPath: stableBin, startupDir: binDir };
 }
 
@@ -523,9 +520,9 @@ export class SystemdClient implements ServiceClient {
      * uninstall / status / restart / stop so callers don't have to track
      * scope themselves after the initial install.
      */
-    private resolveActiveScope(name: string): SystemdScope | null {
-        if (fs.existsSync(this.userUnitPath(name))) return 'user';
-        if (fs.existsSync(this.systemUnitPath(name))) return 'system';
+    private async resolveActiveScope(name: string): Promise<SystemdScope | null> {
+        if (await fileExists(this.userUnitPath(name))) return 'user';
+        if (await fileExists(this.systemUnitPath(name))) return 'system';
         return null;
     }
 
@@ -558,7 +555,7 @@ export class SystemdClient implements ServiceClient {
      * Delegates to the module-level `stageStableUserBin` (extracted so the
      * staging logic is unit-testable). Forward-slash paths (Linux unit file).
      */
-    private withStableUserBin(opts: ServiceInstallOptions): ServiceInstallOptions {
+    private withStableUserBin(opts: ServiceInstallOptions): Promise<ServiceInstallOptions> {
         return stageStableUserBin(opts);
     }
 
@@ -581,27 +578,25 @@ export class SystemdClient implements ServiceClient {
 
         // F1: user-scope services must ExecStart a STABLE, executable binary —
         // never the volatile launch path ($APPIMAGE / ~/Downloads).
-        const effectiveOpts = this.withStableUserBin(opts);
+        const effectiveOpts = await this.withStableUserBin(opts);
         const unitContent = renderUnitFile(effectiveOpts, scope);
         const unitPath = this.userUnitPath(opts.name);
 
-        fs.mkdirSync(path.dirname(unitPath), { recursive: true });
-        fs.writeFileSync(unitPath, unitContent, { mode: 0o644 });
-        runSystemctl(['--user', 'daemon-reload'], 'daemon-reload');
+        await fs.promises.mkdir(path.dirname(unitPath), { recursive: true });
+        await fs.promises.writeFile(unitPath, unitContent, { mode: 0o644 });
+        await runSystemctl(['--user', 'daemon-reload'], 'daemon-reload');
         // Never start with `--now` while the local instance still holds the per-user
         // lock / web port — the service would exit "already running" before binding.
         // Just `enable`; ServiceApi spawns the --user out-of-cgroup install-handoff
         // helper that starts it after the local instance exits and frees the port.
-        runSystemctl(['--user', 'enable', `${opts.name}.service`], `enable ${opts.name}.service`);
+        await runSystemctl(['--user', 'enable', `${opts.name}.service`], `enable ${opts.name}.service`);
 
         // Best-effort linger so the service survives a full logout.
         // Common reasons this can fail: loginctl absent (non-systemd-logind
         // systems), missing privileges on hardened distros. Service is
         // already installed + running — degraded but functional.
         try {
-            execFileSync(resolveSystemTool('loginctl'), ['enable-linger', os.userInfo().username], {
-                stdio: ['ignore', 'pipe', 'pipe'],
-            });
+            await execFileAsync(resolveSystemTool('loginctl'), ['enable-linger', os.userInfo().username]);
         } catch (err) {
             log.warn(
                 `loginctl enable-linger failed (service still installed): ${
@@ -613,7 +608,7 @@ export class SystemdClient implements ServiceClient {
         // Best-effort tray autostart. System scope skips this — headless
         // server case dominant, no desktop session to autostart into.
         try {
-            this.writeTrayAutostart();
+            await this.writeTrayAutostart();
         } catch (err) {
             log.warn(
                 `tray autostart .desktop write failed (service install succeeded): ${
@@ -636,7 +631,7 @@ export class SystemdClient implements ServiceClient {
      * interface implementation (and for any non-cgroup-bound callers).
      */
     public async uninstall(name: string): Promise<void> {
-        const scope = this.resolveActiveScope(name);
+        const scope = await this.resolveActiveScope(name);
         if (scope === null) {
             return;
         }
@@ -649,7 +644,7 @@ export class SystemdClient implements ServiceClient {
         } else {
             const baseArgs = scope === 'user' ? ['--user'] : [];
             try {
-                runSystemctl(
+                await runSystemctl(
                     [...baseArgs, 'disable', '--now', `${name}.service`],
                     `disable --now ${name}.service`,
                 );
@@ -659,13 +654,13 @@ export class SystemdClient implements ServiceClient {
 
             const unitPath = scope === 'user' ? this.userUnitPath(name) : this.systemUnitPath(name);
             try {
-                fs.unlinkSync(unitPath);
+                await fs.promises.unlink(unitPath);
             } catch {
                 // Already gone.
             }
 
             try {
-                runSystemctl([...baseArgs, 'daemon-reload'], 'daemon-reload (after uninstall)');
+                await runSystemctl([...baseArgs, 'daemon-reload'], 'daemon-reload (after uninstall)');
             } catch (err) {
                 log.warn(`daemon-reload after uninstall failed: ${(err as Error).message}`);
             }
@@ -675,7 +670,7 @@ export class SystemdClient implements ServiceClient {
         // wrote one). Idempotent: ignore "already gone".
         if (scope === 'user') {
             try {
-                this.removeTrayAutostart();
+                await this.removeTrayAutostart();
             } catch (err) {
                 log.warn(
                     `tray autostart removal failed (service uninstall succeeded): ${
@@ -687,7 +682,7 @@ export class SystemdClient implements ServiceClient {
     }
 
     public async status(name: string): Promise<ServiceStatus> {
-        const scope = this.resolveActiveScope(name);
+        const scope = await this.resolveActiveScope(name);
         if (scope === null) return 'not-installed';
 
         const baseArgs = scope === 'user' ? ['--user'] : [];
@@ -697,12 +692,8 @@ export class SystemdClient implements ServiceClient {
         // running state).
         try {
             const { bin, args: a } = systemctlArgv([...baseArgs, 'is-active', `${name}.service`]);
-            const out = execFileSync(
-                bin,
-                a,
-                { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8' },
-            ).trim();
-            return out === 'active' ? 'running' : 'stopped';
+            const { stdout } = await execFileAsync(bin, a, { encoding: 'utf8' });
+            return stdout.trim() === 'active' ? 'running' : 'stopped';
         } catch {
             // Non-zero exit (inactive / failed / activating) — treat as stopped.
             return 'stopped';
@@ -710,19 +701,19 @@ export class SystemdClient implements ServiceClient {
     }
 
     public async restart(name: string): Promise<void> {
-        const scope = this.resolveActiveScope(name);
+        const scope = await this.resolveActiveScope(name);
         if (scope === null) {
             throw new Error(`systemctl restart: ${name}.service not installed`);
         }
         const baseArgs = scope === 'user' ? ['--user'] : [];
-        runSystemctl(
+        await runSystemctl(
             [...baseArgs, 'restart', `${name}.service`],
             `restart ${name}.service`,
         );
     }
 
     public async stop(name: string): Promise<void> {
-        const scope = this.resolveActiveScope(name);
+        const scope = await this.resolveActiveScope(name);
         if (scope === null) {
             // Idempotent — nothing to stop.
             return;
@@ -730,7 +721,7 @@ export class SystemdClient implements ServiceClient {
         const baseArgs = scope === 'user' ? ['--user'] : [];
         // Tolerate "already stopped" / "not loaded" — match ServyClient stop semantics.
         try {
-            runSystemctl(
+            await runSystemctl(
                 [...baseArgs, 'stop', `${name}.service`],
                 `stop ${name}.service`,
             );
@@ -749,8 +740,8 @@ export class SystemdClient implements ServiceClient {
      * Local-Dependencies-Only, and — since Linux has no tray binary, item 27 —
      * only leaves an orphaned autostart entry that never resolves).
      */
-    private writeTrayAutostart(): void {
-        const trayPath = resolveTrayHelperPath();
+    private async writeTrayAutostart(): Promise<void> {
+        const trayPath = await resolveTrayHelperPath();
         if (!trayPath) {
             log.info(
                 'tray helper binary not found; skipping tray autostart (no PATH-reliant Exec written)',
@@ -770,15 +761,15 @@ export class SystemdClient implements ServiceClient {
             '',
         ].join('\n');
 
-        fs.mkdirSync(path.dirname(desktopPath), { recursive: true });
-        fs.writeFileSync(desktopPath, content, { mode: 0o644 });
+        await fs.promises.mkdir(path.dirname(desktopPath), { recursive: true });
+        await fs.promises.writeFile(desktopPath, content, { mode: 0o644 });
     }
 
     /** Remove the tray autostart .desktop file. Idempotent. */
-    private removeTrayAutostart(): void {
+    private async removeTrayAutostart(): Promise<void> {
         const desktopPath = this.trayAutostartPath();
         try {
-            fs.unlinkSync(desktopPath);
+            await fs.promises.unlink(desktopPath);
         } catch {
             // Already gone — desired post-state.
         }
