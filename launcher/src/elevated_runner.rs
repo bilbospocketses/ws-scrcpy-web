@@ -418,7 +418,7 @@ fn uninstall_service(args: &UninstallServiceArgs) -> ElevatedResult {
     // current session. Best-effort — no tray process means no kill,
     // not an error.
     log::info("uninstall-service: invoking taskkill /F /IM ws-scrcpy-web-tray.exe");
-    match silent_command("taskkill")
+    match silent_os_tool("taskkill")
         .args(["/F", "/IM", "ws-scrcpy-web-tray.exe"])
         .output()
     {
@@ -470,6 +470,42 @@ pub(crate) fn silent_command(exe: impl AsRef<std::ffi::OsStr>) -> Command {
 #[cfg(not(windows))]
 pub(crate) fn silent_command(exe: impl AsRef<std::ffi::OsStr>) -> Command {
     Command::new(exe)
+}
+
+/// Build the absolute path of an OS-provided Windows tool under
+/// `<system_root>\System32` (with a `.exe` suffix). Pure core of
+/// `system32_tool`, split out so it is unit-testable without reading the
+/// environment.
+#[cfg(windows)]
+fn system32_path(system_root: &str, name: &str) -> String {
+    format!(r"{system_root}\System32\{name}.exe")
+}
+
+/// Resolve an OS-provided Windows tool (`taskkill`, `icacls` — never an app
+/// dependency, which lives under the local deps folder) to its absolute
+/// `%SystemRoot%\System32` path. Keys off `%SystemRoot%` like the TS-side
+/// `resolveSystemTool`, falling back to `C:\Windows`.
+#[cfg(windows)]
+fn system32_tool(name: &str) -> String {
+    let root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".to_string());
+    system32_path(&root, name)
+}
+
+/// `silent_command` for an OS-provided tool, resolved to an absolute path on
+/// Windows so it cannot be hijacked via `%PATH%` (review #20 /
+/// Local-Dependencies-Only). Cross-platform: non-Windows callers
+/// (`uninstall_service`, `on_uninstall`) compile under `cross`, so the
+/// bare-name fallback exists only to keep those paths compiling — `taskkill` /
+/// `icacls` are Windows-only at run time.
+pub(crate) fn silent_os_tool(name: &str) -> Command {
+    #[cfg(windows)]
+    {
+        silent_command(system32_tool(name))
+    }
+    #[cfg(not(windows))]
+    {
+        silent_command(name)
+    }
 }
 
 fn run_capture(exe: &str, args: &[impl AsRef<std::ffi::OsStr>]) -> Result<CapturedOutput, String> {
@@ -719,6 +755,24 @@ mod tests {
         let dir = tempdir().unwrap();
         let r = write_post_stop_bat(dir.path(), "WsScrcpyWeb", "C:/app/servy-cli.exe", "C:/app/launcher.exe");
         assert!(r.is_ok());
+    }
+
+    // OS tools (taskkill/icacls) must resolve under <SystemRoot>\System32 with
+    // a .exe suffix — never via %PATH% (#20 / Local-Dependencies-Only). Pure
+    // core split out from the env-reading `system32_tool` so it is testable.
+    #[cfg(windows)]
+    #[test]
+    fn system32_path_builds_absolute_system32_path() {
+        assert_eq!(
+            system32_path(r"C:\Windows", "taskkill"),
+            r"C:\Windows\System32\taskkill.exe"
+        );
+        // Honors a non-C: SystemRoot — the reason we key off %SystemRoot%
+        // rather than hardcoding C:\Windows.
+        assert_eq!(
+            system32_path(r"D:\Win", "icacls"),
+            r"D:\Win\System32\icacls.exe"
+        );
     }
 
     #[test]
