@@ -46,7 +46,7 @@ export class UpdatesApi {
 
         try {
             if (req.method === 'GET' && url === '/api/updates/status') {
-                return this.handleStatus(res);
+                return await this.handleStatus(res);
             }
             if (req.method === 'POST' && url === '/api/updates/check') {
                 return await this.handleCheck(res);
@@ -77,7 +77,7 @@ export class UpdatesApi {
      * config.json mirror (for UI convenience so the frontend doesn't need
      * to fetch /api/config separately).
      */
-    private buildStatusResponse(): UpdatesStatusResponse {
+    private async buildStatusResponse(): Promise<UpdatesStatusResponse> {
         const cfg = Config.getInstance().getAppConfig();
         const s = this.svc.getStatus();
         const out: UpdatesStatusResponse = {
@@ -90,7 +90,7 @@ export class UpdatesApi {
             updateCheckIntervalMinutes: cfg.updateCheckIntervalMinutes,
         };
         if (process.platform !== 'win32') {
-            out.libfuse2Installed = isLibfuse2Installed();
+            out.libfuse2Installed = await isLibfuse2Installed();
         }
         if (s.availableVersion !== undefined) out.availableVersion = s.availableVersion;
         if (s.progress !== undefined) out.progress = s.progress;
@@ -99,9 +99,9 @@ export class UpdatesApi {
         return out;
     }
 
-    private handleStatus(res: ServerResponse): boolean {
+    private async handleStatus(res: ServerResponse): Promise<boolean> {
         res.writeHead(200);
-        res.end(JSON.stringify(this.buildStatusResponse()));
+        res.end(JSON.stringify(await this.buildStatusResponse()));
         return true;
     }
 
@@ -117,7 +117,7 @@ export class UpdatesApi {
         }
         await this.svc.checkForUpdates();
         res.writeHead(200);
-        res.end(JSON.stringify(this.buildStatusResponse()));
+        res.end(JSON.stringify(await this.buildStatusResponse()));
         return true;
     }
 
@@ -220,7 +220,7 @@ export class UpdatesApi {
         }
 
         res.writeHead(200);
-        res.end(JSON.stringify(this.buildStatusResponse()));
+        res.end(JSON.stringify(await this.buildStatusResponse()));
         return true;
     }
 
@@ -230,7 +230,7 @@ export class UpdatesApi {
             res.end(JSON.stringify({ ok: false, error: 'libfuse2 is Linux-only' }));
             return true;
         }
-        if (isLibfuse2Installed()) {
+        if (await isLibfuse2Installed()) {
             res.writeHead(200);
             res.end(JSON.stringify({ ok: true, alreadyInstalled: true }));
             return true;

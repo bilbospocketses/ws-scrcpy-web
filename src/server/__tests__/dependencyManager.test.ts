@@ -6,9 +6,9 @@ import { DependencyStatus } from '../../common/DependencyTypes';
 import { DependencyManager } from '../DependencyManager';
 
 describe('DependencyManager', () => {
-    it('initializes with all dependencies in unknown state', () => {
+    it('initializes with all dependencies in unknown state', async () => {
         const mgr = new DependencyManager('/tmp/test-deps');
-        const deps = mgr.getAll();
+        const deps = await mgr.getAll();
         expect(deps.length).toBe(3);
         expect(deps.every((d) => d.status === DependencyStatus.Unknown)).toBe(true);
     });
@@ -42,13 +42,13 @@ describe('DependencyManager.getAll() canUpdate', () => {
     it('reports canUpdate=true for all deps when launcher is available', async () => {
         vi.resetModules();
         vi.doMock('../service/elevatedRunner', () => ({
-            launcherIsAvailable: () => true,
+            launcherIsAvailable: async () => true,
             resolveLauncherPath: () => '/fake/launcher.exe',
         }));
         // Re-import after mock to pick up the stubbed module
         const { DependencyManager: Mgr } = await import('../DependencyManager');
         const mgr = new Mgr('/tmp/test-deps-canupdate-yes');
-        const deps = mgr.getAll();
+        const deps = await mgr.getAll();
         for (const dep of deps) {
             expect(dep.canUpdate).toBe(true);
         }
@@ -58,12 +58,12 @@ describe('DependencyManager.getAll() canUpdate', () => {
     it('reports canUpdate=false for launcher-required deps when launcher is unavailable', async () => {
         vi.resetModules();
         vi.doMock('../service/elevatedRunner', () => ({
-            launcherIsAvailable: () => false,
+            launcherIsAvailable: async () => false,
             resolveLauncherPath: () => '/fake/launcher.exe',
         }));
         const { DependencyManager: Mgr } = await import('../DependencyManager');
         const mgr = new Mgr('/tmp/test-deps-canupdate-no');
-        const byName = Object.fromEntries(mgr.getAll().map((d) => [d.name, d]));
+        const byName = Object.fromEntries((await mgr.getAll()).map((d) => [d.name, d]));
         expect(byName['nodejs']?.canUpdate).toBe(false);
         expect(byName['adb']?.canUpdate).toBe(false);
         expect(byName['scrcpy-server']?.canUpdate).toBe(true);

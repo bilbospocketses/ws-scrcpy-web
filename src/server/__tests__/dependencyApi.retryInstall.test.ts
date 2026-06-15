@@ -60,7 +60,7 @@ describe('DependencyApi retry-install endpoint', () => {
         vi.spyOn(mgr, 'checkAll').mockImplementation(async () => {
             adb.latestVersion = '35.0.2';
             // Set all deps to have latest versions so autoInstallMissing can complete them
-            for (const dep of mgr.getAll()) {
+            for (const dep of await mgr.getAll()) {
                 if (!dep.latestVersion) {
                     dep.latestVersion = '1.0.0';
                 }
@@ -70,7 +70,7 @@ describe('DependencyApi retry-install endpoint', () => {
             adb.installedVersion = '35.0.2';
             adb.status = DependencyStatus.UpToDate;
             // Mark all deps as up-to-date
-            for (const dep of mgr.getAll()) {
+            for (const dep of await mgr.getAll()) {
                 if (dep.installedVersion === null && dep.latestVersion !== null) {
                     dep.installedVersion = dep.latestVersion;
                     dep.status = DependencyStatus.UpToDate;

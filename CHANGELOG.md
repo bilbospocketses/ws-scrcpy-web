@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Service-management work no longer blocks the server's event loop.** The Windows and Linux service status checks, install/uninstall, the wait for an elevated helper's result, and the libfuse2 probe used synchronous (blocking) child-process and filesystem calls — which could briefly stall every other in-flight request, including live device-stream WebSockets, while they ran. They are now asynchronous, so a routine status poll or a service install stays out of the way of streaming and the rest of the API.
+
 ### Removed
 
 - **Removed the dead `resolveActiveSessionId` helper** (`src/server/util/active-session.ts` and its test). It was an orphan from the abandoned "Theory D" uninstall-handoff — its only caller was deleted in `0.1.25-beta.51` — so removing it has no behavioral effect, and it clears a latent `shell: true` process-spawn path the security review flagged. The launcher's `--print-active-session` capability is unaffected.
@@ -48,6 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The device shell no longer inherits the server's full environment.** The interactive device shell (`adb shell`) is now started with a minimal, allowlisted environment — OS, adb, and terminal essentials only — instead of a copy of the entire server `process.env`, so secrets or sensitive configuration in the server's environment are not exposed to the shell process.
 - **Resume-handoff tokens are written atomically and restricted to the owner.** The single-use tokens that resume a privileged install/uninstall after a fresh local instance starts are now stored in an owner-only directory (`0700`) as owner-only files (`0600`), written via a temp file + atomic rename — so they aren't readable by other local users and a crash can't leave a half-written token behind.
 - **The Linux user-service binary is verified and staged safely.** When a user-scope service needs a stable `ExecStart`, the machine-wide `/opt` binary is reused only after `lstat` confirms it's a root-owned regular file (not an attacker-repointable symlink); otherwise the app stages its own copy via a temp file + atomic rename, so a concurrent service start never sees a partial or briefly-non-executable binary.
+- **The Windows service-status check resolves `sc` to its absolute System32 path.** The read-only `sc query` that polls service state ran by bare name (resolved via `%PATH%`); it now resolves under `%SystemRoot%\System32` like the app's other OS tools, closing the same binary-hijack surface (review #20) on the routine status-poll path.
 - **The in-app-update "operation server" binds loopback only, not every interface.** During an update the launcher runs a tiny HTTP server that shows the "updating…" wait page and issues the post-update redirect; it bound `0.0.0.0` (all interfaces), briefly exposing that page and redirect to the local network. It now binds `127.0.0.1`, so it is reachable only from the machine itself.
 
 ## [0.1.30-beta.65] - 2026-06-12
