@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { SystemdClient, renderUnitFile, STAGED_SYSTEM_DIR, systemctlArgv, buildServiceUnitEnv, buildMachineWideInstallScript, buildMachineWideUpdateScript } from './SystemdClient';
+import { SystemdClient, renderUnitFile, STAGED_SYSTEM_DIR, systemctlArgv, buildServiceUnitEnv, buildMachineWideInstallScript, buildMachineWideUpdateScript, buildSystemUninstallScript } from './SystemdClient';
+import { shQuote } from './shellEscape';
 
 describe('system-scope staging', () => {
     const baseOpts = {
@@ -114,7 +115,7 @@ describe('buildMachineWideInstallScript', () => {
             (t) => `/usr/bin/${t}`, (t) => `/usr/sbin/${t}`,
         );
         expect(s).toContain('mkdir -p /opt/ws-scrcpy-web');
-        expect(s).toContain('cp "/home/u/Downloads/WsScrcpyWeb-linux-beta.AppImage" "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"');
+        expect(s).toContain(`cp '/home/u/Downloads/WsScrcpyWeb-linux-beta.AppImage' "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"`);
         expect(s).toContain('chmod 0755 "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"');
         expect(s).toContain("semanage fcontext -a -t bin_t '/opt/ws-scrcpy-web(/.*)?'");
         expect(s).toContain('restorecon -Rv "/opt/ws-scrcpy-web"');
@@ -123,7 +124,7 @@ describe('buildMachineWideInstallScript', () => {
         expect(s).toContain('Exec=/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage');     // every user launches the shared /opt binary
         expect(s).not.toContain('dependencies');   // binary only — deps stay per-user ~/.local
         expect(s).not.toContain('systemctl');      // no service install here
-        expect(s).toContain('rm -f "/home/u/Downloads/WsScrcpyWeb-linux-beta.AppImage"');  // final step: delete the original (true relocate)
+        expect(s).toContain(`rm -f '/home/u/Downloads/WsScrcpyWeb-linux-beta.AppImage'`);  // final step: delete the original (true relocate)
     });
 
     it('installs the menu icon into the hicolor theme + refreshes the icon cache when iconSource is given', () => {
@@ -139,7 +140,7 @@ describe('buildMachineWideInstallScript', () => {
         // .desktop's `Icon=ws-scrcpy-web` resolves to (also the path the launcher
         // uninstaller's SYS_ICON teardown removes).
         expect(s).toContain('mkdir -p /usr/share/icons/hicolor/256x256/apps');
-        expect(s).toContain('cp "/tmp/.mount_x/.DirIcon" /usr/share/icons/hicolor/256x256/apps/ws-scrcpy-web.png');
+        expect(s).toContain(`cp '/tmp/.mount_x/.DirIcon' /usr/share/icons/hicolor/256x256/apps/ws-scrcpy-web.png`);
         expect(s).toContain('/usr/share/icons/hicolor/256x256/apps/ws-scrcpy-web.png');
         // best-effort cache refresh, mirroring the update-desktop-database subshell.
         expect(s).toContain('gtk-update-icon-cache');
@@ -147,7 +148,7 @@ describe('buildMachineWideInstallScript', () => {
         // ordering: icon install lands AFTER the .desktop write and BEFORE the home-AppImage delete.
         const desktopIdx = s.indexOf('/usr/share/applications/ws-scrcpy-web.desktop');
         const iconIdx = s.indexOf('/usr/share/icons/hicolor/256x256/apps/ws-scrcpy-web.png');
-        const rmIdx = s.indexOf('rm -f "/home/u/Downloads/WsScrcpyWeb-linux-beta.AppImage"');
+        const rmIdx = s.indexOf(`rm -f '/home/u/Downloads/WsScrcpyWeb-linux-beta.AppImage'`);
         expect(desktopIdx).toBeGreaterThanOrEqual(0);
         expect(desktopIdx).toBeLessThan(iconIdx);
         expect(iconIdx).toBeLessThan(rmIdx);
@@ -205,7 +206,7 @@ describe('buildMachineWideUpdateScript', () => {
         );
         // 2. move the staged download into place (rename, not cp).
         expect(s).toContain(
-            `/usr/bin/mv -f "${args.stagedAppImage}" "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"`,
+            `/usr/bin/mv -f '${args.stagedAppImage}' "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"`,
         );
         // 3. chmod the new binary executable.
         expect(s).toContain('/usr/bin/chmod 0755 "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"');
@@ -246,5 +247,63 @@ describe('buildMachineWideUpdateScript', () => {
         expect(s).toContain('/usr/bin/mv -f');
         expect(s).toContain('/usr/bin/printf');
         expect(s).toContain('/usr/sbin/restorecon');
+    });
+});
+
+describe('root-script shell-escaping (review #11)', () => {
+    it('single-quote-escapes a hostile sourceAppImage in the install script', () => {
+        const evil = '/tmp/x$(id).AppImage';
+        const s = buildMachineWideInstallScript(
+            { sourceAppImage: evil, version: '1.0.0' },
+            (t) => `/usr/bin/${t}`, (t) => `/usr/sbin/${t}`,
+        );
+        // the payload appears ONLY inside a single-quoted (inert) literal,
+        expect(s).toContain(shQuote(evil));
+        // never in a double-quoted slot the root shell would expand.
+        expect(s).not.toContain(`"${evil}"`);
+    });
+
+    it('single-quote-escapes a hostile version (single-quote breakout)', () => {
+        const evil = "1.0'; id; '";
+        const s = buildMachineWideInstallScript(
+            { sourceAppImage: '/tmp/a.AppImage', version: evil },
+            (t) => `/usr/bin/${t}`, (t) => `/usr/sbin/${t}`,
+        );
+        expect(s).toContain(shQuote(evil));
+    });
+
+    it('single-quote-escapes a hostile stagedAppImage in the update script', () => {
+        const evil = '/tmp/s$(id).AppImage.new';
+        const s = buildMachineWideUpdateScript(
+            { stagedAppImage: evil, version: '1.0.0' },
+            (t) => `/usr/bin/${t}`, (t) => `/usr/sbin/${t}`,
+        );
+        expect(s).toContain(shQuote(evil));
+        expect(s).not.toContain(`"${evil}"`);
+    });
+});
+
+describe('buildSystemUninstallScript (review #12)', () => {
+    it('builds disable/rm/daemon-reload with the unit and path single-quoted', () => {
+        const s = buildSystemUninstallScript(
+            'ws-scrcpy-web',
+            '/etc/systemd/system/ws-scrcpy-web.service',
+            '/usr/bin/systemctl',
+        );
+        expect(s).toContain(`/usr/bin/systemctl disable --now 'ws-scrcpy-web.service' || true`);
+        expect(s).toContain(`rm -f '/etc/systemd/system/ws-scrcpy-web.service'`);
+        expect(s).toContain('/usr/bin/systemctl daemon-reload');
+    });
+
+    it('single-quote-escapes a hostile unitPath', () => {
+        const evil = '/etc/systemd/system/x$(id).service';
+        const s = buildSystemUninstallScript('ws-scrcpy-web', evil, '/usr/bin/systemctl');
+        expect(s).toContain(shQuote(evil));
+        expect(s).not.toContain(`"${evil}"`);
+    });
+
+    it('rejects a service name carrying shell metacharacters', () => {
+        expect(() => buildSystemUninstallScript('a;id', '/x', '/usr/bin/systemctl')).toThrow(/service name/);
+        expect(() => buildSystemUninstallScript('a b', '/x', '/usr/bin/systemctl')).toThrow();
     });
 });

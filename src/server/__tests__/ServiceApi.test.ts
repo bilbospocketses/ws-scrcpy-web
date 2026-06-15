@@ -1540,7 +1540,7 @@ describe('ServiceApi', () => {
 
                 expect(fakePkexec).toHaveBeenCalledTimes(1);
                 const [script, label] = fakePkexec.mock.calls[0]!;
-                expect(script).toContain(`cp "${appImagePath}" "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"`);
+                expect(script).toContain(`cp '${appImagePath}' "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"`);
                 expect(script).toContain('bin_t');
                 expect(label).toBe('install-system-wide');
             } finally {

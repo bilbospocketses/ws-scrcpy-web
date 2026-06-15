@@ -44,6 +44,7 @@ import type {
     ServiceStatus,
 } from './ServiceClient';
 import { resolveSystemTool } from './systemTools';
+import { assertServiceName, shQuote } from './shellEscape';
 
 const execFileAsync = promisify(execFile);
 
@@ -313,9 +314,9 @@ export function buildMachineWideInstallScript(
     ].join('\\n');
     const steps = [
         `${mkdir} -p ${STAGED_SYSTEM_DIR}`,
-        `${cp} "${args.sourceAppImage}" "${staged}"`,
+        `${cp} ${shQuote(args.sourceAppImage)} "${staged}"`,
         `${chmod} 0755 "${staged}"`,
-        `${printf} '%s' '${args.version}' > ${SYSTEM_OPT_VERSION_FILE}`,
+        `${printf} '%s' ${shQuote(args.version)} > ${SYSTEM_OPT_VERSION_FILE}`,
         // bin_t add + restorecon as INDEPENDENT `;`-separated steps (whole subshell
         // `|| true`) so neither a re-install's "already defined" nor the `-m`-to-
         // unchanged failure can short-circuit the restorecon (beta.61 #9 fix). No chcon.
@@ -337,7 +338,7 @@ export function buildMachineWideInstallScript(
     if (args.iconSource) {
         const iconCache = binTool('gtk-update-icon-cache');
         steps.push(
-            `( ${mkdir} -p ${SYSTEM_ICON_DIR} && ${cp} "${args.iconSource}" ${SYSTEM_ICON_FILE} && ( ${iconCache} -f /usr/share/icons/hicolor || true ) || true )`,
+            `( ${mkdir} -p ${SYSTEM_ICON_DIR} && ${cp} ${shQuote(args.iconSource)} ${SYSTEM_ICON_FILE} && ( ${iconCache} -f /usr/share/icons/hicolor || true ) || true )`,
         );
     }
     // Final step — remove the original (home) AppImage now that the binary
@@ -346,7 +347,7 @@ export function buildMachineWideInstallScript(
     // running process (the inode stays alive for the live FUSE mount until it
     // exits / re-execs to /opt). `|| true` so a failed cleanup never aborts an
     // otherwise-successful install.
-    steps.push(`( ${rm} -f "${args.sourceAppImage}" || true )`);
+    steps.push(`( ${rm} -f ${shQuote(args.sourceAppImage)} || true )`);
     return steps.join(' && ');
 }
 
@@ -393,10 +394,25 @@ export function buildMachineWideUpdateScript(
     const restorecon = sbinTool('restorecon');
     return [
         `${mv} -f "${target}" "${backup}"`,
-        `${mv} -f "${args.stagedAppImage}" "${target}"`,
+        `${mv} -f ${shQuote(args.stagedAppImage)} "${target}"`,
         `${chmod} 0755 "${target}"`,
         `( ${restorecon} -v "${target}" || ${chcon} -t bin_t "${target}" || true )`,
-        `${printf} '%s' '${args.version}' > ${SYSTEM_OPT_VERSION_FILE}`,
+        `${printf} '%s' ${shQuote(args.version)} > ${SYSTEM_OPT_VERSION_FILE}`,
+    ].join(' && ');
+}
+
+/**
+ * Build the privileged shell script for a system-scope uninstall (run via one
+ * pkexec). The service name is validated and every interpolated value is
+ * single-quoted so nothing in `name` / `unitPath` can break out of the root
+ * `sh -c` (review finding #12).
+ */
+export function buildSystemUninstallScript(name: string, unitPath: string, systemctl: string): string {
+    assertServiceName(name);
+    return [
+        `${systemctl} disable --now ${shQuote(`${name}.service`)} || true`,
+        `rm -f ${shQuote(unitPath)}`,
+        `${systemctl} daemon-reload`,
     ].join(' && ');
 }
 
@@ -587,11 +603,7 @@ export class SystemdClient implements ServiceClient {
         if (scope === 'system' && process.getuid?.() !== 0) {
             const unitPath = this.systemUnitPath(name);
             const systemctl = resolveSystemTool('systemctl');
-            const cmd = [
-                `${systemctl} disable --now ${name}.service || true`,
-                `rm -f "${unitPath}"`,
-                `${systemctl} daemon-reload`,
-            ].join(' && ');
+            const cmd = buildSystemUninstallScript(name, unitPath, systemctl);
             await runPkexec(cmd, 'uninstall (system scope)');
         } else {
             const baseArgs = scope === 'user' ? ['--user'] : [];
