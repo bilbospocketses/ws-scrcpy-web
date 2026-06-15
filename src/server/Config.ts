@@ -208,6 +208,13 @@ function isInteger(n: unknown): n is number {
  */
 type ValidationResult<T> = { ok: true; value: T } | { ok: false; error: string };
 
+/**
+ * The config keys that may be set via `updateAppConfig` — exactly the AppConfig
+ * fields that carry a default. Anything else (an unknown key, or a
+ * prototype-pollution key like `__proto__`) is rejected rather than persisted. (#21)
+ */
+const KNOWN_CONFIG_KEYS: ReadonlySet<string> = new Set(Object.keys(APP_CONFIG_DEFAULTS));
+
 function validateField<K extends keyof AppConfig>(key: K, value: unknown): ValidationResult<AppConfig[K]> {
     switch (key) {
         case 'webPort': {
@@ -642,6 +649,15 @@ export class Config {
     public updateAppConfig(partial: Partial<AppConfig>): { config: AppConfig; restartRequired: boolean } {
         const merged: AppConfig = { ...this._appConfig };
         for (const key of Object.keys(partial) as (keyof AppConfig)[]) {
+            // Reject prototype-pollution keys and anything not a known AppConfig
+            // field rather than persisting arbitrary keys to config.json (#21).
+            const k = key as string;
+            if (k === '__proto__' || k === 'constructor' || k === 'prototype') {
+                throw new ConfigValidationError('illegal config key', k);
+            }
+            if (!KNOWN_CONFIG_KEYS.has(k)) {
+                throw new ConfigValidationError(`unknown config key: ${k}`, k);
+            }
             const value = partial[key];
             if (value === undefined) continue;
             const r = validateField(key, value);

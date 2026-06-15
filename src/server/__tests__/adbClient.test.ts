@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { describe, expect, it } from 'vitest';
-import { AdbClient, AdbExecError, parseMdnsOutput, parseSerialFromMdnsName } from '../AdbClient';
+import { AdbClient, AdbExecError, DEFAULT_TIMEOUT_MS, parseMdnsOutput, parseSerialFromMdnsName } from '../AdbClient';
 import { tempDir } from '../util/disposable';
 
 describe('parseMdnsOutput', () => {
@@ -139,6 +139,20 @@ describe('AdbClient — error surfacing', () => {
             expect((err as AdbExecError).adbPath).toBe(process.execPath);
         }
         // §25 — temp dir disposed by `using td = tempDir(...)` above.
+    });
+
+    it('shell routes through the exec path (typed AdbExecError)', async () => {
+        // node rejects the synthetic args and exits non-zero; routing shell
+        // through exec surfaces failures as a typed AdbExecError. (#23)
+        const client = new AdbClient(process.execPath);
+        await expect(client.shell('emulator-5554', 'getprop')).rejects.toBeInstanceOf(AdbExecError);
+    });
+
+    it('bounds one-shot adb shell with a default timeout (#23)', () => {
+        // Previously arbitrary `shell` stayed unbounded ("caller decides"); a
+        // hung device command could pin the server forever.
+        expect(DEFAULT_TIMEOUT_MS.shell).toBeGreaterThan(0);
+        expect(DEFAULT_TIMEOUT_MS.shell).toBeLessThanOrEqual(60_000);
     });
 
     // mdnsServices "no longer swallows errors" was previously tested by passing

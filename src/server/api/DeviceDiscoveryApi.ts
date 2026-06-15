@@ -7,6 +7,7 @@ import { Logger } from '../Logger';
 import { detectSubnet } from '../network/SubnetDetector';
 import { resolveMac } from '../network/MacResolver';
 import { assertDeletablePaths, shArg } from '../security/deviceInput';
+import { BodyTooLargeError, readBodyCapped } from './utils';
 
 const log = Logger.for('DeviceDiscoveryApi');
 
@@ -214,6 +215,11 @@ export class DeviceDiscoveryApi {
             res.end(JSON.stringify({ error: 'Not found' }));
             return true;
         } catch (err: any) {
+            if (err instanceof BodyTooLargeError) {
+                res.writeHead(413);
+                res.end(JSON.stringify({ error: 'request body too large' }));
+                return true;
+            }
             log.error(`${req.method} ${req.url} threw: ${err?.message ?? String(err)}`);
             res.writeHead(500);
             res.end(JSON.stringify({ error: err.message }));
@@ -223,12 +229,7 @@ export class DeviceDiscoveryApi {
 }
 
 function readBody(req: IncomingMessage): Promise<string> {
-    return new Promise((resolve, reject) => {
-        let body = '';
-        req.on('data', (chunk: Buffer) => {
-            body += chunk.toString();
-        });
-        req.on('end', () => resolve(body));
-        req.on('error', reject);
-    });
+    // Capped to bound memory on a hostile/oversized body (#22); handle()'s catch
+    // maps BodyTooLargeError to a 413.
+    return readBodyCapped(req);
 }

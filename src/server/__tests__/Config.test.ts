@@ -120,6 +120,22 @@ describe('Config — AppConfig extension', () => {
         expect(() => cfg.updateAppConfig({ channel: 'nightly' as 'stable' })).toThrow(ConfigValidationError);
     });
 
+    it('updateAppConfig rejects an unknown config key (no arbitrary persistence)', () => {
+        setup({});
+        const cfg = Config.getInstance();
+        expect(() => cfg.updateAppConfig(JSON.parse('{"bogusKey":1}'))).toThrow(ConfigValidationError);
+    });
+
+    it('updateAppConfig rejects prototype-pollution keys', () => {
+        setup({});
+        const cfg = Config.getInstance();
+        for (const key of ['__proto__', 'constructor', 'prototype']) {
+            expect(() => cfg.updateAppConfig(JSON.parse(`{"${key}":{"x":1}}`))).toThrow(ConfigValidationError);
+        }
+        // global prototype untouched
+        expect(({} as Record<string, unknown>)['x']).toBeUndefined();
+    });
+
     it('updateAppConfig throws ConfigValidationError on out-of-range interval', () => {
         setup({});
         const cfg = Config.getInstance();

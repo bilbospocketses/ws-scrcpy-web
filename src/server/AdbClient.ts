@@ -45,14 +45,17 @@ interface AdbExecOptions {
     timeoutMs?: number;
 }
 
-// Default timeouts for short-lived control-plane commands. Anything not on
-// this list (push/pull, arbitrary shell) stays unbounded — caller decides.
-const DEFAULT_TIMEOUT_MS = {
+// Default timeouts for short-lived control-plane commands. push/pull stay
+// unbounded (large transfers); a one-shot arbitrary `shell` is bounded so a
+// hung device command can't pin the server forever (#23) — genuinely
+// long-running / streaming commands go through shellSpawn instead.
+export const DEFAULT_TIMEOUT_MS = {
     devices: 5_000,
     mdnsServices: 8_000,
     connect: 8_000,
     disconnect: 5_000,
     forwardOps: 5_000,
+    shell: 30_000,
 } as const;
 
 export function parseMdnsOutput(output: string): MdnsDevice[] {
@@ -168,14 +171,12 @@ export class AdbClient {
             });
     }
 
-    async shell(serial: string, command: string): Promise<string> {
-        assertSerial(serial);
-        await this.daemon.ensureReady();
-        const { stdout } = await execFileAsync(this.adbPath, ['-s', serial, 'shell', command], {
-            maxBuffer: 10 * 1024 * 1024,
-            cwd: this.cwd,
-        });
-        return stdout.trim();
+    async shell(serial: string, command: string, timeoutMs: number = DEFAULT_TIMEOUT_MS.shell): Promise<string> {
+        // Route through exec so a one-shot `adb shell` inherits the daemon
+        // coordination, the maxBuffer output cap, error classification, and a
+        // default timeout — it must not be able to hang the server forever (#23).
+        const output = await this.exec(['-s', serial, 'shell', command], { timeoutMs });
+        return output.trim();
     }
 
     async push(serial: string, local: string, remote: string): Promise<void> {
