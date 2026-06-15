@@ -217,6 +217,21 @@ pub struct UninstallArgs {
     pub relaunch: String,
 }
 
+/// Validate a `--data-root` before it is forwarded across pkexec into a root
+/// `rm -rf {data_root}/...`. Only the two paths the app actually uses are
+/// allowed; an arbitrary absolute path, a `..` traversal, a relative value or a
+/// flag-shaped value is refused so the privileged delete can never be
+/// retargeted. (#14)
+fn is_valid_data_root(s: &str) -> bool {
+    if s.is_empty() || s.starts_with('-') || !s.starts_with('/') {
+        return false;
+    }
+    if s.split('/').any(|seg| seg == ".." || seg == ".") {
+        return false;
+    }
+    s == "/var/lib/ws-scrcpy-web" || s.ends_with("/.local/share/WsScrcpyWeb")
+}
+
 /// Parse the uninstall flags. Returns `None` (a parse error) on a missing/invalid
 /// `--scope`, a missing/invalid `--machine-wide`, a missing `--data-root`, or
 /// anything other than EXACTLY one of `--keep` / `--wipe`. `--scope none` is a
@@ -262,6 +277,9 @@ pub fn parse_args(args: &[String]) -> Option<UninstallArgs> {
         .position(|a| a == "--data-root")
         .and_then(|i| args.get(i + 1))
         .cloned()?;
+    if !is_valid_data_root(&data_root) {
+        return None;
+    }
     // --relaunch <abs path>  (optional; only read on a pkexec decline)
     let relaunch = args
         .iter()
@@ -832,6 +850,35 @@ mod tests {
         .map(|s| s.to_string())
         .collect();
         assert_eq!(parse_args(&args), None);
+    }
+
+    #[test]
+    fn parse_args_rejects_invalid_data_root() {
+        let with_data_root = |dr: &str| -> Vec<String> {
+            [
+                "--linux-app-uninstall",
+                "--scope",
+                "system",
+                "--machine-wide",
+                "1",
+                "--wipe",
+                "--data-root",
+                dr,
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect()
+        };
+        // The two real data roots are accepted.
+        assert!(parse_args(&with_data_root("/var/lib/ws-scrcpy-web")).is_some());
+        assert!(parse_args(&with_data_root("/home/u/.local/share/WsScrcpyWeb")).is_some());
+        // Arbitrary, traversal, flag-shaped, relative and empty values are
+        // rejected — the elevated `rm -rf {data_root}` must never be retargeted (#14).
+        assert_eq!(parse_args(&with_data_root("/etc")), None);
+        assert_eq!(parse_args(&with_data_root("/var/lib/ws-scrcpy-web/../../etc")), None);
+        assert_eq!(parse_args(&with_data_root("--privileged")), None);
+        assert_eq!(parse_args(&with_data_root("relative/WsScrcpyWeb")), None);
+        assert_eq!(parse_args(&with_data_root("")), None);
     }
 
     #[test]
