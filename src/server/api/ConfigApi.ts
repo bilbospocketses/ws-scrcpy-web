@@ -4,19 +4,9 @@ import * as fs from 'node:fs';
 import type { AppConfigEnvelope, AppConfigPatchResponse } from '../../common/ConfigEvents';
 import { Config, ConfigValidationError } from '../Config';
 import { Logger } from '../Logger';
+import { BodyTooLargeError, readBodyCapped } from './utils';
 
 const log = Logger.for('ConfigApi');
-
-function readBody(req: IncomingMessage): Promise<string> {
-    return new Promise((resolve, reject) => {
-        let body = '';
-        req.on('data', (chunk: Buffer) => {
-            body += chunk.toString();
-        });
-        req.on('end', () => resolve(body));
-        req.on('error', reject);
-    });
-}
 
 export class ConfigApi {
     async handle(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
@@ -38,7 +28,17 @@ export class ConfigApi {
             }
 
             if (req.method === 'PATCH' && url === '/api/config') {
-                const body = await readBody(req);
+                let body: string;
+                try {
+                    body = await readBodyCapped(req);
+                } catch (err) {
+                    if (err instanceof BodyTooLargeError) {
+                        res.writeHead(413);
+                        res.end(JSON.stringify({ error: 'Request body too large', field: '' }));
+                        return true;
+                    }
+                    throw err;
+                }
                 let parsed: unknown;
                 try {
                     parsed = body.length === 0 ? {} : JSON.parse(body);

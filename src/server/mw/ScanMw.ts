@@ -3,6 +3,25 @@ import { parseSubnetInput, type ParsedSubnet, type ParseError } from '../../comm
 import { NetworkScanner } from '../network/NetworkScanner';
 import type { ScanClientMessage, ScanServerMessage } from '../../common/ScanMessage';
 
+// Scan control messages (a small list of subnets) are tiny; cap them so a
+// hostile client cannot drive memory via the JSON.parse below. The WS server's
+// maxPayload bounds the frame, but it is shared with the (large) device streams,
+// so we cap per-message here. (#22)
+const MAX_SCAN_MESSAGE_BYTES = 256 * 1024;
+
+function rawDataByteLength(data: WS.RawData): number {
+    if (Buffer.isBuffer(data)) {
+        return data.length;
+    }
+    if (Array.isArray(data)) {
+        return data.reduce((n, b) => n + b.length, 0);
+    }
+    if (data instanceof ArrayBuffer) {
+        return data.byteLength;
+    }
+    return 0;
+}
+
 export class ScanMw {
     private static scanner: NetworkScanner | null = null;
 
@@ -23,6 +42,10 @@ export class ScanMw {
         }
 
         const onMessage = (data: WS.RawData): void => {
+            if (rawDataByteLength(data) > MAX_SCAN_MESSAGE_BYTES) {
+                ScanMw.send(ws, { type: 'scan.error', reason: 'message too large' });
+                return;
+            }
             let msg: ScanClientMessage;
             try {
                 msg = JSON.parse(data.toString());
