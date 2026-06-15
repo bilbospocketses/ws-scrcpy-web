@@ -161,4 +161,23 @@ describe('pollForResultFile', () => {
         // Should resolve well under the timeout.
         expect(elapsed).toBeLessThan(500);
     });
+
+    it('returns the result when its nonce matches the expected per-call nonce (#28)', async () => {
+        fs.writeFileSync(
+            resultPath,
+            JSON.stringify({ ok: true, exit_code: 0, stdout: 'ok', stderr: '', nonce: 'good-nonce' }),
+        );
+        const result = await pollForResultFile(resultPath, 1000, 10, undefined, 'good-nonce');
+        expect(result).not.toBeNull();
+        expect(result!.ok).toBe(true);
+    });
+
+    it('rejects (times out on) a result whose nonce does not match — a spoofed/stale file (#28)', async () => {
+        fs.writeFileSync(
+            resultPath,
+            JSON.stringify({ ok: true, exit_code: 0, stdout: 'spoofed', stderr: '', nonce: 'attacker-nonce' }),
+        );
+        const result = await pollForResultFile(resultPath, 80, 10, undefined, 'expected-nonce');
+        expect(result).toBeNull();
+    });
 });
