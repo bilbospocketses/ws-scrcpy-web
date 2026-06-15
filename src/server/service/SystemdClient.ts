@@ -36,6 +36,7 @@ import { execFile, execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import * as crypto from 'node:crypto';
 import { promisify } from 'node:util';
 import { Logger } from '../Logger';
 import type {
@@ -440,6 +441,59 @@ function resolveTrayHelperPath(
     return null;
 }
 
+/**
+ * #31: whether a binary at a stable path is safe to reuse as a user-service
+ * ExecStart without re-staging — it must be a regular file (lstat, so a symlink
+ * an attacker could repoint is rejected), root-owned, and not group/other-
+ * writable. Pure (takes the lstat result) so it is unit-testable.
+ */
+export function isSafeReusableBin(stat: fs.Stats): boolean {
+    return stat.isFile() && stat.uid === 0 && (stat.mode & 0o022) === 0;
+}
+
+/**
+ * Resolve a STABLE, executable `ExecStart` binary for a user-scope service. The
+ * volatile launch path (`opts.binPath` = `$APPIMAGE`, e.g. `~/Downloads/…`) must
+ * never be the unit's `ExecStart`: a browser-downloaded AppImage is `-rw-r--r--`
+ * (the GUI launches it but systemd's `execve()` needs `+x`), and it's the
+ * throwaway installer artifact.
+ *
+ *   - Reuse the machine-wide `/opt` binary only when `lstat` confirms it's a
+ *     safe root-owned regular file (#31 — not a symlink); else stage our own.
+ *   - Stage by copying to a temp file, `chmod 0755`, then an atomic `rename`
+ *     into place (#31), so a concurrent unit start never sees a partial or
+ *     briefly-non-executable binary.
+ *
+ * Returns `opts` with `binPath` + `startupDir` retargeted at the stable path.
+ */
+export function stageStableUserBin(opts: ServiceInstallOptions): ServiceInstallOptions {
+    const optBin = `${STAGED_SYSTEM_DIR}/${STAGED_SYSTEM_APPIMAGE}`;
+    let optStat: fs.Stats | null = null;
+    try {
+        optStat = fs.lstatSync(optBin);
+    } catch {
+        optStat = null;
+    }
+    if (optStat && isSafeReusableBin(optStat)) {
+        return { ...opts, binPath: optBin, startupDir: STAGED_SYSTEM_DIR };
+    }
+    if (!opts.dataRoot) {
+        throw new Error(
+            'SystemdClient.install: user-scope install requires dataRoot to stage a stable binary',
+        );
+    }
+    const binDir = `${opts.dataRoot}/bin`;
+    const stableBin = `${binDir}/${STAGED_SYSTEM_APPIMAGE}`;
+    fs.mkdirSync(binDir, { recursive: true });
+    // Atomic stage: copy to a temp file, make it executable, then rename into
+    // place so a concurrent unit start never sees a partial / non-executable bin.
+    const tmpBin = `${stableBin}.tmp-${process.pid}-${crypto.randomBytes(4).toString('hex')}`;
+    fs.copyFileSync(opts.binPath, tmpBin);
+    fs.chmodSync(tmpBin, 0o755);
+    fs.renameSync(tmpBin, stableBin);
+    return { ...opts, binPath: stableBin, startupDir: binDir };
+}
+
 export class SystemdClient implements ServiceClient {
     /** Absolute path to the user-scope unit file for `name`. */
     public userUnitPath(name: string): string {
@@ -495,30 +549,17 @@ export class SystemdClient implements ServiceClient {
      * throwaway installer artifact (a machine-wide install deletes it; users
      * delete downloads).
      *
-     *   - If the machine-wide `/opt` binary exists, reuse it (already `0755`,
-     *     `bin_t`) — no copy.
-     *   - Otherwise copy the source AppImage to `<dataRoot>/bin/` and `chmod
-     *     0755`, so the unit points at a stable, guaranteed-executable file.
+     *   - Reuse the machine-wide `/opt` binary only when `lstat` confirms it's
+     *     a safe root-owned regular file (#31) — no copy.
+     *   - Otherwise stage the source AppImage to `<dataRoot>/bin/` via a temp
+     *     file + `chmod 0755` + atomic rename (#31), so the unit always points
+     *     at a complete, executable file.
      *
-     * Returns `opts` with `binPath` + `startupDir` retargeted at the resolved
-     * stable path. Forward-slash paths on purpose (Linux unit file).
+     * Delegates to the module-level `stageStableUserBin` (extracted so the
+     * staging logic is unit-testable). Forward-slash paths (Linux unit file).
      */
     private withStableUserBin(opts: ServiceInstallOptions): ServiceInstallOptions {
-        const optBin = `${STAGED_SYSTEM_DIR}/${STAGED_SYSTEM_APPIMAGE}`;
-        if (fs.existsSync(optBin)) {
-            return { ...opts, binPath: optBin, startupDir: STAGED_SYSTEM_DIR };
-        }
-        if (!opts.dataRoot) {
-            throw new Error(
-                'SystemdClient.install: user-scope install requires dataRoot to stage a stable binary',
-            );
-        }
-        const binDir = `${opts.dataRoot}/bin`;
-        const stableBin = `${binDir}/${STAGED_SYSTEM_APPIMAGE}`;
-        fs.mkdirSync(binDir, { recursive: true });
-        fs.copyFileSync(opts.binPath, stableBin);
-        fs.chmodSync(stableBin, 0o755);
-        return { ...opts, binPath: stableBin, startupDir: binDir };
+        return stageStableUserBin(opts);
     }
 
     public async install(opts: ServiceInstallOptions): Promise<void> {

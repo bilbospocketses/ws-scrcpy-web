@@ -37,6 +37,8 @@ const unlinkSyncMock = vi.fn();
 const mkdirSyncMock = vi.fn();
 const copyFileSyncMock = vi.fn();
 const chmodSyncMock = vi.fn();
+const renameSyncMock = vi.fn();
+const lstatSyncMock = vi.fn();
 vi.mock('node:fs', () => ({
     existsSync: (...args: unknown[]) => existsSyncMock(...args),
     writeFileSync: (...args: unknown[]) => writeFileSyncMock(...args),
@@ -44,6 +46,8 @@ vi.mock('node:fs', () => ({
     mkdirSync: (...args: unknown[]) => mkdirSyncMock(...args),
     copyFileSync: (...args: unknown[]) => copyFileSyncMock(...args),
     chmodSync: (...args: unknown[]) => chmodSyncMock(...args),
+    renameSync: (...args: unknown[]) => renameSyncMock(...args),
+    lstatSync: (...args: unknown[]) => lstatSyncMock(...args),
 }));
 
 const homedirMock = vi.fn(() => '/home/jamie');
@@ -84,6 +88,10 @@ describe('SystemdClient', () => {
         mkdirSyncMock.mockReset();
         copyFileSyncMock.mockReset();
         chmodSyncMock.mockReset();
+        renameSyncMock.mockReset();
+        lstatSyncMock.mockReset().mockImplementation(() => {
+            throw new Error('ENOENT');
+        });
         homedirMock.mockReset().mockReturnValue('/home/jamie');
         userInfoMock.mockReset().mockReturnValue({ username: 'jamie' });
         savedGetuid = process.getuid;
@@ -146,8 +154,11 @@ describe('SystemdClient', () => {
             // NEVER ExecStart the volatile launch path. The bin path is a Linux
             // forward-slash string regardless of test host.
             const stableBin = '/home/jamie/.local/share/WsScrcpyWeb/bin/WsScrcpyWeb.AppImage';
-            expect(copyFileSyncMock).toHaveBeenCalledWith(baseOpts.binPath, stableBin);
-            expect(chmodSyncMock).toHaveBeenCalledWith(stableBin, 0o755);
+            // #31 atomic stage: copy to a temp file, chmod +x, then rename into place.
+            const tmpArg = expect.stringContaining(`${stableBin}.tmp-`);
+            expect(copyFileSyncMock).toHaveBeenCalledWith(baseOpts.binPath, tmpArg);
+            expect(chmodSyncMock).toHaveBeenCalledWith(tmpArg, 0o755);
+            expect(renameSyncMock).toHaveBeenCalledWith(tmpArg, stableBin);
 
             // Unit file written to ~/.config/systemd/user/WsScrcpyWeb.service ...
             const unitWrites = writeFileSyncMock.mock.calls.filter((c) =>
@@ -192,9 +203,13 @@ describe('SystemdClient', () => {
         it('user scope with a machine-wide /opt install present: ExecStart is the /opt binary, no staging copy', async () => {
             // F1 case A: the stable /opt binary already exists → reuse it (0755, bin_t).
             const optBin = `${STAGED_SYSTEM_DIR}/${STAGED_SYSTEM_APPIMAGE}`;
-            existsSyncMock.mockImplementation(
-                (p: string) => String(p).replace(/\\/g, '/') === optBin,
-            );
+            // #31: reuse requires lstat to confirm a safe root-owned regular file.
+            lstatSyncMock.mockImplementation((p: unknown) => {
+                if (String(p).replace(/\\/g, '/') === optBin) {
+                    return { isFile: () => true, uid: 0, mode: 0o755 };
+                }
+                throw new Error('ENOENT');
+            });
             const client = new SystemdClient();
             await client.install({ ...baseOpts, scope: 'user' });
 
