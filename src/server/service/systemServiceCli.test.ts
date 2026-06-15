@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { installSystemService, uninstallSystemService, systemServiceStatus, parseSystemServiceArgs, runSystemServiceCli, type CommandRunner } from './systemServiceCli';
+import { installSystemService, uninstallSystemService, systemServiceStatus, parseSystemServiceArgs, runSystemServiceCli, assertSafeRootDir, type CommandRunner } from './systemServiceCli';
 
 function recordingRunner() {
     const calls: string[][] = [];
@@ -14,6 +14,7 @@ const deps = {
     tool: (t: string) => `/usr/bin/${t}`,
     sbinTool: (t: string) => `/usr/sbin/${t}`,
     writeFile: vi.fn(),
+    lstat: () => ({ uid: 0, mode: 0o755, isSymbolicLink: false }),
 };
 
 describe('installSystemService', () => {
@@ -36,6 +37,36 @@ describe('installSystemService', () => {
     it('throws if not root', async () => {
         const { run } = recordingRunner();
         await expect(installSystemService({ port: 8000 }, { ...deps, getuid: () => 1000, run })).rejects.toThrow(/root|euid|sudo/i);
+    });
+
+    it('aborts before any cp/restorecon when a target dir is a symlink (#15)', async () => {
+        const { run, calls } = recordingRunner();
+        const lstat = (p: string) =>
+            p === '/opt/ws-scrcpy-web'
+                ? { uid: 0, mode: 0o755, isSymbolicLink: true }
+                : { uid: 0, mode: 0o755, isSymbolicLink: false };
+        await expect(installSystemService({ port: 8000 }, { ...deps, run, lstat })).rejects.toThrow(/symlink/i);
+        const flat = calls.map((c) => c.join(' '));
+        expect(flat.some((c) => c.startsWith('/usr/sbin/restorecon'))).toBe(false);
+        expect(flat.some((c) => c.startsWith('/usr/bin/cp '))).toBe(false);
+    });
+});
+
+describe('assertSafeRootDir (review #15)', () => {
+    const safe = { uid: 0, mode: 0o755, isSymbolicLink: false };
+    it('accepts a root-owned, non-symlink, non-world-writable dir', () => {
+        expect(() => assertSafeRootDir('/opt/ws-scrcpy-web', () => safe)).not.toThrow();
+    });
+    it('rejects a symlink (symlink-swap / TOCTOU defense)', () => {
+        expect(() => assertSafeRootDir('/opt/ws-scrcpy-web', () => ({ ...safe, isSymbolicLink: true }))).toThrow(/symlink/i);
+    });
+    it('rejects a non-root-owned dir', () => {
+        expect(() => assertSafeRootDir('/opt/ws-scrcpy-web', () => ({ ...safe, uid: 1000 }))).toThrow(/root/i);
+    });
+    it('rejects a group- or world-writable dir', () => {
+        expect(() => assertSafeRootDir('/x', () => ({ ...safe, mode: 0o777 }))).toThrow(/writable/i);
+        expect(() => assertSafeRootDir('/x', () => ({ ...safe, mode: 0o775 }))).toThrow(/writable/i);
+        expect(() => assertSafeRootDir('/x', () => ({ ...safe, mode: 0o757 }))).toThrow(/writable/i);
     });
 });
 

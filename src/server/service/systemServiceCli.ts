@@ -24,6 +24,7 @@ export interface CoreDeps {
     depsSource: string;
     tool: (t: string) => string;       // /usr/bin resolver
     sbinTool: (t: string) => string;   // /usr/sbin resolver (semanage/restorecon)
+    lstat: (path: string) => { uid: number; mode: number; isSymbolicLink: boolean };
 }
 
 const UNIT_PATH = `/etc/systemd/system/${WS_SCRCPY_SERVICE_NAME}.service`;
@@ -36,6 +37,27 @@ function assertRoot(getuid: () => number): void {
     }
 }
 
+/**
+ * Before any privileged copy/chmod/relabel, assert a target directory is a
+ * real, root-owned directory that group/other cannot write — defeating a
+ * symlink swap or TOCTOU that would redirect root's `cp`/`chmod`/`restorecon -R`
+ * onto an attacker-chosen path. (#15)
+ */
+export function assertSafeRootDir(path: string, lstat: CoreDeps['lstat']): void {
+    const st = lstat(path);
+    if (st.isSymbolicLink) {
+        throw new Error(`refusing to operate on ${path}: it is a symlink`);
+    }
+    if (st.uid !== 0) {
+        throw new Error(`refusing to operate on ${path}: not root-owned (uid ${st.uid})`);
+    }
+    if ((st.mode & 0o022) !== 0) {
+        throw new Error(
+            `refusing to operate on ${path}: group/other-writable (mode ${(st.mode & 0o777).toString(8)})`,
+        );
+    }
+}
+
 export async function installSystemService(opts: { port: number }, d: CoreDeps): Promise<void> {
     assertRoot(d.getuid);
     const mkdir = d.tool('mkdir'), cp = d.tool('cp'), chmod = d.tool('chmod'), systemctl = d.tool('systemctl');
@@ -43,6 +65,11 @@ export async function installSystemService(opts: { port: number }, d: CoreDeps):
 
     await d.run([mkdir, '-p', STAGED_SYSTEM_DIR]);
     await d.run([mkdir, '-p', SYSTEM_STATE_DIR]);
+    // Guard against a symlink/TOCTOU swap before root copies or relabels into
+    // these predictable dirs (#15): each must be a real, root-owned,
+    // non-world-writable directory.
+    assertSafeRootDir(STAGED_SYSTEM_DIR, d.lstat);
+    assertSafeRootDir(SYSTEM_STATE_DIR, d.lstat);
     await d.run([cp, d.appImageSource, STAGED_BIN]);
     await d.run([chmod, '0755', STAGED_BIN]);
     await d.run([mkdir, '-p', STAGED_SYSTEM_DEPS_DIR]);
@@ -175,6 +202,7 @@ export function makeProductionCoreDeps(): CliDeps {
         getuid: () => process.getuid?.() ?? 0,
         run,
         writeFile: (p, content, opts) => fs.writeFileSync(p, content, opts),
+        lstat: (p) => { const s = fs.lstatSync(p); return { uid: s.uid, mode: s.mode, isSymbolicLink: s.isSymbolicLink() }; },
         removeFile: (p) => { try { fs.unlinkSync(p); } catch { /* already gone */ } },
         existsCheck: (p) => fs.existsSync(p),
         appImageSource: process.env['APPIMAGE'] ?? process.execPath,
