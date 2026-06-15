@@ -12,11 +12,15 @@ export class ControlCenterCommand {
 
     public static fromJSON(json: string): ControlCenterCommand {
         const body = JSON.parse(json);
-        if (!body) {
+        if (!body || typeof body !== 'object') {
             throw new Error('Invalid input');
         }
         const command = new ControlCenterCommand();
-        const data = (command.data = body.data);
+        const data = body.data;
+        if (!data || typeof data !== 'object') {
+            throw new Error('Invalid input: missing "data"');
+        }
+        command.data = data;
         command.id = body.id;
         command.type = body.type;
 
@@ -25,7 +29,7 @@ export class ControlCenterCommand {
         }
         switch (body.type) {
             case this.KILL_SERVER:
-                if (typeof data.pid !== 'number' && data.pid <= 0) {
+                if (typeof data.pid !== 'number' || data.pid <= 0) {
                     throw new Error('Invalid "pid" value');
                 }
                 command.pid = data.pid;
