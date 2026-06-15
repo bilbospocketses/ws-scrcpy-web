@@ -25,6 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Removed the dead `resolveActiveSessionId` helper** (`src/server/util/active-session.ts` and its test). It was an orphan from the abandoned "Theory D" uninstall-handoff — its only caller was deleted in `0.1.25-beta.51` — so removing it has no behavioral effect, and it clears a latent `shell: true` process-spawn path the security review flagged. The launcher's `--print-active-session` capability is unaffected.
 
+### Fixed
+
+- **The "kill server" control command rejects an invalid process id instead of silently accepting it.** The pid check used `&&` where it needed `||`, so a non-numeric or non-positive pid passed validation; it's now rejected, and a command that arrives without its `data` object fails with a clear error rather than crashing on an undefined property read.
+- **Beta update detection is fixed.** The version comparison split on `.` and ran `Number` over each part, so a tag like `0.1.30-beta.65` became `NaN` and prereleases compared as garbage — a stable `0.1.30` could even look *older* than `0.1.30-beta.1`. It now parses SemVer prerelease tags: the release core compares numerically, a stable release outranks its prerelease, and prerelease identifiers compare per SemVer (so `beta.2 < beta.10`, not string order).
+
 ### Security
 
 - **The HTTP API and WebSocket endpoints now enforce an Origin and Host allowlist.** Requests from another web origin, and requests whose `Host` header is not `localhost` or an IP literal (DNS-rebinding), are rejected — closing a cross-site path by which a malicious page could reach device control, file deletion, and service management.
