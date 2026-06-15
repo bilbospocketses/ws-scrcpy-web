@@ -78,6 +78,16 @@ vi.mock('node:os', () => ({
     tmpdir: () => '/tmp',
 }));
 
+// resolveSystemTool resolves OS tools (systemctl/loginctl/ldconfig) to an
+// absolute path when they exist on the host — which they DO on the Linux CI
+// runner (e.g. /usr/bin/systemctl) but not on a Windows dev box. Stub it to the
+// bare name so the `c[0] === 'systemctl'` / 'loginctl' assertions below are
+// host-independent (otherwise they pass locally and fail in CI).
+vi.mock('../service/systemTools', async () => {
+    const actual = await vi.importActual<typeof import('../service/systemTools')>('../service/systemTools');
+    return { ...actual, resolveSystemTool: (t: string) => t };
+});
+
 import * as path from 'node:path';
 import { renderUnitFile, SystemdClient, STAGED_SYSTEM_DIR, STAGED_SYSTEM_APPIMAGE } from '../service/SystemdClient';
 import type { ServiceInstallOptions } from '../service/ServiceClient';
