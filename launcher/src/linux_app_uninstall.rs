@@ -521,10 +521,10 @@ fn relaunch(path: &str) {
         return;
     }
     let systemd_run = format!("{}/systemd-run", tool_dir("systemd-run"));
-    match std::process::Command::new(&systemd_run)
-        .args(["--user", "--collect", path])
-        .status()
-    {
+    // §71 — shared user-relaunch builder (--user --collect <target>).
+    let argv = crate::linux_service::user_relaunch_command(&systemd_run, &[], path);
+    let (cmd, rest) = argv.split_first().expect("non-empty argv");
+    match std::process::Command::new(cmd).args(rest).status() {
         Ok(s) => log::info(&format!(
             "uninstall: relaunched local {path} via systemd-run (exit {:?})",
             s.code()

@@ -261,13 +261,8 @@ pub fn relaunch_command(target: &Path, under_systemd: bool, systemd_run: &str) -
     if under_systemd {
         // G1: suppress the browser-open on relaunch — the user already has a tab
         // that reconnects, so the relaunched instance must not pop a new one.
-        vec![
-            systemd_run.to_string(),
-            "--user".into(),
-            "--collect".into(),
-            "--setenv=WS_SCRCPY_NO_BROWSER=1".into(),
-            t,
-        ]
+        // §71: shared user-relaunch builder (--user --collect [setenv] <target>).
+        crate::linux_service::user_relaunch_command(systemd_run, &["--setenv=WS_SCRCPY_NO_BROWSER=1"], &t)
     } else {
         // Direct exec — relaunch() sets WS_SCRCPY_NO_BROWSER on the Command.
         vec![t]

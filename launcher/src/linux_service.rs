@@ -182,6 +182,23 @@ pub fn system_relaunch_command(systemd_run: &str, uid: u32, home: &str, web_port
     ]
 }
 
+/// `systemd-run --user --collect [extra_setenv...] <target>` — relaunch a
+/// user-scope AppImage in its OWN transient unit (user-manager-owned cgroup) so
+/// it survives the caller's exit. `extra_setenv` carries any `--setenv=K=V`
+/// tokens (e.g. WS_SCRCPY_NO_BROWSER on the apply path), inserted before the
+/// target. Pure — the single builder shared by the teardown, install-handoff,
+/// uninstall, and apply user-scope relaunch seams. (#71)
+pub fn user_relaunch_command(systemd_run: &str, extra_setenv: &[&str], target: &str) -> Vec<String> {
+    let mut argv = vec![
+        systemd_run.to_string(),
+        "--user".to_string(),
+        "--collect".to_string(),
+    ];
+    argv.extend(extra_setenv.iter().map(|s| s.to_string()));
+    argv.push(target.to_string());
+    argv
+}
+
 /// Validate a relaunch-target path that came from an externally-influenceable
 /// source (a marker file, a `--relaunch` argv, or a fixed path whose on-disk
 /// FILE could be tampered) before it is exec'd. Requires an absolute path with
@@ -359,10 +376,9 @@ fn run(scope: Scope, unit: &str) -> i32 {
     if let Some(target) = relaunch_target(scope, marker) {
         let systemd_run = format!("{}/systemd-run", tool_dir("systemd-run"));
         let target_str = target.to_string_lossy().into_owned();
-        match std::process::Command::new(&systemd_run)
-            .args(["--user", "--collect", &target_str])
-            .status()
-        {
+        let argv = user_relaunch_command(&systemd_run, &[], &target_str);
+        let (cmd, rest) = argv.split_first().expect("non-empty argv");
+        match std::process::Command::new(cmd).args(rest).status() {
             Ok(s) => log::info(&format!(
                 "teardown: relaunched local {target_str} via systemd-run (exit {:?})", s.code()
             )),
@@ -371,29 +387,13 @@ fn run(scope: Scope, unit: &str) -> i32 {
     }
 
     if scope == Scope::System {
-        let systemd_run = format!("{}/systemd-run", tool_dir("systemd-run"));
-        let appimage = "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage";
-        // #50: a root helper must relaunch only a genuine root-owned regular file
-        // at the fixed /opt path — refuse a symlinked or non-root-owned binary.
-        let target_ok = is_safe_relaunch_target(std::path::Path::new(appimage), true);
-        if !target_ok {
-            log::error("system relaunch: refusing — /opt binary is not a root-owned regular file");
-        }
-        let web_port = common::config::AppConfig::load(std::path::Path::new("/var/lib/ws-scrcpy-web")).web_port;
-        match (target_ok.then(discover_active_graphical_uid).flatten(), web_port) {
-            (Some(uid), Some(port)) => match home_for_uid(uid) {
-                Some(home) => {
-                    let argv = system_relaunch_command(&systemd_run, uid, &home, port, appimage);
-                    let (cmd, rest) = argv.split_first().expect("non-empty argv");
-                    match std::process::Command::new(cmd).args(rest).status() {
-                        Ok(s) => log::info(&format!("system uninstall: relaunched {appimage} as uid {uid} on port {port} (exit {:?})", s.code())),
-                        Err(e) => log::error(&format!("system uninstall: relaunch failed: {e}")),
-                    }
-                }
-                None => log::error(&format!("system uninstall: no home for uid {uid}; skipping relaunch")),
-            },
-            _ => log::info("system uninstall: no active graphical session / no service port — skipping relaunch (manual fallback)"),
-        }
+        // §D5 — no auto-relaunch on system-scope teardown. The teardown above
+        // `rm -rf`s BOTH /opt/ws-scrcpy-web and /var/lib/ws-scrcpy-web, so by
+        // here the /opt AppImage and the /var/lib web_port the old relaunch
+        // needed are already gone — the discover-uid + system_relaunch_command
+        // attempt could never fire (it always hit the manual-fallback arm). The
+        // admin re-launches their own AppImage; this is the chosen §12 outcome.
+        log::info("system teardown: no auto-relaunch (admin re-launches manually)");
     }
     0
 }
@@ -529,10 +529,9 @@ fn run_install_handoff(scope: Scope, unit: &str) -> i32 {
     if let Some(target) = relaunch_target(scope, read_local_appimage_marker()) {
         let systemd_run = format!("{}/systemd-run", tool_dir("systemd-run"));
         let target_str = target.to_string_lossy().into_owned();
-        match std::process::Command::new(&systemd_run)
-            .args(["--user", "--collect", &target_str])
-            .status()
-        {
+        let argv = user_relaunch_command(&systemd_run, &[], &target_str);
+        let (cmd, rest) = argv.split_first().expect("non-empty argv");
+        match std::process::Command::new(cmd).args(rest).status() {
             Ok(s) => log::info(&format!(
                 "install-handoff rollback: relaunched local {target_str} (exit {:?})",
                 s.code()
@@ -758,6 +757,28 @@ mod tests {
             system_relaunch_command("/usr/bin/systemd-run", 1000, "/home/jamie", 8000, "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"),
             vec!["/usr/bin/systemd-run", "--uid=1000", "--setenv=HOME=/home/jamie",
                  "--setenv=WS_SCRCPY_WEB_PORT=8000", "--collect", "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"]
+        );
+    }
+
+    #[test]
+    fn user_relaunch_command_builds_collect_unit() {
+        // §71 — plain user-scope relaunch, no extra setenv.
+        assert_eq!(
+            user_relaunch_command("/usr/bin/systemd-run", &[], "/home/u/App.AppImage"),
+            vec!["/usr/bin/systemd-run", "--user", "--collect", "/home/u/App.AppImage"]
+        );
+        // With an extra --setenv (the apply path's NO_BROWSER) inserted before
+        // the target — same builder, one shared shape.
+        assert_eq!(
+            user_relaunch_command(
+                "/usr/bin/systemd-run",
+                &["--setenv=WS_SCRCPY_NO_BROWSER=1"],
+                "/home/u/App.AppImage"
+            ),
+            vec![
+                "/usr/bin/systemd-run", "--user", "--collect",
+                "--setenv=WS_SCRCPY_NO_BROWSER=1", "/home/u/App.AppImage"
+            ]
         );
     }
 
