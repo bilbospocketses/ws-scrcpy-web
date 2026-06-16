@@ -28,7 +28,7 @@
 //
 // Local-Dependencies-Only: every tool is resolved under `bindir` (sbin tools via
 // `sbindir_from(bindir)`) — never a bare name and never via PATH.
-use crate::linux_service::{scope_prefix, sbindir_from, tool_dir, unit_path, Scope};
+use crate::linux_service::{is_safe_relaunch_target, scope_prefix, sbindir_from, tool_dir, unit_path, Scope};
 use crate::log;
 
 /// App / systemd-unit identity shared by every footprint path.
@@ -509,6 +509,15 @@ fn declined(status: std::process::ExitStatus) -> bool {
 fn relaunch(path: &str) {
     if path.is_empty() {
         log::info("uninstall: no --relaunch target supplied; skipping local relaunch");
+        return;
+    }
+    // #50: the --relaunch path is externally supplied; validate it before it
+    // becomes an exec target. This relaunch runs as the user (systemd-run
+    // --user), so no root-owned requirement.
+    if !is_safe_relaunch_target(std::path::Path::new(path), false) {
+        log::error(&format!(
+            "uninstall: refusing unsafe --relaunch target {path:?}; skipping local relaunch"
+        ));
         return;
     }
     let systemd_run = format!("{}/systemd-run", tool_dir("systemd-run"));

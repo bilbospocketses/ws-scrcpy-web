@@ -182,14 +182,52 @@ pub fn system_relaunch_command(systemd_run: &str, uid: u32, home: &str, web_port
     ]
 }
 
+/// Validate a relaunch-target path that came from an externally-influenceable
+/// source (a marker file, a `--relaunch` argv, or a fixed path whose on-disk
+/// FILE could be tampered) before it is exec'd. Requires an absolute path with
+/// no `..` component that `lstat`s to a REGULAR FILE — so a symlink can't
+/// redirect the exec and a missing / directory / special target is refused. For
+/// a relaunch performed in a root/system context pass `require_root_owned = true`
+/// to also require uid-0 ownership, so a non-root user can't plant the binary a
+/// privileged relaunch would run. (#50)
+pub(crate) fn is_safe_relaunch_target(path: &Path, require_root_owned: bool) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    if !path.is_absolute() {
+        return false;
+    }
+    if path
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return false;
+    }
+    // lstat — do NOT follow symlinks; the target must itself be a regular file
+    // (a symlink, dir, fifo, device, or missing path is refused).
+    let meta = match std::fs::symlink_metadata(path) {
+        Ok(m) => m,
+        Err(_) => return false,
+    };
+    if !meta.file_type().is_file() {
+        return false;
+    }
+    if require_root_owned && meta.uid() != 0 {
+        return false;
+    }
+    true
+}
+
 /// User scope relaunches the home AppImage (from the install-time marker) into
 /// local mode. System scope never auto-relaunches (headless-dominant; the admin
-/// re-launches their own AppImage). Returns the path to relaunch, or None.
+/// re-launches their own AppImage). Returns the path to relaunch, or None. The
+/// marker is attacker-influenceable, so the path is validated (#50) before it
+/// becomes an exec target; the user-scope relaunch runs as the user (systemd-run
+/// `--user`), so no root-owned requirement.
 pub fn relaunch_target(scope: Scope, marker: Option<String>) -> Option<PathBuf> {
     match scope {
-        // `|| cfg!(test)` lets the unit test assert Some for a path that doesn't
-        // exist on the test host; in production the marker must point at a real file.
-        Scope::User => marker.map(PathBuf::from).filter(|p| p.exists() || cfg!(test)),
+        Scope::User => {
+            let p = PathBuf::from(marker?);
+            is_safe_relaunch_target(&p, false).then_some(p)
+        }
         Scope::System => None,
     }
 }
@@ -335,8 +373,14 @@ fn run(scope: Scope, unit: &str) -> i32 {
     if scope == Scope::System {
         let systemd_run = format!("{}/systemd-run", tool_dir("systemd-run"));
         let appimage = "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage";
+        // #50: a root helper must relaunch only a genuine root-owned regular file
+        // at the fixed /opt path — refuse a symlinked or non-root-owned binary.
+        let target_ok = is_safe_relaunch_target(std::path::Path::new(appimage), true);
+        if !target_ok {
+            log::error("system relaunch: refusing — /opt binary is not a root-owned regular file");
+        }
         let web_port = common::config::AppConfig::load(std::path::Path::new("/var/lib/ws-scrcpy-web")).web_port;
-        match (discover_active_graphical_uid(), web_port) {
+        match (target_ok.then(discover_active_graphical_uid).flatten(), web_port) {
             (Some(uid), Some(port)) => match home_for_uid(uid) {
                 Some(home) => {
                     let argv = system_relaunch_command(&systemd_run, uid, &home, port, appimage);
@@ -504,8 +548,14 @@ fn run_install_handoff(scope: Scope, unit: &str) -> i32 {
         // failed system install leaves the user with no app running.
         let systemd_run = format!("{}/systemd-run", tool_dir("systemd-run"));
         let appimage = "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage";
+        // #50: a root helper must relaunch only a genuine root-owned regular file
+        // at the fixed /opt path — refuse a symlinked or non-root-owned binary.
+        let target_ok = is_safe_relaunch_target(std::path::Path::new(appimage), true);
+        if !target_ok {
+            log::error("system relaunch: refusing — /opt binary is not a root-owned regular file");
+        }
         let web_port = common::config::AppConfig::load(std::path::Path::new("/var/lib/ws-scrcpy-web")).web_port;
-        match (discover_active_graphical_uid(), web_port) {
+        match (target_ok.then(discover_active_graphical_uid).flatten(), web_port) {
             (Some(uid), Some(port)) => match home_for_uid(uid) {
                 Some(home) => {
                     let argv = system_relaunch_command(&systemd_run, uid, &home, port, appimage);
@@ -605,16 +655,60 @@ mod tests {
     }
 
     #[test]
-    fn relaunch_only_for_user_scope_with_marker() {
-        // user scope + marker -> Some(path) (cfg!(test) bypasses the exists() check)
+    fn relaunch_target_accepts_a_valid_absolute_regular_file() {
+        // user scope + a marker that points at a real absolute regular file -> Some
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let app = tmp.path().join("App.AppImage");
+        std::fs::write(&app, b"#!/bin/sh\n").expect("write");
         assert_eq!(
-            relaunch_target(Scope::User, Some("/home/u/Apps/App.AppImage".into())),
-            Some(PathBuf::from("/home/u/Apps/App.AppImage"))
+            relaunch_target(Scope::User, Some(app.to_string_lossy().into_owned())),
+            Some(app)
         );
-        // system scope -> never relaunch
-        assert_eq!(relaunch_target(Scope::System, Some("/home/u/Apps/App.AppImage".into())), None);
-        // user scope, missing marker -> None
+    }
+
+    #[test]
+    fn relaunch_target_rejects_unsafe_or_missing_markers() {
+        // system scope -> never relaunch (even with a marker)
+        assert_eq!(relaunch_target(Scope::System, Some("/opt/x/App.AppImage".into())), None);
+        // missing marker
         assert_eq!(relaunch_target(Scope::User, None), None);
+        // relative path
+        assert_eq!(relaunch_target(Scope::User, Some("Apps/App.AppImage".into())), None);
+        // absolute but nonexistent
+        assert_eq!(relaunch_target(Scope::User, Some("/nonexistent/App.AppImage".into())), None);
+        // absolute but contains a `..` traversal component
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let app = tmp.path().join("App.AppImage");
+        std::fs::write(&app, b"x").expect("write");
+        let traversal = format!("{}/../App.AppImage", app.parent().unwrap().to_string_lossy());
+        assert_eq!(relaunch_target(Scope::User, Some(traversal)), None);
+    }
+
+    #[test]
+    fn is_safe_relaunch_target_enforces_absolute_no_dotdot_regular_file() {
+        use std::os::unix::fs::MetadataExt;
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let file = tmp.path().join("App.AppImage");
+        std::fs::write(&file, b"x").expect("write");
+
+        // valid: absolute, no `..`, regular file
+        assert!(is_safe_relaunch_target(&file, false));
+        // relative path
+        assert!(!is_safe_relaunch_target(Path::new("App.AppImage"), false));
+        // contains `..`
+        assert!(!is_safe_relaunch_target(&tmp.path().join("..").join("App.AppImage"), false));
+        // nonexistent
+        assert!(!is_safe_relaunch_target(&tmp.path().join("nope.AppImage"), false));
+        // a directory is not a regular file
+        assert!(!is_safe_relaunch_target(tmp.path(), false));
+        // a symlink lstat's as a symlink, not a regular file -> rejected (no redirect)
+        let link = tmp.path().join("link.AppImage");
+        std::os::unix::fs::symlink(&file, &link).expect("symlink");
+        assert!(!is_safe_relaunch_target(&link, false));
+        // require_root_owned: passes iff the file is actually uid-0 owned (robust to
+        // whether the test runs as root, e.g. inside the cross container, or not).
+        let owned_by_root = std::fs::metadata(&file).unwrap().uid() == 0;
+        assert_eq!(is_safe_relaunch_target(&file, true), owned_by_root);
     }
 
     #[test]
