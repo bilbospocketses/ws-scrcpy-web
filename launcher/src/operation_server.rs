@@ -51,7 +51,7 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -63,6 +63,26 @@ use crate::log;
 const MAX_LIFETIME_SECS: u64 = 30;
 const STOP_MARKER_POLL_MS: u64 = 200;
 const ACCEPT_TIMEOUT_MS: u64 = 200;
+
+/// §51 — ceiling on concurrently-live connection-handler threads. `accept_one`
+/// spawns one thread per accepted connection; the listener is loopback-only
+/// (§48), but a local process could still open connections faster than the
+/// 5s-read-timeout handlers drain and exhaust threads / memory. Legitimate
+/// upgrade-window load is single-digit, so this ceiling never trips real
+/// clients while bounding an attacker to a fixed pool of handler threads.
+/// Connections beyond the ceiling are dropped (closed); the polling page just
+/// retries on its next ~1s tick.
+const MAX_INFLIGHT_CONNECTIONS: usize = 64;
+
+// Compile-time floor: legitimate upgrade-window load is single-digit, so the
+// ceiling must leave generous headroom for real clients while still bounding an
+// attacker. Guards against a careless edit to a tiny value (e.g. 0 =
+// drop-everything) — the crate won't build if this is violated.
+const _: () = assert!(
+    MAX_INFLIGHT_CONNECTIONS >= 16,
+    "MAX_INFLIGHT_CONNECTIONS must leave headroom over single-digit legit load"
+);
+
 const STOP_MARKER_FILENAME: &str = "operation-server-stop";
 
 /// Legacy stop-marker filename. Kept as a read-time fallback for ~2 release
@@ -482,9 +502,14 @@ fn run() -> i32 {
             let bg_listener = listener.try_clone().expect("clone listener");
             let bg_redirect: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
             let bg_redirect2 = bg_redirect.clone();
+            // §51 — one in-flight counter shared by the background page thread
+            // and the main accept loop below; both serve the same cloned
+            // listener, so the cap must span both acceptors.
+            let inflight = Arc::new(AtomicUsize::new(0));
+            let inflight_bg = inflight.clone();
             let _page_thread = thread::spawn(move || {
                 while !bg_stop2.load(Ordering::SeqCst) {
-                    accept_one(&bg_listener, &bg_redirect2, OperationVariant::ApplyUpdate);
+                    accept_one(&bg_listener, &bg_redirect2, OperationVariant::ApplyUpdate, &inflight_bg);
                 }
             });
 
@@ -564,7 +589,7 @@ fn run() -> i32 {
 
             let started_at = Instant::now();
             while started_at.elapsed() < Duration::from_secs(MAX_LIFETIME_SECS) {
-                accept_one(&listener, &bg_redirect, OperationVariant::ApplyUpdate);
+                accept_one(&listener, &bg_redirect, OperationVariant::ApplyUpdate, &inflight);
             }
 
             log::info("operation-server: §40 max lifetime elapsed, cleaning up");
@@ -617,6 +642,9 @@ fn run() -> i32 {
 
     let stop_flag = Arc::new(AtomicBool::new(false));
     let redirect_state: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    // §51 — shared in-flight counter caps concurrent connection-handler
+    // threads across both this serving loop and the wind-down loop.
+    let inflight = Arc::new(AtomicUsize::new(0));
     let started_at = Instant::now();
 
     loop {
@@ -635,7 +663,7 @@ fn run() -> i32 {
             let cleanup_dir = data_root.join("control");
             let _ = std::fs::remove_file(cleanup_dir.join(STOP_MARKER_FILENAME));
             let _ = std::fs::remove_file(cleanup_dir.join(LEGACY_STOP_MARKER_FILENAME));
-            return wind_down(listener, redirect_state, port, variant);
+            return wind_down(listener, redirect_state, port, variant, inflight);
         }
         if started_at.elapsed() >= Duration::from_secs(MAX_LIFETIME_SECS) {
             log::info(&format!(
@@ -644,7 +672,7 @@ fn run() -> i32 {
             return 0;
         }
 
-        accept_one(&listener, &redirect_state, variant);
+        accept_one(&listener, &redirect_state, variant, &inflight);
     }
 }
 
@@ -653,7 +681,7 @@ fn run() -> i32 {
 /// (handles the case where Node lost the port race and auto-shifted to
 /// e.g. config_port+1), and keeps serving connections so the polling page
 /// can pick up the resulting redirect.
-fn wind_down(listener: TcpListener, redirect_state: Arc<Mutex<Option<String>>>, config_port: u16, variant: OperationVariant) -> i32 {
+fn wind_down(listener: TcpListener, redirect_state: Arc<Mutex<Option<String>>>, config_port: u16, variant: OperationVariant, inflight: Arc<AtomicUsize>) -> i32 {
     let probe_state = redirect_state.clone();
     thread::spawn(move || {
         probe_for_real_node_and_publish(config_port, probe_state);
@@ -667,25 +695,80 @@ fn wind_down(listener: TcpListener, redirect_state: Arc<Mutex<Option<String>>>, 
             ));
             return 0;
         }
-        accept_one(&listener, &redirect_state, variant);
+        accept_one(&listener, &redirect_state, variant, &inflight);
+    }
+}
+
+/// Atomically reserve one connection-handler slot. Returns `true` if the
+/// caller may spawn a handler (the slot is now counted as live), or `false`
+/// if the in-flight ceiling `max` is already reached (the counter is left
+/// unchanged). The optimistic increment-then-undo keeps the check race-free
+/// across the multiple accept loops that share one counter, so the number of
+/// live handler threads never exceeds `max`. A `true` result MUST be paired
+/// with an `InflightGuard` so the slot is released when the handler finishes.
+fn try_reserve_slot(inflight: &AtomicUsize, max: usize) -> bool {
+    if inflight.fetch_add(1, Ordering::SeqCst) >= max {
+        inflight.fetch_sub(1, Ordering::SeqCst);
+        false
+    } else {
+        true
+    }
+}
+
+/// RAII release for a reserved connection-handler slot. Decrements the shared
+/// in-flight counter on drop, so a slot is freed when its handler returns —
+/// including on panic (`handle_connection` does a couple of `expect`s),
+/// preventing a leaked slot from permanently shrinking the available pool.
+struct InflightGuard {
+    counter: Arc<AtomicUsize>,
+}
+
+impl InflightGuard {
+    fn new(counter: Arc<AtomicUsize>) -> Self {
+        InflightGuard { counter }
+    }
+}
+
+impl Drop for InflightGuard {
+    fn drop(&mut self) {
+        self.counter.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
 /// One iteration of the non-blocking accept loop. Spawns a thread per
-/// accepted connection. Shared between the normal-serving loop and the
-/// wind-down loop so connection handling stays uniform.
-fn accept_one(listener: &TcpListener, redirect_state: &Arc<Mutex<Option<String>>>, variant: OperationVariant) {
+/// accepted connection (subject to the `MAX_INFLIGHT_CONNECTIONS` ceiling).
+/// Shared between the normal-serving loop and the wind-down loop so connection
+/// handling stays uniform.
+fn accept_one(
+    listener: &TcpListener,
+    redirect_state: &Arc<Mutex<Option<String>>>,
+    variant: OperationVariant,
+    inflight: &Arc<AtomicUsize>,
+) {
     match listener.accept() {
         Ok((stream, peer)) => {
+            // §51 — bound the thread-per-connection amplifier. Reserve a slot
+            // before spawning; beyond the ceiling, drop (close) the connection
+            // instead of spawning an unbounded handler thread. The polling page
+            // retries on its next ~1s tick, so a dropped poll is benign.
+            if !try_reserve_slot(inflight, MAX_INFLIGHT_CONNECTIONS) {
+                log::info(&format!(
+                    "operation-server: connection from {peer} dropped — in-flight cap ({MAX_INFLIGHT_CONNECTIONS}) reached"
+                ));
+                // `stream` drops here → socket closed.
+                return;
+            }
             log::info(&format!("operation-server: connection from {peer}"));
             let state_clone = redirect_state.clone();
             // Variant is Copy, so capture-by-value into the thread closure
             // alongside the cloned state Arc.
             let v = variant;
+            let inflight_clone = inflight.clone();
             // Spawn a thread per connection. Short-lived; we don't track
-            // JoinHandles. Connection count during an upgrade window is
-            // single-digit.
+            // JoinHandles. The InflightGuard releases the reserved slot when
+            // the handler returns (including on panic).
             thread::spawn(move || {
+                let _slot = InflightGuard::new(inflight_clone);
                 handle_connection(stream, state_clone, v);
             });
         }
@@ -1403,5 +1486,97 @@ mod tests {
         let m = manifest("../real-1.0.0-full.nupkg", &"0".repeat(64), "1.0.0");
 
         assert!(super::find_and_extract_nupkg(&packages, &current, &m).is_err());
+    }
+
+    // ----- §51: connection-handler concurrency cap (DoS amplifier fix) -----
+    // accept_one spawns one OS thread per accepted connection. The listener
+    // is loopback-only (§48), but a local process can still open connections
+    // faster than the 5s-read-timeout handlers drain, exhausting threads /
+    // memory. These tests pin the admission invariant: never more than
+    // MAX_INFLIGHT_CONNECTIONS handler slots are live at once, every slot is
+    // released when its handler finishes (even on panic), and the reservation
+    // is race-free under contention.
+
+    #[test]
+    fn try_reserve_slot_admits_up_to_max_then_refuses() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let inflight = AtomicUsize::new(0);
+        let max = 3usize;
+        assert!(super::try_reserve_slot(&inflight, max), "1st admit");
+        assert!(super::try_reserve_slot(&inflight, max), "2nd admit");
+        assert!(super::try_reserve_slot(&inflight, max), "3rd admit fills the cap");
+        assert!(!super::try_reserve_slot(&inflight, max), "refused at cap");
+        assert!(!super::try_reserve_slot(&inflight, max), "still refused");
+        assert_eq!(
+            inflight.load(Ordering::SeqCst),
+            max,
+            "refused reservations must not leak the counter above max"
+        );
+    }
+
+    #[test]
+    fn try_reserve_slot_never_exceeds_max_under_contention() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+        let inflight = Arc::new(AtomicUsize::new(0));
+        let max = 8usize;
+        let attempts = 256usize;
+        let granted = Arc::new(AtomicUsize::new(0));
+        let mut handles = Vec::new();
+        for _ in 0..attempts {
+            let inflight = inflight.clone();
+            let granted = granted.clone();
+            handles.push(std::thread::spawn(move || {
+                // Hold the slot (never release) so the cap is genuinely contended.
+                if super::try_reserve_slot(&inflight, max) {
+                    granted.fetch_add(1, Ordering::SeqCst);
+                }
+            }));
+        }
+        for h in handles {
+            h.join().expect("join");
+        }
+        assert_eq!(granted.load(Ordering::SeqCst), max, "exactly max slots granted");
+        assert_eq!(
+            inflight.load(Ordering::SeqCst),
+            max,
+            "counter must settle at max — never above it"
+        );
+    }
+
+    #[test]
+    fn inflight_guard_releases_slot_on_drop() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+        let inflight = Arc::new(AtomicUsize::new(0));
+        let max = 1usize;
+        assert!(super::try_reserve_slot(&inflight, max), "reserve the only slot");
+        assert!(!super::try_reserve_slot(&inflight, max), "cap reached");
+        {
+            // The guard owns the matching release for the reserved slot.
+            let _guard = super::InflightGuard::new(inflight.clone());
+            assert_eq!(inflight.load(Ordering::SeqCst), 1, "slot held inside scope");
+        }
+        assert_eq!(inflight.load(Ordering::SeqCst), 0, "guard releases the slot on drop");
+        assert!(super::try_reserve_slot(&inflight, max), "slot reusable after release");
+    }
+
+    #[test]
+    fn inflight_guard_releases_slot_on_panic() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+        let inflight = Arc::new(AtomicUsize::new(0));
+        assert!(super::try_reserve_slot(&inflight, 4), "reserve a slot");
+        let inflight2 = inflight.clone();
+        let h = std::thread::spawn(move || {
+            let _guard = super::InflightGuard::new(inflight2);
+            panic!("simulated handler panic");
+        });
+        assert!(h.join().is_err(), "handler thread should have panicked");
+        assert_eq!(
+            inflight.load(Ordering::SeqCst),
+            0,
+            "guard must release the slot even when the handler panics"
+        );
     }
 }
