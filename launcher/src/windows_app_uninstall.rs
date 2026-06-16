@@ -270,6 +270,24 @@ fn run_uninstall_in_place(a: &UninstallArgs) -> i32 {
     0
 }
 
+/// Decode a temp-dir path from a UTF-16 buffer and the length reported by
+/// `GetTempPath2W`/`GetTempPathW`. Returns `None` for a zero length (API
+/// failure) or a length that reaches or exceeds the buffer.
+///
+/// §55: on success these APIs return the count of chars copied EXCLUDING the
+/// NUL terminator, so a valid result always leaves room for the NUL and is
+/// strictly `< buf.len()`. A `len >= buf.len()` can't be a real success (it
+/// would mean the buffer was too small — the API returns the required size
+/// instead), so reject it rather than slicing to the brim of an undocumented
+/// MAX_PATH cap. Not exploitable as written (the W variants cap at MAX_PATH),
+/// but fail closed.
+fn temp_path_from_buf(buf: &[u16], len: usize) -> Option<std::path::PathBuf> {
+    if len == 0 || len >= buf.len() {
+        return None;
+    }
+    Some(std::path::PathBuf::from(String::from_utf16_lossy(&buf[..len])))
+}
+
 /// Resolve the context-appropriate temp directory: the user's temp under a
 /// user token, the hardened `C:\Windows\SystemTemp` under a SYSTEM/system-
 /// service token. `GetTempPath2W` is the SYSTEM-safe API (Win10 1903+); fall
@@ -278,19 +296,16 @@ fn resolve_temp_dir() -> Option<std::path::PathBuf> {
     use windows::Win32::Storage::FileSystem::{GetTempPath2W, GetTempPathW};
     // Buffer is MAX_PATH (260) + 1. On success these return the length copied
     // (excluding NUL); if the buffer were too small they'd instead return the
-    // REQUIRED size (> buf.len()) WITHOUT filling it. The W variants cap the
-    // path at MAX_PATH so that can't happen here — but fail closed rather than
-    // slice out of bounds (panic=abort would kill the cleaner before it
+    // REQUIRED size WITHOUT filling it. The W variants cap the path at MAX_PATH
+    // so that can't happen here — but temp_path_from_buf fails closed rather
+    // than slice out of bounds (panic=abort would kill the cleaner before it
     // deletes) or read an unfilled buffer.
     let mut buf = [0u16; 261];
     let mut len = unsafe { GetTempPath2W(Some(&mut buf)) } as usize;
     if len == 0 {
         len = unsafe { GetTempPathW(Some(&mut buf)) } as usize;
     }
-    if len == 0 || len > buf.len() {
-        return None;
-    }
-    Some(std::path::PathBuf::from(String::from_utf16_lossy(&buf[..len])))
+    temp_path_from_buf(&buf, len)
 }
 
 /// Phase 1: copy this launcher to temp and spawn it as the logging-disabled
@@ -420,6 +435,28 @@ mod tests {
 
     const UPDATE_EXE: &str = r"C:\Program Files\WsScrcpyWeb\Update.exe";
     const DATA_ROOT: &str = r"C:\ProgramData\WsScrcpyWeb";
+
+    // ── §55: temp-path buffer bound ───────────────────────────────────────
+
+    #[test]
+    fn temp_path_from_buf_rejects_zero_and_out_of_bounds_lengths() {
+        let buf = [0u16; 8];
+        assert!(temp_path_from_buf(&buf, 0).is_none(), "zero length (API failure) -> None");
+        assert!(temp_path_from_buf(&buf, 9).is_none(), "len > buf.len() -> None");
+        // §55: a successful GetTempPath*W leaves room for the NUL terminator,
+        // so len == buf.len() can't be a valid result -- reject it too (>=),
+        // rather than slicing to the brim of an undocumented cap.
+        assert!(temp_path_from_buf(&buf, 8).is_none(), "len == buf.len() -> None");
+    }
+
+    #[test]
+    fn temp_path_from_buf_decodes_valid_utf16() {
+        let mut buf = [0u16; 16];
+        let s: Vec<u16> = r"C:\Temp".encode_utf16().collect();
+        buf[..s.len()].copy_from_slice(&s);
+        let p = temp_path_from_buf(&buf, s.len()).expect("valid length must decode");
+        assert_eq!(p.to_string_lossy(), r"C:\Temp");
+    }
 
     // ── Pure builder tests ────────────────────────────────────────────────
 
