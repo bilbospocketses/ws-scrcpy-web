@@ -757,6 +757,65 @@ describe('UpdateService', () => {
         expect(mkdirSpy).toHaveBeenCalled();
     });
 
+    // §49: in Windows LOCAL mode (user/system) the operation-server re-extracts
+    // the nupkg itself, so Node must hand it the Velopack-authenticated
+    // version + filename + SHA-256 to verify against. Service mode uses
+    // Velopack's own verified apply (no manifest); Linux uses SHA256SUMS.
+    it.each([
+        ['user' as const, true],
+        ['system' as const, true],
+        ['user-service' as const, false],
+        ['system-service' as const, false],
+    ])('applyUpdate (%s): writes apply-update-verify.json only in local mode (§49)', async (installMode, expectManifest) => {
+        Config.getInstance().updateAppConfig({ autoUpdate: false, installMode });
+        const writeFileSpy = vi.spyOn(fs.promises, 'writeFile').mockResolvedValue(undefined);
+        const mkdirSpy = vi.spyOn(fs.promises, 'mkdir').mockResolvedValue(undefined);
+        // Local mode polls for the operation-server port file; return one so the
+        // poll resolves immediately instead of waiting out the 5s timeout.
+        const readFileSpy = vi.spyOn(fs.promises, 'readFile').mockResolvedValue('8001' as never);
+        using _restore = {
+            [Symbol.dispose]() {
+                writeFileSpy.mockRestore();
+                mkdirSpy.mockRestore();
+                readFileSpy.mockRestore();
+            },
+        };
+
+        const info = fakeUpdateInfo('0.2.0');
+        info.TargetFullRelease.SHA256 = 'A1B2C3';
+        info.TargetFullRelease.FileName = 'ws-scrcpy-web-0.2.0-full.nupkg';
+        const mgr = fakeMgr({
+            checkForUpdatesAsync: async () => info,
+            waitExitThenApplyUpdate: vi.fn(),
+        });
+        const svc = new UpdateService({
+            platform: 'win32',
+            installRoot: '/fake-install-root',
+            existsSync: () => true,
+            updateManagerFactory: () => mgr,
+            setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
+            clearIntervalFn: () => undefined,
+        });
+        svc.init();
+        await svc.checkForUpdates();
+        await svc.applyUpdate();
+
+        const manifestCalls = writeFileSpy.mock.calls.filter(
+            (c) => typeof c[0] === 'string' && (c[0] as string).endsWith('apply-update-verify.json'),
+        );
+        if (expectManifest) {
+            expect(manifestCalls).toHaveLength(1);
+            const written = JSON.parse(manifestCalls[0]![1] as string);
+            expect(written).toEqual({
+                version: '0.2.0',
+                fileName: 'ws-scrcpy-web-0.2.0-full.nupkg',
+                sha256: 'A1B2C3',
+            });
+        } else {
+            expect(manifestCalls).toHaveLength(0);
+        }
+    });
+
     // Linux local-mode apply: replaces Velopack's broken UpdateNix apply with a
     // hand-rolled download -> verify-sha256 -> spawn-helper. (Velopack 1.0.1's apply
     // fails on our AppImage — see docs/specs/2026-06-01-linux-appimage-self-update-design.md.)
