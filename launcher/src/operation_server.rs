@@ -862,7 +862,18 @@ fn handle_connection(mut stream: TcpStream, redirect_state: Arc<Mutex<Option<Str
     let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
     let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
 
-    let mut reader = BufReader::new(stream.try_clone().unwrap_or_else(|_| stream.try_clone().expect("clone failed twice")));
+    // §52 — a failed try_clone is fatal for this one connection but not for
+    // the server: return (closing the socket) instead of panicking. The old
+    // double-clone + `expect` would abort the process on a network-reachable
+    // clone failure (e.g. fd exhaustion).
+    let cloned = match stream.try_clone() {
+        Ok(c) => c,
+        Err(e) => {
+            log::error(&format!("operation-server: connection stream clone failed ({e})"));
+            return;
+        }
+    };
+    let mut reader = BufReader::new(cloned);
     let mut request_line = String::new();
     if reader.read_line(&mut request_line).is_err() {
         return;
