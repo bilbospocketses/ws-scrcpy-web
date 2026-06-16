@@ -17,6 +17,7 @@ rustix = { version = "1", features = ["fs"] }
 ctrlc.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 velopack.workspace = true
 windows.workspace = true
 zip.workspace = true

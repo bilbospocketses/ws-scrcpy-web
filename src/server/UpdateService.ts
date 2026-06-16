@@ -593,6 +593,10 @@ export class UpdateService {
         const installRoot = path.resolve(__dirname, '..', '..');
 
         try {
+            // §49: hand the operation-server the Velopack-authenticated
+            // version + filename + SHA-256 so it can verify the nupkg (which
+            // lives in the user-writable packages/ dir) before extracting it.
+            await this.writeApplyVerifyManifest();
             const child = spawn(helperPath, ['--operation-server'], {
                 cwd: dataRoot,
                 detached: true,
@@ -605,7 +609,7 @@ export class UpdateService {
             child.unref();
             log.info(`applyUpdate: spawned operation-server (pid ${child.pid})`);
         } catch (err) {
-            log.error(`applyUpdate: failed to spawn operation-server: ${(err as Error).message}`);
+            log.error(`applyUpdate: failed to prepare or spawn operation-server: ${(err as Error).message}`);
             return { redirectPort: null };
         }
 
@@ -647,6 +651,39 @@ export class UpdateService {
                     `— service will not auto-restart after Velopack swap; user must restart manually.`,
             );
         }
+    }
+
+    /**
+     * §49: write the verification manifest the operation-server reads before
+     * extracting the downloaded nupkg. Carries Velopack's authenticated
+     * version + filename + SHA-256 (from `UpdateInfo.TargetFullRelease`), so the
+     * launcher (`operation_server.rs::find_and_extract_nupkg`) can re-verify the
+     * package — which Velopack downloaded into the user-writable `packages/`
+     * dir — before extracting + executing it. Windows local-mode only: service
+     * mode uses Velopack's own verified apply, and Linux verifies against the
+     * release SHA256SUMS. Throws on write failure so the caller skips spawning
+     * an operation-server that would only fail-closed.
+     */
+    private async writeApplyVerifyManifest(): Promise<void> {
+        const asset = this.state.pendingUpdate?.TargetFullRelease;
+        if (!asset) {
+            throw new Error('apply: no pending update asset to build the verify manifest from');
+        }
+        if (!asset.SHA256) {
+            log.warn(
+                'applyUpdate: UpdateInfo has no SHA256 for the full package — the operation-server ' +
+                    'will fail-closed and refuse to extract. Check the Velopack release feed.',
+            );
+        }
+        const manifestPath = Config.getInstance().applyUpdateVerifyManifestPath;
+        const body = JSON.stringify({
+            version: asset.Version,
+            fileName: asset.FileName,
+            sha256: asset.SHA256,
+        });
+        await fs.promises.mkdir(path.dirname(manifestPath), { recursive: true });
+        await fs.promises.writeFile(manifestPath, body, 'utf8');
+        log.info(`applyUpdate: wrote apply-update-verify manifest at ${manifestPath}`);
     }
 
     /**

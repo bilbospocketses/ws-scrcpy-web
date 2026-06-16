@@ -581,6 +581,22 @@ export class Config {
     }
 
     /**
+     * Canonical path for the §49 apply-update-verify manifest. UpdateService
+     * writes it (Windows local mode) right before spawning the operation-server;
+     * the launcher reads it (operation_server.rs::read_apply_verify_manifest) to
+     * SHA-256-verify the downloaded nupkg against Velopack's authenticated
+     * UpdateInfo BEFORE extracting + executing it — the nupkg sits in the
+     * user-writable `packages/` dir, so this re-check is the trust anchor.
+     * Lives under `control/` alongside the apply-update-pending marker.
+     */
+    public get applyUpdateVerifyManifestPath(): string {
+        const base = this._dataRoot !== null
+            ? this._dataRoot
+            : path.dirname(this._dependenciesPath);
+        return path.join(base, 'control', 'apply-update-verify.json');
+    }
+
+    /**
      * Canonical path for the consume-once `suppress-browser-open` marker.
      * UpdateService.applyUpdate writes it before the app goes down to apply an
      * update; the relaunched server already carries the user's tab (reconnect /

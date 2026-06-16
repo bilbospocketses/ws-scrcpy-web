@@ -56,6 +56,8 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use sha2::{Digest, Sha256};
+
 use crate::log;
 
 const MAX_LIFETIME_SECS: u64 = 30;
@@ -243,53 +245,165 @@ pub fn should_exit_for_stop_marker(data_root: &Path) -> bool {
     dir.join(STOP_MARKER_FILENAME).exists() || dir.join(LEGACY_STOP_MARKER_FILENAME).exists()
 }
 
-/// Find the latest full nupkg in `packages_dir` and extract its `lib/app/`
-/// contents into `current_dir` (overwrite). Returns the version string on
-/// success. This replaces Update.exe for local-mode updates — no rename
-/// dance, no process-tree scanning, no CWD handle locks.
-fn find_and_extract_nupkg(packages_dir: &Path, current_dir: &Path) -> Result<String, String> {
-    let entry = std::fs::read_dir(packages_dir)
-        .map_err(|e| format!("cannot read packages dir: {e}"))?
-        .filter_map(|e| e.ok())
-        .filter(|e| {
-            let name = e.file_name();
-            let s = name.to_string_lossy();
-            s.ends_with("-full.nupkg")
-        })
-        .max_by_key(|e| e.file_name());
+/// Stream-hash `path` with SHA-256 and return the lowercase hex digest. Used to
+/// verify a downloaded nupkg against Velopack's authenticated UpdateInfo (the
+/// `sha256` field of the apply-update-verify manifest Node writes) before
+/// extracting it over `current/`.
+fn sha256_hex_of_file(path: &Path) -> std::io::Result<String> {
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 8192];
+    loop {
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(hasher.finalize().iter().map(|b| format!("{b:02x}")).collect())
+}
 
-    let nupkg_path = entry
-        .ok_or_else(|| "no *-full.nupkg found in packages dir".to_string())?
-        .path();
+/// Verification manifest Node writes to `<data_root>/control/apply-update-verify.json`
+/// immediately before spawning the operation-server for a Windows local-mode
+/// in-app update. Carries the values from Velopack's authenticated
+/// `UpdateInfo.TargetFullRelease`, so the operation-server can re-verify the
+/// on-disk nupkg (which Velopack downloaded into the user-writable `packages/`
+/// dir) before extracting + executing it. Trust anchor = the HTTPS release feed
+/// Velopack already validated, NOT the co-located, user-writable package file.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ApplyVerifyManifest {
+    /// Target version, from `UpdateInfo.TargetFullRelease.Version`. Authoritative
+    /// version string — replaces deriving it from the (attacker-influenceable)
+    /// archive filename.
+    version: String,
+    /// Bare filename of the full nupkg, from `...TargetFullRelease.FileName`.
+    file_name: String,
+    /// Expected lowercase-hex SHA-256, from `...TargetFullRelease.SHA256`.
+    sha256: String,
+}
 
-    let version = nupkg_path
-        .file_stem()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .to_string();
+const APPLY_VERIFY_MANIFEST_FILENAME: &str = "apply-update-verify.json";
 
-    log::info(&format!("operation-server: extracting {nupkg_path:?}"));
+/// Read + parse the apply-update-verify manifest from `<data_root>/control/`.
+/// Returns Err (→ fail-closed at the call site) when the file is absent or
+/// malformed — an apply must never proceed without a verification anchor.
+fn read_apply_verify_manifest(data_root: &Path) -> Result<ApplyVerifyManifest, String> {
+    let path = data_root
+        .join("control")
+        .join(APPLY_VERIFY_MANIFEST_FILENAME);
+    let raw = std::fs::read_to_string(&path)
+        .map_err(|e| format!("cannot read apply-update-verify manifest {path:?}: {e}"))?;
+    serde_json::from_str(&raw)
+        .map_err(|e| format!("cannot parse apply-update-verify manifest {path:?}: {e}"))
+}
 
-    let file = std::fs::File::open(&nupkg_path)
-        .map_err(|e| format!("cannot open nupkg: {e}"))?;
-    let mut archive = zip::ZipArchive::new(file)
-        .map_err(|e| format!("cannot read nupkg as zip: {e}"))?;
+/// True only if `name` is a single normal path component — no directory
+/// separator, no `.`/`..`, no drive prefix or root. Guards the
+/// `packages_dir.join(file_name)` lookup so the verified manifest can't
+/// retarget it outside the packages dir (e.g. `..\\x`, `C:\\x`, `sub/x`).
+fn is_bare_filename(name: &str) -> bool {
+    let mut comps = std::path::Path::new(name).components();
+    matches!(
+        (comps.next(), comps.next()),
+        (Some(std::path::Component::Normal(_)), None)
+    )
+}
 
-    let prefix = "lib/app/";
+/// Lexically collapse `.`/`..` in a relative path. `enclosed_name()` already
+/// guarantees the NET path can't escape the archive root, but it may keep
+/// interior `..` un-collapsed — and we strip a `lib/app/` prefix afterwards,
+/// which would otherwise let `lib/app/../x` become `../x`. Normalizing first
+/// keeps the post-strip remainder free of any traversal. Drops any leading
+/// `..`/root components defensively (an enclosed name has none).
+fn normalize_relative(p: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for comp in p.components() {
+        match comp {
+            std::path::Component::Normal(c) => out.push(c),
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            std::path::Component::CurDir => {}
+            std::path::Component::RootDir | std::path::Component::Prefix(_) => {}
+        }
+    }
+    out
+}
+
+/// Extract the verified full nupkg's `lib/app/` contents into `current_dir`
+/// (overwrite), returning the target version. §49 hardening: the package is
+/// selected by the EXACT filename in `manifest` (never "newest file in the
+/// dir", which a dropped decoy could win) and its SHA-256 is checked against
+/// `manifest.sha256` BEFORE any extraction — fail-closed, because the nupkg
+/// lives in the user-writable `packages/` dir. Entry paths are constrained
+/// with `enclosed_name()` (zip-slip defense), and the version is taken from
+/// the manifest, not the (attacker-influenceable) archive filename. Replaces
+/// Update.exe for local-mode updates — no rename dance, no CWD handle locks.
+fn find_and_extract_nupkg(
+    packages_dir: &Path,
+    current_dir: &Path,
+    manifest: &ApplyVerifyManifest,
+) -> Result<String, String> {
+    // Select strictly by the verified filename, and only if it is a bare name.
+    let file_name = manifest.file_name.as_str();
+    if !is_bare_filename(file_name) {
+        return Err(format!("refusing unsafe nupkg file name: {file_name:?}"));
+    }
+    let nupkg_path = packages_dir.join(file_name);
+    if !nupkg_path.is_file() {
+        return Err(format!("nupkg named by manifest not found: {nupkg_path:?}"));
+    }
+
+    // Fail-closed integrity check against Velopack's authenticated SHA-256
+    // (from UpdateInfo, relayed by Node). No match → extract nothing.
+    let actual = sha256_hex_of_file(&nupkg_path)
+        .map_err(|e| format!("cannot hash nupkg {nupkg_path:?}: {e}"))?;
+    if !actual.eq_ignore_ascii_case(manifest.sha256.trim()) {
+        return Err(format!(
+            "nupkg SHA-256 mismatch for {nupkg_path:?}: expected {}, got {actual}",
+            manifest.sha256
+        ));
+    }
+
+    log::info(&format!(
+        "operation-server: verified + extracting {nupkg_path:?}"
+    ));
+
+    let file =
+        std::fs::File::open(&nupkg_path).map_err(|e| format!("cannot open nupkg: {e}"))?;
+    let mut archive =
+        zip::ZipArchive::new(file).map_err(|e| format!("cannot read nupkg as zip: {e}"))?;
+
+    let prefix = std::path::Path::new("lib").join("app");
     let mut extracted = 0u32;
     for i in 0..archive.len() {
-        let mut entry = archive.by_index(i)
+        let mut entry = archive
+            .by_index(i)
             .map_err(|e| format!("zip entry {i}: {e}"))?;
-        let raw_name = entry.name().to_string();
-        if !raw_name.starts_with(prefix) {
-            continue;
-        }
-        let relative = &raw_name[prefix.len()..];
-        if relative.is_empty() {
+        // Zip-slip defense: enclosed_name() is None for any entry that would
+        // escape the archive root (absolute, drive-prefixed, or `..`).
+        let enclosed = match entry.enclosed_name() {
+            Some(p) => p,
+            None => {
+                log::error(&format!(
+                    "operation-server: skipping unsafe nupkg entry: {}",
+                    entry.name()
+                ));
+                continue;
+            }
+        };
+        let normalized = normalize_relative(&enclosed);
+        // Only the app payload under lib/app/ is extracted, into current/.
+        let relative = match normalized.strip_prefix(&prefix) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        if relative.as_os_str().is_empty() {
             continue;
         }
         let dest = current_dir.join(relative);
-        if raw_name.ends_with('/') {
+        if entry.is_dir() {
             let _ = std::fs::create_dir_all(&dest);
         } else {
             if let Some(parent) = dest.parent() {
@@ -304,7 +418,7 @@ fn find_and_extract_nupkg(packages_dir: &Path, current_dir: &Path) -> Result<Str
     }
 
     log::info(&format!("operation-server: extracted {extracted} files"));
-    Ok(version)
+    Ok(manifest.version.clone())
 }
 
 fn run() -> i32 {
@@ -391,7 +505,23 @@ fn run() -> i32 {
 
             let packages_dir = install_root.join("packages");
             let current_dir = install_root.join("current");
-            match find_and_extract_nupkg(&packages_dir, &current_dir) {
+            // §49 — fail-closed verification. The nupkg sits in the user-writable
+            // packages/ dir (install_acl::ensure_writable grants the install root
+            // write so the in-app updater works), so we re-verify it against the
+            // manifest Node wrote from Velopack's authenticated UpdateInfo BEFORE
+            // extracting + executing it. No manifest → no trust anchor → refuse.
+            let manifest = match read_apply_verify_manifest(&data_root) {
+                Ok(m) => m,
+                Err(e) => {
+                    log::error(&format!(
+                        "operation-server: cannot verify update ({e}) — refusing to extract"
+                    ));
+                    bg_stop.store(true, Ordering::SeqCst);
+                    delete_port_file(&data_root);
+                    return 4;
+                }
+            };
+            match find_and_extract_nupkg(&packages_dir, &current_dir, &manifest) {
                 Ok(ver) => log::info(&format!("operation-server: extracted {ver} into current/")),
                 Err(e) => {
                     log::error(&format!("operation-server: nupkg extraction failed: {e}"));
@@ -1065,5 +1195,213 @@ mod tests {
             }
             Err(_) => panic!("bind_with_probe should have found a free port"),
         }
+    }
+
+    #[test]
+    fn sha256_hex_of_file_matches_known_vector() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let p = tmp.path().join("abc.bin");
+        std::fs::write(&p, b"abc").expect("write");
+        // Canonical SHA-256("abc").
+        assert_eq!(
+            super::sha256_hex_of_file(&p).expect("hash"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
+    #[test]
+    fn read_apply_verify_manifest_parses_valid_json() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dir = tmp.path().join("control");
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        std::fs::write(
+            dir.join("apply-update-verify.json"),
+            r#"{"version":"0.1.30-beta.66","fileName":"WsScrcpyWeb-0.1.30-beta.66-full.nupkg","sha256":"ABCD1234"}"#,
+        )
+        .expect("write");
+        let m = super::read_apply_verify_manifest(tmp.path()).expect("parse");
+        assert_eq!(m.version, "0.1.30-beta.66");
+        assert_eq!(m.file_name, "WsScrcpyWeb-0.1.30-beta.66-full.nupkg");
+        assert_eq!(m.sha256, "ABCD1234");
+    }
+
+    #[test]
+    fn read_apply_verify_manifest_errors_when_absent() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        assert!(super::read_apply_verify_manifest(tmp.path()).is_err());
+    }
+
+    #[test]
+    fn read_apply_verify_manifest_errors_on_garbage() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dir = tmp.path().join("control");
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        std::fs::write(dir.join("apply-update-verify.json"), b"not json").expect("write");
+        assert!(super::read_apply_verify_manifest(tmp.path()).is_err());
+    }
+
+    /// Build a minimal nupkg (a zip) with the given (entry-name, bytes) pairs.
+    /// Entry names are written verbatim so a malicious `..` name can be tested.
+    fn build_nupkg(path: &std::path::Path, entries: &[(&str, &[u8])]) {
+        use std::io::Write;
+        let file = std::fs::File::create(path).expect("create nupkg");
+        let mut zw = zip::ZipWriter::new(file);
+        for (name, data) in entries {
+            zw.start_file(*name, zip::write::SimpleFileOptions::default())
+                .expect("start_file");
+            zw.write_all(data).expect("write entry");
+        }
+        zw.finish().expect("finish zip");
+    }
+
+    fn manifest(file_name: &str, sha256: &str, version: &str) -> super::ApplyVerifyManifest {
+        super::ApplyVerifyManifest {
+            version: version.to_string(),
+            file_name: file_name.to_string(),
+            sha256: sha256.to_string(),
+        }
+    }
+
+    #[test]
+    fn find_and_extract_nupkg_extracts_lib_app_and_returns_manifest_version() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let packages = tmp.path().join("packages");
+        let current = tmp.path().join("current");
+        std::fs::create_dir_all(&packages).expect("mkdir packages");
+        std::fs::create_dir_all(&current).expect("mkdir current");
+
+        let nupkg = packages.join("pkg-1.0.0-full.nupkg");
+        build_nupkg(
+            &nupkg,
+            &[
+                ("lib/app/index.js", b"console.log(1)"),
+                ("lib/app/sub/style.css", b"body{}"),
+                ("other/ignored.txt", b"nope"), // outside lib/app/ — must be skipped
+            ],
+        );
+        let sha = super::sha256_hex_of_file(&nupkg).expect("hash");
+        let m = manifest("pkg-1.0.0-full.nupkg", &sha, "9.9.9-from-manifest");
+
+        let ver = super::find_and_extract_nupkg(&packages, &current, &m).expect("extract");
+        // Version comes from the manifest, NOT the (attacker-influenceable) filename stem.
+        assert_eq!(ver, "9.9.9-from-manifest");
+        assert_eq!(
+            std::fs::read_to_string(current.join("index.js")).unwrap(),
+            "console.log(1)"
+        );
+        assert_eq!(
+            std::fs::read_to_string(current.join("sub").join("style.css")).unwrap(),
+            "body{}"
+        );
+        assert!(
+            !current.join("ignored.txt").exists(),
+            "entries outside lib/app/ must not be extracted"
+        );
+    }
+
+    #[test]
+    fn find_and_extract_nupkg_blocks_zip_slip_escape() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let packages = tmp.path().join("packages");
+        let current = tmp.path().join("current");
+        std::fs::create_dir_all(&packages).expect("mkdir packages");
+        std::fs::create_dir_all(&current).expect("mkdir current");
+
+        let nupkg = packages.join("pkg-1.0.0-full.nupkg");
+        // `lib/app/../escape.txt` → the insecure code joins `../escape.txt` onto
+        // current/, escaping into the install root. The fix must NOT write it.
+        build_nupkg(
+            &nupkg,
+            &[
+                ("lib/app/ok.txt", b"good"),
+                ("lib/app/../escape.txt", b"PWNED"),
+            ],
+        );
+
+        // Fixture sanity: confirm the malicious name survived the zip writer
+        // (some writers sanitize — that would invalidate this test).
+        {
+            let f = std::fs::File::open(&nupkg).unwrap();
+            let mut ar = zip::ZipArchive::new(f).unwrap();
+            let mut found = false;
+            for i in 0..ar.len() {
+                if ar.by_index(i).unwrap().name().contains("..") {
+                    found = true;
+                }
+            }
+            assert!(found, "fixture: malicious '..' entry did not survive zip write");
+        }
+
+        let sha = super::sha256_hex_of_file(&nupkg).expect("hash");
+        let m = manifest("pkg-1.0.0-full.nupkg", &sha, "1.0.0");
+
+        super::find_and_extract_nupkg(&packages, &current, &m).expect("extract");
+        // The good file lands; the escape file must NOT be written anywhere
+        // outside current/ (the insecure code wrote it to current/../escape.txt).
+        assert!(current.join("ok.txt").exists(), "normal entry should extract");
+        assert!(
+            !tmp.path().join("escape.txt").exists(),
+            "zip-slip entry escaped current/ — traversal not blocked"
+        );
+    }
+
+    #[test]
+    fn find_and_extract_nupkg_rejects_sha256_mismatch() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let packages = tmp.path().join("packages");
+        let current = tmp.path().join("current");
+        std::fs::create_dir_all(&packages).expect("mkdir packages");
+        std::fs::create_dir_all(&current).expect("mkdir current");
+
+        let nupkg = packages.join("pkg-1.0.0-full.nupkg");
+        build_nupkg(&nupkg, &[("lib/app/index.js", b"REAL")]);
+        let m = manifest("pkg-1.0.0-full.nupkg", &"0".repeat(64), "1.0.0");
+
+        let result = super::find_and_extract_nupkg(&packages, &current, &m);
+        assert!(result.is_err(), "must reject on SHA-256 mismatch");
+        assert!(
+            !current.join("index.js").exists(),
+            "fail-closed: nothing may be extracted on mismatch"
+        );
+    }
+
+    #[test]
+    fn find_and_extract_nupkg_ignores_unnamed_decoy_package() {
+        // Attack: a decoy *-full.nupkg is present but is NOT the package the
+        // verified manifest names. The old code picked the highest-versioned file
+        // in the dir; the fix selects strictly by manifest.file_name and refuses
+        // when that exact file is absent — never extracting the decoy.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let packages = tmp.path().join("packages");
+        let current = tmp.path().join("current");
+        std::fs::create_dir_all(&packages).expect("mkdir packages");
+        std::fs::create_dir_all(&current).expect("mkdir current");
+
+        build_nupkg(
+            &packages.join("zzz-9.9.9-full.nupkg"),
+            &[("lib/app/EVIL.js", b"pwn")],
+        );
+        let m = manifest("pkg-1.0.0-full.nupkg", &"0".repeat(64), "1.0.0"); // named pkg not on disk
+
+        assert!(super::find_and_extract_nupkg(&packages, &current, &m).is_err());
+        assert!(
+            !current.join("EVIL.js").exists(),
+            "a decoy package must never be extracted"
+        );
+    }
+
+    #[test]
+    fn find_and_extract_nupkg_rejects_non_bare_file_name() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let packages = tmp.path().join("packages");
+        let current = tmp.path().join("current");
+        std::fs::create_dir_all(&packages).expect("mkdir packages");
+        std::fs::create_dir_all(&current).expect("mkdir current");
+
+        build_nupkg(&packages.join("real-1.0.0-full.nupkg"), &[("lib/app/index.js", b"x")]);
+        // A traversal-shaped file_name is refused even though a valid package exists.
+        let m = manifest("../real-1.0.0-full.nupkg", &"0".repeat(64), "1.0.0");
+
+        assert!(super::find_and_extract_nupkg(&packages, &current, &m).is_err());
     }
 }
