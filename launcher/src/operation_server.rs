@@ -922,7 +922,9 @@ fn build_response(path: &str, redirect: Option<&str>, variant: OperationVariant)
     if path.starts_with("/api/") {
         if path == "/api/discover" {
             if let Some(url) = redirect {
-                let body = format!(r#"{{"status":"ready","redirect":"{url}"}}"#);
+                // §53 — encode via serde_json so the redirect is always
+                // escaped and the body stays valid JSON regardless of contents.
+                let body = serde_json::json!({ "status": "ready", "redirect": url }).to_string();
                 return format!(
                     "HTTP/1.1 200 OK\r\n\
                      Content-Type: application/json\r\n\
@@ -952,10 +954,9 @@ fn build_response(path: &str, redirect: Option<&str>, variant: OperationVariant)
         }
 
         if let Some(url) = redirect {
-            // Naive JSON string encoding — port-only URLs (http://localhost:NNNN/)
-            // contain no characters that need escaping. If the redirect ever
-            // grows beyond port-only, swap to a real JSON encoder.
-            let body = format!(r#"{{"error":null,"redirect":"{}"}}"#, url);
+            // §53 — encode via serde_json so the redirect is always escaped
+            // and the body stays valid JSON regardless of URL contents.
+            let body = serde_json::json!({ "error": null, "redirect": url }).to_string();
             return format!(
                 "HTTP/1.1 200 OK\r\n\
                  Content-Type: application/json\r\n\
@@ -1589,5 +1590,33 @@ mod tests {
             0,
             "guard must release the slot even when the handler panics"
         );
+    }
+
+    // ----- §53: redirect URL must be JSON-escaped in build_response -----
+    // The redirect string is interpolated into the /api JSON bodies. Today it
+    // is always a safe port-only URL, but raw string interpolation emits
+    // invalid JSON the moment it carries a quote/backslash. Encode via
+    // serde_json so the body is always valid JSON and the field round-trips.
+
+    #[test]
+    fn build_response_escapes_redirect_in_discover_ready_body() {
+        let evil = r#"http://localhost:8000/a"b\c"#;
+        let resp = super::build_response("/api/discover", Some(evil), super::OperationVariant::ApplyUpdate);
+        let body = resp.split("\r\n\r\n").nth(1).expect("response body");
+        let parsed: serde_json::Value =
+            serde_json::from_str(body).expect("discover body must be valid JSON");
+        assert_eq!(parsed["status"], "ready");
+        assert_eq!(parsed["redirect"], evil, "redirect must round-trip verbatim");
+    }
+
+    #[test]
+    fn build_response_escapes_redirect_in_api_redirect_body() {
+        let evil = r#"http://localhost:8000/a"b\c"#;
+        let resp = super::build_response("/api/config", Some(evil), super::OperationVariant::ApplyUpdate);
+        let body = resp.split("\r\n\r\n").nth(1).expect("response body");
+        let parsed: serde_json::Value =
+            serde_json::from_str(body).expect("api redirect body must be valid JSON");
+        assert!(parsed["error"].is_null());
+        assert_eq!(parsed["redirect"], evil, "redirect must round-trip verbatim");
     }
 }
