@@ -188,6 +188,44 @@ pub fn delete_port_file(data_root: &Path) {
     let _ = std::fs::remove_file(&path);
 }
 
+/// What to do after a single failed bind attempt in `bind_with_probe`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BindAttempt {
+    /// Advance to the next candidate port.
+    NextPort,
+    /// Wait, then retry the same port (transient contention).
+    RetrySamePort,
+    /// Stop probing and fail.
+    GiveUp,
+}
+
+/// Decide the next action after a failed bind. `in_use` = the error was
+/// `AddrInUse` (transient — the current holder may release the port);
+/// `has_more_ports` = a higher candidate port remains; `timed_out` = the
+/// per-port retry window has elapsed.
+///
+/// §54: a non-`AddrInUse` error (e.g. permission denied) is permanent for this
+/// port, so retrying the same port can never help — advance to the next port
+/// if one exists, otherwise give up immediately. Only `AddrInUse` waits and
+/// retries the same port. (The old code slept-and-retried every error kind on
+/// the same port for the full timeout, then gave up without trying the rest.)
+fn classify_bind_failure(in_use: bool, has_more_ports: bool, timed_out: bool) -> BindAttempt {
+    if has_more_ports {
+        // A higher port is available — advance regardless of error kind. For
+        // AddrInUse this is the old "try next" fast-path; for a permanent error
+        // it's the fix (don't burn the retry window on a dead port).
+        return BindAttempt::NextPort;
+    }
+    // Last candidate port.
+    if in_use && !timed_out {
+        // Transient contention, window still open — wait and retry this port.
+        BindAttempt::RetrySamePort
+    } else {
+        // Permanent error, or the retry window has elapsed — give up.
+        BindAttempt::GiveUp
+    }
+}
+
 pub fn bind_with_probe(
     start_port: u16,
     max_offset: u16,
@@ -203,27 +241,39 @@ pub fn bind_with_probe(
             match TcpListener::bind(("127.0.0.1", port)) {
                 Ok(listener) => return Ok((listener, port)),
                 Err(e) => {
-                    let is_in_use = e.kind() == std::io::ErrorKind::AddrInUse;
-                    if is_in_use && offset < max_offset {
-                        log::info(&format!(
-                            "operation-server: port {port} in use, trying next"
-                        ));
-                        break; // try next port
-                    }
-                    if bind_start.elapsed() >= retry_timeout {
-                        if is_in_use {
-                            log::error(&format!(
-                                "operation-server: all ports {start_port}..={} in use after {retry_timeout:?}",
-                                start_port.saturating_add(max_offset)
-                            ));
+                    let in_use = e.kind() == std::io::ErrorKind::AddrInUse;
+                    let has_more_ports = offset < max_offset;
+                    let timed_out = bind_start.elapsed() >= retry_timeout;
+                    match classify_bind_failure(in_use, has_more_ports, timed_out) {
+                        BindAttempt::NextPort => {
+                            if in_use {
+                                log::info(&format!(
+                                    "operation-server: port {port} in use, trying next"
+                                ));
+                            } else {
+                                log::info(&format!(
+                                    "operation-server: bind 127.0.0.1:{port} failed ({e}), trying next"
+                                ));
+                            }
+                            break; // try next port
+                        }
+                        BindAttempt::RetrySamePort => {
+                            thread::sleep(Duration::from_millis(BIND_RETRY_INTERVAL_MS));
+                        }
+                        BindAttempt::GiveUp => {
+                            if in_use {
+                                log::error(&format!(
+                                    "operation-server: all ports {start_port}..={} in use after {retry_timeout:?}",
+                                    start_port.saturating_add(max_offset)
+                                ));
+                            } else {
+                                log::error(&format!(
+                                    "operation-server: bind 127.0.0.1:{port} failed: {e}"
+                                ));
+                            }
                             return Err(3);
                         }
-                        log::error(&format!(
-                            "operation-server: bind 127.0.0.1:{port} failed after {retry_timeout:?}: {e}"
-                        ));
-                        return Err(3);
                     }
-                    thread::sleep(Duration::from_millis(BIND_RETRY_INTERVAL_MS));
                 }
             }
         }
@@ -1618,5 +1668,28 @@ mod tests {
             serde_json::from_str(body).expect("api redirect body must be valid JSON");
         assert!(parsed["error"].is_null());
         assert_eq!(parsed["redirect"], evil, "redirect must round-trip verbatim");
+    }
+
+    // ----- §54: bind_with_probe must not retry permanent errors on the same
+    // port -----
+    // The old loop slept-and-retried the SAME port for the full timeout on a
+    // permanent error (e.g. permission denied), then gave up WITHOUT trying the
+    // remaining ports. The decision is now a pure function: only AddrInUse
+    // (transient) waits on the same port; any other error advances immediately.
+
+    #[test]
+    fn classify_bind_failure_decision_table() {
+        use super::BindAttempt;
+        // AddrInUse + a higher port available → advance immediately.
+        assert!(matches!(super::classify_bind_failure(true, true, false), BindAttempt::NextPort));
+        // AddrInUse on the last port, window still open → wait + retry same port.
+        assert!(matches!(super::classify_bind_failure(true, false, false), BindAttempt::RetrySamePort));
+        // AddrInUse on the last port, window elapsed → give up.
+        assert!(matches!(super::classify_bind_failure(true, false, true), BindAttempt::GiveUp));
+        // Permanent error with ports left → advance (FIX: was retry-same-port).
+        assert!(matches!(super::classify_bind_failure(false, true, false), BindAttempt::NextPort));
+        // Permanent error on the last port → give up at once, no retry (FIX).
+        assert!(matches!(super::classify_bind_failure(false, false, false), BindAttempt::GiveUp));
+        assert!(matches!(super::classify_bind_failure(false, false, true), BindAttempt::GiveUp));
     }
 }
