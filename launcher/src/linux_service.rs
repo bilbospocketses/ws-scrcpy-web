@@ -144,44 +144,6 @@ pub fn bootstrap_target(opt_exists: bool, appimage_env: Option<&str>) -> Option<
     }
 }
 
-/// First column of each `loginctl list-sessions --no-legend` line = session id.
-pub fn parse_session_ids(list_output: &str) -> Vec<String> {
-    list_output.lines().filter_map(|l| l.split_whitespace().next()).map(str::to_string).collect()
-}
-
-/// uid of the session from a `loginctl show-session <id> -p Active -p Type -p User -p Display`
-/// block, IFF it is active AND graphical (x11/wayland). We don't need DISPLAY — the
-/// relaunched app is a server the browser reconnects to.
-pub fn active_graphical_uid_from_show(show_output: &str) -> Option<u32> {
-    let (mut active, mut kind, mut uid) = (false, String::new(), None::<u32>);
-    for line in show_output.lines() {
-        if let Some((k, v)) = line.split_once('=') {
-            match k.trim() {
-                "Active" => active = v.trim() == "yes",
-                "Type" => kind = v.trim().to_string(),
-                "User" => uid = v.trim().parse().ok(),
-                _ => {}
-            }
-        }
-    }
-    if active && (kind == "x11" || kind == "wayland") { uid } else { None }
-}
-
-/// `systemd-run --uid=<uid> --setenv=HOME=<home> --setenv=WS_SCRCPY_WEB_PORT=<port>
-/// --collect <appimage>` — relaunch the shared /opt binary AS the user, with HOME
-/// (mandatory — else data_root_for_linux panics) and the service's port (so the
-/// browser reconnects). No DISPLAY (it's a server). Pure.
-pub fn system_relaunch_command(systemd_run: &str, uid: u32, home: &str, web_port: u16, appimage: &str) -> Vec<String> {
-    vec![
-        systemd_run.to_string(),
-        format!("--uid={uid}"),
-        format!("--setenv=HOME={home}"),
-        format!("--setenv=WS_SCRCPY_WEB_PORT={web_port}"),
-        "--collect".to_string(),
-        appimage.to_string(),
-    ]
-}
-
 /// `systemd-run --user --collect [extra_setenv...] <target>` — relaunch a
 /// user-scope AppImage in its OWN transient unit (user-manager-owned cgroup) so
 /// it survives the caller's exit. `extra_setenv` carries any `--setenv=K=V`
@@ -295,29 +257,6 @@ pub(crate) fn tool_dir(tool: &str) -> String {
         }
     }
     "/usr/bin".to_string()
-}
-
-/// Best-effort: the active graphical session's uid via loginctl (absolute paths,
-/// Local-Deps). Pure parsers (P2-1) do the work; this is the exec seam.
-fn discover_active_graphical_uid() -> Option<u32> {
-    let loginctl = format!("{}/loginctl", tool_dir("loginctl"));
-    let list = std::process::Command::new(&loginctl).args(["list-sessions", "--no-legend"]).output().ok()?;
-    for id in parse_session_ids(&String::from_utf8_lossy(&list.stdout)) {
-        if let Ok(show) = std::process::Command::new(&loginctl)
-            .args(["show-session", &id, "-p", "Active", "-p", "Type", "-p", "User", "-p", "Display"]).output() {
-            if let Some(uid) = active_graphical_uid_from_show(&String::from_utf8_lossy(&show.stdout)) {
-                return Some(uid);
-            }
-        }
-    }
-    None
-}
-
-/// Resolve a uid's home dir from `getent passwd <uid>` (field 6). Absolute path.
-fn home_for_uid(uid: u32) -> Option<String> {
-    let getent = format!("{}/getent", tool_dir("getent"));
-    let out = std::process::Command::new(&getent).args(["passwd", &uid.to_string()]).output().ok()?;
-    String::from_utf8_lossy(&out.stdout).lines().next()?.split(':').nth(5).map(str::to_string)
 }
 
 /// A non-zero exit from a teardown step is benign — WARN, not ERROR — only for
@@ -540,34 +479,13 @@ fn run_install_handoff(scope: Scope, unit: &str) -> i32 {
         }
     }
     if scope == Scope::System {
-        // System scope: relaunch_target returns None (no home marker), so the
-        // user-scope block above is a no-op. Mirror the uninstall->relaunch path —
-        // discover the active graphical user and relaunch the /opt binary AS them
-        // (systemd-run --uid, NOT --user: this helper runs as root). Without this, a
-        // failed system install leaves the user with no app running.
-        let systemd_run = format!("{}/systemd-run", tool_dir("systemd-run"));
-        let appimage = "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage";
-        // #50: a root helper must relaunch only a genuine root-owned regular file
-        // at the fixed /opt path — refuse a symlinked or non-root-owned binary.
-        let target_ok = is_safe_relaunch_target(std::path::Path::new(appimage), true);
-        if !target_ok {
-            log::error("system relaunch: refusing — /opt binary is not a root-owned regular file");
-        }
-        let web_port = common::config::AppConfig::load(std::path::Path::new("/var/lib/ws-scrcpy-web")).web_port;
-        match (target_ok.then(discover_active_graphical_uid).flatten(), web_port) {
-            (Some(uid), Some(port)) => match home_for_uid(uid) {
-                Some(home) => {
-                    let argv = system_relaunch_command(&systemd_run, uid, &home, port, appimage);
-                    let (cmd, rest) = argv.split_first().expect("non-empty argv");
-                    match std::process::Command::new(cmd).args(rest).status() {
-                        Ok(s) => log::info(&format!("install-handoff rollback: relaunched {appimage} as uid {uid} on port {port} (exit {:?})", s.code())),
-                        Err(e) => log::error(&format!("install-handoff rollback: relaunch failed: {e}")),
-                    }
-                }
-                None => log::error(&format!("install-handoff rollback: no home for uid {uid}; skipping relaunch")),
-            },
-            _ => log::error("install-handoff rollback: no active graphical session / web port; admin can relaunch manually"),
-        }
+        // §D5-sibling — no auto-relaunch after a system-scope install rollback.
+        // The rollback teardown above `rm -rf`s BOTH /opt/ws-scrcpy-web and
+        // /var/lib/ws-scrcpy-web, so the /opt AppImage and the /var/lib web_port a
+        // relaunch would need are already gone here — the discover-uid +
+        // system_relaunch_command attempt could never fire (it always hit the
+        // manual-fallback arm). The admin re-launches their own AppImage.
+        log::error("install-handoff rollback: system install failed; admin can relaunch manually");
     }
     0
 }
@@ -735,29 +653,6 @@ mod tests {
         // server, never defer to a "live" port (which, during the install handoff, is
         // just the outgoing local instance). beta.56 self-defer regression guard.
         assert_eq!(service_defer_url(Some("system-service"), Some(8000), true, true), None);
-    }
-
-    #[test]
-    fn parses_session_ids_from_list() {
-        let list = "   3 1000 jamie seat0 tty2\n  c1 0 root  -    -\n";
-        assert_eq!(parse_session_ids(list), vec!["3".to_string(), "c1".to_string()]);
-    }
-
-    #[test]
-    fn active_graphical_uid_only_when_active_and_graphical() {
-        assert_eq!(active_graphical_uid_from_show("Active=yes\nType=wayland\nUser=1000\nDisplay="), Some(1000));
-        assert_eq!(active_graphical_uid_from_show("Active=yes\nType=x11\nUser=1001\nDisplay=:0"), Some(1001));
-        assert_eq!(active_graphical_uid_from_show("Active=no\nType=x11\nUser=1000\nDisplay=:0"), None);
-        assert_eq!(active_graphical_uid_from_show("Active=yes\nType=tty\nUser=1000\nDisplay="), None);
-    }
-
-    #[test]
-    fn system_relaunch_command_runs_as_user_on_service_port() {
-        assert_eq!(
-            system_relaunch_command("/usr/bin/systemd-run", 1000, "/home/jamie", 8000, "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"),
-            vec!["/usr/bin/systemd-run", "--uid=1000", "--setenv=HOME=/home/jamie",
-                 "--setenv=WS_SCRCPY_WEB_PORT=8000", "--collect", "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"]
-        );
     }
 
     #[test]
