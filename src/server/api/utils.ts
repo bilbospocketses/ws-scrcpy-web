@@ -1,5 +1,5 @@
 // biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
-import type { IncomingMessage } from 'http';
+import type { IncomingMessage, ServerResponse } from 'http';
 
 /**
  * Cap on request-body size. Every body this server reads (config patch, device
@@ -77,4 +77,56 @@ export async function readJsonBody(req: IncomingMessage, limit = MAX_BODY_BYTES)
         // fall through to {}
     }
     return {};
+}
+
+/** Thrown by `readJsonBodyStrict` when a non-empty body is not a JSON object. */
+export class InvalidJsonError extends Error {
+    constructor() {
+        super('request body is not a valid JSON object');
+        this.name = 'InvalidJsonError';
+    }
+}
+
+/**
+ * Strict sibling of `readJsonBody`: an empty body still resolves to `{}` (the
+ * caller validates required fields and 400s), but a non-empty body that is not a
+ * JSON object — parse failure, array, or primitive — throws `InvalidJsonError`,
+ * so the handler answers 400 instead of letting a raw `JSON.parse` throw bubble
+ * to a generic 500 (which also leaked the parser's message back to the client).
+ * Memory is bounded by `readBodyCapped`; an over-cap body rejects with
+ * `BodyTooLargeError`. (#72, #73)
+ */
+export async function readJsonBodyStrict<T extends Record<string, unknown> = Record<string, unknown>>(
+    req: IncomingMessage,
+    limit = MAX_BODY_BYTES,
+): Promise<T> {
+    const body = await readBodyCapped(req, limit);
+    if (body.length === 0) {
+        return {} as T;
+    }
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(body);
+    } catch {
+        throw new InvalidJsonError();
+    }
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+        return parsed as T;
+    }
+    throw new InvalidJsonError();
+}
+
+/**
+ * Write a generic `500` JSON response, guarding `res.headersSent` so a handler
+ * that already began streaming a response cannot trigger a "headers after sent"
+ * throw at a top-level catch (#74), and never echoing the internal error text
+ * back to the client. Callers should log the real error server-side first.
+ */
+export function sendInternalError(res: ServerResponse): void {
+    if (res.headersSent) {
+        res.end();
+        return;
+    }
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'internal error' }));
 }

@@ -7,7 +7,7 @@ import { Logger } from '../Logger';
 import { resolveMac } from '../network/MacResolver';
 import { detectSubnet } from '../network/SubnetDetector';
 import { assertDeletablePaths, shArg } from '../security/deviceInput';
-import { BodyTooLargeError, readBodyCapped } from './utils';
+import { BodyTooLargeError, InvalidJsonError, readJsonBodyStrict, sendInternalError } from './utils';
 
 const log = Logger.for('DeviceDiscoveryApi');
 
@@ -59,8 +59,11 @@ export class DeviceDiscoveryApi {
             }
 
             if (req.method === 'POST' && url === '/api/devices/connect') {
-                const body = await readBody(req);
-                const { address, serial, label } = JSON.parse(body);
+                const { address, serial, label } = await readJsonBodyStrict<{
+                    address?: string;
+                    serial?: string;
+                    label?: string;
+                }>(req);
                 if (!address) {
                     res.writeHead(400);
                     res.end(JSON.stringify({ error: 'address is required' }));
@@ -88,7 +91,7 @@ export class DeviceDiscoveryApi {
                         if (realSerial) {
                             DeviceLabelStore.getInstance().set(realSerial, label);
                         }
-                        const ip = address.split(':')[0];
+                        const ip = address.split(':')[0]!;
                         const mac = await resolveMac(ip);
                         if (mac) {
                             DeviceLabelStore.getInstance().set(mac, label);
@@ -104,8 +107,7 @@ export class DeviceDiscoveryApi {
             }
 
             if (req.method === 'POST' && url === '/api/devices/disconnect') {
-                const body = await readBody(req);
-                const { address } = JSON.parse(body);
+                const { address } = await readJsonBodyStrict<{ address?: string }>(req);
                 if (!address) {
                     res.writeHead(400);
                     res.end(JSON.stringify({ error: 'address is required' }));
@@ -134,8 +136,7 @@ export class DeviceDiscoveryApi {
             }
 
             if (req.method === 'POST' && url === '/api/devices/sleep-wake') {
-                const body = await readBody(req);
-                const { udid, action } = JSON.parse(body);
+                const { udid, action } = await readJsonBodyStrict<{ udid?: string; action?: string }>(req);
                 if (!udid || !action) {
                     res.writeHead(400);
                     res.end(JSON.stringify({ error: 'udid and action are required' }));
@@ -160,8 +161,7 @@ export class DeviceDiscoveryApi {
             }
 
             if (req.method === 'PUT' && url === '/api/devices/labels') {
-                const body = await readBody(req);
-                const { serial, label } = JSON.parse(body);
+                const { serial, label } = await readJsonBodyStrict<{ serial?: string; label?: string }>(req);
                 if (!serial) {
                     res.writeHead(400);
                     res.end(JSON.stringify({ error: 'serial is required' }));
@@ -179,8 +179,7 @@ export class DeviceDiscoveryApi {
             }
 
             if (req.method === 'POST' && url === '/api/devices/files/delete') {
-                const body = await readBody(req);
-                const { udid, paths } = JSON.parse(body);
+                const { udid, paths } = await readJsonBodyStrict<{ udid?: string; paths?: unknown }>(req);
                 if (!udid) {
                     res.writeHead(400);
                     res.end(JSON.stringify({ error: 'udid is required' }));
@@ -220,16 +219,14 @@ export class DeviceDiscoveryApi {
                 res.end(JSON.stringify({ error: 'request body too large' }));
                 return true;
             }
+            if (err instanceof InvalidJsonError) {
+                res.writeHead(400);
+                res.end(JSON.stringify({ error: 'invalid JSON body' }));
+                return true;
+            }
             log.error(`${req.method} ${req.url} threw: ${err?.message ?? String(err)}`);
-            res.writeHead(500);
-            res.end(JSON.stringify({ error: err.message }));
+            sendInternalError(res);
             return true;
         }
     }
-}
-
-function readBody(req: IncomingMessage): Promise<string> {
-    // Capped to bound memory on a hostile/oversized body (#22); handle()'s catch
-    // maps BodyTooLargeError to a 413.
-    return readBodyCapped(req);
 }

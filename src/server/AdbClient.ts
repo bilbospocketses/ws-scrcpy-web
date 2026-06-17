@@ -84,6 +84,24 @@ export function parseSerialFromMdnsName(name: string, service: string): string {
     return serial;
 }
 
+/**
+ * Parse `adb shell getprop` output (`[key]: [value]` lines) into a map. Uses a
+ * null-prototype object so device-controlled property names cannot collide with
+ * `Object.prototype` members — a plain `{}` would report inherited keys such as
+ * `toString` as present and is a prototype-pollution surface. (#78)
+ */
+export function parseGetProp(output: string): Record<string, string> {
+    const props: Record<string, string> = Object.create(null);
+    const regex = /\[(.+?)\]: \[(.*)]/g;
+    let match: RegExpExecArray | null;
+    while ((match = regex.exec(output)) !== null) {
+        if (match[1] !== undefined && match[2] !== undefined) {
+            props[match[1]] = match[2];
+        }
+    }
+    return props;
+}
+
 export class AdbClient {
     /**
      * Working directory for spawned adb processes. Set to the adb binary's

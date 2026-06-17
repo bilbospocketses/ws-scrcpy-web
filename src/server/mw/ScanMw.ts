@@ -58,6 +58,13 @@ export class ScanMw {
                     ScanMw.send(ws, { type: 'scan.error', reason: 'scan already in progress' });
                     return;
                 }
+                // The parsed message shape is untrusted (a cast over JSON.parse);
+                // guard `subnets` before iterating so a `{type:'scan.start'}` with a
+                // missing/non-array subnets can't throw an uncaught `for…of undefined`. (#75)
+                if (!Array.isArray(msg.subnets) || msg.subnets.some((s) => typeof s !== 'string')) {
+                    ScanMw.send(ws, { type: 'scan.error', reason: 'subnets must be an array of strings' });
+                    return;
+                }
                 const mdnsOnly = msg.mdnsOnly === true;
                 const parsed: ParsedSubnet[] = [];
                 const errors: { subnet: string; error: string }[] = [];

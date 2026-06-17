@@ -2,7 +2,14 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { describe, expect, it } from 'vitest';
-import { AdbClient, AdbExecError, DEFAULT_TIMEOUT_MS, parseMdnsOutput, parseSerialFromMdnsName } from '../AdbClient';
+import {
+    AdbClient,
+    AdbExecError,
+    DEFAULT_TIMEOUT_MS,
+    parseGetProp,
+    parseMdnsOutput,
+    parseSerialFromMdnsName,
+} from '../AdbClient';
 import { tempDir } from '../util/disposable';
 
 describe('parseMdnsOutput', () => {
@@ -178,5 +185,24 @@ describe('parseSerialFromMdnsName', () => {
 
     it('handles empty string', () => {
         expect(parseSerialFromMdnsName('', '_adb._tcp')).toBe('');
+    });
+});
+
+describe('parseGetProp', () => {
+    it('parses [key]: [value] lines into a map', () => {
+        const output = ['[ro.product.model]: [Pixel 7]', '[ro.serialno]: [ABC123]'].join('\n');
+        expect(parseGetProp(output)).toEqual({ 'ro.product.model': 'Pixel 7', 'ro.serialno': 'ABC123' });
+    });
+
+    it('captures empty property values', () => {
+        expect(parseGetProp('[init.svc.adbd]: []')).toEqual({ 'init.svc.adbd': '' });
+    });
+
+    it('uses a null-prototype map so device keys cannot inherit Object.prototype members (#78)', () => {
+        // A device that never reports `toString` must not appear to have one — a
+        // plain {} would inherit Object.prototype.toString as a non-own value.
+        const props = parseGetProp('[ro.x]: [1]');
+        expect(props['toString']).toBeUndefined();
+        expect(Object.getPrototypeOf(props)).toBeNull();
     });
 });

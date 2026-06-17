@@ -1,7 +1,15 @@
-import type { IncomingMessage } from 'node:http';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import { Readable } from 'node:stream';
-import { describe, expect, it } from 'vitest';
-import { BodyTooLargeError, MAX_BODY_BYTES, readBodyCapped, readJsonBody } from './utils';
+import { describe, expect, it, vi } from 'vitest';
+import {
+    BodyTooLargeError,
+    InvalidJsonError,
+    MAX_BODY_BYTES,
+    readBodyCapped,
+    readJsonBody,
+    readJsonBodyStrict,
+    sendInternalError,
+} from './utils';
 
 function reqFrom(chunks: Array<Buffer | string>): IncomingMessage {
     return Readable.from(chunks.map((c) => (typeof c === 'string' ? Buffer.from(c) : c))) as unknown as IncomingMessage;
@@ -41,5 +49,50 @@ describe('readJsonBody', () => {
 
     it('returns {} (best-effort) when the body exceeds the cap', async () => {
         expect(await readJsonBody(reqFrom([Buffer.alloc(2048, 0x61)]), 1024)).toEqual({});
+    });
+});
+
+describe('readJsonBodyStrict', () => {
+    it('parses a JSON object', async () => {
+        expect(await readJsonBodyStrict(reqFrom(['{"a":1}']))).toEqual({ a: 1 });
+    });
+
+    it('resolves to {} on an empty body (caller validates required fields and 400s)', async () => {
+        expect(await readJsonBodyStrict(reqFrom([]))).toEqual({});
+    });
+
+    it('throws InvalidJsonError on malformed JSON (so the handler can 400, not 500)', async () => {
+        await expect(readJsonBodyStrict(reqFrom(['not json']))).rejects.toBeInstanceOf(InvalidJsonError);
+    });
+
+    it('throws InvalidJsonError on a non-object payload (array or primitive)', async () => {
+        await expect(readJsonBodyStrict(reqFrom(['[1,2]']))).rejects.toBeInstanceOf(InvalidJsonError);
+        await expect(readJsonBodyStrict(reqFrom(['42']))).rejects.toBeInstanceOf(InvalidJsonError);
+    });
+
+    it('propagates BodyTooLargeError over the cap (distinct from a 400)', async () => {
+        await expect(readJsonBodyStrict(reqFrom([Buffer.alloc(2048, 0x61)]), 1024)).rejects.toBeInstanceOf(
+            BodyTooLargeError,
+        );
+    });
+});
+
+describe('sendInternalError', () => {
+    function mockRes(headersSent: boolean) {
+        return { headersSent, writeHead: vi.fn(), end: vi.fn() };
+    }
+
+    it('writes a generic 500 with no internal detail when headers are unsent', () => {
+        const res = mockRes(false);
+        sendInternalError(res as unknown as ServerResponse);
+        expect(res.writeHead).toHaveBeenCalledWith(500, { 'Content-Type': 'application/json' });
+        expect(JSON.parse(res.end.mock.calls[0]![0] as string)).toEqual({ error: 'internal error' });
+    });
+
+    it('does not writeHead again once headers were sent (avoids the double-writeHead throw)', () => {
+        const res = mockRes(true);
+        sendInternalError(res as unknown as ServerResponse);
+        expect(res.writeHead).not.toHaveBeenCalled();
+        expect(res.end).toHaveBeenCalledWith();
     });
 });

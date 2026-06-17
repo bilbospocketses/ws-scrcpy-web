@@ -4,6 +4,7 @@ import * as https from 'https';
 import path from 'path';
 import * as process from 'process';
 import { TypedEmitter } from '../../common/TypedEmitter';
+import { sendInternalError } from '../api/utils';
 import { Config } from '../Config';
 import { EnvName } from '../EnvName';
 import { createStaticHandler } from '../StaticFileServer';
@@ -181,9 +182,11 @@ export class HttpServer extends TypedEmitter<HttpServerEvents> implements Servic
                 }
                 if (fallback) fallback(req, res);
             };
-            tryHandlers().catch((err) => {
-                res.writeHead(500);
-                res.end(JSON.stringify({ error: err.message }));
+            tryHandlers().catch(() => {
+                // Last-resort guard for an unhandled rejection from a handler:
+                // emit a generic 500 (no internal detail) and skip re-`writeHead`
+                // if a handler already started streaming the response. (#74)
+                sendInternalError(res);
             });
         };
     }
