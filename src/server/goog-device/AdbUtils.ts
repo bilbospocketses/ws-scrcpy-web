@@ -83,8 +83,8 @@ export class AdbUtils {
             buf.writeUInt32LE(stat.mtime, 12);
             stream.send(buf);
             stream.close(1000);
-        } catch (error: any) {
-            const message = error?.message || 'stat failed';
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'stat failed';
             this.sendError(message, stream);
         }
     }
@@ -135,8 +135,8 @@ export class AdbUtils {
                 }
             }
             stream.close(0);
-        } catch (error: any) {
-            const message = error?.message || 'readdir failed';
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'readdir failed';
             this.sendError(message, stream);
         }
     }
@@ -165,8 +165,8 @@ export class AdbUtils {
             }
             stream.send(Buffer.from(AdbProtocol.DONE, 'ascii'));
             stream.close();
-        } catch (error: any) {
-            const message = error?.message || 'pull failed';
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'pull failed';
             this.sendError(message, stream);
         }
     }

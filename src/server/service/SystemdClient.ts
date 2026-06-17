@@ -66,6 +66,13 @@ const TRAY_AUTOSTART_FILE = 'ws-scrcpy-web-tray.desktop';
 
 /** Root-owned staging dir for the system-scope AppImage (SELinux bin_t — init_t can exec). */
 export const STAGED_SYSTEM_DIR = '/opt/ws-scrcpy-web';
+/**
+ * SELinux fcontext path spec for the staged `/opt` tree — the `(/.*)?` suffix
+ * matches the directory and everything beneath it. Shared by the machine-wide
+ * install script and the `--install-system-service` CLI so bin_t labeling
+ * targets an identical spec from both entry points. (#79)
+ */
+export const SYSTEM_FCONTEXT_SPEC = `${STAGED_SYSTEM_DIR}(/.*)?`;
 /** Stable, channel-agnostic filename for the staged system-scope AppImage. */
 export const STAGED_SYSTEM_APPIMAGE = 'WsScrcpyWeb.AppImage';
 /**
@@ -312,7 +319,7 @@ export function buildMachineWideInstallScript(
         // bin_t add + restorecon as INDEPENDENT `;`-separated steps (whole subshell
         // `|| true`) so neither a re-install's "already defined" nor the `-m`-to-
         // unchanged failure can short-circuit the restorecon (beta.61 #9 fix). No chcon.
-        `( ${semanage} fcontext -a -t bin_t '${STAGED_SYSTEM_DIR}(/.*)?' || ${semanage} fcontext -m -t bin_t '${STAGED_SYSTEM_DIR}(/.*)?' ; ${restorecon} -Rv "${STAGED_SYSTEM_DIR}" ) || true`,
+        `( ${semanage} fcontext -a -t bin_t '${SYSTEM_FCONTEXT_SPEC}' || ${semanage} fcontext -m -t bin_t '${SYSTEM_FCONTEXT_SPEC}' ; ${restorecon} -Rv "${STAGED_SYSTEM_DIR}" ) || true`,
         `( ${printf} '${desktop}\\n' > ${SYSTEM_DESKTOP_FILE} || true )`,
         `( ${updateDesktopDb} /usr/share/applications || true )`,
     ];

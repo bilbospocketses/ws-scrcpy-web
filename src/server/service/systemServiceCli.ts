@@ -12,6 +12,7 @@ import {
     STAGED_SYSTEM_APPIMAGE,
     STAGED_SYSTEM_DEPS_DIR,
     STAGED_SYSTEM_DIR,
+    SYSTEM_FCONTEXT_SPEC,
     SYSTEM_STATE_DIR,
 } from './SystemdClient';
 import { resolveSystemTool } from './systemTools';
@@ -38,7 +39,6 @@ export interface CoreDeps {
 
 const UNIT_PATH = `/etc/systemd/system/${WS_SCRCPY_SERVICE_NAME}.service`;
 const STAGED_BIN = `${STAGED_SYSTEM_DIR}/${STAGED_SYSTEM_APPIMAGE}`;
-const FCONTEXT_SPEC = `${STAGED_SYSTEM_DIR}(/.*)?`;
 
 function assertRoot(getuid: () => number): void {
     if (getuid() !== 0) {
@@ -88,7 +88,7 @@ export async function installSystemService(opts: { port: number }, d: CoreDeps):
     await d.run([mkdir, '-p', STAGED_SYSTEM_DEPS_DIR]);
     await d.run([cp, '-a', `${d.depsSource}/.`, `${STAGED_SYSTEM_DEPS_DIR}/`]);
 
-    await d.run([semanage, 'fcontext', '-a', '-t', 'bin_t', FCONTEXT_SPEC]);
+    await d.run([semanage, 'fcontext', '-a', '-t', 'bin_t', SYSTEM_FCONTEXT_SPEC]);
     await d.run([restorecon, '-R', STAGED_SYSTEM_DIR]);
     await d.run([restorecon, '-R', SYSTEM_STATE_DIR]);
 
@@ -128,7 +128,7 @@ export async function uninstallSystemService(
     await d.run([systemctl, 'disable', '--now', `${WS_SCRCPY_SERVICE_NAME}.service`]).catch(() => undefined);
     d.removeFile(UNIT_PATH);
     await d.run([systemctl, 'daemon-reload']);
-    await d.run([semanage, 'fcontext', '-d', FCONTEXT_SPEC]).catch(() => undefined);
+    await d.run([semanage, 'fcontext', '-d', SYSTEM_FCONTEXT_SPEC]).catch(() => undefined);
     await d.run([restorecon, '-R', STAGED_SYSTEM_DIR]).catch(() => undefined);
     await d.run([rm, '-rf', STAGED_SYSTEM_DIR]);
     if (opts.keepState) {

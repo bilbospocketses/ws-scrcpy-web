@@ -41,6 +41,9 @@ type State = 'idle' | 'scanning' | 'draining';
 export class NetworkScanner {
     private state: State = 'idle';
     private cancelFlag = false;
+    // Resolves `cancelSignal` (created per scan in start()) the moment cancel()
+    // fires, so the drain watcher reacts to an event instead of polling. (#77)
+    private resolveCancel: (() => void) | null = null;
     private spectators = new Set<WS | any>();
     private emittedAddresses = new Set<string>();
     private foundSoFar = 0;
@@ -85,6 +88,7 @@ export class NetworkScanner {
     cancel(): void {
         if (this.state !== 'scanning') return;
         this.cancelFlag = true;
+        this.resolveCancel?.();
     }
 
     async start(subnets: ParsedSubnet[], ws: WS | any, options?: { mdnsOnly?: boolean }): Promise<void> {
@@ -94,6 +98,11 @@ export class NetworkScanner {
         const mdnsOnly = options?.mdnsOnly === true;
         this.state = 'scanning';
         this.cancelFlag = false;
+        let resolveCancel!: () => void;
+        const cancelSignal = new Promise<void>((resolve) => {
+            resolveCancel = resolve;
+        });
+        this.resolveCancel = resolveCancel;
         this.emittedAddresses.clear();
         this.foundSoFar = 0;
         this.lastStartedMsg = null;
@@ -112,6 +121,7 @@ export class NetworkScanner {
             [Symbol.dispose]: (): void => {
                 this.state = 'idle';
                 this.cancelFlag = false;
+                this.resolveCancel = null;
             },
         };
 
@@ -147,14 +157,13 @@ export class NetworkScanner {
 
             const runPromise = this.runTracks(mdnsOnly ? [] : subnets, totalHosts, mdnsOnly);
 
-            // Watch for cancel flag: emit scan.draining as soon as it's set, while workers still in flight.
-            let drainWatcherDone = false;
+            // Emit scan.draining as soon as cancel fires, while workers are still in
+            // flight. Event-driven: race the run against the cancel signal rather than
+            // polling a flag on a fixed interval. (#77)
             const drainWatcher = (async () => {
-                while (!this.cancelFlag) {
-                    // Exit as soon as runTracks finishes (normal completion path)
-                    if (drainWatcherDone) return;
-                    await new Promise((r) => setTimeout(r, 10));
-                }
+                // `.catch` here only gives the race a non-rejecting view — runPromise's
+                // real rejection is still surfaced by `await runPromise` below.
+                await Promise.race([runPromise.catch(() => {}), cancelSignal]);
                 if (this.cancelFlag && this.state === 'scanning') {
                     this.state = 'draining';
                     this.emit({ type: 'scan.draining' });
@@ -165,7 +174,6 @@ export class NetworkScanner {
             // Snapshot cancel state BEFORE awaiting drainWatcher — any late cancel() after
             // workers completed shouldn't retroactively turn a successful scan into cancelled.
             const wasCancelled = this.cancelFlag;
-            drainWatcherDone = true;
             await drainWatcher;
 
             if (wasCancelled) {

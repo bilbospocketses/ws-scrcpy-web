@@ -48,13 +48,15 @@ export class WebsocketMultiplexer extends Mw {
 
     protected onChannel({ channel, data }: { channel: Multiplexer; data: ArrayBuffer }): void {
         let processed = false;
+        // The channel code + payload derive from `data` alone (loop-invariant), so
+        // decode once here instead of re-decoding inside every factory iteration. (#76)
+        const code = new TextDecoder().decode(Buffer.from(data).slice(0, 4));
+        const buffer = data.byteLength > 4 ? data.slice(4) : undefined;
         for (const mwFactory of WebsocketMultiplexer.mwFactories.values()) {
             // §25 — removed degenerate try { ... } finally { } wrapper. The
             // commented-out cleanup (this.mw.add/remove on channel close/error
             // events) is the intended-future-feature placeholder, not active
             // cleanup. No resource to dispose here today.
-            const code = new TextDecoder().decode(Buffer.from(data).slice(0, 4));
-            const buffer = data.byteLength > 4 ? data.slice(4) : undefined;
             const mw = mwFactory.processChannel(channel, code, buffer);
             if (mw) {
                 processed = true;
