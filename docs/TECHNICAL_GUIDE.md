@@ -1063,6 +1063,12 @@ The home page (`http://localhost:8000`) is a single-page view with three section
 | `--danger-hover-bg` | Hover fill for outlined red | `rgba(185, 28, 28, 0.1)` | `rgba(240, 108, 117, 0.1)` |
 | `--warning-color` | Outlined amber badges (`.dep-warn`) | `#b45309` | `#fbbf24` |
 | `--info-color` | Outlined blue badges (`.dep-info`) | `#0969da` | `#60a5fa` |
+| `--accent-color` | Primary interactive blue (input focus border, connect/primary buttons, file-browser selection, `:focus-visible` ring) | `#5b9aff` | `#5b9aff` |
+| `--accent-rgb` | RGB triplet for accent `rgba()` tints — `rgba(var(--accent-rgb), 0.1)` | `91, 154, 255` | `91, 154, 255` |
+| `--danger-rgb` | RGB triplet for danger `rgba()` tints | `185, 28, 28` | `240, 108, 117` |
+| `--success-rgb` | RGB triplet for success `rgba()` tints | `21, 128, 61` | `74, 222, 128` |
+| `--modal-divider` | 1px hairline divider in modals / list rows | `rgba(0, 0, 0, 0.08)` | `rgba(255, 255, 255, 0.08)` |
+| `--border-muted` | Muted border (e.g. the service-op spinner ring) | `rgba(0, 0, 0, 0.2)` | `rgba(255, 255, 255, 0.2)` |
 
 All action-button pairs on the home page (`.discovery-connect-btn` + `.discovery-dismiss-btn`; `.sleep-wake-btn.state-off` + `.state-on`; `.disconnect-btn`) use the outlined treatment — transparent bg, colored border + text — and pull their colors from `--success-color` / `--danger-color` so light mode gets legible contrast automatically. The status pills in the Dependencies section (`.dep-ok` / `.dep-warn` / `.dep-info` / `.dep-error` / `.dep-unknown`) use the same pattern, with the shared `.dep-badge` rule declaring `border: 0.5px solid currentColor; background: transparent;` — each status only needs to set its text color, and the border matches automatically via `currentColor`.
 
