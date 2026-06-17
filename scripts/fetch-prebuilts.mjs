@@ -6,10 +6,12 @@
 // Invoked by:
 //   - `npm run fetch-prebuilts` (explicit, air-gapped setups)
 //   - vitest.globalSetup.ts (before test runs)
-//   - the main server at boot (via resolveNodePty)
 //
-// The three callers share logic, but this script duplicates rather than
-// imports so it works on a fresh clone before `npm run build`.
+// NodePtyResolver (the server-boot path) does NOT use this script — it has its
+// own download routine (downloadAndOverlayPtyNode) with a non-overridable URL
+// base and a seed-derived version. This script intentionally duplicates the
+// download logic rather than importing it, so it works on a fresh clone before
+// `npm run build`.
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -18,9 +20,51 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const RELEASE_URL_BASE = process.env.WSSCRCPY_RELEASE_URL_BASE
-    ?? 'https://github.com/bilbospocketses/ws-scrcpy-web/releases/download';
 const DOWNLOAD_TIMEOUT_MS = 30_000;
+
+export const DEFAULT_RELEASE_URL_BASE =
+    'https://github.com/bilbospocketses/ws-scrcpy-web/releases/download';
+
+/**
+ * Resolve the release URL base for prebuilt downloads. WSSCRCPY_RELEASE_URL_BASE
+ * redirects the source of a NATIVE-BINARY download, so it is honored ONLY when
+ * the operator also sets the explicit opt-in WSSCRCPY_ALLOW_RELEASE_URL_OVERRIDE=1
+ * (air-gapped mirror setups). Without the opt-in any value is ignored and the
+ * canonical GitHub releases URL is used — a stray/injected env var cannot
+ * silently point the download at an attacker-controlled host.
+ */
+export function resolveReleaseUrlBase(env = process.env) {
+    const override = env.WSSCRCPY_RELEASE_URL_BASE;
+    const optedIn = env.WSSCRCPY_ALLOW_RELEASE_URL_OVERRIDE === '1';
+    if (override && optedIn) {
+        return { base: override, overridden: true, ignoredOverride: false };
+    }
+    return {
+        base: DEFAULT_RELEASE_URL_BASE,
+        overridden: false,
+        ignoredOverride: Boolean(override),
+    };
+}
+
+/**
+ * The node-pty version to fetch a prebuilt for, pinned to the lockfile-controlled
+ * copy installed in node_modules — NOT taken from the network manifest. The
+ * manifest's upstreamVersion tracks the LATEST upstream node-pty (a weekly cron)
+ * and can legitimately run ahead of this repo's pinned dependency, so trusting it
+ * could fetch a binary for a different node-pty than the JS we ship. Anchoring to
+ * the installed package.json keeps the download tied to a repo-controlled value.
+ */
+export function readInstalledNodePtyVersion(repoRoot) {
+    const pkgJsonPath = path.join(repoRoot, 'node_modules', 'node-pty', 'package.json');
+    if (!fs.existsSync(pkgJsonPath)) {
+        throw new Error(`node-pty is not installed at ${pkgJsonPath}; run \`npm install\` first`);
+    }
+    const json = JSON.parse(fs.readFileSync(pkgJsonPath, 'utf8'));
+    if (!json.version) {
+        throw new Error('installed node-pty package.json has no "version" field');
+    }
+    return json.version;
+}
 
 function detectLibc() {
     if (process.platform !== 'linux') return 'glibc';
@@ -72,6 +116,17 @@ async function main() {
     console.log(`[fetch-prebuilts] host: ${host.platform}-${host.arch}-${host.libc} abi=${host.nodeAbi}`);
     console.log(`[fetch-prebuilts] depsPath: ${depsPath}`);
 
+    const { base: RELEASE_URL_BASE, overridden, ignoredOverride } = resolveReleaseUrlBase();
+    if (overridden) {
+        console.warn(
+            `[fetch-prebuilts] WARNING: honoring overridden release URL base ${RELEASE_URL_BASE} (WSSCRCPY_ALLOW_RELEASE_URL_OVERRIDE=1)`,
+        );
+    } else if (ignoredOverride) {
+        console.warn(
+            '[fetch-prebuilts] WARNING: WSSCRCPY_RELEASE_URL_BASE is set but ignored; set WSSCRCPY_ALLOW_RELEASE_URL_OVERRIDE=1 to opt in. Using the canonical release URL.',
+        );
+    }
+
     const manifestUrl = `${RELEASE_URL_BASE}/node-pty-prebuilds-latest/manifest.json`;
     const manifestRes = await fetch(manifestUrl, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
     if (!manifestRes.ok) {
@@ -88,7 +143,12 @@ async function main() {
         process.exit(1);
     }
 
-    const version = manifest.upstreamVersion;
+    const version = readInstalledNodePtyVersion(path.resolve(__dirname, '..'));
+    if (manifest.upstreamVersion && manifest.upstreamVersion !== version) {
+        console.warn(
+            `[fetch-prebuilts] note: manifest upstreamVersion ${manifest.upstreamVersion} differs from installed node-pty ${version}; fetching the installed (pinned) version.`,
+        );
+    }
     const key = composePrebuiltKey(host, version);
     const libcSegment = host.platform === 'linux' ? `-${host.libc}` : '';
     const cacheDir = path.join(depsPath, 'node-pty', `v${version}`, `${host.platform}-${host.arch}${libcSegment}`);
@@ -131,7 +191,16 @@ async function main() {
     console.log(`[fetch-prebuilts] active location populated: ${activeDir}`);
 }
 
-main().catch((err) => {
-    console.error('[fetch-prebuilts] unexpected error:', err);
-    process.exit(1);
-});
+// Only run when invoked directly as a CLI (npm run fetch-prebuilts /
+// vitest.globalSetup's `node scripts/fetch-prebuilts.mjs`). Guarding this
+// lets the module be imported by unit tests without firing a network
+// download on import. Same idiom as scripts/assert-version-sync.mjs.
+if (
+    process.argv[1] &&
+    process.argv[1].replace(/\\/g, '/').endsWith('scripts/fetch-prebuilts.mjs')
+) {
+    main().catch((err) => {
+        console.error('[fetch-prebuilts] unexpected error:', err);
+        process.exit(1);
+    });
+}
