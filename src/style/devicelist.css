@@ -336,10 +336,10 @@ body.list #device_list_menu {
    (with gray cell borders) without an outer blue border around it. */
 #devices .device-list div.desc-block .action-button,
 #devices .device-list div.desc-block a {
-    border: 0.5px solid #5b9aff;
+    border: 0.5px solid var(--accent-color);
     border-radius: 6px;
     background-color: transparent;
-    color: #5b9aff;
+    color: var(--accent-color);
     text-decoration: none;
     padding: 0.15rem 0.5rem;
     font-family: var(--font-mono);
@@ -424,7 +424,7 @@ body.list #device_list_menu {
 
 #devices .device-name-input:focus {
     outline: none;
-    border-color: var(--accent-color, #5b9aff);
+    border-color: var(--accent-color);
 }
 
 a.link-stream .kind-icon {

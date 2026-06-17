@@ -183,7 +183,7 @@
 
 .discovery-name-input:focus {
     outline: none;
-    border-color: var(--accent-color, #5b9aff);
+    border-color: var(--accent-color);
 }
 
 .discovery-name-input::placeholder {
@@ -222,7 +222,7 @@
 
 .discovery-manual-form input[type="text"]:focus {
     outline: none;
-    border-color: var(--accent-color, #5b9aff);
+    border-color: var(--accent-color);
 }
 
 .discovery-manual-form input[type="text"]::placeholder {
@@ -383,8 +383,8 @@
 }
 
 .update-button-container.state-downloading {
-    color: #5b9aff; /* deep blue — matches .settings-btn-primary */
-    border-color: #5b9aff;
+    color: var(--accent-color); /* deep blue — matches .settings-btn-primary */
+    border-color: var(--accent-color);
 }
 
 .update-button-container.state-downloading:hover {

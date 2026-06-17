@@ -243,7 +243,7 @@ dialog.modal .modal-controls input:not([type="checkbox"]) {
 dialog.modal .modal-controls select:focus,
 dialog.modal .modal-controls input:focus {
     outline: none;
-    border-color: #5b9aff;
+    border-color: var(--accent-color);
 }
 
 dialog.modal .modal-controls input:disabled,
@@ -267,7 +267,7 @@ dialog.modal .modal-controls input[type="range"] {
     grid-column: controls;
     width: 100%;
     cursor: pointer;
-    accent-color: #5b9aff;
+    accent-color: var(--accent-color);
 }
 
 /* ── Advanced toggle ── */
@@ -361,7 +361,7 @@ dialog.modal .modal-advanced input[type="checkbox"] {
     width: 16px;
     height: 16px;
     cursor: pointer;
-    accent-color: #5b9aff;
+    accent-color: var(--accent-color);
 }
 
 [data-theme="light"] dialog.modal .modal-advanced select,
@@ -389,7 +389,7 @@ dialog.modal .modal-settings button {
     border: 0.5px solid var(--text-color, #ddd);
     border-radius: 6px;
     background: transparent;
-    color: #5b9aff;
+    color: var(--accent-color);
     padding: 6px 16px;
     cursor: pointer;
     white-space: nowrap;
@@ -439,7 +439,7 @@ dialog.modal .connect-btn {
     border: 0.5px solid var(--text-color, #ddd);
     border-radius: 6px;
     background: transparent;
-    color: #5b9aff;
+    color: var(--accent-color);
     padding: 6px 20px;
     cursor: pointer;
     white-space: nowrap;
@@ -655,7 +655,7 @@ dialog.settings-modal .settings-control .settings-radio-label {
  * radio is never `disabled` (Chromium desaturates accent-color on :disabled),
  * so this dot renders at full saturation in both the active and locked state. */
 dialog.settings-modal .settings-control .settings-radio-label input[type="radio"] {
-    accent-color: #5b9aff;
+    accent-color: var(--accent-color);
 }
 
 /*
@@ -701,7 +701,7 @@ dialog.settings-modal .settings-input {
 
 dialog.settings-modal .settings-input:focus {
     outline: none;
-    border-color: #5b9aff;
+    border-color: var(--accent-color);
 }
 
 [data-theme="light"] dialog.settings-modal .settings-input {
@@ -725,8 +725,8 @@ dialog.modal .settings-btn:disabled {
 }
 
 dialog.modal .settings-btn-primary {
-    color: #5b9aff;
-    border-color: #5b9aff;
+    color: var(--accent-color);
+    border-color: var(--accent-color);
 }
 
 dialog.modal .settings-btn-danger {
@@ -798,7 +798,7 @@ dialog.service-operation-modal .modal-body {
     width: 32px;
     height: 32px;
     border: 3px solid var(--border-muted, rgba(255, 255, 255, 0.2));
-    border-top-color: var(--accent, #5b9aff);
+    border-top-color: var(--accent-color);
     border-radius: 50%;
     margin: 0 auto 1rem;
     animation: service-op-spin 0.8s linear infinite;
