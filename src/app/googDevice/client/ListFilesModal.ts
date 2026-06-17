@@ -12,6 +12,7 @@ import FilePushHandler, { type DragAndPushListener, type PushUpdateParams } from
 import { ManagerClient } from '../../client/ManagerClient';
 import { attachFsChannelKeepAlive } from './fsChannelKeepAlive';
 import { basename, resolve } from '../../pathUtils';
+import { debugLog } from '../../util/debugLog';
 
 const TAG = '[ListFilesModal]';
 const ICON_SIZE_KEY = 'file-browser-icon-size';
@@ -454,13 +455,13 @@ export class ListFilesModal extends Modal implements DragAndPushListener {
         // Command sub-channels (STAT/LIST/RECV) are created on THIS channel.
         const initChannel = (): void => {
             const initData = this.getChannelInitData();
-            console.log(TAG, 'wsUrl:', this.wsUrl, 'mux readyState:', this.multiplexer?.readyState, 'sockets:', [...ManagerClient.sockets.keys()]);
+            debugLog(TAG, 'wsUrl:', this.wsUrl, 'mux readyState:', this.multiplexer?.readyState, 'sockets:', [...ManagerClient.sockets.keys()]);
             this.fsChannel = this.multiplexer!.createChannel(initData);
 
-            console.log(TAG, 'FSLS channel created, readyState:', this.fsChannel.readyState);
+            debugLog(TAG, 'FSLS channel created, readyState:', this.fsChannel.readyState);
 
             this.fsChannel.addEventListener('open', () => {
-                console.log(TAG, 'FSLS channel opened, readyState:', this.fsChannel?.readyState);
+                debugLog(TAG, 'FSLS channel opened, readyState:', this.fsChannel?.readyState);
                 // Set up upload handler (needs the FSLS channel for AdbkitFilePushStream)
                 const pushStream = new AdbkitFilePushStream(this.fsChannel!, this as any);
                 this.filePushHandler = new FilePushHandler(this.bodyEl, pushStream);
@@ -478,7 +479,7 @@ export class ListFilesModal extends Modal implements DragAndPushListener {
 
             this.fsChannel.addEventListener('close', (ev) => {
                 const ce = ev as CloseEvent;
-                console.log(TAG, 'FSLS channel closed, code:', ce.code, 'reason:', ce.reason);
+                debugLog(TAG, 'FSLS channel closed, code:', ce.code, 'reason:', ce.reason);
             });
         };
 
@@ -527,9 +528,9 @@ export class ListFilesModal extends Modal implements DragAndPushListener {
     }
 
     private loadDirectory(path: string): void {
-        console.log(TAG, 'loadDirectory:', path, 'fsChannel:', !!this.fsChannel, 'readyState:', this.fsChannel?.readyState);
+        debugLog(TAG, 'loadDirectory:', path, 'fsChannel:', !!this.fsChannel, 'readyState:', this.fsChannel?.readyState);
         if (!this.fsChannel || this.fsChannel.readyState !== this.fsChannel.OPEN) {
-            console.log(TAG, 'loadDirectory BAILED — fsChannel not ready');
+            debugLog(TAG, 'loadDirectory BAILED — fsChannel not ready');
             return;
         }
         this.showLoading();
@@ -551,9 +552,9 @@ export class ListFilesModal extends Modal implements DragAndPushListener {
     }
 
     private sendCommand(cmd: string, path: string, entry?: Entry, pathToLoadAfter = ''): void {
-        console.log(TAG, 'sendCommand:', cmd, path, 'fsChannel:', !!this.fsChannel, 'readyState:', this.fsChannel?.readyState);
+        debugLog(TAG, 'sendCommand:', cmd, path, 'fsChannel:', !!this.fsChannel, 'readyState:', this.fsChannel?.readyState);
         if (!this.fsChannel) {
-            console.log(TAG, 'sendCommand BAILED — no fsChannel');
+            debugLog(TAG, 'sendCommand BAILED — no fsChannel');
             return;
         }
 
@@ -570,7 +571,7 @@ export class ListFilesModal extends Modal implements DragAndPushListener {
         // (same pattern as FileListingClient.loadContent — this.ws.createChannel(payload))
         try {
             const channel = this.fsChannel.createChannel(payload);
-            console.log(TAG, 'Sub-channel created for', cmd, 'readyState:', channel.readyState);
+            debugLog(TAG, 'Sub-channel created for', cmd, 'readyState:', channel.readyState);
             this.channels.add(channel);
 
         const download: Download = {
@@ -600,7 +601,7 @@ export class ListFilesModal extends Modal implements DragAndPushListener {
                 this.entries = this.pendingEntries.slice();
                 this.pendingEntries = [];
                 this.currentPath = dl?.path ?? this.currentPath;
-                console.log(TAG, 'Channel closed: directory listing complete,', this.entries.length, 'entries for path:', this.currentPath);
+                debugLog(TAG, 'Channel closed: directory listing complete,', this.entries.length, 'entries for path:', this.currentPath);
                 this.applyFilterAndSort();
                 this.renderBreadcrumbs();
                 this.renderFileList();
@@ -619,7 +620,7 @@ export class ListFilesModal extends Modal implements DragAndPushListener {
     private handleReply(channel: Multiplexer, e: MessageEvent): void {
         const data = new Uint8Array(e.data);
         const reply = new TextDecoder('ascii').decode(data.subarray(0, 4));
-        console.log(TAG, 'handleReply:', reply, 'dataLen:', data.length);
+        debugLog(TAG, 'handleReply:', reply, 'dataLen:', data.length);
 
         switch (reply) {
             case Protocol.DENT: {
@@ -646,7 +647,7 @@ export class ListFilesModal extends Modal implements DragAndPushListener {
                     // Directory listing complete
                     this.entries = this.pendingEntries.slice();
                     this.pendingEntries = [];
-                    console.log(TAG, 'DONE: directory listing complete,', this.entries.length, 'entries for path:', download?.path);
+                    debugLog(TAG, 'DONE: directory listing complete,', this.entries.length, 'entries for path:', download?.path);
                     this.currentPath = download?.path ?? this.currentPath;
                     this.applyFilterAndSort();
                     this.renderBreadcrumbs();

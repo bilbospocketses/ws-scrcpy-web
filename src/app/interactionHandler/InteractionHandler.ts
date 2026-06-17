@@ -8,6 +8,7 @@ import type { BasePlayer } from '../player/BasePlayer';
 import type ScreenInfo from '../ScreenInfo';
 import Size from '../Size';
 import Util from '../Util';
+import { isPointerReleaseType } from './pointerRelease';
 
 interface Touch {
     action: number;
@@ -191,7 +192,10 @@ export abstract class InteractionHandler {
     protected static getPointerId(type: string, identifier: number): number {
         if (this.idToPointerMap.has(identifier)) {
             const pointerId = this.idToPointerMap.get(identifier) as number;
-            if (type === 'touchend' || type === 'touchcancel') {
+            // Release on touchend/touchcancel AND mouseup — the mouse path adds
+            // on mousedown (identifier 0) and previously never freed it, leaking
+            // the static maps on every mouse interaction. (#47)
+            if (isPointerReleaseType(type)) {
                 this.idToPointerMap.delete(identifier);
                 this.pointerToIdMap.delete(pointerId);
             }

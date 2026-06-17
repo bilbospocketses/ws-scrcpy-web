@@ -7,6 +7,7 @@ import MotionEvent from '../MotionEvent';
 import type { BasePlayer } from '../player/BasePlayer';
 import type ScreenInfo from '../ScreenInfo';
 import { type InteractionEvents, InteractionHandler, type KeyEventNames } from './InteractionHandler';
+import { shouldHandleMultiTouchKey } from './multiTouchKey';
 
 const TAG = '[FeaturedTouchHandler]';
 
@@ -184,11 +185,17 @@ export class FeaturedInteractionHandler extends InteractionHandler {
         if (!this.lastPosition) {
             return;
         }
+        const { ctrlKey, shiftKey } = event;
+        // The synthetic multi-touch gesture is gated on Ctrl/Shift; plain keys
+        // and held-key repeats can't change it. Bail early to avoid rebuilding
+        // a multi-touch event on every key (incl. auto-repeats). (#46)
+        if (!shouldHandleMultiTouchKey({ repeat: event.repeat, ctrlKey, shiftKey })) {
+            return;
+        }
         const screenInfo = this.player.getScreenInfo();
         if (!screenInfo) {
             return;
         }
-        const { ctrlKey, shiftKey } = event;
         const { target, button, buttons, clientY, clientX } = this.lastPosition;
         const type = InteractionHandler.SIMULATE_MULTI_TOUCH;
         const props = { ctrlKey, shiftKey, type, target, button, buttons, clientX, clientY };
