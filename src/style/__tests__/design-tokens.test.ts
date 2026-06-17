@@ -102,3 +102,38 @@ describe('status color tokens (danger / success)', () => {
         }
     });
 });
+
+describe('divider / border-muted tokens', () => {
+    it('defines --modal-divider and --border-muted in both themes', () => {
+        const appCss = readStyle('app.css');
+        expect(darkBlock(appCss)).toMatch(/--modal-divider\s*:/);
+        expect(lightBlock(appCss)).toMatch(/--modal-divider\s*:/);
+        expect(darkBlock(appCss)).toMatch(/--border-muted\s*:/);
+        expect(lightBlock(appCss)).toMatch(/--border-muted\s*:/);
+    });
+
+    it('has no hardcoded rgba(255,255,255,0.08) divider literal in consumers', () => {
+        for (const file of CONSUMER_CSS_FILES) {
+            expect(readStyle(file), `${file}: rgba(255,255,255,0.08)`).not.toMatch(
+                /rgba\(\s*255\s*,\s*255\s*,\s*255\s*,\s*0\.08\s*\)/,
+            );
+        }
+    });
+
+    it('removed the now-redundant light-theme divider overrides in modal + listfiles', () => {
+        // The --modal-divider token switches per theme, so the explicit
+        // [data-theme="light"] border-color overrides (rgba(0,0,0,0.08)) are gone.
+        // (first-run-banner.css uses rgba(0,0,0,0.08) as a background, not a divider — excluded.)
+        for (const file of ['modal.css', 'listfiles.css']) {
+            expect(readStyle(file), `${file}: leftover rgba(0,0,0,0.08) divider override`).not.toMatch(
+                /rgba\(\s*0\s*,\s*0\s*,\s*0\s*,\s*0\.08\s*\)/,
+            );
+        }
+    });
+
+    it('no longer references the --border-muted fallback literal', () => {
+        for (const file of CONSUMER_CSS_FILES) {
+            expect(readStyle(file), `${file}: var(--border-muted, …)`).not.toMatch(/var\(\s*--border-muted\s*,/);
+        }
+    });
+});

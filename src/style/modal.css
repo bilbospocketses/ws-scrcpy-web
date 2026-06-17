@@ -130,12 +130,8 @@ dialog.modal .modal-header {
     align-items: center;
     justify-content: space-between;
     padding: 0.75rem 1rem;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    border-bottom: 1px solid var(--modal-divider);
     flex-shrink: 0;
-}
-
-[data-theme="light"] dialog.modal .modal-header {
-    border-bottom-color: rgba(0, 0, 0, 0.08);
 }
 
 dialog.modal .modal-title {
@@ -190,12 +186,8 @@ dialog.modal .modal-footer {
     align-items: center;
     justify-content: space-between;
     padding: 0.75rem 1rem;
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    border-top: 1px solid var(--modal-divider);
     flex-shrink: 0;
-}
-
-[data-theme="light"] dialog.modal .modal-footer {
-    border-top-color: rgba(0, 0, 0, 0.08);
 }
 
 /* ── Controls grid (used by ConfigureScrcpy) ── */
@@ -273,13 +265,9 @@ dialog.modal .modal-controls input[type="range"] {
 /* ── Advanced toggle ── */
 dialog.modal .modal-advanced-separator {
     grid-column: 1 / -1;
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    border-top: 1px solid var(--modal-divider);
     margin-top: 0.5rem;
     padding-top: 0.5rem;
-}
-
-[data-theme="light"] dialog.modal .modal-advanced-separator {
-    border-top-color: rgba(0, 0, 0, 0.08);
 }
 
 dialog.modal .modal-advanced-toggle {
@@ -378,11 +366,7 @@ dialog.modal .modal-settings {
     justify-content: center;
     margin-top: 1rem;
     padding-top: 0.75rem;
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-[data-theme="light"] dialog.modal .modal-settings {
-    border-top-color: rgba(0, 0, 0, 0.08);
+    border-top: 1px solid var(--modal-divider);
 }
 
 dialog.modal .modal-settings button {
@@ -464,12 +448,8 @@ dialog.modal .shell-warning {
     padding: 4px 1rem;
     font-size: 11px;
     color: var(--danger-color);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    border-bottom: 1px solid var(--modal-divider);
     flex-shrink: 0;
-}
-
-[data-theme="light"] dialog.modal .shell-warning {
-    border-bottom-color: rgba(0, 0, 0, 0.08);
 }
 
 dialog.modal.shell-modal .modal-body {
@@ -546,11 +526,7 @@ dialog.settings-modal .modal-frame {
 
 dialog.settings-modal .settings-section {
     padding: 0.75rem 0;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-[data-theme="light"] dialog.settings-modal .settings-section {
-    border-bottom-color: rgba(0, 0, 0, 0.08);
+    border-bottom: 1px solid var(--modal-divider);
 }
 
 dialog.settings-modal .settings-section:last-child {
@@ -797,7 +773,7 @@ dialog.service-operation-modal .modal-body {
 .service-operation-spinner {
     width: 32px;
     height: 32px;
-    border: 3px solid var(--border-muted, rgba(255, 255, 255, 0.2));
+    border: 3px solid var(--border-muted);
     border-top-color: var(--accent-color);
     border-radius: 50%;
     margin: 0 auto 1rem;

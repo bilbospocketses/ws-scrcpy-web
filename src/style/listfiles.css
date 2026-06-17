@@ -60,14 +60,10 @@
     display: flex;
     align-items: center;
     padding: 6px 12px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    border-bottom: 1px solid var(--modal-divider);
     gap: 4px;
     overflow-x: auto;
     flex-shrink: 0;
-}
-
-[data-theme="light"] .list-files-breadcrumbs {
-    border-bottom-color: rgba(0, 0, 0, 0.08);
 }
 
 .list-files-breadcrumb-segment {
@@ -129,7 +125,7 @@
     display: flex;
     align-items: center;
     padding: 6px 12px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    border-bottom: 1px solid var(--modal-divider);
     font-size: 11px;
     color: rgba(255, 255, 255, 0.4);
     flex-shrink: 0;
@@ -141,7 +137,6 @@
 }
 
 [data-theme="light"] .list-files-header {
-    border-bottom-color: rgba(0, 0, 0, 0.08);
     color: rgba(0, 0, 0, 0.4);
     background: rgb(245, 248, 252);
 }
@@ -323,14 +318,10 @@
     display: flex;
     align-items: center;
     padding: 8px 12px;
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    border-top: 1px solid var(--modal-divider);
     flex-shrink: 0;
     gap: 8px;
     font-size: 12px;
-}
-
-[data-theme="light"] .list-files-footer {
-    border-top-color: rgba(0, 0, 0, 0.08);
 }
 
 .list-files-footer-actions {
