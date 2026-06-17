@@ -23,6 +23,7 @@ import VolumeUpSVG from '../../public/images/skin-light/ic_volume_up_678_48px.sv
 import BackSVG from '../../public/images/skin-light/System_Back_678.svg';
 import HomeSVG from '../../public/images/skin-light/System_Home_678.svg';
 import OverviewSVG from '../../public/images/skin-light/System_Overview_678.svg';
+import { removeSvgTitles } from './svgTitles';
 
 export enum Icon {
     BACK = 0,
@@ -114,10 +115,7 @@ export default class SvgImage {
         const dummy = document.createElement('div');
         dummy.innerHTML = this.getSvgString(type);
         const svg = dummy.children[0]!;
-        const titles = svg.getElementsByTagName('title');
-        for (let i = 0, l = titles.length; i < l; i++) {
-            svg.removeChild(titles[i]!);
-        }
+        removeSvgTitles(svg);
         return svg;
     }
 }

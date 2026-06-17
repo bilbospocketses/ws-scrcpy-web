@@ -112,6 +112,10 @@ export function parseAv1SequenceHeader(data: Uint8Array): Av1CodecInfo {
         }
     }
 
+    // max_frame_width/height from the sequence header. For AV1 the player prefers
+    // the container/metadata dimensions, so these are advisory on the AV1 path
+    // (the H.264/H.265 parsers do consume their parsed dimensions). Read rather
+    // than skipped so the bit cursor stays aligned for the fields that follow. (#88)
     const widthBits = reader.f(4) + 1;
     const heightBits = reader.f(4) + 1;
     const width = reader.f(widthBits) + 1;
@@ -186,7 +190,7 @@ function readLeb128(data: Uint8Array, pos: number): { value: number; newPos: num
     return { value, newPos: pos };
 }
 
-class Av1BitReader {
+export class Av1BitReader {
     private bitPos: number;
     private readonly data: Uint8Array;
 
@@ -211,8 +215,16 @@ class Av1BitReader {
 
     uvlc(): number {
         let leadingZeros = 0;
-        while (this.f(1) === 0) leadingZeros++;
-        if (leadingZeros >= 32) return (1 << 32) - 1;
-        return (1 << leadingZeros) - 1 + this.f(leadingZeros);
+        // Cap at 32: per the AV1 spec a uvlc with >= 32 leading zeros decodes to
+        // the 32-bit max, and the cap also bounds the read on a malformed all-zero
+        // stream. Use 2**n, not `1 << n` (which goes negative at n=31 and wraps to
+        // 0 at n=32). (#90)
+        while (leadingZeros < 32 && this.f(1) === 0) {
+            leadingZeros++;
+        }
+        if (leadingZeros >= 32) {
+            return 2 ** 32 - 1;
+        }
+        return 2 ** leadingZeros - 1 + this.f(leadingZeros);
     }
 }

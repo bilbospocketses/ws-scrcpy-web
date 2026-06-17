@@ -12,6 +12,10 @@ export interface ScrollControlMessageInterface extends ControlMessageInterface {
 
 export class ScrollControlMessage extends ControlMessage {
     public static PAYLOAD_LENGTH = 20;
+    // scrcpy desktop normalizes scroll ticks with /16; we use a larger divisor for
+    // slower, smoother scrolling over latent streams. Named so the two axes can't
+    // drift apart. (#94)
+    private static readonly SCROLL_DIVISOR = 128;
 
     constructor(
         readonly position: Position,
@@ -34,10 +38,9 @@ export class ScrollControlMessage extends ControlMessage {
      * @override
      */
     public override toUint8Array(): Uint8Array {
-        // Normalize scroll ticks to [-1, 1] then encode as i16 fixed-point
-        // scrcpy desktop uses /16; we use /128 for slower scrolling over latent streams
-        const hScrollNorm = Math.max(-1, Math.min(1, this.hScroll / 128));
-        const vScrollNorm = Math.max(-1, Math.min(1, this.vScroll / 128));
+        // Normalize scroll ticks to [-1, 1] then encode as i16 fixed-point.
+        const hScrollNorm = Math.max(-1, Math.min(1, this.hScroll / ScrollControlMessage.SCROLL_DIVISOR));
+        const vScrollNorm = Math.max(-1, Math.min(1, this.vScroll / ScrollControlMessage.SCROLL_DIVISOR));
         return new BinaryWriter(ScrollControlMessage.PAYLOAD_LENGTH + 1)
             .writeUInt8(this.type)
             .writeUInt32BE(this.position.point.x)

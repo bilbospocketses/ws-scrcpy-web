@@ -6,6 +6,7 @@ import Size from '../Size';
 import Util from '../Util';
 import VideoSettings from '../VideoSettings';
 import { AnimationFrameGuard } from './animationFrameGuard';
+import { stringArraysDiffer } from './statsDiff';
 
 interface BitrateStat {
     timestamp: number;
@@ -508,13 +509,7 @@ export abstract class BasePlayer extends TypedEmitter<PlayerEvents> {
         } else {
             newStats.push('Not supported');
         }
-        let changed = this.statLines.length !== newStats.length;
-        let i = 0;
-        while (!changed && i++ < newStats.length) {
-            if (newStats[i] !== this.statLines[i]) {
-                changed = true;
-            }
-        }
+        const changed = stringArraysDiffer(this.statLines, newStats);
 
         if (changed) {
             this.statLines = newStats;

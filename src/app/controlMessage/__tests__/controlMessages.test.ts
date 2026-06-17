@@ -28,6 +28,27 @@ describe('BinaryWriter', () => {
     });
 });
 
+describe('TouchControlMessage pressure clamping (#93)', () => {
+    // pressure is the UInt16BE at byte offset 22:
+    // type(1)+action(1)+ptrIdHi(4)+ptrIdLo(4)+x(4)+y(4)+w(2)+h(2) = 22
+    function pressureField(pressure: number): number {
+        const bytes = new TouchControlMessage(0, 0, pos(0, 0, 100, 100), pressure, 0, 0).toUint8Array();
+        return (bytes[22]! << 8) | bytes[23]!;
+    }
+
+    it('clamps pressure > 1 to the 16-bit max (0xffff), not a truncated wrap', () => {
+        expect(pressureField(2.0)).toBe(0xffff);
+    });
+
+    it('clamps negative pressure to 0', () => {
+        expect(pressureField(-1)).toBe(0x0000);
+    });
+
+    it('maps full pressure 1.0 to 0xffff', () => {
+        expect(pressureField(1.0)).toBe(0xffff);
+    });
+});
+
 describe('TouchControlMessage — scrcpy protocol match', () => {
     // scrcpy control_msg.c: sc_control_msg_serialize_inject_touch_event returns 32
     const SCRCPY_TOUCH_MSG_SIZE = 32;

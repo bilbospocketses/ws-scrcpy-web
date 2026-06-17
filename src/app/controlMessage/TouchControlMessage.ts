@@ -47,6 +47,9 @@ export class TouchControlMessage extends ControlMessage {
      * @override
      */
     public override toUint8Array(): Uint8Array {
+        // Clamp pressure to [0, 1] before scaling to the 16-bit field: a NaN or
+        // out-of-range force value would otherwise wrap or truncate silently. (#93)
+        const pressure = Number.isFinite(this.pressure) ? Math.min(1, Math.max(0, this.pressure)) : 0;
         return new BinaryWriter(TouchControlMessage.PAYLOAD_LENGTH + 1)
             .writeUInt8(this.type)
             .writeUInt8(this.action)
@@ -56,7 +59,7 @@ export class TouchControlMessage extends ControlMessage {
             .writeUInt32BE(this.position.point.y)
             .writeUInt16BE(this.position.screenSize.width)
             .writeUInt16BE(this.position.screenSize.height)
-            .writeUInt16BE(this.pressure * TouchControlMessage.MAX_PRESSURE_VALUE)
+            .writeUInt16BE(pressure * TouchControlMessage.MAX_PRESSURE_VALUE)
             .writeUInt32BE(this.actionButton)
             .writeUInt32BE(this.buttons)
             .toUint8Array();

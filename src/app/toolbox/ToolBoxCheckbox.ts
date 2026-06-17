@@ -1,5 +1,6 @@
 import SvgImage, { type Icon } from '../ui/SvgImage';
 import { type Optional, ToolBoxElement } from './ToolBoxElement';
+import { toInputId } from './toInputId';
 
 type Icons = {
     on?: Icon;
@@ -35,7 +36,7 @@ export class ToolBoxCheckbox extends ToolBoxElement<HTMLInputElement> {
             label.appendChild(this.imageOn);
             input.classList.add('two-images');
         }
-        const id = opt_id || title.toLowerCase().replace(' ', '_');
+        const id = opt_id || toInputId(title);
         label.htmlFor = input.id = `input_${id}`;
         this.input = input;
         this.label = label;
