@@ -91,6 +91,11 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
     // can skip rebuilding rows whose descriptor is unchanged (diff/patch instead
     // of clear-and-rebuild). Cleared on destroy with the row nodes.
     private lastRenderedByUdid: Map<string, string> = new Map();
+    // §34: coalescing guard for the now-async refresh. `refreshing` = a refresh
+    // is in flight; `refreshPending` = at least one more refresh was requested
+    // while it ran (collapsed into a single re-run).
+    private refreshing = false;
+    private refreshPending = false;
 
     protected constructor(
         params: ParamsDeviceTracker,
@@ -126,6 +131,30 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
     }
 
     /**
+     * §34: coalescing wrapper. refreshDeviceTable is async (it awaits the
+     * per-refresh row-context fetch), so rapid WS messages could otherwise
+     * interleave two diff passes over the same DOM. If a refresh is already in
+     * flight, mark a re-run pending and return; the in-flight pass loops once
+     * more after it finishes, capturing the latest descriptors. At most one
+     * extra pass runs no matter how many refreshes pile up while one is active.
+     */
+    protected async refreshDeviceTable(): Promise<void> {
+        if (this.refreshing) {
+            this.refreshPending = true;
+            return;
+        }
+        this.refreshing = true;
+        try {
+            do {
+                this.refreshPending = false;
+                await this.doRefreshDeviceTable();
+            } while (this.refreshPending);
+        } finally {
+            this.refreshing = false;
+        }
+    }
+
+    /**
      * §34: build the device list by DIFFING the existing DOM rows (keyed by
      * udid via data-udid) against this.descriptors rather than tearing the whole
      * block down and rebuilding every row on every WebSocket message:
@@ -140,7 +169,7 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
      * buildDeviceRow call — eliminating the prior per-row /api/devices/labels
      * request storm.
      */
-    protected async refreshDeviceTable(): Promise<void> {
+    private async doRefreshDeviceTable(): Promise<void> {
         const data = this.descriptors;
         const devices = this.getOrCreateTableHolder();
         const tbody = this.getOrBuildTableBody(devices);

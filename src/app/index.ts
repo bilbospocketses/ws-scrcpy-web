@@ -5,6 +5,7 @@ import '../style/home.css';
 import { shouldShowBookmark } from './client/bookmarkGate';
 import { DependencyPanel } from './client/DependencyPanel';
 import { FirstRunBanner } from './client/FirstRunBanner';
+import { onPageTeardown } from './util/onPageTeardown';
 import { HostTracker } from './client/HostTracker';
 import { NetworkDiscoveryPanel } from './client/NetworkDiscoveryPanel';
 import { createSettingsHeader } from './client/SettingsHeader';
@@ -290,7 +291,13 @@ window.onload = async (): Promise<void> => {
     pageContainer.className = 'page-container';
     document.body.appendChild(pageContainer);
 
+    // §36: capture the page-lifetime singletons so their polling intervals can
+    // be released on page teardown (see onPageTeardown below).
+    let firstRunBanner: FirstRunBanner | undefined;
+    let dependencyPanel: DependencyPanel | undefined;
+
     FirstRunBanner.create().then((banner) => {
+        firstRunBanner = banner;
         pageContainer.insertBefore(banner.getElement(), pageContainer.firstChild);
     });
 
@@ -314,7 +321,16 @@ window.onload = async (): Promise<void> => {
     pageContainer.appendChild(discoveryPanel.getElement());
 
     DependencyPanel.create().then((depPanel) => {
+        dependencyPanel = depPanel;
         pageContainer.appendChild(depPanel.getElement());
+    });
+
+    // §36: DependencyPanel + FirstRunBanner poll on intervals for the page
+    // lifetime; release them on teardown so the intervals don't keep firing into
+    // bfcache/unload. destroy() (= stopPolling) is idempotent.
+    onPageTeardown(() => {
+        firstRunBanner?.destroy();
+        dependencyPanel?.destroy();
     });
 
     HostTracker.start();
