@@ -22,10 +22,22 @@ pub(crate) fn scope_prefix(scope: Scope) -> Vec<String> {
     }
 }
 
+/// Resolve the invoking user's HOME for building user-scope (`$HOME/.config`)
+/// paths. Logs when HOME is unset rather than silently assuming `/root`: the
+/// fallback only applies when HOME is absent (typically running as root, where
+/// `/root` is in fact correct), so it stays a last resort but is no longer
+/// invisible. (#98)
+pub fn home_dir() -> String {
+    std::env::var("HOME").unwrap_or_else(|_| {
+        log::error("HOME unset; falling back to /root for user-scope path resolution");
+        "/root".to_string()
+    })
+}
+
 pub fn unit_path(scope: Scope, name: &str) -> PathBuf {
     match scope {
         Scope::User => {
-            let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
+            let home = home_dir();
             PathBuf::from(home)
                 .join(".config/systemd/user")
                 .join(format!("{name}.service"))

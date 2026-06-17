@@ -567,10 +567,10 @@ fn run() -> i32 {
             #[cfg(windows)]
             {
                 use std::os::windows::process::CommandExt;
-                const CREATE_NO_WINDOW_FLAG: u32 = 0x08000000;
+                use crate::win_util::CREATE_NO_WINDOW;
                 let _ = std::process::Command::new(r"C:\Windows\System32\taskkill.exe")
                     .args(["/F", "/IM", "ws-scrcpy-web-tray.exe", "/T"])
-                    .creation_flags(CREATE_NO_WINDOW_FLAG)
+                    .creation_flags(CREATE_NO_WINDOW)
                     .stdin(std::process::Stdio::null())
                     .stdout(std::process::Stdio::null())
                     .stderr(std::process::Stdio::null())
@@ -612,11 +612,10 @@ fn run() -> i32 {
             {
                 let launcher_path = current_dir.join("ws-scrcpy-web-launcher.exe");
                 use std::os::windows::process::CommandExt;
-                const DETACHED_PROCESS: u32 = 0x00000008;
-                const CREATE_NO_WINDOW_FLAG: u32 = 0x08000000;
+                use crate::win_util::{CREATE_NO_WINDOW, DETACHED_PROCESS};
                 match std::process::Command::new(&launcher_path)
                     .current_dir(&install_root)
-                    .creation_flags(DETACHED_PROCESS | CREATE_NO_WINDOW_FLAG)
+                    .creation_flags(DETACHED_PROCESS | CREATE_NO_WINDOW)
                     .stdin(std::process::Stdio::null())
                     .stdout(std::process::Stdio::null())
                     .stderr(std::process::Stdio::null())

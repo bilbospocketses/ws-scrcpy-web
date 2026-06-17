@@ -321,8 +321,7 @@ fn run_bootstrap(a: &UninstallArgs) -> i32 {
     // CREATE_NO_WINDOW gives no console window, and null stdio severs inherited
     // handles. The cleaner MUST outlive our std::process::exit(0) below; the
     // uninstall helper also runs outside any kill-on-job-close job.
-    const DETACHED_PROCESS: u32 = 0x0000_0008;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    use crate::win_util::{CREATE_NO_WINDOW, DETACHED_PROCESS};
 
     let pid = std::process::id();
 

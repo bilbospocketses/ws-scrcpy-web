@@ -23,8 +23,7 @@
 // grant either; first launch under beta.7 catches them).
 
 use anyhow::{Context, Result, bail};
-use std::ffi::OsStr;
-use std::os::windows::ffi::OsStrExt;
+use crate::win_util::to_wide;
 use std::path::Path;
 
 use windows::Win32::Foundation::CloseHandle;
@@ -32,15 +31,20 @@ use windows::Win32::System::Threading::{GetExitCodeProcess, INFINITE, WaitForSin
 use windows::Win32::UI::Shell::{SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW, ShellExecuteExW};
 use windows::core::PCWSTR;
 
-const SENTINEL_FILE_NAME: &str = ".ws-scrcpy-write-test";
+const SENTINEL_PREFIX: &str = ".ws-scrcpy-write-test";
 const ACL_SID_AUTH_USERS: &str = "*S-1-5-11";
 
-/// Test whether the running user can write to `path`. Creates and deletes
-/// a sentinel file. Velopack uses a similar test internally
-/// (`<root>/.velopack_dir_test`) — we use a distinct filename so concurrent
-/// self-tests don't race.
+/// Monotonic suffix so concurrent `is_writable` calls — even within one process
+/// — never collide on the sentinel filename. (#97)
+static SENTINEL_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Test whether the running user can write to `path`. Creates and deletes a
+/// sentinel file whose name is unique per call (pid + a monotonic counter), so
+/// two instances (or threads) probing the same path can't delete each other's
+/// sentinel mid-test and misreport writability. (#97)
 pub fn is_writable(path: &Path) -> bool {
-    let test_path = path.join(SENTINEL_FILE_NAME);
+    let seq = SENTINEL_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let test_path = path.join(format!("{SENTINEL_PREFIX}-{}-{seq}", std::process::id()));
     match std::fs::write(&test_path, b"") {
         Ok(()) => {
             let _ = std::fs::remove_file(&test_path);
@@ -135,13 +139,6 @@ fn run_icacls_elevated(install_root: &Path) -> Result<i32> {
     }
 }
 
-fn to_wide(s: &str) -> Vec<u16> {
-    OsStr::new(s)
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -157,8 +154,11 @@ mod tests {
     fn is_writable_does_not_leave_sentinel_behind() {
         let dir = tempdir().unwrap();
         is_writable(dir.path());
-        let sentinel = dir.path().join(SENTINEL_FILE_NAME);
-        assert!(!sentinel.exists(), "sentinel file should be cleaned up");
+        let leftover = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .any(|e| e.file_name().to_string_lossy().starts_with(SENTINEL_PREFIX));
+        assert!(!leftover, "sentinel file should be cleaned up");
     }
 
     #[test]

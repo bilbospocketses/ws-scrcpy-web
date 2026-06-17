@@ -30,6 +30,8 @@ mod system_service_cli;
 #[cfg(windows)]
 mod user_session_spawn;
 #[cfg(windows)]
+mod win_util;
+#[cfg(windows)]
 mod windows_app_uninstall;
 
 fn main() {

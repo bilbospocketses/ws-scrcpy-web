@@ -38,14 +38,7 @@
 #[cfg(windows)]
 mod imp {
     use anyhow::Result;
-    use std::ffi::OsStr;
-    use std::os::windows::ffi::OsStrExt;
-
-    /// Convert a Rust string to a null-terminated UTF-16 buffer suitable
-    /// for the W-suffixed Win32 APIs.
-    fn to_wide(s: &str) -> Vec<u16> {
-        OsStr::new(s).encode_wide().chain(std::iter::once(0)).collect()
-    }
+    use crate::win_util::to_wide;
 
     /// Returns true when the current process has an elevated token (i.e.
     /// "Run as administrator" was used). Internally queries the process
