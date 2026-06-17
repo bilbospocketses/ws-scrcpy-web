@@ -106,7 +106,7 @@ function extract(archivePath, outDir) {
         execFileSync(WINDOWS_TAR, ['-xf', archivePath, '-C', outDir], { stdio: 'inherit' });
     } else {
         log(`extracting via tar`);
-        execFileSync('tar', ['-xf', archivePath, '-C', outDir], { stdio: 'inherit' });
+        execFileSync('tar', ['-xf', archivePath, '-C', outDir, '--no-same-owner'], { stdio: 'inherit' });
     }
 }
 

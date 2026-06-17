@@ -28,7 +28,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -63,14 +63,24 @@ function readVersion() {
             err(`failed to parse package.json: ${e.message}`);
         }
     }
-    // Fallback: parse Cargo.toml workspace.package.version naively.
+    // Fallback: parse Cargo.toml's [workspace.package] version.
     const cargoPath = join(REPO_ROOT, 'Cargo.toml');
     if (existsSync(cargoPath)) {
-        const text = readFileSync(cargoPath, 'utf8');
-        const m = text.match(/^\s*version\s*=\s*"([^"]+)"/m);
-        if (m) return m[1];
+        const v = parseCargoWorkspaceVersion(readFileSync(cargoPath, 'utf8'));
+        if (v) return v;
     }
     throw new Error('Could not resolve a version from package.json or Cargo.toml');
+}
+
+/**
+ * Extract `version` from the `[workspace.package]` section of a Cargo.toml.
+ * Scoped to that section — not the first line-start `version =` anywhere — so a
+ * `version =` in an earlier section can't be grabbed by position. Returns null
+ * if absent. (#102)
+ */
+export function parseCargoWorkspaceVersion(tomlText) {
+    const m = tomlText.match(/\[workspace\.package\][^[]*?\bversion\s*=\s*"([^"]+)"/);
+    return m ? m[1] : null;
 }
 
 /** Verify `vpk` is callable on PATH. Returns true / false. */
@@ -167,9 +177,13 @@ function main() {
     log('AppImage packaging + runtime swap complete. Output under Releases/linux/.');
 }
 
-try {
-    main();
-} catch (e) {
-    err(`unexpected error: ${e.message}`);
-    process.exit(1);
+// Only run when invoked directly (`node scripts/package-linux.mjs`), not when
+// imported (e.g. by the unit test for parseCargoWorkspaceVersion). (#102)
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+    try {
+        main();
+    } catch (e) {
+        err(`unexpected error: ${e.message}`);
+        process.exit(1);
+    }
 }

@@ -11,9 +11,8 @@ const buildConfigDefinePlugin = new webpack.DefinePlugin({
     '__PATHNAME__': JSON.stringify('/'),
 });
 
-const pkgVersion: string = JSON.parse(
-    readFileSync(path.join(PROJECT_ROOT, 'package.json'), 'utf-8'),
-).version;
+const rootPkg = JSON.parse(readFileSync(path.join(PROJECT_ROOT, 'package.json'), 'utf-8'));
+const pkgVersion: string = rootPkg.version;
 
 const versionDefinePlugin = new webpack.DefinePlugin({
     '__WSSCRCPY_VERSION__': JSON.stringify(pkgVersion),
@@ -31,11 +30,11 @@ class GenerateDistPackageJsonPlugin {
                 () => {
                     const pkg = {
                         name: 'ws-scrcpy-web',
-                        version: '1.0.0',
+                        version: pkgVersion,
                         scripts: { start: 'node index.js' },
                         dependencies: {
-                            'node-pty': '^0.10.1',
-                            'ws': '^8.18.0',
+                            'node-pty': rootPkg.optionalDependencies?.['node-pty'] ?? rootPkg.dependencies?.['node-pty'],
+                            'ws': rootPkg.dependencies?.ws,
                         },
                     };
                     const content = JSON.stringify(pkg, null, 2);
