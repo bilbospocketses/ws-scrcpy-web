@@ -296,11 +296,11 @@
 }
 
 .list-files-action-delete {
-    color: #f06c75;
+    color: var(--danger-color);
 }
 
 .list-files-action-delete:hover {
-    background: rgba(240, 108, 117, 0.15);
+    background: rgba(var(--danger-rgb), 0.15);
 }
 
 /* ── Progress bar (in-row) ── */
@@ -315,7 +315,7 @@
 }
 
 .list-files-progress.error {
-    background: rgba(240, 108, 117, 0.15);
+    background: rgba(var(--danger-rgb), 0.15);
 }
 
 /* ── Footer ── */
@@ -359,11 +359,11 @@
 }
 
 .list-files-footer-btn.delete {
-    color: #f06c75;
+    color: var(--danger-color);
 }
 
 .list-files-footer-btn.delete:hover:not(:disabled) {
-    background: rgba(240, 108, 117, 0.1);
+    background: rgba(var(--danger-rgb), 0.1);
 }
 
 .list-files-footer-info {

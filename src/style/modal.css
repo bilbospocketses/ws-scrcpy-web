@@ -423,15 +423,15 @@ dialog.modal .status-text {
 }
 
 dialog.modal .status-text.status-probing {
-    color: #f06c75;
+    color: var(--danger-color);
 }
 
 dialog.modal .status-text.status-ready {
-    color: #4ade80;
+    color: var(--success-color);
 }
 
 dialog.modal .status-text.status-error {
-    color: #f06c75;
+    color: var(--danger-color);
 }
 
 /* ── Connect button (footer) ── */
@@ -463,7 +463,7 @@ dialog.modal.shell-modal .modal-frame {
 dialog.modal .shell-warning {
     padding: 4px 1rem;
     font-size: 11px;
-    color: #f06c75;
+    color: var(--danger-color);
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
     flex-shrink: 0;
 }
@@ -679,12 +679,12 @@ dialog.settings-modal .settings-control .settings-radio-label.settings-radio-loc
  * present (used in the Updates section's dual-purpose button).
  */
 dialog.modal .settings-btn.settings-btn-ready {
-    color: #4caf50;
-    border-color: #4caf50;
+    color: var(--success-color);
+    border-color: var(--success-color);
 }
 
 dialog.modal .settings-btn.settings-btn-ready:hover {
-    background: rgba(76, 175, 80, 0.08);
+    background: rgba(var(--success-rgb), 0.08);
 }
 
 dialog.settings-modal .settings-input {
@@ -730,13 +730,13 @@ dialog.modal .settings-btn-primary {
 }
 
 dialog.modal .settings-btn-danger {
-    color: #ff6b6b;
-    border-color: #ff6b6b;
+    color: var(--danger-color);
+    border-color: var(--danger-color);
 }
 
 dialog.modal .settings-btn-danger-outline {
-    color: #f06c75;
-    border-color: #f06c75;
+    color: var(--danger-color);
+    border-color: var(--danger-color);
     background: transparent;
 }
 
@@ -754,17 +754,17 @@ dialog.settings-modal .settings-status {
 }
 
 dialog.settings-modal .settings-status-error {
-    color: var(--error-color, #ff6b6b);
+    color: var(--danger-color);
 }
 
 /*
  * Status text turns green when an update is ready to apply, mirroring
- * the .settings-btn-ready button color (#4caf50) so the description
+ * the .settings-btn-ready button color (var(--success-color)) so the description
  * and action visually pair — "update: vX.Y.Z" + green "apply update"
  * button reinforce one another.
  */
 dialog.settings-modal .settings-status-ready {
-    color: #4caf50;
+    color: var(--success-color);
 }
 
 dialog.settings-modal .settings-stub-note {

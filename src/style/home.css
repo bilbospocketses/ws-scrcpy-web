@@ -270,18 +270,18 @@
 
 .discovery-manual-result.error,
 .discovery-card-result.error {
-    color: #f87171;
+    color: var(--danger-color);
 }
 
 .discovery-manual-result.success,
 .discovery-card-result.success {
-    color: #4ade80;
+    color: var(--success-color);
 }
 
 .dep-ok-btn {
     background: #1a3a1a !important;
     border-color: #2a5a2a !important;
-    color: #4ade80 !important;
+    color: var(--success-color) !important;
 }
 
 .discovery-connect-btn {
@@ -392,16 +392,16 @@
 }
 
 .update-button-container.state-ready {
-    color: var(--success-color, #4ade80);
-    border-color: var(--success-color, #4ade80);
+    color: var(--success-color);
+    border-color: var(--success-color);
     cursor: pointer;
 }
 
 .update-button-container.state-ready:hover {
-    background: var(--success-hover-bg, rgba(74, 222, 128, 0.12));
+    background: var(--success-hover-bg);
 }
 
 .update-button-container.state-error {
-    color: var(--danger-color, #ff6b6b);
-    border-color: var(--danger-color, #ff6b6b);
+    color: var(--danger-color);
+    border-color: var(--danger-color);
 }

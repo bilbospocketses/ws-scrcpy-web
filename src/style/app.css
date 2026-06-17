@@ -37,6 +37,8 @@
     --progress-background-error-color: rgba(255, 50, 50, 0.2);
     --accent-color: #5b9aff;
     --accent-rgb: 91, 154, 255;
+    --danger-rgb: 240, 108, 117;
+    --success-rgb: 74, 222, 128;
 }
 
 /* Light theme */
@@ -70,6 +72,8 @@
     --progress-background-error-color: rgba(255, 50, 50, 0.2);
     --accent-color: #5b9aff;
     --accent-rgb: 91, 154, 255;
+    --danger-rgb: 185, 28, 28;
+    --success-rgb: 21, 128, 61;
 }
 
 html {
