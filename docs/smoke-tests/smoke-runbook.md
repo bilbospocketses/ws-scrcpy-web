@@ -1,10 +1,10 @@
 # ws-scrcpy-web — Smoke Test Runbook (plain-English)
 
-> **Smoke target: `v0.1.30-beta.64`** — bump this one line each release; everything below is version-agnostic.
+> **Smoke target: `v0.1.30-beta.66`** — bump this one line each release; everything below is version-agnostic.
 
 **What this is.** A step-by-step manual test pass for the **ws-scrcpy-web** app. Completing it is the agreed gate before cutting the **0.1.30 final** release — the "prove it really installs, updates, and streams on Windows + Linux" check. You run it by hand on your test VMs plus a real Android device; it can't be automated from a chat.
 
-**Source of truth.** This is the plain-English twin of `docs/smoke-tests/smoke-full.md` in the repo. Same 76 tests, jargon spelled out, laid out as fixed-width tables you can keep open and tick through. If the two ever disagree, **the repo doc wins** — tell me and I'll re-sync this one.
+**Source of truth.** This is the plain-English twin of `docs/smoke-tests/smoke-full.md` in the repo. The same tests as the repo doc, jargon spelled out, laid out as fixed-width tables you can keep open and tick through. If the two ever disagree, **the repo doc wins** — tell me and I'll re-sync this one.
 
 ## How to use this runbook
 
@@ -371,17 +371,21 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 │ Test                 │ OS   │ Do this                      │ Pass - what you should see                       │ Done │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
 │ 7.1 Connect over     │ Both │ Home > "scan/connect" > type │ adb connects; the device card shows under        │ [ ]  │
-│ Wi-Fi                │      │ the device ip:port (or scan  │ "connected devices" within ~5s.                  │      │
-│                      │      │ a subnet).                   │                                                  │      │
+│ Wi-Fi                │      │ the device ip:port (or scan a│ "connected devices" within ~5s.                  │      │
+│                      │      │ subnet).                     │                                                  │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
 │ 7.2 Scan a subnet    │ Both │ Open the scan-network dialog │ Reachable devices are listed; picking one        │ [ ]  │
 │                      │      │ and scan a subnet.           │ connects; a bad/empty subnet is handled          │      │
 │                      │      │                              │ gracefully (no hang).                            │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
-│ 7.3 USB device       │ Win  │ Plug in a USB Android        │ It appears under connected devices and survives  │ [ ]  │
-│ (Windows)            │      │ device; approve the "allow   │ a page reload.                                   │      │
-│                      │      │ debugging" prompt on the     │                                                  │      │
-│                      │      │ phone.                       │                                                  │      │
+│ 7.3 USB device       │ Win  │ Plug in a USB Android device;│ It appears under connected devices and survives a│ [ ]  │
+│ (Windows)            │      │ approve the "allow debugging"│ page reload.                                     │      │
+│                      │      │ prompt on the phone.         │                                                  │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 7.4 List updates in  │ Both │ Connect, rename, and         │ Rows update in place (diffed by device id) — no  │ [ ]  │
+│ place                │      │ disconnect a few devices;    │ whole-list flicker; labels load once per refresh,│      │
+│                      │      │ watch the connected-devices  │ not once per row; changes show within ~1s.       │      │
+│                      │      │ list.                        │ (beta.66 perf)                                   │      │
 └──────────────────────┴──────┴──────────────────────────────┴──────────────────────────────────────────────────┴──────┘
 ```
 
@@ -393,19 +397,25 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 │ Test                 │ OS   │ Do this                      │ Pass - what you should see                       │ Done │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
 │ 8.1 Video            │ Both │ Click a device > open the    │ Live video plays smoothly; no decode errors in   │ [ ]  │
-│                      │      │ stream dialog > connect.     │ the browser console.                             │      │
+│                      │      │ stream dialog > connect; then│ the console. The video cell fills its area with  │      │
+│                      │      │ resize the window.           │ the correct aspect ratio (no stretch/overflow)   │      │
+│                      │      │                              │ and rescales on resize keeping aspect. (beta.66  │      │
+│                      │      │                              │ #106)                                            │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
 │ 8.2 Control          │ Both │ In the stream,               │ Your touches and keystrokes reach the device;    │ [ ]  │
-│                      │      │ click/scroll/type and use    │ navigation works.                                │      │
-│                      │      │ the on-screen buttons.       │                                                  │      │
+│                      │      │ click/scroll/type and use the│ navigation works.                                │      │
+│                      │      │ on-screen buttons.           │                                                  │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
 │ 8.3 Audio            │ Both │ Turn on audio in the stream  │ Audio plays; the codec/source toggles work.      │ [ ]  │
-│                      │      │ settings (needs Android      │                                                  │      │
-│                      │      │ 11+).                        │                                                  │      │
+│                      │      │ settings (needs Android 11+).│                                                  │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
 │ 8.4 Quality settings │ Both │ Change                       │ Changes take effect; the stream restarts with    │ [ ]  │
-│                      │      │ display/codec/encoder/fps/bi │ them; they're remembered per-device next time.   │      │
-│                      │      │ trate, then reconnect.       │                                                  │      │
+│                      │      │ display/codec/encoder/fps/bit│ them; they're remembered per-device next time.   │      │
+│                      │      │ rate, then reconnect.        │                                                  │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 8.5 H.265 (HEVC)     │ Both │ Set the video codec to       │ Both codecs decode and render in-browser         │ [ ]  │
+│ decode               │      │ H.265/HEVC, connect; then    │ (WebCodecs) — live frames, no decode errors.     │      │
+│                      │      │ repeat with H.264.           │ Confirms the owed real-browser H.265 check. (#41)│      │
 └──────────────────────┴──────┴──────────────────────────────┴──────────────────────────────────────────────────┴──────┘
 ```
 
@@ -421,8 +431,11 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 │                      │      │ a couple commands.           │ shell).                                          │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
 │ 9.2 Files            │ Both │ Device > file-list dialog >  │ The listing loads; the icon-size choice sticks;  │ [ ]  │
-│                      │      │ browse, change the icon      │ transfers work.                                  │      │
-│                      │      │ size, push and pull a file.  │                                                  │      │
+│                      │      │ browse, change the icon size,│ transfers work. The console stays quiet —        │      │
+│                      │      │ push and pull a file — with  │ file-listing protocol traces are gated behind the│      │
+│                      │      │ the browser console open.    │ 'ws-scrcpy-web-debug' localStorage flag (set it  │      │
+│                      │      │                              │ to 'true' to see the [ListFiles] traces).        │      │
+│                      │      │                              │ (beta.66)                                        │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
 │ 9.3 Device buttons   │ Both │ Use sleep/wake and any       │ Buttons show the right state (green/red); the    │ [ ]  │
 │                      │      │ power/nav buttons on the     │ actions actually happen on the device.           │      │
@@ -437,20 +450,32 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 │ Test                 │ OS   │ Do this                      │ Pass - what you should see                       │ Done │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
 │ 10.1 Status endpoint │ Both │ Open                         │ Returns JSON with the right platform, supported, │ [ ]  │
-│                      │      │ http://localhost:<port>/api/ │ and status fields.                               │      │
-│                      │      │ service/status in a browser. │                                                  │      │
+│                      │      │ http://localhost:<port>/api/s│ and status fields.                               │      │
+│                      │      │ ervice/status in a browser.  │                                                  │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
 │ 10.2 Windows logs    │ Win  │ Tail launcher.log +          │ No ERR / Error: lines, apart from the known      │ [ ]  │
 │ clean                │      │ ws-scrcpy-web.log under      │ harmless node-pty "AttachConsole" noise.         │      │
-│                      │      │ ProgramData\WsScrcpyWeb\logs │ server.log / service.log are thin crash-catchers │      │
-│                      │      │ during use (canonical logs). │ — normal lines live in the canonical files; a    │      │
-│                      │      │                              │ .1 backup may appear; all files are tail-able.   │      │
+│                      │      │ ProgramData\WsScrcpyWeb\logs │ server.log / service.log are thin crash-catchers;│      │
+│                      │      │ during use (canonical logs). │ a .1 backup may appear; all files are tail-able. │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
-│ 10.3 Linux logs      │ Lin  │ Tail launcher.log +          │ No error spam; shutdown messages appear when you │ [ ]  │
-│ clean                │      │ ws-scrcpy-web.log under      │ stop the app. server.log / service.log are thin  │      │
-│                      │      │ ~/.local/share/.../logs (or  │ crash-catchers; a .1 backup may appear; all      │      │
-│                      │      │ /var/lib/.../logs for        │ files are tail-able.                             │      │
-│                      │      │ system installs).            │                                                  │      │
+│ 10.3 Linux logs clean│ Lin  │ Tail launcher.log +          │ No error spam; shutdown messages appear when you │ [ ]  │
+│                      │      │ ws-scrcpy-web.log under      │ stop the app. server.log / service.log are thin  │      │
+│                      │      │ ~/.local/share/.../logs (or  │ crash-catchers; a .1 backup may appear; all files│      │
+│                      │      │ /var/lib/.../logs for system │ are tail-able.                                   │      │
+│                      │      │ installs).                   │                                                  │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 10.4 Token /         │ Both │ With the app open, restart   │ After a restart the open tab must be reloaded to │ [ ]  │
+│ reload-on-restart    │      │ the server (change web port >│ reconnect — a new per-instance token is minted   │      │
+│                      │      │ save, or stop & relaunch).   │ each boot (SameSite=Strict, HttpOnly cookie). A  │      │
+│                      │      │ Separately, curl             │ cookie-less curl is rejected on the sensitive    │      │
+│                      │      │ /api/service/status with no  │ API. Normal browser use is unchanged. (beta.66   │      │
+│                      │      │ cookie.                      │ security)                                        │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 10.5 404 + security  │ Both │ curl -I a missing asset path │ A missing asset / unknown API path returns 404   │ [ ]  │
+│ headers              │      │ and /, then load a deep      │ (not the HTML shell); an in-app route still      │      │
+│                      │      │ in-app route in the browser  │ serves the shell. Static responses carry         │      │
+│                      │      │ and refresh.                 │ X-Content-Type-Options: nosniff and              │      │
+│                      │      │                              │ X-Frame-Options: SAMEORIGIN. (beta.66 security)  │      │
 └──────────────────────┴──────┴──────────────────────────────┴──────────────────────────────────────────────────┴──────┘
 ```
 
@@ -627,6 +652,41 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 
 ---
 
+### Module 16 — Accessibility & theming
+*Keyboard focus, reduced motion, and theming — all in the browser. No device or install state needed; run with the app open and repeat the visual rows in both themes.*
+
+```text
+┌──────────────────────┬──────┬──────────────────────────────┬──────────────────────────────────────────────────┬──────┐
+│ Test                 │ OS   │ Do this                      │ Pass - what you should see                       │ Done │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 16.1 Theme switch    │ Both │ Toggle the home-page theme   │ The whole UI recolors live (backgrounds, text,   │ [ ]  │
+│                      │      │ control light <-> dark; open │ borders, buttons); nothing stuck at the other    │      │
+│                      │      │ modals + the stream view in  │ theme; the choice persists across a reload.      │      │
+│                      │      │ each.                        │                                                  │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 16.2 Keyboard focus  │ Both │ Tab through the home page and│ A clear 2px accent focus outline shows on the    │ [ ]  │
+│ ring                 │      │ a dialog's controls with the │ keyboard-focused control (:focus-visible), but   │      │
+│                      │      │ keyboard; then click controls│ NOT on a plain mouse click. (WCAG 2.4.7)         │      │
+│                      │      │ with the mouse.              │                                                  │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 16.3 Reduced motion  │ Both │ Turn on the OS "reduce       │ Animations and transitions collapse to           │ [ ]  │
+│                      │      │ motion" setting, reload the  │ near-instant; turn the setting off and normal    │      │
+│                      │      │ app, then trigger animated UI│ animation returns. (WCAG 2.3.3)                  │      │
+│                      │      │ (modals, spinners,           │                                                  │      │
+│                      │      │ transitions).                │                                                  │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 16.4 Light-mode tints│ Both │ In light theme: select a file│ The selection / delete-hover / apply-update tints│ [ ]  │
+│                      │      │ row, hover the delete        │ are proper light-theme shades (via the           │      │
+│                      │      │ control, and (on an update   │ danger/success tokens), not slightly-off dark    │      │
+│                      │      │ run) hover apply-update.     │ values.                                          │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 16.5 Embed page      │ Both │ Open embed.html (the         │ <html> has a lang attribute set (assistive-tech  │ [ ]  │
+│ language             │      │ embeddable stream page);     │ hint), matching the main app shell.              │      │
+│                      │      │ view-source / inspect the    │                                                  │      │
+│                      │      │ <html> element.              │                                                  │      │
+└──────────────────────┴──────┴──────────────────────────────┴──────────────────────────────────────────────────┴──────┘
+```
+
 ## Global pass criteria
 
 ```text
@@ -651,11 +711,14 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 ├──────────────────────┼────────────────────────────────────────────────────────────────┼──────┤
 │ Data preserved       │ Your config/deps/logs survive an uninstall + reinstall.        │ [ ]  │
 ├──────────────────────┼────────────────────────────────────────────────────────────────┼──────┤
-│ Core flow            │ scan > connect > stream (video + control) > shell works on     │ [ ]  │
-│                      │ both Windows and Linux.                                        │      │
+│ Core flow            │ scan > connect > stream (video + control) > shell works on both│ [ ]  │
+│                      │ Windows and Linux.                                             │      │
+├──────────────────────┼────────────────────────────────────────────────────────────────┼──────┤
+│ Accessible UI        │ Keyboard focus stays visible (:focus-visible); reduce-motion is│ [ ]  │
+│                      │ honoured; both themes render fully with no off-theme tints.    │      │
 └──────────────────────┴────────────────────────────────────────────────────────────────┴──────┘
 ```
 
 **If any Linux SELinux/lifecycle test (Modules 2, 4, 5, the service-update rows 6.5/6.6) — or the core-flow criterion — fails:** stop, **run `capture-logs.sh <id>` (Pre-flight F; `.ps1` on Windows)** for the evidence bundle, and report it before promoting 0.1.30 to stable. Cosmetic/polish failures: note and triage later. **Module 11 (no-libfuse2)** is optional — a failure there just means keep the libfuse2 code; it doesn't block 0.1.30.
 
-*Plain-English companion to [`smoke-full.md`](./smoke-full.md), the canonical machine-precise checklist. Same 76 tests with the jargon spelled out; if the two ever diverge, the full doc wins.*
+*Plain-English companion to [`smoke-full.md`](./smoke-full.md), the canonical machine-precise checklist. The same tests as the repo doc, with the jargon spelled out; if the two ever diverge, the full doc wins.*

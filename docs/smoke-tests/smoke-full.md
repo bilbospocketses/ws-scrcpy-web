@@ -1,10 +1,10 @@
 # ws-scrcpy-web — Full Smoke Test
 
-> **Smoke target: `v0.1.30-beta.64`** — bump this one line each release; everything below is version-agnostic.
+> **Smoke target: `v0.1.30-beta.66`** — bump this one line each release; everything below is version-agnostic.
 
 All-encompassing manual smoke, grouped by function and tagged by platform (`[Win]` / `[Linux]` / `[Both]`). Each row is a single test: **what to verify**, **how to perform it**, and the **expected result + how to verify**. Walk top to bottom; some rows depend on state from earlier rows in the same module.
 
-> **Consolidated 2026-06-06.** This doc absorbs the three former per-feature checklists — Linux service-mode (`beta.37`), stop-server-&-exit (`beta.39`), and the Windows multi-user / MSI pass (`v0.1.25-beta.3`) — so it is the **single gate for `0.1.30` final** (the first true Windows + Linux release). It covers every shipped feature to date: install/first-run, Linux layout & SELinux, multi-user & single-instance, service mode (incl. the beta.45–48 stable-ExecStart + install hand-off + post-install port-discovery fix), lifecycle, updates (local / machine-wide / user- & system-service), devices, streaming, adb, logs, Velopack 1.2.0, stop-server-&-exit, settings prompts, and the **Linux Server-section UX** (install-for-all-users, start-menu icon, in-app complete uninstall — Module 14).
+> **Consolidated 2026-06-06.** This doc absorbs the three former per-feature checklists — Linux service-mode (`beta.37`), stop-server-&-exit (`beta.39`), and the Windows multi-user / MSI pass (`v0.1.25-beta.3`) — so it is the **single gate for `0.1.30` final** (the first true Windows + Linux release). It covers every shipped feature to date: install/first-run, Linux layout & SELinux, multi-user & single-instance, service mode (incl. the beta.45–48 stable-ExecStart + install hand-off + post-install port-discovery fix), lifecycle, updates (local / machine-wide / user- & system-service), devices, streaming, adb, logs, Velopack 1.2.0, stop-server-&-exit, settings prompts, and the **Linux Server-section UX** (install-for-all-users, start-menu icon, in-app complete uninstall — Module 14), plus the security/quality hardening and **accessibility & theming** (Module 16) shipped in beta.66.
 
 ## Pre-flight
 
@@ -124,22 +124,24 @@ Get the "update from" build first (Pre-flight build-prep: the beta.40 artifact).
 | **7.1** `[Both]` Wireless connect | Home → "scan/connect" → enter device `ip:port` (or scan a subnet). | adb connects; device card appears in "connected devices" within ~5s. |
 | **7.2** `[Both]` Scan subnet | Open the scan-network modal; run a subnet scan. | Reachable devices listed; selecting one connects; bad/empty subnets handled gracefully (no hang). |
 | **7.3** `[Win]` USB device | Plug a USB device (authorize the RSA prompt on device). | Appears in connected devices; survives a home-page reload. |
+| **7.4** `[Both]` Device list updates in place *(beta.66 perf)* | With the app open, connect / rename / disconnect a few devices and watch the "connected devices" list. | Rows update **in place** — diffed by device id, not torn down and rebuilt on every server message (no whole-list flicker); device labels load **once per refresh**, not once per row (no per-row request storm that grows with device count); add / remove / rename reflects within ~1s. |
 
 ## Module 8 — scrcpy streaming
 
 | Test | How to perform | Expected + verify |
 |---|---|---|
-| **8.1** `[Both]` Video stream | Click a device → open the stream/config modal → connect. | Live video renders smoothly; no decode errors in console. |
+| **8.1** `[Both]` Video stream | Click a device → open the stream/config modal → connect; then resize the browser window. | Live video renders smoothly; no decode errors in console. **The video cell fills its area with the correct aspect ratio** — no stretch, squish, or overflow — and **rescales on window resize while keeping aspect** (beta.66 #106: `.video` is grid-auto-sized and the device resolution is exposed via the `--video-width` / `--video-height` custom props, replacing the old inline `width/height` + `auto !important`). |
 | **8.2** `[Both]` Control | In the stream, click/scroll/type and use the on-screen device buttons. | Touch + key input reaches the device; navigation works. |
 | **8.3** `[Both]` Audio | Enable audio in the stream settings (Android 11+). | Audio plays; codec/source toggle works. |
 | **8.4** `[Both]` Codec/encoder settings | In the config modal, change display/codec/encoder/fps/bitrate → reconnect. | Settings apply; stream restarts with the new params; persisted per-device on next open. |
+| **8.5** `[Both]` H.265 (HEVC) decode *(#41)* | In the config modal set the **video codec to H.265 / HEVC** → connect; then repeat with **H.264**. | **Both** codecs decode and render in-browser (WebCodecs) — live frames, no decode errors in the console. Confirms the real-browser H.265 decode owed since the "configure the decoder once with its parameter sets" change (the keyframe-backlog drop now also covers H.265/AV1, not H.264 only); H.264 is the baseline. |
 
 ## Module 9 — adb in modals
 
 | Test | How to perform | Expected + verify |
 |---|---|---|
 | **9.1** `[Both]` Shell modal | Device → "shell" → run `getprop ro.product.model`, a couple of commands. | Interactive terminal works; output correct; closing the modal ends the session cleanly (no orphaned adb shell). |
-| **9.2** `[Both]` File listing/transfer | Device → file-list modal → browse, change icon size, push/pull a file. | Listing loads; icon-size pref persists; transfers succeed. |
+| **9.2** `[Both]` File listing/transfer *(+ quiet console, beta.66)* | Device → file-list modal → browse, change icon size, push/pull a file — with the browser console open. | Listing loads; icon-size pref persists; transfers succeed. **The console stays quiet** — the per-message / per-chunk file-listing protocol traces are now gated behind a debug flag. Verify the gate: `localStorage.setItem('ws-scrcpy-web-debug','true')` → reopen the modal → the `[ListFiles]` traces reappear; `localStorage.removeItem('ws-scrcpy-web-debug')` → silent again. |
 | **9.3** `[Both]` Device actions | Use sleep/wake (and any power/nav actions) on the device card. | Buttons reflect state (green/red), actions take effect. |
 
 ## Module 10 — Logs & sanity
@@ -149,6 +151,8 @@ Get the "update from" build first (Pre-flight build-prep: the beta.40 artifact).
 | **10.1** `[Both]` Service status API | Browse `http://localhost:<port>/api/service/status`. | JSON with correct `platform`, `supported`, `status`. |
 | **10.2** `[Win]` Logs clean | Tail `C:\ProgramData\WsScrcpyWeb\logs\{launcher,ws-scrcpy-web}.log` during normal use (canonical logs). `server.log` / `service.log` are thin crash-catchers — normal lines live in the canonical files; a `.1` backup may appear; all files are tail-able. | No `ERR` / `Error:` except known cosmetic node-pty AttachConsole noise. |
 | **10.3** `[Linux]` Logs clean | Tail `launcher.log` + `ws-scrcpy-web.log` under `~/.local/share/.../logs` (or `/var/lib/.../logs` for system) — these are the canonical logs. `server.log` / `service.log` are thin crash-catchers; a `.1` backup may appear; all files are tail-able. | No error spam; teardown logs present on stop. |
+| **10.4** `[Both]` Per-instance token / reload-on-restart *(beta.66 security)* | With the app open in a tab, **restart the server** (change the web port → save, or stop & relaunch the app). Then, separately, `curl http://localhost:<port>/api/service/status` with no cookie. | After a restart the **already-open tab must be reloaded** to reconnect — the server mints a **new per-instance token** on each boot and hands it to the page as a `SameSite=Strict; HttpOnly` cookie, so the stale tab's socket/API calls are rejected until it reloads (then it works normally). A non-browser `curl` that never loaded the page (no cookie) is **rejected** on the sensitive API surface. Normal browser use is unchanged. |
+| **10.5** `[Both]` 404 + security headers *(beta.66 security)* | `curl -I http://localhost:<port>/no-such-asset.js` ; `curl -I http://localhost:<port>/` ; then load a deep in-app route in the browser and refresh it. | A missing **asset / unknown API path → `404`** (no longer the HTML shell with `200`); an **in-app route navigation still falls back to the shell**. Every static response carries **`X-Content-Type-Options: nosniff`** and **`X-Frame-Options: SAMEORIGIN`** (the documented same-origin embed still works). |
 
 ## Module 11 — Velopack 1.2.0 / item-31
 
@@ -210,6 +214,20 @@ In-app **uninstall** now works on Windows (parity with Linux), and "stop server 
 
 ---
 
+## Module 16 — Accessibility & theming
+
+beta.66's security/quality pass restored the keyboard focus indicator, added a reduced-motion mode, and finished theming a few hardcoded tints. All browser-only — **no device or install state needed**; run with the app open, and repeat the visual rows in both themes.
+
+| Test | How to perform | Expected + verify |
+|---|---|---|
+| **16.1** `[Both]` Light/dark theme switch | Toggle the theme (the home-page theme control) light ↔ dark; open a couple of modals and the stream view in each. | The whole UI recolors live — backgrounds, text, borders, buttons — with no element stuck at the other theme's colors; the choice persists across a reload. |
+| **16.2** `[Both]` Keyboard focus ring *(WCAG 2.4.7)* | **Tab** through the home page and a modal's controls with the keyboard; then **click** controls with the mouse. | A clear **focus outline** (2px, accent color) appears on the **keyboard**-focused control (`:focus-visible`); it does **not** appear on a plain mouse click. Regression guard: the old global `:focus { outline: none }` that hid focus everywhere is gone. |
+| **16.3** `[Both]` Reduced motion *(WCAG 2.3.3)* | Turn on the OS "reduce motion" setting (GNOME: Settings → Accessibility; Windows: Settings → Accessibility → Visual effects → Animation effects **off**), reload the app, then trigger animated UI (open modals, spinners, transitions). | Animations and transitions collapse to **near-instant** — no meaningful slides / fades / spins (the global `prefers-reduced-motion: reduce` reset). Turn the setting back off → normal animation returns. |
+| **16.4** `[Both]` Light-mode status tints | In **light** theme: select a file row, hover the delete control, and (on a beta.40→latest update run) hover the apply-update control. | The selection / delete-hover / apply-update tints render as proper light-theme shades — they now resolve through the danger / success design tokens, **not** the slightly-off dark-theme channel values they were previously hardcoded to. |
+| **16.5** `[Both]` Embed page language | Open `embed.html` (the embeddable stream page); view source / inspect the `<html>` element. | `<html>` has a **`lang`** attribute set (assistive-tech hint), matching the main app shell. |
+
+---
+
 ## Global pass criteria
 
 | Criterion | Holds when |
@@ -221,5 +239,6 @@ In-app **uninstall** now works on Windows (parity with Linux), and "stop server 
 | **Clean shutdown** | "stop server & exit" tears down adb (+ Win tray) with no orphans; gated off in service mode. |
 | **Data preserved** | User config/deps/logs survive uninstall + reinstall. |
 | **Core flow** | Scan → connect → stream (video + control) → shell works on both platforms. |
+| **Accessible UI** | Keyboard focus is always visible (`:focus-visible`); reduce-motion is honoured; both light + dark themes render fully with no hardcoded off-theme tints. |
 
 **If a `[Linux]` SELinux/lifecycle row (Modules 2, 4, 5, the service-mode update rows 6.5/6.6, or the Module 14 uninstall-cascade rows 14.4–14.7) or the core-flow criterion fails:** stop, run `capture-logs.sh <id>` (`.ps1` on Windows) for the evidence bundle, report back — fix before promoting 0.1.30 stable. Cosmetic/polish failures: note and triage as beta-territory vs stable-blocker. **Module 11 (no-libfuse2)** is the gate for closing item 31, not a 0.1.30-stable blocker on its own — a failure there means keep the libfuse2 gate, don't remove it.

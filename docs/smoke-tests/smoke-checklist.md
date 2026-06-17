@@ -1,13 +1,13 @@
 # ws-scrcpy-web — Smoke Run-Sheet
 
-> **Smoke target: `v0.1.30-beta.64`** — bump this one line each release; everything below is version-agnostic.
+> **Smoke target: `v0.1.30-beta.66`** — bump this one line each release; everything below is version-agnostic.
 
 Execution-ordered, tickable checklist for the 0.1.30 Linux smoke gate. Regroups the canonical rows from
 [`smoke-full.md`](./smoke-full.md) by **app state** — the order you actually run them; that doc
 stays the module-organized reference. Wherever a row shows a version, expect the **smoke-target version** (top of this doc),
 which carries the beta.48 port-discovery fix plus the Server-section UX (batch #15).
 
-**Legend:** ✅ passed · ☐ to run · 🧩 needs setup (fresh snapshot / 2nd user / 2nd admin / beta.40 artifact / no-libfuse2 host) · 📱 needs a real device · 🪟 Windows pass (separate snapshot)
+**Legend:** ✅ passed · ☐ to run · 🧩 needs setup (fresh snapshot / 2nd user / 2nd admin / beta.40 artifact / no-libfuse2 host) · 📱 needs a real device · 🪟 Windows pass (separate snapshot) · 🌐 browser-only (no device or install state)
 
 ## Before each run — reset to a clean slate
 
@@ -52,6 +52,20 @@ Boxes start unticked — this is a fresh pass.
 | ☐ **10.1** `[B]` Status API | Browse `/api/service/status` | JSON with correct `platform`, `supported`, `status` |
 | ☐ **10.3** `[L]` Logs clean | Tail `~/.local/share/WsScrcpyWeb/logs` | No error spam; teardown logs on stop |
 | ☐ **12.2** `[B]` Stop-exit gating | Settings → Server (service installed) | Button **greyed** + neutral note; clicking fires **no** shutdown POST; re-enables after uninstall |
+
+## #7A — Browser UX & accessibility 🌐 *(app running; no device needed)*
+
+> Browser-only checks — run any time the app is up (right after #7 is convenient). No device or service state required. Repeat the visual rows in **both** light and dark themes. These cover beta.66's accessibility/theming work plus the user-visible security behaviors.
+
+| Test | How to perform | Expected + verify |
+|---|---|---|
+| ☐ **16.1** `[B]` Theme switch | Toggle the home-page theme light ↔ dark; open a modal + the stream view in each | Whole UI recolors live; nothing stuck at the other theme; persists across reload |
+| ☐ **16.2** `[B]` Keyboard focus ring | **Tab** through controls, then **click** with the mouse | 2px accent `:focus-visible` outline on keyboard focus; **not** on a mouse click (old global `:focus{outline:none}` gone) |
+| ☐ **16.3** `[B]` Reduced motion | OS "reduce motion" on → reload → trigger modals/spinners/transitions | Animations collapse to near-instant (`prefers-reduced-motion`); off → normal animation returns |
+| ☐ **16.4** `[B]` Light-mode status tints | In **light** theme: select a file row, hover delete, (update run) hover apply-update | Tints are proper light shades via danger/success tokens — not off-shade dark values |
+| ☐ **16.5** `[B]` Embed page lang | Open `embed.html`; inspect `<html>` | `<html lang>` set (a11y), matching the app shell |
+| ☐ **10.4** `[B]` Token / reload-on-restart | Restart the server (web-port save, or stop & relaunch); also `curl /api/service/status` with no cookie | Open tab must **reload** to reconnect (new per-instance token each boot, `SameSite=Strict` `HttpOnly` cookie); cookie-less curl **rejected**; normal browser use unchanged |
+| ☐ **10.5** `[B]` 404 + security headers | `curl -I` a missing path and `/`; load a deep in-app route + refresh | Missing asset / unknown API → **404** (not the shell); in-app route still serves shell; responses carry `nosniff` + `X-Frame-Options: SAMEORIGIN` |
 
 ## #8 — User-service uninstall → local mode
 
@@ -117,12 +131,14 @@ Get the from-build first: `gh run download 26859605903 --repo bilbospocketses/ws
 |---|---|---|
 | ☐ **7.1** `[B]` Wireless connect | Scan/connect → device `ip:port` | adb connects; card appears within ~5s |
 | ☐ **7.2** `[B]` Subnet scan | Scan-network modal → subnet | Devices listed; bad/empty subnets handled (no hang) |
-| ☐ **8.1** `[B]` Video stream | Device → stream/config → connect | Live video renders; no decode errors |
+| ☐ **7.4** `[B]` Device list in place *(beta.66)* | Connect / rename / disconnect a few devices | Rows diff in place (no whole-list flicker); labels load once per refresh, not once per row |
+| ☐ **8.1** `[B]` Video stream | Device → stream/config → connect; resize window | Live video renders; no decode errors; **video cell keeps correct aspect** (no stretch/overflow), rescales on resize (beta.66 #106) |
 | ☐ **8.2** `[B]` Control | Click/scroll/type + on-screen device buttons | Input reaches the device; nav works |
 | ☐ **8.3** `[B]` Audio | Enable audio (Android 11+) | Plays; codec/source toggle works |
 | ☐ **8.4** `[B]` Codec/encoder | Change display/codec/encoder/fps/bitrate → reconnect | Applies; persists per-device |
+| ☐ **8.5** `[B]` H.265 decode *(#41)* | Set codec **H.265/HEVC** → connect; repeat **H.264** | Both decode + render in-browser (WebCodecs); no decode errors |
 | ☐ **9.1** `[B]` Shell modal | Run `getprop ro.product.model` + a couple commands | Terminal works; clean close, no orphaned adb shell |
-| ☐ **9.2** `[B]` File listing/transfer | Browse, change icon size, push/pull | Loads; icon-size persists; transfers succeed |
+| ☐ **9.2** `[B]` File listing/transfer | Browse, change icon size, push/pull (console open) | Loads; icon-size persists; transfers succeed; **console quiet** unless `ws-scrcpy-web-debug` localStorage flag set (beta.66) |
 | ☐ **9.3** `[B]` Device actions | Sleep/wake + power/nav on the card | Buttons reflect state; actions take effect |
 
 ## #14 — Windows pass 🪟 *(clean Win11 snapshot, accounts Admin/User1/User2, the MSI)*
