@@ -328,7 +328,7 @@ body.list #device_list_menu {
 }
 
 #devices .device-list .device.not-active a:visited {
-    color: var(--link-color_visited-light);
+    color: var(--link-color-visited-light);
 }
 
 /* Action buttons and links styled as buttons. Blue border moved here

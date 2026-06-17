@@ -402,8 +402,12 @@ export abstract class BasePlayer extends TypedEmitter<PlayerEvents> {
         this.touchableCanvas.width = width;
         this.touchableCanvas.height = height;
         if (this.parentElement) {
-            this.parentElement.style.height = `${height}px`;
-            this.parentElement.style.width = `${width}px`;
+            // Expose the device resolution as custom properties rather than an
+            // inline width/height: `.video` is grid-auto-sized (capped by the
+            // canvas max-width/height), so an inline width/height would only have
+            // to be overridden back to auto with `!important`. (#106)
+            this.parentElement.style.setProperty('--video-width', `${width}px`);
+            this.parentElement.style.setProperty('--video-height', `${height}px`);
         }
         const size = new Size(width, height);
         this.emit('video-view-resize', size);

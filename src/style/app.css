@@ -24,8 +24,8 @@
     --info-color: #60a5fa;
     --link-color: hsl(218, 63%, 70%);
     --link-color-light: hsl(218, 63%, 50%);
-    --link-color_visited: hsl(267, 31%, 47%);
-    --link-color_visited-light: hsl(267, 31%, 27%);
+    --link-color-visited: hsl(267, 31%, 47%);
+    --link-color-visited-light: hsl(267, 31%, 27%);
     --kill-button-hover-color: #f06c75;
     --url-color: #888888;
     --button-text-color: hsl(214, 82%, 76%);
@@ -58,8 +58,8 @@
     --info-color: #0969da;
     --link-color: hsl(218, 85%, 43%);
     --link-color-light: hsl(218, 85%, 73%);
-    --link-color_visited: hsl(271, 68%, 32%);
-    --link-color_visited-light: hsl(271, 68%, 72%);
+    --link-color-visited: hsl(271, 68%, 32%);
+    --link-color-visited-light: hsl(271, 68%, 72%);
     --kill-button-hover-color: #dc3545;
     --url-color: #6c757d;
     --button-text-color: #0d6efd;
@@ -78,12 +78,26 @@ html {
     font-size: var(--font-size);
 }
 
+/* Respect the OS "reduce motion" preference (WCAG 2.3.3): collapse animations
+ * and transitions to near-instant rather than removing them, so state changes
+ * stay legible. `!important` is the idiomatic override for this global reset. (#103) */
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+    }
+}
+
 a {
     color: var(--link-color);
 }
 
 a:visited {
-    color: var(--link-color_visited);
+    color: var(--link-color-visited);
 }
 
 body {

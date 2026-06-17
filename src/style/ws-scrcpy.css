@@ -51,11 +51,13 @@
     min-height: 0;
     place-items: center;
     background-color: #000;
-    /* Override inline width/height set by setScreenInfo() with raw device
-     * resolution — lets grid layout + inline max-width/max-height (also set
-     * by the player) control the displayed cell size with correct aspect. */
-    width: auto !important;
-    height: auto !important;
+    /* Grid layout + the canvas max-width/max-height caps control the displayed
+     * cell size with correct aspect; `.video` itself stays auto. The device
+     * resolution is exposed as the --video-width / --video-height custom props
+     * (set by the player's setScreenInfo) instead of an inline width/height, so
+     * no `!important` is needed to keep the cell auto-sized. (#106) */
+    width: auto;
+    height: auto;
 }
 
 /* Viewport-based max caps on the canvas layers. Canvas elements preserve
