@@ -15,7 +15,7 @@ export class KeyInputHandler {
         if (!keyCode) {
             return;
         }
-        let action: typeof KeyEvent.ACTION_DOWN | typeof KeyEvent.ACTION_DOWN;
+        let action: typeof KeyEvent.ACTION_DOWN | typeof KeyEvent.ACTION_UP;
         let repeatCount = 0;
         if (keyboardEvent.type === 'keydown') {
             action = KeyEvent.ACTION_DOWN;

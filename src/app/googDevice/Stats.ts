@@ -59,7 +59,7 @@ export class Stats {
     public isFIFO(): boolean {
         return this.checkModeProperty(Stats.S_IFIFO);
     }
-    public isisSocket(): boolean {
+    public isSocket(): boolean {
         return this.checkModeProperty(Stats.S_IFSOCK);
     }
     public isSymbolicLink(): boolean {

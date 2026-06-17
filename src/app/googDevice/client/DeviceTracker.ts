@@ -134,7 +134,6 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
 
     private updateLink(params: {
         url: string;
-        name: string;
         fullName: string;
         udid: string;
         deviceKind?: 'phone' | 'tablet' | 'tv' | undefined;
@@ -314,7 +313,6 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
 
         // Auto-select best interface: prefer wifi/direct IP, fallback to proxy
         let selectedInterfaceUrl = '';
-        let selectedInterfaceName = '';
         if (isActive) {
             const wifiInterface = device.interfaces.find((i) => i.name === device['wifi.interface']);
             const firstInterface = device.interfaces[0];
@@ -327,11 +325,9 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
                     port: SERVER_PORT,
                 };
                 selectedInterfaceUrl = DeviceTracker.createUrl(params).toString();
-                selectedInterfaceName = bestInterface.name;
             }
             if (!selectedInterfaceUrl) {
                 selectedInterfaceUrl = DeviceTracker.createUrl(this.params, device.udid).toString();
-                selectedInterfaceName = 'proxy';
             }
         }
 
@@ -409,7 +405,6 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
         if (DeviceTracker.CREATE_DIRECT_LINKS && isActive && selectedInterfaceUrl) {
             this.updateLink({
                 url: selectedInterfaceUrl,
-                name: selectedInterfaceName,
                 fullName,
                 udid: device.udid,
                 deviceKind: device.deviceKind,
