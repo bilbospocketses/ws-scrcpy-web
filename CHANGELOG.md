@@ -35,6 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Several browser-side leaks are now cleaned up on teardown.** The device-tracker reconnect timer, the dependency-panel and first-run-banner polling intervals (released on page unload), a per-file-browser `hashchange` listener, a keep-alive channel handler, and the player's stats animation-frame loop are all cancelled or removed when their owner is destroyed instead of lingering; the shared pointer-id map also releases mouse entries on mouse-up.
 - **The in-app-update wait server is more robust.** A failed socket clone now drops that one connection instead of panicking the process, its redirect JSON is properly escaped, and its port probe advances past a permanent bind error instead of retrying a dead port until timeout.
 - **Status tints now follow the active theme.** Several red/green tinted backgrounds (file-row selection, delete-hover, the apply-update hover) were hardcoded to their dark-theme channel values and showed a slightly off shade in light mode; they now resolve through the danger/success design tokens and adapt to the theme.
+- **Keyboard focus is visible again, and the embed page declares its language.** A global `:focus { outline: none }` had removed the keyboard focus indicator across the whole app; it is replaced by a `:focus-visible` outline (shown on keyboard navigation, not mouse clicks), so keyboard users can see where they are. The embedded stream page (`embed.html`) now sets `<html lang>` for assistive technology.
 
 ### Security
 

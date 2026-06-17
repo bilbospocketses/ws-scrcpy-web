@@ -116,8 +116,12 @@ body.stream {
     padding: 5px;
 }
 
-:focus {
-    outline: none;
+/* Keyboard focus indicator (WCAG 2.4.7). Inputs that swap to a border highlight
+   opt out via their own more-specific :focus rule; everything else shows this
+   outline on keyboard navigation only (not on mouse click). */
+:focus-visible {
+    outline: 2px solid var(--accent-color);
+    outline-offset: 2px;
 }
 
 .wait {

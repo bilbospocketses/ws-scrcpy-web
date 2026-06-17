@@ -278,30 +278,28 @@
     color: var(--success-color);
 }
 
-.dep-ok-btn {
-    background: #1a3a1a !important;
-    border-color: #2a5a2a !important;
-    color: var(--success-color) !important;
+/* Discovery action buttons recolor the .dep-btn base (blue) to success-green /
+   danger-red. Qualified with the base class so they win by specificity rather
+   than !important. (The unreferenced .dep-ok-btn rule that lived here was dead
+   CSS and was removed.) */
+.dep-btn.discovery-connect-btn {
+    border-color: var(--success-color);
+    color: var(--success-color);
+    background: transparent;
 }
 
-.discovery-connect-btn {
-    border-color: var(--success-color) !important;
-    color: var(--success-color) !important;
-    background: transparent !important;
+.dep-btn.discovery-connect-btn:hover:not(:disabled) {
+    background: var(--success-hover-bg);
 }
 
-.discovery-connect-btn:hover:not(:disabled) {
-    background: var(--success-hover-bg) !important;
+.dep-btn.discovery-dismiss-btn {
+    border-color: var(--danger-color);
+    color: var(--danger-color);
+    background: transparent;
 }
 
-.discovery-dismiss-btn {
-    border-color: var(--danger-color) !important;
-    color: var(--danger-color) !important;
-    background: transparent !important;
-}
-
-.discovery-dismiss-btn:hover:not(:disabled) {
-    background: var(--danger-hover-bg) !important;
+.dep-btn.discovery-dismiss-btn:hover:not(:disabled) {
+    background: var(--danger-hover-bg);
 }
 
 /* ── Update button (top-right, third from edge) ──
