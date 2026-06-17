@@ -1,5 +1,6 @@
 // src/app/audio/AudioPlayer.ts
 import { PCM_WORKLET_NAME, PCM_WORKLET_SOURCE } from './PcmWorklet';
+import { decodeS16LEToFloat32Planar } from './pcmConvert';
 
 export class AudioPlayer {
     private audioContext?: AudioContext;
@@ -132,23 +133,9 @@ export class AudioPlayer {
     private pushRawPcm(data: Uint8Array): void {
         if (!this.workletReady) return;
 
-        const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-        const sampleCount = (data.byteLength / 2) | 0;
         const channelCount = 2;
-        const framesPerChannel = (sampleCount / channelCount) | 0;
-
-        const channels: Float32Array[] = [];
-        for (let ch = 0; ch < channelCount; ch++) {
-            channels.push(new Float32Array(framesPerChannel));
-        }
-
-        for (let i = 0; i < framesPerChannel; i++) {
-            for (let ch = 0; ch < channelCount; ch++) {
-                const sampleIndex = i * channelCount + ch;
-                const int16 = view.getInt16(sampleIndex * 2, true);
-                channels[ch]![i] = int16 / 32768;
-            }
-        }
+        const channels = decodeS16LEToFloat32Planar(data, channelCount);
+        const framesPerChannel = channels[0]?.length ?? 0;
 
         this.workletNode!.port.postMessage(
             { channels, numFrames: framesPerChannel },
