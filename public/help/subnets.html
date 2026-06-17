@@ -125,12 +125,20 @@ th { color: var(--muted); font-weight: 600; }
 </ul>
 <p>The scan is read-only: nothing is written to or changed on any device. It's equivalent to checking whether each address has a doorbell, without entering.</p>
 
-<a class="back" href="../" onclick="window.close(); return false;">&larr; Close tab</a>
+<a class="back" href="../">&larr; Close tab</a>
 
 <div class="footer">
 References: RFC 1918 (Private IPv4 address allocation) · RFC 4632 (CIDR notation).<br>
 Written for ws-scrcpy-web. No third-party content.
 </div>
 </main>
+<script>
+// Attach the close-tab handler instead of an inline onclick attribute (avoids
+// the inline event-handler CSP smell; the page already uses an inline script). (#107)
+document.querySelector('.back')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    window.close();
+});
+</script>
 </body>
 </html>

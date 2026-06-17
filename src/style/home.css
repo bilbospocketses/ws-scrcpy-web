@@ -72,30 +72,30 @@
 .home-section h2 {
     margin: 0 0 16px 0;
     font-size: 18px;
-    color: var(--text-color, #eee);
+    color: var(--text-color);
     font-weight: 600;
 }
 
 .section-divider {
     border: none;
-    border-top: 1px solid var(--device-border-color, #444);
+    border-top: 1px solid var(--device-border-color);
     margin: 0;
 }
 
 /* Subtle outline card for section content */
 .section-card {
-    border: 1px solid var(--device-border-color, #444);
+    border: 1px solid var(--device-border-color);
     border-radius: 8px;
     padding: 16px;
-    background: var(--device-list-default-color, #1e1e1e);
+    background: var(--device-list-default-color);
 }
 
 /* Empty state card — used when no results to show */
 .empty-state-card {
-    border: 1px solid var(--device-border-color, #444);
+    border: 1px solid var(--device-border-color);
     border-radius: 8px;
     padding: 16px;
-    background: var(--device-list-default-color, #1e1e1e);
+    background: var(--device-list-default-color);
     color: var(--text-color-light);
     font-size: 14px;
     text-align: center;
@@ -129,9 +129,9 @@
     align-items: center;
     justify-content: space-between;
     padding: 12px 16px;
-    border: 1px solid var(--device-border-color, #444);
+    border: 1px solid var(--device-border-color);
     border-radius: 8px;
-    background: var(--device-list-default-color, #1e1e1e);
+    background: var(--device-list-default-color);
 }
 
 .discovery-card-info {
@@ -142,7 +142,7 @@
 .discovery-card-name {
     font-size: 14px;
     font-weight: 500;
-    color: var(--text-color, #eee);
+    color: var(--text-color);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -173,15 +173,16 @@
 
 .discovery-name-input {
     flex-basis: 100%;
-    background: var(--stream-bg-color, #333);
-    border: 1px solid var(--device-border-color, #444);
+    background: var(--stream-bg-color);
+    border: 1px solid var(--device-border-color);
     border-radius: 6px;
-    color: var(--text-color, #eee);
+    color: var(--text-color);
     font-size: 13px;
     padding: 6px 10px;
 }
 
-.discovery-name-input:focus {
+.discovery-name-input:focus,
+.discovery-manual-form input[type="text"]:focus {
     outline: none;
     border-color: var(--accent-color);
 }
@@ -202,9 +203,9 @@
     gap: 8px;
     margin-bottom: 12px;
     padding: 12px;
-    border: 1px solid var(--device-border-color, #444);
+    border: 1px solid var(--device-border-color);
     border-radius: 8px;
-    background: var(--device-list-default-color, #1e1e1e);
+    background: var(--device-list-default-color);
 }
 
 .discovery-manual-form[hidden] {
@@ -212,17 +213,12 @@
 }
 
 .discovery-manual-form input[type="text"] {
-    background: var(--stream-bg-color, #333);
-    border: 1px solid var(--device-border-color, #444);
+    background: var(--stream-bg-color);
+    border: 1px solid var(--device-border-color);
     border-radius: 6px;
-    color: var(--text-color, #eee);
+    color: var(--text-color);
     font-size: 13px;
     padding: 6px 10px;
-}
-
-.discovery-manual-form input[type="text"]:focus {
-    outline: none;
-    border-color: var(--accent-color);
 }
 
 .discovery-manual-form input[type="text"]::placeholder {
@@ -256,7 +252,7 @@
 }
 
 .discovery-manual-close:hover {
-    color: var(--text-color, #eee);
+    color: var(--text-color);
 }
 
 .discovery-manual-result,

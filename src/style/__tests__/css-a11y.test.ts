@@ -30,4 +30,22 @@ describe('cascade hygiene (no !important war)', () => {
         // comment that merely mentions the word doesn't trip the guard.
         expect(read('src/style/home.css')).not.toMatch(/!important\s*[;}]/);
     });
+
+    it('the .video cell is auto-sized without !important (#106)', () => {
+        // Sizing is driven by grid + the canvas max-width/height caps; the device
+        // resolution is exposed via --video-width/--video-height custom props.
+        expect(read('src/style/ws-scrcpy.css')).not.toMatch(/(?:width|height):\s*auto\s*!important/);
+    });
+});
+
+describe('reduced motion (WCAG 2.3.3)', () => {
+    it('honours prefers-reduced-motion with a global reset in app.css (#103)', () => {
+        expect(read('src/style/app.css')).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)/);
+    });
+});
+
+describe('custom-property naming', () => {
+    it('uses kebab-case for the visited-link var, not an underscore (#104)', () => {
+        expect(read('src/style/app.css')).not.toMatch(/--link-color_visited/);
+    });
 });
