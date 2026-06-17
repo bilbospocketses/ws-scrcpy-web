@@ -2,11 +2,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-    consumeToken,
-    issueToken,
-    purgeExpiredTokens,
-} from '../service/resumeToken';
+import { consumeToken, issueToken, purgeExpiredTokens } from '../service/resumeToken';
 
 // Wrap a few node:fs writers in spies that still call through to the real
 // implementation, so #30 can assert the *intent* (mode 0700/0600 + atomic
@@ -96,9 +92,7 @@ describe('resumeToken', () => {
 
     it('rejects tokens of incorrect length', () => {
         expect(consumeToken(installRoot, 'short', 'uninstall-service')).toBeNull();
-        expect(
-            consumeToken(installRoot, '0'.repeat(64), 'uninstall-service'),
-        ).toBeNull();
+        expect(consumeToken(installRoot, '0'.repeat(64), 'uninstall-service')).toBeNull();
     });
 
     it('purgeExpiredTokens removes expired entries and keeps fresh ones', () => {
@@ -107,8 +101,7 @@ describe('resumeToken', () => {
         issueToken(installRoot, 'uninstall-service', past);
         issueToken(installRoot, 'uninstall-service', fresh);
 
-        const tokenFiles = () =>
-            fs.readdirSync(path.join(installRoot, '.resume-tokens'));
+        const tokenFiles = () => fs.readdirSync(path.join(installRoot, '.resume-tokens'));
         expect(tokenFiles()).toHaveLength(2);
 
         purgeExpiredTokens(installRoot);

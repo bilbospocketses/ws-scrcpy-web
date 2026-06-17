@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DependencyStatus } from '../../common/DependencyTypes';
-import * as elevatedRunnerModule from '../service/elevatedRunner';
 import { DependencyManager } from '../DependencyManager';
+import * as elevatedRunnerModule from '../service/elevatedRunner';
 
 vi.mock('../service/elevatedRunner', () => ({
     launcherIsAvailable: vi.fn(async () => true),

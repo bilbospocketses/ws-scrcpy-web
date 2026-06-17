@@ -6,24 +6,19 @@ import * as fs from 'fs';
 import * as path from 'path';
 // biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import { promisify } from 'util';
-import {
-    UpdateManager,
-    type UpdateInfo,
-    type UpdateOptions,
-    type VelopackLocatorConfig,
-} from 'velopack';
-import { getAppVersion } from './appVersion';
+import { type UpdateInfo, UpdateManager, type UpdateOptions, type VelopackLocatorConfig } from 'velopack';
 import type { UpdateChannel } from '../common/ConfigEvents';
-import type { UpdateState } from '../common/UpdateEvents';
 import { WS_SCRCPY_SERVICE_NAME } from '../common/ServiceEvents';
+import type { UpdateState } from '../common/UpdateEvents';
 import { AdbClient } from './AdbClient';
+import { getAppVersion } from './appVersion';
 import { Config } from './Config';
-import { Logger } from './Logger';
-import { linuxAppImageAssetName, releaseAssetUrl, parseSha256Sums } from './linuxUpdateAssets';
-import { verifySha256 } from './verifySha256';
 import { downloadToFile, fetchText } from './downloadToFile';
-import { buildDetachedSpawn } from './service/systemTools';
+import { Logger } from './Logger';
+import { linuxAppImageAssetName, parseSha256Sums, releaseAssetUrl } from './linuxUpdateAssets';
 import { buildMachineWideUpdateScript, runPkexec, STAGED_SYSTEM_DIR } from './service/SystemdClient';
+import { buildDetachedSpawn } from './service/systemTools';
+import { verifySha256 } from './verifySha256';
 
 const execFileAsync = promisify(execFile);
 
@@ -316,7 +311,7 @@ export class UpdateService {
             // Marker present but mgr construction threw — corrupted install or SDK bug.
             log.warn(
                 `Production marker present but UpdateManager construction failed: ${(err as Error).message}. ` +
-                    `Falling back to installed-without-updates state.`,
+                    'Falling back to installed-without-updates state.',
             );
             this.mgr = null;
             this.state = { isInstalled: true, currentVersion: getAppVersion(), status: 'idle' };
@@ -535,13 +530,32 @@ export class UpdateService {
             let spawnSystem = false;
             if (installMode === 'system-service') {
                 target = STAGED_SYSTEM_TARGET;
-                helperArgs = ['--linux-apply', '--staged', stagedPath, '--target', target,
-                    '--service-restart', 'system', '--unit', WS_SCRCPY_SERVICE_NAME, '--relabel'];
+                helperArgs = [
+                    '--linux-apply',
+                    '--staged',
+                    stagedPath,
+                    '--target',
+                    target,
+                    '--service-restart',
+                    'system',
+                    '--unit',
+                    WS_SCRCPY_SERVICE_NAME,
+                    '--relabel',
+                ];
                 spawnSystem = true;
             } else if (installMode === 'user-service') {
                 target = homeAppImage;
-                helperArgs = ['--linux-apply', '--staged', stagedPath, '--target', target,
-                    '--service-restart', 'user', '--unit', WS_SCRCPY_SERVICE_NAME];
+                helperArgs = [
+                    '--linux-apply',
+                    '--staged',
+                    stagedPath,
+                    '--target',
+                    target,
+                    '--service-restart',
+                    'user',
+                    '--unit',
+                    WS_SCRCPY_SERVICE_NAME,
+                ];
             } else if (isMachineWide) {
                 // (1) elevate ONLY the swap (root-owned /opt). One pkexec prompt does
                 //     the ETXTBSY-safe rename-swap of the /opt binary + VERSION write.
@@ -556,10 +570,20 @@ export class UpdateService {
                 helperArgs = ['--linux-apply', '--target', target, '--wait-pid', String(process.pid)];
             } else {
                 target = homeAppImage;
-                helperArgs = ['--linux-apply', '--staged', stagedPath, '--target', target,
-                    '--wait-pid', String(process.pid)];
+                helperArgs = [
+                    '--linux-apply',
+                    '--staged',
+                    stagedPath,
+                    '--target',
+                    target,
+                    '--wait-pid',
+                    String(process.pid),
+                ];
             }
-            const plan = buildDetachedSpawn(helperPath, helperArgs, { unit: `wsscrcpy-apply-${Date.now()}`, system: spawnSystem });
+            const plan = buildDetachedSpawn(helperPath, helperArgs, {
+                unit: `wsscrcpy-apply-${Date.now()}`,
+                system: spawnSystem,
+            });
             if (plan.viaSystemd) {
                 // systemd-run registers the transient unit then exits promptly.
                 // AWAIT it so the unit is registered before THIS process exits —
@@ -571,9 +595,7 @@ export class UpdateService {
                     c.once('exit', () => resolve());
                     c.once('error', () => resolve());
                 });
-                log.info(
-                    `applyUpdate(linux): registered apply helper via ${plan.cmd} (systemd) to swap ${target}`,
-                );
+                log.info(`applyUpdate(linux): registered apply helper via ${plan.cmd} (systemd) to swap ${target}`);
             } else {
                 const child = spawn(plan.cmd, plan.args, { detached: true, stdio: 'ignore' });
                 child.unref();
@@ -586,10 +608,7 @@ export class UpdateService {
 
         const cfg = Config.getInstance();
         const dataRoot = cfg.dataRoot ?? path.dirname(cfg.dependenciesPath);
-        const helperPath = path.join(
-            dataRoot,
-            'control', 'operation-server', 'ws-scrcpy-web-launcher.exe',
-        );
+        const helperPath = path.join(dataRoot, 'control', 'operation-server', 'ws-scrcpy-web-launcher.exe');
         const installRoot = path.resolve(__dirname, '..', '..');
 
         try {
@@ -648,7 +667,7 @@ export class UpdateService {
         } catch (err) {
             log.warn(
                 `applyUpdate: failed to write apply-update-pending marker at ${markerPath}: ${(err as Error).message} ` +
-                    `— service will not auto-restart after Velopack swap; user must restart manually.`,
+                    '— service will not auto-restart after Velopack swap; user must restart manually.',
             );
         }
     }
@@ -698,7 +717,9 @@ export class UpdateService {
             await fs.promises.writeFile(markerPath, '', 'utf8');
             log.info(`applyUpdate: wrote suppress-browser-open marker at ${markerPath}`);
         } catch (err) {
-            log.warn(`applyUpdate: failed to write suppress-browser-open marker at ${markerPath}: ${(err as Error).message}`);
+            log.warn(
+                `applyUpdate: failed to write suppress-browser-open marker at ${markerPath}: ${(err as Error).message}`,
+            );
         }
     }
 
@@ -747,7 +768,9 @@ export class UpdateService {
 
         if (process.platform === 'win32') {
             try {
-                await execFileAsync('C:\\Windows\\System32\\taskkill.exe', ['/F', '/IM', 'adb.exe', '/T'], { timeout: 5_000 });
+                await execFileAsync('C:\\Windows\\System32\\taskkill.exe', ['/F', '/IM', 'adb.exe', '/T'], {
+                    timeout: 5_000,
+                });
                 log.info('preApply: taskkill /F /IM adb.exe ok');
             } catch {
                 // taskkill exits non-zero when no matching process; treat as success.

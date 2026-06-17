@@ -83,8 +83,7 @@ export function parseEmbedParams(params: URLSearchParams): {
 // embed.html sets <body data-embed-entry> as an explicit opt-in marker;
 // tests and any other importer never set it, so bootstrap stays dormant.
 function shouldBootstrap(): boolean {
-    return typeof document !== 'undefined'
-        && document.body?.hasAttribute('data-embed-entry') === true;
+    return typeof document !== 'undefined' && document.body?.hasAttribute('data-embed-entry') === true;
 }
 
 if (typeof document !== 'undefined' && document.readyState === 'loading') {

@@ -67,7 +67,11 @@ export class ServiceFirstRunModal extends Modal {
     private fillBody(container: HTMLElement): void {
         const intro = document.createElement('p');
         intro.style.cssText = 'margin: 0 0 12px;';
-        intro.appendChild(document.createTextNode('the service is installed and will start automatically every time your computer boots.'));
+        intro.appendChild(
+            document.createTextNode(
+                'the service is installed and will start automatically every time your computer boots.',
+            ),
+        );
         container.appendChild(intro);
 
         const url = `http://localhost:${this.opts.webPort}`;
@@ -105,9 +109,7 @@ export class ServiceFirstRunModal extends Modal {
         const checkbox = document.createElement('input');
         checkbox.type = 'checkbox';
         dontShowLabel.appendChild(checkbox);
-        dontShowLabel.appendChild(
-            document.createTextNode("don't show this again on this browser"),
-        );
+        dontShowLabel.appendChild(document.createTextNode("don't show this again on this browser"));
         this.dontShowCheckbox = checkbox;
         container.appendChild(dontShowLabel);
     }

@@ -138,7 +138,9 @@ export abstract class Modal {
         // Remove from DOM after exit transition completes (200ms matches CSS)
         this.dialog.addEventListener('transitionend', () => this.dialog.remove(), { once: true });
         // Fallback: remove after 250ms if transitionend doesn't fire (e.g., reduced motion)
-        setTimeout(() => { if (this.dialog.parentElement) this.dialog.remove(); }, 250);
+        setTimeout(() => {
+            if (this.dialog.parentElement) this.dialog.remove();
+        }, 250);
         this.options.onClose?.(result);
     }
 }

@@ -10,9 +10,7 @@ export interface UninstallHandoffMarkerInput {
     launcherArgs: string[];
 }
 
-export type WriteMarkerResult =
-    | { ok: true }
-    | { ok: false; errorMessage: string };
+export type WriteMarkerResult = { ok: true } | { ok: false; errorMessage: string };
 
 /**
  * Write the uninstall-handoff marker atomically under
@@ -26,13 +24,17 @@ export async function writeUninstallHandoffMarker(
     const dir = join(dataRoot, CONTROL_DIR);
     const finalPath = join(dir, UNINSTALL_HANDOFF_FILENAME);
     const tmpPath = `${finalPath}.tmp`;
-    const body = JSON.stringify({
-        verb: 'uninstall-service',
-        targetSessionId: input.targetSessionId,
-        launcherPath: input.launcherPath,
-        launcherArgs: input.launcherArgs,
-        writtenAt: new Date().toISOString(),
-    }, null, 2);
+    const body = JSON.stringify(
+        {
+            verb: 'uninstall-service',
+            targetSessionId: input.targetSessionId,
+            launcherPath: input.launcherPath,
+            launcherArgs: input.launcherArgs,
+            writtenAt: new Date().toISOString(),
+        },
+        null,
+        2,
+    );
     try {
         await mkdir(dir, { recursive: true });
         await writeFile(tmpPath, body, 'utf8');

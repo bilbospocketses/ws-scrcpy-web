@@ -1,5 +1,5 @@
-import type { EventMap } from '../../common/TypedEmitter';
 import { DeviceState } from '../../common/DeviceState';
+import type { EventMap } from '../../common/TypedEmitter';
 import type { BaseDeviceDescriptor } from '../../types/BaseDeviceDescriptor';
 import type { HostItem } from '../../types/Configuration';
 import type { DeviceTrackerEvent } from '../../types/DeviceTrackerEvent';
@@ -272,7 +272,9 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
     }
 
     private removeAllDeviceRows(block: Element): void {
-        this.getDeviceRows(block).forEach((el) => el.remove());
+        this.getDeviceRows(block).forEach((el) => {
+            el.remove();
+        });
     }
 
     private static serializeDescriptor(device: BaseDeviceDescriptor): string {

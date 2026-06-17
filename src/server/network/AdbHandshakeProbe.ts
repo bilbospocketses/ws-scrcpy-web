@@ -21,10 +21,10 @@ const HEADER_SIZE = 24;
 // modern feature set makes the tablet's adbd treat us as a real client.
 const HOST_BANNER = Buffer.from(
     'host::features=shell_v2,cmd,stat_v2,ls_v2,fixed_push_mkdir,apex,abb,' +
-    'fixed_push_symlink_timestamp,abb_exec,remount_shell,track_app,' +
-    'sendrecv_v2,sendrecv_v2_brotli,sendrecv_v2_lz4,sendrecv_v2_zstd,' +
-    'sendrecv_v2_dry_run_send,openscreen_mdns,devicetracker_proto_format,' +
-    'devraw,app_info,server_status,track_mdns',
+        'fixed_push_symlink_timestamp,abb_exec,remount_shell,track_app,' +
+        'sendrecv_v2,sendrecv_v2_brotli,sendrecv_v2_lz4,sendrecv_v2_zstd,' +
+        'sendrecv_v2_dry_run_send,openscreen_mdns,devicetracker_proto_format,' +
+        'devraw,app_info,server_status,track_mdns',
     'utf8',
 );
 
@@ -66,7 +66,10 @@ export function parseCnxnReply(buf: Buffer): AdbHandshakeResult {
     if (command === A_CNXN) {
         if (magic !== A_CNXN_MAGIC) return { isAdb: false };
         if (buf.length < HEADER_SIZE + dataLen) return { isAdb: false };
-        const banner = buf.slice(HEADER_SIZE, HEADER_SIZE + dataLen).toString('utf8').replace(/\0+$/, '');
+        const banner = buf
+            .slice(HEADER_SIZE, HEADER_SIZE + dataLen)
+            .toString('utf8')
+            .replace(/\0+$/, '');
         return { isAdb: true, model: extractModel(banner) };
     }
     if (command === A_AUTH) {
@@ -159,12 +162,24 @@ export function probeAdb(
             settled = true;
             if (timer) clearTimeout(timer);
             if (result.isAdb) {
-                try { socket.end(); } catch { /* ignore */ }
+                try {
+                    socket.end();
+                } catch {
+                    /* ignore */
+                }
                 setTimeout(() => {
-                    try { socket.destroy(); } catch { /* ignore */ }
+                    try {
+                        socket.destroy();
+                    } catch {
+                        /* ignore */
+                    }
                 }, GRACEFUL_CLOSE_GRACE_MS).unref();
             } else {
-                try { socket.destroy(); } catch { /* ignore */ }
+                try {
+                    socket.destroy();
+                } catch {
+                    /* ignore */
+                }
             }
             resolve(result);
         };
@@ -188,7 +203,11 @@ export function probeAdb(
             // adbd to build and send its CNXN/AUTH banner.
             if (timer) clearTimeout(timer);
             timer = setTimeout(() => done({ isAdb: false }), replyTimeoutMs);
-            try { socket.setNoDelay(true); } catch { /* ignore */ }
+            try {
+                socket.setNoDelay(true);
+            } catch {
+                /* ignore */
+            }
             socket.write(buildCnxnPacket());
         });
         socket.connect(port, host);

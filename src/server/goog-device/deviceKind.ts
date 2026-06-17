@@ -1,4 +1,4 @@
-import { parseWmSizeStrict, parseWmDensityStrict } from './wmParsers';
+import { parseWmDensityStrict, parseWmSizeStrict } from './wmParsers';
 
 export type DeviceKind = 'phone' | 'tablet' | 'tv';
 

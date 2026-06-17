@@ -192,7 +192,9 @@ export class AdbClient {
     }
 
     async listForwards(serial: string): Promise<{ serial: string; local: string; remote: string }[]> {
-        const output = await this.exec(['-s', serial, 'forward', '--list'], { timeoutMs: DEFAULT_TIMEOUT_MS.forwardOps });
+        const output = await this.exec(['-s', serial, 'forward', '--list'], {
+            timeoutMs: DEFAULT_TIMEOUT_MS.forwardOps,
+        });
         return output
             .split('\n')
             .filter((line) => line.trim().length > 0)

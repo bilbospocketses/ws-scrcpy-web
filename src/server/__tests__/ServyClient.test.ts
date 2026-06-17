@@ -141,10 +141,7 @@ describe('ServyClient', () => {
         fileExistsMock.mockImplementation((p: unknown) => {
             const s = String(p);
             // launcher AND tray helper both present
-            return Promise.resolve(
-                s.endsWith('ws-scrcpy-web-launcher.exe') ||
-                    s.endsWith('ws-scrcpy-web-tray.exe'),
-            );
+            return Promise.resolve(s.endsWith('ws-scrcpy-web-launcher.exe') || s.endsWith('ws-scrcpy-web-tray.exe'));
         });
         const client = new ServyClient('servy.exe');
         await client.install({
@@ -234,7 +231,8 @@ describe('ServyClient', () => {
                 stderr: string;
             };
             err.code = 1060;
-            err.stderr = '[SC] EnumQueryServicesStatus:OpenService FAILED 1060:\nThe specified service does not exist as an installed service.';
+            err.stderr =
+                '[SC] EnumQueryServicesStatus:OpenService FAILED 1060:\nThe specified service does not exist as an installed service.';
             cb(err, { stdout: '', stderr: '' });
         });
         const client = new ServyClient('servy.exe');
@@ -264,11 +262,7 @@ describe('ServyClient', () => {
 
 describe('parseScQueryStatus', () => {
     it('parses RUNNING (state code 4)', () => {
-        expect(
-            parseScQueryStatus(
-                'SERVICE_NAME: X\n  STATE              : 4  RUNNING\n  TYPE  : 10',
-            ),
-        ).toBe('running');
+        expect(parseScQueryStatus('SERVICE_NAME: X\n  STATE              : 4  RUNNING\n  TYPE  : 10')).toBe('running');
     });
 
     it('parses STOPPED (state code 1)', () => {

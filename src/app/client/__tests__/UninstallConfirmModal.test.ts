@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { UninstallConfirmModal } from '../UninstallConfirmModal';
 
 // Mirror the AdminConfirmModal test stub: showModal throws InvalidStateError

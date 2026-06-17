@@ -1,9 +1,9 @@
 import type { ParamsStreamScrcpy } from '../../../types/ParamsStreamScrcpy';
 import type { BasePlayer } from '../../player/BasePlayer';
-import type VideoSettings from '../../VideoSettings';
-import { Modal } from '../../ui/Modal';
 import { startStream } from '../../public/startStream';
 import type { StreamHandle } from '../../public/types';
+import { Modal } from '../../ui/Modal';
+import type VideoSettings from '../../VideoSettings';
 
 export class ConnectModal extends Modal {
     private handle?: StreamHandle | undefined;
@@ -47,7 +47,8 @@ export class ConnectModal extends Modal {
                 const errorEl = document.createElement('div');
                 errorEl.className = 'connect-modal-error';
                 errorEl.textContent = `stream failed: ${err.message}`;
-                errorEl.style.cssText = 'padding: 24px; color: #f06c75; font-family: monospace; font-size: 14px; text-align: center;';
+                errorEl.style.cssText =
+                    'padding: 24px; color: #f06c75; font-family: monospace; font-size: 14px; text-align: center;';
                 this.bodyEl.innerHTML = '';
                 this.bodyEl.appendChild(errorEl);
                 // Close after 4s (long enough to read, short enough not to feel stuck)

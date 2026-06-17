@@ -55,9 +55,7 @@ describe('ControlCenterCommand.fromJSON', () => {
     it('throws a clean error (not an undefined deref) when data is missing', () => {
         let msg = '';
         try {
-            ControlCenterCommand.fromJSON(
-                JSON.stringify({ id: 1, type: ControlCenterCommand.START_SERVER }),
-            );
+            ControlCenterCommand.fromJSON(JSON.stringify({ id: 1, type: ControlCenterCommand.START_SERVER }));
             throw new Error('expected fromJSON to throw');
         } catch (e) {
             msg = (e as Error).message;

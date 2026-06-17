@@ -61,11 +61,7 @@ function tokenPath(installRoot: string, token: string): string {
  * Issue a new resume token for the given action. Returns the token
  * string the caller should embed in the redirect URL.
  */
-export function issueToken(
-    installRoot: string,
-    action: 'uninstall-service',
-    now: number = Date.now(),
-): string {
+export function issueToken(installRoot: string, action: 'uninstall-service', now: number = Date.now()): string {
     const token = crypto.randomBytes(TOKEN_BYTES).toString('hex');
     const record: ResumeTokenRecord = { token, action, createdAt: now };
     const dir = tokenDir(installRoot);
@@ -74,7 +70,11 @@ export function issueToken(
     // partial token. POSIX perms; on Windows the per-user install root + ACLs
     // govern and the mode/chmod calls are effectively no-ops.
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-    try { fs.chmodSync(dir, 0o700); } catch { /* best-effort: pre-existing dir */ }
+    try {
+        fs.chmodSync(dir, 0o700);
+    } catch {
+        /* best-effort: pre-existing dir */
+    }
     const finalPath = tokenPath(installRoot, token);
     const tmpPath = `${finalPath}.tmp-${process.pid}-${crypto.randomBytes(4).toString('hex')}`;
     fs.writeFileSync(tmpPath, JSON.stringify(record), { encoding: 'utf8', mode: 0o600 });
@@ -115,7 +115,11 @@ export function consumeToken(
         record = JSON.parse(raw) as ResumeTokenRecord;
     } catch {
         // Malformed file. Best-effort delete so it doesn't pile up.
-        try { fs.unlinkSync(filepath); } catch { /* ignore */ }
+        try {
+            fs.unlinkSync(filepath);
+        } catch {
+            /* ignore */
+        }
         return null;
     }
 
@@ -125,13 +129,21 @@ export function consumeToken(
     if (typeof record.createdAt !== 'number') return null;
     if (now - record.createdAt > TOKEN_TTL_MS) {
         // Expired. Delete and reject.
-        try { fs.unlinkSync(filepath); } catch { /* ignore */ }
+        try {
+            fs.unlinkSync(filepath);
+        } catch {
+            /* ignore */
+        }
         log.info(`resume token rejected: expired (${(now - record.createdAt) / 1000}s old)`);
         return null;
     }
 
     // Valid. Consume.
-    try { fs.unlinkSync(filepath); } catch { /* ignore */ }
+    try {
+        fs.unlinkSync(filepath);
+    } catch {
+        /* ignore */
+    }
     log.info(`resume token consumed: ${record.action}`);
     return record;
 }
@@ -151,7 +163,11 @@ export function purgeExpiredTokens(installRoot: string, now: number = Date.now()
                 }
             } catch {
                 // Malformed or unreadable — best-effort delete.
-                try { fs.unlinkSync(filepath); } catch { /* ignore */ }
+                try {
+                    fs.unlinkSync(filepath);
+                } catch {
+                    /* ignore */
+                }
             }
         }
     } catch (err) {

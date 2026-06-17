@@ -10,15 +10,11 @@ import { ServerShutdownApi } from './api/ServerShutdownApi';
 import { ServiceApi } from './api/ServiceApi';
 import { UpdatesApi } from './api/UpdatesApi';
 import { WhoamiApi } from './api/WhoamiApi';
-import { forceBlockingStdio } from './util/forceBlockingStdio';
 import { Config } from './Config';
-import { UpdateService } from './UpdateService';
 import { DependencyManager } from './DependencyManager';
-import { findAvailablePort, webPortOverride } from './PortPicker';
 import { DeviceLabelStore } from './DeviceLabelStore';
 import { DeviceProbe } from './DeviceProbe';
 import { Logger } from './Logger';
-import { consumeSuppressBrowserMarker, openBrowser, shouldAutoOpenBrowser } from './openBrowser';
 import { HostTracker } from './mw/HostTracker';
 import type { MwFactory } from './mw/Mw';
 import { ScanMw } from './mw/ScanMw';
@@ -27,12 +23,16 @@ import { resolveNodePty } from './NodePtyResolver';
 import { probeAdb } from './network/AdbHandshakeProbe';
 import { resolveMac } from './network/MacResolver';
 import { NetworkScanner } from './network/NetworkScanner';
+import { consumeSuppressBrowserMarker, openBrowser, shouldAutoOpenBrowser } from './openBrowser';
+import { findAvailablePort, webPortOverride } from './PortPicker';
 import { ScrcpyConnection } from './ScrcpyConnection';
+import { makeProductionCoreDeps, parseSystemServiceArgs, runSystemServiceCli } from './service/systemServiceCli';
 import { HttpServer } from './services/HttpServer';
 import type { Service, ServiceClass } from './services/Service';
 import { WebSocketServer } from './services/WebSocketServer';
 import { reapStrayAdbOnWindows } from './shutdownHelpers';
-import { parseSystemServiceArgs, runSystemServiceCli, makeProductionCoreDeps } from './service/systemServiceCli';
+import { UpdateService } from './UpdateService';
+import { forceBlockingStdio } from './util/forceBlockingStdio';
 
 // Velopack JS SDK init must run before any other side-effecting startup logic.
 // In dev mode (no install layout) this returns gracefully without altering state.
@@ -60,7 +60,10 @@ const __ssArgs = parseSystemServiceArgs(process.argv);
 if (__ssArgs) {
     runSystemServiceCli(__ssArgs, makeProductionCoreDeps())
         .then((code) => process.exit(code))
-        .catch((err) => { console.error(String((err as Error)?.message ?? err)); process.exit(1); });
+        .catch((err) => {
+            console.error(String((err as Error)?.message ?? err));
+            process.exit(1);
+        });
 } else {
     // ---------------------------------------------------------------------------
     // Normal server startup — only reached when no system-service CLI flag given.
@@ -234,8 +237,7 @@ if (__ssArgs) {
             // to find xdg-open / cmd.exe is logged and ignored.
             try {
                 const appCfg = config.getAppConfig();
-                const isServiceMode =
-                    appCfg.installMode === 'user-service' || appCfg.installMode === 'system-service';
+                const isServiceMode = appCfg.installMode === 'user-service' || appCfg.installMode === 'system-service';
                 // G1: a relaunch (the post-machine-wide-install /opt re-exec, or an
                 // in-app update relaunch) sets WS_SCRCPY_NO_BROWSER=1 — the user
                 // already has a tab that reconnects, so don't pop a redundant one.
@@ -244,9 +246,7 @@ if (__ssArgs) {
                 // WS_SCRCPY_NO_BROWSER, so applyUpdate left a consume-once marker —
                 // honor + delete it so the post-update relaunch doesn't pop a 2nd tab
                 // on top of the user's reconnecting one.
-                const postUpdateRelaunch = consumeSuppressBrowserMarker(
-                    config.suppressBrowserOpenMarkerPath,
-                );
+                const postUpdateRelaunch = consumeSuppressBrowserMarker(config.suppressBrowserOpenMarkerPath);
                 const suppressBrowser = noBrowserEnv || postUpdateRelaunch;
                 // D1: the native launcher's supervisor sets WS_SCRCPY_OPEN_BROWSER=1
                 // on its FIRST Node spawn (a fresh user launch), so a cold start past
@@ -288,7 +288,9 @@ if (__ssArgs) {
             depManager
                 .checkAll()
                 .then(() => depManager.autoInstallMissing())
-                .catch((err: Error) => Logger.for('DependencyManager').error('Initial check/install failed:', err.message));
+                .catch((err: Error) =>
+                    Logger.for('DependencyManager').error('Initial check/install failed:', err.message),
+                );
 
             // adb daemon pre-warm has been moved to module load (right after the
             // scanAdb singleton is constructed). All AdbClient methods await
@@ -310,7 +312,10 @@ if (__ssArgs) {
     });
 
     process.on('unhandledRejection', (reason) => {
-        serverLog.error('Unhandled rejection:', reason instanceof Error ? reason.stack || reason.message : String(reason));
+        serverLog.error(
+            'Unhandled rejection:',
+            reason instanceof Error ? reason.stack || reason.message : String(reason),
+        );
     });
 
     const EXIT_WATCHDOG_MS = 10_000;
@@ -381,7 +386,9 @@ if (__ssArgs) {
         // output. No correctness cost — if any service.release() side
         // effect runs longer than 2000ms, the 10s watchdog below still
         // backstops. Per user direction 2026-05-15.
-        setTimeout(() => { /* no-op; ref'd 2000ms hold for prompt-settle */ }, 2000);
+        setTimeout(() => {
+            /* no-op; ref'd 2000ms hold for prompt-settle */
+        }, 2000);
         // Watchdog: if release() side effects + event-loop drain haven't
         // brought the process down within EXIT_WATCHDOG_MS, force-exit. Without
         // this, anything pinning the loop (a stuck WS close, a long-lived setTimeout,
@@ -434,7 +441,9 @@ if (__ssArgs) {
                     serverLog.warn(`  request[${i}] ${ctor}`);
                 });
             } catch (err) {
-                serverLog.warn(`exit-watchdog diagnostic dump failed: ${err instanceof Error ? err.message : String(err)}`);
+                serverLog.warn(
+                    `exit-watchdog diagnostic dump failed: ${err instanceof Error ? err.message : String(err)}`,
+                );
             }
             serverLog.warn('forcing process.exit(0)');
             process.exit(0);

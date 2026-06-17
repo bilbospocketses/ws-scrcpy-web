@@ -6,8 +6,8 @@ import * as process from 'process';
 import { TypedEmitter } from '../../common/TypedEmitter';
 import { Config } from '../Config';
 import { EnvName } from '../EnvName';
-import { evaluateHttpRequest } from '../security/requestGate';
 import { createStaticHandler } from '../StaticFileServer';
+import { evaluateHttpRequest } from '../security/requestGate';
 import { Utils } from '../Utils';
 import type { Service } from './Service';
 

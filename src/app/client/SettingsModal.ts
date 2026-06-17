@@ -1,18 +1,18 @@
+import type { AppConfigEnvelope, AppConfigPatchResponse, UpdateChannel } from '../../common/ConfigEvents';
+import type {
+    ServiceInstallResponse,
+    ServiceStatusResponse,
+    ServiceUninstallResponse,
+} from '../../common/ServiceEvents';
+import type { UpdatesConfigPatchRequest, UpdatesStatusResponse } from '../../common/UpdateEvents';
 import { Modal } from '../ui/Modal';
 import { AdminConfirmModal, type AdminConfirmOptions } from './AdminConfirmModal';
 import { ConfirmModal } from './ConfirmModal';
-import { UninstallConfirmModal } from './UninstallConfirmModal';
+import { pollServiceUninstalled } from './pollServiceUninstalled';
 import { ResetConfirmModal } from './ResetConfirmModal';
 import { ServiceOperationModal } from './ServiceOperationModal';
+import { UninstallConfirmModal } from './UninstallConfirmModal';
 import { runUpgradingHandoff } from './UpgradingOverlay';
-import { pollServiceUninstalled } from './pollServiceUninstalled';
-import type { AppConfigEnvelope, AppConfigPatchResponse, UpdateChannel } from '../../common/ConfigEvents';
-import type {
-    ServiceStatusResponse,
-    ServiceInstallResponse,
-    ServiceUninstallResponse,
-} from '../../common/ServiceEvents';
-import type { UpdatesStatusResponse, UpdatesConfigPatchRequest } from '../../common/UpdateEvents';
 
 /**
  * Follow-up copy shown after a Linux service uninstall begins, by scope.
@@ -63,11 +63,7 @@ export function classifyInstallPoll(args: {
     // instance and not a transient dead port.
     if (args.reachable && args.servedByService) {
         // Different bound port -> navigate there; same port -> reload in place.
-        if (
-            args.configMtime != null &&
-            args.configMtime !== args.baselineMtime &&
-            args.diskWebPort != null
-        ) {
+        if (args.configMtime != null && args.configMtime !== args.baselineMtime && args.diskWebPort != null) {
             return { kind: 'navigate', port: args.diskWebPort };
         }
         return { kind: 'reconnect' };
@@ -124,8 +120,8 @@ export function scopeRadioState(resp: ScopeRadioInputs): ScopeRadioState {
         resp.installMode === 'system-service' || resp.installMode === 'system'
             ? 'system'
             : resp.installMode === 'user-service' || resp.installMode === 'user'
-                ? 'user'
-                : null;
+              ? 'user'
+              : null;
     const installedScope: 'user' | 'system' | null =
         resp.scope === 'user' || resp.scope === 'system' ? resp.scope : scopeFromInstallMode;
     return {
@@ -192,7 +188,10 @@ export function appSectionButtonsState(resp: {
     };
 }
 
-export interface SystemServiceInstallGate { enabled: boolean; note: string | null; }
+export interface SystemServiceInstallGate {
+    enabled: boolean;
+    note: string | null;
+}
 
 /** System-scope service install requires a machine-wide /opt install first
  *  (the root service execs the /opt binary; it can't exist without it). */
@@ -663,10 +662,7 @@ export class SettingsModal extends Modal {
             const data = (await r.json()) as AppConfigPatchResponse;
             this.currentWebPort = data.config.webPort;
             if (data.restartRequired) {
-                this.setServerStatus(
-                    'restarting → redirecting…',
-                    false,
-                );
+                this.setServerStatus('restarting → redirecting…', false);
                 if (data.redirectTo) {
                     setTimeout(() => {
                         window.location.href = data.redirectTo!;
@@ -772,7 +768,7 @@ export class SettingsModal extends Modal {
                 installBtn.textContent = 'installing...';
                 fetch('/api/updates/install-libfuse2', { method: 'POST' })
                     .then(async (r) => {
-                        const data = await r.json().catch(() => null) as { ok?: boolean; error?: string } | null;
+                        const data = (await r.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
                         if (r.ok && data?.ok) {
                             void this.refreshUpdates();
                         } else {
@@ -793,7 +789,8 @@ export class SettingsModal extends Modal {
             this.updatesBody.appendChild(btnRow);
 
             const hint = document.createElement('p');
-            hint.style.cssText = 'grid-column: 1 / -1; color: var(--text-color-light); font-size: 12px; margin: 4px 0 0;';
+            hint.style.cssText =
+                'grid-column: 1 / -1; color: var(--text-color-light); font-size: 12px; margin: 4px 0 0;';
             hint.textContent = 'or install manually (e.g. "sudo dnf install fuse-libs") and restart the app.';
             this.updatesBody.appendChild(hint);
             return;
@@ -979,9 +976,7 @@ export class SettingsModal extends Modal {
         const busy = s.status === 'checking' || s.status === 'downloading';
         btn.disabled = busy || this.updatesApplyInFlight;
         if (s.status === 'ready') {
-            btn.textContent = s.availableVersion
-                ? `apply v${s.availableVersion}`
-                : 'apply update';
+            btn.textContent = s.availableVersion ? `apply v${s.availableVersion}` : 'apply update';
             btn.classList.remove('settings-btn-primary');
             btn.classList.add('settings-btn-ready');
         } else {
@@ -1243,8 +1238,7 @@ export class SettingsModal extends Modal {
             notice.className = 'settings-status';
             notice.style.gridColumn = '1 / -1';
             notice.textContent =
-                resp.unsupportedReason ||
-                'service mode is currently windows-only. linux support arrives later in SP3.';
+                resp.unsupportedReason || 'service mode is currently windows-only. linux support arrives later in SP3.';
             this.serviceSection.appendChild(notice);
             return;
         }
@@ -1326,9 +1320,7 @@ export class SettingsModal extends Modal {
                 void this.onUninstallService(btn);
             });
         }
-        this.serviceSection.appendChild(
-            this.buildRow('installs/uninstalls server service', btn),
-        );
+        this.serviceSection.appendChild(this.buildRow('installs/uninstalls server service', btn));
 
         // Linux: gate the system-scope install button on a prior machine-wide
         // (/opt) install — the root service execs the shared /opt binary, which
@@ -1404,9 +1396,10 @@ export class SettingsModal extends Modal {
             });
             const data = (await r.json().catch(() => null)) as ServiceInstallResponse | null;
             if (!r.ok || !data || data.ok !== true) {
-                const errMsg = data && data.ok === false
-                    ? SettingsModal.reasonToUserMessage(data.reason, data.error)
-                    : `install failed (${r.status})`;
+                const errMsg =
+                    data && data.ok === false
+                        ? SettingsModal.reasonToUserMessage(data.reason, data.error)
+                        : `install failed (${r.status})`;
                 modal.close();
                 btn.disabled = false;
                 btn.textContent = prevText;
@@ -1439,7 +1432,11 @@ export class SettingsModal extends Modal {
                 try {
                     const statusResp = await fetch('/api/service/status', { signal: AbortSignal.timeout(5000) });
                     if (statusResp.ok) {
-                        const statusData = await statusResp.json() as { configMtime?: number; diskWebPort?: number; servedByService?: boolean };
+                        const statusData = (await statusResp.json()) as {
+                            configMtime?: number;
+                            diskWebPort?: number;
+                            servedByService?: boolean;
+                        };
                         configMtime = statusData.configMtime ?? null;
                         diskWebPort = statusData.diskWebPort ?? null;
                         servedByService = statusData.servedByService === true;
@@ -1448,7 +1445,13 @@ export class SettingsModal extends Modal {
                     reachable = false;
                 }
                 const outcome = classifyInstallPoll({
-                    reachable, servedByService, configMtime, baselineMtime, diskWebPort, iterations, maxIterations,
+                    reachable,
+                    servedByService,
+                    configMtime,
+                    baselineMtime,
+                    diskWebPort,
+                    iterations,
+                    maxIterations,
                 });
                 switch (outcome.kind) {
                     case 'navigate':
@@ -1460,7 +1463,9 @@ export class SettingsModal extends Modal {
                         // grace so the service has bound the port.
                         clearInterval(poll);
                         btn.textContent = 'reconnecting…';
-                        setTimeout(() => { window.location.reload(); }, 2500);
+                        setTimeout(() => {
+                            window.location.reload();
+                        }, 2500);
                         return;
                     case 'timeout':
                         clearInterval(poll);
@@ -1506,9 +1511,10 @@ export class SettingsModal extends Modal {
             const r = await fetch('/api/service/uninstall', { method: 'POST' });
             const data = (await r.json().catch(() => null)) as ServiceUninstallResponse | null;
             if (!r.ok || !data || data.ok !== true) {
-                const errMsg = data && data.ok === false
-                    ? SettingsModal.reasonToUserMessage(data.reason, data.error)
-                    : `uninstall failed (${r.status})`;
+                const errMsg =
+                    data && data.ok === false
+                        ? SettingsModal.reasonToUserMessage(data.reason, data.error)
+                        : `uninstall failed (${r.status})`;
                 modal.close();
                 btn.disabled = false;
                 btn.textContent = prevText;
@@ -1518,8 +1524,7 @@ export class SettingsModal extends Modal {
             if (data.status === 'shutting-down') {
                 // Derive scope from the installMode field so we know whether a
                 // local relaunch is coming (user scope) or not (system scope).
-                const isSystemUninstall =
-                    data.installMode === 'system' || data.installMode === 'system-service';
+                const isSystemUninstall = data.installMode === 'system' || data.installMode === 'system-service';
                 if (isLinux && isSystemUninstall) {
                     // System scope on Linux: the out-of-cgroup teardown helper runs
                     // ASYNCHRONOUSLY. Do NOT claim success blindly — beta.60 #9 5.1: the
@@ -1570,7 +1575,10 @@ export class SettingsModal extends Modal {
                     try {
                         const resp = await fetch('/api/discover', { signal: AbortSignal.timeout(5000) });
                         if (!resp.ok) return;
-                        const discoverData = await resp.json() as { webPort?: number | null; configMtime?: number | null };
+                        const discoverData = (await resp.json()) as {
+                            webPort?: number | null;
+                            configMtime?: number | null;
+                        };
                         if (
                             discoverData.configMtime != null &&
                             discoverData.configMtime !== baselineMtime &&

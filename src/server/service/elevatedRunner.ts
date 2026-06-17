@@ -29,11 +29,11 @@
 //   - servy-cli succeeds but post-actions fail → result.ok is true,
 //     errorMessage is null, but combined stderr may have warnings.
 
-// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
-import { execFile, spawn } from 'child_process';
+import { randomBytes } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { randomBytes } from 'node:crypto';
+// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
+import { execFile, spawn } from 'child_process';
 import { promisify } from 'util';
 import { Logger } from '../Logger';
 import { tempDir } from '../util/disposable';
@@ -152,7 +152,7 @@ export async function runElevated(
     if (!(await fileExists(launcherPath))) {
         throw new Error(
             `runElevated requires the packaged launcher at ${launcherPath}, ` +
-                `which is not present (likely a dev/from-source run rather than a Velopack install)`,
+                'which is not present (likely a dev/from-source run rather than a Velopack install)',
         );
     }
 
@@ -182,9 +182,7 @@ export async function runElevated(
     // -Verb RunAs because the elevated process runs in a different
     // logon session and -Wait can't always track cross-session
     // children.
-    log.info(
-        `runElevated(${command}) launching ${launcherPath} (direct=${useDirect}, file-poll)`,
-    );
+    log.info(`runElevated(${command}) launching ${launcherPath} (direct=${useDirect}, file-poll)`);
 
     if (useDirect) {
         // Direct spawn — caller is already privileged (Local
@@ -192,11 +190,11 @@ export async function runElevated(
         // No UAC needed. We don't await the child; we just kick
         // it off and rely on the result-file polling for sync.
         try {
-            const child = spawn(
-                launcherPath,
-                ['--elevate-and-run', command, argsPath, resultPath],
-                { detached: true, stdio: 'ignore', windowsHide: true },
-            );
+            const child = spawn(launcherPath, ['--elevate-and-run', command, argsPath, resultPath], {
+                detached: true,
+                stdio: 'ignore',
+                windowsHide: true,
+            });
             child.unref();
         } catch (err) {
             return {
@@ -225,11 +223,10 @@ export async function runElevated(
         let uacFailed = false;
         let uacErrorMessage = '';
         try {
-            await execFileAsync(
-                launcherPath,
-                ['--request-uac', command, argsPath, resultPath],
-                { windowsHide: true, maxBuffer: 1024 * 1024 },
-            );
+            await execFileAsync(launcherPath, ['--request-uac', command, argsPath, resultPath], {
+                windowsHide: true,
+                maxBuffer: 1024 * 1024,
+            });
         } catch (err) {
             uacFailed = true;
             uacErrorMessage = (err as Error).message ?? '(no message)';
@@ -304,11 +301,7 @@ export async function pollForResultFile(
                 // mid-write. Wait a tick and re-read. If it's > 1KB
                 // and still malformed, the helper produced bad JSON —
                 // surface that.
-                if (
-                    parsed.ok === false &&
-                    /could not parse/i.test(parsed.errorMessage ?? '') &&
-                    raw.length < 1024
-                ) {
+                if (parsed.ok === false && /could not parse/i.test(parsed.errorMessage ?? '') && raw.length < 1024) {
                     await sleep(intervalMs);
                     continue;
                 }
@@ -356,15 +349,13 @@ export function toSnakeCase(input: Record<string, unknown>): Record<string, unkn
 export function parseResult(raw: string): ElevatedResult {
     try {
         const obj = JSON.parse(raw) as Record<string, unknown>;
-        const get = (snake: string, camel: string): unknown =>
-            obj[snake] !== undefined ? obj[snake] : obj[camel];
+        const get = (snake: string, camel: string): unknown => (obj[snake] !== undefined ? obj[snake] : obj[camel]);
         return {
             ok: Boolean(get('ok', 'ok')),
             exitCode: Number(get('exit_code', 'exitCode') ?? 0),
             stdout: String(get('stdout', 'stdout') ?? ''),
             stderr: String(get('stderr', 'stderr') ?? ''),
-            errorMessage:
-                (get('error_message', 'errorMessage') as string | null | undefined) ?? undefined,
+            errorMessage: (get('error_message', 'errorMessage') as string | null | undefined) ?? undefined,
             nonce: (get('nonce', 'nonce') as string | null | undefined) ?? undefined,
         };
     } catch (err) {

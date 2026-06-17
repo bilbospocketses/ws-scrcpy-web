@@ -93,7 +93,13 @@ export default class FilePushHandler implements DragEventListener {
         }
         let receivedBytes = 0;
 
-        const processData = async ({ done, value }: { done: boolean; value?: Uint8Array | undefined }): Promise<void> => {
+        const processData = async ({
+            done,
+            value,
+        }: {
+            done: boolean;
+            value?: Uint8Array | undefined;
+        }): Promise<void> => {
             if (done || !value) {
                 this.filePushStream.sendEventFinish({ id: pushId });
                 const { code: finishResponseCode } = await this.waitForResponse(pushId);

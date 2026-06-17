@@ -77,7 +77,9 @@ export class HostTracker extends ManagerClient<ParamsBase, HostTrackerEvents> {
                     });
                 }
                 if (msg.data.remote) {
-                    msg.data.remote.forEach((item) => this.startTracker(item));
+                    msg.data.remote.forEach((item) => {
+                        this.startTracker(item);
+                    });
                 }
                 break;
             }

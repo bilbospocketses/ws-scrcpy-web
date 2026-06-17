@@ -21,12 +21,7 @@ export function shArg(value: string): string {
 const SERIAL_RE = /^[A-Za-z0-9._:-]{1,128}$/;
 
 export function isValidSerial(serial: unknown): serial is string {
-    return (
-        typeof serial === 'string' &&
-        serial.length > 0 &&
-        !serial.startsWith('-') &&
-        SERIAL_RE.test(serial)
-    );
+    return typeof serial === 'string' && serial.length > 0 && !serial.startsWith('-') && SERIAL_RE.test(serial);
 }
 
 /** Return the serial when valid, otherwise throw. */

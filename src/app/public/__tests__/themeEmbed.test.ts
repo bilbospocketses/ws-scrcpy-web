@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { getTheme, setTheme, installThemeEmbedListener, notifyThemeReady, notifyThemeChanged } from '../themeEmbed';
+import { getTheme, installThemeEmbedListener, notifyThemeChanged, notifyThemeReady, setTheme } from '../themeEmbed';
 
 describe('getTheme / setTheme', () => {
     beforeEach(() => {
@@ -134,10 +134,7 @@ describe('notifyThemeReady', () => {
         const target = { postMessage: vi.fn() } as unknown as Window;
         setTheme('light');
         notifyThemeReady(target);
-        expect(target.postMessage).toHaveBeenCalledWith(
-            { type: 'ws-scrcpy-web:theme-ready', theme: 'light' },
-            '*',
-        );
+        expect(target.postMessage).toHaveBeenCalledWith({ type: 'ws-scrcpy-web:theme-ready', theme: 'light' }, '*');
     });
 
     it('defaults target to window.parent', () => {
@@ -165,10 +162,7 @@ describe('notifyThemeReady', () => {
     it('honors custom messageType (suffixed with -ready)', () => {
         const target = { postMessage: vi.fn() } as unknown as Window;
         notifyThemeReady(target, { messageType: 'custom:theme' });
-        expect(target.postMessage).toHaveBeenCalledWith(
-            expect.objectContaining({ type: 'custom:theme-ready' }),
-            '*',
-        );
+        expect(target.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'custom:theme-ready' }), '*');
     });
 });
 
@@ -182,10 +176,7 @@ describe('notifyThemeChanged', () => {
         const target = { postMessage: vi.fn() } as unknown as Window;
         setTheme('light');
         notifyThemeChanged(target);
-        expect(target.postMessage).toHaveBeenCalledWith(
-            { type: 'ws-scrcpy-web:theme-changed', theme: 'light' },
-            '*',
-        );
+        expect(target.postMessage).toHaveBeenCalledWith({ type: 'ws-scrcpy-web:theme-changed', theme: 'light' }, '*');
     });
 
     it('defaults target to window.parent', () => {
@@ -213,9 +204,6 @@ describe('notifyThemeChanged', () => {
     it('honors custom messageType (suffixed with -changed)', () => {
         const target = { postMessage: vi.fn() } as unknown as Window;
         notifyThemeChanged(target, { messageType: 'custom:theme' });
-        expect(target.postMessage).toHaveBeenCalledWith(
-            expect.objectContaining({ type: 'custom:theme-changed' }),
-            '*',
-        );
+        expect(target.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'custom:theme-changed' }), '*');
     });
 });

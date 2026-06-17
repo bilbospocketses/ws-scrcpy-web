@@ -1,5 +1,5 @@
-import { isSafeEncoderName } from './security/deviceInput';
 import type { ScrcpyOptions } from './ScrcpyOptions';
+import { isSafeEncoderName } from './security/deviceInput';
 
 /**
  * Pure translation from the stream WebSocket's query string to a ScrcpyOptions

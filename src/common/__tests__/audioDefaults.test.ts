@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
-    audioEnabledDefault,
     audioCaptureSupported,
     audioDupSupported,
+    audioEnabledDefault,
     defaultAudioSourceForSdk,
 } from '../AudioDefaults';
 

@@ -1,10 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-    parseWmSize,
-    parseWmSizeStrict,
-    parseWmDensity,
-    parseWmDensityStrict,
-} from '../wmParsers';
+import { parseWmDensity, parseWmDensityStrict, parseWmSize, parseWmSizeStrict } from '../wmParsers';
 
 describe('parseWmSizeStrict', () => {
     it('parses Physical size', () => {

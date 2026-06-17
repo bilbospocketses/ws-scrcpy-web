@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ConfirmModal } from '../ConfirmModal';
 
 beforeEach(() => {
@@ -18,8 +18,9 @@ afterEach(() => {
 });
 
 function button(label: string): HTMLButtonElement {
-    const btn = (Array.from(document.querySelectorAll('button')) as HTMLButtonElement[])
-        .find((b) => b.textContent?.trim().toLowerCase() === label.toLowerCase());
+    const btn = (Array.from(document.querySelectorAll('button')) as HTMLButtonElement[]).find(
+        (b) => b.textContent?.trim().toLowerCase() === label.toLowerCase(),
+    );
     expect(btn, `button "${label}"`).toBeTruthy();
     return btn!;
 }

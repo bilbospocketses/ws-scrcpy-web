@@ -3,10 +3,7 @@ import { scrcpyOptionsFromQuery } from './scrcpyOptionsFromQuery';
 
 describe('scrcpyOptionsFromQuery', () => {
     it('accepts a well-formed encoder name', () => {
-        const opts = scrcpyOptionsFromQuery(
-            new URLSearchParams('videoEncoder=OMX.qcom.video.encoder.avc'),
-            'scid1',
-        );
+        const opts = scrcpyOptionsFromQuery(new URLSearchParams('videoEncoder=OMX.qcom.video.encoder.avc'), 'scid1');
         expect(opts.videoEncoder).toBe('OMX.qcom.video.encoder.avc');
     });
 

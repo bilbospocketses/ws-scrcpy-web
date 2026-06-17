@@ -1,25 +1,25 @@
 // @vitest-environment jsdom
 
-import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as AdminConfirmModalModule from '../AdminConfirmModal';
+import * as ResetConfirmModalModule from '../ResetConfirmModal';
 import {
-    uninstallFollowupMessage,
-    classifyInstallPoll,
-    resetPromptsPayload,
-    scopeRadioState,
-    lockScopeRadioControl,
-    stopServerButtonState,
-    buildServiceInfoRow,
-    systemServiceInstallGate,
     applySystemInstallGate,
     appSectionButtonsState,
     buildInstallAllUsersControl,
-    buildUninstallControl,
     buildResetControl,
+    buildServiceInfoRow,
+    buildUninstallControl,
+    classifyInstallPoll,
+    lockScopeRadioControl,
+    resetPromptsPayload,
     SettingsModal,
+    scopeRadioState,
+    stopServerButtonState,
+    systemServiceInstallGate,
+    uninstallFollowupMessage,
 } from '../SettingsModal';
 import * as UninstallConfirmModalModule from '../UninstallConfirmModal';
-import * as ResetConfirmModalModule from '../ResetConfirmModal';
-import * as AdminConfirmModalModule from '../AdminConfirmModal';
 
 /** Flush microtasks + a macrotask so the awaited fetch handlers settle. */
 const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
@@ -54,7 +54,10 @@ describe('classifyInstallPoll', () => {
         maxIterations: 30,
     };
     it('navigates when the service answers on a new port (mtime changed)', () => {
-        expect(classifyInstallPoll({ ...served, configMtime: 200, diskWebPort: 8002 })).toEqual({ kind: 'navigate', port: 8002 });
+        expect(classifyInstallPoll({ ...served, configMtime: 200, diskWebPort: 8002 })).toEqual({
+            kind: 'navigate',
+            port: 8002,
+        });
     });
     it('reconnects when the service answers on the SAME port, no mtime change (the race fix)', () => {
         expect(classifyInstallPoll(served)).toEqual({ kind: 'reconnect' });
@@ -63,7 +66,16 @@ describe('classifyInstallPoll', () => {
         expect(classifyInstallPoll({ ...served, servedByService: false })).toEqual({ kind: 'keep-polling' });
     });
     it('keeps polling through the hand-off dead window (unreachable, before the cap)', () => {
-        expect(classifyInstallPoll({ ...served, reachable: false, servedByService: false, configMtime: null, diskWebPort: null, iterations: 2 })).toEqual({ kind: 'keep-polling' });
+        expect(
+            classifyInstallPoll({
+                ...served,
+                reachable: false,
+                servedByService: false,
+                configMtime: null,
+                diskWebPort: null,
+                iterations: 2,
+            }),
+        ).toEqual({ kind: 'keep-polling' });
     });
     it('times out only when the service never takes over', () => {
         expect(classifyInstallPoll({ ...served, servedByService: false, iterations: 31 })).toEqual({ kind: 'timeout' });
@@ -305,7 +317,8 @@ describe('buildUninstallControl', () => {
     });
 
     it('button click opens UninstallConfirmModal (calls confirm)', async () => {
-        const confirmSpy = vi.spyOn(UninstallConfirmModalModule.UninstallConfirmModal, 'confirm')
+        const confirmSpy = vi
+            .spyOn(UninstallConfirmModalModule.UninstallConfirmModal, 'confirm')
             .mockResolvedValue({ confirmed: false, keep: true });
         const { button } = buildUninstallControl({ onUninstalled: vi.fn() });
         button.click();
@@ -317,8 +330,10 @@ describe('buildUninstallControl', () => {
         const fetchMock = vi.fn().mockResolvedValue({ ok: true });
         vi.stubGlobal('fetch', fetchMock);
         const onUninstalled = vi.fn();
-        vi.spyOn(UninstallConfirmModalModule.UninstallConfirmModal, 'confirm')
-            .mockResolvedValue({ confirmed: true, keep: true });
+        vi.spyOn(UninstallConfirmModalModule.UninstallConfirmModal, 'confirm').mockResolvedValue({
+            confirmed: true,
+            keep: true,
+        });
 
         const { button } = buildUninstallControl({ onUninstalled });
         button.click();
@@ -336,8 +351,10 @@ describe('buildUninstallControl', () => {
         const fetchMock = vi.fn().mockResolvedValue({ ok: true });
         vi.stubGlobal('fetch', fetchMock);
         const onUninstalled = vi.fn();
-        vi.spyOn(UninstallConfirmModalModule.UninstallConfirmModal, 'confirm')
-            .mockResolvedValue({ confirmed: true, keep: false });
+        vi.spyOn(UninstallConfirmModalModule.UninstallConfirmModal, 'confirm').mockResolvedValue({
+            confirmed: true,
+            keep: false,
+        });
 
         const { button } = buildUninstallControl({ onUninstalled });
         button.click();
@@ -352,8 +369,10 @@ describe('buildUninstallControl', () => {
         const fetchMock = vi.fn();
         vi.stubGlobal('fetch', fetchMock);
         const onUninstalled = vi.fn();
-        vi.spyOn(UninstallConfirmModalModule.UninstallConfirmModal, 'confirm')
-            .mockResolvedValue({ confirmed: false, keep: true });
+        vi.spyOn(UninstallConfirmModalModule.UninstallConfirmModal, 'confirm').mockResolvedValue({
+            confirmed: false,
+            keep: true,
+        });
 
         const { button } = buildUninstallControl({ onUninstalled });
         button.click();
@@ -380,9 +399,7 @@ describe('buildResetControl', () => {
     });
 
     it('button click opens ResetConfirmModal (calls confirm)', async () => {
-        const confirmSpy = vi
-            .spyOn(ResetConfirmModalModule.ResetConfirmModal, 'confirm')
-            .mockResolvedValue(false);
+        const confirmSpy = vi.spyOn(ResetConfirmModalModule.ResetConfirmModal, 'confirm').mockResolvedValue(false);
         const { button } = buildResetControl({ reload: vi.fn() });
         button.click();
         await flush();
@@ -453,9 +470,9 @@ describe('Server section row order (folded App, beta.62)', () => {
         // queueMicrotask(() => fillBody(...)) to run.
         await flushMicrotasks();
 
-        const labels = Array.from(
-            document.body.querySelectorAll<HTMLElement>('.settings-row .settings-label'),
-        ).map((el) => el.textContent ?? '');
+        const labels = Array.from(document.body.querySelectorAll<HTMLElement>('.settings-row .settings-label')).map(
+            (el) => el.textContent ?? '',
+        );
 
         const resetIdx = labels.indexOf('reset welcome and bookmark prompts');
         const installIdx = labels.indexOf('install for all users');
@@ -486,9 +503,9 @@ describe('Settings section restructure (beta.62)', () => {
         new SettingsModal();
         await flushMicrotasks();
 
-        const headings = Array.from(
-            document.body.querySelectorAll<HTMLElement>('.settings-section-heading'),
-        ).map((el) => el.textContent ?? '');
+        const headings = Array.from(document.body.querySelectorAll<HTMLElement>('.settings-section-heading')).map(
+            (el) => el.textContent ?? '',
+        );
         expect(headings).toEqual(['Updates', 'Service', 'Server']);
     });
 
@@ -501,9 +518,7 @@ describe('Settings section restructure (beta.62)', () => {
         await flushMicrotasks();
 
         const rows = Array.from(document.body.querySelectorAll<HTMLElement>('.settings-row'));
-        const portRow = rows.find(
-            (r) => r.querySelector('.settings-label')?.textContent === 'web port',
-        );
+        const portRow = rows.find((r) => r.querySelector('.settings-label')?.textContent === 'web port');
         expect(portRow, 'web port row missing').toBeTruthy();
         const control = portRow?.querySelector('.settings-control');
         expect(control?.querySelector('input'), 'port input missing').toBeTruthy();
@@ -606,15 +621,13 @@ describe('onInstallService takeover copy (§7 system-service hand-off)', () => {
         await buildModal();
 
         // After renderServiceState, the install button should exist.
-        const installBtn = Array.from(
-            document.body.querySelectorAll<HTMLButtonElement>('button.settings-btn'),
-        ).find((b) => b.textContent === 'not installed — install?');
+        const installBtn = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button.settings-btn')).find(
+            (b) => b.textContent === 'not installed — install?',
+        );
         expect(installBtn, 'install button not found after initial render').toBeTruthy();
 
         // Select system scope radio.
-        const systemRadio = document.body.querySelector<HTMLInputElement>(
-            'input[type="radio"][value="system"]',
-        );
+        const systemRadio = document.body.querySelector<HTMLInputElement>('input[type="radio"][value="system"]');
         expect(systemRadio, 'system scope radio not found').toBeTruthy();
         systemRadio!.checked = true;
 
@@ -649,20 +662,16 @@ describe('onInstallService takeover copy (§7 system-service hand-off)', () => {
 
         await buildModal();
 
-        const installBtn = Array.from(
-            document.body.querySelectorAll<HTMLButtonElement>('button.settings-btn'),
-        ).find((b) => b.textContent === 'not installed — install?');
+        const installBtn = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button.settings-btn')).find(
+            (b) => b.textContent === 'not installed — install?',
+        );
         expect(installBtn, 'install button not found').toBeTruthy();
 
         // Ensure user radio is checked, system radio is not.
-        const userRadio = document.body.querySelector<HTMLInputElement>(
-            'input[type="radio"][value="user"]',
-        );
+        const userRadio = document.body.querySelector<HTMLInputElement>('input[type="radio"][value="user"]');
         expect(userRadio, 'user scope radio not found').toBeTruthy();
         userRadio!.checked = true;
-        const systemRadio = document.body.querySelector<HTMLInputElement>(
-            'input[type="radio"][value="system"]',
-        );
+        const systemRadio = document.body.querySelector<HTMLInputElement>('input[type="radio"][value="system"]');
         if (systemRadio) systemRadio.checked = false;
 
         // Click install — Linux + user scope skips AdminConfirmModal.

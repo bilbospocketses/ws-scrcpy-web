@@ -18,11 +18,7 @@ import type { AdbClient } from './AdbClient';
  * If ws-scrcpy-web is rebuilt with a newer scrcpy-server binary, the size
  * changes, we push — which is what we want.
  */
-export async function ensureScrcpyServerPushed(
-    adbClient: AdbClient,
-    serial: string,
-    localPath: string,
-): Promise<void> {
+export async function ensureScrcpyServerPushed(adbClient: AdbClient, serial: string, localPath: string): Promise<void> {
     const expectedSize = statSync(localPath).size;
     try {
         const out = await adbClient.shell(serial, `wc -c < ${DEVICE_SERVER_PATH} 2>/dev/null`);

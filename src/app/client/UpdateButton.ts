@@ -47,12 +47,7 @@ export function createUpdateButton(): HTMLElement {
     }
 
     function setState(stateClass: string): void {
-        container.classList.remove(
-            'state-checking',
-            'state-downloading',
-            'state-ready',
-            'state-error',
-        );
+        container.classList.remove('state-checking', 'state-downloading', 'state-ready', 'state-error');
         if (stateClass) container.classList.add(stateClass);
     }
 
@@ -102,9 +97,7 @@ export function createUpdateButton(): HTMLElement {
         btn.type = 'button';
         btn.className = 'update-button-action';
         // textContent is the safe path for the dynamic version string.
-        btn.textContent = availableVersion
-            ? `apply update v${availableVersion}`
-            : 'apply update';
+        btn.textContent = availableVersion ? `apply update v${availableVersion}` : 'apply update';
         btn.addEventListener('click', () => {
             void onApplyClick(btn);
         });

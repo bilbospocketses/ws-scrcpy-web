@@ -62,9 +62,10 @@ export class AdminConfirmModal extends Modal {
     private fillBody(container: HTMLElement): void {
         const message = document.createElement('p');
         message.style.cssText = 'margin: 0 0 12px;';
-        message.textContent = this.platform === 'linux'
-            ? `${this.capitalizedAction()} with system scope needs administrator privileges. polkit will show a password prompt next.`
-            : `${this.capitalizedAction()} requires administrative privileges. Windows will show a UAC prompt next.`;
+        message.textContent =
+            this.platform === 'linux'
+                ? `${this.capitalizedAction()} with system scope needs administrator privileges. polkit will show a password prompt next.`
+                : `${this.capitalizedAction()} requires administrative privileges. Windows will show a UAC prompt next.`;
         container.appendChild(message);
 
         const question = document.createElement('p');

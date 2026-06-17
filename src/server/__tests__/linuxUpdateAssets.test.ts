@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { linuxAppImageAssetName, releaseAssetUrl, parseSha256Sums } from '../linuxUpdateAssets';
+import { describe, expect, it } from 'vitest';
+import { linuxAppImageAssetName, parseSha256Sums, releaseAssetUrl } from '../linuxUpdateAssets';
 
 describe('linuxUpdateAssets', () => {
     it('builds the channel-suffixed AppImage asset name', () => {

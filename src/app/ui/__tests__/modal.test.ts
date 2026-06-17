@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Modal } from '../Modal';
 
 // jsdom doesn't implement showModal/close — stub them
@@ -12,7 +12,9 @@ beforeEach(() => {
 
 afterEach(() => {
     // Clean up any dialogs left in the DOM
-    document.body.querySelectorAll('dialog').forEach((d) => d.remove());
+    document.body.querySelectorAll('dialog').forEach((d) => {
+        d.remove();
+    });
     vi.useRealTimers();
 });
 
@@ -233,7 +235,9 @@ describe('Modal onBeforeClose', () => {
                 container.textContent = 'track';
             }
             protected override onBeforeClose(): void {
-                order.push(document.body.contains(this['dialog']) ? 'cleanup-while-attached' : 'cleanup-while-detached');
+                order.push(
+                    document.body.contains(this['dialog']) ? 'cleanup-while-attached' : 'cleanup-while-detached',
+                );
             }
         }
 

@@ -194,7 +194,10 @@ describe('BaseDeviceTracker diff/patch by udid (#34 Part B)', () => {
         expect(builtAfterFirst).toBe(2);
 
         // Identical descriptors → no rows rebuilt.
-        tracker.setDescriptors([{ udid: 'A', state: 'device' }, { udid: 'B', state: 'device' }]);
+        tracker.setDescriptors([
+            { udid: 'A', state: 'device' },
+            { udid: 'B', state: 'device' },
+        ]);
         await tracker.refresh();
         expect(tracker.buildRowCount).toBe(builtAfterFirst);
 

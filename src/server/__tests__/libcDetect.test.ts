@@ -1,11 +1,11 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('fs');
 vi.mock('child_process');
 
-import { detectLibc } from '../libcDetect';
-import * as fs from 'fs';
 import * as childProcess from 'child_process';
+import * as fs from 'fs';
+import { detectLibc } from '../libcDetect';
 
 const fsModule = vi.mocked(fs);
 const childProcessModule = vi.mocked(childProcess);
@@ -47,8 +47,12 @@ describe('detectLibc', () => {
     it('falls back to glibc on linux when no signals are present', () => {
         setPlatform('linux');
         vi.spyOn(process.report as any, 'getReport').mockReturnValue({ header: {} });
-        fsModule.accessSync.mockImplementation(() => { throw new Error('ENOENT'); });
-        childProcessModule.execFileSync.mockImplementation(() => { throw new Error('ldd not found'); });
+        fsModule.accessSync.mockImplementation(() => {
+            throw new Error('ENOENT');
+        });
+        childProcessModule.execFileSync.mockImplementation(() => {
+            throw new Error('ldd not found');
+        });
         expect(detectLibc()).toBe('glibc');
     });
 });

@@ -91,10 +91,10 @@ export function resolveDependenciesPath(
 
     throw new Error(
         'DEPS_PATH is not set and no dependencies path is configured. ' +
-        'On Windows, dependencies are expected at <dataRoot>/dependencies ' +
-        '(default %PROGRAMDATA%\\WsScrcpyWeb\\dependencies). ' +
-        'On Linux, set DEPS_PATH or place a `dependencies/` folder next to ' +
-        'a `package.json` sibling of the entry script.',
+            'On Windows, dependencies are expected at <dataRoot>/dependencies ' +
+            '(default %PROGRAMDATA%\\WsScrcpyWeb\\dependencies). ' +
+            'On Linux, set DEPS_PATH or place a `dependencies/` folder next to ' +
+            'a `package.json` sibling of the entry script.',
     );
 }
 
@@ -149,14 +149,10 @@ export function resolveAdbPath(
  * unexpectedly missing — an extremely rare edge but worth covering rather
  * than crashing.
  */
-export function resolveDataRoot(
-    env: NodeJS.ProcessEnv,
-    platform: NodeJS.Platform = process.platform,
-): string | null {
+export function resolveDataRoot(env: NodeJS.ProcessEnv, platform: NodeJS.Platform = process.platform): string | null {
     if (platform === 'win32') {
-        const programData = env['PROGRAMDATA'] && env['PROGRAMDATA'].length > 0
-            ? env['PROGRAMDATA']
-            : 'C:\\ProgramData';
+        const programData =
+            env['PROGRAMDATA'] && env['PROGRAMDATA'].length > 0 ? env['PROGRAMDATA'] : 'C:\\ProgramData';
         return path.win32.join(programData, 'WsScrcpyWeb');
     }
     // Non-Windows: DATA_ROOT (launcher bridge) > XDG_DATA_HOME > ~/.local/share
@@ -300,10 +296,7 @@ function sanitizeAppConfig(raw: FlatConfig, warn: (msg: string) => void): AppCon
         else warn(`config.json: ${r.error}; using default false`);
     }
     if ((raw as { serviceFirstRunSeen?: unknown }).serviceFirstRunSeen !== undefined) {
-        const r = validateField(
-            'serviceFirstRunSeen',
-            (raw as { serviceFirstRunSeen?: unknown }).serviceFirstRunSeen,
-        );
+        const r = validateField('serviceFirstRunSeen', (raw as { serviceFirstRunSeen?: unknown }).serviceFirstRunSeen);
         if (r.ok) out.serviceFirstRunSeen = r.value;
         else warn(`config.json: ${r.error}; using default false`);
     }
@@ -456,11 +449,7 @@ export class Config {
             const appConfig = sanitizeAppConfig(fileConfig, warn);
             const servers = Config.buildServers(fileConfig, appConfig.webPort);
 
-            const dependenciesPath = resolveDependenciesPath(
-                process.env,
-                fileConfig,
-                process.argv[1] ?? '.',
-            );
+            const dependenciesPath = resolveDependenciesPath(process.env, fileConfig, process.argv[1] ?? '.');
 
             // ADB resolution must come AFTER dependenciesPath. Always returns a path
             // inside <dependenciesPath>/adb/ unless config.json explicitly overrides.
@@ -469,10 +458,22 @@ export class Config {
             const adbPath = adbResolution.path;
             log.info(`adbPath=${adbPath} (source=${adbResolution.source})`);
 
-            const scanConcurrency = Number.parseInt(process.env['SCAN_CONCURRENCY'] ?? '', 10) || fileConfig.scanConcurrency || DEFAULT_SCAN_CONCURRENCY;
-            const scanTcpTimeoutMs = Number.parseInt(process.env['SCAN_TCP_TIMEOUT_MS'] ?? '', 10) || fileConfig.scanTcpTimeoutMs || DEFAULT_SCAN_TCP_TIMEOUT_MS;
-            const scanAdbConnectTimeoutMs = Number.parseInt(process.env['SCAN_ADB_CONNECT_TIMEOUT_MS'] ?? '', 10) || fileConfig.scanAdbConnectTimeoutMs || DEFAULT_SCAN_ADB_CONNECT_TIMEOUT_MS;
-            const scanProgressInterval = Number.parseInt(process.env['SCAN_PROGRESS_INTERVAL'] ?? '', 10) || fileConfig.scanProgressInterval || DEFAULT_SCAN_PROGRESS_INTERVAL;
+            const scanConcurrency =
+                Number.parseInt(process.env['SCAN_CONCURRENCY'] ?? '', 10) ||
+                fileConfig.scanConcurrency ||
+                DEFAULT_SCAN_CONCURRENCY;
+            const scanTcpTimeoutMs =
+                Number.parseInt(process.env['SCAN_TCP_TIMEOUT_MS'] ?? '', 10) ||
+                fileConfig.scanTcpTimeoutMs ||
+                DEFAULT_SCAN_TCP_TIMEOUT_MS;
+            const scanAdbConnectTimeoutMs =
+                Number.parseInt(process.env['SCAN_ADB_CONNECT_TIMEOUT_MS'] ?? '', 10) ||
+                fileConfig.scanAdbConnectTimeoutMs ||
+                DEFAULT_SCAN_ADB_CONNECT_TIMEOUT_MS;
+            const scanProgressInterval =
+                Number.parseInt(process.env['SCAN_PROGRESS_INTERVAL'] ?? '', 10) ||
+                fileConfig.scanProgressInterval ||
+                DEFAULT_SCAN_PROGRESS_INTERVAL;
 
             this.instance = new Config(
                 servers,
@@ -574,9 +575,7 @@ export class Config {
      * alongside the existing uninstall-handoff marker (see `common/src/control_marker.rs`).
      */
     public get applyUpdatePendingMarkerPath(): string {
-        const base = this._dataRoot !== null
-            ? this._dataRoot
-            : path.dirname(this._dependenciesPath);
+        const base = this._dataRoot !== null ? this._dataRoot : path.dirname(this._dependenciesPath);
         return path.join(base, 'control', 'apply-update-pending');
     }
 
@@ -590,9 +589,7 @@ export class Config {
      * Lives under `control/` alongside the apply-update-pending marker.
      */
     public get applyUpdateVerifyManifestPath(): string {
-        const base = this._dataRoot !== null
-            ? this._dataRoot
-            : path.dirname(this._dependenciesPath);
+        const base = this._dataRoot !== null ? this._dataRoot : path.dirname(this._dependenciesPath);
         return path.join(base, 'control', 'apply-update-verify.json');
     }
 
@@ -607,30 +604,32 @@ export class Config {
      * WS_SCRCPY_NO_BROWSER on it the way Linux's linux_apply does.)
      */
     public get suppressBrowserOpenMarkerPath(): string {
-        const base = this._dataRoot !== null
-            ? this._dataRoot
-            : path.dirname(this._dependenciesPath);
+        const base = this._dataRoot !== null ? this._dataRoot : path.dirname(this._dependenciesPath);
         return path.join(base, 'control', 'suppress-browser-open');
     }
 
     public get operationServerPortFilePath(): string {
-        const base = this._dataRoot !== null
-            ? this._dataRoot
-            : path.dirname(this._dependenciesPath);
+        const base = this._dataRoot !== null ? this._dataRoot : path.dirname(this._dependenciesPath);
         return path.join(base, 'control', 'operation-server-port');
     }
 
     public get uninstallPendingMarkerPath(): string {
-        const base = this._dataRoot !== null
-            ? this._dataRoot
-            : path.dirname(this._dependenciesPath);
+        const base = this._dataRoot !== null ? this._dataRoot : path.dirname(this._dependenciesPath);
         return path.join(base, 'control', 'uninstall-pending');
     }
 
-    public get scanConcurrency(): number { return this._scanConcurrency; }
-    public get scanTcpTimeoutMs(): number { return this._scanTcpTimeoutMs; }
-    public get scanAdbConnectTimeoutMs(): number { return this._scanAdbConnectTimeoutMs; }
-    public get scanProgressInterval(): number { return this._scanProgressInterval; }
+    public get scanConcurrency(): number {
+        return this._scanConcurrency;
+    }
+    public get scanTcpTimeoutMs(): number {
+        return this._scanTcpTimeoutMs;
+    }
+    public get scanAdbConnectTimeoutMs(): number {
+        return this._scanAdbConnectTimeoutMs;
+    }
+    public get scanProgressInterval(): number {
+        return this._scanProgressInterval;
+    }
 
     /** Always true in the simplified config — local goog tracker always runs. */
     public get runLocalGoogTracker(): boolean {
@@ -730,7 +729,10 @@ export class Config {
 }
 
 export class ConfigValidationError extends Error {
-    constructor(message: string, public readonly field: string) {
+    constructor(
+        message: string,
+        public readonly field: string,
+    ) {
         super(message);
         this.name = 'ConfigValidationError';
     }

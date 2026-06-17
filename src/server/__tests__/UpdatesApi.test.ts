@@ -1,15 +1,16 @@
 // biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
-import type { IncomingMessage, ServerResponse } from 'http';
+
 // biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import * as fs from 'fs';
+import type { IncomingMessage, ServerResponse } from 'http';
 // biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import * as os from 'os';
 // biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { UpdatesApi } from '../api/UpdatesApi';
 import { Config } from '../Config';
 import { EnvName } from '../EnvName';
-import { UpdatesApi } from '../api/UpdatesApi';
 import type { UpdateService, UpdateServiceState } from '../UpdateService';
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -307,11 +308,7 @@ describe('UpdatesApi', () => {
     it('PATCH /config: bad channel → 400', async () => {
         const svc = fakeService();
         const api = new UpdatesApi(svc);
-        const { req, res } = makeReqRes(
-            '/api/updates/config',
-            'PATCH',
-            JSON.stringify({ channel: 'nightly' }),
-        );
+        const { req, res } = makeReqRes('/api/updates/config', 'PATCH', JSON.stringify({ channel: 'nightly' }));
         await api.handle(req, res);
         expect((res as any).getStatus()).toBe(400);
         const body = JSON.parse((res as any).getBody());
@@ -347,11 +344,7 @@ describe('UpdatesApi', () => {
     it('PATCH /config: empty githubOwner → 400', async () => {
         const svc = fakeService();
         const api = new UpdatesApi(svc);
-        const { req, res } = makeReqRes(
-            '/api/updates/config',
-            'PATCH',
-            JSON.stringify({ githubOwner: '' }),
-        );
+        const { req, res } = makeReqRes('/api/updates/config', 'PATCH', JSON.stringify({ githubOwner: '' }));
         await api.handle(req, res);
         expect((res as any).getStatus()).toBe(400);
         expect(JSON.parse((res as any).getBody()).error).toMatch(/non-empty string/);
@@ -374,11 +367,7 @@ describe('UpdatesApi', () => {
     it('PATCH /config: bad autoUpdate (non-boolean) → 400', async () => {
         const svc = fakeService();
         const api = new UpdatesApi(svc);
-        const { req, res } = makeReqRes(
-            '/api/updates/config',
-            'PATCH',
-            JSON.stringify({ autoUpdate: 'yes' }),
-        );
+        const { req, res } = makeReqRes('/api/updates/config', 'PATCH', JSON.stringify({ autoUpdate: 'yes' }));
         await api.handle(req, res);
         expect((res as any).getStatus()).toBe(400);
         expect(JSON.parse((res as any).getBody()).error).toMatch(/autoUpdate must be a boolean/);
@@ -389,11 +378,7 @@ describe('UpdatesApi', () => {
     it('PATCH /config: channel change triggers svc.reconfigure', async () => {
         const svc = fakeService({ isInstalled: true });
         const api = new UpdatesApi(svc);
-        const { req, res } = makeReqRes(
-            '/api/updates/config',
-            'PATCH',
-            JSON.stringify({ channel: 'beta' }),
-        );
+        const { req, res } = makeReqRes('/api/updates/config', 'PATCH', JSON.stringify({ channel: 'beta' }));
         await api.handle(req, res);
         expect((res as any).getStatus()).toBe(200);
         expect(svc.reconfigure).toHaveBeenCalledTimes(1);
@@ -422,11 +407,7 @@ describe('UpdatesApi', () => {
     it('PATCH /config: only autoUpdate change does NOT trigger reconfigure or restartTimer', async () => {
         const svc = fakeService({ isInstalled: true });
         const api = new UpdatesApi(svc);
-        const { req, res } = makeReqRes(
-            '/api/updates/config',
-            'PATCH',
-            JSON.stringify({ autoUpdate: false }),
-        );
+        const { req, res } = makeReqRes('/api/updates/config', 'PATCH', JSON.stringify({ autoUpdate: false }));
         await api.handle(req, res);
         expect((res as any).getStatus()).toBe(200);
         expect(svc.reconfigure).not.toHaveBeenCalled();
@@ -467,11 +448,7 @@ describe('UpdatesApi', () => {
     it('PATCH /config: dev mode still persists config (no reconfigure though)', async () => {
         const svc = fakeService({ isInstalled: false });
         const api = new UpdatesApi(svc);
-        const { req, res } = makeReqRes(
-            '/api/updates/config',
-            'PATCH',
-            JSON.stringify({ githubOwner: 'newowner' }),
-        );
+        const { req, res } = makeReqRes('/api/updates/config', 'PATCH', JSON.stringify({ githubOwner: 'newowner' }));
         await api.handle(req, res);
         expect((res as any).getStatus()).toBe(200);
         expect(Config.getInstance().getAppConfig().githubOwner).toBe('newowner');

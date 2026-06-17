@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { resolveSystemTool, buildDetachedSpawn } from './systemTools';
+import { describe, expect, it } from 'vitest';
+import { buildDetachedSpawn, resolveSystemTool } from './systemTools';
 
 describe('resolveSystemTool — POSIX', () => {
     it('returns the first candidate that exists', () => {
@@ -33,7 +33,14 @@ describe('resolveSystemTool — Windows', () => {
 
     it('appends .exe when probing a bare Windows tool name', () => {
         const seen: string[] = [];
-        resolveSystemTool('icacls', (p) => { seen.push(p); return false; }, 'win32');
+        resolveSystemTool(
+            'icacls',
+            (p) => {
+                seen.push(p);
+                return false;
+            },
+            'win32',
+        );
         expect(seen.some((p) => p.toLowerCase().endsWith('system32\\icacls.exe'))).toBe(true);
     });
 

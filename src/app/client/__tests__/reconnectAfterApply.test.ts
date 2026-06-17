@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { reconnectAfterApply } from '../reconnectAfterApply';
 
 function statusResponse(version: string) {
@@ -17,7 +17,10 @@ describe('reconnectAfterApply', () => {
             fetchFn: fetchMock as unknown as typeof fetch,
             intervalMs: 0,
             deadlineMs: 10_000,
-            now: (() => { let t = 0; return () => (t += 1); })(),
+            now: (() => {
+                let t = 0;
+                return () => (t += 1);
+            })(),
         });
         expect(result).toBe('updated');
         expect(fetchMock).toHaveBeenCalledWith('/api/updates/status', { cache: 'no-store' });
@@ -31,7 +34,10 @@ describe('reconnectAfterApply', () => {
             fetchFn: fetchMock as unknown as typeof fetch,
             intervalMs: 0,
             deadlineMs: 5,
-            now: (() => { let t = 0; return () => (t += 2); })(),
+            now: (() => {
+                let t = 0;
+                return () => (t += 2);
+            })(),
         });
         expect(result).toBe('timeout');
     });

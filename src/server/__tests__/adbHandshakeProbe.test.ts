@@ -69,7 +69,10 @@ describe('buildCnxnPacket', () => {
 
 describe('parseCnxnReply', () => {
     it('returns isAdb=true and extracts model for valid CNXN', () => {
-        const banner = Buffer.from('device::ro.product.name=sdk;ro.product.model=SM-T550;ro.product.device=gt5;features=cmd', 'utf8');
+        const banner = Buffer.from(
+            'device::ro.product.name=sdk;ro.product.model=SM-T550;ro.product.device=gt5;features=cmd',
+            'utf8',
+        );
         const reply = buildReply(A_CNXN, banner);
         const r = parseCnxnReply(reply);
         expect(r.isAdb).toBe(true);

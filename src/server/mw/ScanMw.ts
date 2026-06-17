@@ -1,7 +1,7 @@
 import type WS from 'ws';
-import { parseSubnetInput, type ParsedSubnet, type ParseError } from '../../common/SubnetParser';
-import { NetworkScanner } from '../network/NetworkScanner';
 import type { ScanClientMessage, ScanServerMessage } from '../../common/ScanMessage';
+import { type ParsedSubnet, type ParseError, parseSubnetInput } from '../../common/SubnetParser';
+import type { NetworkScanner } from '../network/NetworkScanner';
 
 // Scan control messages (a small list of subnets) are tiny; cap them so a
 // hostile client cannot drive memory via the JSON.parse below. The WS server's

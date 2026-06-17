@@ -1,12 +1,10 @@
-import { describe, expect, it } from 'vitest';
 import type { IncomingMessage } from 'node:http';
 import { Readable } from 'node:stream';
+import { describe, expect, it } from 'vitest';
 import { BodyTooLargeError, MAX_BODY_BYTES, readBodyCapped, readJsonBody } from './utils';
 
 function reqFrom(chunks: Array<Buffer | string>): IncomingMessage {
-    return Readable.from(
-        chunks.map((c) => (typeof c === 'string' ? Buffer.from(c) : c)),
-    ) as unknown as IncomingMessage;
+    return Readable.from(chunks.map((c) => (typeof c === 'string' ? Buffer.from(c) : c))) as unknown as IncomingMessage;
 }
 
 describe('readBodyCapped', () => {

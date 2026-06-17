@@ -1,23 +1,19 @@
 import '../../../style/devicelist.css';
 import { ACTION } from '../../../common/Action';
+import { audioCaptureSupported, audioEnabledDefault, defaultAudioSourceForSdk } from '../../../common/AudioDefaults';
 import { ChannelCode } from '../../../common/ChannelCode';
 import { SERVER_PORT } from '../../../common/Constants';
 import { DeviceState } from '../../../common/DeviceState';
 import type { HostItem } from '../../../types/Configuration';
 import type GoogDeviceDescriptor from '../../../types/GoogDeviceDescriptor';
 import type { ParamsDeviceTracker } from '../../../types/ParamsDeviceTracker';
+import { AudioSettingsStore } from '../../client/AudioSettingsStore';
 import { BaseDeviceTracker } from '../../client/BaseDeviceTracker';
 import type { Tool } from '../../client/Tool';
 import Util from '../../Util';
 import { html } from '../../ui/HtmlTag';
 import SvgImage from '../../ui/SvgImage';
 import { StreamClientScrcpy } from './StreamClientScrcpy';
-import { AudioSettingsStore } from '../../client/AudioSettingsStore';
-import {
-    audioCaptureSupported,
-    audioEnabledDefault,
-    defaultAudioSourceForSdk,
-} from '../../../common/AudioDefaults';
 
 // ---------- capability gating ----------
 
@@ -125,14 +121,24 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
 
     private static iconForKind(kind: 'phone' | 'tablet' | 'tv' | undefined) {
         switch (kind) {
-            case 'tv': return SvgImage.Icon.DEVICE_TV;
-            case 'tablet': return SvgImage.Icon.DEVICE_TABLET;
-            case 'phone': return SvgImage.Icon.DEVICE_PHONE;
-            default: return undefined;
+            case 'tv':
+                return SvgImage.Icon.DEVICE_TV;
+            case 'tablet':
+                return SvgImage.Icon.DEVICE_TABLET;
+            case 'phone':
+                return SvgImage.Icon.DEVICE_PHONE;
+            default:
+                return undefined;
         }
     }
 
-    private updateLink(params: { url: string; name: string; fullName: string; udid: string; deviceKind?: 'phone' | 'tablet' | 'tv' | undefined }): void {
+    private updateLink(params: {
+        url: string;
+        name: string;
+        fullName: string;
+        udid: string;
+        deviceKind?: 'phone' | 'tablet' | 'tv' | undefined;
+    }): void {
         const { url, fullName, udid, deviceKind } = params;
         const playerTds = document.getElementsByName(
             encodeURIComponent(`${DeviceTracker.AttributePrefixPlayerFor}${fullName}`),
@@ -435,8 +441,7 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
                     params.audioSource = saved.source;
                     params.audioCodec = saved.codec;
                 } else {
-                    params.audioEnabled =
-                        audioCaptureSupported(sdkInt) && audioEnabledDefault(device.deviceKind);
+                    params.audioEnabled = audioCaptureSupported(sdkInt) && audioEnabledDefault(device.deviceKind);
                     params.audioSource = defaultAudioSourceForSdk(sdkInt);
                     // audioCodec left unset → server uses scrcpy's opus default
                 }
@@ -491,11 +496,7 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
         }
     }
 
-    private static buildLabelCell(
-        cell: HTMLTableCellElement,
-        serial: string,
-        labels: Record<string, string>,
-    ): void {
+    private static buildLabelCell(cell: HTMLTableCellElement, serial: string, labels: Record<string, string>): void {
         // §34 Part A: the label map is fetched ONCE per table refresh
         // (fetchRowContext) and injected here, instead of each row issuing its
         // own GET /api/devices/labels — which produced a request storm scaling
@@ -512,7 +513,8 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
 
             const pencilBtn = document.createElement('button');
             pencilBtn.className = 'device-name-edit-btn';
-            pencilBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 3a2.85 2.85 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>';
+            pencilBtn.innerHTML =
+                '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 3a2.85 2.85 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>';
             pencilBtn.title = 'Edit device name';
             pencilBtn.addEventListener('click', () => renderEdit(label));
             cell.appendChild(pencilBtn);
@@ -530,7 +532,8 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
 
             const saveBtn = document.createElement('button');
             saveBtn.className = 'device-name-edit-btn';
-            saveBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>';
+            saveBtn.innerHTML =
+                '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>';
             saveBtn.title = 'Save';
             const save = async () => {
                 const newLabel = input.value.trim();

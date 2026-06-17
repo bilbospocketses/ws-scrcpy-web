@@ -1,5 +1,4 @@
 import type { IPty } from 'node-pty';
-import { getNodePty } from '../../NodePtyResolver';
 import * as os from 'os';
 import type WS from 'ws';
 import { ACTION } from '../../../common/Action';
@@ -10,6 +9,7 @@ import type { XtermClientMessage, XtermServiceParameters } from '../../../types/
 import { Config } from '../../Config';
 import { Logger } from '../../Logger';
 import { Mw, type RequestParameters } from '../../mw/Mw';
+import { getNodePty } from '../../NodePtyResolver';
 
 const OS_WINDOWS = os.platform() === 'win32';
 const USE_BINARY = !OS_WINDOWS;
@@ -21,14 +21,39 @@ const EVENT_TYPE_SHELL = 'shell';
 // to the shell. Matched case-insensitively (Windows uses `Path`, `SystemRoot`, …).
 const SHELL_ENV_ALLOW: readonly string[] = OS_WINDOWS
     ? [
-          'PATH', 'SYSTEMROOT', 'WINDIR', 'TEMP', 'TMP', 'USERPROFILE',
-          'HOMEDRIVE', 'HOMEPATH', 'COMSPEC', 'PATHEXT', 'APPDATA', 'LOCALAPPDATA',
-          'NUMBER_OF_PROCESSORS', 'PROCESSOR_ARCHITECTURE',
-          'ANDROID_USER_HOME', 'ANDROID_SDK_HOME', 'ANDROID_ADB_SERVER_PORT', 'ANDROID_ADB_SERVER_SOCKET',
+          'PATH',
+          'SYSTEMROOT',
+          'WINDIR',
+          'TEMP',
+          'TMP',
+          'USERPROFILE',
+          'HOMEDRIVE',
+          'HOMEPATH',
+          'COMSPEC',
+          'PATHEXT',
+          'APPDATA',
+          'LOCALAPPDATA',
+          'NUMBER_OF_PROCESSORS',
+          'PROCESSOR_ARCHITECTURE',
+          'ANDROID_USER_HOME',
+          'ANDROID_SDK_HOME',
+          'ANDROID_ADB_SERVER_PORT',
+          'ANDROID_ADB_SERVER_SOCKET',
       ]
     : [
-          'PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TMPDIR',
-          'ANDROID_USER_HOME', 'ANDROID_SDK_HOME', 'ANDROID_ADB_SERVER_PORT', 'ANDROID_ADB_SERVER_SOCKET',
+          'PATH',
+          'HOME',
+          'USER',
+          'LOGNAME',
+          'SHELL',
+          'LANG',
+          'LC_ALL',
+          'LC_CTYPE',
+          'TMPDIR',
+          'ANDROID_USER_HOME',
+          'ANDROID_SDK_HOME',
+          'ANDROID_ADB_SERVER_PORT',
+          'ANDROID_ADB_SERVER_SOCKET',
       ];
 
 /**

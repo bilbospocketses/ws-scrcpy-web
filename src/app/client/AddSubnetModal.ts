@@ -1,5 +1,5 @@
-import { Modal } from '../ui/Modal';
 import { parseSubnetInput } from '../../common/SubnetParser';
+import { Modal } from '../ui/Modal';
 
 export type AddSubnetMode = 'add' | 'edit';
 
@@ -32,14 +32,16 @@ export class AddSubnetModal extends Modal {
 
     private fillBody(container: HTMLElement): void {
         const help = document.createElement('p');
-        help.textContent = 'Accepted formats: CIDR (192.168.2.0/24), single IP (192.168.2.5), or range (192.168.2.10-50).';
+        help.textContent =
+            'Accepted formats: CIDR (192.168.2.0/24), single IP (192.168.2.5), or range (192.168.2.10-50).';
         help.style.cssText = 'margin: 0 0 12px; color: var(--text-color-light); font-size: 13px;';
         container.appendChild(help);
 
         this.input = document.createElement('input');
         this.input.type = 'text';
         this.input.placeholder = '192.168.2.0/24 or 192.168.2.5 or 192.168.2.10-50';
-        this.input.style.cssText = 'width: 100%; padding: 8px; font-family: var(--font-mono, monospace); box-sizing: border-box;';
+        this.input.style.cssText =
+            'width: 100%; padding: 8px; font-family: var(--font-mono, monospace); box-sizing: border-box;';
         this.input.addEventListener('input', () => this.revalidate());
         this.input.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' && this.addBtn && !this.addBtn.disabled) this.submit();
@@ -92,10 +94,10 @@ export class AddSubnetModal extends Modal {
             this.addBtn.disabled = true;
         } else {
             const label = r.normalized.includes('/32')
-                ? `✓ single host`
+                ? '✓ single host'
                 : r.normalized.includes('-')
-                    ? `✓ range, ${r.hostCount} host${r.hostCount === 1 ? '' : 's'}`
-                    : `✓ CIDR, ${r.hostCount} host${r.hostCount === 1 ? '' : 's'}`;
+                  ? `✓ range, ${r.hostCount} host${r.hostCount === 1 ? '' : 's'}`
+                  : `✓ CIDR, ${r.hostCount} host${r.hostCount === 1 ? '' : 's'}`;
             this.status.style.color = '#8ad67a';
             this.status.textContent = label;
             this.addBtn.disabled = false;

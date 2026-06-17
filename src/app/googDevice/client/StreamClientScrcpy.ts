@@ -1,7 +1,7 @@
 import { ACTION } from '../../../common/Action';
-import { applyStreamParams } from '../../../common/StreamUrlParams';
 import { SERVER_PORT } from '../../../common/Constants';
 import { ControlCenterCommand } from '../../../common/ControlCenterCommand';
+import { applyStreamParams } from '../../../common/StreamUrlParams';
 import type GoogDeviceDescriptor from '../../../types/GoogDeviceDescriptor';
 import type { ParamsDeviceTracker } from '../../../types/ParamsDeviceTracker';
 import type { ParamsStreamScrcpy } from '../../../types/ParamsStreamScrcpy';
@@ -199,7 +199,15 @@ export class StreamClientScrcpy
         deviceKind?: 'phone' | 'tablet' | 'tv',
     ): { instance: StreamClientScrcpy; stop: () => void } {
         const params = query instanceof URLSearchParams ? StreamClientScrcpy.parseParameters(query) : query;
-        const instance = new StreamClientScrcpy(params, player, fitToScreen, videoSettings, container, onDisconnect, deviceKind);
+        const instance = new StreamClientScrcpy(
+            params,
+            player,
+            fitToScreen,
+            videoSettings,
+            container,
+            onDisconnect,
+            deviceKind,
+        );
         return { instance, stop: () => instance.stopStream() };
     }
 
@@ -214,7 +222,14 @@ export class StreamClientScrcpy
     ) {
         super(params);
         const { udid, player: playerName } = this.params;
-        this.startStream({ udid, player, playerName, fitToScreen: fitToScreen ?? params.fitToScreen, videoSettings, deviceKind });
+        this.startStream({
+            udid,
+            player,
+            playerName,
+            fitToScreen: fitToScreen ?? params.fitToScreen,
+            videoSettings,
+            deviceKind,
+        });
     }
 
     public static override parseParameters(params: URLSearchParams): ParamsStreamScrcpy {
@@ -363,7 +378,14 @@ export class StreamClientScrcpy
         }
     };
 
-    public async startStream({ udid, player, playerName, videoSettings, fitToScreen, deviceKind }: StartParams): Promise<void> {
+    public async startStream({
+        udid,
+        player,
+        playerName,
+        videoSettings,
+        fitToScreen,
+        deviceKind,
+    }: StartParams): Promise<void> {
         this.isStopping = false;
         if (!udid) {
             throw Error(`Invalid udid value: "${udid}"`);

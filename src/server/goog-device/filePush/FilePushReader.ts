@@ -176,7 +176,10 @@ export class FilePushReader {
                         await this.adbClient.push(this.serial, this.tempFilePath, this.fileName);
                         this.sendResponse(FilePushResponseStatus.NO_ERROR);
                     } catch (error: any) {
-                        Logger.for('FilePushReader').error(`Push error (${this.serial} | ${this.fileName}):`, error.message);
+                        Logger.for('FilePushReader').error(
+                            `Push error (${this.serial} | ${this.fileName}):`,
+                            error.message,
+                        );
                         this.closeWithError(FilePushResponseStatus.ERROR_OTHER, error.message);
                         return;
                     }

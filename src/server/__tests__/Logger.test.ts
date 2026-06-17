@@ -1,8 +1,8 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { Logger, shouldLogToConsole, rotateIfNeeded } from '../Logger';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { Logger, rotateIfNeeded, shouldLogToConsole } from '../Logger';
 
 describe('shouldLogToConsole', () => {
     it('returns true for a TTY, false otherwise', () => {

@@ -42,7 +42,9 @@ async function reserveEphemeral(): Promise<number> {
 }
 
 describe('webPortOverride', () => {
-    it('parses a valid port', () => { expect(webPortOverride('8000')).toBe(8000); });
+    it('parses a valid port', () => {
+        expect(webPortOverride('8000')).toBe(8000);
+    });
     it('rejects invalid/unset', () => {
         expect(webPortOverride(undefined)).toBeNull();
         expect(webPortOverride('')).toBeNull();

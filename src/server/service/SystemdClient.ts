@@ -33,20 +33,16 @@
  */
 
 import { execFile } from 'node:child_process';
+import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import * as crypto from 'node:crypto';
 import { promisify } from 'node:util';
 import { Logger } from '../Logger';
-import type {
-    ServiceClient,
-    ServiceInstallOptions,
-    ServiceStatus,
-} from './ServiceClient';
-import { resolveSystemTool } from './systemTools';
-import { assertServiceName, shQuote } from './shellEscape';
 import { fileExists } from '../util/fsExists';
+import type { ServiceClient, ServiceInstallOptions, ServiceStatus } from './ServiceClient';
+import { assertServiceName, shQuote } from './shellEscape';
+import { resolveSystemTool } from './systemTools';
 
 const execFileAsync = promisify(execFile);
 
@@ -223,8 +219,8 @@ async function runSystemctl(args: string[], label: string): Promise<string> {
         return stdout;
     } catch (err) {
         const e = err as NodeJS.ErrnoException & { stderr?: Buffer | string; stdout?: Buffer | string };
-        const stderr = typeof e.stderr === 'string' ? e.stderr : e.stderr?.toString('utf8') ?? '';
-        const stdout = typeof e.stdout === 'string' ? e.stdout : e.stdout?.toString('utf8') ?? '';
+        const stderr = typeof e.stderr === 'string' ? e.stderr : (e.stderr?.toString('utf8') ?? '');
+        const stdout = typeof e.stdout === 'string' ? e.stdout : (e.stdout?.toString('utf8') ?? '');
         const detail = (stderr || stdout || e.message).trim();
         throw new Error(`systemctl ${label} failed: ${detail || e.message}`);
     }
@@ -242,9 +238,7 @@ export function renderUnitFile(opts: ServiceInstallOptions, scope: SystemdScope)
     // System scope runs under init_t and may NOT exec a user_home_t AppImage,
     // so the unit references the staged /opt copy (labelled bin_t at install).
     // User scope runs as the unconfined user and execs the home AppImage directly.
-    const execStart = scope === 'system'
-        ? `${STAGED_SYSTEM_DIR}/${STAGED_SYSTEM_APPIMAGE}`
-        : opts.binPath;
+    const execStart = scope === 'system' ? `${STAGED_SYSTEM_DIR}/${STAGED_SYSTEM_APPIMAGE}` : opts.binPath;
     const workingDir = scope === 'system' ? STAGED_SYSTEM_DIR : opts.startupDir;
     return [
         '[Unit]',
@@ -475,9 +469,7 @@ export async function stageStableUserBin(opts: ServiceInstallOptions): Promise<S
         return { ...opts, binPath: optBin, startupDir: STAGED_SYSTEM_DIR };
     }
     if (!opts.dataRoot) {
-        throw new Error(
-            'SystemdClient.install: user-scope install requires dataRoot to stage a stable binary',
-        );
+        throw new Error('SystemdClient.install: user-scope install requires dataRoot to stage a stable binary');
     }
     const binDir = `${opts.dataRoot}/bin`;
     const stableBin = `${binDir}/${STAGED_SYSTEM_APPIMAGE}`;
@@ -562,9 +554,7 @@ export class SystemdClient implements ServiceClient {
     public async install(opts: ServiceInstallOptions): Promise<void> {
         const scope = opts.scope;
         if (!scope) {
-            throw new Error(
-                'SystemdClient.install: scope is required (caller must pass user or system)',
-            );
+            throw new Error('SystemdClient.install: scope is required (caller must pass user or system)');
         }
         // System-scope installs now go through systemServiceCli.installSystemService
         // (the `--install-system-service` CLI core, elevated via sudo or one awaited
@@ -598,11 +588,7 @@ export class SystemdClient implements ServiceClient {
         try {
             await execFileAsync(resolveSystemTool('loginctl'), ['enable-linger', os.userInfo().username]);
         } catch (err) {
-            log.warn(
-                `loginctl enable-linger failed (service still installed): ${
-                    (err as Error).message
-                }`,
-            );
+            log.warn(`loginctl enable-linger failed (service still installed): ${(err as Error).message}`);
         }
 
         // Best-effort tray autostart. System scope skips this — headless
@@ -610,11 +596,7 @@ export class SystemdClient implements ServiceClient {
         try {
             await this.writeTrayAutostart();
         } catch (err) {
-            log.warn(
-                `tray autostart .desktop write failed (service install succeeded): ${
-                    (err as Error).message
-                }`,
-            );
+            log.warn(`tray autostart .desktop write failed (service install succeeded): ${(err as Error).message}`);
         }
     }
 
@@ -672,11 +654,7 @@ export class SystemdClient implements ServiceClient {
             try {
                 await this.removeTrayAutostart();
             } catch (err) {
-                log.warn(
-                    `tray autostart removal failed (service uninstall succeeded): ${
-                        (err as Error).message
-                    }`,
-                );
+                log.warn(`tray autostart removal failed (service uninstall succeeded): ${(err as Error).message}`);
             }
         }
     }
@@ -706,10 +684,7 @@ export class SystemdClient implements ServiceClient {
             throw new Error(`systemctl restart: ${name}.service not installed`);
         }
         const baseArgs = scope === 'user' ? ['--user'] : [];
-        await runSystemctl(
-            [...baseArgs, 'restart', `${name}.service`],
-            `restart ${name}.service`,
-        );
+        await runSystemctl([...baseArgs, 'restart', `${name}.service`], `restart ${name}.service`);
     }
 
     public async stop(name: string): Promise<void> {
@@ -721,10 +696,7 @@ export class SystemdClient implements ServiceClient {
         const baseArgs = scope === 'user' ? ['--user'] : [];
         // Tolerate "already stopped" / "not loaded" — match ServyClient stop semantics.
         try {
-            await runSystemctl(
-                [...baseArgs, 'stop', `${name}.service`],
-                `stop ${name}.service`,
-            );
+            await runSystemctl([...baseArgs, 'stop', `${name}.service`], `stop ${name}.service`);
         } catch (err) {
             log.info(`systemctl stop returned: ${(err as Error).message}`);
         }
@@ -743,9 +715,7 @@ export class SystemdClient implements ServiceClient {
     private async writeTrayAutostart(): Promise<void> {
         const trayPath = await resolveTrayHelperPath();
         if (!trayPath) {
-            log.info(
-                'tray helper binary not found; skipping tray autostart (no PATH-reliant Exec written)',
-            );
+            log.info('tray helper binary not found; skipping tray autostart (no PATH-reliant Exec written)');
             return;
         }
 

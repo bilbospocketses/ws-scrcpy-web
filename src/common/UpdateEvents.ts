@@ -14,12 +14,7 @@
 
 import type { UpdateChannel } from './ConfigEvents';
 
-export type UpdateState =
-    | 'idle'
-    | 'checking'
-    | 'downloading'
-    | 'ready'
-    | 'error';
+export type UpdateState = 'idle' | 'checking' | 'downloading' | 'ready' | 'error';
 
 /**
  * Canonical response shape for GET /api/updates/status, POST /api/updates/check,

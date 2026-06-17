@@ -109,7 +109,7 @@
     flex-shrink: 0;
     width: 3.715rem;
     background-color: var(--control-buttons-bg-color);
-    order: 1;  /* DOM order is toolbar-first, but we want video-left toolbar-right */
+    order: 1; /* DOM order is toolbar-first, but we want video-left toolbar-right */
 }
 
 /* Embed page (embed.html) marks its body with data-embed-entry. The stream

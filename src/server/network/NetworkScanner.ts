@@ -1,6 +1,6 @@
 import type WS from 'ws';
+import type { ScanProgressMessage, ScanServerMessage, ScanStartedMessage } from '../../common/ScanMessage';
 import type { ParsedSubnet } from '../../common/SubnetParser';
-import type { ScanServerMessage, ScanStartedMessage, ScanProgressMessage } from '../../common/ScanMessage';
 import { parseSerialFromMdnsName } from '../AdbClient';
 import type { AdbHandshakeResult } from './AdbHandshakeProbe';
 
@@ -12,7 +12,12 @@ export interface NetworkScannerDeps {
      *  the CNXN/AUTH reply after connect succeeds. Returns { isAdb, model? }.
      *  Using one socket instead of separate tcpProbe + handshake avoids a race
      *  with embedded adbd stacks that reject back-to-back connections. */
-    adbHandshakeProbe: (host: string, port: number, connectTimeoutMs: number, replyTimeoutMs: number) => Promise<AdbHandshakeResult>;
+    adbHandshakeProbe: (
+        host: string,
+        port: number,
+        connectTimeoutMs: number,
+        replyTimeoutMs: number,
+    ) => Promise<AdbHandshakeResult>;
     /** Optional pre-warm hook: ensure the adb daemon is running before workers
      *  fire off parallel probes. Without it, the first batch of concurrent
      *  probes against a cold daemon race to spawn it and most fail. Provided
@@ -57,13 +62,19 @@ export class NetworkScanner {
         this.spectators.add(ws);
         // Send snapshot of current state so new spectators aren't stuck on empty chip
         if (this.lastStartedMsg && ws.readyState === ws.OPEN) {
-            try { ws.send(JSON.stringify(this.lastStartedMsg)); } catch {}
+            try {
+                ws.send(JSON.stringify(this.lastStartedMsg));
+            } catch {}
         }
         if (this.lastProgressMsg && ws.readyState === ws.OPEN) {
-            try { ws.send(JSON.stringify(this.lastProgressMsg)); } catch {}
+            try {
+                ws.send(JSON.stringify(this.lastProgressMsg));
+            } catch {}
         }
         if (this.state === 'draining' && ws.readyState === ws.OPEN) {
-            try { ws.send(JSON.stringify({ type: 'scan.draining' })); } catch {}
+            try {
+                ws.send(JSON.stringify({ type: 'scan.draining' }));
+            } catch {}
         }
         // Clean up on close to avoid accumulating dead entries during long scans
         if (typeof ws.once === 'function') {
@@ -172,9 +183,7 @@ export class NetworkScanner {
     }
 
     protected async runTracks(subnets: ParsedSubnet[], totalHosts: number, mdnsOnly = false): Promise<void> {
-        const connectedAddresses = new Set(
-            (await this.deps.adbDevices()).map((d) => d.serial),
-        );
+        const connectedAddresses = new Set((await this.deps.adbDevices()).map((d) => d.serial));
 
         // Track A: mDNS — synchronous (adb returns all at once)
         const mdnsPromise = (async () => {
@@ -268,7 +277,14 @@ export class NetworkScanner {
         await Promise.all([mdnsPromise, ...workers]);
     }
 
-    private emitHit(partial: { source: 'mdns' | 'tcp'; address: string; serial: string; name: string; mac?: string | null; label?: string }): void {
+    private emitHit(partial: {
+        source: 'mdns' | 'tcp';
+        address: string;
+        serial: string;
+        name: string;
+        mac?: string | null;
+        label?: string;
+    }): void {
         if (this.emittedAddresses.has(partial.address)) return;
         this.emittedAddresses.add(partial.address);
         this.foundSoFar++;

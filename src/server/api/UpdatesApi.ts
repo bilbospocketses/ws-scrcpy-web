@@ -10,8 +10,8 @@ import type {
 } from '../../common/UpdateEvents';
 import { Config } from '../Config';
 import { Logger } from '../Logger';
+import { ensureLibfuse2, isLibfuse2Installed } from '../service/SystemdClient';
 import type { UpdateService } from '../UpdateService';
-import { isLibfuse2Installed, ensureLibfuse2 } from '../service/SystemdClient';
 import { readJsonBody } from './utils';
 
 const log = Logger.for('UpdatesApi');
@@ -250,9 +250,7 @@ export class UpdatesApi {
 // ──────────────────────────────────────────────────────────────────────────
 // PATCH body validation
 
-type ValidationResult =
-    | { ok: true; value: UpdatesConfigPatchRequest }
-    | { ok: false; error: string };
+type ValidationResult = { ok: true; value: UpdatesConfigPatchRequest } | { ok: false; error: string };
 
 function validatePatch(raw: Record<string, unknown>): ValidationResult {
     const out: UpdatesConfigPatchRequest = {};

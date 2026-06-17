@@ -28,17 +28,13 @@
  */
 
 import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import * as path from 'node:path';
+import { promisify } from 'node:util';
 import { Logger } from '../Logger';
-import { resolveLauncherPath, runElevated } from './elevatedRunner';
 import { fileExists } from '../util/fsExists';
+import { resolveLauncherPath, runElevated } from './elevatedRunner';
+import type { ServiceClient, ServiceInstallOptions, ServiceStatus } from './ServiceClient';
 import { resolveSystemTool } from './systemTools';
-import type {
-    ServiceClient,
-    ServiceInstallOptions,
-    ServiceStatus,
-} from './ServiceClient';
 
 const log = Logger.for('ServyClient');
 
@@ -142,7 +138,7 @@ export class ServyClient implements ServiceClient {
         if (!(await fileExists(resolveLauncherPath()))) {
             throw new Error(
                 `service install requires the packaged launcher binary at ${resolveLauncherPath()}, ` +
-                    `which is not present (likely a dev/from-source run)`,
+                    'which is not present (likely a dev/from-source run)',
             );
         }
         const trayHelperPath = await this.tryResolveTrayHelperPath();
@@ -163,10 +159,7 @@ export class ServyClient implements ServiceClient {
             dataRoot: opts.dataRoot,
         });
         if (!result.ok) {
-            throw new ServiceInstallError(
-                result.errorMessage ?? 'service install failed',
-                result,
-            );
+            throw new ServiceInstallError(result.errorMessage ?? 'service install failed', result);
         }
         if (result.stderr) {
             log.warn(`service install completed with warnings: ${result.stderr.trim()}`);
@@ -180,7 +173,7 @@ export class ServyClient implements ServiceClient {
         if (!(await fileExists(resolveLauncherPath()))) {
             throw new Error(
                 `service uninstall requires the packaged launcher binary at ${resolveLauncherPath()}, ` +
-                    `which is not present (likely a dev/from-source run)`,
+                    'which is not present (likely a dev/from-source run)',
             );
         }
         const result = await runElevated('uninstall-service', {
@@ -188,10 +181,7 @@ export class ServyClient implements ServiceClient {
             name,
         });
         if (!result.ok) {
-            throw new ServiceInstallError(
-                result.errorMessage ?? 'service uninstall failed',
-                result,
-            );
+            throw new ServiceInstallError(result.errorMessage ?? 'service uninstall failed', result);
         }
     }
 
@@ -225,11 +215,11 @@ export class ServyClient implements ServiceClient {
                 code?: number | string;
                 status?: number | null;
             };
-            const stderr = typeof e.stderr === 'string' ? e.stderr : e.stderr?.toString('utf8') ?? '';
-            const stdout = typeof e.stdout === 'string' ? e.stdout : e.stdout?.toString('utf8') ?? '';
+            const stderr = typeof e.stderr === 'string' ? e.stderr : (e.stderr?.toString('utf8') ?? '');
+            const stdout = typeof e.stdout === 'string' ? e.stdout : (e.stdout?.toString('utf8') ?? '');
             // sc.exe returns 1060 ERROR_SERVICE_DOES_NOT_EXIST. execFileSync
             // surfaces this as `error.status` (numeric) on the thrown error.
-            const exitCode = typeof e.status === 'number' ? e.status : (typeof e.code === 'number' ? e.code : null);
+            const exitCode = typeof e.status === 'number' ? e.status : typeof e.code === 'number' ? e.code : null;
             if (
                 exitCode === 1060 ||
                 /service.*does not exist/i.test(stderr) ||
@@ -245,9 +235,7 @@ export class ServyClient implements ServiceClient {
         // restart = stop + start, but Servy's `restart` is one round-trip.
         // Routes through elevation since it touches SCM control.
         if (!(await fileExists(resolveLauncherPath()))) {
-            throw new Error(
-                `service restart requires the packaged launcher binary at ${resolveLauncherPath()}`,
-            );
+            throw new Error(`service restart requires the packaged launcher binary at ${resolveLauncherPath()}`);
         }
         // We don't have a dedicated `restart-service` command in the
         // elevate-and-run helper today; the welcome-modal + Settings UI

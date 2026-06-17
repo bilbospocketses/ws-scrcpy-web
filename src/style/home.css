@@ -325,7 +325,10 @@
     color: var(--text-color);
     font-size: 13px;
     font-family: var(--font-mono);
-    transition: background-color 0.15s, border-color 0.15s, color 0.15s;
+    transition:
+        background-color 0.15s,
+        border-color 0.15s,
+        color 0.15s;
 }
 
 .update-button-container .update-button-label {

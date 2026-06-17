@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createHash } from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { verifySha256 } from '../verifySha256';
 
 describe('verifySha256', () => {

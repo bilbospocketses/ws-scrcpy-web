@@ -139,7 +139,7 @@ export class DependencyManager {
                 reason: 'launcher-required',
                 errorMessage:
                     `${def.displayName} updates require an installed build. ` +
-                    `In dev mode, populate dependencies/ via scripts/fetch-node.mjs.`,
+                    'In dev mode, populate dependencies/ via scripts/fetch-node.mjs.',
                 requiresRestart: false,
             };
         }
@@ -390,7 +390,11 @@ export class DependencyManager {
                 throw err;
             }
             if (renamed) {
-                try { fs.unlinkSync(oldExe); } catch { /* best-effort cleanup */ }
+                try {
+                    fs.unlinkSync(oldExe);
+                } catch {
+                    /* best-effort cleanup */
+                }
             }
         } else {
             this.copyDirContents(extractedPath, destDir);
@@ -445,7 +449,11 @@ export class DependencyManager {
                 throw err;
             }
             if (renamed) {
-                try { fs.unlinkSync(oldExe); } catch { /* best-effort cleanup */ }
+                try {
+                    fs.unlinkSync(oldExe);
+                } catch {
+                    /* best-effort cleanup */
+                }
             }
         } else {
             this.copyDirContents(platformToolsDir, destDir);
@@ -477,9 +485,9 @@ export class DependencyManager {
         if (!(await launcherIsAvailable())) {
             throw new Error(
                 `extractZip requires the packaged launcher binary at ${resolveLauncherPath()}. ` +
-                    `Dev mode should populate dependencies/ via scripts/fetch-node.mjs (Node) or ` +
+                    'Dev mode should populate dependencies/ via scripts/fetch-node.mjs (Node) or ' +
                     `by pre-seeding from a prior install; the dependency-manager's autoInstall ` +
-                    `extractZip path is intended for Velopack-installed deployments only.`,
+                    'extractZip path is intended for Velopack-installed deployments only.',
             );
         }
         await execFileAsync(resolveLauncherPath(), ['--unzip', zipPath, destDir], {

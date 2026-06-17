@@ -148,7 +148,11 @@ export class FeaturedInteractionHandler extends InteractionHandler {
                 } else {
                     messages = this.buildScrollEvent(event, screenInfo);
                 }
-            } else if (this._dpadMode && event.button === 0 && (event.type === 'mousedown' || event.type === 'mouseup')) {
+            } else if (
+                this._dpadMode &&
+                event.button === 0 &&
+                (event.type === 'mousedown' || event.type === 'mouseup')
+            ) {
                 // D-pad mode: left-click → DPAD_CENTER
                 const action = event.type === 'mousedown' ? MotionEvent.ACTION_DOWN : MotionEvent.ACTION_UP;
                 this.listener.sendMessage(new KeyCodeControlMessage(action, KeyEvent.KEYCODE_DPAD_CENTER, 0, 0));

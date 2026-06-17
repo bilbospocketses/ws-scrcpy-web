@@ -397,7 +397,9 @@ export class ScrcpyConnection extends Mw {
             // sent an unexpected layout — either too-old scrcpy (pre-v4) or a
             // future-protocol-change. Surface clearly rather than silently using
             // bogus dimensions.
-            throw new Error(`scrcpy stream metadata: expected session-packet flag MSB at offset 68, got 0x${sessionFlags.toString(16).padStart(8, '0')}`);
+            throw new Error(
+                `scrcpy stream metadata: expected session-packet flag MSB at offset 68, got 0x${sessionFlags.toString(16).padStart(8, '0')}`,
+            );
         }
         const screenWidth = videoMeta.readUInt32BE(72);
         const screenHeight = videoMeta.readUInt32BE(76);

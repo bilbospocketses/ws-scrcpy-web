@@ -1,5 +1,5 @@
+import type { ServiceInstallResponse, ServiceStatusResponse } from '../../common/ServiceEvents';
 import { Modal } from '../ui/Modal';
-import type { ServiceStatusResponse, ServiceInstallResponse } from '../../common/ServiceEvents';
 import { ServiceOperationModal } from './ServiceOperationModal';
 
 export type WelcomeChoice = 'service' | 'on-demand';
@@ -81,8 +81,7 @@ export class WelcomeModal extends Modal {
         container.appendChild(note);
 
         const divider = document.createElement('hr');
-        divider.style.cssText =
-            'border: none; border-top: 1px solid rgba(255,255,255,0.08); margin: 16px 0;';
+        divider.style.cssText = 'border: none; border-top: 1px solid rgba(255,255,255,0.08); margin: 16px 0;';
         container.appendChild(divider);
 
         const heading = document.createElement('p');
@@ -189,9 +188,7 @@ export class WelcomeModal extends Modal {
         this.dontShowCheckbox = document.createElement('input');
         this.dontShowCheckbox.type = 'checkbox';
         dontShowLabel.appendChild(this.dontShowCheckbox);
-        dontShowLabel.appendChild(
-            document.createTextNode("don't show this again on this browser"),
-        );
+        dontShowLabel.appendChild(document.createTextNode("don't show this again on this browser"));
         container.appendChild(dontShowLabel);
 
         const buttons = document.createElement('div');
@@ -222,9 +219,7 @@ export class WelcomeModal extends Modal {
 
     private setStatus(msg: string, isError = false): void {
         this.statusEl.textContent = msg;
-        this.statusEl.style.color = isError
-            ? 'var(--error-color, #ff6b6b)'
-            : 'var(--text-color-light)';
+        this.statusEl.style.color = isError ? 'var(--error-color, #ff6b6b)' : 'var(--text-color-light)';
     }
 
     private setBusy(busy: boolean): void {
@@ -254,8 +249,7 @@ export class WelcomeModal extends Modal {
             if (this.headingEl) this.headingEl.textContent = 'run as a systemd service?';
             if (this.descEl) {
                 this.descEl.textContent =
-                    'recommended for always-on access. the server starts at login ' +
-                    '(or boot, for system scope).';
+                    'recommended for always-on access. the server starts at login ' + '(or boot, for system scope).';
             }
             if (this.scopeFieldset) {
                 this.scopeFieldset.style.display = '';
@@ -293,9 +287,7 @@ export class WelcomeModal extends Modal {
 
         if (!statusResp.supported) {
             // Linux (or other unsupported platform): show notice + fall back to user mode.
-            const reason =
-                statusResp.unsupportedReason ||
-                'service mode is not supported on this platform.';
+            const reason = statusResp.unsupportedReason || 'service mode is not supported on this platform.';
             this.setStatus(`${reason} falling back to on-demand mode…`);
             const patch: Record<string, unknown> = { installMode: 'user' };
             if (this.dontShowCheckbox.checked) patch['firstRunComplete'] = true;
@@ -326,10 +318,7 @@ export class WelcomeModal extends Modal {
             });
             const data = (await r.json().catch(() => null)) as ServiceInstallResponse | null;
             if (!r.ok || !data || data.ok !== true) {
-                const errMsg =
-                    data && data.ok === false
-                        ? data.error
-                        : `install failed (${r.status})`;
+                const errMsg = data && data.ok === false ? data.error : `install failed (${r.status})`;
                 this.setStatus(errMsg, true);
                 this.setBusy(false);
                 return;
@@ -349,14 +338,17 @@ export class WelcomeModal extends Modal {
                 if (iterations > maxIterations) {
                     clearInterval(poll);
                     modal.close();
-                    this.setStatus('service is running but port discovery timed out. reload at your usual address.', true);
+                    this.setStatus(
+                        'service is running but port discovery timed out. reload at your usual address.',
+                        true,
+                    );
                     this.setBusy(false);
                     return;
                 }
                 try {
                     const statusResp = await fetch('/api/service/status', { signal: AbortSignal.timeout(5000) });
                     if (!statusResp.ok) return;
-                    const statusData = await statusResp.json() as { configMtime?: number; diskWebPort?: number };
+                    const statusData = (await statusResp.json()) as { configMtime?: number; diskWebPort?: number };
                     if (
                         statusData.configMtime != null &&
                         statusData.configMtime !== baselineMtime &&

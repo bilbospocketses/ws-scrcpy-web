@@ -58,10 +58,7 @@ export function readBodyCapped(req: IncomingMessage, limit = MAX_BODY_BYTES): Pr
  * best-effort by design, so callers that need strict validation should layer it
  * on top of the returned object. Memory is bounded by `readBodyCapped`. (#22)
  */
-export async function readJsonBody(
-    req: IncomingMessage,
-    limit = MAX_BODY_BYTES,
-): Promise<Record<string, unknown>> {
+export async function readJsonBody(req: IncomingMessage, limit = MAX_BODY_BYTES): Promise<Record<string, unknown>> {
     let body: string;
     try {
         body = await readBodyCapped(req, limit);

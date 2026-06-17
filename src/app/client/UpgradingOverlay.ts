@@ -48,8 +48,7 @@ export class UpgradingOverlay {
         } else if (state === 'reconnecting') {
             this.msg.textContent = 'updating — restarting and reconnecting…';
         } else {
-            this.msg.textContent =
-                `update applied. if this page doesn't return on its own, reopen ${url ?? 'the app url'}.`;
+            this.msg.textContent = `update applied. if this page doesn't return on its own, reopen ${url ?? 'the app url'}.`;
         }
     }
 

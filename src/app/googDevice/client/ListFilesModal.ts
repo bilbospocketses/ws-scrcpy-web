@@ -1,18 +1,18 @@
 import '../../../style/listfiles.css';
-import Protocol from '../../../common/AdbProtocol';
 import { ACTION } from '../../../common/Action';
+import Protocol from '../../../common/AdbProtocol';
 import { ChannelCode } from '../../../common/ChannelCode';
 import { Multiplexer } from '../../../packages/multiplexer/Multiplexer';
 import { BinaryWriter } from '../../BinaryWriter';
+import { ManagerClient } from '../../client/ManagerClient';
+import { basename, resolve } from '../../pathUtils';
 import { Modal } from '../../ui/Modal';
+import { debugLog } from '../../util/debugLog';
 import { Entry } from '../Entry';
-import { createFileIconForEntry } from './FileIconUtils';
 import { AdbkitFilePushStream } from '../filePush/AdbkitFilePushStream';
 import FilePushHandler, { type DragAndPushListener, type PushUpdateParams } from '../filePush/FilePushHandler';
-import { ManagerClient } from '../../client/ManagerClient';
+import { createFileIconForEntry } from './FileIconUtils';
 import { attachFsChannelKeepAlive } from './fsChannelKeepAlive';
-import { basename, resolve } from '../../pathUtils';
-import { debugLog } from '../../util/debugLog';
 
 const TAG = '[ListFilesModal]';
 const ICON_SIZE_KEY = 'file-browser-icon-size';
@@ -221,7 +221,11 @@ export class ListFilesModal extends Modal implements DragAndPushListener {
         }
 
         // Close the FSLS channel
-        if (this.fsChannel && (this.fsChannel.readyState === this.fsChannel.OPEN || this.fsChannel.readyState === this.fsChannel.CONNECTING)) {
+        if (
+            this.fsChannel &&
+            (this.fsChannel.readyState === this.fsChannel.OPEN ||
+                this.fsChannel.readyState === this.fsChannel.CONNECTING)
+        ) {
             this.fsChannel.close();
         }
         this.fsChannel = undefined;
@@ -276,7 +280,9 @@ export class ListFilesModal extends Modal implements DragAndPushListener {
             opt.appendChild(label);
 
             opt.addEventListener('click', () => {
-                options.querySelectorAll('.list-files-size-option').forEach((el) => el.classList.remove('selected'));
+                options.querySelectorAll('.list-files-size-option').forEach((el) => {
+                    el.classList.remove('selected');
+                });
                 opt.classList.add('selected');
                 selectedSize = size;
             });
@@ -302,9 +308,7 @@ export class ListFilesModal extends Modal implements DragAndPushListener {
         const note = document.createElement('div');
         note.className = 'list-files-size-picker-note';
         const updateNote = (): void => {
-            note.textContent = saveCheck.checked
-                ? 'uncheck and click ok to clear saved preference'
-                : '';
+            note.textContent = saveCheck.checked ? 'uncheck and click ok to clear saved preference' : '';
         };
         saveCheck.addEventListener('change', updateNote);
         updateNote();
@@ -455,7 +459,9 @@ export class ListFilesModal extends Modal implements DragAndPushListener {
         // Command sub-channels (STAT/LIST/RECV) are created on THIS channel.
         const initChannel = (): void => {
             const initData = this.getChannelInitData();
-            debugLog(TAG, 'wsUrl:', this.wsUrl, 'mux readyState:', this.multiplexer?.readyState, 'sockets:', [...ManagerClient.sockets.keys()]);
+            debugLog(TAG, 'wsUrl:', this.wsUrl, 'mux readyState:', this.multiplexer?.readyState, 'sockets:', [
+                ...ManagerClient.sockets.keys(),
+            ]);
             this.fsChannel = this.multiplexer!.createChannel(initData);
 
             debugLog(TAG, 'FSLS channel created, readyState:', this.fsChannel.readyState);
@@ -528,7 +534,15 @@ export class ListFilesModal extends Modal implements DragAndPushListener {
     }
 
     private loadDirectory(path: string): void {
-        debugLog(TAG, 'loadDirectory:', path, 'fsChannel:', !!this.fsChannel, 'readyState:', this.fsChannel?.readyState);
+        debugLog(
+            TAG,
+            'loadDirectory:',
+            path,
+            'fsChannel:',
+            !!this.fsChannel,
+            'readyState:',
+            this.fsChannel?.readyState,
+        );
         if (!this.fsChannel || this.fsChannel.readyState !== this.fsChannel.OPEN) {
             debugLog(TAG, 'loadDirectory BAILED — fsChannel not ready');
             return;
@@ -552,7 +566,16 @@ export class ListFilesModal extends Modal implements DragAndPushListener {
     }
 
     private sendCommand(cmd: string, path: string, entry?: Entry, pathToLoadAfter = ''): void {
-        debugLog(TAG, 'sendCommand:', cmd, path, 'fsChannel:', !!this.fsChannel, 'readyState:', this.fsChannel?.readyState);
+        debugLog(
+            TAG,
+            'sendCommand:',
+            cmd,
+            path,
+            'fsChannel:',
+            !!this.fsChannel,
+            'readyState:',
+            this.fsChannel?.readyState,
+        );
         if (!this.fsChannel) {
             debugLog(TAG, 'sendCommand BAILED — no fsChannel');
             return;
@@ -574,42 +597,48 @@ export class ListFilesModal extends Modal implements DragAndPushListener {
             debugLog(TAG, 'Sub-channel created for', cmd, 'readyState:', channel.readyState);
             this.channels.add(channel);
 
-        const download: Download = {
-            cmd,
-            receivedBytes: 0,
-            path,
-            entry,
-            chunks: [],
-            pathToLoadAfter,
-        };
-        this.downloads.set(channel, download);
+            const download: Download = {
+                cmd,
+                receivedBytes: 0,
+                path,
+                entry,
+                chunks: [],
+                pathToLoadAfter,
+            };
+            this.downloads.set(channel, download);
 
-        const onMessage = (event: MessageEvent): void => {
-            this.handleReply(channel, event);
-        };
-        const onClose = (): void => {
-            const dl = this.downloads.get(channel);
-            this.channels.delete(channel);
-            this.downloads.delete(channel);
-            channel.removeEventListener('message', onMessage);
-            channel.removeEventListener('close', onClose);
+            const onMessage = (event: MessageEvent): void => {
+                this.handleReply(channel, event);
+            };
+            const onClose = (): void => {
+                const dl = this.downloads.get(channel);
+                this.channels.delete(channel);
+                this.downloads.delete(channel);
+                channel.removeEventListener('message', onMessage);
+                channel.removeEventListener('close', onClose);
 
-            // For directory listings (LIST command), the server closes the channel after
-            // all DENT entries (no DONE message). Render the listing — even if empty.
-            // Only trigger for LIST, not STAT (STAT close is just a transition step).
-            if (dl?.cmd === Protocol.LIST) {
-                this.entries = this.pendingEntries.slice();
-                this.pendingEntries = [];
-                this.currentPath = dl?.path ?? this.currentPath;
-                debugLog(TAG, 'Channel closed: directory listing complete,', this.entries.length, 'entries for path:', this.currentPath);
-                this.applyFilterAndSort();
-                this.renderBreadcrumbs();
-                this.renderFileList();
-                this.updateFooterInfo();
-            }
-        };
-        channel.addEventListener('message', onMessage);
-        channel.addEventListener('close', onClose);
+                // For directory listings (LIST command), the server closes the channel after
+                // all DENT entries (no DONE message). Render the listing — even if empty.
+                // Only trigger for LIST, not STAT (STAT close is just a transition step).
+                if (dl?.cmd === Protocol.LIST) {
+                    this.entries = this.pendingEntries.slice();
+                    this.pendingEntries = [];
+                    this.currentPath = dl?.path ?? this.currentPath;
+                    debugLog(
+                        TAG,
+                        'Channel closed: directory listing complete,',
+                        this.entries.length,
+                        'entries for path:',
+                        this.currentPath,
+                    );
+                    this.applyFilterAndSort();
+                    this.renderBreadcrumbs();
+                    this.renderFileList();
+                    this.updateFooterInfo();
+                }
+            };
+            channel.addEventListener('message', onMessage);
+            channel.addEventListener('close', onClose);
         } catch (err) {
             console.error(TAG, 'Failed to create sub-channel:', err);
         }
@@ -647,7 +676,13 @@ export class ListFilesModal extends Modal implements DragAndPushListener {
                     // Directory listing complete
                     this.entries = this.pendingEntries.slice();
                     this.pendingEntries = [];
-                    debugLog(TAG, 'DONE: directory listing complete,', this.entries.length, 'entries for path:', download?.path);
+                    debugLog(
+                        TAG,
+                        'DONE: directory listing complete,',
+                        this.entries.length,
+                        'entries for path:',
+                        download?.path,
+                    );
                     this.currentPath = download?.path ?? this.currentPath;
                     this.applyFilterAndSort();
                     this.renderBreadcrumbs();
@@ -735,9 +770,7 @@ export class ListFilesModal extends Modal implements DragAndPushListener {
 
         // Clean progress bar
         if (download.entry) {
-            const rowEl = this.fileListBody?.querySelector(
-                `[data-path="${CSS.escape(download.path)}"]`,
-            ) as HTMLElement;
+            const rowEl = this.fileListBody?.querySelector(`[data-path="${CSS.escape(download.path)}"]`) as HTMLElement;
             if (rowEl) {
                 const progressEl = rowEl.querySelector('.list-files-progress') as HTMLElement;
                 if (progressEl) {
@@ -806,7 +839,9 @@ export class ListFilesModal extends Modal implements DragAndPushListener {
     private updateSortArrows(): void {
         const headerRow = this.bodyEl.querySelector('.list-files-header');
         if (!headerRow) return;
-        headerRow.querySelectorAll('.list-files-sort-arrow').forEach((el) => el.remove());
+        headerRow.querySelectorAll('.list-files-sort-arrow').forEach((el) => {
+            el.remove();
+        });
 
         const selector =
             this.sortField === 'name'
@@ -960,7 +995,8 @@ export class ListFilesModal extends Modal implements DragAndPushListener {
 
         const delBtn = document.createElement('button');
         delBtn.className = 'list-files-action-btn list-files-action-delete';
-        delBtn.innerHTML = '<svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>';
+        delBtn.innerHTML =
+            '<svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>';
         delBtn.title = 'delete';
         delBtn.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -1045,8 +1081,10 @@ export class ListFilesModal extends Modal implements DragAndPushListener {
         // Download disabled when ANY directory is selected (can't download dirs over ADB)
         const canDownload = hasSelection && !hasDirSelection;
 
-        const delBtn = this.getDeleteBtn(); if (delBtn) delBtn.disabled = !hasSelection;
-        const dlBtn = this.getDownloadBtn(); if (dlBtn) dlBtn.disabled = !canDownload;
+        const delBtn = this.getDeleteBtn();
+        if (delBtn) delBtn.disabled = !hasSelection;
+        const dlBtn = this.getDownloadBtn();
+        if (dlBtn) dlBtn.disabled = !canDownload;
 
         this.updateFooterInfo();
     }

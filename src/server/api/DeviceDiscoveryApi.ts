@@ -4,8 +4,8 @@ import { AdbClient, parseSerialFromMdnsName } from '../AdbClient';
 import { Config } from '../Config';
 import { DeviceLabelStore } from '../DeviceLabelStore';
 import { Logger } from '../Logger';
-import { detectSubnet } from '../network/SubnetDetector';
 import { resolveMac } from '../network/MacResolver';
+import { detectSubnet } from '../network/SubnetDetector';
 import { assertDeletablePaths, shArg } from '../security/deviceInput';
 import { BodyTooLargeError, readBodyCapped } from './utils';
 
@@ -27,7 +27,9 @@ export class DeviceDiscoveryApi {
         try {
             if (req.method === 'POST' && url === '/api/devices/scan') {
                 const discovered = await this.adbClient.mdnsServices();
-                const connectable = discovered.filter((d) => d.service.includes('_adb') && !d.service.includes('pairing'));
+                const connectable = discovered.filter(
+                    (d) => d.service.includes('_adb') && !d.service.includes('pairing'),
+                );
                 const connected = await this.adbClient.devices();
                 const connectedAddresses = new Set(connected.map((d) => d.serial));
                 const labelStore = DeviceLabelStore.getInstance();
@@ -70,9 +72,7 @@ export class DeviceDiscoveryApi {
                 }
                 const result = await this.adbClient.connect(address);
                 const success = result.includes('connected');
-                log.info(
-                    `connect ${address} → ${success ? 'OK' : 'FAIL'}: ${result.trim().replace(/\s+/g, ' ')}`,
-                );
+                log.info(`connect ${address} → ${success ? 'OK' : 'FAIL'}: ${result.trim().replace(/\s+/g, ' ')}`);
                 if (success && label) {
                     // Persist the label under the device's real serial AND its MAC.
                     // Storing under both keys lets future scans (which may only have

@@ -71,9 +71,10 @@ dialog.modal .modal-frame select {
 /* Dialog element: transparent container, stays rendered during exit */
 dialog.modal {
     opacity: 0;
-    transition: opacity 0.2s ease-out,
-                display 0.2s ease-out allow-discrete,
-                overlay 0.2s ease-out allow-discrete;
+    transition:
+        opacity 0.2s ease-out,
+        display 0.2s ease-out allow-discrete,
+        overlay 0.2s ease-out allow-discrete;
 }
 
 dialog.modal[open] {
@@ -84,7 +85,9 @@ dialog.modal[open] {
 dialog.modal .modal-frame {
     opacity: 0;
     transform: scale(0.96) translateY(8px);
-    transition: opacity 0.2s ease-out, transform 0.2s ease-out;
+    transition:
+        opacity 0.2s ease-out,
+        transform 0.2s ease-out;
 }
 
 /* Frame: visible state when open */
@@ -97,8 +100,9 @@ dialog.modal[open] .modal-frame {
 dialog.modal::backdrop {
     background: rgba(0, 0, 0, 0.45);
     opacity: 0;
-    transition: opacity 0.2s ease-out,
-                display 0.2s ease-out allow-discrete;
+    transition:
+        opacity 0.2s ease-out,
+        display 0.2s ease-out allow-discrete;
 }
 
 /* Backdrop: visible state when open */
@@ -318,7 +322,10 @@ dialog.modal .modal-advanced {
     overflow: hidden;
     max-height: 0;
     opacity: 0;
-    transition: max-height 0.3s ease, opacity 0.3s ease, margin 0.3s ease;
+    transition:
+        max-height 0.3s ease,
+        opacity 0.3s ease,
+        margin 0.3s ease;
     margin-top: 0;
 }
 
@@ -798,5 +805,7 @@ dialog.service-operation-modal .modal-body {
 }
 
 @keyframes service-op-spin {
-    to { transform: rotate(360deg); }
+    to {
+        transform: rotate(360deg);
+    }
 }

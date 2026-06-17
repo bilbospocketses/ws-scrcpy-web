@@ -6,13 +6,27 @@ const COOKIE = `ws_scrcpy_token=${getInstanceToken()}`;
 
 describe('requestGate.evaluateHttpRequest', () => {
     it('rejects a cross-origin API request with 403', () => {
-        const d = evaluateHttpRequest('POST', '/api/service/install', 'http://evil.com', 'localhost:8000', COOKIE, false);
+        const d = evaluateHttpRequest(
+            'POST',
+            '/api/service/install',
+            'http://evil.com',
+            'localhost:8000',
+            COOKIE,
+            false,
+        );
         expect(d.allowed).toBe(false);
         expect(d).toMatchObject({ status: 403 });
     });
 
     it('rejects a same-origin API request that carries no token', () => {
-        const d = evaluateHttpRequest('GET', '/api/devices', 'http://localhost:8000', 'localhost:8000', undefined, false);
+        const d = evaluateHttpRequest(
+            'GET',
+            '/api/devices',
+            'http://localhost:8000',
+            'localhost:8000',
+            undefined,
+            false,
+        );
         expect(d.allowed).toBe(false);
     });
 

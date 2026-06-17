@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { AdbDaemonManager } from '../AdbDaemonManager';
 import { AdbExecError } from '../AdbClient';
+import { AdbDaemonManager } from '../AdbDaemonManager';
 
 /**
  * Subclass that mocks the side-effectful spawn / kill-server steps so the

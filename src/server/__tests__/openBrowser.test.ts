@@ -1,10 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 // biome-ignore lint/style/useNodejsImportProtocol: match the non-prefixed app-code import style
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 // biome-ignore lint/style/useNodejsImportProtocol: match the non-prefixed app-code import style
 import { tmpdir } from 'os';
 // biome-ignore lint/style/useNodejsImportProtocol: match the non-prefixed app-code import style
 import { join } from 'path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { consumeSuppressBrowserMarker, shouldAutoOpenBrowser } from '../openBrowser';
 
 /**
@@ -35,9 +35,7 @@ describe('shouldAutoOpenBrowser', () => {
     });
 
     it('does NOT open in service mode, even on a fresh launch', () => {
-        expect(
-            shouldAutoOpenBrowser({ ...base, isServiceMode: true, launcherFreshLaunch: true }),
-        ).toBe(false);
+        expect(shouldAutoOpenBrowser({ ...base, isServiceMode: true, launcherFreshLaunch: true })).toBe(false);
     });
 
     it('does NOT open when a relaunch asked for suppression (overrides both signals)', () => {

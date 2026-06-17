@@ -2,15 +2,44 @@ export type FileIconType = 'folder' | 'file' | 'image' | 'video' | 'audio' | 'te
 
 const EXTENSION_MAP: Record<string, FileIconType> = {
     // Image
-    jpg: 'image', jpeg: 'image', png: 'image', gif: 'image', bmp: 'image', webp: 'image', svg: 'image',
+    jpg: 'image',
+    jpeg: 'image',
+    png: 'image',
+    gif: 'image',
+    bmp: 'image',
+    webp: 'image',
+    svg: 'image',
     // Video
-    mp4: 'video', mkv: 'video', avi: 'video', mov: 'video', webm: 'video', '3gp': 'video',
+    mp4: 'video',
+    mkv: 'video',
+    avi: 'video',
+    mov: 'video',
+    webm: 'video',
+    '3gp': 'video',
     // Audio
-    mp3: 'audio', ogg: 'audio', flac: 'audio', aac: 'audio', wav: 'audio', m4a: 'audio', opus: 'audio',
+    mp3: 'audio',
+    ogg: 'audio',
+    flac: 'audio',
+    aac: 'audio',
+    wav: 'audio',
+    m4a: 'audio',
+    opus: 'audio',
     // Text/code
-    txt: 'text', md: 'text', json: 'text', xml: 'text', yaml: 'text', yml: 'text',
-    log: 'text', conf: 'text', sh: 'text', py: 'text', js: 'text', ts: 'text',
-    html: 'text', css: 'text', csv: 'text',
+    txt: 'text',
+    md: 'text',
+    json: 'text',
+    xml: 'text',
+    yaml: 'text',
+    yml: 'text',
+    log: 'text',
+    conf: 'text',
+    sh: 'text',
+    py: 'text',
+    js: 'text',
+    ts: 'text',
+    html: 'text',
+    css: 'text',
+    csv: 'text',
 };
 
 const ICON_SVGS: Record<FileIconType, string> = {

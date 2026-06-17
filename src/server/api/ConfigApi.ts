@@ -1,6 +1,7 @@
 // biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
-import type { IncomingMessage, ServerResponse } from 'http';
+
 import * as fs from 'node:fs';
+import type { IncomingMessage, ServerResponse } from 'http';
 import type { AppConfigEnvelope, AppConfigPatchResponse } from '../../common/ConfigEvents';
 import { Config, ConfigValidationError } from '../Config';
 import { Logger } from '../Logger';

@@ -102,9 +102,7 @@ export class PortChangeModal extends Modal {
         const checkbox = document.createElement('input');
         checkbox.type = 'checkbox';
         dontShowLabel.appendChild(checkbox);
-        dontShowLabel.appendChild(
-            document.createTextNode("don't show this again for this port"),
-        );
+        dontShowLabel.appendChild(document.createTextNode("don't show this again for this port"));
         this.dontShowCheckbox = checkbox;
         container.appendChild(dontShowLabel);
 
@@ -116,9 +114,7 @@ export class PortChangeModal extends Modal {
         const globalCheckbox = document.createElement('input');
         globalCheckbox.type = 'checkbox';
         globalLabel.appendChild(globalCheckbox);
-        globalLabel.appendChild(
-            document.createTextNode("don't show again — ever, even when the port changes"),
-        );
+        globalLabel.appendChild(document.createTextNode("don't show again — ever, even when the port changes"));
         this.globalCheckbox = globalCheckbox;
         container.appendChild(globalLabel);
         globalCheckbox.addEventListener('change', () => {
@@ -141,7 +137,9 @@ export class PortChangeModal extends Modal {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ bookmarkDismissedGlobally: true }),
-            }).catch(() => { /* network hiccup — re-show next load */ });
+            }).catch(() => {
+                /* network hiccup — re-show next load */
+            });
             this.opts.onDismissed?.();
             this.close();
             return;
@@ -153,7 +151,9 @@ export class PortChangeModal extends Modal {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ bookmarkDismissedForPort: this.opts.webPort }),
-            }).catch(() => { /* network hiccup — modal will re-show next load */ });
+            }).catch(() => {
+                /* network hiccup — modal will re-show next load */
+            });
         }
         this.opts.onDismissed?.();
         this.close();

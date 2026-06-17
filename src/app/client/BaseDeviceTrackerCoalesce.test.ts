@@ -49,7 +49,10 @@ describe('BaseDeviceTracker refresh coalescing (#34)', () => {
     it('coalesces concurrent refreshes — an in-flight refresh causes at most ONE re-run', async () => {
         const resolvers: Array<(v: unknown) => void> = [];
         const fetchMock = vi.fn(
-            () => new Promise<unknown>((resolve) => { resolvers.push(resolve); }),
+            () =>
+                new Promise<unknown>((resolve) => {
+                    resolvers.push(resolve);
+                }),
         );
         vi.stubGlobal('fetch', fetchMock);
 

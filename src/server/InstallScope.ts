@@ -50,7 +50,5 @@ export function detectInstallScope(opts: DetectInstallScopeOptions = {}): Instal
     // Case-insensitive prefix compare (Windows paths are case-insensitive).
     // We don't bother with realpath / symlink resolution — Velopack installs
     // are flat copies, no symlinks involved.
-    return installDir.toLowerCase().startsWith(localAppData.toLowerCase())
-        ? 'user'
-        : 'system';
+    return installDir.toLowerCase().startsWith(localAppData.toLowerCase()) ? 'user' : 'system';
 }

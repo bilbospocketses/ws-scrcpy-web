@@ -42,8 +42,7 @@ export class UninstallConfirmModal extends Modal {
 
     private fillBody(container: HTMLElement): void {
         const description = document.createElement('p');
-        description.textContent =
-            'this removes the app, its dependencies, and any installed service.';
+        description.textContent = 'this removes the app, its dependencies, and any installed service.';
         container.appendChild(description);
 
         const keepLabel = document.createElement('label');

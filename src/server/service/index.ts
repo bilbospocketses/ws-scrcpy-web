@@ -11,12 +11,7 @@
  * unsupported clients throw, which the API layer treats as a 501 surface.
  */
 
-import type {
-    ServiceClient,
-    ServiceClientFactoryResult,
-    ServiceInstallOptions,
-    ServiceStatus,
-} from './ServiceClient';
+import type { ServiceClient, ServiceClientFactoryResult, ServiceInstallOptions, ServiceStatus } from './ServiceClient';
 import { ServyClient } from './ServyClient';
 import { SystemdClient } from './SystemdClient';
 
@@ -46,9 +41,7 @@ class UnsupportedPlatformClient implements ServiceClient {
  * The `platform` argument is exposed for tests. Production callers omit it
  * and the factory consults `process.platform`.
  */
-export function getServiceClient(
-    platform: NodeJS.Platform = process.platform,
-): ServiceClientFactoryResult {
+export function getServiceClient(platform: NodeJS.Platform = process.platform): ServiceClientFactoryResult {
     if (platform === 'win32') {
         return {
             client: new ServyClient(),

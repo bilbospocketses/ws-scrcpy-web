@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { buildShellEnv } from '../goog-device/mw/RemoteShell';
 
 // #29 — the device-shell PTY must NOT inherit the server's full process.env

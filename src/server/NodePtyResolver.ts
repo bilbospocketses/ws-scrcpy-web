@@ -109,11 +109,7 @@ export async function verifyChecksum(filePath: string, expectedSha256Hex: string
 
 export function dataRootPackageDir(depsPath: string, upstreamVersion: string, host: HostInfo): string {
     const libcSegment = host.platform === 'linux' ? `-${host.libc}` : '';
-    return path.join(
-        depsPath,
-        'node-pty',
-        `v${upstreamVersion}-${host.platform}-${host.arch}${libcSegment}`,
-    );
+    return path.join(depsPath, 'node-pty', `v${upstreamVersion}-${host.platform}-${host.arch}${libcSegment}`);
 }
 
 /**
@@ -222,7 +218,7 @@ export async function loadManifest(depsPath: string): Promise<Manifest | null> {
         const url = `${RELEASE_URL_BASE}/node-pty-prebuilds-latest/manifest.json`;
         const res = await fetch(url, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
         if (res.ok) {
-            const body = await res.json() as Manifest;
+            const body = (await res.json()) as Manifest;
             fs.mkdirSync(path.dirname(cachedManifestPath), { recursive: true });
             fs.writeFileSync(cachedManifestPath, JSON.stringify(body, null, 2));
             return body;
@@ -247,25 +243,30 @@ export async function loadManifest(depsPath: string): Promise<Manifest | null> {
  * to load (Node ABI doesn't match the build-machine ABI baked into the
  * seed — typical after an in-app Node auto-update).
  */
-export async function downloadAndOverlayPtyNode(
-    version: string,
-    host: HostInfo,
-    packageDir: string,
-): Promise<boolean> {
+export async function downloadAndOverlayPtyNode(version: string, host: HostInfo, packageDir: string): Promise<boolean> {
     const key = composePrebuiltKey(host, version);
     const tarUrl = `${RELEASE_URL_BASE}/node-pty-prebuilds-v${version}/${key}.tar.gz`;
     const sumsUrl = `${RELEASE_URL_BASE}/node-pty-prebuilds-v${version}/SHA256SUMS`;
 
     try {
         const sumsRes = await fetch(sumsUrl, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
-        if (!sumsRes.ok) { log.info(`SHA256SUMS fetch failed: ${sumsRes.status}`); return false; }
+        if (!sumsRes.ok) {
+            log.info(`SHA256SUMS fetch failed: ${sumsRes.status}`);
+            return false;
+        }
         const sumsText = await sumsRes.text();
         const sumLine = sumsText.split('\n').find((l) => l.includes(`${key}.tar.gz`));
-        if (!sumLine) { log.info(`no checksum entry for ${key}.tar.gz`); return false; }
+        if (!sumLine) {
+            log.info(`no checksum entry for ${key}.tar.gz`);
+            return false;
+        }
         const expectedSha = sumLine.split(/\s+/)[0]!.toLowerCase();
 
         const tarRes = await fetch(tarUrl, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
-        if (!tarRes.ok) { log.info(`tarball fetch failed: ${tarRes.status}`); return false; }
+        if (!tarRes.ok) {
+            log.info(`tarball fetch failed: ${tarRes.status}`);
+            return false;
+        }
 
         // Stage tar in a temp dir under the package, extract, then overlay
         // contents onto the existing build/Release/. We DON'T blow away
@@ -292,13 +293,7 @@ export async function downloadAndOverlayPtyNode(
         fs.rmSync(tarPath, { force: true });
 
         // Overlay extracted files into build/Release/.
-        const buildReleaseDir = path.join(
-            packageDir,
-            'node_modules',
-            'node-pty',
-            'build',
-            'Release',
-        );
+        const buildReleaseDir = path.join(packageDir, 'node_modules', 'node-pty', 'build', 'Release');
         fs.mkdirSync(buildReleaseDir, { recursive: true });
         fs.cpSync(stagingDir, buildReleaseDir, { recursive: true, force: true });
         fs.rmSync(stagingDir, { recursive: true, force: true });

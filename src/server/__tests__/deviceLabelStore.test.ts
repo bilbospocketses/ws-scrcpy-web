@@ -7,12 +7,16 @@ const TEST_FILE = path.resolve(__dirname, '..', '..', '..', 'test-device-labels.
 
 describe('DeviceLabelStore', () => {
     beforeEach(() => {
-        try { fs.unlinkSync(TEST_FILE); } catch {}
+        try {
+            fs.unlinkSync(TEST_FILE);
+        } catch {}
         DeviceLabelStore.resetInstance();
     });
 
     afterEach(() => {
-        try { fs.unlinkSync(TEST_FILE); } catch {}
+        try {
+            fs.unlinkSync(TEST_FILE);
+        } catch {}
     });
 
     it('returns undefined for unknown serial', () => {
@@ -34,7 +38,7 @@ describe('DeviceLabelStore', () => {
     });
 
     it('loads existing file on init', () => {
-        fs.writeFileSync(TEST_FILE, JSON.stringify({ 'S1': 'TV' }));
+        fs.writeFileSync(TEST_FILE, JSON.stringify({ S1: 'TV' }));
         const store = DeviceLabelStore.getInstance(TEST_FILE);
         expect(store.get('S1')).toBe('TV');
     });
@@ -50,7 +54,7 @@ describe('DeviceLabelStore', () => {
         const store = DeviceLabelStore.getInstance(TEST_FILE);
         store.set('S1', 'TV1');
         store.set('S2', 'TV2');
-        expect(store.getAll()).toEqual({ 'S1': 'TV1', 'S2': 'TV2' });
+        expect(store.getAll()).toEqual({ S1: 'TV1', S2: 'TV2' });
     });
 
     it('handles missing file gracefully', () => {

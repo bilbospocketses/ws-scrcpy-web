@@ -1,17 +1,17 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 // biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import * as fs from 'fs';
 // biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import * as os from 'os';
 // biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import * as path from 'path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
-    resolveNodePty,
     _resetForTest,
     _setSeedRootForTest,
-    getHostInfo,
     dataRootPackageDir,
+    getHostInfo,
     packageHasBinary,
+    resolveNodePty,
 } from '../NodePtyResolver';
 
 /**
@@ -41,23 +41,21 @@ describe('NodePtyResolver — integration (seed → dataRoot)', () => {
         const seedNodeModules = path.join(fakeSeedRoot, 'node_modules');
         fs.mkdirSync(seedNodeModules, { recursive: true });
         const liveNm = path.join(process.cwd(), 'node_modules');
-        fs.cpSync(
-            path.join(liveNm, 'node-pty'),
-            path.join(seedNodeModules, 'node-pty'),
-            { recursive: true },
-        );
-        fs.cpSync(
-            path.join(liveNm, 'node-addon-api'),
-            path.join(seedNodeModules, 'node-addon-api'),
-            { recursive: true },
-        );
+        fs.cpSync(path.join(liveNm, 'node-pty'), path.join(seedNodeModules, 'node-pty'), { recursive: true });
+        fs.cpSync(path.join(liveNm, 'node-addon-api'), path.join(seedNodeModules, 'node-addon-api'), {
+            recursive: true,
+        });
         _setSeedRootForTest(fakeSeedRoot);
     });
 
     afterEach(() => {
         _setSeedRootForTest(null);
-        try { fs.rmSync(tempDepsPath, { recursive: true, force: true }); } catch {}
-        try { fs.rmSync(fakeSeedRoot, { recursive: true, force: true }); } catch {}
+        try {
+            fs.rmSync(tempDepsPath, { recursive: true, force: true });
+        } catch {}
+        try {
+            fs.rmSync(fakeSeedRoot, { recursive: true, force: true });
+        } catch {}
     });
 
     it('first launch stages seed → dataRoot and loads node-pty', async () => {
@@ -75,10 +73,7 @@ describe('NodePtyResolver — integration (seed → dataRoot)', () => {
         // resolver uses that to compute the package dir, so we read it
         // back from the seed to construct the expected path.
         const seedPkg = JSON.parse(
-            fs.readFileSync(
-                path.join(fakeSeedRoot, 'node_modules', 'node-pty', 'package.json'),
-                'utf8',
-            ),
+            fs.readFileSync(path.join(fakeSeedRoot, 'node_modules', 'node-pty', 'package.json'), 'utf8'),
         ) as { version: string };
         const expectedPkgDir = dataRootPackageDir(tempDepsPath, seedPkg.version, host);
         expect(packageHasBinary(expectedPkgDir)).toBe(true);
@@ -92,14 +87,15 @@ describe('NodePtyResolver — integration (seed → dataRoot)', () => {
         // binary already).
         const host = getHostInfo();
         const seedPkg = JSON.parse(
-            fs.readFileSync(
-                path.join(fakeSeedRoot, 'node_modules', 'node-pty', 'package.json'),
-                'utf8',
-            ),
+            fs.readFileSync(path.join(fakeSeedRoot, 'node_modules', 'node-pty', 'package.json'), 'utf8'),
         ) as { version: string };
         const ptyNodeFile = path.join(
             dataRootPackageDir(tempDepsPath, seedPkg.version, host),
-            'node_modules', 'node-pty', 'build', 'Release', 'pty.node',
+            'node_modules',
+            'node-pty',
+            'build',
+            'Release',
+            'pty.node',
         );
         const mtimeBefore = fs.statSync(ptyNodeFile).mtimeMs;
 

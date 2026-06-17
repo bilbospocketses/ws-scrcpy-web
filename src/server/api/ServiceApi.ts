@@ -1,33 +1,39 @@
 // biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
-import type { IncomingMessage, ServerResponse } from 'http';
-import { execFile, spawn } from 'child_process';
+
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { execFile, spawn } from 'child_process';
+import type { IncomingMessage, ServerResponse } from 'http';
 import type { InstallMode } from '../../common/ConfigEvents';
 import {
-    WS_SCRCPY_SERVICE_DESCRIPTION,
-    WS_SCRCPY_SERVICE_DISPLAY_NAME,
-    WS_SCRCPY_SERVICE_NAME,
     type AppUninstallRequest,
     type ServiceActionFailure,
     type ServiceActionSuccess,
     type ServiceInstallRequest,
     type ServiceStatusResponse,
+    WS_SCRCPY_SERVICE_DESCRIPTION,
+    WS_SCRCPY_SERVICE_DISPLAY_NAME,
+    WS_SCRCPY_SERVICE_NAME,
 } from '../../common/ServiceEvents';
+import { getAppVersion } from '../appVersion';
 import { Config } from '../Config';
 import { detectInstallScope } from '../InstallScope';
 import { Logger } from '../Logger';
+import { getServiceClient, type ServiceClientFactoryResult } from '../service';
 import { consumeToken } from '../service/resumeToken';
 import { ServiceInstallError } from '../service/ServyClient';
 import {
-    getServiceClient,
-    type ServiceClientFactoryResult,
-} from '../service';
-import { resolveSystemTool } from '../service/systemTools';
-import { STAGED_SYSTEM_DIR, STAGED_SYSTEM_APPIMAGE, SYSTEM_STATE_DIR, buildServiceUnitEnv, buildMachineWideInstallScript, runPkexec, DECLINE_MARKER_NAME } from '../service/SystemdClient';
+    buildMachineWideInstallScript,
+    buildServiceUnitEnv,
+    DECLINE_MARKER_NAME,
+    runPkexec,
+    STAGED_SYSTEM_APPIMAGE,
+    STAGED_SYSTEM_DIR,
+    SYSTEM_STATE_DIR,
+} from '../service/SystemdClient';
 import type { CommandRunner } from '../service/systemServiceCli';
-import { getAppVersion } from '../appVersion';
+import { resolveSystemTool } from '../service/systemTools';
 import { readJsonBody } from './utils';
 
 const log = Logger.for('ServiceApi');
@@ -63,9 +69,19 @@ export function buildUninstallHelperArgs(o: {
     // root → system transient unit (`--collect`); non-root → user manager (`--user --collect`).
     const prefix = o.isRoot ? ['--collect'] : ['--user', '--collect'];
     return [
-        ...prefix, o.unit, o.helper, '--linux-app-uninstall',
-        '--scope', o.scope, '--machine-wide', o.machineWide ? '1' : '0',
-        o.keep ? '--keep' : '--wipe', '--data-root', o.dataRoot, '--relaunch', o.relaunch,
+        ...prefix,
+        o.unit,
+        o.helper,
+        '--linux-app-uninstall',
+        '--scope',
+        o.scope,
+        '--machine-wide',
+        o.machineWide ? '1' : '0',
+        o.keep ? '--keep' : '--wipe',
+        '--data-root',
+        o.dataRoot,
+        '--relaunch',
+        o.relaunch,
     ];
 }
 
@@ -148,7 +164,9 @@ export class ServiceApi {
             child.on('error', (err) => log.warn(`spawnDetached ${cmd} error: ${err.message}`));
             child.unref();
         },
-        private scheduleExit: (fn: () => void, ms: number) => void = (fn, ms) => { setTimeout(fn, ms).unref(); },
+        private scheduleExit: (fn: () => void, ms: number) => void = (fn, ms) => {
+            setTimeout(fn, ms).unref();
+        },
         private readonly runPkexecFn: (shellCmd: string, label: string) => Promise<string> = runPkexec,
         // F3: injectable so tests can force the verify outcome without a real
         // 15s poll. Default polls is-active; tests pass async () => true|false.
@@ -245,7 +263,11 @@ export class ServiceApi {
         //     users" modal once the user has declined it (persistent marker).
         // Both go through the injected existsCheck so the API stays unit-testable.
         // Spread conditionally (like scope/diskWebPort) so they're Linux-only.
-        let machineWide: { machineWideInstalled: boolean; systemInstallDeclined: boolean; optUpdateAvailable: boolean } | null = null;
+        let machineWide: {
+            machineWideInstalled: boolean;
+            systemInstallDeclined: boolean;
+            optUpdateAvailable: boolean;
+        } | null = null;
         if (result.platform === 'linux') {
             const cfg = Config.getInstance();
             const dataRoot = cfg.dataRoot ?? path.dirname(cfg.dependenciesPath);
@@ -347,8 +369,8 @@ export class ServiceApi {
                     ok: false,
                     error:
                         `service mode requires the packaged launcher binary at ${launcherExe}, ` +
-                        `which is not present (likely a dev/from-source run rather than a Velopack install). ` +
-                        `Install ws-scrcpy-web via the MSI and retry.`,
+                        'which is not present (likely a dev/from-source run rather than a Velopack install). ' +
+                        'Install ws-scrcpy-web via the MSI and retry.',
                     reason: 'unknown',
                 };
                 res.writeHead(500);
@@ -466,8 +488,11 @@ export class ServiceApi {
             // packaged installs always set absolute (the supported entry to this
             // branch). (#26)
             if (!path.isAbsolute(binPath)) {
-                try { cfg.updateAppConfig({ installMode: previousMode ?? null }); }
-                catch (e) { log.warn(`installMode revert failed after binPath validation: ${(e as Error).message}`); }
+                try {
+                    cfg.updateAppConfig({ installMode: previousMode ?? null });
+                } catch (e) {
+                    log.warn(`installMode revert failed after binPath validation: ${(e as Error).message}`);
+                }
                 const body: ServiceActionFailure = {
                     ok: false,
                     error: `service mode requires an absolute app binary path; got ${JSON.stringify(binPath)} (a relative $APPIMAGE is not a supported packaged install).`,
@@ -480,26 +505,48 @@ export class ServiceApi {
             const r = await this.runElevated([pkexec, binPath, '--install-system-service', '--port', String(port)]);
             if (r.code !== 0) {
                 // revert installMode so the next load doesn't see a phantom service mode
-                try { cfg.updateAppConfig({ installMode: previousMode ?? null }); }
-                catch (e) { log.warn(`installMode revert failed after pkexec install: ${(e as Error).message}`); }
+                try {
+                    cfg.updateAppConfig({ installMode: previousMode ?? null });
+                } catch (e) {
+                    log.warn(`installMode revert failed after pkexec install: ${(e as Error).message}`);
+                }
                 // pkexec exit 126 == polkit auth dismissed/declined → UAC-style retry prompt
                 if (r.code === 126) {
-                    const body: ServiceActionFailure = { ok: false, error: 'install was cancelled at the authentication prompt', reason: 'uac-declined' };
-                    res.writeHead(403); res.end(JSON.stringify(body)); return true;
+                    const body: ServiceActionFailure = {
+                        ok: false,
+                        error: 'install was cancelled at the authentication prompt',
+                        reason: 'uac-declined',
+                    };
+                    res.writeHead(403);
+                    res.end(JSON.stringify(body));
+                    return true;
                 }
-                const body: ServiceActionFailure = { ok: false, error: (r.stderr || 'system-service install failed').trim(), reason: 'servy-failure' };
-                res.writeHead(500); res.end(JSON.stringify(body)); return true;
+                const body: ServiceActionFailure = {
+                    ok: false,
+                    error: (r.stderr || 'system-service install failed').trim(),
+                    reason: 'servy-failure',
+                };
+                res.writeHead(500);
+                res.end(JSON.stringify(body));
+                return true;
             }
             // success: the unit is enabled+started (or queued via Restart). Exit local
             // to free the port; the frontend's /api/service/status poll reconnects.
-            this.scheduleExit(() => { log.info('install-flow: local instance exiting (handoff to system service via pkexec)'); process.exit(0); }, 1_500);
+            this.scheduleExit(() => {
+                log.info('install-flow: local instance exiting (handoff to system service via pkexec)');
+                process.exit(0);
+            }, 1_500);
             const disk = this.readDiskConfig();
             const body: ServiceActionSuccess = {
-                ok: true, status: 'shutting-down', installMode: newInstallMode,
+                ok: true,
+                status: 'shutting-down',
+                installMode: newInstallMode,
                 ...(disk.configMtime != null ? { configMtime: disk.configMtime } : {}),
                 ...(disk.diskWebPort != null ? { diskWebPort: disk.diskWebPort } : {}),
             };
-            res.writeHead(200); res.end(JSON.stringify(body)); return true;
+            res.writeHead(200);
+            res.end(JSON.stringify(body));
+            return true;
         }
 
         try {
@@ -530,9 +577,7 @@ export class ServiceApi {
             try {
                 cfg.updateAppConfig({ installMode: previousMode ?? null });
             } catch (revertErr) {
-                log.warn(
-                    `installMode revert failed after install error: ${(revertErr as Error).message}`,
-                );
+                log.warn(`installMode revert failed after install error: ${(revertErr as Error).message}`);
             }
             // ServiceInstallError carries a structured result from the
             // elevated helper. UAC-declined gets its own 403 status so
@@ -564,8 +609,15 @@ export class ServiceApi {
             const systemdRun = resolveSystemTool('systemd-run');
             const handoffUnit = `--unit=wsscrcpy-install-${Date.now()}`;
             this.spawnDetached(systemdRun, [
-                '--user', '--collect', handoffUnit,
-                helper, '--linux-service-install-handoff', '--scope', 'user', '--unit', WS_SCRCPY_SERVICE_NAME,
+                '--user',
+                '--collect',
+                handoffUnit,
+                helper,
+                '--linux-service-install-handoff',
+                '--scope',
+                'user',
+                '--unit',
+                WS_SCRCPY_SERVICE_NAME,
             ]);
             log.info('install-flow(linux user): spawned install-handoff helper; exiting local to free the lock');
             // Exit promptly so the helper can start the service (release lock + port).
@@ -703,14 +755,21 @@ export class ServiceApi {
                 // exec the bin_t-labeled staged AppImage directly.
                 const optAppImage = `${STAGED_SYSTEM_DIR}/${STAGED_SYSTEM_APPIMAGE}`;
                 const runArgs = [
-                    '--system', '--collect', teardownUnit,
+                    '--system',
+                    '--collect',
+                    teardownUnit,
                     // DATA_ROOT is MANDATORY: a `systemd-run --system` transient unit has no
                     // HOME/XDG either, so without it the launcher panics in data_root_for_linux
                     // (config.rs) at startup — before running ANY teardown command (the beta.60
                     // #9 5.1 core-dump that made uninstall a silent no-op). Mirrors the install
                     // handoff's --setenv.
                     `--setenv=DATA_ROOT=${SYSTEM_STATE_DIR}`,
-                    optAppImage, '--linux-service-teardown', '--scope', 'system', '--unit', WS_SCRCPY_SERVICE_NAME,
+                    optAppImage,
+                    '--linux-service-teardown',
+                    '--scope',
+                    'system',
+                    '--unit',
+                    WS_SCRCPY_SERVICE_NAME,
                 ];
                 if (process.getuid?.() === 0) {
                     cmd = systemdRun;
@@ -726,8 +785,15 @@ export class ServiceApi {
                 const helper = path.join(dataRoot, 'control', 'operation-server', 'ws-scrcpy-web-launcher.exe');
                 cmd = systemdRun;
                 sdArgs = [
-                    '--user', '--collect', teardownUnit,
-                    helper, '--linux-service-teardown', '--scope', 'user', '--unit', WS_SCRCPY_SERVICE_NAME,
+                    '--user',
+                    '--collect',
+                    teardownUnit,
+                    helper,
+                    '--linux-service-teardown',
+                    '--scope',
+                    'user',
+                    '--unit',
+                    WS_SCRCPY_SERVICE_NAME,
                 ];
             }
             this.spawnDetached(cmd, sdArgs);
@@ -819,7 +885,9 @@ export class ServiceApi {
                     child.unref();
                     log.info(`uninstall: spawned operation-server at ${helperPath}`);
                 } catch (err) {
-                    log.warn(`uninstall: failed to spawn operation-server (bat will handle it): ${(err as Error).message}`);
+                    log.warn(
+                        `uninstall: failed to spawn operation-server (bat will handle it): ${(err as Error).message}`,
+                    );
                 }
 
                 setTimeout(() => {
@@ -885,7 +953,13 @@ export class ServiceApi {
         const appImage = process.env['APPIMAGE'];
         if (!appImage) {
             res.writeHead(400);
-            res.end(JSON.stringify({ ok: false, error: 'not running from an AppImage ($APPIMAGE unset)', reason: 'unknown' }));
+            res.end(
+                JSON.stringify({
+                    ok: false,
+                    error: 'not running from an AppImage ($APPIMAGE unset)',
+                    reason: 'unknown',
+                }),
+            );
             return true;
         }
         const version = getAppVersion();
@@ -929,7 +1003,13 @@ export class ServiceApi {
             if (this.existsCheck(relaunchHelper)) {
                 // process.ppid is the launcher (the flock holder); the helper waits
                 // for it to exit before relaunching /opt.
-                this.spawnDetached(relaunchHelper, ['--linux-apply', '--target', optBin, '--wait-pid', String(process.ppid)]);
+                this.spawnDetached(relaunchHelper, [
+                    '--linux-apply',
+                    '--target',
+                    optBin,
+                    '--wait-pid',
+                    String(process.ppid),
+                ]);
                 this.scheduleExit(() => {
                     log.info('install-system-wide: local instance exiting → relaunch from /opt');
                     process.exit(0);
@@ -937,7 +1017,9 @@ export class ServiceApi {
                 res.writeHead(200);
                 res.end(JSON.stringify({ ok: true, status: 'shutting-down' }));
             } else {
-                log.warn('install-system-wide: relaunch helper not found; app keeps running from the home mount until next launch');
+                log.warn(
+                    'install-system-wide: relaunch helper not found; app keeps running from the home mount until next launch',
+                );
                 res.writeHead(200);
                 res.end(JSON.stringify({ ok: true, status: 'installed' }));
             }
@@ -950,7 +1032,11 @@ export class ServiceApi {
             // Remove the root-readable temp icon (best-effort; the privileged install
             // script has already copied it into the hicolor theme by now).
             if (iconSource) {
-                try { fs.rmSync(iconSource, { force: true }); } catch { /* best-effort */ }
+                try {
+                    fs.rmSync(iconSource, { force: true });
+                } catch {
+                    /* best-effort */
+                }
             }
         }
         return true;
@@ -1078,8 +1164,10 @@ export class ServiceApi {
             this.spawnDetached(helper, [
                 '--windows-app-uninstall',
                 keep ? '--keep' : '--wipe',
-                '--data-root', dataRoot,
-                '--update-exe', updateExe,
+                '--data-root',
+                dataRoot,
+                '--update-exe',
+                updateExe,
             ]);
             this.scheduleExit(() => {
                 log.info('app-uninstall(win32): local instance exiting → detached teardown');
@@ -1093,7 +1181,13 @@ export class ServiceApi {
 
         if (result.platform !== 'linux') {
             res.writeHead(200);
-            res.end(JSON.stringify({ ok: false, reason: 'unsupported', error: 'app uninstall is not supported on this platform' }));
+            res.end(
+                JSON.stringify({
+                    ok: false,
+                    reason: 'unsupported',
+                    error: 'app uninstall is not supported on this platform',
+                }),
+            );
             return true;
         }
 

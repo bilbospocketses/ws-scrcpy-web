@@ -1,18 +1,18 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 // biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import * as fs from 'fs';
 // biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import * as os from 'os';
 // biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import * as path from 'path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
     _resetForTest,
     composePrebuiltKey,
-    verifyChecksum,
+    copySeedToDataRoot,
     dataRootPackageDir,
     packageHasBinary,
     ptyNodePath,
-    copySeedToDataRoot,
+    verifyChecksum,
 } from '../NodePtyResolver';
 
 describe('NodePtyResolver — helpers', () => {
@@ -24,20 +24,34 @@ describe('NodePtyResolver — helpers', () => {
     });
 
     afterEach(() => {
-        try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+        try {
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        } catch {}
     });
 
     it('composePrebuiltKey produces linux key with libc suffix', () => {
-        const key = composePrebuiltKey({
-            platform: 'linux', arch: 'x64', libc: 'glibc', nodeAbi: '127',
-        }, '1.1.0');
+        const key = composePrebuiltKey(
+            {
+                platform: 'linux',
+                arch: 'x64',
+                libc: 'glibc',
+                nodeAbi: '127',
+            },
+            '1.1.0',
+        );
         expect(key).toBe('node-pty-v1.1.0-node-abi127-linux-x64-glibc');
     });
 
     it('composePrebuiltKey omits libc suffix on win32', () => {
-        const key = composePrebuiltKey({
-            platform: 'win32', arch: 'arm64', libc: 'glibc', nodeAbi: '127',
-        }, '1.1.0');
+        const key = composePrebuiltKey(
+            {
+                platform: 'win32',
+                arch: 'arm64',
+                libc: 'glibc',
+                nodeAbi: '127',
+            },
+            '1.1.0',
+        );
         expect(key).toBe('node-pty-v1.1.0-node-abi127-win32-arm64');
     });
 
@@ -57,14 +71,20 @@ describe('NodePtyResolver — helpers', () => {
 
     it('dataRootPackageDir composes path with version + host on win32', () => {
         const dir = dataRootPackageDir(tmpDir, '1.1.0', {
-            platform: 'win32', arch: 'x64', libc: 'glibc', nodeAbi: '137',
+            platform: 'win32',
+            arch: 'x64',
+            libc: 'glibc',
+            nodeAbi: '137',
         });
         expect(dir).toBe(path.join(tmpDir, 'node-pty', 'v1.1.0-win32-x64'));
     });
 
     it('dataRootPackageDir includes libc segment on linux', () => {
         const dir = dataRootPackageDir(tmpDir, '1.1.0', {
-            platform: 'linux', arch: 'x64', libc: 'musl', nodeAbi: '127',
+            platform: 'linux',
+            arch: 'x64',
+            libc: 'musl',
+            nodeAbi: '127',
         });
         expect(dir).toBe(path.join(tmpDir, 'node-pty', 'v1.1.0-linux-x64-musl'));
     });

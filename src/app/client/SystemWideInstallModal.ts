@@ -54,8 +54,7 @@ export class SystemWideInstallModal extends Modal {
 
         const yesLine = document.createElement('p');
         yesLine.style.cssText = 'margin: 0 0 12px;';
-        yesLine.textContent =
-            'clicking "yes, all users" installs the app to /opt with one administrator prompt.';
+        yesLine.textContent = 'clicking "yes, all users" installs the app to /opt with one administrator prompt.';
         container.appendChild(yesLine);
 
         const noLine = document.createElement('p');

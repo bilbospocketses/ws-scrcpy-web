@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SystemWideInstallModal } from '../SystemWideInstallModal';
 
 beforeEach(() => {
@@ -111,9 +111,7 @@ describe('SystemWideInstallModal', () => {
         const onDecline = vi.fn();
         new SystemWideInstallModal({ onInstall, onDecline });
         await Promise.resolve();
-        const closeX = Array.from(document.querySelectorAll('button')).find(
-            (b) => b.textContent === '×',
-        );
+        const closeX = Array.from(document.querySelectorAll('button')).find((b) => b.textContent === '×');
         expect(closeX, 'the × close button should not be rendered').toBeUndefined();
     });
 

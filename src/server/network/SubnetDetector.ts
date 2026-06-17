@@ -59,7 +59,7 @@ async function detectViaGateway(deps: DetectorDeps): Promise<DetectedSubnet | nu
             const gateway = lineMatch[1]!;
             const ifaceName = lineMatch[2]!;
             if (gateway === '0.0.0.0') continue;
-            if (!/^[\w:.\-]+$/.test(ifaceName)) continue;
+            if (!/^[\w:.-]+$/.test(ifaceName)) continue;
             const metricMatch = line.match(/\bmetric\s+(\d+)/);
             const metric = metricMatch ? Number.parseInt(metricMatch[1]!, 10) : 0;
             if (metric < bestMetric) {

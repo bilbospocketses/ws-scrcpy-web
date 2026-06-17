@@ -2,18 +2,27 @@
 import { execFile } from 'child_process';
 // biome-ignore lint/style/useNodejsImportProtocol: webpack externals
 import * as fs from 'fs';
-import {
-    STAGED_SYSTEM_DIR, STAGED_SYSTEM_APPIMAGE, STAGED_SYSTEM_DEPS_DIR, SYSTEM_STATE_DIR,
-    renderUnitFile, buildServiceUnitEnv, buildSystemSeedConfig,
-} from './SystemdClient';
-import { resolveSystemTool } from './systemTools';
-import { WS_SCRCPY_SERVICE_NAME, WS_SCRCPY_SERVICE_DESCRIPTION } from '../../common/ServiceEvents';
+import { WS_SCRCPY_SERVICE_DESCRIPTION, WS_SCRCPY_SERVICE_NAME } from '../../common/ServiceEvents';
 import { Config } from '../Config';
 import { Logger } from '../Logger';
+import {
+    buildServiceUnitEnv,
+    buildSystemSeedConfig,
+    renderUnitFile,
+    STAGED_SYSTEM_APPIMAGE,
+    STAGED_SYSTEM_DEPS_DIR,
+    STAGED_SYSTEM_DIR,
+    SYSTEM_STATE_DIR,
+} from './SystemdClient';
+import { resolveSystemTool } from './systemTools';
 
 const log = Logger.for('systemServiceCli');
 
-export interface CommandResult { code: number; stdout: string; stderr: string; }
+export interface CommandResult {
+    code: number;
+    stdout: string;
+    stderr: string;
+}
 export type CommandRunner = (argv: string[]) => Promise<CommandResult>;
 
 export interface CoreDeps {
@@ -22,8 +31,8 @@ export interface CoreDeps {
     writeFile: (path: string, content: string, opts: { mode: number }) => void;
     appImageSource: string;
     depsSource: string;
-    tool: (t: string) => string;       // /usr/bin resolver
-    sbinTool: (t: string) => string;   // /usr/sbin resolver (semanage/restorecon)
+    tool: (t: string) => string; // /usr/bin resolver
+    sbinTool: (t: string) => string; // /usr/sbin resolver (semanage/restorecon)
     lstat: (path: string) => { uid: number; mode: number; isSymbolicLink: boolean };
 }
 
@@ -33,7 +42,9 @@ const FCONTEXT_SPEC = `${STAGED_SYSTEM_DIR}(/.*)?`;
 
 function assertRoot(getuid: () => number): void {
     if (getuid() !== 0) {
-        throw new Error('--install-system-service must run as root (use sudo, or the desktop installer which elevates via pkexec).');
+        throw new Error(
+            '--install-system-service must run as root (use sudo, or the desktop installer which elevates via pkexec).',
+        );
     }
 }
 
@@ -52,16 +63,18 @@ export function assertSafeRootDir(path: string, lstat: CoreDeps['lstat']): void 
         throw new Error(`refusing to operate on ${path}: not root-owned (uid ${st.uid})`);
     }
     if ((st.mode & 0o022) !== 0) {
-        throw new Error(
-            `refusing to operate on ${path}: group/other-writable (mode ${(st.mode & 0o777).toString(8)})`,
-        );
+        throw new Error(`refusing to operate on ${path}: group/other-writable (mode ${(st.mode & 0o777).toString(8)})`);
     }
 }
 
 export async function installSystemService(opts: { port: number }, d: CoreDeps): Promise<void> {
     assertRoot(d.getuid);
-    const mkdir = d.tool('mkdir'), cp = d.tool('cp'), chmod = d.tool('chmod'), systemctl = d.tool('systemctl');
-    const semanage = d.sbinTool('semanage'), restorecon = d.sbinTool('restorecon');
+    const mkdir = d.tool('mkdir'),
+        cp = d.tool('cp'),
+        chmod = d.tool('chmod'),
+        systemctl = d.tool('systemctl');
+    const semanage = d.sbinTool('semanage'),
+        restorecon = d.sbinTool('restorecon');
 
     await d.run([mkdir, '-p', STAGED_SYSTEM_DIR]);
     await d.run([mkdir, '-p', SYSTEM_STATE_DIR]);
@@ -81,21 +94,37 @@ export async function installSystemService(opts: { port: number }, d: CoreDeps):
 
     const seed = buildSystemSeedConfig(opts.port);
     d.writeFile(`${SYSTEM_STATE_DIR}/config.json`, JSON.stringify(seed, null, 2) + '\n', { mode: 0o644 });
-    const envVars = { ...buildServiceUnitEnv('linux', 'system', STAGED_SYSTEM_DEPS_DIR), WS_SCRCPY_WEB_PORT: String(opts.port) };
-    const unit = renderUnitFile({
-        name: WS_SCRCPY_SERVICE_NAME, description: WS_SCRCPY_SERVICE_DESCRIPTION,
-        binPath: STAGED_BIN, startupDir: STAGED_SYSTEM_DIR, maxRestartAttempts: 10,
-        envVars, logPath: `${SYSTEM_STATE_DIR}/logs/service.log`,
-    } as unknown as Parameters<typeof renderUnitFile>[0], 'system');
+    const envVars = {
+        ...buildServiceUnitEnv('linux', 'system', STAGED_SYSTEM_DEPS_DIR),
+        WS_SCRCPY_WEB_PORT: String(opts.port),
+    };
+    const unit = renderUnitFile(
+        {
+            name: WS_SCRCPY_SERVICE_NAME,
+            description: WS_SCRCPY_SERVICE_DESCRIPTION,
+            binPath: STAGED_BIN,
+            startupDir: STAGED_SYSTEM_DIR,
+            maxRestartAttempts: 10,
+            envVars,
+            logPath: `${SYSTEM_STATE_DIR}/logs/service.log`,
+        } as unknown as Parameters<typeof renderUnitFile>[0],
+        'system',
+    );
     d.writeFile(UNIT_PATH, unit, { mode: 0o644 });
     await d.run([systemctl, 'daemon-reload']);
     await d.run([systemctl, 'enable', '--now', `${WS_SCRCPY_SERVICE_NAME}.service`]);
     log.info('system service installed + enabled');
 }
 
-export async function uninstallSystemService(opts: { keepState: boolean }, d: CoreDeps & { removeFile: (p: string) => void }): Promise<void> {
+export async function uninstallSystemService(
+    opts: { keepState: boolean },
+    d: CoreDeps & { removeFile: (p: string) => void },
+): Promise<void> {
     assertRoot(d.getuid);
-    const systemctl = d.tool('systemctl'), rm = d.tool('rm'), semanage = d.sbinTool('semanage'), restorecon = d.sbinTool('restorecon');
+    const systemctl = d.tool('systemctl'),
+        rm = d.tool('rm'),
+        semanage = d.sbinTool('semanage'),
+        restorecon = d.sbinTool('restorecon');
     await d.run([systemctl, 'disable', '--now', `${WS_SCRCPY_SERVICE_NAME}.service`]).catch(() => undefined);
     d.removeFile(UNIT_PATH);
     await d.run([systemctl, 'daemon-reload']);
@@ -110,10 +139,14 @@ export async function uninstallSystemService(opts: { keepState: boolean }, d: Co
     log.info(`system service uninstalled (keepState=${opts.keepState})`);
 }
 
-export async function systemServiceStatus(d: CoreDeps & { existsCheck: (p: string) => boolean }): Promise<{ installed: boolean; active: boolean }> {
+export async function systemServiceStatus(
+    d: CoreDeps & { existsCheck: (p: string) => boolean },
+): Promise<{ installed: boolean; active: boolean }> {
     const installed = d.existsCheck(UNIT_PATH);
     if (!installed) return { installed: false, active: false };
-    const r = await d.run([d.tool('systemctl'), 'is-active', `${WS_SCRCPY_SERVICE_NAME}.service`]).catch(() => ({ code: 1, stdout: '', stderr: '' } as CommandResult));
+    const r = await d
+        .run([d.tool('systemctl'), 'is-active', `${WS_SCRCPY_SERVICE_NAME}.service`])
+        .catch(() => ({ code: 1, stdout: '', stderr: '' }) as CommandResult);
     return { installed: true, active: r.stdout.trim() === 'active' };
 }
 
@@ -191,26 +224,37 @@ export async function runSystemServiceCli(parsed: ParsedSystemServiceArgs, deps:
  * deps tree, daemon-reload) must not be killed mid-flight.
  */
 export function makeProductionCoreDeps(): CliDeps {
-    const run: CommandRunner = (argv) => new Promise((resolve) => {
-        execFile(argv[0]!, argv.slice(1), { encoding: 'utf8' }, (err, stdout, stderr) => {
-            const e = err as (NodeJS.ErrnoException & { status?: number }) | null;
-            const code = e ? (typeof e.code === 'number' ? e.code : (e.status ?? 1)) : 0;
-            resolve({ code, stdout: stdout ?? '', stderr: stderr ?? '' });
+    const run: CommandRunner = (argv) =>
+        new Promise((resolve) => {
+            execFile(argv[0]!, argv.slice(1), { encoding: 'utf8' }, (err, stdout, stderr) => {
+                const e = err as (NodeJS.ErrnoException & { status?: number }) | null;
+                const code = e ? (typeof e.code === 'number' ? e.code : (e.status ?? 1)) : 0;
+                resolve({ code, stdout: stdout ?? '', stderr: stderr ?? '' });
+            });
         });
-    });
     return {
         getuid: () => process.getuid?.() ?? 0,
         run,
         writeFile: (p, content, opts) => fs.writeFileSync(p, content, opts),
-        lstat: (p) => { const s = fs.lstatSync(p); return { uid: s.uid, mode: s.mode, isSymbolicLink: s.isSymbolicLink() }; },
-        removeFile: (p) => { try { fs.unlinkSync(p); } catch { /* already gone */ } },
+        lstat: (p) => {
+            const s = fs.lstatSync(p);
+            return { uid: s.uid, mode: s.mode, isSymbolicLink: s.isSymbolicLink() };
+        },
+        removeFile: (p) => {
+            try {
+                fs.unlinkSync(p);
+            } catch {
+                /* already gone */
+            }
+        },
         existsCheck: (p) => fs.existsSync(p),
         appImageSource: process.env['APPIMAGE'] ?? process.execPath,
         depsSource: Config.getInstance().dependenciesPath,
         tool: (t) => resolveSystemTool(t),
         sbinTool: (t) => resolveSystemTool(t),
         defaultPort: () => Config.getInstance().getAppConfig().webPort,
-        log: (s) => { process.stdout.write(s + '\n'); },
+        log: (s) => {
+            process.stdout.write(s + '\n');
+        },
     };
 }
-

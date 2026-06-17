@@ -42,11 +42,14 @@ describe('resolveDataRoot', () => {
         });
 
         it('DATA_ROOT takes precedence over XDG_DATA_HOME', () => {
-            const result = resolveDataRoot({
-                DATA_ROOT: '/launcher/provided/WsScrcpyWeb',
-                XDG_DATA_HOME: '/should/not/use',
-                HOME: '/home/user',
-            }, 'linux');
+            const result = resolveDataRoot(
+                {
+                    DATA_ROOT: '/launcher/provided/WsScrcpyWeb',
+                    XDG_DATA_HOME: '/should/not/use',
+                    HOME: '/home/user',
+                },
+                'linux',
+            );
             expect(result).toBe('/launcher/provided/WsScrcpyWeb');
         });
 

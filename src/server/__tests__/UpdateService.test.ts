@@ -97,14 +97,14 @@ describe('UpdateService', () => {
         Config._resetForTest();
 
         const realReadFile = fs.promises.readFile.bind(fs.promises);
-        readFileSpy = vi.spyOn(fs.promises, 'readFile').mockImplementation(
-            ((...args: Parameters<typeof fs.promises.readFile>) => {
-                if (typeof args[0] === 'string' && args[0].includes('operation-server-port')) {
-                    return Promise.resolve('9999');
-                }
-                return realReadFile(...args);
-            }) as typeof fs.promises.readFile,
-        );
+        readFileSpy = vi.spyOn(fs.promises, 'readFile').mockImplementation(((
+            ...args: Parameters<typeof fs.promises.readFile>
+        ) => {
+            if (typeof args[0] === 'string' && args[0].includes('operation-server-port')) {
+                return Promise.resolve('9999');
+            }
+            return realReadFile(...args);
+        }) as typeof fs.promises.readFile);
     });
 
     afterEach(() => {
@@ -710,13 +710,14 @@ describe('UpdateService', () => {
         // Spy on fs.promises.writeFile + mkdir to capture the marker write
         // without polluting real ProgramData. Mock as no-ops since we only
         // care about the call shape, not the effect on disk.
-        const writeFileSpy = vi
-            .spyOn(fs.promises, 'writeFile')
-            .mockResolvedValue(undefined);
-        const mkdirSpy = vi
-            .spyOn(fs.promises, 'mkdir')
-            .mockResolvedValue(undefined);
-        using _restore = { [Symbol.dispose]() { writeFileSpy.mockRestore(); mkdirSpy.mockRestore(); } };
+        const writeFileSpy = vi.spyOn(fs.promises, 'writeFile').mockResolvedValue(undefined);
+        const mkdirSpy = vi.spyOn(fs.promises, 'mkdir').mockResolvedValue(undefined);
+        using _restore = {
+            [Symbol.dispose]() {
+                writeFileSpy.mockRestore();
+                mkdirSpy.mockRestore();
+            },
+        };
 
         const info = fakeUpdateInfo('0.2.0');
         const applyFn = vi.fn();
@@ -749,9 +750,7 @@ describe('UpdateService', () => {
         }
 
         const markerCalls = writeFileSpy.mock.calls.filter(
-            (c) =>
-                typeof c[0] === 'string' &&
-                (c[0] as string).endsWith('apply-update-pending'),
+            (c) => typeof c[0] === 'string' && (c[0] as string).endsWith('apply-update-pending'),
         );
         expect(markerCalls).toHaveLength(1);
         expect(mkdirSpy).toHaveBeenCalled();
@@ -821,7 +820,12 @@ describe('UpdateService', () => {
     // fails on our AppImage — see docs/specs/2026-06-01-linux-appimage-self-update-design.md.)
     it('applyUpdate (linux local): downloads + verifies + spawns helper; no waitExitThenApplyUpdate', async () => {
         const { createHash } = await import('crypto');
-        Config.getInstance().updateAppConfig({ autoUpdate: false, installMode: 'user', channel: 'beta', githubOwner: 'bilbospocketses' });
+        Config.getInstance().updateAppConfig({
+            autoUpdate: false,
+            installMode: 'user',
+            channel: 'beta',
+            githubOwner: 'bilbospocketses',
+        });
         const appImageBytes = Buffer.from('NEW-APPIMAGE-CONTENT');
         const goodHash = createHash('sha256').update(appImageBytes).digest('hex');
         const sums = `${goodHash}  ./linux-final/WsScrcpyWeb-linux-beta.AppImage\n`;
@@ -829,7 +833,10 @@ describe('UpdateService', () => {
             url.endsWith('.AppImage') ? new Response(appImageBytes) : new Response(sums),
         ) as unknown as typeof fetch;
         const applyFn = vi.fn();
-        const mgr = fakeMgr({ checkForUpdatesAsync: async () => fakeUpdateInfo('0.1.30-beta.26'), waitExitThenApplyUpdate: applyFn });
+        const mgr = fakeMgr({
+            checkForUpdatesAsync: async () => fakeUpdateInfo('0.1.30-beta.26'),
+            waitExitThenApplyUpdate: applyFn,
+        });
         const spawnMock = vi.mocked(child_process.spawn);
         spawnMock.mockClear();
         const svc = new UpdateService({
@@ -864,7 +871,12 @@ describe('UpdateService', () => {
     });
 
     it('applyUpdate (linux local): SHA mismatch aborts, no helper spawn', async () => {
-        Config.getInstance().updateAppConfig({ autoUpdate: false, installMode: 'user', channel: 'beta', githubOwner: 'bilbospocketses' });
+        Config.getInstance().updateAppConfig({
+            autoUpdate: false,
+            installMode: 'user',
+            channel: 'beta',
+            githubOwner: 'bilbospocketses',
+        });
         const sums = `${'0'.repeat(64)}  ./linux-final/WsScrcpyWeb-linux-beta.AppImage\n`;
         const fetchFn = vi.fn(async (url: string) =>
             url.endsWith('.AppImage') ? new Response(Buffer.from('CORRUPT')) : new Response(sums),
@@ -899,7 +911,12 @@ describe('UpdateService', () => {
         ['system-service' as const, 'system' as const],
     ])('applyUpdate (linux %s): spawns helper with --service-restart; no waitExitThenApplyUpdate', async (installMode, scope) => {
         const { createHash } = await import('crypto');
-        Config.getInstance().updateAppConfig({ autoUpdate: false, installMode, channel: 'beta', githubOwner: 'bilbospocketses' });
+        Config.getInstance().updateAppConfig({
+            autoUpdate: false,
+            installMode,
+            channel: 'beta',
+            githubOwner: 'bilbospocketses',
+        });
         const appImageBytes = Buffer.from('NEW-APPIMAGE-CONTENT');
         const goodHash = createHash('sha256').update(appImageBytes).digest('hex');
         const sums = `${goodHash}  ./linux-final/WsScrcpyWeb-linux-beta.AppImage\n`;
@@ -907,7 +924,10 @@ describe('UpdateService', () => {
             url.endsWith('.AppImage') ? new Response(appImageBytes) : new Response(sums),
         ) as unknown as typeof fetch;
         const applyFn = vi.fn();
-        const mgr = fakeMgr({ checkForUpdatesAsync: async () => fakeUpdateInfo('0.1.30-beta.40'), waitExitThenApplyUpdate: applyFn });
+        const mgr = fakeMgr({
+            checkForUpdatesAsync: async () => fakeUpdateInfo('0.1.30-beta.40'),
+            waitExitThenApplyUpdate: applyFn,
+        });
         const spawnMock = vi.mocked(child_process.spawn);
         spawnMock.mockClear();
         const svc = new UpdateService({
@@ -958,7 +978,12 @@ describe('UpdateService', () => {
         [null],
     ])('applyUpdate (linux machine-wide-no-service, installMode=%s): pkexec rename-swap + relaunch-only helper', async (installMode) => {
         const { createHash } = await import('crypto');
-        Config.getInstance().updateAppConfig({ autoUpdate: false, installMode, channel: 'beta', githubOwner: 'bilbospocketses' });
+        Config.getInstance().updateAppConfig({
+            autoUpdate: false,
+            installMode,
+            channel: 'beta',
+            githubOwner: 'bilbospocketses',
+        });
         const appImageBytes = Buffer.from('NEW-APPIMAGE-CONTENT');
         const goodHash = createHash('sha256').update(appImageBytes).digest('hex');
         const sums = `${goodHash}  ./linux-final/WsScrcpyWeb-linux-beta.AppImage\n`;
@@ -966,7 +991,10 @@ describe('UpdateService', () => {
             url.endsWith('.AppImage') ? new Response(appImageBytes) : new Response(sums),
         ) as unknown as typeof fetch;
         const applyFn = vi.fn();
-        const mgr = fakeMgr({ checkForUpdatesAsync: async () => fakeUpdateInfo('0.1.31-beta.2'), waitExitThenApplyUpdate: applyFn });
+        const mgr = fakeMgr({
+            checkForUpdatesAsync: async () => fakeUpdateInfo('0.1.31-beta.2'),
+            waitExitThenApplyUpdate: applyFn,
+        });
         const pkexecMock = vi.fn<(shellCmd: string, label: string) => Promise<string>>(async () => '');
         const spawnMock = vi.mocked(child_process.spawn);
         spawnMock.mockClear();
@@ -998,10 +1026,10 @@ describe('UpdateService', () => {
         expect(label).toBe('machine-wide-update');
         expect(script).toContain('mv -f');
         expect(script).toContain('/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage.bak'); // old → .bak
-        expect(script).toContain('"/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"');   // staged → /opt
-        expect(script).toContain('.new');                                        // the staged download moved in
+        expect(script).toContain('"/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"'); // staged → /opt
+        expect(script).toContain('.new'); // the staged download moved in
         expect(script).toContain("'0.1.31-beta.2' > /opt/ws-scrcpy-web/VERSION"); // new VERSION
-        expect(script).not.toMatch(/\bcp\b/);                                    // never cp (ETXTBSY)
+        expect(script).not.toMatch(/\bcp\b/); // never cp (ETXTBSY)
 
         // (2) the relaunch-only helper is spawned (NOT under pkexec): no --staged,
         // no --service-restart — just --target /opt + --wait-pid <ourpid>.
@@ -1012,7 +1040,7 @@ describe('UpdateService', () => {
         expect(cmdline).toContain('--linux-apply');
         expect(cmdline).toContain('--target /opt/ws-scrcpy-web/WsScrcpyWeb.AppImage');
         expect(cmdline).toContain(`--wait-pid ${process.pid}`);
-        expect(cmdline).not.toContain('--staged');        // relaunch-only: no swap by the helper
+        expect(cmdline).not.toContain('--staged'); // relaunch-only: no swap by the helper
         expect(cmdline).not.toContain('--service-restart');
         expect(cmdline).not.toContain('--relabel');
     });

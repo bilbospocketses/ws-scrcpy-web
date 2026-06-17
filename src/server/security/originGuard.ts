@@ -70,10 +70,7 @@ export function isHostAllowed(host: string | undefined): boolean {
  *     clients and same-origin GET/HEAD requests omit it; the per-instance
  *     token closes that remaining gap for non-browser callers.
  */
-export function isRequestAllowed(
-    origin: string | undefined,
-    host: string | undefined,
-): OriginCheckResult {
+export function isRequestAllowed(origin: string | undefined, host: string | undefined): OriginCheckResult {
     if (!isHostAllowed(host)) {
         return { allowed: false, reason: 'host not allowed (possible DNS rebinding)' };
     }

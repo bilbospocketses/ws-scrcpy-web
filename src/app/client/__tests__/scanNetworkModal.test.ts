@@ -11,7 +11,9 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-    document.body.querySelectorAll('dialog').forEach((d) => d.remove());
+    document.body.querySelectorAll('dialog').forEach((d) => {
+        d.remove();
+    });
     localStorage.clear();
 });
 
@@ -111,7 +113,10 @@ describe('ScanNetworkModal — row editing', () => {
         await flush();
         await flush();
 
-        const rowsBefore: Array<{ id: string; raw: string }> = modal['rows'].map((r: { id: string; raw: string }) => ({ id: r.id, raw: r.raw }));
+        const rowsBefore: Array<{ id: string; raw: string }> = modal['rows'].map((r: { id: string; raw: string }) => ({
+            id: r.id,
+            raw: r.raw,
+        }));
         const firstUserRow = rowsBefore.find((r) => r.raw === '10.0.0.0/24');
         expect(firstUserRow).toBeDefined();
         const targetId = firstUserRow!.id;

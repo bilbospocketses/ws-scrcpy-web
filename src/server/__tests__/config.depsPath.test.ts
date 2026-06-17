@@ -68,13 +68,7 @@ describe('resolveDependenciesPath', () => {
     });
 
     it('on Windows, defaults PROGRAMDATA to C:\\ProgramData when env is absent', () => {
-        const result = resolveDependenciesPath(
-            {},
-            {},
-            'C:\\anywhere\\dist\\index.js',
-            () => false,
-            'win32',
-        );
+        const result = resolveDependenciesPath({}, {}, 'C:\\anywhere\\dist\\index.js', () => false, 'win32');
         expect(result).toBe(path.win32.join('C:\\ProgramData', 'WsScrcpyWeb', 'dependencies'));
     });
 

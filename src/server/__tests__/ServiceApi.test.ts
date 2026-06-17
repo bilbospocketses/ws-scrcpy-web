@@ -1,23 +1,21 @@
 // biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
-import type { IncomingMessage, ServerResponse } from 'http';
+
 import * as fs from 'fs';
+import type { IncomingMessage, ServerResponse } from 'http';
 import * as os from 'os';
 import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ServiceApi, buildUninstallHelperArgs, defaultRunElevated } from '../api/ServiceApi';
+import { WS_SCRCPY_SERVICE_NAME } from '../../common/ServiceEvents';
+import { buildUninstallHelperArgs, defaultRunElevated, ServiceApi } from '../api/ServiceApi';
 import { Config } from '../Config';
 import { EnvName } from '../EnvName';
+import type { ServiceClient, ServiceClientFactoryResult } from '../service/ServiceClient';
 import {
     DECLINE_MARKER_NAME,
     STAGED_SYSTEM_APPIMAGE,
     STAGED_SYSTEM_DIR,
     SYSTEM_STATE_DIR,
 } from '../service/SystemdClient';
-import { WS_SCRCPY_SERVICE_NAME } from '../../common/ServiceEvents';
-import type {
-    ServiceClient,
-    ServiceClientFactoryResult,
-} from '../service/ServiceClient';
 
 function makeReqRes(url: string, method = 'GET', body?: string, headers?: Record<string, string>) {
     // Minimal IncomingMessage: only the on('data')/on('end') hooks readJsonBody
@@ -111,7 +109,11 @@ describe('ServiceApi', () => {
     afterEach(() => {
         // Capture paths that need cleanup BEFORE resetting the Config singleton.
         let uninstallMarkerPath: string | undefined;
-        try { uninstallMarkerPath = Config.getInstance().uninstallPendingMarkerPath; } catch { /* no singleton */ }
+        try {
+            uninstallMarkerPath = Config.getInstance().uninstallPendingMarkerPath;
+        } catch {
+            /* no singleton */
+        }
 
         Config._resetForTest();
         if (savedEnv.CONFIG === undefined) delete process.env[EnvName.CONFIG_PATH];
@@ -135,7 +137,11 @@ describe('ServiceApi', () => {
         // Clean up the uninstall-pending marker (may live outside tmpDirs on
         // Windows when dataRoot resolves to ProgramData rather than the tmp dir).
         if (uninstallMarkerPath) {
-            try { fs.rmSync(uninstallMarkerPath, { force: true }); } catch { /* best-effort */ }
+            try {
+                fs.rmSync(uninstallMarkerPath, { force: true });
+            } catch {
+                /* best-effort */
+            }
         }
     });
 
@@ -165,14 +171,22 @@ describe('ServiceApi', () => {
         process.env['APPIMAGE'] = 'relative/WsScrcpyWeb.AppImage'; // non-absolute → guard fires before pkexec
         try {
             const api = new ServiceApi(
-                () => ({ supported: true, platform: 'linux', client: fakeClient() } as unknown as ServiceClientFactoryResult),
-                () => 'system',       // scope() — linux install reads requested scope from the body, so this is unused here
-                () => true,           // existsCheck (the binPath guard is absolute-only; existence is not checked)
-                () => {},             // spawnDetached
-                () => {},             // scheduleExit
-                async () => '',       // runPkexecFn
-                async () => true,     // verifyServiceActive
-                (argv) => { elevatedCalls.push(argv); return Promise.resolve({ code: 0, stdout: '', stderr: '' }); }, // runElevated
+                () =>
+                    ({
+                        supported: true,
+                        platform: 'linux',
+                        client: fakeClient(),
+                    }) as unknown as ServiceClientFactoryResult,
+                () => 'system', // scope() — linux install reads requested scope from the body, so this is unused here
+                () => true, // existsCheck (the binPath guard is absolute-only; existence is not checked)
+                () => {}, // spawnDetached
+                () => {}, // scheduleExit
+                async () => '', // runPkexecFn
+                async () => true, // verifyServiceActive
+                (argv) => {
+                    elevatedCalls.push(argv);
+                    return Promise.resolve({ code: 0, stdout: '', stderr: '' });
+                }, // runElevated
             );
             const { req, res } = makeReqRes('/api/service/install', 'POST', JSON.stringify({ scope: 'system' }));
             await api.handle(req, res);
@@ -189,10 +203,12 @@ describe('ServiceApi', () => {
     it('system-scope uninstall: teardown spawn sets DATA_ROOT (else the helper panics in data_root_for_linux at startup — beta.60 #9 5.1)', async () => {
         const spawned: { cmd: string; args: string[] }[] = [];
         const api = new ServiceApi(
-            () => ({ supported: true, platform: 'linux', client: { getInstalledScope: async () => 'system' } } as any),
+            () => ({ supported: true, platform: 'linux', client: { getInstalledScope: async () => 'system' } }) as any,
             () => 'system',
             () => true,
-            (cmd, args) => { spawned.push({ cmd, args }); },
+            (cmd, args) => {
+                spawned.push({ cmd, args });
+            },
         );
         const { req, res } = makeReqRes('/api/service/uninstall', 'POST');
         await api.handle(req, res);
@@ -210,7 +226,10 @@ describe('ServiceApi', () => {
             platform: 'linux',
             unsupportedReason: 'Linux service mode lands later in SP3 — for now, run from source',
         };
-        const api = new ServiceApi(() => factoryResult, () => 'system');
+        const api = new ServiceApi(
+            () => factoryResult,
+            () => 'system',
+        );
         const { req, res } = makeReqRes('/api/service/status');
         await api.handle(req, res);
         expect((res as any).getStatus()).toBe(200);
@@ -229,7 +248,10 @@ describe('ServiceApi', () => {
             supported: true,
             platform: 'win32',
         };
-        const api = new ServiceApi(() => factoryResult, () => 'user');
+        const api = new ServiceApi(
+            () => factoryResult,
+            () => 'user',
+        );
         const { req, res } = makeReqRes('/api/service/status');
         await api.handle(req, res);
         expect((res as any).getStatus()).toBe(200);
@@ -252,7 +274,10 @@ describe('ServiceApi', () => {
             supported: true,
             platform: 'win32',
         };
-        const api = new ServiceApi(() => factoryResult, () => 'user');
+        const api = new ServiceApi(
+            () => factoryResult,
+            () => 'user',
+        );
         const { req, res } = makeReqRes('/api/service/status');
         await api.handle(req, res);
         const body = JSON.parse((res as any).getBody());
@@ -276,7 +301,10 @@ describe('ServiceApi', () => {
             supported: true,
             platform: 'linux',
         };
-        const api = new ServiceApi(() => factoryResult, () => 'user');
+        const api = new ServiceApi(
+            () => factoryResult,
+            () => 'user',
+        );
         const { req, res } = makeReqRes('/api/service/status');
         await api.handle(req, res);
         const body = JSON.parse((res as any).getBody());
@@ -296,7 +324,10 @@ describe('ServiceApi', () => {
             supported: true,
             platform: 'linux',
         };
-        const api = new ServiceApi(() => factoryResult, () => 'user');
+        const api = new ServiceApi(
+            () => factoryResult,
+            () => 'user',
+        );
         const { req, res } = makeReqRes('/api/service/status');
         await api.handle(req, res);
         const body = JSON.parse((res as any).getBody());
@@ -323,7 +354,11 @@ describe('ServiceApi', () => {
             supported: true,
             platform: 'linux',
         };
-        const api = new ServiceApi(() => factoryResult, () => 'user', existsCheck);
+        const api = new ServiceApi(
+            () => factoryResult,
+            () => 'user',
+            existsCheck,
+        );
         const { req, res } = makeReqRes('/api/service/status');
         await api.handle(req, res);
         const body = JSON.parse((res as any).getBody());
@@ -347,7 +382,11 @@ describe('ServiceApi', () => {
             supported: true,
             platform: 'linux',
         };
-        const api = new ServiceApi(() => factoryResult, () => 'user', existsCheck);
+        const api = new ServiceApi(
+            () => factoryResult,
+            () => 'user',
+            existsCheck,
+        );
         const { req, res } = makeReqRes('/api/service/status');
         await api.handle(req, res);
         const body = JSON.parse((res as any).getBody());
@@ -362,7 +401,11 @@ describe('ServiceApi', () => {
             supported: true,
             platform: 'win32',
         };
-        const api = new ServiceApi(() => factoryResult, () => 'user', () => true);
+        const api = new ServiceApi(
+            () => factoryResult,
+            () => 'user',
+            () => true,
+        );
         const { req, res } = makeReqRes('/api/service/status');
         await api.handle(req, res);
         const body = JSON.parse((res as any).getBody());
@@ -377,7 +420,10 @@ describe('ServiceApi', () => {
             platform: 'linux',
             unsupportedReason: 'nope',
         };
-        const api = new ServiceApi(() => factoryResult, () => 'system');
+        const api = new ServiceApi(
+            () => factoryResult,
+            () => 'system',
+        );
         const { req, res } = makeReqRes('/api/service/install', 'POST');
         await api.handle(req, res);
         expect((res as any).getStatus()).toBe(501);
@@ -388,7 +434,9 @@ describe('ServiceApi', () => {
     });
 
     it('POST /install calls client.install with installMode=user-service for user scope', async () => {
-        const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(async () => undefined);
+        const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(
+            async () => undefined,
+        );
         const client = fakeClient({
             install: installFn,
             status: vi.fn(async () => 'running' as const),
@@ -432,7 +480,9 @@ describe('ServiceApi', () => {
     });
 
     it('POST /install calls client.install with installMode=system-service for system scope', async () => {
-        const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(async () => undefined);
+        const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(
+            async () => undefined,
+        );
         const client = fakeClient({
             install: installFn,
             status: vi.fn(async () => 'running' as const),
@@ -488,16 +538,13 @@ describe('ServiceApi', () => {
         // retry prompt.
         const { ServiceInstallError } = await import('../service/ServyClient');
         const installFn = vi.fn(async () => {
-            throw new ServiceInstallError(
-                'user declined elevation. Service install requires Administrator',
-                {
-                    ok: false,
-                    exitCode: -1,
-                    stdout: '',
-                    stderr: '',
-                    errorMessage: 'user declined elevation. Service install requires Administrator',
-                },
-            );
+            throw new ServiceInstallError('user declined elevation. Service install requires Administrator', {
+                ok: false,
+                exitCode: -1,
+                stdout: '',
+                stderr: '',
+                errorMessage: 'user declined elevation. Service install requires Administrator',
+            });
         });
         const client = fakeClient({ install: installFn as any });
         const factoryResult: ServiceClientFactoryResult = {
@@ -519,7 +566,9 @@ describe('ServiceApi', () => {
     });
 
     it('POST /install returns 500 when the launcher exe is missing (dev runs)', async () => {
-        const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(async () => undefined);
+        const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(
+            async () => undefined,
+        );
         const client = fakeClient({ install: installFn });
         const factoryResult: ServiceClientFactoryResult = {
             client,
@@ -529,7 +578,11 @@ describe('ServiceApi', () => {
         // existsCheck returns false — service install can't proceed without
         // the packaged launcher binary. Caller gets a clear 500 with the
         // expected path mentioned, NOT a confusing Servy error message.
-        const api = new ServiceApi(() => factoryResult, () => 'user', () => false);
+        const api = new ServiceApi(
+            () => factoryResult,
+            () => 'user',
+            () => false,
+        );
         const { req, res } = makeReqRes('/api/service/install', 'POST');
         await api.handle(req, res);
         expect((res as any).getStatus()).toBe(500);
@@ -580,7 +633,10 @@ describe('ServiceApi', () => {
             supported: true,
             platform: 'win32',
         };
-        const api = new ServiceApi(() => factoryResult, () => 'user');
+        const api = new ServiceApi(
+            () => factoryResult,
+            () => 'user',
+        );
         const { req, res } = makeReqRes('/api/service/uninstall', 'POST');
         await api.handle(req, res);
         expect((res as any).getStatus()).toBe(200);
@@ -594,16 +650,13 @@ describe('ServiceApi', () => {
     it('POST /uninstall returns 403 when ServiceInstallError reports UAC declined', async () => {
         const { ServiceInstallError } = await import('../service/ServyClient');
         const uninstallFn = vi.fn(async () => {
-            throw new ServiceInstallError(
-                'user declined elevation. Service uninstall requires Administrator',
-                {
-                    ok: false,
-                    exitCode: -1,
-                    stdout: '',
-                    stderr: '',
-                    errorMessage: 'user declined elevation. Service uninstall requires Administrator',
-                },
-            );
+            throw new ServiceInstallError('user declined elevation. Service uninstall requires Administrator', {
+                ok: false,
+                exitCode: -1,
+                stdout: '',
+                stderr: '',
+                errorMessage: 'user declined elevation. Service uninstall requires Administrator',
+            });
         });
         const client = fakeClient({ uninstall: uninstallFn as any });
         const factoryResult: ServiceClientFactoryResult = {
@@ -611,7 +664,10 @@ describe('ServiceApi', () => {
             supported: true,
             platform: 'win32',
         };
-        const api = new ServiceApi(() => factoryResult, () => 'user');
+        const api = new ServiceApi(
+            () => factoryResult,
+            () => 'user',
+        );
         const { req, res } = makeReqRes('/api/service/uninstall', 'POST');
         await api.handle(req, res);
         expect((res as any).getStatus()).toBe(403);
@@ -630,7 +686,10 @@ describe('ServiceApi', () => {
             supported: true,
             platform: 'win32',
         };
-        const api = new ServiceApi(() => factoryResult, () => 'user');
+        const api = new ServiceApi(
+            () => factoryResult,
+            () => 'user',
+        );
         const { req, res } = makeReqRes('/api/service/uninstall', 'POST');
         await api.handle(req, res);
         expect((res as any).getStatus()).toBe(500);
@@ -668,7 +727,9 @@ describe('ServiceApi', () => {
         });
 
         it('POST /install on Linux with empty body defaults to user scope', async () => {
-            const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(async () => undefined);
+            const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(
+                async () => undefined,
+            );
             const client = fakeClient({
                 install: installFn,
                 status: vi.fn(async () => 'running' as const),
@@ -678,7 +739,10 @@ describe('ServiceApi', () => {
                 supported: true,
                 platform: 'linux',
             };
-            const api = new ServiceApi(() => factoryResult, () => 'system' /* should be ignored on Linux */);
+            const api = new ServiceApi(
+                () => factoryResult,
+                () => 'system' /* should be ignored on Linux */,
+            );
             const { req, res } = makeReqRes('/api/service/install', 'POST', '');
             await api.handle(req, res);
             expect((res as any).getStatus()).toBe(200);
@@ -690,7 +754,9 @@ describe('ServiceApi', () => {
         });
 
         it('POST /install on Linux with {scope: "user"} body installs user scope', async () => {
-            const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(async () => undefined);
+            const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(
+                async () => undefined,
+            );
             const client = fakeClient({
                 install: installFn,
                 status: vi.fn(async () => 'running' as const),
@@ -700,12 +766,11 @@ describe('ServiceApi', () => {
                 supported: true,
                 platform: 'linux',
             };
-            const api = new ServiceApi(() => factoryResult, () => 'system');
-            const { req, res } = makeReqRes(
-                '/api/service/install',
-                'POST',
-                JSON.stringify({ scope: 'user' }),
+            const api = new ServiceApi(
+                () => factoryResult,
+                () => 'system',
             );
+            const { req, res } = makeReqRes('/api/service/install', 'POST', JSON.stringify({ scope: 'user' }));
             await api.handle(req, res);
             expect((res as any).getStatus()).toBe(200);
             const opts = installFn.mock.calls[0]?.[0];
@@ -716,7 +781,9 @@ describe('ServiceApi', () => {
             // Task 7: system-scope install goes through runElevated, not client.install.
             // Response is still shutting-down; no verifyServiceActive poll needed since
             // the rootful core (running as root via pkexec) handles enable+start.
-            const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(async () => undefined);
+            const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(
+                async () => undefined,
+            );
             const statusFn = vi.fn(async () => 'running' as const);
             const client = fakeClient({ install: installFn, status: statusFn });
             const factoryResult: ServiceClientFactoryResult = {
@@ -726,8 +793,13 @@ describe('ServiceApi', () => {
             };
             const runElevated = vi.fn(async (_argv: string[]) => ({ code: 0, stdout: '', stderr: '' }));
             const api = new ServiceApi(
-                () => factoryResult, () => 'user', () => false,
-                () => {}, () => {}, async () => '', async () => true,
+                () => factoryResult,
+                () => 'user',
+                () => false,
+                () => {},
+                () => {},
+                async () => '',
+                async () => true,
                 runElevated,
             );
             const { req, res } = makeReqRes('/api/service/install', 'POST', JSON.stringify({ scope: 'system' }));
@@ -752,7 +824,9 @@ describe('ServiceApi', () => {
         // the port takeover. No timeout, no kill, no EPERM class.
 
         it('POST /install Linux system scope: runElevated called with pkexec argv, client.install NOT called, response shutting-down', async () => {
-            const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(async () => undefined);
+            const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(
+                async () => undefined,
+            );
             const client = fakeClient({ install: installFn, status: vi.fn(async () => 'running' as const) });
             const factoryResult: ServiceClientFactoryResult = { client, supported: true, platform: 'linux' };
 
@@ -770,8 +844,12 @@ describe('ServiceApi', () => {
                     () => factoryResult,
                     () => 'user',
                     () => false,
-                    () => { /* no spawn */ },
-                    () => { /* no-op scheduleExit — never calls process.exit */ },
+                    () => {
+                        /* no spawn */
+                    },
+                    () => {
+                        /* no-op scheduleExit — never calls process.exit */
+                    },
                     async () => '',
                     async () => true,
                     runElevated,
@@ -813,7 +891,9 @@ describe('ServiceApi', () => {
         });
 
         it('POST /install Linux system scope: runElevated returns code 126 → 403 uac-declined + installMode reverted', async () => {
-            const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(async () => undefined);
+            const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(
+                async () => undefined,
+            );
             const client = fakeClient({ install: installFn, status: vi.fn(async () => 'not-installed' as const) });
             const factoryResult: ServiceClientFactoryResult = { client, supported: true, platform: 'linux' };
 
@@ -823,8 +903,12 @@ describe('ServiceApi', () => {
                 () => factoryResult,
                 () => 'user',
                 () => false,
-                () => { /* no spawn */ },
-                () => { /* no-op scheduleExit */ },
+                () => {
+                    /* no spawn */
+                },
+                () => {
+                    /* no-op scheduleExit */
+                },
                 async () => '',
                 async () => true,
                 runElevated,
@@ -853,18 +937,28 @@ describe('ServiceApi', () => {
         });
 
         it('POST /install Linux system scope: runElevated returns code 1 with stderr → 500 servy-failure + installMode reverted', async () => {
-            const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(async () => undefined);
+            const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(
+                async () => undefined,
+            );
             const client = fakeClient({ install: installFn, status: vi.fn(async () => 'not-installed' as const) });
             const factoryResult: ServiceClientFactoryResult = { client, supported: true, platform: 'linux' };
 
-            const runElevated = vi.fn(async (_argv: string[]) => ({ code: 1, stdout: '', stderr: 'boom: unit enable failed' }));
+            const runElevated = vi.fn(async (_argv: string[]) => ({
+                code: 1,
+                stdout: '',
+                stderr: 'boom: unit enable failed',
+            }));
 
             const api = new ServiceApi(
                 () => factoryResult,
                 () => 'user',
                 () => false,
-                () => { /* no spawn */ },
-                () => { /* no-op scheduleExit */ },
+                () => {
+                    /* no spawn */
+                },
+                () => {
+                    /* no-op scheduleExit */
+                },
                 async () => '',
                 async () => true,
                 runElevated,
@@ -894,7 +988,9 @@ describe('ServiceApi', () => {
             const savedAppImage = process.env['APPIMAGE'];
             process.env['APPIMAGE'] = appImagePath;
             try {
-                const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(async () => undefined);
+                const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(
+                    async () => undefined,
+                );
                 const client = fakeClient({
                     install: installFn,
                     status: vi.fn(async () => 'running' as const),
@@ -904,12 +1000,11 @@ describe('ServiceApi', () => {
                     supported: true,
                     platform: 'linux',
                 };
-                const api = new ServiceApi(() => factoryResult, () => 'user');
-                const { req, res } = makeReqRes(
-                    '/api/service/install',
-                    'POST',
-                    JSON.stringify({ scope: 'user' }),
+                const api = new ServiceApi(
+                    () => factoryResult,
+                    () => 'user',
                 );
+                const { req, res } = makeReqRes('/api/service/install', 'POST', JSON.stringify({ scope: 'user' }));
                 await api.handle(req, res);
                 expect((res as any).getStatus()).toBe(200);
 
@@ -931,7 +1026,9 @@ describe('ServiceApi', () => {
             const savedAppImage = process.env['APPIMAGE'];
             delete process.env['APPIMAGE'];
             try {
-                const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(async () => undefined);
+                const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(
+                    async () => undefined,
+                );
                 const client = fakeClient({
                     install: installFn,
                     status: vi.fn(async () => 'running' as const),
@@ -941,12 +1038,11 @@ describe('ServiceApi', () => {
                     supported: true,
                     platform: 'linux',
                 };
-                const api = new ServiceApi(() => factoryResult, () => 'user');
-                const { req, res } = makeReqRes(
-                    '/api/service/install',
-                    'POST',
-                    JSON.stringify({ scope: 'user' }),
+                const api = new ServiceApi(
+                    () => factoryResult,
+                    () => 'user',
                 );
+                const { req, res } = makeReqRes('/api/service/install', 'POST', JSON.stringify({ scope: 'user' }));
                 await api.handle(req, res);
                 expect((res as any).getStatus()).toBe(200);
 
@@ -963,7 +1059,9 @@ describe('ServiceApi', () => {
         });
 
         it('POST /install on Linux with malformed JSON body falls back to user scope', async () => {
-            const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(async () => undefined);
+            const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(
+                async () => undefined,
+            );
             const client = fakeClient({
                 install: installFn,
                 status: vi.fn(async () => 'running' as const),
@@ -973,12 +1071,11 @@ describe('ServiceApi', () => {
                 supported: true,
                 platform: 'linux',
             };
-            const api = new ServiceApi(() => factoryResult, () => 'system');
-            const { req, res } = makeReqRes(
-                '/api/service/install',
-                'POST',
-                'not-json{',
+            const api = new ServiceApi(
+                () => factoryResult,
+                () => 'system',
             );
+            const { req, res } = makeReqRes('/api/service/install', 'POST', 'not-json{');
             await api.handle(req, res);
             expect((res as any).getStatus()).toBe(200);
             const opts = installFn.mock.calls[0]?.[0];
@@ -994,7 +1091,9 @@ describe('ServiceApi', () => {
             const savedAppImage = process.env['APPIMAGE'];
             process.env['APPIMAGE'] = '/home/jamie/Applications/WsScrcpyWeb.AppImage';
             try {
-                const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(async () => undefined);
+                const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(
+                    async () => undefined,
+                );
                 const client = fakeClient({
                     install: installFn,
                     status: vi.fn(async () => 'running' as const),
@@ -1004,12 +1103,11 @@ describe('ServiceApi', () => {
                     supported: true,
                     platform: 'linux',
                 };
-                const api = new ServiceApi(() => factoryResult, () => 'user');
-                const { req, res } = makeReqRes(
-                    '/api/service/install',
-                    'POST',
-                    JSON.stringify({ scope: 'user' }),
+                const api = new ServiceApi(
+                    () => factoryResult,
+                    () => 'user',
                 );
+                const { req, res } = makeReqRes('/api/service/install', 'POST', JSON.stringify({ scope: 'user' }));
                 await api.handle(req, res);
                 expect((res as any).getStatus()).toBe(200);
                 const opts = installFn.mock.calls[0]?.[0];
@@ -1029,7 +1127,9 @@ describe('ServiceApi', () => {
         // (installSystemService) stages /opt directly.
 
         it('POST /install on Linux system scope uses runElevated, client.install NOT called (helper candidate irrelevant)', async () => {
-            const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(async () => undefined);
+            const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(
+                async () => undefined,
+            );
             const client = fakeClient({
                 install: installFn,
                 status: vi.fn(async () => 'running' as const),
@@ -1049,15 +1149,16 @@ describe('ServiceApi', () => {
 
             const runElevated = vi.fn(async (_argv: string[]) => ({ code: 0, stdout: '', stderr: '' }));
             const api = new ServiceApi(
-                () => factoryResult, () => 'user', () => true,
-                () => {}, () => {}, async () => '', async () => true,
+                () => factoryResult,
+                () => 'user',
+                () => true,
+                () => {},
+                () => {},
+                async () => '',
+                async () => true,
                 runElevated,
             );
-            const { req, res } = makeReqRes(
-                '/api/service/install',
-                'POST',
-                JSON.stringify({ scope: 'system' }),
-            );
+            const { req, res } = makeReqRes('/api/service/install', 'POST', JSON.stringify({ scope: 'system' }));
             await api.handle(req, res);
             expect((res as any).getStatus()).toBe(200);
 
@@ -1068,7 +1169,9 @@ describe('ServiceApi', () => {
         });
 
         it('POST /install on Linux system scope uses runElevated regardless of helper absence', async () => {
-            const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(async () => undefined);
+            const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(
+                async () => undefined,
+            );
             const client = fakeClient({
                 install: installFn,
                 status: vi.fn(async () => 'running' as const),
@@ -1082,15 +1185,16 @@ describe('ServiceApi', () => {
             // No helper candidate — existsCheck returns false. Still uses runElevated.
             const runElevated = vi.fn(async (_argv: string[]) => ({ code: 0, stdout: '', stderr: '' }));
             const api = new ServiceApi(
-                () => factoryResult, () => 'user', () => false,
-                () => {}, () => {}, async () => '', async () => true,
+                () => factoryResult,
+                () => 'user',
+                () => false,
+                () => {},
+                () => {},
+                async () => '',
+                async () => true,
                 runElevated,
             );
-            const { req, res } = makeReqRes(
-                '/api/service/install',
-                'POST',
-                JSON.stringify({ scope: 'system' }),
-            );
+            const { req, res } = makeReqRes('/api/service/install', 'POST', JSON.stringify({ scope: 'system' }));
             await api.handle(req, res);
             expect((res as any).getStatus()).toBe(200);
 
@@ -1100,7 +1204,9 @@ describe('ServiceApi', () => {
 
         it('POST /install on Linux user scope does NOT use runElevated (user scope calls client.install)', async () => {
             // User scope is unchanged — still calls client.install() directly.
-            const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(async () => undefined);
+            const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(
+                async () => undefined,
+            );
             const client = fakeClient({
                 install: installFn,
                 status: vi.fn(async () => 'running' as const),
@@ -1113,15 +1219,16 @@ describe('ServiceApi', () => {
 
             const runElevated = vi.fn(async (_argv: string[]) => ({ code: 0, stdout: '', stderr: '' }));
             const api = new ServiceApi(
-                () => factoryResult, () => 'user', () => false,
-                () => {}, () => {}, async () => '', async () => true,
+                () => factoryResult,
+                () => 'user',
+                () => false,
+                () => {},
+                () => {},
+                async () => '',
+                async () => true,
                 runElevated,
             );
-            const { req, res } = makeReqRes(
-                '/api/service/install',
-                'POST',
-                JSON.stringify({ scope: 'user' }),
-            );
+            const { req, res } = makeReqRes('/api/service/install', 'POST', JSON.stringify({ scope: 'user' }));
             await api.handle(req, res);
             expect((res as any).getStatus()).toBe(200);
 
@@ -1164,7 +1271,12 @@ describe('ServiceApi', () => {
             Config.getInstance().updateAppConfig({ installMode: 'user-service' });
 
             // Pass spawnDetached as 4th constructor arg (injectable for tests).
-            const api = new ServiceApi(() => factoryResult, () => 'user', () => true, spawnDetached);
+            const api = new ServiceApi(
+                () => factoryResult,
+                () => 'user',
+                () => true,
+                spawnDetached,
+            );
             const { req, res } = makeReqRes('/api/service/uninstall', 'POST');
             await api.handle(req, res);
 
@@ -1214,7 +1326,12 @@ describe('ServiceApi', () => {
             };
 
             const spawnDetached = vi.fn();
-            const api = new ServiceApi(() => factoryResult, () => 'user', () => true, spawnDetached);
+            const api = new ServiceApi(
+                () => factoryResult,
+                () => 'user',
+                () => true,
+                spawnDetached,
+            );
             const { req, res } = makeReqRes('/api/service/uninstall', 'POST');
             await api.handle(req, res);
 
@@ -1259,7 +1376,12 @@ describe('ServiceApi', () => {
 
             Config.getInstance().updateAppConfig({ installMode: 'system-service' });
 
-            const api = new ServiceApi(() => factoryResult, () => 'user', () => true, spawnDetached);
+            const api = new ServiceApi(
+                () => factoryResult,
+                () => 'user',
+                () => true,
+                spawnDetached,
+            );
             const { req, res } = makeReqRes('/api/service/uninstall', 'POST');
             await api.handle(req, res);
 
@@ -1309,7 +1431,12 @@ describe('ServiceApi', () => {
 
             Config.getInstance().updateAppConfig({ installMode: 'system-service' });
 
-            const api = new ServiceApi(() => factoryResult, () => 'user', () => true, spawnDetached);
+            const api = new ServiceApi(
+                () => factoryResult,
+                () => 'user',
+                () => true,
+                spawnDetached,
+            );
             const { req, res } = makeReqRes('/api/service/uninstall', 'POST');
             await api.handle(req, res);
 
@@ -1340,7 +1467,9 @@ describe('ServiceApi', () => {
 
         it('schedules a prompt local-instance exit on Linux user-scope install (handoff frees the lock)', async () => {
             const scheduled: number[] = [];
-            const scheduleExit = vi.fn((_fn: () => void, ms: number) => { scheduled.push(ms); });
+            const scheduleExit = vi.fn((_fn: () => void, ms: number) => {
+                scheduled.push(ms);
+            });
             const client = fakeClient({
                 install: vi.fn(async () => undefined),
                 status: vi.fn(async () => 'running' as const),
@@ -1390,11 +1519,11 @@ describe('ServiceApi', () => {
             const api = new ServiceApi(
                 () => factoryResult,
                 () => 'user',
-                () => true,          // existsCheck → packaged launcher present
-                vi.fn(),            // spawnDetached
+                () => true, // existsCheck → packaged launcher present
+                vi.fn(), // spawnDetached
                 scheduleExit,
-                undefined,          // runPkexecFn → default
-                async () => false,  // verifyServiceActive → service never came up
+                undefined, // runPkexecFn → default
+                async () => false, // verifyServiceActive → service never came up
             );
             const { req, res } = makeReqRes('/api/service/install', 'POST', JSON.stringify({ scope: 'user' }));
             await api.handle(req, res);
@@ -1452,7 +1581,10 @@ describe('ServiceApi', () => {
             const scheduleExit = vi.fn();
             let spawnedCmd = '';
             let spawnedArgs: string[] = [];
-            const spawnDetached = vi.fn((cmd: string, args: string[]) => { spawnedCmd = cmd; spawnedArgs = args; });
+            const spawnDetached = vi.fn((cmd: string, args: string[]) => {
+                spawnedCmd = cmd;
+                spawnedArgs = args;
+            });
             const client = fakeClient({
                 install: vi.fn(async () => undefined),
                 status: vi.fn(async () => 'running' as const),
@@ -1522,7 +1654,12 @@ describe('ServiceApi', () => {
 
             Config.getInstance().updateAppConfig({ installMode: 'user-service' });
 
-            const api = new ServiceApi(() => factoryResult, () => 'user', () => true, spawnDetached);
+            const api = new ServiceApi(
+                () => factoryResult,
+                () => 'user',
+                () => true,
+                spawnDetached,
+            );
             const { req, res } = makeReqRes('/api/service/uninstall', 'POST');
             await api.handle(req, res);
 
@@ -1564,14 +1701,7 @@ describe('ServiceApi', () => {
             process.env['APPIMAGE'] = appImagePath;
             try {
                 const fakePkexec = vi.fn(async (_cmd: string, _label: string) => '');
-                const api = new ServiceApi(
-                    undefined,
-                    undefined,
-                    undefined,
-                    undefined,
-                    undefined,
-                    fakePkexec,
-                );
+                const api = new ServiceApi(undefined, undefined, undefined, undefined, undefined, fakePkexec);
                 const { req, res } = makeReqRes('/api/service/install-system-wide', 'POST');
                 await api.handle(req, res);
 
@@ -1597,11 +1727,20 @@ describe('ServiceApi', () => {
                 const fakePkexec = vi.fn(async (_cmd: string, _label: string) => '');
                 const scheduleExit = vi.fn();
                 let spawnedArgs: string[] = [];
-                const spawnDetached = vi.fn((_cmd: string, args: string[]) => { spawnedArgs = args; });
+                const spawnDetached = vi.fn((_cmd: string, args: string[]) => {
+                    spawnedArgs = args;
+                });
                 // existsCheck → true for the relaunch helper (F5 hands off + exits) but FALSE for
                 // kbuildsycoca, so refreshDesktopCaches no-ops (treated as non-KDE) and spawnDetached
                 // stays at exactly 1 (the relaunch helper) for the assertion below.
-                const api = new ServiceApi(undefined, undefined, (p: string) => !p.includes('kbuildsycoca'), spawnDetached, scheduleExit, fakePkexec);
+                const api = new ServiceApi(
+                    undefined,
+                    undefined,
+                    (p: string) => !p.includes('kbuildsycoca'),
+                    spawnDetached,
+                    scheduleExit,
+                    fakePkexec,
+                );
                 const { req, res } = makeReqRes('/api/service/install-system-wide', 'POST');
                 await api.handle(req, res);
 
@@ -1627,14 +1766,7 @@ describe('ServiceApi', () => {
             delete process.env['APPIMAGE'];
             try {
                 const fakePkexec = vi.fn(async (_cmd: string, _label: string) => '');
-                const api = new ServiceApi(
-                    undefined,
-                    undefined,
-                    undefined,
-                    undefined,
-                    undefined,
-                    fakePkexec,
-                );
+                const api = new ServiceApi(undefined, undefined, undefined, undefined, undefined, fakePkexec);
                 const { req, res } = makeReqRes('/api/service/install-system-wide', 'POST');
                 await api.handle(req, res);
 
@@ -1650,14 +1782,7 @@ describe('ServiceApi', () => {
 
         it('POST /api/service/decline-system-wide writes decline marker under <dataRoot>/control and returns 200', async () => {
             const fakePkexec = vi.fn(async (_cmd: string, _label: string) => '');
-            const api = new ServiceApi(
-                undefined,
-                undefined,
-                undefined,
-                undefined,
-                undefined,
-                fakePkexec,
-            );
+            const api = new ServiceApi(undefined, undefined, undefined, undefined, undefined, fakePkexec);
             const { req, res } = makeReqRes('/api/service/decline-system-wide', 'POST');
             await api.handle(req, res);
 
@@ -1692,12 +1817,14 @@ describe('ServiceApi', () => {
 
         it('non-root: --user --collect prefix, --wipe when keep=false, machine-wide 0, scope none', () => {
             const args = buildUninstallHelperArgs({
-                isRoot: false, scope: 'none', machineWide: false, keep: false, ...base,
+                isRoot: false,
+                scope: 'none',
+                machineWide: false,
+                keep: false,
+                ...base,
             });
             // Non-root → user manager: leading --user --collect, then unit, helper, mode flag.
-            expect(args.slice(0, 5)).toEqual([
-                '--user', '--collect', base.unit, base.helper, '--linux-app-uninstall',
-            ]);
+            expect(args.slice(0, 5)).toEqual(['--user', '--collect', base.unit, base.helper, '--linux-app-uninstall']);
             expect(args).toContain('--wipe');
             expect(args).not.toContain('--keep');
             // Each value-flag is immediately followed by its value.
@@ -1709,7 +1836,11 @@ describe('ServiceApi', () => {
 
         it('non-root: --keep when keep=true, machine-wide 1, scope user', () => {
             const args = buildUninstallHelperArgs({
-                isRoot: false, scope: 'user', machineWide: true, keep: true, ...base,
+                isRoot: false,
+                scope: 'user',
+                machineWide: true,
+                keep: true,
+                ...base,
             });
             expect(args).toContain('--keep');
             expect(args).not.toContain('--wipe');
@@ -1719,12 +1850,14 @@ describe('ServiceApi', () => {
 
         it('root: --collect prefix with NO --user, scope system', () => {
             const args = buildUninstallHelperArgs({
-                isRoot: true, scope: 'system', machineWide: true, keep: false, ...base,
+                isRoot: true,
+                scope: 'system',
+                machineWide: true,
+                keep: false,
+                ...base,
             });
             // Root → system manager: leading --collect (no --user).
-            expect(args.slice(0, 4)).toEqual([
-                '--collect', base.unit, base.helper, '--linux-app-uninstall',
-            ]);
+            expect(args.slice(0, 4)).toEqual(['--collect', base.unit, base.helper, '--linux-app-uninstall']);
             expect(args).not.toContain('--user');
             expect(args[args.indexOf('--scope') + 1]).toBe('system');
         });
@@ -1742,9 +1875,18 @@ describe('ServiceApi', () => {
             };
             let spawnedCmd = '';
             let spawnedArgs: string[] = [];
-            const spawnMock = vi.fn((cmd: string, args: string[]) => { spawnedCmd = cmd; spawnedArgs = args; });
+            const spawnMock = vi.fn((cmd: string, args: string[]) => {
+                spawnedCmd = cmd;
+                spawnedArgs = args;
+            });
             // existsCheck → helper present; scheduleExit → no-op (don't sacrifice the worker).
-            const api = new ServiceApi(() => factoryResult, () => 'user', () => true, spawnMock, () => {});
+            const api = new ServiceApi(
+                () => factoryResult,
+                () => 'user',
+                () => true,
+                spawnMock,
+                () => {},
+            );
             const { req, res } = makeReqRes('/api/service/uninstall-app', 'POST', JSON.stringify({ keep: true }));
             await api.handle(req, res);
 
@@ -1777,7 +1919,13 @@ describe('ServiceApi', () => {
             };
             Config.getInstance().updateAppConfig({ installMode: 'user-service' });
             const spawnMock = vi.fn();
-            const api = new ServiceApi(() => factoryResult, () => 'user', () => true, spawnMock, () => {});
+            const api = new ServiceApi(
+                () => factoryResult,
+                () => 'user',
+                () => true,
+                spawnMock,
+                () => {},
+            );
             const { req, res } = makeReqRes('/api/service/uninstall-app', 'POST', JSON.stringify({ keep: true }));
             await api.handle(req, res);
             expect((res as any).getStatus()).toBe(200);
@@ -1797,7 +1945,13 @@ describe('ServiceApi', () => {
             };
             const spawnMock = vi.fn();
             // existsCheck → false: the staged helper is absent (dev/from-source run).
-            const api = new ServiceApi(() => factoryResult, () => 'user', () => false, spawnMock, () => {});
+            const api = new ServiceApi(
+                () => factoryResult,
+                () => 'user',
+                () => false,
+                spawnMock,
+                () => {},
+            );
             const { req, res } = makeReqRes('/api/service/uninstall-app', 'POST', JSON.stringify({ keep: false }));
             await api.handle(req, res);
 
@@ -1824,10 +1978,19 @@ describe('ServiceApi', () => {
             };
             let spawnedCmd = '';
             let spawnedArgs: string[] = [];
-            const spawnMock = vi.fn((cmd: string, args: string[]) => { spawnedCmd = cmd; spawnedArgs = args; });
+            const spawnMock = vi.fn((cmd: string, args: string[]) => {
+                spawnedCmd = cmd;
+                spawnedArgs = args;
+            });
             const scheduleExit = vi.fn();
             // existsCheck → staged helper present.
-            const api = new ServiceApi(() => factoryResult, () => 'user', () => true, spawnMock, scheduleExit);
+            const api = new ServiceApi(
+                () => factoryResult,
+                () => 'user',
+                () => true,
+                spawnMock,
+                scheduleExit,
+            );
             const { req, res } = makeReqRes('/api/service/uninstall-app', 'POST', JSON.stringify({ keep: false }));
             await api.handle(req, res);
 
@@ -1864,8 +2027,16 @@ describe('ServiceApi', () => {
                 platform: 'win32',
             };
             let spawnedArgs: string[] = [];
-            const spawnMock = vi.fn((_cmd: string, args: string[]) => { spawnedArgs = args; });
-            const api = new ServiceApi(() => factoryResult, () => 'user', () => true, spawnMock, () => {});
+            const spawnMock = vi.fn((_cmd: string, args: string[]) => {
+                spawnedArgs = args;
+            });
+            const api = new ServiceApi(
+                () => factoryResult,
+                () => 'user',
+                () => true,
+                spawnMock,
+                () => {},
+            );
             const { req, res } = makeReqRes('/api/service/uninstall-app', 'POST', JSON.stringify({ keep: true }));
             await api.handle(req, res);
 
@@ -1885,7 +2056,13 @@ describe('ServiceApi', () => {
             };
             const spawnMock = vi.fn();
             // existsCheck → false: the staged helper is absent (dev/from-source run).
-            const api = new ServiceApi(() => factoryResult, () => 'user', () => false, spawnMock, () => {});
+            const api = new ServiceApi(
+                () => factoryResult,
+                () => 'user',
+                () => false,
+                spawnMock,
+                () => {},
+            );
             const { req, res } = makeReqRes('/api/service/uninstall-app', 'POST', JSON.stringify({ keep: false }));
             await api.handle(req, res);
 
@@ -1905,7 +2082,13 @@ describe('ServiceApi', () => {
                 unsupportedReason: 'macOS service mode unsupported',
             };
             const spawnMock = vi.fn();
-            const api = new ServiceApi(() => factoryResult, () => 'user', () => true, spawnMock, () => {});
+            const api = new ServiceApi(
+                () => factoryResult,
+                () => 'user',
+                () => true,
+                spawnMock,
+                () => {},
+            );
             const { req, res } = makeReqRes('/api/service/uninstall-app', 'POST', JSON.stringify({ keep: true }));
             await api.handle(req, res);
 
@@ -1923,7 +2106,10 @@ describe('ServiceApi', () => {
             supported: true,
             platform: 'win32',
         };
-        const api = new ServiceApi(() => factoryResult, () => 'user');
+        const api = new ServiceApi(
+            () => factoryResult,
+            () => 'user',
+        );
         const { req, res } = makeReqRes('/api/service/bogus', 'GET');
         await api.handle(req, res);
         expect((res as any).getStatus()).toBe(404);
@@ -1941,7 +2127,11 @@ describe('ServiceApi', () => {
                 supported: true,
                 platform: 'linux',
             };
-            const api = new ServiceApi(() => factoryResult, () => 'user', () => false);
+            const api = new ServiceApi(
+                () => factoryResult,
+                () => 'user',
+                () => false,
+            );
             const { req, res } = makeReqRes('/api/service/status');
             await api.handle(req, res);
             const body = JSON.parse((res as any).getBody());
@@ -1962,7 +2152,11 @@ describe('ServiceApi', () => {
                 supported: true,
                 platform: 'linux',
             };
-            const api = new ServiceApi(() => factoryResult, () => 'user', () => false);
+            const api = new ServiceApi(
+                () => factoryResult,
+                () => 'user',
+                () => false,
+            );
             const { req, res } = makeReqRes('/api/service/status');
             await api.handle(req, res);
             const body = JSON.parse((res as any).getBody());
@@ -1983,7 +2177,11 @@ describe('ServiceApi', () => {
                 supported: true,
                 platform: 'linux',
             };
-            const api = new ServiceApi(() => factoryResult, () => 'user', () => false);
+            const api = new ServiceApi(
+                () => factoryResult,
+                () => 'user',
+                () => false,
+            );
             const { req, res } = makeReqRes('/api/service/status');
             await api.handle(req, res);
             const body = JSON.parse((res as any).getBody());
@@ -2001,7 +2199,11 @@ describe('ServiceApi', () => {
             supported: true,
             platform: 'win32',
         };
-        const api = new ServiceApi(() => factoryResult, () => 'user', () => true);
+        const api = new ServiceApi(
+            () => factoryResult,
+            () => 'user',
+            () => true,
+        );
         const { req, res } = makeReqRes('/api/service/status');
         await api.handle(req, res);
         const body = JSON.parse((res as any).getBody());
@@ -2021,11 +2223,11 @@ describe('ServiceApi', () => {
             supported: true,
             platform: 'win32',
         };
-        const api = new ServiceApi(() => factoryResult, () => 'user');
-        vi.spyOn(
-            api as unknown as { isLikelyLocalSystem: () => boolean },
-            'isLikelyLocalSystem',
-        ).mockReturnValue(true);
+        const api = new ServiceApi(
+            () => factoryResult,
+            () => 'user',
+        );
+        vi.spyOn(api as unknown as { isLikelyLocalSystem: () => boolean }, 'isLikelyLocalSystem').mockReturnValue(true);
         Config.getInstance().updateAppConfig({ installMode: 'system-service' });
 
         const { req, res } = makeReqRes('/api/service/uninstall', 'POST');
@@ -2045,7 +2247,10 @@ describe('ServiceApi', () => {
             platform: 'linux',
             unsupportedReason: 'systemd not found',
         };
-        const api = new ServiceApi(() => factoryResult, () => 'user');
+        const api = new ServiceApi(
+            () => factoryResult,
+            () => 'user',
+        );
         const { req, res } = makeReqRes('/api/service/uninstall', 'POST');
         await api.handle(req, res);
         expect((res as any).getStatus()).toBe(501);
@@ -2057,16 +2262,13 @@ describe('ServiceApi', () => {
     it('returns reason=uac-declined when client.uninstall throws UAC-declined error', async () => {
         const { ServiceInstallError } = await import('../service/ServyClient');
         const uninstallFn = vi.fn(async () => {
-            throw new ServiceInstallError(
-                'user declined elevation. Service uninstall requires Administrator',
-                {
-                    ok: false,
-                    exitCode: -1,
-                    stdout: '',
-                    stderr: '',
-                    errorMessage: 'user declined elevation. Service uninstall requires Administrator',
-                },
-            );
+            throw new ServiceInstallError('user declined elevation. Service uninstall requires Administrator', {
+                ok: false,
+                exitCode: -1,
+                stdout: '',
+                stderr: '',
+                errorMessage: 'user declined elevation. Service uninstall requires Administrator',
+            });
         });
         const client = fakeClient({ uninstall: uninstallFn as any });
         const factoryResult: ServiceClientFactoryResult = {
@@ -2074,7 +2276,10 @@ describe('ServiceApi', () => {
             supported: true,
             platform: 'win32',
         };
-        const api = new ServiceApi(() => factoryResult, () => 'user');
+        const api = new ServiceApi(
+            () => factoryResult,
+            () => 'user',
+        );
         const { req, res } = makeReqRes('/api/service/uninstall', 'POST');
         await api.handle(req, res);
         expect((res as any).getStatus()).toBe(403);
@@ -2089,15 +2294,15 @@ describe('ServiceApi', () => {
             supported: true,
             platform: 'win32',
         };
-        const api = new ServiceApi(() => factoryResult, () => 'user');
+        const api = new ServiceApi(
+            () => factoryResult,
+            () => 'user',
+        );
         // Provide a token that will fail consumeToken validation (it won't match
         // any issued token in the temp dir, so consumeToken returns false).
-        const { req, res } = makeReqRes(
-            '/api/service/uninstall',
-            'POST',
-            undefined,
-            { 'x-resume-token': 'bogus-token-value' },
-        );
+        const { req, res } = makeReqRes('/api/service/uninstall', 'POST', undefined, {
+            'x-resume-token': 'bogus-token-value',
+        });
         await api.handle(req, res);
         expect((res as any).getStatus()).toBe(401);
         const body = JSON.parse((res as any).getBody());
@@ -2116,7 +2321,10 @@ describe('ServiceApi', () => {
             supported: true,
             platform: 'win32',
         };
-        const api = new ServiceApi(() => factoryResult, () => 'user');
+        const api = new ServiceApi(
+            () => factoryResult,
+            () => 'user',
+        );
         const { req, res } = makeReqRes('/api/service/uninstall', 'POST');
         await api.handle(req, res);
         expect((res as any).getStatus()).toBe(500);
@@ -2133,11 +2341,13 @@ describe('ServiceApi', () => {
                 supported: true,
                 platform: 'win32',
             };
-            const api = new ServiceApi(() => factoryResult, () => 'user');
-            vi.spyOn(
-                api as unknown as { isLikelyLocalSystem: () => boolean },
-                'isLikelyLocalSystem',
-            ).mockReturnValue(true);
+            const api = new ServiceApi(
+                () => factoryResult,
+                () => 'user',
+            );
+            vi.spyOn(api as unknown as { isLikelyLocalSystem: () => boolean }, 'isLikelyLocalSystem').mockReturnValue(
+                true,
+            );
             Config.getInstance().updateAppConfig({ installMode: 'user-service' });
 
             const { req, res } = makeReqRes('/api/service/uninstall', 'POST');
@@ -2154,11 +2364,13 @@ describe('ServiceApi', () => {
                 supported: true,
                 platform: 'win32',
             };
-            const api = new ServiceApi(() => factoryResult, () => 'user');
-            vi.spyOn(
-                api as unknown as { isLikelyLocalSystem: () => boolean },
-                'isLikelyLocalSystem',
-            ).mockReturnValue(true);
+            const api = new ServiceApi(
+                () => factoryResult,
+                () => 'user',
+            );
+            vi.spyOn(api as unknown as { isLikelyLocalSystem: () => boolean }, 'isLikelyLocalSystem').mockReturnValue(
+                true,
+            );
             Config.getInstance().updateAppConfig({ installMode: 'system-service' });
 
             const { req, res } = makeReqRes('/api/service/uninstall', 'POST');
@@ -2175,7 +2387,12 @@ describe('ServiceApi', () => {
         it('schedules process.exit(0) after 5s', async () => {
             vi.useFakeTimers();
             const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
-            using _restore = { [Symbol.dispose]() { exitSpy.mockRestore(); vi.useRealTimers(); } };
+            using _restore = {
+                [Symbol.dispose]() {
+                    exitSpy.mockRestore();
+                    vi.useRealTimers();
+                },
+            };
 
             const client = fakeClient({ status: vi.fn(async () => 'running' as const) });
             const factoryResult: ServiceClientFactoryResult = {
@@ -2183,11 +2400,13 @@ describe('ServiceApi', () => {
                 supported: true,
                 platform: 'win32',
             };
-            const api = new ServiceApi(() => factoryResult, () => 'user');
-            vi.spyOn(
-                api as unknown as { isLikelyLocalSystem: () => boolean },
-                'isLikelyLocalSystem',
-            ).mockReturnValue(true);
+            const api = new ServiceApi(
+                () => factoryResult,
+                () => 'user',
+            );
+            vi.spyOn(api as unknown as { isLikelyLocalSystem: () => boolean }, 'isLikelyLocalSystem').mockReturnValue(
+                true,
+            );
             Config.getInstance().updateAppConfig({ installMode: 'user-service' });
 
             const { req, res } = makeReqRes('/api/service/uninstall', 'POST');
@@ -2208,11 +2427,13 @@ describe('ServiceApi', () => {
                 supported: true,
                 platform: 'win32',
             };
-            const api = new ServiceApi(() => factoryResult, () => 'user');
-            vi.spyOn(
-                api as unknown as { isLikelyLocalSystem: () => boolean },
-                'isLikelyLocalSystem',
-            ).mockReturnValue(false);
+            const api = new ServiceApi(
+                () => factoryResult,
+                () => 'user',
+            );
+            vi.spyOn(api as unknown as { isLikelyLocalSystem: () => boolean }, 'isLikelyLocalSystem').mockReturnValue(
+                false,
+            );
             Config.getInstance().updateAppConfig({ installMode: 'user' });
 
             const { req, res } = makeReqRes('/api/service/uninstall', 'POST');
@@ -2232,11 +2453,13 @@ describe('ServiceApi', () => {
                 supported: true,
                 platform: 'win32',
             };
-            const api = new ServiceApi(() => factoryResult, () => 'user');
-            vi.spyOn(
-                api as unknown as { isLikelyLocalSystem: () => boolean },
-                'isLikelyLocalSystem',
-            ).mockReturnValue(false);
+            const api = new ServiceApi(
+                () => factoryResult,
+                () => 'user',
+            );
+            vi.spyOn(api as unknown as { isLikelyLocalSystem: () => boolean }, 'isLikelyLocalSystem').mockReturnValue(
+                false,
+            );
             Config.getInstance().updateAppConfig({ installMode: 'user-service' });
 
             const { req, res } = makeReqRes('/api/service/uninstall', 'POST');
@@ -2262,10 +2485,9 @@ describe('ServiceApi', () => {
                 () => 'system',
                 () => true,
             );
-            vi.spyOn(
-                api as unknown as { isLikelyLocalSystem: () => boolean },
-                'isLikelyLocalSystem',
-            ).mockReturnValue(true);
+            vi.spyOn(api as unknown as { isLikelyLocalSystem: () => boolean }, 'isLikelyLocalSystem').mockReturnValue(
+                true,
+            );
 
             const { req, res } = makeReqRes('/api/service/uninstall', 'POST');
             await api.handle(req, res);

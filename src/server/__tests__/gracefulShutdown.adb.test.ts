@@ -9,16 +9,9 @@ vi.mock('child_process', async (importOriginal) => {
     const real = await importOriginal<typeof child_process>();
     return {
         ...real,
-        execFile: vi.fn(
-            (
-                _file: string,
-                _args: string[],
-                _opts: unknown,
-                cb: (err: Error | null) => void,
-            ) => {
-                cb(null);
-            },
-        ),
+        execFile: vi.fn((_file: string, _args: string[], _opts: unknown, cb: (err: Error | null) => void) => {
+            cb(null);
+        }),
     };
 });
 
@@ -54,12 +47,7 @@ describe('reapStrayAdbOnWindows', () => {
     it('swallows a non-zero exit (no-match) without throwing', async () => {
         vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
         execFileMock.mockImplementation(
-            (
-                _file: string,
-                _args: string[],
-                _opts: unknown,
-                cb: (err: Error | null) => void,
-            ) => {
+            (_file: string, _args: string[], _opts: unknown, cb: (err: Error | null) => void) => {
                 const err = Object.assign(new Error('no matching process'), { code: 1 });
                 cb(err);
             },

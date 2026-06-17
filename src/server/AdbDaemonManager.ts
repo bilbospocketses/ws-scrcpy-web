@@ -81,7 +81,9 @@ export class AdbDaemonManager {
             // consumer attaches its own awaits/handlers via the returned
             // promise (or the race below). The stored field exists only so
             // concurrent callers share the work — it's not awaited directly.
-            this.inflight.catch(() => { /* tracked by callers */ });
+            this.inflight.catch(() => {
+                /* tracked by callers */
+            });
         }
         const inflight = this.inflight;
         if (opts.waitMs === undefined) {
@@ -90,12 +92,14 @@ export class AdbDaemonManager {
         let timer: NodeJS.Timeout | undefined;
         const timeoutPromise = new Promise<void>((_, reject) => {
             timer = setTimeout(() => {
-                reject(new AdbExecError(
-                    'timeout',
-                    this.adbPath,
-                    ['start-server'],
-                    new Error(`adb daemon not ready within ${opts.waitMs}ms`),
-                ));
+                reject(
+                    new AdbExecError(
+                        'timeout',
+                        this.adbPath,
+                        ['start-server'],
+                        new Error(`adb daemon not ready within ${opts.waitMs}ms`),
+                    ),
+                );
             }, opts.waitMs);
         });
         // §25 — using-declaration replaces the prior try/finally clearTimeout.
@@ -213,8 +217,12 @@ export class AdbDaemonManager {
                 reject(err);
             };
 
-            proc.stdout?.on('data', (chunk: Buffer) => { stdoutBuf += chunk.toString(); });
-            proc.stderr?.on('data', (chunk: Buffer) => { stderrBuf += chunk.toString(); });
+            proc.stdout?.on('data', (chunk: Buffer) => {
+                stdoutBuf += chunk.toString();
+            });
+            proc.stderr?.on('data', (chunk: Buffer) => {
+                stderrBuf += chunk.toString();
+            });
 
             proc.on('error', (err) => {
                 settleErr(new AdbExecError('spawn', this.adbPath, ['start-server'], err));
@@ -230,8 +238,14 @@ export class AdbDaemonManager {
             });
 
             const timer = setTimeout(() => {
-                try { proc.kill(); } catch { /* best-effort */ }
-                settleErr(new AdbExecError('timeout', this.adbPath, ['start-server'], new Error(`${timeoutMs}ms deadline`)));
+                try {
+                    proc.kill();
+                } catch {
+                    /* best-effort */
+                }
+                settleErr(
+                    new AdbExecError('timeout', this.adbPath, ['start-server'], new Error(`${timeoutMs}ms deadline`)),
+                );
             }, timeoutMs);
             timer.unref();
         });

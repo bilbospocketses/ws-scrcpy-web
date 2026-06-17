@@ -165,5 +165,4 @@ export interface AppUninstallRequest {
 /** Canonical Windows service name registered with Servy / SCM. */
 export const WS_SCRCPY_SERVICE_NAME = 'WsScrcpyWeb';
 export const WS_SCRCPY_SERVICE_DISPLAY_NAME = 'ws-scrcpy-web';
-export const WS_SCRCPY_SERVICE_DESCRIPTION =
-    'ws-scrcpy-web — browser-based scrcpy front-end for Android devices.';
+export const WS_SCRCPY_SERVICE_DESCRIPTION = 'ws-scrcpy-web — browser-based scrcpy front-end for Android devices.';

@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { PortChangeModal } from '../PortChangeModal';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ConfirmModal } from '../ConfirmModal';
+import { PortChangeModal } from '../PortChangeModal';
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
@@ -13,7 +13,10 @@ beforeEach(() => {
     HTMLDialogElement.prototype.close = vi.fn(function (this: HTMLDialogElement) {
         this.removeAttribute('open');
     });
-    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true } as Response)));
+    vi.stubGlobal(
+        'fetch',
+        vi.fn(() => Promise.resolve({ ok: true } as Response)),
+    );
 });
 
 afterEach(() => {
@@ -26,8 +29,9 @@ function checkboxes(): HTMLInputElement[] {
     return Array.from(document.querySelectorAll('input[type="checkbox"]')) as HTMLInputElement[];
 }
 function gotIt(): HTMLButtonElement {
-    const btn = (Array.from(document.querySelectorAll('button')) as HTMLButtonElement[])
-        .find((b) => b.textContent?.trim().toLowerCase() === 'got it');
+    const btn = (Array.from(document.querySelectorAll('button')) as HTMLButtonElement[]).find(
+        (b) => b.textContent?.trim().toLowerCase() === 'got it',
+    );
     expect(btn, 'got it button').toBeTruthy();
     return btn!;
 }

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AdminConfirmModal } from '../AdminConfirmModal';
 
 // JSDOM doesn't implement HTMLDialogElement.showModal() by default; stub

@@ -40,7 +40,8 @@ export class ScanProgressChip {
         this.dismissBtn = document.createElement('button');
         this.dismissBtn.textContent = '×';
         this.dismissBtn.setAttribute('aria-label', 'dismiss');
-        this.dismissBtn.style.cssText = 'margin-left: auto; background: none; border: none; color: var(--text-color-light); cursor: pointer;';
+        this.dismissBtn.style.cssText =
+            'margin-left: auto; background: none; border: none; color: var(--text-color-light); cursor: pointer;';
         this.dismissBtn.addEventListener('click', () => this.dismiss());
         this.dismissBtn.hidden = true;
         this.el.appendChild(this.dismissBtn);

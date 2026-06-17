@@ -21,7 +21,7 @@
  *   - loginctl failure tolerance: install still succeeds when loginctl throws
  */
 
-import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Hoisted mocks — must be declared before the SystemdClient import so the
 // module receives mocked deps at evaluation time. #32: SystemdClient now uses
@@ -89,8 +89,8 @@ vi.mock('../service/systemTools', async () => {
 });
 
 import * as path from 'node:path';
-import { renderUnitFile, SystemdClient, STAGED_SYSTEM_DIR, STAGED_SYSTEM_APPIMAGE } from '../service/SystemdClient';
 import type { ServiceInstallOptions } from '../service/ServiceClient';
+import { renderUnitFile, STAGED_SYSTEM_APPIMAGE, STAGED_SYSTEM_DIR, SystemdClient } from '../service/SystemdClient';
 
 const baseOpts: ServiceInstallOptions = {
     name: 'WsScrcpyWeb',
@@ -135,19 +135,13 @@ describe('SystemdClient', () => {
     describe('renderUnitFile', () => {
         it('renders user-scope unit with default.target and Environment lines', () => {
             const out = renderUnitFile(baseOpts, 'user');
-            expect(out).toContain(
-                'Description=ws-scrcpy-web — browser-based scrcpy front-end for Android devices.',
-            );
+            expect(out).toContain('Description=ws-scrcpy-web — browser-based scrcpy front-end for Android devices.');
             expect(out).toContain('ExecStart=/opt/ws-scrcpy-web/ws-scrcpy-web-launcher');
             expect(out).toContain('Environment=DEPS_PATH=/opt/ws-scrcpy-web/dependencies');
             expect(out).toContain('StartLimitBurst=3');
             expect(out).toContain('StartLimitIntervalSec=300');
-            expect(out).toContain(
-                'StandardOutput=append:/opt/ws-scrcpy-web/dependencies/service.log',
-            );
-            expect(out).toContain(
-                'StandardError=append:/opt/ws-scrcpy-web/dependencies/service.log',
-            );
+            expect(out).toContain('StandardOutput=append:/opt/ws-scrcpy-web/dependencies/service.log');
+            expect(out).toContain('StandardError=append:/opt/ws-scrcpy-web/dependencies/service.log');
             expect(out).toContain('WantedBy=default.target');
             expect(out).not.toContain('multi-user.target');
         });
@@ -167,9 +161,7 @@ describe('SystemdClient', () => {
     describe('install', () => {
         it('throws when scope is undefined', async () => {
             const client = new SystemdClient();
-            await expect(client.install({ ...baseOpts, scope: undefined })).rejects.toThrow(
-                /scope is required/,
-            );
+            await expect(client.install({ ...baseOpts, scope: undefined })).rejects.toThrow(/scope is required/);
         });
 
         it('user scope (no machine-wide install): stages a stable binary under <dataRoot>/bin, points ExecStart there, daemon-reload + enable + loginctl', async () => {
@@ -189,9 +181,7 @@ describe('SystemdClient', () => {
             expect(renameMock).toHaveBeenCalledWith(tmpArg, stableBin);
 
             // Unit file written to ~/.config/systemd/user/WsScrcpyWeb.service ...
-            const unitWrites = writeFileMock.mock.calls.filter((c) =>
-                String(c[0]).endsWith('WsScrcpyWeb.service'),
-            );
+            const unitWrites = writeFileMock.mock.calls.filter((c) => String(c[0]).endsWith('WsScrcpyWeb.service'));
             expect(unitWrites).toHaveLength(1);
             // path.join uses backslashes on Windows host; normalize for the
             // assertion since the runtime target is Linux.
@@ -207,16 +197,10 @@ describe('SystemdClient', () => {
             expect(sysCalls).toHaveLength(2);
             expect(sysCalls[0]![1]).toEqual(['--user', 'daemon-reload']);
             // F4: user scope enables but does NOT --now (the handoff helper starts it).
-            expect(sysCalls[1]![1]).toEqual([
-                '--user',
-                'enable',
-                'WsScrcpyWeb.service',
-            ]);
+            expect(sysCalls[1]![1]).toEqual(['--user', 'enable', 'WsScrcpyWeb.service']);
 
             // loginctl enable-linger called
-            const loginctlCalls = execFileMock.mock.calls.filter(
-                (c) => c[0] === 'loginctl',
-            );
+            const loginctlCalls = execFileMock.mock.calls.filter((c) => c[0] === 'loginctl');
             expect(loginctlCalls).toHaveLength(1);
             expect(loginctlCalls[0]![1]).toEqual(['enable-linger', 'jamie']);
 
@@ -243,9 +227,7 @@ describe('SystemdClient', () => {
 
             // No copy — the /opt binary is used directly.
             expect(copyFileMock).not.toHaveBeenCalled();
-            const unitWrites = writeFileMock.mock.calls.filter((c) =>
-                String(c[0]).endsWith('WsScrcpyWeb.service'),
-            );
+            const unitWrites = writeFileMock.mock.calls.filter((c) => String(c[0]).endsWith('WsScrcpyWeb.service'));
             expect(String(unitWrites[0]![1])).toContain(`ExecStart=${optBin}`);
             // never the volatile launch path
             expect(String(unitWrites[0]![1])).not.toContain(`ExecStart=${baseOpts.binPath}`);
@@ -334,11 +316,7 @@ describe('SystemdClient', () => {
             execFileMock.mockImplementation((_cmd, _args, _opts, cb) => cb(null, { stdout: 'active\n', stderr: '' }));
             const client = new SystemdClient();
             await expect(client.status('WsScrcpyWeb')).resolves.toBe('running');
-            expect(execFileMock.mock.calls[0]![1]).toEqual([
-                '--user',
-                'is-active',
-                'WsScrcpyWeb.service',
-            ]);
+            expect(execFileMock.mock.calls[0]![1]).toEqual(['--user', 'is-active', 'WsScrcpyWeb.service']);
         });
 
         it("returns 'stopped' when is-active outputs 'inactive'", async () => {
@@ -354,7 +332,9 @@ describe('SystemdClient', () => {
             fileExistsMock.mockImplementation((p: unknown) =>
                 Promise.resolve(String(p).replace(/\\/g, '/').includes('/.config/systemd/user/')),
             );
-            execFileMock.mockImplementation((_cmd, _args, _opts, cb) => cb(new Error('exit 3'), { stdout: '', stderr: '' }));
+            execFileMock.mockImplementation((_cmd, _args, _opts, cb) =>
+                cb(new Error('exit 3'), { stdout: '', stderr: '' }),
+            );
             const client = new SystemdClient();
             await expect(client.status('WsScrcpyWeb')).resolves.toBe('stopped');
         });
@@ -366,10 +346,7 @@ describe('SystemdClient', () => {
             execFileMock.mockImplementation((_cmd, _args, _opts, cb) => cb(null, { stdout: 'active\n', stderr: '' }));
             const client = new SystemdClient();
             await expect(client.status('WsScrcpyWeb')).resolves.toBe('running');
-            expect(execFileMock.mock.calls[0]![1]).toEqual([
-                'is-active',
-                'WsScrcpyWeb.service',
-            ]);
+            expect(execFileMock.mock.calls[0]![1]).toEqual(['is-active', 'WsScrcpyWeb.service']);
         });
     });
 
@@ -390,25 +367,14 @@ describe('SystemdClient', () => {
             await client.uninstall('WsScrcpyWeb');
 
             const sysCalls = execFileMock.mock.calls.filter((c) => c[0] === 'systemctl');
-            expect(sysCalls[0]![1]).toEqual([
-                '--user',
-                'disable',
-                '--now',
-                'WsScrcpyWeb.service',
-            ]);
+            expect(sysCalls[0]![1]).toEqual(['--user', 'disable', '--now', 'WsScrcpyWeb.service']);
             expect(sysCalls[1]![1]).toEqual(['--user', 'daemon-reload']);
 
             // Unit file unlinked + autostart .desktop unlinked. Normalize
             // backslashes since path.join on Windows host uses them.
-            const unlinks = unlinkMock.mock.calls.map((c) =>
-                String(c[0]).replace(/\\/g, '/'),
-            );
-            expect(unlinks).toContain(
-                '/home/jamie/.config/systemd/user/WsScrcpyWeb.service',
-            );
-            expect(unlinks).toContain(
-                '/home/jamie/.config/autostart/ws-scrcpy-web-tray.desktop',
-            );
+            const unlinks = unlinkMock.mock.calls.map((c) => String(c[0]).replace(/\\/g, '/'));
+            expect(unlinks).toContain('/home/jamie/.config/systemd/user/WsScrcpyWeb.service');
+            expect(unlinks).toContain('/home/jamie/.config/autostart/ws-scrcpy-web-tray.desktop');
         });
 
         it('system scope as non-root: uses pkexec for privilege escalation', async () => {
@@ -463,11 +429,7 @@ describe('SystemdClient', () => {
             );
             const client = new SystemdClient();
             await client.restart('WsScrcpyWeb');
-            expect(execFileMock.mock.calls[0]![1]).toEqual([
-                '--user',
-                'restart',
-                'WsScrcpyWeb.service',
-            ]);
+            expect(execFileMock.mock.calls[0]![1]).toEqual(['--user', 'restart', 'WsScrcpyWeb.service']);
         });
     });
 });

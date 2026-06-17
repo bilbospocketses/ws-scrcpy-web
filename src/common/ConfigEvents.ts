@@ -116,11 +116,6 @@ export const APP_CONFIG_DEFAULTS: AppConfig = {
     bookmarkDismissedGlobally: false,
 };
 
-export const VALID_INSTALL_MODES: ReadonlyArray<InstallMode> = [
-    'user',
-    'user-service',
-    'system',
-    'system-service',
-];
+export const VALID_INSTALL_MODES: ReadonlyArray<InstallMode> = ['user', 'user-service', 'system', 'system-service'];
 
 export const VALID_CHANNELS: ReadonlyArray<UpdateChannel> = ['stable', 'beta'];

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { isSpaNavigation } from '../StaticFileServer';
 
 // #24 — a missing path falls back to the SPA shell ONLY for a navigation: an

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { pollServiceUninstalled } from '../pollServiceUninstalled';
 
 function statusResponse(status: string) {
@@ -16,7 +16,10 @@ describe('pollServiceUninstalled', () => {
             fetchFn: fetchMock as unknown as typeof fetch,
             intervalMs: 0,
             deadlineMs: 10_000,
-            now: (() => { let t = 0; return () => (t += 1); })(),
+            now: (() => {
+                let t = 0;
+                return () => (t += 1);
+            })(),
         });
         expect(result).toBe('uninstalled');
         expect(fetchMock).toHaveBeenCalledWith('/api/service/status', { cache: 'no-store' });
@@ -29,7 +32,10 @@ describe('pollServiceUninstalled', () => {
             fetchFn: fetchMock as unknown as typeof fetch,
             intervalMs: 0,
             deadlineMs: 5,
-            now: (() => { let t = 0; return () => (t += 2); })(),
+            now: (() => {
+                let t = 0;
+                return () => (t += 2);
+            })(),
         });
         expect(result).toBe('still-present');
     });

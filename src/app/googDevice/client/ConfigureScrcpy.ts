@@ -1,22 +1,22 @@
 import {
+    type AudioSource,
     audioCaptureSupported,
     audioDupSupported,
     audioEnabledDefault,
     defaultAudioSourceForSdk,
-    type AudioSource,
 } from '../../../common/AudioDefaults';
-import { AudioSettingsStore } from '../../client/AudioSettingsStore';
 import type { ProbeResult } from '../../../common/ProbeResult';
 import type GoogDeviceDescriptor from '../../../types/GoogDeviceDescriptor';
 import type { ParamsStreamScrcpy } from '../../../types/ParamsStreamScrcpy';
 import { Attribute } from '../../Attribute';
+import { AudioSettingsStore } from '../../client/AudioSettingsStore';
 import { DeviceProbeClient } from '../../client/DeviceProbeClient';
 import { DisplayInfo } from '../../DisplayInfo';
 import type { PlayerClass } from '../../player/BasePlayer';
 import Size from '../../Size';
 import Util from '../../Util';
-import VideoSettings from '../../VideoSettings';
 import { Modal } from '../../ui/Modal';
+import VideoSettings from '../../VideoSettings';
 import type { DeviceTracker } from './DeviceTracker';
 import { StreamClientScrcpy } from './StreamClientScrcpy';
 
@@ -790,7 +790,8 @@ export class ConfigureScrcpy extends Modal {
         const videoCodec = this.videoCodecSelect?.value;
         const audioCodec = this.audioCodecSelect?.value;
         const audioEnabled = this.audioEnabledCheckbox?.checked ?? audioEnabledDefault(this.deviceKind);
-        const audioSource = (this.audioSourceSelect?.value as AudioSource | undefined) ?? defaultAudioSourceForSdk(this.sdkInt);
+        const audioSource =
+            (this.audioSourceSelect?.value as AudioSource | undefined) ?? defaultAudioSourceForSdk(this.sdkInt);
         const encoderName = this.encoderSelectElement?.value || undefined;
 
         // Get the device label from the modal header before closing (close() removes dialog from DOM)

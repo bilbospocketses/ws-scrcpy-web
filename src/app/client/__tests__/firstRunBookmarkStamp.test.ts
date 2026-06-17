@@ -13,9 +13,9 @@
  * should issue the bookmark PATCH at construction time.
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { WelcomeModal } from '../WelcomeModal';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ServiceFirstRunModal } from '../ServiceFirstRunModal';
+import { WelcomeModal } from '../WelcomeModal';
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
 

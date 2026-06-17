@@ -17,10 +17,9 @@ describe('parseWindowsArp', () => {
     });
 
     it('returns null when IP is not present', () => {
-        const out = [
-            'Interface: 192.168.86.3 --- 0x15',
-            '  192.168.86.50        aa-bb-cc-dd-ee-ff     dynamic',
-        ].join('\n');
+        const out = ['Interface: 192.168.86.3 --- 0x15', '  192.168.86.50        aa-bb-cc-dd-ee-ff     dynamic'].join(
+            '\n',
+        );
         expect(__internals.parseWindowsArp(out, '192.168.86.231')).toBeNull();
     });
 
@@ -95,7 +94,9 @@ describe('resolveMac', () => {
     });
 
     it('returns null when the command throws', async () => {
-        const runCommand = async () => { throw new Error('exec failed'); };
+        const runCommand = async () => {
+            throw new Error('exec failed');
+        };
         const mac = await resolveMac('192.168.1.5', { runCommand, platform: 'linux' });
         expect(mac).toBeNull();
     });

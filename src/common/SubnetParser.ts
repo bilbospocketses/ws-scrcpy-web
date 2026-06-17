@@ -125,9 +125,9 @@ function parseRange(input: string): ParsedSubnet | ParseError {
     if (literalCount > 65536) {
         return {
             reason:
-                `Range too large — maximum is 65,536 addresses (the size of a /16 CIDR block). ` +
+                'Range too large — maximum is 65,536 addresses (the size of a /16 CIDR block). ' +
                 `Got ${literalCount.toLocaleString()}. For larger scans, split into multiple entries ` +
-                `or use CIDR notation like 10.0.0.0/16. ` +
+                'or use CIDR notation like 10.0.0.0/16. ' +
                 CHEAT_SHEET_NOTE,
         };
     }

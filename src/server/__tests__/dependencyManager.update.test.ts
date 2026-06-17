@@ -83,7 +83,11 @@ describe('DependencyManager.update() launcher-required gate', () => {
         }));
         const { DependencyManager: Mgr } = await import('../DependencyManager');
         const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wsscrcpy-gate-'));
-        using _cleanup = { [Symbol.dispose]() { fs.rmSync(tmp, { recursive: true, force: true }); } };
+        using _cleanup = {
+            [Symbol.dispose]() {
+                fs.rmSync(tmp, { recursive: true, force: true });
+            },
+        };
         const mgr = new Mgr(tmp);
         const result = await mgr.update('nodejs');
         expect(result.success).toBe(false);
@@ -102,7 +106,11 @@ describe('DependencyManager.update() launcher-required gate', () => {
         }));
         const { DependencyManager: Mgr } = await import('../DependencyManager');
         const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wsscrcpy-gate-scrcpy-'));
-        using _cleanup = { [Symbol.dispose]() { fs.rmSync(tmp, { recursive: true, force: true }); } };
+        using _cleanup = {
+            [Symbol.dispose]() {
+                fs.rmSync(tmp, { recursive: true, force: true });
+            },
+        };
         const fetchSpy = vi.spyOn(global, 'fetch').mockImplementation(async (input) => {
             const url = typeof input === 'string' ? input : input.toString();
             if (url.includes('api.github.com')) {
@@ -113,7 +121,11 @@ describe('DependencyManager.update() launcher-required gate', () => {
             }
             return new Response('fake-jar-bytes', { status: 200 });
         });
-        using _restoreFetch = { [Symbol.dispose]() { fetchSpy.mockRestore(); } };
+        using _restoreFetch = {
+            [Symbol.dispose]() {
+                fetchSpy.mockRestore();
+            },
+        };
         const mgr = new Mgr(tmp);
         const info = mgr.getByName('scrcpy-server')!;
         info.installedVersion = '3.3.4';
@@ -161,9 +173,9 @@ describe('DependencyManager.installNodejs rollback', () => {
         // biome-ignore lint/suspicious/noExplicitAny: private method spy
         vi.spyOn(mgr as any, 'extractZip').mockRejectedValue(new Error('mock extract fail'));
 
-        await expect(
-            callInstallNodejs(mgr, '/fake/download.zip', '24.15.0', extractTmp, 'win32'),
-        ).rejects.toThrow('mock extract fail');
+        await expect(callInstallNodejs(mgr, '/fake/download.zip', '24.15.0', extractTmp, 'win32')).rejects.toThrow(
+            'mock extract fail',
+        );
 
         // Original node.exe must be intact; no .old created.
         expect(fs.readFileSync(originalNodeExe, 'utf8')).toBe('ORIGINAL-NODE-BYTES');
@@ -194,9 +206,9 @@ describe('DependencyManager.installNodejs rollback', () => {
             throw new Error('mock copy fail');
         });
 
-        await expect(
-            callInstallNodejs(mgr, '/fake/download.zip', '24.15.0', extractTmp, 'win32'),
-        ).rejects.toThrow('mock copy fail');
+        await expect(callInstallNodejs(mgr, '/fake/download.zip', '24.15.0', extractTmp, 'win32')).rejects.toThrow(
+            'mock copy fail',
+        );
 
         // node.exe must be restored from .old; .old must no longer exist after restore.
         expect(fs.existsSync(originalNodeExe)).toBe(true);

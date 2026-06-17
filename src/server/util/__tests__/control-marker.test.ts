@@ -1,8 +1,8 @@
-import { describe, it, expect } from 'vitest';
-import { writeUninstallHandoffMarker } from '../control-marker';
-import { mkdtempSync, readFileSync, existsSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { describe, expect, it } from 'vitest';
+import { writeUninstallHandoffMarker } from '../control-marker';
 
 describe('writeUninstallHandoffMarker', () => {
     it('writes a parseable JSON marker at <dataRoot>/control/uninstall-handoff.json', async () => {
@@ -26,10 +26,14 @@ describe('writeUninstallHandoffMarker', () => {
     it('overwrites an existing marker', async () => {
         const dataRoot = mkdtempSync(join(tmpdir(), 'marker-test-'));
         await writeUninstallHandoffMarker(dataRoot, {
-            targetSessionId: 1, launcherPath: 'a.exe', launcherArgs: [],
+            targetSessionId: 1,
+            launcherPath: 'a.exe',
+            launcherArgs: [],
         });
         await writeUninstallHandoffMarker(dataRoot, {
-            targetSessionId: 2, launcherPath: 'a.exe', launcherArgs: [],
+            targetSessionId: 2,
+            launcherPath: 'a.exe',
+            launcherArgs: [],
         });
         const path = join(dataRoot, 'control', 'uninstall-handoff.json');
         const body = JSON.parse(readFileSync(path, 'utf8'));
@@ -39,7 +43,9 @@ describe('writeUninstallHandoffMarker', () => {
     it('accepts null targetSessionId for "any session"', async () => {
         const dataRoot = mkdtempSync(join(tmpdir(), 'marker-test-'));
         const result = await writeUninstallHandoffMarker(dataRoot, {
-            targetSessionId: null, launcherPath: 'a.exe', launcherArgs: [],
+            targetSessionId: null,
+            launcherPath: 'a.exe',
+            launcherArgs: [],
         });
         expect(result.ok).toBe(true);
         const path = join(dataRoot, 'control', 'uninstall-handoff.json');

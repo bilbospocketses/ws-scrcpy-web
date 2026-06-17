@@ -215,22 +215,28 @@ export class DependencyPanel {
 
     private statusLabel(dep: DependencyInfo): string {
         switch (dep.status) {
-            case 'up-to-date': return '<span class="dep-badge dep-ok">Up to date</span>';
-            case 'update-available': return '<span class="dep-badge dep-warn">Update available</span>';
-            case 'checking': return '<span class="dep-badge dep-info">Checking...</span>';
-            case 'updating': return '<span class="dep-badge dep-info">Updating...</span>';
-            case 'error': return `<span class="dep-badge dep-error" title="${escapeHtml(dep.errorMessage || '')}">Error</span>`;
-            default: return '<span class="dep-badge dep-unknown">Unknown</span>';
+            case 'up-to-date':
+                return '<span class="dep-badge dep-ok">Up to date</span>';
+            case 'update-available':
+                return '<span class="dep-badge dep-warn">Update available</span>';
+            case 'checking':
+                return '<span class="dep-badge dep-info">Checking...</span>';
+            case 'updating':
+                return '<span class="dep-badge dep-info">Updating...</span>';
+            case 'error':
+                return `<span class="dep-badge dep-error" title="${escapeHtml(dep.errorMessage || '')}">Error</span>`;
+            default:
+                return '<span class="dep-badge dep-unknown">Unknown</span>';
         }
     }
 
     private actionButton(dep: DependencyInfo): string {
         if (dep.status === 'update-available') {
             if (!dep.canUpdate) {
-                const tooltip = 'In-app updates require an installed build. ' +
+                const tooltip =
+                    'In-app updates require an installed build. ' +
                     'In dev mode, populate dependencies/ via scripts/fetch-node.mjs.';
-                return `<button class="dep-btn dep-update" disabled title="${tooltip}">` +
-                    `update (dev)</button>`;
+                return `<button class="dep-btn dep-update" disabled title="${tooltip}">` + 'update (dev)</button>';
             }
             return `<button class="dep-btn dep-update" data-update="${escapeHtml(dep.name)}">update</button>`;
         }

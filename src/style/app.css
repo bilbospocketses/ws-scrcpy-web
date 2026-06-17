@@ -1,8 +1,8 @@
-@import url('./ws-scrcpy.css');
+@import url("./ws-scrcpy.css");
 
 :root {
     --font-size: 14px;
-    --font-mono: Consolas, 'Segoe UI Mono', 'SF Mono', Menlo, 'Liberation Mono', 'DejaVu Sans Mono', monospace;
+    --font-mono: Consolas, "Segoe UI Mono", "SF Mono", Menlo, "Liberation Mono", "DejaVu Sans Mono", monospace;
 }
 
 /* Dark theme (default) */

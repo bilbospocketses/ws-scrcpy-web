@@ -2,11 +2,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import {
-    parseResult,
-    pollForResultFile,
-    toSnakeCase,
-} from '../service/elevatedRunner';
+import { parseResult, pollForResultFile, toSnakeCase } from '../service/elevatedRunner';
 
 describe('toSnakeCase', () => {
     it('converts camelCase keys to snake_case at the top level', () => {
@@ -121,10 +117,7 @@ describe('pollForResultFile', () => {
         // Write the result file 30ms after the poll starts. The poll
         // should pick it up on its next tick and return.
         setTimeout(() => {
-            fs.writeFileSync(
-                resultPath,
-                JSON.stringify({ ok: true, exit_code: 0, stdout: 'done', stderr: '' }),
-            );
+            fs.writeFileSync(resultPath, JSON.stringify({ ok: true, exit_code: 0, stdout: 'done', stderr: '' }));
         }, 30);
         const result = await pollForResultFile(resultPath, 1000, 10);
         expect(result).not.toBeNull();
@@ -137,10 +130,7 @@ describe('pollForResultFile', () => {
         // skip the partial version and return the complete one.
         fs.writeFileSync(resultPath, '{"ok":');
         setTimeout(() => {
-            fs.writeFileSync(
-                resultPath,
-                JSON.stringify({ ok: true, exit_code: 0, stdout: '', stderr: '' }),
-            );
+            fs.writeFileSync(resultPath, JSON.stringify({ ok: true, exit_code: 0, stdout: '', stderr: '' }));
         }, 30);
         const result = await pollForResultFile(resultPath, 1000, 10);
         expect(result).not.toBeNull();

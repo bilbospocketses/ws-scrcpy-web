@@ -1,5 +1,14 @@
-import { describe, it, expect } from 'vitest';
-import { SystemdClient, renderUnitFile, STAGED_SYSTEM_DIR, systemctlArgv, buildServiceUnitEnv, buildMachineWideInstallScript, buildMachineWideUpdateScript, buildSystemUninstallScript } from './SystemdClient';
+import { describe, expect, it } from 'vitest';
+import {
+    buildMachineWideInstallScript,
+    buildMachineWideUpdateScript,
+    buildServiceUnitEnv,
+    buildSystemUninstallScript,
+    renderUnitFile,
+    STAGED_SYSTEM_DIR,
+    SystemdClient,
+    systemctlArgv,
+} from './SystemdClient';
 import { shQuote } from './shellEscape';
 
 describe('system-scope staging', () => {
@@ -32,7 +41,6 @@ describe('system-scope staging', () => {
     });
 });
 
-
 describe('SYSTEM_STATE_DIR — /var/lib retargeting', () => {
     it('system-scope unit env points DATA_ROOT at /var/lib (not /opt/.../data)', () => {
         const env = buildServiceUnitEnv('linux', 'system', '/home/u/.local/share/WsScrcpyWeb/dependencies');
@@ -48,7 +56,6 @@ describe('SYSTEM_STATE_DIR — /var/lib retargeting', () => {
         expect(sysEnv['WS_SCRCPY_SERVICE']).toBe('1');
         expect(winEnv['WS_SCRCPY_SERVICE']).toBe('1');
     });
-
 });
 
 describe('absolute-path OS tools', () => {
@@ -90,7 +97,12 @@ describe('renderUnitFile — system scope unit', () => {
         binPath: '/home/u/.local/share/WsScrcpyWeb/bin/WsScrcpyWeb.AppImage',
         startupDir: '/home/u',
         maxRestartAttempts: 10,
-        envVars: { DATA_ROOT: '/var/lib/ws-scrcpy-web', DEPS_PATH: '/opt/ws-scrcpy-web/dependencies', WS_SCRCPY_SERVICE: '1', WS_SCRCPY_WEB_PORT: '8000' },
+        envVars: {
+            DATA_ROOT: '/var/lib/ws-scrcpy-web',
+            DEPS_PATH: '/opt/ws-scrcpy-web/dependencies',
+            WS_SCRCPY_SERVICE: '1',
+            WS_SCRCPY_WEB_PORT: '8000',
+        },
         logPath: '/var/lib/ws-scrcpy-web/logs/service.log',
     } as unknown as Parameters<typeof renderUnitFile>[0];
 
@@ -112,19 +124,22 @@ describe('buildMachineWideInstallScript', () => {
     it('machine-wide install stages the binary + label + desktop + VERSION, then deletes the source', () => {
         const s = buildMachineWideInstallScript(
             { sourceAppImage: '/home/u/Downloads/WsScrcpyWeb-linux-beta.AppImage', version: '0.1.31-beta.1' },
-            (t) => `/usr/bin/${t}`, (t) => `/usr/sbin/${t}`,
+            (t) => `/usr/bin/${t}`,
+            (t) => `/usr/sbin/${t}`,
         );
         expect(s).toContain('mkdir -p /opt/ws-scrcpy-web');
-        expect(s).toContain(`cp '/home/u/Downloads/WsScrcpyWeb-linux-beta.AppImage' "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"`);
+        expect(s).toContain(
+            `cp '/home/u/Downloads/WsScrcpyWeb-linux-beta.AppImage' "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"`,
+        );
         expect(s).toContain('chmod 0755 "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"');
         expect(s).toContain("semanage fcontext -a -t bin_t '/opt/ws-scrcpy-web(/.*)?'");
         expect(s).toContain('restorecon -Rv "/opt/ws-scrcpy-web"');
         expect(s).toContain('/opt/ws-scrcpy-web/VERSION');
-        expect(s).toContain('/usr/share/applications/ws-scrcpy-web.desktop');   // SYSTEM-WIDE menu (all users)
-        expect(s).toContain('Exec=/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage');     // every user launches the shared /opt binary
-        expect(s).not.toContain('dependencies');   // binary only — deps stay per-user ~/.local
-        expect(s).not.toContain('systemctl');      // no service install here
-        expect(s).toContain(`rm -f '/home/u/Downloads/WsScrcpyWeb-linux-beta.AppImage'`);  // final step: delete the original (true relocate)
+        expect(s).toContain('/usr/share/applications/ws-scrcpy-web.desktop'); // SYSTEM-WIDE menu (all users)
+        expect(s).toContain('Exec=/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage'); // every user launches the shared /opt binary
+        expect(s).not.toContain('dependencies'); // binary only — deps stay per-user ~/.local
+        expect(s).not.toContain('systemctl'); // no service install here
+        expect(s).toContain(`rm -f '/home/u/Downloads/WsScrcpyWeb-linux-beta.AppImage'`); // final step: delete the original (true relocate)
     });
 
     it('installs the menu icon into the hicolor theme + refreshes the icon cache when iconSource is given', () => {
@@ -134,7 +149,8 @@ describe('buildMachineWideInstallScript', () => {
                 version: '0.1.31-beta.1',
                 iconSource: '/tmp/.mount_x/.DirIcon',
             },
-            (t) => `/usr/bin/${t}`, (t) => `/usr/sbin/${t}`,
+            (t) => `/usr/bin/${t}`,
+            (t) => `/usr/sbin/${t}`,
         );
         // icon staged into the hicolor 256x256 apps dir under the name the
         // .desktop's `Icon=ws-scrcpy-web` resolves to (also the path the launcher
@@ -157,7 +173,8 @@ describe('buildMachineWideInstallScript', () => {
     it('skips the icon steps entirely when no iconSource is given (graceful skip)', () => {
         const s = buildMachineWideInstallScript(
             { sourceAppImage: '/home/u/Downloads/WsScrcpyWeb-linux-beta.AppImage', version: '0.1.31-beta.1' },
-            (t) => `/usr/bin/${t}`, (t) => `/usr/sbin/${t}`,
+            (t) => `/usr/bin/${t}`,
+            (t) => `/usr/sbin/${t}`,
         );
         expect(s).not.toContain('/usr/share/icons/hicolor');
         expect(s).not.toContain('gtk-update-icon-cache');
@@ -166,7 +183,8 @@ describe('buildMachineWideInstallScript', () => {
     it('makes the /opt bin_t fcontext add idempotent (-a || -m) so a re-install over an existing rule still restorecons (no &&-cascade)', () => {
         const s = buildMachineWideInstallScript(
             { sourceAppImage: '/home/u/Downloads/WsScrcpyWeb-linux-beta.AppImage', version: '0.1.31-beta.1' },
-            (t) => `/usr/bin/${t}`, (t) => `/usr/sbin/${t}`,
+            (t) => `/usr/bin/${t}`,
+            (t) => `/usr/sbin/${t}`,
         );
         // a re-install (or any path hitting a pre-existing /opt rule) makes a bare
         // `semanage -a` error "already defined" and the `&&` skips restorecon. The
@@ -175,9 +193,10 @@ describe('buildMachineWideInstallScript', () => {
     });
 
     it('restorecon runs independently of the bin_t add (;-separated), no chcon fallback (beta.61)', () => {
-        const s = buildMachineWideInstallScript(
-            { sourceAppImage: '/home/u/Downloads/WsScrcpyWeb-linux-beta.AppImage', version: '0.1.31-beta.1' },
-        );
+        const s = buildMachineWideInstallScript({
+            sourceAppImage: '/home/u/Downloads/WsScrcpyWeb-linux-beta.AppImage',
+            version: '0.1.31-beta.1',
+        });
         expect(s).toContain('restorecon -Rv "/opt/ws-scrcpy-web"');
         expect(s).not.toContain('chcon -t bin_t');
         // bin_t add + restorecon are `;`-separated, not `&&`-chained (can't short-circuit)
@@ -193,21 +212,22 @@ describe('buildMachineWideUpdateScript', () => {
     // while the AppImage is mounted). The new file gets re-labelled bin_t + a
     // fresh VERSION.
     const args = {
-        stagedAppImage:
-            '/home/u/.local/share/WsScrcpyWeb/control/update-staging/WsScrcpyWeb-linux-beta.AppImage.new',
+        stagedAppImage: '/home/u/.local/share/WsScrcpyWeb/control/update-staging/WsScrcpyWeb-linux-beta.AppImage.new',
         version: '0.1.31-beta.2',
     };
 
     it('rename-swaps the /opt AppImage (old→.bak, staged→/opt), chmods, relabels best-effort, writes VERSION', () => {
-        const s = buildMachineWideUpdateScript(args, (t) => `/usr/bin/${t}`, (t) => `/usr/sbin/${t}`);
+        const s = buildMachineWideUpdateScript(
+            args,
+            (t) => `/usr/bin/${t}`,
+            (t) => `/usr/sbin/${t}`,
+        );
         // 1. back up the RUNNING /opt binary by RENAME (cp would ETXTBSY it).
         expect(s).toContain(
             '/usr/bin/mv -f "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage" "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage.bak"',
         );
         // 2. move the staged download into place (rename, not cp).
-        expect(s).toContain(
-            `/usr/bin/mv -f '${args.stagedAppImage}' "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"`,
-        );
+        expect(s).toContain(`/usr/bin/mv -f '${args.stagedAppImage}' "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"`);
         // 3. chmod the new binary executable.
         expect(s).toContain('/usr/bin/chmod 0755 "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"');
         // 4. re-apply the bin_t label best-effort: restorecon (persistent rule),
@@ -219,7 +239,11 @@ describe('buildMachineWideUpdateScript', () => {
     });
 
     it('NEVER cp the AppImage (cp overwrites in place → ETXTBSY on the running file)', () => {
-        const s = buildMachineWideUpdateScript(args, (t) => `/usr/bin/${t}`, (t) => `/usr/sbin/${t}`);
+        const s = buildMachineWideUpdateScript(
+            args,
+            (t) => `/usr/bin/${t}`,
+            (t) => `/usr/sbin/${t}`,
+        );
         expect(s).not.toMatch(/\bcp\b/);
     });
 
@@ -238,12 +262,22 @@ describe('buildMachineWideUpdateScript', () => {
     });
 
     it('relabel is best-effort — restorecon → chcon → || true in one subshell (never aborts the && chain)', () => {
-        const s = buildMachineWideUpdateScript(args, (t) => `/usr/bin/${t}`, (t) => `/usr/sbin/${t}`);
-        expect(s).toMatch(/\(\s*\/usr\/sbin\/restorecon -v "[^"]+" \|\| \/usr\/bin\/chcon -t bin_t "[^"]+" \|\| true\s*\)/);
+        const s = buildMachineWideUpdateScript(
+            args,
+            (t) => `/usr/bin/${t}`,
+            (t) => `/usr/sbin/${t}`,
+        );
+        expect(s).toMatch(
+            /\(\s*\/usr\/sbin\/restorecon -v "[^"]+" \|\| \/usr\/bin\/chcon -t bin_t "[^"]+" \|\| true\s*\)/,
+        );
     });
 
     it('uses absolute tool paths (no bare names) when resolvers are injected', () => {
-        const s = buildMachineWideUpdateScript(args, (t) => `/usr/bin/${t}`, (t) => `/usr/sbin/${t}`);
+        const s = buildMachineWideUpdateScript(
+            args,
+            (t) => `/usr/bin/${t}`,
+            (t) => `/usr/sbin/${t}`,
+        );
         expect(s).toContain('/usr/bin/mv -f');
         expect(s).toContain('/usr/bin/printf');
         expect(s).toContain('/usr/sbin/restorecon');
@@ -255,7 +289,8 @@ describe('root-script shell-escaping (review #11)', () => {
         const evil = '/tmp/x$(id).AppImage';
         const s = buildMachineWideInstallScript(
             { sourceAppImage: evil, version: '1.0.0' },
-            (t) => `/usr/bin/${t}`, (t) => `/usr/sbin/${t}`,
+            (t) => `/usr/bin/${t}`,
+            (t) => `/usr/sbin/${t}`,
         );
         // the payload appears ONLY inside a single-quoted (inert) literal,
         expect(s).toContain(shQuote(evil));
@@ -267,7 +302,8 @@ describe('root-script shell-escaping (review #11)', () => {
         const evil = "1.0'; id; '";
         const s = buildMachineWideInstallScript(
             { sourceAppImage: '/tmp/a.AppImage', version: evil },
-            (t) => `/usr/bin/${t}`, (t) => `/usr/sbin/${t}`,
+            (t) => `/usr/bin/${t}`,
+            (t) => `/usr/sbin/${t}`,
         );
         expect(s).toContain(shQuote(evil));
     });
@@ -276,7 +312,8 @@ describe('root-script shell-escaping (review #11)', () => {
         const evil = '/tmp/s$(id).AppImage.new';
         const s = buildMachineWideUpdateScript(
             { stagedAppImage: evil, version: '1.0.0' },
-            (t) => `/usr/bin/${t}`, (t) => `/usr/sbin/${t}`,
+            (t) => `/usr/bin/${t}`,
+            (t) => `/usr/sbin/${t}`,
         );
         expect(s).toContain(shQuote(evil));
         expect(s).not.toContain(`"${evil}"`);

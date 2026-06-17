@@ -52,11 +52,7 @@ export class WebSocketServer implements Service {
             // not. (A server restart mints a new token, so an already-open page
             // must reload to reconnect — expected for a per-instance secret.)
             verifyClient: (info, cb) => {
-                const decision = evaluateWsConnection(
-                    info.origin,
-                    info.req.headers.host,
-                    info.req.headers.cookie,
-                );
+                const decision = evaluateWsConnection(info.origin, info.req.headers.host, info.req.headers.cookie);
                 if (!decision.allowed) {
                     log.info(
                         `rejected WS connection (origin="${info.origin ?? ''}" host="${

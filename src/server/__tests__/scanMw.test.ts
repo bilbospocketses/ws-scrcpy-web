@@ -1,10 +1,9 @@
-import { describe, expect, it } from 'vitest';
 import * as http from 'http';
-import { WebSocketServer } from 'ws';
-import WebSocket from 'ws';
+import { describe, expect, it } from 'vitest';
+import WebSocket, { WebSocketServer } from 'ws';
+import { SCAN_WS_PATH } from '../../common/ScanMessage';
 import { ScanMw } from '../mw/ScanMw';
 import { NetworkScanner } from '../network/NetworkScanner';
-import { SCAN_WS_PATH } from '../../common/ScanMessage';
 
 async function collectMessages(ws: WebSocket, until: (msg: any) => boolean): Promise<any[]> {
     return new Promise((resolve, reject) => {
@@ -58,7 +57,12 @@ describe('ScanMw integration', () => {
         const scanner = new NetworkScanner({
             adbDevices: async () => [],
             adbMdnsServices: async () => [
-                { name: 'adb-ABCD._adb-tls-connect._tcp.local.', service: '_adb-tls-connect._tcp.', address: '10.0.0.5', port: 5555 },
+                {
+                    name: 'adb-ABCD._adb-tls-connect._tcp.local.',
+                    service: '_adb-tls-connect._tcp.',
+                    address: '10.0.0.5',
+                    port: 5555,
+                },
             ],
             adbHandshakeProbe: async () => ({ isAdb: false }),
             concurrency: 4,

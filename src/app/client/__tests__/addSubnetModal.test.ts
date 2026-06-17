@@ -9,7 +9,9 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-    document.body.querySelectorAll('dialog').forEach((d) => d.remove());
+    document.body.querySelectorAll('dialog').forEach((d) => {
+        d.remove();
+    });
 });
 
 async function flush(): Promise<void> {

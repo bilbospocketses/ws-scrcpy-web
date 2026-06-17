@@ -1,14 +1,16 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { CapabilitiesApi } from '../api/CapabilitiesApi';
 // biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import type { IncomingMessage, ServerResponse } from 'http';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { CapabilitiesApi } from '../api/CapabilitiesApi';
 
 // Mock the resolver so CapabilitiesApi tests focus on API behavior and don't
 // exercise real download / filesystem / network code. The resolver has its own
 // unit tests + a dedicated integration test.
 let mockedHandle: { available: boolean; reason?: string } | undefined;
 vi.mock('../NodePtyResolver', () => ({
-    _resetForTest: () => { mockedHandle = undefined; },
+    _resetForTest: () => {
+        mockedHandle = undefined;
+    },
     resolveNodePty: async () => mockedHandle ?? { available: false, reason: 'test-default' },
     getNodePty: () => mockedHandle,
 }));
@@ -18,9 +20,16 @@ function makeReqRes(url: string, method = 'GET') {
     const chunks: string[] = [];
     let statusCode = 0;
     const res = {
-        writeHead(code: number) { statusCode = code; return this; },
-        setHeader() { return this; },
-        end(data?: string) { if (data) chunks.push(data); },
+        writeHead(code: number) {
+            statusCode = code;
+            return this;
+        },
+        setHeader() {
+            return this;
+        },
+        end(data?: string) {
+            if (data) chunks.push(data);
+        },
         getStatus: () => statusCode,
         getBody: () => chunks.join(''),
     } as unknown as ServerResponse & { getStatus(): number; getBody(): string };

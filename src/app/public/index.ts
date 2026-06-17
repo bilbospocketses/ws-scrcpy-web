@@ -15,16 +15,16 @@ import { WebCodecsPlayer } from '../player/WebCodecsPlayer';
 StreamClientScrcpy.registerPlayer(WebCodecsPlayer);
 
 export { startStream } from './startStream';
-export type { StartStreamOptions, StreamInfo, StreamHandle } from './types';
+export type { Theme, ThemeEmbedOptions } from './themeEmbed';
 
 export {
     getTheme,
-    setTheme,
     installThemeEmbedListener,
-    notifyThemeReady,
     notifyThemeChanged,
+    notifyThemeReady,
+    setTheme,
 } from './themeEmbed';
-export type { Theme, ThemeEmbedOptions } from './themeEmbed';
+export type { StartStreamOptions, StreamHandle, StreamInfo } from './types';
 
 // Injected at build time via webpack DefinePlugin
 declare const __WSSCRCPY_VERSION__: string;

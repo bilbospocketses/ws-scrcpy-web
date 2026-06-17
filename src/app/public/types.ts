@@ -18,7 +18,7 @@ export interface StartStreamOptions {
     maxSize?: number | undefined;
 
     // Features
-    audio?: boolean | undefined;      // default true
+    audio?: boolean | undefined; // default true
     /**
      * Where scrcpy captures audio from on the device:
      *   - `playback` (default on Android 13+) — captures playback AND keeps
@@ -32,7 +32,7 @@ export interface StartStreamOptions {
      * `aac` is a common fallback when a device's Opus encoder fails.
      */
     audioCodec?: 'opus' | 'aac' | 'flac' | 'raw' | undefined;
-    keyboard?: boolean | undefined;   // default true
+    keyboard?: boolean | undefined; // default true
 
     /**
      * Android device kind. When provided, seeds the stream toolbar's

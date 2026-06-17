@@ -176,7 +176,7 @@ export class Device extends TypedEmitter<DeviceEvents> {
     private filterPsOutput(processName: string, output: string): number[] {
         const list: number[] = [];
         const processes = output.split('\n');
-        processes.map((line) => {
+        processes.forEach((line) => {
             const cols = line
                 .trim()
                 .split(' ')
@@ -218,7 +218,7 @@ export class Device extends TypedEmitter<DeviceEvents> {
         );
         const re = /\/proc\/([0-9]+)\/cmdline/;
         const list: number[] = [];
-        lines.split('\n').map((line) => {
+        lines.split('\n').forEach((line) => {
             const trim = line.trim();
             const m = trim.match(re);
             if (m) {

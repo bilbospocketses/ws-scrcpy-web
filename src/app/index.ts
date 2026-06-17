@@ -2,21 +2,21 @@ import '../style/app.css';
 import '../style/dependencies.css';
 import '../style/first-run-banner.css';
 import '../style/home.css';
+import type { AppConfigEnvelope } from '../common/ConfigEvents';
+import type { ServiceStatusResponse } from '../common/ServiceEvents';
 import { shouldShowBookmark } from './client/bookmarkGate';
 import { DependencyPanel } from './client/DependencyPanel';
 import { FirstRunBanner } from './client/FirstRunBanner';
-import { onPageTeardown } from './util/onPageTeardown';
 import { HostTracker } from './client/HostTracker';
 import { NetworkDiscoveryPanel } from './client/NetworkDiscoveryPanel';
 import { createSettingsHeader } from './client/SettingsHeader';
 import { createThemeToggle, initTheme } from './client/ThemeToggle';
-import { installThemeEmbedListener, notifyThemeReady } from './public/themeEmbed';
-import { createUpdateButton } from './client/UpdateButton';
 import type { Tool } from './client/Tool';
+import { createUpdateButton } from './client/UpdateButton';
 import { WelcomeModal } from './client/WelcomeModal';
-import type { AppConfigEnvelope } from '../common/ConfigEvents';
-import type { ServiceStatusResponse } from '../common/ServiceEvents';
 import { StreamClientScrcpy } from './googDevice/client/StreamClientScrcpy';
+import { installThemeEmbedListener, notifyThemeReady } from './public/themeEmbed';
+import { onPageTeardown } from './util/onPageTeardown';
 
 function isResumingUninstall(): boolean {
     const params = new URLSearchParams(location.search);
@@ -92,8 +92,7 @@ function maybeShowWelcomeModal(): void {
             const config = data?.config;
             if (!runtime || !config) return;
 
-            const isServiceInstance =
-                config.installMode === 'user-service' || config.installMode === 'system-service';
+            const isServiceInstance = config.installMode === 'user-service' || config.installMode === 'system-service';
 
             // Gate on server-side config flags (config.json), not
             // localStorage. The modals PATCH these flags when dismissed;
@@ -109,7 +108,11 @@ function maybeShowWelcomeModal(): void {
                     });
                     return;
                 }
-                maybeShowPortChangeModal(config.bookmarkDismissedGlobally, config.bookmarkDismissedForPort, runtime.webPort);
+                maybeShowPortChangeModal(
+                    config.bookmarkDismissedGlobally,
+                    config.bookmarkDismissedForPort,
+                    runtime.webPort,
+                );
                 return;
             }
 
@@ -124,7 +127,11 @@ function maybeShowWelcomeModal(): void {
                 return;
             }
 
-            maybeShowPortChangeModal(config.bookmarkDismissedGlobally, config.bookmarkDismissedForPort, runtime.webPort);
+            maybeShowPortChangeModal(
+                config.bookmarkDismissedGlobally,
+                config.bookmarkDismissedForPort,
+                runtime.webPort,
+            );
         })
         .catch(() => {
             // /api/config absent (e.g., dev server without P2 wiring) — silently bail.
@@ -182,15 +189,13 @@ function maybeShowFirstRunModal(): void {
                 // System-wide update offer (P3c-2): a newer home AppImage is running
                 // over an older /opt copy → offer to update the system-wide install.
                 if (status.optUpdateAvailable === true) {
-                    showStatusBanner(
-                        'update the system-wide install?',
-                        'update',
-                        () => {
-                            void fetch('/api/service/install-system-wide', { method: 'POST' })
-                                .then((r) => { if (r.ok) window.location.reload(); })
-                                .catch(() => {});
-                        },
-                    );
+                    showStatusBanner('update the system-wide install?', 'update', () => {
+                        void fetch('/api/service/install-system-wide', { method: 'POST' })
+                            .then((r) => {
+                                if (r.ok) window.location.reload();
+                            })
+                            .catch(() => {});
+                    });
                     // Fall through — still show the normal first-run flow below.
                 }
             }
@@ -235,11 +240,7 @@ function maybeShowFirstRunModal(): void {
         });
 }
 
-function maybeShowPortChangeModal(
-    globallyDismissed: boolean,
-    dismissedFor: number | null,
-    currentPort: number,
-): void {
+function maybeShowPortChangeModal(globallyDismissed: boolean, dismissedFor: number | null, currentPort: number): void {
     if (!shouldShowBookmark({ globallyDismissed, dismissedForPort: dismissedFor, currentPort })) return;
     void import('./client/PortChangeModal').then(({ PortChangeModal }) => {
         new PortChangeModal({ webPort: currentPort });

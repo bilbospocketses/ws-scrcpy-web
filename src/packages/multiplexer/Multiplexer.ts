@@ -176,9 +176,13 @@ export class Multiplexer extends TypedEmitter<MultiplexerEvents> implements WebS
             }
             const ws = this.ws;
             if (ws instanceof Multiplexer) {
-                this.storage.forEach((data) => ws.sendData(data));
+                this.storage.forEach((data) => {
+                    ws.sendData(data);
+                });
             } else {
-                this.storage.forEach((data) => ws.send(data as string | BufferSource | Blob));
+                this.storage.forEach((data) => {
+                    ws.send(data as string | BufferSource | Blob);
+                });
             }
             this.storage.length = 0;
         };

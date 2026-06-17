@@ -81,7 +81,9 @@ body.list #device_list_menu {
        asymmetry is intentional, not part of the content padding.) */
     padding: 8px 14px;
     background: var(--device-list-default-color);
-    transition: border-color 0.15s, box-shadow 0.15s;
+    transition:
+        border-color 0.15s,
+        box-shadow 0.15s;
 }
 
 #devices .device-list div.device:hover {
@@ -350,7 +352,6 @@ body.list #device_list_menu {
 #devices .device-list div.desc-block a:hover {
     background-color: var(--device-list-hover-color);
 }
-
 
 /* Tracker block — inherits grid layout so device cards flow correctly */
 #devices .device-list > div {

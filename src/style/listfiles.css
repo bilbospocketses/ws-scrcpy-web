@@ -43,7 +43,7 @@
 }
 
 .list-files-modal .file-icon-symlink::after {
-    content: '\2197';
+    content: "\2197";
     position: absolute;
     bottom: -2px;
     left: -2px;

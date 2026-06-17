@@ -166,23 +166,17 @@ describe('Config — AppConfig extension', () => {
     it('bookmarkDismissedForPort: rejects out-of-range port', () => {
         setup({});
         const cfg = Config.getInstance();
-        expect(() => cfg.updateAppConfig({ bookmarkDismissedForPort: 80 })).toThrow(
-            ConfigValidationError,
-        );
-        expect(() => cfg.updateAppConfig({ bookmarkDismissedForPort: 70000 })).toThrow(
-            ConfigValidationError,
-        );
+        expect(() => cfg.updateAppConfig({ bookmarkDismissedForPort: 80 })).toThrow(ConfigValidationError);
+        expect(() => cfg.updateAppConfig({ bookmarkDismissedForPort: 70000 })).toThrow(ConfigValidationError);
     });
 
     it('bookmarkDismissedForPort: rejects non-integer values', () => {
         setup({});
         const cfg = Config.getInstance();
-        expect(() =>
-            cfg.updateAppConfig({ bookmarkDismissedForPort: 'abc' as unknown as number }),
-        ).toThrow(ConfigValidationError);
-        expect(() =>
-            cfg.updateAppConfig({ bookmarkDismissedForPort: 8000.5 }),
-        ).toThrow(ConfigValidationError);
+        expect(() => cfg.updateAppConfig({ bookmarkDismissedForPort: 'abc' as unknown as number })).toThrow(
+            ConfigValidationError,
+        );
+        expect(() => cfg.updateAppConfig({ bookmarkDismissedForPort: 8000.5 })).toThrow(ConfigValidationError);
     });
 
     it('bookmarkDismissedForPort: loads valid value from disk', () => {
@@ -236,8 +230,6 @@ describe('Config — AppConfig extension', () => {
         setup({});
         const cfg = Config.getInstance();
         const base = cfg.dataRoot ?? path.dirname(cfg.dependenciesPath);
-        expect(cfg.uninstallPendingMarkerPath).toBe(
-            path.join(base, 'control', 'uninstall-pending'),
-        );
+        expect(cfg.uninstallPendingMarkerPath).toBe(path.join(base, 'control', 'uninstall-pending'));
     });
 });
