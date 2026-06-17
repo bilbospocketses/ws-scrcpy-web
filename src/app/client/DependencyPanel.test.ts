@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type DependencyInfo, DependencyStatus } from '../../common/DependencyTypes';
 import { DependencyPanel } from './DependencyPanel';
 
@@ -35,5 +35,39 @@ describe('DependencyPanel XSS', () => {
         ]);
         const body = panel.getElement().querySelector('tbody');
         expect(body?.querySelector('img')).toBeNull();
+    });
+});
+
+describe('DependencyPanel polling lifecycle (#36)', () => {
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => [] }));
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+        vi.unstubAllGlobals();
+    });
+
+    it('stops polling after destroy() — the interval no longer fires load()', () => {
+        const panel = new DependencyPanel();
+        (panel as any).startPolling();
+        const loadSpy = vi.spyOn(panel as any, 'load');
+
+        // One interval before destroy → load() fires.
+        vi.advanceTimersByTime(15_000);
+        expect(loadSpy).toHaveBeenCalledTimes(1);
+
+        panel.destroy();
+        loadSpy.mockClear();
+
+        // After destroy, advancing well past several intervals → no more load().
+        vi.advanceTimersByTime(60_000);
+        expect(loadSpy).not.toHaveBeenCalled();
+    });
+
+    it('destroy() is idempotent / safe to call without polling started', () => {
+        const panel = new DependencyPanel();
+        expect(() => panel.destroy()).not.toThrow();
     });
 });

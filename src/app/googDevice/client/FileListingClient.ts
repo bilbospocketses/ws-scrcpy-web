@@ -100,6 +100,17 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     private rowsByName: Map<string, HTMLElement> = new Map();
     private tableBody: HTMLElement;
     private channels: Set<Multiplexer> = new Set();
+    // Bound hashchange handler — stored so destroy() can removeEventListener the
+    // exact same reference (an inline arrow would be unremovable).
+    private readonly onHashChange = (): void => {
+        const hash = location.hash.replace(/#!/, '');
+        const params = new URLSearchParams(hash);
+        if (params.get('action') !== ACTION.FILE_LISTING) return;
+        const hashPath = params.get('path');
+        if (hashPath && hashPath !== this.path) {
+            this.loadContent(hashPath);
+        }
+    };
     constructor(params: ParamsFileListing) {
         super(params);
         this.parent = document.body;
@@ -107,15 +118,10 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
         this.path = this.params.path;
         this.openNewConnection();
         this.setBodyClass('file-listing');
-        window.addEventListener('hashchange', () => {
-            const hash = location.hash.replace(/#!/, '');
-            const params = new URLSearchParams(hash);
-            if (params.get('action') !== ACTION.FILE_LISTING) return;
-            const hashPath = params.get('path');
-            if (hashPath && hashPath !== this.path) {
-                this.loadContent(hashPath);
-            }
-        });
+        // Store the handler reference so destroy() can remove it. An inline
+        // arrow passed directly to addEventListener is unremovable and leaks
+        // the whole client (closure over `this`) for the page lifetime.
+        window.addEventListener('hashchange', this.onHashChange);
         this.name = `${TAG} [${this.serial}]`;
         this.tableBodyId = `${Util.escapeUdid(this.serial)}_list`;
         this.wrapperId = `wrapper_${this.tableBodyId}`;
@@ -304,6 +310,14 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
 
     protected onSocketOpen(): void {
         this.loadContent(this.path);
+    }
+
+    public override destroy(): void {
+        super.destroy();
+        // Remove the hashchange listener registered in the constructor. Without
+        // this the client (and its DOM/closure graph) leaks on every navigation
+        // away from a file-listing view.
+        window.removeEventListener('hashchange', this.onHashChange);
     }
 
     protected loadContent(path: string, entry?: Entry, anchor?: HTMLElement, pathToLoadAfter = ''): void {
