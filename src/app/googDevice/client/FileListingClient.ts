@@ -13,6 +13,7 @@ import { html } from '../../ui/HtmlTag';
 import { Entry } from '../Entry';
 import { AdbkitFilePushStream } from '../filePush/AdbkitFilePushStream';
 import FilePushHandler, { type DragAndPushListener, type PushUpdateParams } from '../filePush/FilePushHandler';
+import { parseDataChunk, parseDentReply, parseFailReply, parseStatReply, readSyncReplyCode } from './adbSyncReply';
 import { buildFslsInitData } from './multiplexConnection';
 
 const TAG = '[FileListing]';
@@ -409,17 +410,10 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
 
     protected handleReply(channel: Multiplexer, e: MessageEvent): void {
         const data = new Uint8Array(e.data);
-        const reply = new TextDecoder('ascii').decode(data.subarray(0, 4));
+        const reply = readSyncReplyCode(data);
         switch (reply) {
             case Protocol.DENT: {
-                const stat = data.subarray(4);
-                const statView = new DataView(stat.buffer, stat.byteOffset);
-                const mode = statView.getUint32(0, true);
-                const size = statView.getUint32(4, true);
-                const mtime = statView.getUint32(8, true);
-                const namelen = statView.getUint32(12, true);
-                const name = new TextDecoder().decode(stat.subarray(16, 16 + namelen));
-                this.addEntry(new Entry(name, mode, size, mtime));
+                this.addEntry(parseDentReply(data));
                 return;
             }
             case Protocol.DONE:
@@ -430,11 +424,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                 if (!download) {
                     return;
                 }
-                const stat = data.subarray(4);
-                const statView = new DataView(stat.buffer, stat.byteOffset);
-                const mode = statView.getUint32(0, true);
-                const size = statView.getUint32(4, true);
-                const mtime = statView.getUint32(8, true);
+                const { mode, size, mtime } = parseStatReply(data);
                 const nameString = basename(download.path);
                 if (mode === 0) {
                     console.error(this.name, `no entity "${download.path}"`);
@@ -456,9 +446,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                 break;
             }
             case Protocol.FAIL: {
-                const dataView = new DataView(data.buffer, data.byteOffset);
-                const length = dataView.getUint32(4, true);
-                const message = new TextDecoder().decode(data.subarray(8, 8 + length));
+                const message = parseFailReply(data);
                 console.error(TAG, `FAIL: ${message}`);
                 return;
             }
@@ -467,8 +455,9 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                 if (!download) {
                     return;
                 }
-                download.chunks.push(data.subarray(4));
-                download.receivedBytes += data.length - 4;
+                const chunk = parseDataChunk(data);
+                download.chunks.push(chunk);
+                download.receivedBytes += chunk.length;
                 if (download.anchor) {
                     let progressElement = download.progressEl;
                     if (!progressElement) {

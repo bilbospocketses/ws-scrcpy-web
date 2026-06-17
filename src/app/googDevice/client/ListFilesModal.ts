@@ -9,6 +9,7 @@ import { debugLog } from '../../util/debugLog';
 import { Entry } from '../Entry';
 import { AdbkitFilePushStream } from '../filePush/AdbkitFilePushStream';
 import FilePushHandler, { type DragAndPushListener, type PushUpdateParams } from '../filePush/FilePushHandler';
+import { parseDataChunk, parseDentReply, parseFailReply, parseStatReply, readSyncReplyCode } from './adbSyncReply';
 import { createFileIconForEntry } from './FileIconUtils';
 import { attachFsChannelKeepAlive } from './fsChannelKeepAlive';
 import { buildFslsInitData, buildMultiplexUrl } from './multiplexConnection';
@@ -632,21 +633,14 @@ export class ListFilesModal extends Modal implements DragAndPushListener {
 
     private handleReply(channel: Multiplexer, e: MessageEvent): void {
         const data = new Uint8Array(e.data);
-        const reply = new TextDecoder('ascii').decode(data.subarray(0, 4));
+        const reply = readSyncReplyCode(data);
         debugLog(TAG, 'handleReply:', reply, 'dataLen:', data.length);
 
         switch (reply) {
             case Protocol.DENT: {
-                const stat = data.subarray(4);
-                const statView = new DataView(stat.buffer, stat.byteOffset);
-                const mode = statView.getUint32(0, true);
-                const size = statView.getUint32(4, true);
-                const mtime = statView.getUint32(8, true);
-                const namelen = statView.getUint32(12, true);
-                const name = new TextDecoder().decode(stat.subarray(16, 16 + namelen));
-                const entry = new Entry(name, mode, size, mtime);
+                const entry = parseDentReply(data);
                 // Skip '.' and '..'
-                if (name !== '.' && name !== '..') {
+                if (entry.name !== '.' && entry.name !== '..') {
                     this.pendingEntries.push(entry);
                 }
                 return;
@@ -679,11 +673,7 @@ export class ListFilesModal extends Modal implements DragAndPushListener {
                 const download = this.downloads.get(channel);
                 if (!download) return;
 
-                const stat = data.subarray(4);
-                const statView = new DataView(stat.buffer, stat.byteOffset);
-                const mode = statView.getUint32(0, true);
-                const size = statView.getUint32(4, true);
-                const mtime = statView.getUint32(8, true);
+                const { mode, size, mtime } = parseStatReply(data);
                 const nameString = basename(download.path);
 
                 if (mode === 0) {
@@ -710,9 +700,7 @@ export class ListFilesModal extends Modal implements DragAndPushListener {
                 break;
             }
             case Protocol.FAIL: {
-                const dataView = new DataView(data.buffer, data.byteOffset);
-                const length = dataView.getUint32(4, true);
-                const message = new TextDecoder().decode(data.subarray(8, 8 + length));
+                const message = parseFailReply(data);
                 console.error(TAG, `FAIL: ${message}`);
                 return;
             }
@@ -720,8 +708,9 @@ export class ListFilesModal extends Modal implements DragAndPushListener {
                 const download = this.downloads.get(channel);
                 if (!download) return;
 
-                download.chunks.push(data.subarray(4));
-                download.receivedBytes += data.length - 4;
+                const chunk = parseDataChunk(data);
+                download.chunks.push(chunk);
+                download.receivedBytes += chunk.length;
 
                 // Update progress bar in the file row
                 if (download.entry) {
