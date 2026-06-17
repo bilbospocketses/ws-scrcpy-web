@@ -1,7 +1,5 @@
 import '../../../style/listfiles.css';
-import { ACTION } from '../../../common/Action';
 import Protocol from '../../../common/AdbProtocol';
-import { ChannelCode } from '../../../common/ChannelCode';
 import { Multiplexer } from '../../../packages/multiplexer/Multiplexer';
 import { BinaryWriter } from '../../BinaryWriter';
 import { ManagerClient } from '../../client/ManagerClient';
@@ -13,6 +11,7 @@ import { AdbkitFilePushStream } from '../filePush/AdbkitFilePushStream';
 import FilePushHandler, { type DragAndPushListener, type PushUpdateParams } from '../filePush/FilePushHandler';
 import { createFileIconForEntry } from './FileIconUtils';
 import { attachFsChannelKeepAlive } from './fsChannelKeepAlive';
+import { buildFslsInitData, buildMultiplexUrl } from './multiplexConnection';
 
 const TAG = '[ListFilesModal]';
 const ICON_SIZE_KEY = 'file-browser-icon-size';
@@ -412,17 +411,7 @@ export class ListFilesModal extends Modal implements DragAndPushListener {
 
     private buildWebSocketUrl(): string {
         const { hostname, port, secure, pathname } = this.params;
-        let urlString: string;
-        if (typeof hostname === 'string' && typeof port === 'number') {
-            const protocol = secure ? 'wss:' : 'ws:';
-            urlString = `${protocol}//${hostname}:${port}${pathname ?? location.pathname}`;
-        } else {
-            const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-            urlString = `${protocol}//${location.host}${pathname ?? location.pathname}`;
-        }
-        const url = new URL(urlString);
-        url.searchParams.set('action', ACTION.MULTIPLEX);
-        return url.toString();
+        return buildMultiplexUrl({ hostname, port, secure, pathname });
     }
 
     // The FSLS channel — a sub-multiplexer on the shared WebSocket multiplexer.
@@ -525,12 +514,7 @@ export class ListFilesModal extends Modal implements DragAndPushListener {
     // ── Directory listing protocol ──
 
     private getChannelInitData(): Uint8Array {
-        const serial = new TextEncoder().encode(this.udid);
-        return new BinaryWriter(4 + 4 + serial.byteLength)
-            .writeString(ChannelCode.FSLS)
-            .writeUInt32LE(serial.length)
-            .writeBytes(serial)
-            .toUint8Array();
+        return buildFslsInitData(this.udid);
     }
 
     private loadDirectory(path: string): void {

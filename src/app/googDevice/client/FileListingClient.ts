@@ -1,6 +1,5 @@
 import { ACTION } from '../../../common/Action';
 import Protocol from '../../../common/AdbProtocol';
-import { ChannelCode } from '../../../common/ChannelCode';
 import { Multiplexer } from '../../../packages/multiplexer/Multiplexer';
 import type GoogDeviceDescriptor from '../../../types/GoogDeviceDescriptor';
 import type { ParamsDeviceTracker } from '../../../types/ParamsDeviceTracker';
@@ -14,6 +13,7 @@ import { html } from '../../ui/HtmlTag';
 import { Entry } from '../Entry';
 import { AdbkitFilePushStream } from '../filePush/AdbkitFilePushStream';
 import FilePushHandler, { type DragAndPushListener, type PushUpdateParams } from '../filePush/FilePushHandler';
+import { buildFslsInitData } from './multiplexConnection';
 
 const TAG = '[FileListing]';
 
@@ -623,11 +623,6 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     }
 
     protected override getChannelInitData(): Uint8Array {
-        const serial = new TextEncoder().encode(this.serial);
-        return new BinaryWriter(4 + 4 + serial.byteLength)
-            .writeString(ChannelCode.FSLS)
-            .writeUInt32LE(serial.length)
-            .writeBytes(serial)
-            .toUint8Array();
+        return buildFslsInitData(this.serial);
     }
 }

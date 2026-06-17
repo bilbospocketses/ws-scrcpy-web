@@ -2,13 +2,13 @@ import '@xterm/xterm/css/xterm.css';
 import { AttachAddon } from '@xterm/addon-attach';
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
-import { ACTION } from '../../../common/Action';
 import { ChannelCode } from '../../../common/ChannelCode';
 import { Multiplexer } from '../../../packages/multiplexer/Multiplexer';
 import type { MessageXtermClient } from '../../../types/MessageXtermClient';
 import { ManagerClient } from '../../client/ManagerClient';
 import { ShellCloseConfirmModal } from '../../client/ShellCloseConfirmModal';
 import { Modal } from '../../ui/Modal';
+import { buildMultiplexUrl } from './multiplexConnection';
 
 const TAG = '[ShellModal]';
 
@@ -112,17 +112,7 @@ export class ShellModal extends Modal {
 
     private buildWebSocketUrl(): string {
         const { hostname, port, secure, pathname } = this.params;
-        let urlString: string;
-        if (typeof hostname === 'string' && typeof port === 'number') {
-            const protocol = secure ? 'wss:' : 'ws:';
-            urlString = `${protocol}//${hostname}:${port}${pathname ?? location.pathname}`;
-        } else {
-            const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-            urlString = `${protocol}//${location.host}${pathname ?? location.pathname}`;
-        }
-        const url = new URL(urlString);
-        url.searchParams.set('action', ACTION.MULTIPLEX);
-        return url.toString();
+        return buildMultiplexUrl({ hostname, port, secure, pathname });
     }
 
     private connect(terminalContainer: HTMLElement): void {
