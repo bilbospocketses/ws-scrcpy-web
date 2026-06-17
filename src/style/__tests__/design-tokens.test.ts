@@ -137,3 +137,24 @@ describe('divider / border-muted tokens', () => {
         }
     });
 });
+
+describe('theme-token ownership (no app/ws-scrcpy duplication)', () => {
+    // The stream/toolbar tokens must live in ws-scrcpy.css because embed.html
+    // loads it standalone (without app.css). app.css imports ws-scrcpy.css, so it
+    // must NOT redefine them — that was the duplication finding 64 flagged.
+    const STREAM_TOKENS = ['--control-buttons-bg-color', '--svg-button-fill', '--svg-checkbox-bg-color'];
+
+    it('defines the stream tokens in ws-scrcpy.css', () => {
+        const ws = readStyle('ws-scrcpy.css');
+        for (const t of STREAM_TOKENS) {
+            expect(ws, `${t} should be defined in ws-scrcpy.css`).toMatch(new RegExp(`${t}\\s*:`));
+        }
+    });
+
+    it('does not duplicate the stream tokens in app.css', () => {
+        const appCss = readStyle('app.css');
+        for (const t of STREAM_TOKENS) {
+            expect(appCss, `${t} duplicated in app.css`).not.toMatch(new RegExp(`${t}\\s*:`));
+        }
+    });
+});
