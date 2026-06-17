@@ -1,5 +1,8 @@
 // src/app/player/h265-utils.ts
-import { BitStream } from './h264-utils';
+import { BitStream, stripEmulationPrevention } from './h264-utils';
+
+// Re-export the shared NAL helper so existing importers of '../h265-utils' keep working.
+export { stripEmulationPrevention };
 
 export const HEVC_NAL_TYPE = {
     VPS: 32,
@@ -15,25 +18,6 @@ export interface HevcCodecInfo {
     codec: string;
     width: number;
     height: number;
-}
-
-/**
- * Strip RBSP emulation prevention bytes (00 00 03 → 00 00).
- * Must be done before bitstream parsing on any NAL unit data.
- */
-function stripEmulationPrevention(data: Uint8Array): Uint8Array {
-    const out: number[] = [];
-    let i = 0;
-    while (i < data.length) {
-        if (i + 2 < data.length && data[i] === 0 && data[i + 1] === 0 && data[i + 2] === 3) {
-            out.push(0, 0);
-            i += 3; // skip the 0x03 byte
-        } else {
-            out.push(data[i]!);
-            i++;
-        }
-    }
-    return new Uint8Array(out);
 }
 
 export function parseHevcSPS(data: Uint8Array): HevcCodecInfo {

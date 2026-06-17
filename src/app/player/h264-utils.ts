@@ -16,6 +16,35 @@ export const NALU_TYPE = {
     PPS: 8,
 } as const;
 
+// ── RBSP emulation-prevention ───────────────────────────────────
+
+/**
+ * Strip RBSP emulation prevention bytes (00 00 03 → 00 00).
+ * Must be done before bitstream parsing on any NAL unit data (H.264 and H.265).
+ *
+ * Writes into a pre-sized Uint8Array (output can never exceed input length) and
+ * returns a subarray view of the bytes actually written — avoids the boxed
+ * `number[]` + per-element push() a naive implementation incurs.
+ *
+ * Canonical home for the shared NAL helper; h265-utils re-exports it.
+ */
+export function stripEmulationPrevention(data: Uint8Array): Uint8Array {
+    const out = new Uint8Array(data.length);
+    let n = 0;
+    let i = 0;
+    while (i < data.length) {
+        if (i + 2 < data.length && data[i] === 0 && data[i + 1] === 0 && data[i + 2] === 3) {
+            out[n++] = 0;
+            out[n++] = 0;
+            i += 3; // skip the 0x03 emulation-prevention byte
+        } else {
+            out[n++] = data[i]!;
+            i++;
+        }
+    }
+    return out.subarray(0, n);
+}
+
 // ── BitStream (Exp-Golomb reader) ───────────────────────────────
 
 export class BitStream {

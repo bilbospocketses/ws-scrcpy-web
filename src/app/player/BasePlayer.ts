@@ -5,6 +5,7 @@ import ScreenInfo from '../ScreenInfo';
 import Size from '../Size';
 import Util from '../Util';
 import VideoSettings from '../VideoSettings';
+import { AnimationFrameGuard } from './animationFrameGuard';
 
 interface BitrateStat {
     timestamp: number;
@@ -80,7 +81,9 @@ export abstract class BasePlayer extends TypedEmitter<PlayerEvents> {
     private totalStatsCounter = 0;
     private dirtyStatsWidth = 0;
     private state: number = BasePlayer.STATE['STOPPED']!;
-    private qualityAnimationId?: number | undefined;
+    // Single guarded rAF handle for the quality-stats loop — prevents the
+    // double-start / cancel-leak the raw id allowed (finding #44).
+    private readonly qualityStatsRaf = new AnimationFrameGuard();
     private showQualityStats = BasePlayer.DEFAULT_SHOW_QUALITY_STATS;
     protected receivedFirstFrame = false;
     private statLines: string[] = [];
@@ -320,23 +323,32 @@ export abstract class BasePlayer extends TypedEmitter<PlayerEvents> {
 
     public stop(): void {
         this.state = BasePlayer.STATE['STOPPED']!;
+        // Cancel any pending stats frame so the loop cannot run after stop (no leak).
+        this.qualityStatsRaf.stop();
     }
 
     public getState(): number {
         return this.state;
     }
 
-    public pushFrame(frame: Uint8Array): void {
+    // `isKeyframe` is accepted so subclasses (BaseCanvasBasedPlayer) and callers
+    // can plumb the demuxer's real keyframe flag through a single signature; the
+    // base stats path itself does not need it.
+    public pushFrame(frame: Uint8Array, _isKeyframe?: boolean): void {
         if (!this.receivedFirstFrame) {
             this.receivedFirstFrame = true;
-            if (typeof this.qualityAnimationId !== 'number') {
-                this.qualityAnimationId = requestAnimationFrame(this.updateQualityStats);
-            }
+            // Guarded: a no-op if a stats frame is already pending (no double-start).
+            this.scheduleQualityStats();
         }
         this.inputBytes.push({
             timestamp: Date.now(),
             bytes: frame.byteLength,
         });
+    }
+
+    /** Start the quality-stats rAF loop, unless one is already pending. */
+    private scheduleQualityStats(): void {
+        this.qualityStatsRaf.start(this.updateQualityStats);
     }
 
     public abstract getPreferredVideoSetting(): VideoSettings;
@@ -402,6 +414,9 @@ export abstract class BasePlayer extends TypedEmitter<PlayerEvents> {
 
     protected resetStats(): void {
         this.receivedFirstFrame = false;
+        // Cancel the pending stats frame; clearing receivedFirstFrame lets the next
+        // pushFrame re-arm the loop cleanly without a second concurrent loop (#44).
+        this.qualityStatsRaf.stop();
         this.totalStatsCounter = 0;
         this.totalStats = {
             droppedFrames: 0,
@@ -446,7 +461,7 @@ export abstract class BasePlayer extends TypedEmitter<PlayerEvents> {
         }
         this.drawStats();
         if (this.state !== BasePlayer.STATE['STOPPED']!) {
-            this.qualityAnimationId = requestAnimationFrame(this.updateQualityStats);
+            this.scheduleQualityStats();
         }
     };
 

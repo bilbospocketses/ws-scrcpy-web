@@ -30,6 +30,7 @@ import { UhidManager } from '../UhidManager';
 import { UhidMouseHandler } from '../UhidMouseHandler';
 import { ConfigureScrcpy } from './ConfigureScrcpy';
 import { DeviceTracker } from './DeviceTracker';
+import { RollingWindow } from './RollingWindow';
 
 type StartParams = {
     udid: string;
@@ -140,7 +141,12 @@ export class StreamClientScrcpy
     private fitToScreen?: boolean | undefined;
     private demuxer?: ScrcpyDemuxer | undefined;
     private audioPlayer?: AudioPlayer | undefined;
-    private frameSizes: number[] = [];
+    // Fixed 30-frame rolling window with an O(1) running average — replaces the
+    // per-frame shift()/reduce() churn on the video hot path. `frameSampleCount`
+    // tracks how many frames we have observed (for the initial baseline build).
+    private static readonly FRAME_WINDOW_SIZE = 30;
+    private frameSizes = new RollingWindow(StreamClientScrcpy.FRAME_WINDOW_SIZE);
+    private frameSampleCount = 0;
     private baselineFrameSize = 0;
     private degradationCount = 0;
     private lastRefreshTime = 0;
@@ -280,13 +286,14 @@ export class StreamClientScrcpy
         // Track frame sizes for degradation detection (skip config frames)
         if (!isConfig && data.length > 0) {
             this.frameSizes.push(data.length);
-            // Build baseline from first 30 frames
-            if (this.frameSizes.length === 30) {
-                this.baselineFrameSize = this.frameSizes.reduce((a, b) => a + b, 0) / 30;
+            this.frameSampleCount++;
+            // Build baseline from first 30 frames (window is full at this point)
+            if (this.frameSampleCount === StreamClientScrcpy.FRAME_WINDOW_SIZE) {
+                this.baselineFrameSize = this.frameSizes.average();
             }
-            // Keep rolling window of 30 frames
-            if (this.frameSizes.length > 30) {
-                this.frameSizes.shift();
+            // Once past the baseline window, evaluate degradation each frame.
+            // The window evicts the oldest sample in O(1) on every push above.
+            if (this.frameSampleCount > StreamClientScrcpy.FRAME_WINDOW_SIZE) {
                 this.checkForDegradation();
             }
         }
@@ -496,9 +503,9 @@ export class StreamClientScrcpy
         // Don't check within 30s of a refresh (was 10s — too aggressive)
         if (now - this.lastRefreshTime < 30000) return;
         // Need at least 10 samples for a reliable average
-        if (this.frameSizes.length < 10) return;
+        if (this.frameSizes.count < 10) return;
 
-        const avg = this.frameSizes.reduce((a, b) => a + b, 0) / this.frameSizes.length;
+        const avg = this.frameSizes.average();
         // If average frame size drops below 10% of baseline for sustained period
         // (was 25% — too sensitive for static content like screensavers)
         if (avg < this.baselineFrameSize * 0.1) {
@@ -509,7 +516,8 @@ export class StreamClientScrcpy
                     `Quality degradation detected (avg=${Math.round(avg)} vs baseline=${Math.round(this.baselineFrameSize)}), refreshing stream`,
                 );
                 this.degradationCount = 0;
-                this.frameSizes = [];
+                this.frameSizes.clear();
+                this.frameSampleCount = 0;
                 this.baselineFrameSize = 0;
                 this.refreshStream();
             }
@@ -521,7 +529,8 @@ export class StreamClientScrcpy
     public refreshStream(): void {
         console.log(TAG, 'Refreshing stream (reconnect for fresh keyframe)');
         this.lastRefreshTime = Date.now();
-        this.frameSizes = [];
+        this.frameSizes.clear();
+        this.frameSampleCount = 0;
         this.baselineFrameSize = 0;
         this.degradationCount = 0;
 

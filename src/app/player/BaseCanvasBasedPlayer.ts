@@ -2,6 +2,7 @@ import type { DisplayInfo } from '../DisplayInfo';
 import type ScreenInfo from '../ScreenInfo';
 import type VideoSettings from '../VideoSettings';
 import { BasePlayer, type PlaybackQuality } from './BasePlayer';
+import { shouldDropBacklog } from './backlogDrop';
 
 type DecodedFrame = {
     width: number;
@@ -207,23 +208,22 @@ export abstract class BaseCanvasBasedPlayer extends BasePlayer {
         }
     }
 
-    public override pushFrame(frame: Uint8Array): void {
-        super.pushFrame(frame);
-        if (BasePlayer.isIFrame(frame)) {
-            if (this.videoSettings) {
-                const { maxFps } = this.videoSettings;
-                if (this.framesList.length > maxFps / 2) {
-                    const dropped = this.framesList.length;
-                    this.framesList = [];
-                    this.videoStats.push({
-                        decodedFrames: 0,
-                        droppedFrames: dropped,
-                        inputBytes: 0,
-                        inputFrames: 0,
-                        timestamp: Date.now(),
-                    });
-                }
-            }
+    public override pushFrame(frame: Uint8Array, isKeyframe?: boolean): void {
+        super.pushFrame(frame, isKeyframe);
+        // Prefer the demuxer's real keyframe flag (works for H.264/H.265/AV1);
+        // fall back to the H.264-only NAL check when no flag is supplied so
+        // existing callers keep their previous behavior (finding #43).
+        const keyframe = typeof isKeyframe === 'boolean' ? isKeyframe : BasePlayer.isIFrame(frame);
+        if (this.videoSettings && shouldDropBacklog(keyframe, this.framesList.length, this.videoSettings.maxFps)) {
+            const dropped = this.framesList.length;
+            this.framesList = [];
+            this.videoStats.push({
+                decodedFrames: 0,
+                droppedFrames: dropped,
+                inputBytes: 0,
+                inputFrames: 0,
+                timestamp: Date.now(),
+            });
         }
         this.framesList.push(frame);
         this.shiftFrame();

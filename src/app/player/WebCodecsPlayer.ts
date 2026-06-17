@@ -6,8 +6,9 @@ import VideoSettings from '../VideoSettings';
 import { OBU_TYPE, obuType, parseAv1ConfigRecord, parseAv1SequenceHeader } from './av1-utils';
 import { BaseCanvasBasedPlayer } from './BaseCanvasBasedPlayer';
 import { BasePlayer } from './BasePlayer';
-import { parseSPS } from './h264-utils';
+import { parseSPS, stripEmulationPrevention } from './h264-utils';
 import { HEVC_NAL_TYPE, hevcNalType, parseHevcSPS } from './h265-utils';
+import { buildDecoderConfig } from './webCodecsConfig';
 
 function toHex(value: number) {
     return value.toString(16).padStart(2, '0').toUpperCase();
@@ -32,6 +33,9 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
     }
 
     private static parseSPSCodecString(data: Uint8Array): { codec: string; width: number; height: number } {
+        // Strip RBSP emulation-prevention bytes before bitstream parsing, mirroring
+        // the H.265 path (parseHevcSPS strips internally). An SPS containing a
+        // 00 00 03 triple would otherwise be mis-parsed (finding #42).
         const {
             profile_idc,
             constraint_set_flags,
@@ -44,7 +48,7 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
             frame_crop_top_offset,
             frame_crop_bottom_offset,
             sar,
-        } = parseSPS(data);
+        } = parseSPS(stripEmulationPrevention(data));
 
         const sarScale = sar[0] / sar[1];
         const codec = `avc1.${[profile_idc, constraint_set_flags, level_idc].map(toHex).join('')}`;
@@ -99,8 +103,9 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
      * Replaces the old pushFrame(Uint8Array) → decode() pipeline.
      */
     public pushVideoFrame(data: Uint8Array, pts: bigint, isConfig: boolean, isKeyframe: boolean): void {
-        // Track stats via BasePlayer
-        BasePlayer.prototype.pushFrame.call(this, data);
+        // Track stats via BasePlayer. Pass the demuxer's real keyframe flag so the
+        // shared signature carries it (works for H.264/H.265/AV1) — see finding #43.
+        BasePlayer.prototype.pushFrame.call(this, data, isKeyframe);
 
         if (isConfig) {
             let result: { codec: string; width?: number; height?: number } | null = null;
@@ -124,12 +129,17 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
                 if (this.decoder.state === 'configured') {
                     this.decoder.flush().catch(() => {});
                 }
-                this.decoder.configure({
-                    codec: result.codec,
-                    codedWidth: codedW,
-                    codedHeight: codedH,
-                    optimizeForLatency: true,
-                } as VideoDecoderConfig);
+                // Supply SPS/PPS (and VPS for H.265) once via `description` so the
+                // per-frame keyframe path no longer concatenates config + frame data.
+                this.decoder.configure(
+                    buildDecoderConfig({
+                        codec: result.codec,
+                        detectedCodec: this.detectedCodec,
+                        codedWidth: codedW,
+                        codedHeight: codedH,
+                        configData: data,
+                    }),
+                );
             }
             this.configData = new Uint8Array(data);
             return;
@@ -142,28 +152,17 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
                 this.receivedFirstFrame = true;
             }
 
-            if (this.detectedCodec === 'av1') {
-                // AV1: no config prepending needed
-                this.decoder.decode(
-                    new EncodedVideoChunk({
-                        type: 'key',
-                        timestamp: Number(pts),
-                        data,
-                    }),
-                );
-            } else {
-                // H.264/H.265: prepend config (SPS/PPS or VPS/SPS/PPS)
-                const fullData = new Uint8Array(this.configData.length + data.length);
-                fullData.set(this.configData);
-                fullData.set(data, this.configData.length);
-                this.decoder.decode(
-                    new EncodedVideoChunk({
-                        type: 'key',
-                        timestamp: Number(pts),
-                        data: fullData,
-                    }),
-                );
-            }
+            // SPS/PPS (and VPS for H.265) were handed to the decoder via the
+            // `description` field of VideoDecoderConfig at configure() time, and
+            // AV1 carries its sequence header inline — so decode the keyframe
+            // data directly with no per-frame config concatenation (finding #41).
+            this.decoder.decode(
+                new EncodedVideoChunk({
+                    type: 'key',
+                    timestamp: Number(pts),
+                    data,
+                }),
+            );
             return;
         }
 
