@@ -8,6 +8,7 @@ import { BaseCanvasBasedPlayer } from './BaseCanvasBasedPlayer';
 import { BasePlayer } from './BasePlayer';
 import { parseSPS, stripEmulationPrevention } from './h264-utils';
 import { HEVC_NAL_TYPE, hevcNalType, parseHevcSPS } from './h265-utils';
+import { findFirstNaluOffset, findNaluByHeader } from './naluScanner';
 import { buildDecoderConfig } from './webCodecsConfig';
 
 function toHex(value: number) {
@@ -179,23 +180,7 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
 
     /** Find offset of NALU with given type in Annex B stream. Returns -1 if not found. */
     private findNaluOffset(data: Uint8Array, naluType: number): number {
-        for (let i = 0; i < data.length - 4; i++) {
-            // Look for start code 00 00 00 01 or 00 00 01
-            if (data[i] === 0 && data[i + 1] === 0) {
-                let offset: number;
-                if (data[i + 2] === 1) {
-                    offset = i + 3;
-                } else if (data[i + 2] === 0 && data[i + 3] === 1) {
-                    offset = i + 4;
-                } else {
-                    continue;
-                }
-                if (offset < data.length && (data[offset]! & 0x1f) === naluType) {
-                    return offset;
-                }
-            }
-        }
-        return -1;
+        return findNaluByHeader(data, (b) => (b & 0x1f) === naluType);
     }
 
     private parseConfig(data: Uint8Array): { codec: string; width?: number; height?: number } | null {
@@ -243,32 +228,11 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
     }
 
     private findStartCode(data: Uint8Array): number {
-        for (let i = 0; i < data.length - 4; i++) {
-            if (data[i] === 0 && data[i + 1] === 0) {
-                if (data[i + 2] === 1) return i + 3;
-                if (data[i + 2] === 0 && data[i + 3] === 1) return i + 4;
-            }
-        }
-        return -1;
+        return findFirstNaluOffset(data);
     }
 
     private findHevcNalu(data: Uint8Array, nalType: number): number {
-        for (let i = 0; i < data.length - 4; i++) {
-            if (data[i] === 0 && data[i + 1] === 0) {
-                let offset: number;
-                if (data[i + 2] === 1) {
-                    offset = i + 3;
-                } else if (data[i + 2] === 0 && data[i + 3] === 1) {
-                    offset = i + 4;
-                } else {
-                    continue;
-                }
-                if (offset < data.length && hevcNalType(data[offset]!) === nalType) {
-                    return offset;
-                }
-            }
-        }
-        return -1;
+        return findNaluByHeader(data, (b) => hevcNalType(b) === nalType);
     }
 
     /** Set fallback dimensions from stream metadata (used by AV1 which doesn't include dimensions in config). */

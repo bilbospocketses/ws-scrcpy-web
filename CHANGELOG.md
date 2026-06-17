@@ -36,6 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The in-app-update wait server is more robust.** A failed socket clone now drops that one connection instead of panicking the process, its redirect JSON is properly escaped, and its port probe advances past a permanent bind error instead of retrying a dead port until timeout.
 - **Status tints now follow the active theme.** Several red/green tinted backgrounds (file-row selection, delete-hover, the apply-update hover) were hardcoded to their dark-theme channel values and showed a slightly off shade in light mode; they now resolve through the danger/success design tokens and adapt to the theme.
 - **Keyboard focus is visible again, and the embed page declares its language.** A global `:focus { outline: none }` had removed the keyboard focus indicator across the whole app; it is replaced by a `:focus-visible` outline (shown on keyboard navigation, not mouse clicks), so keyboard users can see where they are. The embedded stream page (`embed.html`) now sets `<html lang>` for assistive technology.
+- **The video config parser no longer misses a NAL unit at the very end of a packet.** The H.264/H.265 Annex B start-code scanner stopped four bytes short of the buffer end, so a parameter-set NAL unit whose start code landed in the final bytes could be missed; the scan bound is corrected (and the three duplicated scanners unified into one).
 
 ### Security
 
