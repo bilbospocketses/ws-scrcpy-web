@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.66] - 2026-06-17
+
 ### Changed
 
 - **Service-management work no longer blocks the server's event loop.** The Windows and Linux service status checks, install/uninstall, the wait for an elevated helper's result, and the libfuse2 probe used synchronous (blocking) child-process and filesystem calls — which could briefly stall every other in-flight request, including live device-stream WebSockets, while they ran. They are now asynchronous, so a routine status poll or a service install stays out of the way of streaming and the rest of the API.
