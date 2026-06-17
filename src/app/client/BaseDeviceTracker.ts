@@ -86,6 +86,11 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
     protected id = '';
     private created = false;
     private messageId = 0;
+    private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    // §34: tracks the last-rendered serialized descriptor per udid so a refresh
+    // can skip rebuilding rows whose descriptor is unchanged (diff/patch instead
+    // of clear-and-rebuild). Cleared on destroy with the row nodes.
+    private lastRenderedByUdid: Map<string, string> = new Map();
 
     protected constructor(
         params: ParamsDeviceTracker,
@@ -110,22 +115,147 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
         return ++this.messageId;
     }
 
+    /**
+     * §34: fire-and-forget entry point kept for the many synchronous callers
+     * (constructors, onSocketMessage). Delegates to the async diff/patch
+     * refresh, which fetches per-refresh row context (e.g. the device-label map)
+     * exactly once instead of once per row.
+     */
     protected buildDeviceTable(): void {
+        void this.refreshDeviceTable();
+    }
+
+    /**
+     * §34: build the device list by DIFFING the existing DOM rows (keyed by
+     * udid via data-udid) against this.descriptors rather than tearing the whole
+     * block down and rebuilding every row on every WebSocket message:
+     *  - rows for new udids are built and appended,
+     *  - rows for gone udids are removed,
+     *  - rows whose descriptor is unchanged are left as the SAME node
+     *    (preserves scroll/focus and avoids a per-message rebuild storm),
+     *  - changed rows are rebuilt in place,
+     *  - finally the surviving/new rows are reordered to match descriptor order.
+     *
+     * Row context (the label map) is fetched ONCE here and passed into each
+     * buildDeviceRow call — eliminating the prior per-row /api/devices/labels
+     * request storm.
+     */
+    protected async refreshDeviceTable(): Promise<void> {
         const data = this.descriptors;
         const devices = this.getOrCreateTableHolder();
         const tbody = this.getOrBuildTableBody(devices);
+        const block = this.getTrackerBlock(tbody);
+        this.setNameValue(block, this.trackerName);
 
-        const block = this.getOrCreateTrackerBlock(tbody, this.trackerName);
+        const context = await this.fetchRowContext();
+
         if (data.length === 0) {
-            const empty = document.createElement('div');
-            empty.className = 'empty-state-card';
-            empty.textContent = 'No devices connected.';
-            block.appendChild(empty);
-        } else {
-            data.forEach((item) => {
-                this.buildDeviceRow(block, item);
-            });
+            this.removeAllDeviceRows(block);
+            this.lastRenderedByUdid.clear();
+            if (!block.querySelector('.empty-state-card')) {
+                const empty = document.createElement('div');
+                empty.className = 'empty-state-card';
+                empty.textContent = 'No devices connected.';
+                block.appendChild(empty);
+            }
+            return;
         }
+
+        // Devices present — drop any empty-state card.
+        block.querySelector('.empty-state-card')?.remove();
+
+        const desiredUdids = new Set(data.map((d) => d.udid));
+
+        // Remove rows for devices that are gone.
+        this.getDeviceRows(block).forEach((el) => {
+            const udid = el.getAttribute('data-udid');
+            if (udid !== null && !desiredUdids.has(udid)) {
+                el.remove();
+                this.lastRenderedByUdid.delete(udid);
+            }
+        });
+
+        // Add new rows / rebuild changed rows. New nodes are appended to the end
+        // of the block by buildDeviceRow; we reorder afterwards.
+        for (const device of data) {
+            const udid = device.udid;
+            const serialized = BaseDeviceTracker.serializeDescriptor(device);
+            const existing = this.getDeviceRow(block, udid);
+            if (existing && this.lastRenderedByUdid.get(udid) === serialized) {
+                continue; // unchanged — keep the existing node
+            }
+            const newRow = this.buildAndTagRow(block, device, udid, context);
+            if (existing && newRow) {
+                existing.replaceWith(newRow);
+            } else if (existing && !newRow) {
+                // buildDeviceRow produced nothing (defensive) — drop stale node.
+                existing.remove();
+            }
+            this.lastRenderedByUdid.set(udid, serialized);
+        }
+
+        // Reorder surviving device rows to match descriptor order. appendChild
+        // MOVES existing nodes (preserving identity), so unchanged rows keep
+        // their node while ending up in the right position.
+        for (const device of data) {
+            const row = this.getDeviceRow(block, device.udid);
+            if (row) {
+                block.appendChild(row);
+            }
+        }
+    }
+
+    /**
+     * §34: per-refresh context passed to buildDeviceRow. Default: none.
+     * DeviceTracker overrides this to fetch the device-label map a single time
+     * for the whole refresh.
+     */
+    protected fetchRowContext(): Promise<unknown> {
+        return Promise.resolve(undefined);
+    }
+
+    /**
+     * §34: invoke the subclass row builder (which appends its row to `block`),
+     * then capture and tag that row with data-udid so the diff can find it next
+     * refresh. Returns the tagged row, or undefined if no row was appended.
+     */
+    private buildAndTagRow(block: Element, device: DD, udid: string, context: unknown): Element | undefined {
+        const before = block.lastElementChild;
+        this.buildDeviceRow(block, device, context);
+        const appended = block.lastElementChild;
+        if (!appended || appended === before) {
+            return undefined;
+        }
+        appended.setAttribute('data-udid', udid);
+        return appended;
+    }
+
+    private getDeviceRows(block: Element): Element[] {
+        return Array.from(block.querySelectorAll('[data-udid]'));
+    }
+
+    private getDeviceRow(block: Element, udid: string): Element | null {
+        // Match by attribute selector. udids can contain ':' and other chars, so
+        // escape the quote/backslash that would break the selector string. (We
+        // avoid the global CSS.escape since it isn't present in every test env.)
+        const escaped = udid.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        return block.querySelector(`[data-udid="${escaped}"]`);
+    }
+
+    private removeAllDeviceRows(block: Element): void {
+        this.getDeviceRows(block).forEach((el) => el.remove());
+    }
+
+    private static serializeDescriptor(device: BaseDeviceDescriptor): string {
+        // Stable-enough change key: JSON with sorted keys so property order
+        // can't cause spurious rebuilds.
+        const source = device as unknown as Record<string, unknown>;
+        const keys = Object.keys(source).sort();
+        const ordered: Record<string, unknown> = {};
+        for (const k of keys) {
+            ordered[k] = source[k];
+        }
+        return JSON.stringify(ordered);
     }
 
     private setNameValue(parent: Element | null, name: string): void {
@@ -143,30 +273,43 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
         parent.insertBefore(nameEl, parent.firstChild);
     }
 
-    private getOrCreateTrackerBlock(parent: Element, controlCenterName: string): Element {
+    /**
+     * §34: get-or-create the tracker block WITHOUT clearing its children — the
+     * diff/patch refresh manages row lifecycle itself. (Previously this cleared
+     * all children on every call, forcing a full rebuild.)
+     */
+    private getTrackerBlock(parent: Element): Element {
         let el = document.getElementById(this.elementId);
         if (!el) {
             el = document.createElement('div');
             el.id = this.elementId;
             parent.appendChild(el);
             this.created = true;
-        } else {
-            while (el.children.length) {
-                el.removeChild(el.children[0]!);
-            }
         }
-        this.setNameValue(el, controlCenterName);
         return el;
     }
 
-    protected abstract buildDeviceRow(tbody: Element, device: DD): void;
+    /**
+     * @param tbody   the tracker block the row should be appended to
+     * @param device  the descriptor to render
+     * @param context §34 per-refresh context (e.g. the device-label map),
+     *                fetched once by refreshDeviceTable. Optional so existing
+     *                callers/overrides compile; DeviceTracker uses it.
+     */
+    protected abstract buildDeviceRow(tbody: Element, device: DD, context?: unknown): void;
 
     protected onSocketClose(event: CloseEvent): void {
         if (this.destroyed) {
             return;
         }
         console.log(TAG, `Connection closed: ${event.reason}`);
-        setTimeout(() => {
+        this.reconnectTimer = setTimeout(() => {
+            this.reconnectTimer = null;
+            // Re-check destroyed: destroy() may have run between scheduling and
+            // firing (e.g. the user navigated away during the 2s window).
+            if (this.destroyed) {
+                return;
+            }
             this.openNewConnection();
         }, 2000);
     }
@@ -265,6 +408,11 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
 
     public override destroy(): void {
         super.destroy();
+        if (this.reconnectTimer !== null) {
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = null;
+        }
+        this.lastRenderedByUdid.clear();
         if (this.created) {
             const el = document.getElementById(this.elementId);
             if (el) {

@@ -182,7 +182,12 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
         return urlObject;
     }
 
-    protected buildDeviceRow(tbody: Element, device: GoogDeviceDescriptor): void {
+    protected override buildDeviceRow(tbody: Element, device: GoogDeviceDescriptor, context?: unknown): void {
+        // §34 Part A: the per-refresh device-label map (fetched once by
+        // fetchRowContext) arrives as context. Fall back to an empty map so a
+        // failed/absent fetch just renders "Unnamed Device".
+        const labels: Record<string, string> =
+            context && typeof context === 'object' ? (context as Record<string, string>) : {};
         const fullName = `${this.id}_${Util.escapeUdid(device.udid)}`;
         const isActive = device.state === DeviceState.DEVICE;
         const deviceName = device['ro.product.model']?.startsWith(device['ro.product.manufacturer'])
@@ -210,7 +215,7 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
             const nameCell = nameRow.querySelector('td:last-child') as HTMLTableCellElement;
             if (nameCell) {
                 const serial = device['ro.serialno'] || '';
-                DeviceTracker.buildLabelCell(nameCell, serial);
+                DeviceTracker.buildLabelCell(nameCell, serial, labels);
             }
         }
 
@@ -456,6 +461,21 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
         });
     }
 
+    /**
+     * §34 Part A: fetch the device-label map ONCE per table refresh. The
+     * resolved map is passed into every buildDeviceRow call for this refresh,
+     * replacing the previous per-row GET /api/devices/labels storm. A failed
+     * fetch resolves to an empty map (rows render "Unnamed Device").
+     */
+    protected override async fetchRowContext(): Promise<Record<string, string>> {
+        try {
+            const res = await fetch('/api/devices/labels');
+            return (await res.json()) as Record<string, string>;
+        } catch {
+            return {};
+        }
+    }
+
     protected override getChannelCode(): string {
         return ChannelCode.GTRC;
     }
@@ -471,19 +491,17 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
         }
     }
 
-    private static buildLabelCell(cell: HTMLTableCellElement, serial: string): void {
-        const renderDisplay = async () => {
-            let label = '';
-            if (serial) {
-                try {
-                    const res = await fetch('/api/devices/labels');
-                    const labels: Record<string, string> = await res.json();
-                    label = labels[serial] || '';
-                } catch {
-                    // Couldn't fetch labels — show unnamed
-                }
-            }
-
+    private static buildLabelCell(
+        cell: HTMLTableCellElement,
+        serial: string,
+        labels: Record<string, string>,
+    ): void {
+        // §34 Part A: the label map is fetched ONCE per table refresh
+        // (fetchRowContext) and injected here, instead of each row issuing its
+        // own GET /api/devices/labels — which produced a request storm scaling
+        // with device count. renderDisplay takes the label to show directly so
+        // the save() flow can re-render with the just-typed value, no refetch.
+        const renderDisplay = (label = labels[serial] || '') => {
             cell.innerHTML = '';
             cell.className = 'device-name-cell';
 
@@ -527,14 +545,16 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
                         // Save failed — will show old label
                     }
                 }
-                renderDisplay();
+                // Re-render with the just-typed value so the UI reflects the
+                // save immediately (the per-refresh label map updates next poll).
+                renderDisplay(newLabel);
             };
             saveBtn.addEventListener('click', save);
             cell.appendChild(saveBtn);
 
             input.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter') save();
-                if (e.key === 'Escape') renderDisplay();
+                if (e.key === 'Escape') renderDisplay(currentLabel);
             });
 
             input.focus();

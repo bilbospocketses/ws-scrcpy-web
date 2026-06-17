@@ -25,6 +25,14 @@ export class FirstRunBanner {
         return this.container;
     }
 
+    /**
+     * Tear down: stop the background poll interval so it doesn't keep firing
+     * (and keep this instance alive) after the banner is removed from the DOM.
+     */
+    destroy(): void {
+        this.stopPolling();
+    }
+
     private startPolling(): void {
         if (this.pollHandle !== null) return;
         this.pollHandle = setInterval(() => {

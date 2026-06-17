@@ -10,6 +10,7 @@ import { createFileIconForEntry } from './FileIconUtils';
 import { AdbkitFilePushStream } from '../filePush/AdbkitFilePushStream';
 import FilePushHandler, { type DragAndPushListener, type PushUpdateParams } from '../filePush/FilePushHandler';
 import { ManagerClient } from '../../client/ManagerClient';
+import { attachFsChannelKeepAlive } from './fsChannelKeepAlive';
 import { basename, resolve } from '../../pathUtils';
 
 const TAG = '[ListFilesModal]';
@@ -210,6 +211,13 @@ export class ListFilesModal extends Modal implements DragAndPushListener {
         this.channels.clear();
         this.downloads.clear();
         this.uploads.clear();
+
+        // Detach the keep-alive 'empty' handler before closing the FSLS channel
+        // so the listener (and its hold on the channel) is released. (#38)
+        if (this.detachFsChannelKeepAlive) {
+            this.detachFsChannelKeepAlive();
+            this.detachFsChannelKeepAlive = undefined;
+        }
 
         // Close the FSLS channel
         if (this.fsChannel && (this.fsChannel.readyState === this.fsChannel.OPEN || this.fsChannel.readyState === this.fsChannel.CONNECTING)) {
@@ -416,6 +424,11 @@ export class ListFilesModal extends Modal implements DragAndPushListener {
     // ManagerClient creates this via createChannel(getChannelInitData()).
     // loadDirectory creates command sub-channels on THIS channel, not on the root multiplexer.
     private fsChannel?: Multiplexer | undefined;
+    // Disposer that removes the FSLS channel's keep-alive 'empty' handler.
+    // Stored so onBeforeClose can detach it (the handler closes over nothing,
+    // but leaving it registered keeps the listener — and the channel ref —
+    // around). See attachFsChannelKeepAlive. (#38)
+    private detachFsChannelKeepAlive?: (() => void) | undefined;
 
     private connectAndLoad(): void {
         this.wsUrl = this.buildWebSocketUrl();
@@ -459,9 +472,9 @@ export class ListFilesModal extends Modal implements DragAndPushListener {
             // Prevent the FSLS channel from being cleaned up by the root multiplexer's
             // 'empty' handler when it temporarily has no sub-channels (e.g., between STAT
             // finishing and LIST starting). We control the lifecycle via onBeforeClose.
-            this.fsChannel.on('empty', () => {
-                // no-op: keep the FSLS channel alive
-            });
+            // The disposer detaches this exact handler when the modal closes so it
+            // doesn't leak (an inline arrow here would be unremovable).
+            this.detachFsChannelKeepAlive = attachFsChannelKeepAlive(this.fsChannel);
 
             this.fsChannel.addEventListener('close', (ev) => {
                 const ce = ev as CloseEvent;
