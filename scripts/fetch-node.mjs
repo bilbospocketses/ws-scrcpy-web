@@ -31,6 +31,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolvePosixTar } from './posix-tar.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -105,8 +106,11 @@ function extract(archivePath, outDir) {
         log(`extracting via ${WINDOWS_TAR}`);
         execFileSync(WINDOWS_TAR, ['-xf', archivePath, '-C', outDir], { stdio: 'inherit' });
     } else {
-        log(`extracting via tar`);
-        execFileSync('tar', ['-xf', archivePath, '-C', outDir, '--no-same-owner'], { stdio: 'inherit' });
+        // Absolute canonical tar, never the bare name (which $PATH would
+        // resolve) — Local-Dependencies-Only, mirrors WINDOWS_TAR above.
+        const tarBin = resolvePosixTar();
+        log(`extracting via ${tarBin}`);
+        execFileSync(tarBin, ['-xf', archivePath, '-C', outDir, '--no-same-owner'], { stdio: 'inherit' });
     }
 }
 

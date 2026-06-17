@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **The build-time Node-bootstrap extraction resolves `tar` by an absolute system path instead of via `PATH`.** The script that unpacks the bundled Node runtime (used in CI and air-gapped installs) invoked `tar` by bare name on Linux/macOS, which the OS resolves through `$PATH`; it now resolves to a canonical absolute location (`/usr/bin/tar`, falling back to `/bin/tar`) and fails fast if it isn't found — matching the Windows build's absolute `tar.exe` path and closing a PATH-hijack surface during the build. Build-time only; no change to the shipped app.
+
 ## [0.1.30-beta.66] - 2026-06-17
 
 ### Changed
