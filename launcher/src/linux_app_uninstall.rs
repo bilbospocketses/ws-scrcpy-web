@@ -143,7 +143,7 @@ pub fn app_uninstall_commands(
 
     // 2b. tray autostart entry — defensive: pre-beta.45 installs wrote it. Always
     //     attempted; HOME-relative (resolved like unit_path).
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
+    let home = crate::linux_service::home_dir();
     user_owned.push(vec![
         rm.clone(),
         "-f".into(),

@@ -306,8 +306,7 @@ fn ensure_tray_in_current_session(tray_exe: &Path) -> EnsureOutcome {
     // opens its own console window (CREATE_NO_WINDOW). Tray binary is
     // windows-subsystem so it'd be windowless either way, but the flags
     // also break the parent-process exit kill-chain for cleaner detach.
-    const DETACHED_PROCESS: u32 = 0x00000008;
-    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    use crate::win_util::{CREATE_NO_WINDOW, DETACHED_PROCESS};
     match std::process::Command::new(tray_exe)
         .arg("--launcher-spawn")
         .stdin(Stdio::null())

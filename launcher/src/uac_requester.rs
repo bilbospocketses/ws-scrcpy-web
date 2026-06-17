@@ -125,14 +125,7 @@ fn request_uac_impl(_command: &str, _args_path: &str, _result_path: &str) -> i32
 }
 
 #[cfg(windows)]
-fn to_wide(s: &str) -> Vec<u16> {
-    use std::ffi::OsStr;
-    use std::os::windows::ffi::OsStrExt;
-    OsStr::new(s)
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect()
-}
+use crate::win_util::to_wide;
 
 #[cfg(test)]
 mod tests {

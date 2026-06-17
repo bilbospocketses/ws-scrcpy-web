@@ -479,7 +479,7 @@ impl CapturedOutput {
 pub(crate) fn silent_command(exe: impl AsRef<std::ffi::OsStr>) -> Command {
     use std::os::windows::process::CommandExt;
     let mut cmd = Command::new(exe);
-    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    cmd.creation_flags(crate::win_util::CREATE_NO_WINDOW);
     cmd
 }
 

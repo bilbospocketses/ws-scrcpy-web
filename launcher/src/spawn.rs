@@ -21,11 +21,8 @@ const NODE_BIN: &str = "node.exe";
 #[cfg(not(windows))]
 const NODE_BIN: &str = "node";
 
-// CREATE_NO_WINDOW = 0x08000000. Defined here as a literal so we don't need
-// to thread the windows crate through pure-logic functions / tests on
-// non-Windows hosts (when those happen — e.g., CI matrix expansion).
 #[cfg(windows)]
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+use crate::win_util::CREATE_NO_WINDOW;
 
 /// Pure resolution: given an optional DEPS_PATH and an exe directory,
 /// return the Node binary path or an error.
