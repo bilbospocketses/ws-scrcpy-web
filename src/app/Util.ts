@@ -129,9 +129,6 @@ export default class Util {
         } catch (error: any) {}
 
         return (Util.supportsPassiveValue = supportsPassive);
-
-        // Use our detect's results. passive applied if supported, capture will be false either way.
-        // elem.addEventListener('touchstart', fn, supportsPassive ? { passive: true } : false);
     }
 
     static setImmediate(fn: () => any): void {

@@ -459,7 +459,7 @@ export class ListFilesModal extends Modal implements DragAndPushListener {
             this.fsChannel.addEventListener('open', () => {
                 debugLog(TAG, 'FSLS channel opened, readyState:', this.fsChannel?.readyState);
                 // Set up upload handler (needs the FSLS channel for AdbkitFilePushStream)
-                const pushStream = new AdbkitFilePushStream(this.fsChannel!, this as any);
+                const pushStream = new AdbkitFilePushStream(this.fsChannel!, this);
                 this.filePushHandler = new FilePushHandler(this.bodyEl, pushStream);
                 this.filePushHandler.addEventListener(this);
 

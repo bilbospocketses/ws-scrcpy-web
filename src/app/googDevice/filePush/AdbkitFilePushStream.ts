@@ -3,16 +3,24 @@ import type { Multiplexer } from '../../../packages/multiplexer/Multiplexer';
 import { BinaryReader } from '../../BinaryReader';
 import { CommandControlMessage, FilePushState } from '../../controlMessage/CommandControlMessage';
 import { join } from '../../pathUtils';
-import type { FileListingClient } from '../client/FileListingClient';
 import FilePushHandler from './FilePushHandler';
 import { FilePushResponseStatus } from './FilePushResponseStatus';
 import { FilePushStream } from './FilePushStream';
+
+/**
+ * Minimal contract AdbkitFilePushStream needs from its host — just the current
+ * remote directory to resolve upload paths against. Both FileListingClient and
+ * ListFilesModal satisfy it structurally, so neither needs an `as any`. (#87)
+ */
+export interface FilePushTarget {
+    getPath(): string;
+}
 
 export class AdbkitFilePushStream extends FilePushStream {
     private channels: Map<number, Multiplexer> = new Map();
     constructor(
         private readonly socket: Multiplexer,
-        private readonly fileListingClient: FileListingClient,
+        private readonly fileListingClient: FilePushTarget,
     ) {
         super();
     }
@@ -61,13 +69,15 @@ export class AdbkitFilePushStream extends FilePushStream {
         const channel = this.socket.createChannel(new TextEncoder().encode(Protocol.SEND));
         const onMessage = (event: MessageEvent): void => {
             const reader = new BinaryReader(new Uint8Array(event.data as ArrayBuffer));
-            const id = reader.readInt16BE();
+            // Distinct from the outer `id` param (the push-request id): this is the
+            // device's response id. Renamed to avoid shadowing the parameter. (#84)
+            const responseId = reader.readInt16BE();
             const code = reader.readInt8();
             if (code === FilePushResponseStatus.NEW_PUSH_ID) {
-                this.channels.set(id, channel);
-                pushId = id;
+                this.channels.set(responseId, channel);
+                pushId = responseId;
             }
-            this.emit('response', { id, code });
+            this.emit('response', { id: responseId, code });
         };
         const onClose = (event: CloseEvent): void => {
             if (!event.wasClean) {
