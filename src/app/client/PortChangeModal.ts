@@ -110,7 +110,7 @@ export class PortChangeModal extends Modal {
         // (global) dismissal. Checking it supersedes — and disables — the
         // per-port box. Committing it goes through a confirmation (see dismiss).
         const globalLabel = document.createElement('label');
-        globalLabel.style.cssText = dontShowLabel.style.cssText + ' margin-top: 8px;';
+        globalLabel.style.cssText = `${dontShowLabel.style.cssText} margin-top: 8px;`;
         const globalCheckbox = document.createElement('input');
         globalCheckbox.type = 'checkbox';
         globalLabel.appendChild(globalCheckbox);

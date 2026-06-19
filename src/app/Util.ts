@@ -31,7 +31,7 @@ export default class Util {
         // host_port as before) while neutralising HTML-dangerous characters in
         // any id/name derived from the udid (defence in depth alongside the
         // html`` quote-escaping).
-        return 'udid_' + udid.replace(/[^A-Za-z0-9_-]/g, '_');
+        return `udid_${udid.replace(/[^A-Za-z0-9_-]/g, '_')}`;
     }
 
     public static parse(params: URLSearchParams, name: string, required?: boolean): string | null {
@@ -61,7 +61,7 @@ export default class Util {
             return 0;
         }
         const int = Number.parseInt(value, 10);
-        if (isNaN(int)) {
+        if (Number.isNaN(int)) {
             return 0;
         }
         return int;
@@ -100,7 +100,7 @@ export default class Util {
             input = input[input.length - 1] ?? '';
         }
         const int = Number.parseInt(input, 10);
-        if (isNaN(int)) {
+        if (Number.isNaN(int)) {
             return undefined;
         }
         return int;
@@ -126,7 +126,7 @@ export default class Util {
             window.addEventListener('testPassive', null, opts);
             // @ts-expect-error
             window.removeEventListener('testPassive', null, opts);
-        } catch (error: any) {}
+        } catch (_error: any) {}
 
         return (Util.supportsPassiveValue = supportsPassive);
     }

@@ -1,4 +1,3 @@
-// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import { statSync } from 'fs';
 import { DEVICE_SERVER_PATH } from '../common/Constants';
 import type { AdbClient } from './AdbClient';

@@ -461,7 +461,7 @@ export class ConfigureScrcpy extends Modal {
             const displayId = this.getNumberValueFromInput('displayId');
             const codecOptions = this.getStringValueFromInput('codecOptions') || undefined;
             let bounds: Size | undefined;
-            if (!isNaN(maxWidth) && !isNaN(maxHeight) && maxWidth && maxHeight) {
+            if (!Number.isNaN(maxWidth) && !Number.isNaN(maxHeight) && maxWidth && maxHeight) {
                 bounds = new Size(maxWidth, maxHeight);
             }
             const encoderName = this.getValueFromSelect('encoderName') || undefined;

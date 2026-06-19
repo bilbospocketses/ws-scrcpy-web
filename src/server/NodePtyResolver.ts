@@ -1,8 +1,5 @@
-// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import * as crypto from 'crypto';
-// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import * as fs from 'fs';
-// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import * as path from 'path';
 import { Logger } from './Logger';
 import { detectLibc, type LibcFlavor } from './libcDetect';
@@ -272,7 +269,7 @@ export async function downloadAndOverlayPtyNode(version: string, host: HostInfo,
         // contents onto the existing build/Release/. We DON'T blow away
         // build/Release because it may contain platform-specific helper
         // files (winpty-agent.exe on Windows, etc.) we want to keep.
-        const stagingDir = path.join(packageDir, '.staging-' + Date.now());
+        const stagingDir = path.join(packageDir, `.staging-${Date.now()}`);
         fs.mkdirSync(stagingDir, { recursive: true });
         const tarPath = path.join(stagingDir, `${key}.tar.gz`);
         fs.writeFileSync(tarPath, Buffer.from(await tarRes.arrayBuffer()));
@@ -328,14 +325,12 @@ function loadFromDataRoot(packageDir: string): typeof import('node-pty') | null 
         // survives bundling untouched. createRequire's argument is a
         // marker path inside packageDir; the require it returns then
         // resolves 'node-pty' against packageDir's node_modules tree.
-        // biome-ignore lint/suspicious/noExplicitAny: process.getBuiltinModule is loosely typed
         const builtinModule = (process as any).getBuiltinModule('module') as {
             createRequire(filename: string): NodeJS.Require;
         };
         const marker = path.join(packageDir, '_resolver-marker.js');
         const r = builtinModule.createRequire(marker);
         const pty = r('node-pty') as typeof import('node-pty');
-        // biome-ignore lint/suspicious/noExplicitAny: runtime shape check on an untyped import
         if (typeof (pty as any).spawn !== 'function') {
             return null;
         }

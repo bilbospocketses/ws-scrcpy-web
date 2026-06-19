@@ -150,7 +150,8 @@ export class RemoteShell extends Mw {
             if (!this.term) {
                 return;
             }
-            return this.term.write(event.data as string);
+            this.term.write(event.data as string);
+            return;
         }
         let data;
         try {

@@ -166,7 +166,7 @@ export class Device extends TypedEmitter<DeviceEvents> {
                 return output
                     .split(' ')
                     .map((pid) => Number.parseInt(pid, 10))
-                    .filter((num) => !isNaN(num));
+                    .filter((num) => !Number.isNaN(num));
             })
             .catch(() => {
                 return [];
@@ -183,7 +183,7 @@ export class Device extends TypedEmitter<DeviceEvents> {
                 .filter((item) => item.length);
             if (cols[cols.length - 1] === processName) {
                 const pid = Number.parseInt(cols[1]!, 10);
-                if (!isNaN(pid)) {
+                if (!Number.isNaN(pid)) {
                     list.push(pid);
                 }
             }

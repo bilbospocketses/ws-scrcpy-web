@@ -1,10 +1,6 @@
-// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import { execFileSync } from 'child_process';
-// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import * as crypto from 'crypto';
-// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import * as fs from 'fs';
-// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import * as path from 'path';
 
 /**

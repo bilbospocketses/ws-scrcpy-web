@@ -236,7 +236,7 @@ export class DependencyPanel {
                 const tooltip =
                     'In-app updates require an installed build. ' +
                     'In dev mode, populate dependencies/ via scripts/fetch-node.mjs.';
-                return `<button class="dep-btn dep-update" disabled title="${tooltip}">` + 'update (dev)</button>';
+                return `<button class="dep-btn dep-update" disabled title="${tooltip}">update (dev)</button>`;
             }
             return `<button class="dep-btn dep-update" data-update="${escapeHtml(dep.name)}">update</button>`;
         }

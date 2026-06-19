@@ -1,4 +1,3 @@
-// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import * as child_process from 'child_process';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { reapStrayAdbOnWindows } from '../shutdownHelpers';

@@ -9,5 +9,5 @@ export abstract class BaseControlCenter<T> extends TypedEmitter<ControlCenterEve
     abstract getId(): string;
     abstract getName(): string;
     abstract getDevices(): T[];
-    abstract runCommand(command: ControlCenterCommand): Promise<string | void>;
+    abstract runCommand(command: ControlCenterCommand): Promise<string | undefined>;
 }

@@ -1,4 +1,3 @@
-// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import { EventEmitter } from 'events';
 import { describe, expect, it, vi } from 'vitest';
 import { DependencyStatus } from '../../common/DependencyTypes';
@@ -27,7 +26,6 @@ function makeMockRes() {
     (res.end as ReturnType<typeof vi.fn>).mockImplementation((body: string) => {
         res.body = body;
     });
-    // biome-ignore lint/suspicious/noExplicitAny: test mock
     return res as any;
 }
 

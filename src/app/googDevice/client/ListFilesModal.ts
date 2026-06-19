@@ -668,7 +668,7 @@ export class ListFilesModal extends Modal implements DragAndPushListener {
             }
             case Protocol.DONE: {
                 const download = this.downloads.get(channel);
-                if (download && download.entry && download.entry.isFile()) {
+                if (download?.entry?.isFile()) {
                     // File download complete
                     this.finishFileDownload(channel);
                 } else {
@@ -881,7 +881,7 @@ export class ListFilesModal extends Modal implements DragAndPushListener {
             } else {
                 seg.className = 'list-files-breadcrumb-segment';
                 seg.textContent = part;
-                const targetPath = '/' + parts.slice(0, i + 1).join('/');
+                const targetPath = `/${parts.slice(0, i + 1).join('/')}`;
                 seg.addEventListener('click', () => this.loadDirectory(targetPath));
             }
             this.breadcrumbBar!.appendChild(seg);

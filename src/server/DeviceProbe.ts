@@ -1,6 +1,4 @@
-// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import path from 'path';
-// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import type WS from 'ws';
 import { ACTION } from '../common/Action';
 import { DEVICE_SERVER_PATH, SERVER_PACKAGE } from '../common/Constants';

@@ -485,7 +485,7 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
         DeviceTracker.instancesByUrl.delete(this.url.toString());
         if (!DeviceTracker.instancesByUrl.size) {
             const holder = document.getElementById(BaseDeviceTracker.HOLDER_ELEMENT_ID);
-            if (holder && holder.parentElement) {
+            if (holder?.parentElement) {
                 holder.parentElement.removeChild(holder);
             }
         }

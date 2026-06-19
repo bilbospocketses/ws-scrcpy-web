@@ -146,7 +146,7 @@ export abstract class BasePlayer extends TypedEmitter<PlayerEvents> {
                     if (boundsHeight > scaledHeight) {
                         boundsHeight = scaledHeight;
                     }
-                    if (boundsHeight == h) {
+                    if (boundsHeight === h) {
                         scaledWidth = w;
                     } else {
                         scaledWidth = (boundsHeight * w) / h;
@@ -228,7 +228,7 @@ export abstract class BasePlayer extends TypedEmitter<PlayerEvents> {
         }
         try {
             parsedValue = JSON.parse(saved);
-        } catch (error: any) {
+        } catch (_error: any) {
             console.error(`[${this.name}]`, 'Failed to parse', saved);
         }
         return parsedValue;
@@ -260,11 +260,18 @@ export abstract class BasePlayer extends TypedEmitter<PlayerEvents> {
         } = parsed;
 
         // REMOVE `frameRate`
-        const maxFps = isNaN(parsed.maxFps) ? parsed.frameRate : parsed.maxFps;
+        // parsed.* come from JSON.parse and may be undefined / strings; wrap in
+        // Number() so Number.isNaN replicates the old isNaN coercion (undefined -> NaN
+        // -> fall back to the preferred default), which a bare Number.isNaN would not.
+        const maxFps = Number.isNaN(Number(parsed.maxFps)) ? parsed.frameRate : parsed.maxFps;
         // REMOVE `maxSize`
         let bounds: Size | null = null;
-        if (typeof parsed.bounds !== 'object' || isNaN(parsed.bounds.width) || isNaN(parsed.bounds.height)) {
-            if (!isNaN(parsed.maxSize)) {
+        if (
+            typeof parsed.bounds !== 'object' ||
+            Number.isNaN(Number(parsed.bounds.width)) ||
+            Number.isNaN(Number(parsed.bounds.height))
+        ) {
+            if (!Number.isNaN(Number(parsed.maxSize))) {
                 bounds = new Size(parsed.maxSize, parsed.maxSize);
             }
         } else {
@@ -273,12 +280,12 @@ export abstract class BasePlayer extends TypedEmitter<PlayerEvents> {
         return new VideoSettings({
             displayId: typeof displayId === 'number' ? displayId : 0,
             crop: crop ? new Rect(crop.left, crop.top, crop.right, crop.bottom) : preferred.crop,
-            bitrate: !isNaN(bitrate) ? bitrate : preferred.bitrate,
+            bitrate: !Number.isNaN(Number(bitrate)) ? bitrate : preferred.bitrate,
             bounds: bounds !== null ? bounds : preferred.bounds,
-            maxFps: !isNaN(maxFps) ? maxFps : preferred.maxFps,
-            iFrameInterval: !isNaN(iFrameInterval) ? iFrameInterval : preferred.iFrameInterval,
+            maxFps: !Number.isNaN(Number(maxFps)) ? maxFps : preferred.maxFps,
+            iFrameInterval: !Number.isNaN(Number(iFrameInterval)) ? iFrameInterval : preferred.iFrameInterval,
             sendFrameMeta: typeof sendFrameMeta === 'boolean' ? sendFrameMeta : preferred.sendFrameMeta,
-            lockedVideoOrientation: !isNaN(lockedVideoOrientation)
+            lockedVideoOrientation: !Number.isNaN(Number(lockedVideoOrientation))
                 ? lockedVideoOrientation
                 : preferred.lockedVideoOrientation,
             codecOptions,

@@ -68,7 +68,7 @@ export function parseMdnsOutput(output: string): MdnsDevice[] {
         if (colonIdx === -1) continue;
         const address = addressPort.substring(0, colonIdx);
         const port = parseInt(addressPort.substring(colonIdx + 1), 10);
-        if (isNaN(port)) continue;
+        if (Number.isNaN(port)) continue;
         results.push({ name: name.trim(), service: service.trim(), address, port });
     }
     return results;

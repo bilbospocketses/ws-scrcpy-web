@@ -162,7 +162,7 @@ export class ControlCenter extends BaseControlCenter<GoogDeviceDescriptor> imple
         this.stopTracking();
     }
 
-    public async runCommand(command: ControlCenterCommand): Promise<void> {
+    public async runCommand(command: ControlCenterCommand): Promise<string | undefined> {
         const udid = command.getUdid();
         const device = this.getDevice(udid);
         if (!device) {

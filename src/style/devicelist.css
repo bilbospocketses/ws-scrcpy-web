@@ -50,6 +50,7 @@ body.list #device_list_menu {
     display: none;
 }
 
+/* biome-ignore lint/style/noDescendingSpecificity: intentional source order; reordering would change the cascade */
 #device_list_menu {
     display: block;
     position: absolute;
@@ -334,6 +335,7 @@ body.list #device_list_menu {
 /* Action buttons and links styled as buttons. Blue border moved here
    from .desc-block so the parent .desc-block can act as a grid cell
    (with gray cell borders) without an outer blue border around it. */
+/* biome-ignore-start lint/style/noDescendingSpecificity: intentional source order; reordering would change the cascade */
 #devices .device-list div.desc-block .action-button,
 #devices .device-list div.desc-block a {
     border: 0.5px solid var(--accent-color);
@@ -347,6 +349,7 @@ body.list #device_list_menu {
     cursor: pointer;
     display: inline-block;
 }
+/* biome-ignore-end lint/style/noDescendingSpecificity: end desc-block action selectors */
 
 #devices .device-list div.desc-block .action-button:hover,
 #devices .device-list div.desc-block a:hover {
@@ -379,6 +382,7 @@ body.list #device_list_menu {
 /* Device name row — inline label editor */
 #devices .device-name-cell {
     position: relative;
+    /* biome-ignore lint/complexity/noImportantStyles: targeted override of the row's base padding for the inline name-editor affordance */
     padding-right: 28px !important;
 }
 

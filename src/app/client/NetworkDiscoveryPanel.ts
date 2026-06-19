@@ -93,7 +93,7 @@ export class NetworkDiscoveryPanel {
         try {
             const res = await fetch('/api/devices/scan/subnet');
             const detected = await res.json();
-            if (detected && detected.cidr) {
+            if (detected?.cidr) {
                 gateway = { cidr: detected.cidr, hostCount: detected.hostCount };
             }
         } catch {

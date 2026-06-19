@@ -264,6 +264,7 @@
     visibility: visible;
 }
 
+/* biome-ignore lint/style/noDescendingSpecificity: intentional source order; reordering would change the cascade */
 .list-files-action-btn {
     background: transparent;
     border: none;
@@ -276,6 +277,7 @@
     justify-content: center;
 }
 
+/* biome-ignore lint/style/noDescendingSpecificity: intentional source order; reordering would change the cascade */
 .list-files-action-btn svg {
     width: var(--file-icon-size, 24px);
     height: var(--file-icon-size, 24px);

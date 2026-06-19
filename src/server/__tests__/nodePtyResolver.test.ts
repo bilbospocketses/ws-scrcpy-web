@@ -1,8 +1,5 @@
-// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import * as fs from 'fs';
-// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import * as os from 'os';
-// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {

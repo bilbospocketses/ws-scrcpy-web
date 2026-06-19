@@ -1,6 +1,3 @@
-// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
-
-// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 
