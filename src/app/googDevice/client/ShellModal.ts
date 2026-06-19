@@ -115,8 +115,30 @@ export class ShellModal extends Modal {
         return buildMultiplexUrl({ hostname, port, secure, pathname });
     }
 
+    // buildMultiplexUrl throws on a malformed device hostname/port; show a
+    // friendly inline message and close instead of letting the throw abort the
+    // modal open with an uncaught error. Mirrors ConnectModal's onError UI.
+    private showConnectError(err: unknown): void {
+        console.error('[ShellModal]', err);
+        const errorEl = document.createElement('div');
+        errorEl.className = 'shell-modal-error';
+        errorEl.textContent = `connection failed: ${err instanceof Error ? err.message : String(err)}`;
+        errorEl.style.cssText =
+            'padding: 24px; color: #f06c75; font-family: monospace; font-size: 14px; text-align: center;';
+        this.bodyEl.innerHTML = '';
+        this.bodyEl.appendChild(errorEl);
+        // Close after 4s (long enough to read, short enough not to feel stuck).
+        setTimeout(() => this.close(), 4000);
+    }
+
     private connect(terminalContainer: HTMLElement): void {
-        const url = this.buildWebSocketUrl();
+        let url: string;
+        try {
+            url = this.buildWebSocketUrl();
+        } catch (err) {
+            this.showConnectError(err);
+            return;
+        }
 
         // Get or create a multiplexer for this URL
         let multiplexer = ManagerClient.sockets.get(url);

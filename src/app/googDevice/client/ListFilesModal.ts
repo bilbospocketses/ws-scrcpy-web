@@ -415,6 +415,22 @@ export class ListFilesModal extends Modal implements DragAndPushListener {
         return buildMultiplexUrl({ hostname, port, secure, pathname });
     }
 
+    // buildMultiplexUrl throws on a malformed device hostname/port; show a
+    // friendly inline message and close instead of letting the throw abort the
+    // modal open with an uncaught error. Mirrors ConnectModal's onError UI.
+    private showConnectError(err: unknown): void {
+        console.error('[ListFilesModal]', err);
+        const errorEl = document.createElement('div');
+        errorEl.className = 'list-files-modal-error';
+        errorEl.textContent = `connection failed: ${err instanceof Error ? err.message : String(err)}`;
+        errorEl.style.cssText =
+            'padding: 24px; color: #f06c75; font-family: monospace; font-size: 14px; text-align: center;';
+        this.bodyEl.innerHTML = '';
+        this.bodyEl.appendChild(errorEl);
+        // Close after 4s (long enough to read, short enough not to feel stuck).
+        setTimeout(() => this.close(), 4000);
+    }
+
     // The FSLS channel — a sub-multiplexer on the shared WebSocket multiplexer.
     // ManagerClient creates this via createChannel(getChannelInitData()).
     // loadDirectory creates command sub-channels on THIS channel, not on the root multiplexer.
@@ -426,7 +442,12 @@ export class ListFilesModal extends Modal implements DragAndPushListener {
     private detachFsChannelKeepAlive?: (() => void) | undefined;
 
     private connectAndLoad(): void {
-        this.wsUrl = this.buildWebSocketUrl();
+        try {
+            this.wsUrl = this.buildWebSocketUrl();
+        } catch (err) {
+            this.showConnectError(err);
+            return;
+        }
 
         // Get or create the shared root multiplexer (same pattern as ManagerClient/ShellModal)
         let mux = ManagerClient.sockets.get(this.wsUrl);

@@ -66,8 +66,11 @@
     --button-border-color: #c0c6cc;
     --progress-background-color: rgba(50, 100, 255, 0.2);
     --progress-background-error-color: rgba(255, 50, 50, 0.2);
-    --accent-color: #5b9aff;
-    --accent-rgb: 91, 154, 255;
+    /* Darker than the dark-theme accent so it clears WCAG AA contrast (at least
+     * 4.5:1) as a focus ring / accent text color on the light background —
+     * #0969da is ~5.2:1 on white; reuses the light --info-color blue. */
+    --accent-color: #0969da;
+    --accent-rgb: 9, 105, 218;
     --danger-rgb: 185, 28, 28;
     --success-rgb: 21, 128, 61;
     --modal-divider: rgba(0, 0, 0, 0.08);

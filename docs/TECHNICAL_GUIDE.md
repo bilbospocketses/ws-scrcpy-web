@@ -1790,6 +1790,7 @@ The upgrade-server's wind-down probe detects when the new Node process is ready:
 | Marker file | Written by | Read by | Purpose |
 |-------------|-----------|---------|---------|
 | `control/apply-update-pending` | Node (UpdateService) | `post-stop` handler | (Windows) tells the post-stop step to run the Velopack apply |
+| `control/apply-update-verify.json` | Node (UpdateService) | `operation_server.rs` | (Windows local-mode) SHA256 manifest the operation-server verifies before applying a downloaded nupkg update |
 | `control/local-appimage` | Node (install) | `linux_service.rs` | (Linux) home AppImage path, used to relaunch local mode after a user-scope service uninstall |
 | `.restart` | Node (DependencyManager) | Launcher supervisor | Triggers a Node respawn after dep updates |
 
