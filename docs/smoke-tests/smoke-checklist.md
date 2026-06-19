@@ -122,7 +122,7 @@ Get the from-build first: `gh run download 26859605903 --repo bilbospocketses/ws
 | Test | How to perform | Expected + verify |
 |---|---|---|
 | ☐ **11.1** `[L]` No-libfuse2 launch | Run the smoke-target AppImage on a host without `libfuse2` | Launches (type-2 FUSE embedded); no "dlopen libfuse" error |
-| ☐ **11.2** `[L]` No-libfuse2 update | In-app update from that host | Succeeds → **clears item 31 step 3** (then remove the 5 gate files) |
+| ☐ **11.2** `[L]` No-libfuse2 update | In-app update from that host | Succeeds — regression check that the type-2 runtime self-updates with no host libfuse2 (gate code already removed) |
 | ☐ **11.3** `[L]` Locator-fix watch | During 6.3 / 6.4 / 6.6 apply + relaunch | No Velopack locator root-path regression (velopack#921) |
 
 ## #13 — Devices / scrcpy / adb 📱 *(needs a real Android device, Wireless debugging)*

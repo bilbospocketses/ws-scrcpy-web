@@ -287,17 +287,9 @@ AppImage signing is currently under evaluation; releases ship **unsigned** for n
 
 The bundled `node-pty` native binary is built against glibc. Musl-based distros (Alpine and similar) are not supported. Run on glibc-based distros: Ubuntu, Debian, Fedora, Arch, openSUSE, etc. — anything that ships glibc 2.31+ should work.
 
-#### libfuse2 (only for in-app updates)
+#### libfuse2 — not required
 
-**The AppImage no longer needs libfuse2 to launch.** Our packaging swaps in the static [type-2 AppImage runtime](https://github.com/AppImage/type2-runtime) (it statically links libfuse), so the AppImage starts on any glibc-based distro — including fresh Ubuntu 24+, Fedora 40+, and Arch installs that no longer ship libfuse2 by default. Just `chmod +x` and run.
-
-The **in-app updater** is the one remaining piece that still needs host `libfuse2`: it mounts the downloaded update AppImage to extract the new build. If Settings → Updates shows a libfuse2 warning, click **install libfuse2** to invoke `pkexec <pkg-manager> install` for your distro (auto-detected: `dnf`, `apt-get`, or `yum`). Or install manually:
-
-- **Debian/Ubuntu**: `sudo apt-get install libfuse2`
-- **Fedora/RHEL**: `sudo dnf install fuse-libs`
-- **Arch**: `sudo pacman -S fuse2`
-
-> This updater-side dependency is slated for removal: Velopack 1.1.1 (now bundled) ships its own type-2 runtime, so once it's verified on a no-libfuse2 distro the gate goes away entirely.
+The AppImage needs no host `libfuse2`. Packaging swaps in the static [type-2 AppImage runtime](https://github.com/AppImage/type2-runtime) (libfuse is statically linked), and the in-app updater uses Velopack's bundled type-2 runtime for the update mount — so the app both **launches** and **self-updates** on any glibc-based distro, including fresh Ubuntu 24+, Fedora 40+, and Arch installs that no longer ship libfuse2. Just `chmod +x` and run.
 
 #### Tray icon
 

@@ -510,7 +510,7 @@ dialog.list-files-modal .modal-body {
 
 /* ── Settings modal ── */
 /* Wider than the base modal: the Settings modal has accreted enough sections
-   (service scope, updates, App-section, libfuse2 gate) that long info/error text
+   (service scope, updates, App-section) that long info/error text
    wrapped into many lines and pushed the content past max-height -> a vertical
    scrollbar. The extra horizontal room lets that text breathe (fewer wrapped
    lines -> shorter content). Scoped to .settings-modal so the small confirm
