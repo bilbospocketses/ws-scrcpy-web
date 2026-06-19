@@ -35,8 +35,6 @@ export interface UpdatesStatusResponse {
     errorMessage?: string;
     /** Last successful check timestamp (ISO string). */
     lastCheckedAt?: string;
-    /** Linux only: whether libfuse2 is installed (required for AppImage updates). */
-    libfuse2Installed?: boolean;
     /** Mirrored from config.json for UI convenience. */
     autoUpdate: boolean;
     channel: UpdateChannel;

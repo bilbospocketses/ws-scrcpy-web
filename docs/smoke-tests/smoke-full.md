@@ -161,7 +161,7 @@ Velopack is at 1.2.0 (bumped in beta.44). These rows close out item 31 (the libf
 | Test | How to perform | Expected + verify |
 |---|---|---|
 | **11.1** `[Linux]` No-libfuse2 launch | On a minimal distro/container **without** `libfuse2` installed, run the smoke-target AppImage. | Launches (type-2 runtime has FUSE embedded); **no** `libfuse.so.2` / "dlopen libfuse" error. |
-| **11.2** `[Linux]` No-libfuse2 in-app update | From that no-libfuse2 host, run an in-app update (6.x flow). | Update succeeds → **clears item 31 step 3**; then the 5 libfuse2 gate files can be removed (`SystemdClient.ts`, `UpdatesApi.ts`, `UpdateEvents.ts`, `SettingsModal.ts`, README section). |
+| **11.2** `[Linux]` No-libfuse2 in-app update | From that no-libfuse2 host, run an in-app update (6.x flow). | Update succeeds. The libfuse2 gate code is already removed (`SystemdClient.ts`, `UpdatesApi.ts`, `UpdateEvents.ts`, `SettingsModal.ts`, README); this row is the regression check that the type-2 runtime self-updates with no host libfuse2. |
 | **11.3** `[Linux]` Locator fix watch (velopack#921) | During **6.3 / 6.4 / 6.6** apply + relaunch on the machine-wide `/opt` install. | Apply + relaunch land correctly; no Velopack locator root-path regression (the 1.2.0 fix targets exactly this path). |
 | **11.4** `[Win]` PerMachine intact | After the 1.5 MSI install, check the install location. | Installed PerMachine to `C:\Program Files\WsScrcpyWeb\` (vpk 1.2.0 `--msi --instLocation PerMachine` unchanged). |
 

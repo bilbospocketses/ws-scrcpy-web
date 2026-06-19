@@ -168,57 +168,6 @@ export async function runPkexec(shellCmd: string, label: string): Promise<string
     }
 }
 
-/**
- * Check if libfuse2 is available (required for Velopack AppImage updates).
- * If missing, return the package-manager install command for the detected
- * distro family (deb or rpm). Returns null if already present.
- */
-export async function isLibfuse2Installed(): Promise<boolean> {
-    try {
-        const { stdout } = await execFileAsync(resolveSystemTool('ldconfig'), ['-p'], {
-            encoding: 'utf8',
-        });
-        return stdout.includes('libfuse.so.2');
-    } catch {
-        return false;
-    }
-}
-
-async function libfuse2InstallCmd(): Promise<string | null> {
-    try {
-        const { stdout } = await execFileAsync(resolveSystemTool('ldconfig'), ['-p'], {
-            encoding: 'utf8',
-        });
-        if (stdout.includes('libfuse.so.2')) return null;
-    } catch {
-        // ldconfig not found or failed — assume libfuse2 is missing.
-    }
-
-    if (await fileExists('/usr/bin/dnf')) {
-        return 'dnf install -y fuse-libs';
-    }
-    if (await fileExists('/usr/bin/apt-get')) {
-        return 'apt-get install -y libfuse2';
-    }
-    if (await fileExists('/usr/bin/yum')) {
-        return 'yum install -y fuse-libs';
-    }
-    log.warn('libfuse2 missing but cannot detect package manager (no dnf, apt-get, or yum)');
-    return null;
-}
-
-/**
- * Ensure libfuse2 is installed (required for Velopack AppImage updates).
- * Uses pkexec for graphical privilege escalation if installation is needed.
- */
-export async function ensureLibfuse2(): Promise<void> {
-    const cmd = await libfuse2InstallCmd();
-    if (!cmd) return;
-    log.info(`libfuse2 not found; installing via: ${cmd}`);
-    await runPkexec(cmd, 'install libfuse2');
-    log.info('libfuse2 installed successfully');
-}
-
 async function runSystemctl(args: string[], label: string): Promise<string> {
     try {
         const { bin, args: a } = systemctlArgv(args);

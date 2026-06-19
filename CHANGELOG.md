@@ -25,6 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The light theme's accent color now meets WCAG AA contrast.** The accent blue used for focus outlines and accent text was `#5b9aff` in both themes, which only reaches about 3.8:1 against the light theme's white background — below the 4.5:1 minimum. Light mode now uses a darker blue (`#0969da`, ~5.2:1), matching its existing info color; dark mode is unchanged.
 
+### Removed
+
+- **Removed the libfuse2 first-run gate.** The Linux in-app updater previously required host `libfuse2` to mount the downloaded update AppImage and showed an "install libfuse2" prompt in Settings → Updates when it was missing. Velopack 1.2.0's bundled type-2 runtime embeds FUSE, so the update mount no longer needs host libfuse2. Removed the gate end to end: `isLibfuse2Installed` / `ensureLibfuse2` (`SystemdClient.ts`), the `/api/updates/install-libfuse2` endpoint and `libfuse2Installed` status field (`UpdatesApi.ts`, `UpdateEvents.ts`), the Settings prompt (`SettingsModal.ts`), and the README instructions. The AppImage already launches without libfuse2 via the build-time type-2 runtime swap.
+
 ### Fixed
 
 - **Opening the file browser or shell against a device with a malformed address no longer aborts with an uncaught error.** Both modals built their WebSocket URL without catching the validation error `buildMultiplexUrl` throws on an invalid hostname or port, so a malformed device address threw past the modal-open path. They now show a brief "connection failed" message and close, matching how the stream modal already handles connection errors.
