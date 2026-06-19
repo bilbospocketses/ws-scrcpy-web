@@ -27,7 +27,7 @@
                 "noStaticOnlyClass": "off",
                 "noThisInStatic": "off",
                 "useOptionalChain": "warn",
-                "useLiteralKeys": "warn",
+                "useLiteralKeys": "off",
                 "noUselessConstructor": "warn",
                 "noArguments": "warn"
             },
@@ -35,7 +35,7 @@
                 "noNonNullAssertion": "off",
                 "useDefaultParameterLast": "off",
                 "noParameterAssign": "off",
-                "useNodejsImportProtocol": "warn",
+                "useNodejsImportProtocol": "off",
                 "useTemplate": "warn",
                 "noUnusedTemplateLiteral": "warn",
                 "noUselessElse": "warn",
@@ -48,7 +48,7 @@
                 "noConstantCondition": "warn"
             },
             "performance": {
-                "noDelete": "warn"
+                "noDelete": "off"
             }
         }
     },

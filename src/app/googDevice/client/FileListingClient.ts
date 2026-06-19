@@ -171,7 +171,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                     let anchor: HTMLElement | undefined;
                     if (entryIdString) {
                         const entryId = Number.parseInt(entryIdString, 10);
-                        if (!isNaN(entryId) && this.entries[entryId]) {
+                        if (!Number.isNaN(entryId) && this.entries[entryId]) {
                             entry = this.entries[entryId];
                             anchor = e.target;
                         }
@@ -215,7 +215,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
 
     private findOrCreateEntryRow(fileName: string): HTMLElement {
         const existing = this.rowsByName.get(fileName);
-        if (existing && existing.isConnected) {
+        if (existing?.isConnected) {
             return existing;
         }
         return this.addRow(true, fileName, 'file');
@@ -224,7 +224,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
     public onFilePushUpdate(data: PushUpdateParams): void {
         const { fileName, progress, error, message, finished } = data;
         let upload = this.uploads.get(fileName);
-        if (!upload || !upload.anchor.isConnected) {
+        if (!upload?.anchor.isConnected) {
             const row = this.findOrCreateEntryRow(fileName);
             const anchor = row.getElementsByTagName('a')[0]!;
             const progressEl = this.appendProgressElement(anchor);
@@ -572,7 +572,7 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
             this.cleanProgress(el);
         }
         let name: string;
-        if (download.entry && download.entry.isFile()) {
+        if (download.entry?.isFile()) {
             name = download.entry.name;
         } else {
             // we always should have `download.entry` and never be here

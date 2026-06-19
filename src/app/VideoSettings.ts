@@ -41,7 +41,7 @@ export default class VideoSettings {
             this.iFrameInterval = data.iFrameInterval;
             this.sendFrameMeta = data.sendFrameMeta || false;
             this.lockedVideoOrientation = data.lockedVideoOrientation || -1;
-            if (typeof data.displayId === 'number' && !isNaN(data.displayId) && data.displayId >= 0) {
+            if (typeof data.displayId === 'number' && !Number.isNaN(data.displayId) && data.displayId >= 0) {
                 this.displayId = data.displayId;
             }
             if (data.codecOptions) {

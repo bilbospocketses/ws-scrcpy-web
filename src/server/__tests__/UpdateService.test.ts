@@ -1,10 +1,6 @@
-// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import * as child_process from 'child_process';
-// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import * as fs from 'fs';
-// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import * as os from 'os';
-// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import * as path from 'path';
 import type { UpdateInfo, UpdateOptions, VelopackAsset } from 'velopack';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -545,7 +541,6 @@ describe('UpdateService', () => {
             },
         });
         // Replace mgr after init so we can inspect progress live.
-        // biome-ignore lint/suspicious/noExplicitAny: test reaches into private field intentionally
         (svc as any).mgr = liveMgr;
         await svc.checkForUpdates();
         expect(progresses).toEqual([0, 42, 100]);

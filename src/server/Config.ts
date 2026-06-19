@@ -721,7 +721,6 @@ export class Config {
             if (!r.ok) {
                 throw new ConfigValidationError(r.error, key as string);
             }
-            // biome-ignore lint/suspicious/noExplicitAny: index assignment with verified-typed value
             (merged as any)[key] = r.value;
         }
         const restartRequired = merged.webPort !== this._appConfig.webPort;
@@ -739,7 +738,7 @@ export class Config {
      * with 2-space indent and trailing newline (Contract 1).
      */
     public saveToDisk(): void {
-        const out = JSON.stringify(this._appConfig, null, 2) + '\n';
+        const out = `${JSON.stringify(this._appConfig, null, 2)}\n`;
         const dir = path.dirname(this._configFilePath);
         if (!fs.existsSync(dir)) {
             fs.mkdirSync(dir, { recursive: true });

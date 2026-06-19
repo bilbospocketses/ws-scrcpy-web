@@ -118,7 +118,7 @@ export class AudioPlayer {
             return;
         }
 
-        if (!this.decoder || this.decoder.state !== 'configured') return;
+        if (this.decoder?.state !== 'configured') return;
 
         this.decoder.decode(
             new EncodedAudioChunk({

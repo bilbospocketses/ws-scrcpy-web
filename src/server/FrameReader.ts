@@ -1,5 +1,4 @@
 // src/server/FrameReader.ts
-// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import type net from 'net';
 
 // scrcpy v4 wire-protocol constants. v4 added a "session packet flag" at

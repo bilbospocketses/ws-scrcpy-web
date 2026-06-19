@@ -67,7 +67,7 @@ function timestamp(): string {
 function writeToFile(line: string): void {
     rotateIfNeeded(LOG_FILE, MAX_LOG_SIZE);
     try {
-        fs.appendFileSync(LOG_FILE, line + '\n');
+        fs.appendFileSync(LOG_FILE, `${line}\n`);
     } catch {
         // If we can't write to the log file, don't crash the server
     }

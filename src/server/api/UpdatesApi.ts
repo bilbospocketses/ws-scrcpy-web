@@ -1,4 +1,3 @@
-// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import type { IncomingMessage, ServerResponse } from 'http';
 import type { UpdateChannel } from '../../common/ConfigEvents';
 import { VALID_CHANNELS } from '../../common/ConfigEvents';

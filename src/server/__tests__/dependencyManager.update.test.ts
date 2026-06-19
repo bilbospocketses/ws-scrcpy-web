@@ -156,7 +156,6 @@ describe('DependencyManager.installNodejs rollback', () => {
         platform: 'win32' | 'linux',
     ): Promise<void> {
         // installNodejs is private — invoke via a typed cast for the test only.
-        // biome-ignore lint/suspicious/noExplicitAny: invoke private method
         await (mgr as any).installNodejs(downloadPath, version, installTmp, platform);
     }
 
@@ -170,7 +169,6 @@ describe('DependencyManager.installNodejs rollback', () => {
         const extractTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wsscrcpy-extract-'));
 
         // Mock extractZip to throw
-        // biome-ignore lint/suspicious/noExplicitAny: private method spy
         vi.spyOn(mgr as any, 'extractZip').mockRejectedValue(new Error('mock extract fail'));
 
         await expect(callInstallNodejs(mgr, '/fake/download.zip', '24.15.0', extractTmp, 'win32')).rejects.toThrow(
@@ -198,10 +196,8 @@ describe('DependencyManager.installNodejs rollback', () => {
         fs.writeFileSync(path.join(archiveRoot, 'node.exe'), 'NEW-NODE-BYTES');
 
         // extractZip mock succeeds (no-op — the layout is pre-populated).
-        // biome-ignore lint/suspicious/noExplicitAny: private method spy
         vi.spyOn(mgr as any, 'extractZip').mockResolvedValue(undefined);
         // copyDirContents mock throws partway.
-        // biome-ignore lint/suspicious/noExplicitAny: private method spy
         vi.spyOn(mgr as any, 'copyDirContents').mockImplementation(() => {
             throw new Error('mock copy fail');
         });
@@ -231,7 +227,6 @@ describe('DependencyManager.installNodejs rollback', () => {
         fs.writeFileSync(path.join(archiveRoot, 'node.exe'), 'NEW-NODE-BYTES');
         fs.writeFileSync(path.join(archiveRoot, 'npm.cmd'), 'NPM-CMD-BYTES');
 
-        // biome-ignore lint/suspicious/noExplicitAny: private method spy
         vi.spyOn(mgr as any, 'extractZip').mockResolvedValue(undefined);
         // Don't mock copyDirContents — let it run for real on the pre-populated archive.
 

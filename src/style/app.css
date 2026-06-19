@@ -88,10 +88,12 @@ html {
     *,
     *::before,
     *::after {
+        /* biome-ignore-start lint/complexity/noImportantStyles: WCAG prefers-reduced-motion global reset — !important is the idiomatic override (#103) */
         animation-duration: 0.01ms !important;
         animation-iteration-count: 1 !important;
         transition-duration: 0.01ms !important;
         scroll-behavior: auto !important;
+        /* biome-ignore-end lint/complexity/noImportantStyles: end reduced-motion reset */
     }
 }
 

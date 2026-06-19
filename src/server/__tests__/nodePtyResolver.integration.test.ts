@@ -1,8 +1,5 @@
-// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import * as fs from 'fs';
-// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import * as os from 'os';
-// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
@@ -63,7 +60,6 @@ describe('NodePtyResolver — integration (seed → dataRoot)', () => {
 
         expect(handle.reason).toBeUndefined();
         expect(handle.available).toBe(true);
-        // biome-ignore lint/suspicious/noExplicitAny: runtime shape probe
         expect(typeof (handle.pty as any).spawn).toBe('function');
 
         // Verify staging actually happened in dataRoot (not in install

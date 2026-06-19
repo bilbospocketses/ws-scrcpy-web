@@ -129,7 +129,7 @@ export class FilePushReader {
                     return;
                 }
                 const { chunk } = command;
-                if (!chunk || !chunk.length) {
+                if (!chunk?.length) {
                     this.closeWithError(FilePushResponseStatus.ERROR_INCORRECT_SIZE);
                     return;
                 }

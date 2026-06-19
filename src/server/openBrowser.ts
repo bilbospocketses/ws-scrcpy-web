@@ -1,6 +1,4 @@
-// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import { spawn } from 'child_process';
-// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import { rmSync, statSync } from 'fs';
 import { Logger } from './Logger';
 

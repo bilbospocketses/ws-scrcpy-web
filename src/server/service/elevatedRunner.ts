@@ -32,7 +32,6 @@
 import { randomBytes } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import { execFile, spawn } from 'child_process';
 import { promisify } from 'util';
 import { Logger } from '../Logger';

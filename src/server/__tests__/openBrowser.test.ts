@@ -1,8 +1,5 @@
-// biome-ignore lint/style/useNodejsImportProtocol: match the non-prefixed app-code import style
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
-// biome-ignore lint/style/useNodejsImportProtocol: match the non-prefixed app-code import style
 import { tmpdir } from 'os';
-// biome-ignore lint/style/useNodejsImportProtocol: match the non-prefixed app-code import style
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { consumeSuppressBrowserMarker, shouldAutoOpenBrowser } from '../openBrowser';

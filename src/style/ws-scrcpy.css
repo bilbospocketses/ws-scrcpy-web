@@ -141,6 +141,7 @@ body[data-embed-entry] .device-view {
     opacity: 1;
 }
 
+/* biome-ignore lint/style/noDescendingSpecificity: intentional source order; reordering would change the cascade */
 .control-button > svg {
     fill: var(--svg-button-fill);
     width: 100%;

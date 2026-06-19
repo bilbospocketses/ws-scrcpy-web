@@ -1,12 +1,7 @@
-// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import { execFile } from 'child_process';
-// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import fs from 'fs';
-// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import os from 'os';
-// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import path from 'path';
-// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import { promisify } from 'util';
 import { Logger } from './Logger';
 import { loadManifest } from './NodePtyResolver';

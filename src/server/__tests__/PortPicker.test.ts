@@ -1,4 +1,3 @@
-// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import * as net from 'net';
 import { afterEach, describe, expect, it } from 'vitest';
 import { findAvailablePort, webPortOverride } from '../PortPicker';

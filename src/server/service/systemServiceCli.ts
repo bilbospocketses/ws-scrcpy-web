@@ -1,6 +1,4 @@
-// biome-ignore lint/style/useNodejsImportProtocol: webpack externals
 import { execFile } from 'child_process';
-// biome-ignore lint/style/useNodejsImportProtocol: webpack externals
 import * as fs from 'fs';
 import { WS_SCRCPY_SERVICE_DESCRIPTION, WS_SCRCPY_SERVICE_NAME } from '../../common/ServiceEvents';
 import { Config } from '../Config';
@@ -69,12 +67,12 @@ export function assertSafeRootDir(path: string, lstat: CoreDeps['lstat']): void 
 
 export async function installSystemService(opts: { port: number }, d: CoreDeps): Promise<void> {
     assertRoot(d.getuid);
-    const mkdir = d.tool('mkdir'),
-        cp = d.tool('cp'),
-        chmod = d.tool('chmod'),
-        systemctl = d.tool('systemctl');
-    const semanage = d.sbinTool('semanage'),
-        restorecon = d.sbinTool('restorecon');
+    const mkdir = d.tool('mkdir');
+    const cp = d.tool('cp');
+    const chmod = d.tool('chmod');
+    const systemctl = d.tool('systemctl');
+    const semanage = d.sbinTool('semanage');
+    const restorecon = d.sbinTool('restorecon');
 
     await d.run([mkdir, '-p', STAGED_SYSTEM_DIR]);
     await d.run([mkdir, '-p', SYSTEM_STATE_DIR]);
@@ -93,7 +91,7 @@ export async function installSystemService(opts: { port: number }, d: CoreDeps):
     await d.run([restorecon, '-R', SYSTEM_STATE_DIR]);
 
     const seed = buildSystemSeedConfig(opts.port);
-    d.writeFile(`${SYSTEM_STATE_DIR}/config.json`, JSON.stringify(seed, null, 2) + '\n', { mode: 0o644 });
+    d.writeFile(`${SYSTEM_STATE_DIR}/config.json`, `${JSON.stringify(seed, null, 2)}\n`, { mode: 0o644 });
     const envVars = {
         ...buildServiceUnitEnv('linux', 'system', STAGED_SYSTEM_DEPS_DIR),
         WS_SCRCPY_WEB_PORT: String(opts.port),
@@ -121,10 +119,10 @@ export async function uninstallSystemService(
     d: CoreDeps & { removeFile: (p: string) => void },
 ): Promise<void> {
     assertRoot(d.getuid);
-    const systemctl = d.tool('systemctl'),
-        rm = d.tool('rm'),
-        semanage = d.sbinTool('semanage'),
-        restorecon = d.sbinTool('restorecon');
+    const systemctl = d.tool('systemctl');
+    const rm = d.tool('rm');
+    const semanage = d.sbinTool('semanage');
+    const restorecon = d.sbinTool('restorecon');
     await d.run([systemctl, 'disable', '--now', `${WS_SCRCPY_SERVICE_NAME}.service`]).catch(() => undefined);
     d.removeFile(UNIT_PATH);
     await d.run([systemctl, 'daemon-reload']);
@@ -254,7 +252,7 @@ export function makeProductionCoreDeps(): CliDeps {
         sbinTool: (t) => resolveSystemTool(t),
         defaultPort: () => Config.getInstance().getAppConfig().webPort,
         log: (s) => {
-            process.stdout.write(s + '\n');
+            process.stdout.write(`${s}\n`);
         },
     };
 }

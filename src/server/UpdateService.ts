@@ -1,10 +1,6 @@
-// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import { execFile, spawn } from 'child_process';
-// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import * as fs from 'fs';
-// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import * as path from 'path';
-// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import { promisify } from 'util';
 import { type UpdateInfo, UpdateManager, type UpdateOptions, type VelopackLocatorConfig } from 'velopack';
 import type { UpdateChannel } from '../common/ConfigEvents';
@@ -730,7 +726,7 @@ export class UpdateService {
             try {
                 const content = await fs.promises.readFile(portFilePath, 'utf8');
                 const port = parseInt(content.trim(), 10);
-                if (!isNaN(port) && port > 0 && port <= 65535) {
+                if (!Number.isNaN(port) && port > 0 && port <= 65535) {
                     return port;
                 }
             } catch {

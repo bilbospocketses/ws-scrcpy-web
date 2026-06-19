@@ -47,7 +47,7 @@ export class Message {
     public toCloseEvent(): CloseEvent {
         let code: number | undefined;
         let reason: string | undefined;
-        if (this.data && this.data.byteLength) {
+        if (this.data?.byteLength) {
             const view = new DataView(this.data);
             code = view.getUint16(0, true);
             if (this.data.byteLength > 6) {

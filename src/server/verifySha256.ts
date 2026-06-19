@@ -1,6 +1,4 @@
-// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import { createHash } from 'crypto';
-// biome-ignore lint/style/useNodejsImportProtocol: webpack externals don't support node: prefix
 import { createReadStream } from 'fs';
 
 /** Stream-hash `filePath` (sha256) and return the lowercase hex digest. */

@@ -463,7 +463,7 @@ export abstract class InteractionHandler {
         const logPrefix = `${TAG}[formatTouchEvent]`;
         const messages: TouchControlMessage[] = [];
         const touches = e.changedTouches;
-        if (touches && touches.length) {
+        if (touches?.length) {
             for (let i = 0, l = touches.length; i < l; i++) {
                 const touch = touches[i]!;
                 const pointerId = InteractionHandler.getPointerId(e.type, touch.identifier);
