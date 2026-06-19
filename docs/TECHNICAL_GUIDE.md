@@ -33,6 +33,7 @@ This document covers the internal architecture of ws-scrcpy-web -- a browser-bas
 21. [Tray Helper](#21-tray-helper)
 22. [In-App Updater (Velopack)](#22-in-app-updater-velopack)
 23. [First-Run Modal Gating](#23-first-run-modal-gating)
+24. [Access Control & Request Gating](#24-access-control--request-gating)
 
 ---
 
@@ -1889,3 +1890,38 @@ This design means the state survives port changes, browser cache clears, and mac
 | `src/app/client/ServiceFirstRunModal.ts` | Service-instance first-run info modal |
 | `src/app/client/PortChangeModal.ts` | Port-changed notification modal |
 | `src/app/client/SettingsModal.ts` | "Reset welcome prompts" button |
+
+---
+
+## 24. Access Control & Request Gating
+
+ws-scrcpy-web serves an **unauthenticated** API + WebSocket surface (anyone who can reach the port can drive connected devices). It is designed for a trusted local/LAN network — there is no user login (an opt-in auth subsystem is a separate, future workstream). The server defends that surface against *cross-network* and *cross-site* attackers with three layers, evaluated in order in `src/server/security/requestGate.ts`:
+
+1. **Host allowlist (DNS-rebinding defense)** — `originGuard.isHostAllowed`. The `Host` header's hostname must be `localhost`, an IP literal (e.g. `192.168.1.5`, `[::1]`), or an operator-configured `allowedHosts` entry. A bare domain name is rejected, because DNS-rebinding attacks require a domain the attacker can re-point at a loopback/LAN address. This check is **universal** — it applies even to document / static-asset requests, so a rebound page never loads.
+2. **Origin match (CSRF defense)** — `originGuard.isRequestAllowed`. For the sensitive surface (`/api/*` and any state-changing method), a present `Origin` header must equal the request's own origin (`http(s)://<host>`). A *missing* Origin is allowed here (non-browser clients and top-level navigations omit it); the token layer closes that gap.
+3. **Per-instance token** — `instanceToken.ts`. A 256-bit random token is minted once per server launch and handed to the browser as an `HttpOnly; SameSite=Strict` cookie when it loads a document. Every `/api/*` call (except the launcher's `GET /api/config` discovery probe) and every WebSocket upgrade must present it, compared in constant time. A non-browser LAN client that never loaded the page has no token and is refused.
+
+### 24.1 `allowedHosts` — serving on a domain / behind a reverse proxy
+
+By default only `localhost` + IP literals pass layer 1, so terminating TLS at a reverse proxy and serving on a domain name (`https://devices.example.com`) is blocked. Rather than weaken the default, add the domain(s) to the server-only `allowedHosts` array in `config.json`:
+
+```json
+{
+  "webPort": 8000,
+  "allowedHosts": ["devices.example.com"]
+}
+```
+
+- `allowedHosts` is read **once at boot** (`Config.allowedHosts` → `originGuard.setAllowedHosts`) and is **server-only**: it is deliberately absent from `AppConfig`, so it can never be read or changed through the frontend-facing `GET` / `PATCH /api/config` surface. Entries are trimmed, lowercased, and matched against the `Host` hostname (port stripped).
+- The reverse proxy **must forward the original `Host` header** (the domain), not rewrite it to the upstream `localhost` — otherwise layer 2's Origin match fails (browser `Origin: https://devices.example.com` vs upstream `Host: localhost`).
+- Only list domains you control. Every entry widens the rebinding surface by exactly that name, so keep the list tight; leave it empty (the default) for local/LAN-only use.
+
+### 24.2 Key Files
+
+| File | Purpose |
+|------|---------|
+| `src/server/security/originGuard.ts` | Host allowlist (`isHostAllowed`, `setAllowedHosts`) + Origin match (`isRequestAllowed`) |
+| `src/server/security/requestGate.ts` | Composes the three layers for HTTP (`evaluateHttpRequest`) and WS (`evaluateWsConnection`) |
+| `src/server/security/instanceToken.ts` | Per-launch token mint, cookie build, constant-time validation |
+| `src/server/Config.ts` | Reads + sanitizes `allowedHosts` from config.json (`sanitizeAllowedHosts`, `Config.allowedHosts`) |
+| `src/server/index.ts` | Applies `allowedHosts` at boot via `setAllowedHosts(config.allowedHosts)` |

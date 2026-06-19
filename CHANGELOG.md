@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Optional `allowedHosts` config for reverse-proxy / domain deployments.** By default the server accepts only `localhost` and IP-literal `Host` headers (a DNS-rebinding defense), which blocks serving it on a domain name behind a TLS-terminating reverse proxy. A new server-only `allowedHosts` array in `config.json` opts specific domains in (e.g. `{ "allowedHosts": ["devices.example.com"] }`). It is read once at startup and is deliberately not exposed or mutable through the `/api/config` surface. See `SECURITY.md` and TECHNICAL_GUIDE §24.
+
 ### Changed
 
 - **The light theme's accent color now meets WCAG AA contrast.** The accent blue used for focus outlines and accent text was `#5b9aff` in both themes, which only reaches about 3.8:1 against the light theme's white background — below the 4.5:1 minimum. Light mode now uses a darker blue (`#0969da`, ~5.2:1), matching its existing info color; dark mode is unchanged.

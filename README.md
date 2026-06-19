@@ -329,6 +329,18 @@ A few advanced switches are only available via environment variables:
 | `VELOPACK_FEED_URL` | Force the Velopack auto-updater to use a custom feed URL (mostly useful for the local update-flow sandbox test). |
 | `ADB_PATH` | Override the path to the ADB executable (rarely needed; the dependency manager handles ADB by default). |
 
+### Access control
+
+ws-scrcpy-web has **no login** — anyone who can reach the port can control connected devices, so run it only on a trusted local/LAN network. The server blocks cross-site (CSRF) and DNS-rebinding attacks with a Host allowlist, an Origin check, and a per-launch token cookie; by default it accepts only `localhost` and IP-literal hosts.
+
+To serve it on a domain name behind a TLS-terminating reverse proxy, add the domain(s) to a server-only `allowedHosts` array in `config.json` (read at startup, never exposed via the in-app API), and make sure the proxy forwards the original `Host` header:
+
+```json
+{ "allowedHosts": ["devices.example.com"] }
+```
+
+See [`SECURITY.md`](SECURITY.md) and `docs/TECHNICAL_GUIDE.md` §24 for the full access-control model.
+
 ## Logging
 
 The server logs all output to `ws-scrcpy-web.log`. Every line includes an ISO 8601 timestamp and a module tag (e.g., `[ScrcpyConnection]`, `[Server]`). The log file rotates at 10 MB (per write), keeping one backup (`.log.1`). In dev (`npm start`, no launcher) console output is preserved in the terminal; under the launcher the console echo is suppressed and `ws-scrcpy-web.log` is the single source of truth.

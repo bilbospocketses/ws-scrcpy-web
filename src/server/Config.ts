@@ -50,6 +50,12 @@ export interface FlatConfig {
     updateCheckIntervalMinutes?: number;
     channel?: 'stable' | 'beta';
     githubOwner?: string;
+
+    // Security: extra Host header hostnames accepted beyond localhost / IP
+    // literals (reverse-proxy / domain deployments). Server-only and read at
+    // boot — deliberately NOT part of AppConfig, so it is never exposed or
+    // mutable via the frontend-facing GET/PATCH /api/config surface.
+    allowedHosts?: string[];
 }
 
 /**
@@ -342,6 +348,29 @@ function sanitizeAppConfig(raw: FlatConfig, warn: (msg: string) => void): AppCon
     return out;
 }
 
+/**
+ * Validate the optional `allowedHosts` escape-hatch from config.json into a
+ * clean string[]. Non-arrays and non-string / blank entries are dropped with a
+ * warning rather than throwing (Contract 1: do not throw on load). Hostnames
+ * are trimmed + lowercased so they compare directly against the parsed Host.
+ */
+export function sanitizeAllowedHosts(raw: unknown, warn: (msg: string) => void): string[] {
+    if (raw === undefined) return [];
+    if (!Array.isArray(raw)) {
+        warn('config.json: allowedHosts must be an array of hostname strings; ignoring');
+        return [];
+    }
+    const out: string[] = [];
+    for (const entry of raw) {
+        if (typeof entry !== 'string' || entry.trim().length === 0) {
+            warn(`config.json: allowedHosts entry ${JSON.stringify(entry)} is not a non-empty string; skipping`);
+            continue;
+        }
+        out.push(entry.trim().toLowerCase());
+    }
+    return out;
+}
+
 export class Config {
     private static instance?: Config | undefined;
 
@@ -475,6 +504,8 @@ export class Config {
                 fileConfig.scanProgressInterval ||
                 DEFAULT_SCAN_PROGRESS_INTERVAL;
 
+            const allowedHosts = sanitizeAllowedHosts(fileConfig.allowedHosts, warn);
+
             this.instance = new Config(
                 servers,
                 adbPath,
@@ -486,6 +517,7 @@ export class Config {
                 appConfig,
                 configFilePath,
                 dataRoot,
+                allowedHosts,
             );
         }
         return this.instance;
@@ -507,6 +539,7 @@ export class Config {
         appConfig: AppConfig,
         configFilePath: string,
         private readonly _dataRoot: string | null = null,
+        private readonly _allowedHosts: string[] = [],
     ) {
         this._appConfig = appConfig;
         this._configFilePath = configFilePath;
@@ -537,6 +570,15 @@ export class Config {
      */
     public get dataRoot(): string | null {
         return this._dataRoot;
+    }
+
+    /**
+     * Operator-configured extra Host hostnames (config.json `allowedHosts`)
+     * accepted beyond localhost / IP literals. Read once at boot and applied to
+     * the security layer via setAllowedHosts(); never frontend-mutable.
+     */
+    public get allowedHosts(): string[] {
+        return this._allowedHosts;
     }
 
     /**

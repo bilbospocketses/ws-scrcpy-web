@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { isHostAllowed, isRequestAllowed, requiresOriginCheck } from './originGuard';
+import { afterEach, describe, expect, it } from 'vitest';
+import { isHostAllowed, isRequestAllowed, requiresOriginCheck, setAllowedHosts } from './originGuard';
 
 describe('originGuard.isRequestAllowed', () => {
     describe('Host allowlist (DNS-rebinding defense)', () => {
@@ -84,6 +84,59 @@ describe('originGuard.isHostAllowed', () => {
         expect(isHostAllowed('myserver.local')).toBe(false);
         expect(isHostAllowed(undefined)).toBe(false);
         expect(isHostAllowed('bad host!!')).toBe(false);
+    });
+});
+
+describe('originGuard.setAllowedHosts (configurable escape-hatch)', () => {
+    // setAllowedHosts mutates module-level state; restore the default
+    // (localhost + IP only) after every test so the rest of the suite — and
+    // re-runs — see pristine state.
+    afterEach(() => {
+        setAllowedHosts([]);
+    });
+
+    it('accepts a configured domain Host that would otherwise be rejected', () => {
+        expect(isHostAllowed('app.example.com')).toBe(false);
+        setAllowedHosts(['app.example.com']);
+        expect(isHostAllowed('app.example.com')).toBe(true);
+    });
+
+    it('strips the port when matching a configured domain Host', () => {
+        setAllowedHosts(['app.example.com']);
+        expect(isHostAllowed('app.example.com:8443')).toBe(true);
+    });
+
+    it('matches configured hosts case-insensitively', () => {
+        setAllowedHosts(['App.Example.COM']);
+        expect(isHostAllowed('app.example.com')).toBe(true);
+    });
+
+    it('still rejects domains that are not in the configured list', () => {
+        setAllowedHosts(['app.example.com']);
+        expect(isHostAllowed('evil.com')).toBe(false);
+    });
+
+    it('still allows localhost and IP literals when a list is configured', () => {
+        setAllowedHosts(['app.example.com']);
+        expect(isHostAllowed('localhost:8000')).toBe(true);
+        expect(isHostAllowed('192.168.1.5:8000')).toBe(true);
+    });
+
+    it('lets a same-origin request to a configured domain pass end-to-end', () => {
+        setAllowedHosts(['app.example.com']);
+        expect(isRequestAllowed('https://app.example.com', 'app.example.com').allowed).toBe(true);
+    });
+
+    it('restores the default localhost+IP-only policy when set to an empty list', () => {
+        setAllowedHosts(['app.example.com']);
+        setAllowedHosts([]);
+        expect(isHostAllowed('app.example.com')).toBe(false);
+    });
+
+    it('ignores blank/whitespace entries', () => {
+        setAllowedHosts(['  ', '', 'app.example.com']);
+        expect(isHostAllowed('app.example.com')).toBe(true);
+        expect(isHostAllowed('   ')).toBe(false);
     });
 });
 

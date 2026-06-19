@@ -26,6 +26,7 @@ import { NetworkScanner } from './network/NetworkScanner';
 import { consumeSuppressBrowserMarker, openBrowser, shouldAutoOpenBrowser } from './openBrowser';
 import { findAvailablePort, webPortOverride } from './PortPicker';
 import { ScrcpyConnection } from './ScrcpyConnection';
+import { setAllowedHosts } from './security/originGuard';
 import { makeProductionCoreDeps, parseSystemServiceArgs, runSystemServiceCli } from './service/systemServiceCli';
 import { HttpServer } from './services/HttpServer';
 import type { Service, ServiceClass } from './services/Service';
@@ -80,6 +81,12 @@ if (__ssArgs) {
     const runningServices: Service[] = [];
 
     const config = Config.getInstance();
+
+    // Apply the operator-configured Host allowlist to the security layer before
+    // any server starts accepting requests. Empty by default (localhost + IP
+    // literals only); a config.json `allowedHosts` opts a domain/reverse-proxy
+    // deployment in. See docs/SECURITY.md.
+    setAllowedHosts(config.allowedHosts);
 
     // Detect port collision: walk forward from the configured webPort until a free
     // port is found (range = configured..+99). On shift, persist the new port and
