@@ -10,12 +10,12 @@ import {
     VALID_INSTALL_MODES,
 } from '../common/ConfigEvents';
 import type { ServerItem } from '../types/Configuration';
-import { DEFAULT_DEVICE_LABELS_PATH } from './DeviceLabelStore';
 import { IMPLICIT_ADMIN_ID } from './db/constants';
 import { Db, dbDir } from './db/Db';
 import { GLOBAL_KEYS, PROMPT_KEYS } from './db/import/importConfigJson';
 import { EnvName } from './EnvName';
 import { Logger } from './Logger';
+import { DEFAULT_DEVICE_LABELS_PATH } from './legacyDeviceLabels';
 
 const DEFAULT_SCAN_CONCURRENCY = 64;
 const DEFAULT_SCAN_TCP_TIMEOUT_MS = 300;

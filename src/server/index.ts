@@ -12,8 +12,8 @@ import { UpdatesApi } from './api/UpdatesApi';
 import { WhoamiApi } from './api/WhoamiApi';
 import { Config } from './Config';
 import { DependencyManager } from './DependencyManager';
-import { DeviceLabelStore } from './DeviceLabelStore';
 import { DeviceProbe } from './DeviceProbe';
+import { IMPLICIT_ADMIN_ID } from './db/constants';
 import { Logger } from './Logger';
 import { HostTracker } from './mw/HostTracker';
 import type { MwFactory } from './mw/Mw';
@@ -182,7 +182,7 @@ if (__ssArgs) {
         // adb process is launched.
         adbStartServer: () => adbDaemon.ensureReady({ waitMs: 5_000 }),
         resolveMac,
-        labelFor: (key: string) => DeviceLabelStore.getInstance().get(key),
+        labelFor: (key: string) => config.db.devices.getLabel(IMPLICIT_ADMIN_ID, key),
         concurrency: config.scanConcurrency,
         progressInterval: config.scanProgressInterval,
         tcpTimeoutMs: config.scanTcpTimeoutMs,
