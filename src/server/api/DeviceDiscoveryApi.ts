@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { AdbClient, parseSerialFromMdnsName } from '../AdbClient';
+import { resolveUserId } from '../auth/currentUser';
 import { Config } from '../Config';
-import { DeviceLabelStore } from '../DeviceLabelStore';
 import { Logger } from '../Logger';
 import { resolveMac } from '../network/MacResolver';
 import { detectSubnet } from '../network/SubnetDetector';
@@ -31,7 +31,8 @@ export class DeviceDiscoveryApi {
                 );
                 const connected = await this.adbClient.devices();
                 const connectedAddresses = new Set(connected.map((d) => d.serial));
-                const labelStore = DeviceLabelStore.getInstance();
+                const db = Config.getInstance().db;
+                const userId = resolveUserId(req);
                 const available = connectable
                     .filter((d) => {
                         const addr = `${d.address}:${d.port}`;
@@ -42,7 +43,7 @@ export class DeviceDiscoveryApi {
                         return {
                             ...d,
                             serial,
-                            label: labelStore.get(serial) || '',
+                            label: db.devices.getLabel(userId, serial) || '',
                         };
                     });
                 res.writeHead(200);
@@ -68,9 +69,11 @@ export class DeviceDiscoveryApi {
                     res.end(JSON.stringify({ error: 'address is required' }));
                     return true;
                 }
+                const db = Config.getInstance().db;
+                const userId = resolveUserId(req);
                 // mDNS path: serial is known upfront, save the label before connecting.
                 if (serial && label) {
-                    DeviceLabelStore.getInstance().set(serial, label);
+                    db.devices.setLabel(userId, serial, label);
                 }
                 const result = await this.adbClient.connect(address);
                 const success = result.includes('connected');
@@ -88,12 +91,12 @@ export class DeviceDiscoveryApi {
                             if (lookedUp) realSerial = lookedUp;
                         }
                         if (realSerial) {
-                            DeviceLabelStore.getInstance().set(realSerial, label);
+                            db.devices.setLabel(userId, realSerial, label);
                         }
                         const ip = address.split(':')[0]!;
                         const mac = await resolveMac(ip);
                         if (mac) {
-                            DeviceLabelStore.getInstance().set(mac, label);
+                            db.devices.setLabel(userId, mac, label);
                         }
                     } catch {
                         // Serial or MAC lookup failed — partial persist is OK;
@@ -153,7 +156,7 @@ export class DeviceDiscoveryApi {
             }
 
             if (req.method === 'GET' && url === '/api/devices/labels') {
-                const labels = DeviceLabelStore.getInstance().getAll();
+                const labels = Config.getInstance().db.devices.getAllLabels(resolveUserId(req));
                 res.writeHead(200);
                 res.end(JSON.stringify(labels));
                 return true;
@@ -166,11 +169,12 @@ export class DeviceDiscoveryApi {
                     res.end(JSON.stringify({ error: 'serial is required' }));
                     return true;
                 }
-                const store = DeviceLabelStore.getInstance();
+                const db = Config.getInstance().db;
+                const userId = resolveUserId(req);
                 if (label) {
-                    store.set(serial, label);
+                    db.devices.setLabel(userId, serial, label);
                 } else {
-                    store.delete(serial);
+                    db.devices.deleteLabel(userId, serial);
                 }
                 res.writeHead(200);
                 res.end(JSON.stringify({ success: true }));
