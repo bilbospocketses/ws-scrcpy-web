@@ -102,4 +102,36 @@ export class DeviceStore {
         for (const r of rows) out[r.serial] = r.label;
         return out;
     }
+
+    // --- Per-device settings (Phase 3): device_settings keyed (user, udid, scope) ---
+
+    getDeviceSetting(userId: number, udid: string, scope: string): unknown {
+        const r = this.db
+            .prepare('SELECT value FROM device_settings WHERE user_id = ? AND udid = ? AND scope = ?')
+            .get(userId, udid, scope) as { value: string } | undefined;
+        return r ? JSON.parse(r.value) : undefined;
+    }
+
+    setDeviceSetting(userId: number, udid: string, scope: string, value: unknown): void {
+        this.db
+            .prepare(
+                'INSERT INTO device_settings (user_id, udid, scope, value) VALUES (?, ?, ?, ?) ON CONFLICT(user_id, udid, scope) DO UPDATE SET value = excluded.value',
+            )
+            .run(userId, udid, scope, JSON.stringify(value));
+    }
+
+    getDeviceSettings(userId: number, udid: string): Record<string, unknown> {
+        const rows = this.db
+            .prepare('SELECT scope, value FROM device_settings WHERE user_id = ? AND udid = ?')
+            .all(userId, udid) as Array<{ scope: string; value: string }>;
+        const out: Record<string, unknown> = {};
+        for (const r of rows) out[r.scope] = JSON.parse(r.value);
+        return out;
+    }
+
+    /** Clear all of a user's device labels + per-device settings (the per-user reset). */
+    clearForUser(userId: number): void {
+        this.db.prepare('DELETE FROM device_labels WHERE user_id = ?').run(userId);
+        this.db.prepare('DELETE FROM device_settings WHERE user_id = ?').run(userId);
+    }
 }
