@@ -192,7 +192,7 @@ async function main() {
             console.error('[dev-supervisor] FATAL: Node binary disappeared between iterations — aborting');
             process.exit(1);
         }
-        currentChild = spawn(node.path, [serverScript], {
+        currentChild = spawn(node.path, ['--disable-warning=ExperimentalWarning', serverScript], {
             stdio: 'inherit',
             cwd: REPO_ROOT,
         });

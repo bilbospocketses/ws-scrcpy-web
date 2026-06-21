@@ -359,6 +359,14 @@ if (__ssArgs) {
             serverLog.info(`Stopping ${serviceName} ...`);
             service.release();
         });
+        // Snapshot the SQLite store on a clean shutdown — the last-good `.bak`
+        // the corrupt-recovery path restores from. Best-effort; never block exit.
+        try {
+            const db = config.db;
+            db.backup(`${db.dbPath}.bak`);
+        } catch (err) {
+            serverLog.warn(`db backup on shutdown failed: ${(err as Error).message}`);
+        }
     }
 
     let interrupted = false;

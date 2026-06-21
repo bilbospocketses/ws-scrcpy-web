@@ -1,4 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
+import * as fs from 'fs';
 import * as path from 'path';
 import { openDatabase } from './openDatabase';
 import { importLegacyIfNeeded } from './import/importLegacy';
@@ -57,7 +58,13 @@ export class Db {
     }
 
     backup(toPath: string): void {
-        // VACUUM INTO writes a clean snapshot; the path must not already exist.
+        // VACUUM INTO writes a clean snapshot but fails if the target exists, so
+        // clear any prior snapshot first.
+        try {
+            fs.rmSync(toPath, { force: true });
+        } catch {
+            /* best effort */
+        }
         this.handle.exec(`VACUUM INTO '${toPath.replace(/'/g, "''")}'`);
     }
 }

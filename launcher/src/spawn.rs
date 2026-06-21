@@ -120,7 +120,8 @@ pub fn spawn_server(deps_path: &Path, data_root: &Path, open_browser: bool) -> R
     let entry = resolve_server_entry_with(&work_dir)?;
 
     let mut cmd = Command::new(&node);
-    cmd.arg(&entry)
+    cmd.arg("--disable-warning=ExperimentalWarning")
+        .arg(&entry)
         .current_dir(&work_dir)
         .env("DEPS_PATH", deps_path)
         .env("DATA_ROOT", data_root)
@@ -172,7 +173,8 @@ pub fn spawn_server(deps_path: &Path, data_root: &Path, open_browser: bool) -> R
     let entry = resolve_server_entry_with(&work_dir)?;
 
     let mut cmd = Command::new(&node);
-    cmd.arg(&entry)
+    cmd.arg("--disable-warning=ExperimentalWarning")
+        .arg(&entry)
         .current_dir(&work_dir)
         .env("DEPS_PATH", deps_path)
         .env("DATA_ROOT", data_root);
