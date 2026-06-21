@@ -8,6 +8,7 @@ import { DependencyApi } from './api/DependencyApi';
 import { DeviceDiscoveryApi } from './api/DeviceDiscoveryApi';
 import { ServerShutdownApi } from './api/ServerShutdownApi';
 import { ServiceApi } from './api/ServiceApi';
+import { SettingsApi } from './api/SettingsApi';
 import { UpdatesApi } from './api/UpdatesApi';
 import { WhoamiApi } from './api/WhoamiApi';
 import { Config } from './Config';
@@ -124,6 +125,9 @@ if (__ssArgs) {
 
     const configApi = new ConfigApi();
     HttpServer.addApiHandler(configApi);
+
+    const settingsApi = new SettingsApi();
+    HttpServer.addApiHandler(settingsApi);
 
     const serviceApi = new ServiceApi();
     HttpServer.addApiHandler(serviceApi);
