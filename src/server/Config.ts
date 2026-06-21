@@ -10,7 +10,7 @@ import {
     VALID_INSTALL_MODES,
 } from '../common/ConfigEvents';
 import type { ServerItem } from '../types/Configuration';
-import { DEFAULT_DEVICE_LABELS_PATH } from './DeviceLabelStore';
+import { DEFAULT_DEVICE_LABELS_PATH } from './legacyDeviceLabels';
 import { IMPLICIT_ADMIN_ID } from './db/constants';
 import { Db, dbDir } from './db/Db';
 import { GLOBAL_KEYS, PROMPT_KEYS } from './db/import/importConfigJson';

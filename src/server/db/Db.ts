@@ -32,7 +32,7 @@ export class Db {
      * `opts` lets callers point the import at the ACTUAL legacy file locations:
      * `configPath` defaults to <dataRoot>/config.json and `deviceLabelsPath` to
      * <dataRoot>/device-labels.json, but the real device-labels.json is
-     * bundle-relative (DeviceLabelStore), so Config passes its true path. The
+     * bundle-relative (see legacyDeviceLabels), so Config passes its true path. The
      * defaults keep the unit test hermetic.
      */
     static getInstance(dataRoot: string, opts?: { configPath?: string; deviceLabelsPath?: string }): Db {
