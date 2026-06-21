@@ -1,9 +1,9 @@
-import { describe, it, expect, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { Config } from '../Config';
+import { afterEach, describe, expect, it } from 'vitest';
 import { SettingsApi } from '../api/SettingsApi';
+import { Config } from '../Config';
 import { IMPLICIT_ADMIN_ID } from '../db/constants';
 import { EnvName } from '../EnvName';
 import { makeReqRes } from './helpers/httpMock';
