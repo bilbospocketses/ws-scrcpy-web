@@ -1,7 +1,10 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
-const DEFAULT_PATH = path.resolve(__dirname, '..', 'device-labels.json');
+// Exported so the SQLite migration (Db / importLegacy) reads the SAME legacy
+// file this store wrote — it is bundle-relative (next to dist/), NOT under
+// <dataRoot>, so the importer must use this exact path, not a dataRoot guess.
+export const DEFAULT_DEVICE_LABELS_PATH = path.resolve(__dirname, '..', 'device-labels.json');
 
 export class DeviceLabelStore {
     private static instance?: DeviceLabelStore | undefined;
@@ -11,7 +14,7 @@ export class DeviceLabelStore {
         this.load();
     }
 
-    static getInstance(filePath = DEFAULT_PATH): DeviceLabelStore {
+    static getInstance(filePath = DEFAULT_DEVICE_LABELS_PATH): DeviceLabelStore {
         if (!this.instance) {
             this.instance = new DeviceLabelStore(filePath);
         }

@@ -353,3 +353,14 @@ Each phase is its own plan in `docs/plans/` (per D1) and its own beta.
 ## Rollout
 
 Four sequential betas off `main` (post-beta.62), one per phase, each `release:beta` with CHANGELOG notes under `## [Unreleased]` (never a pre-written version heading — `bump-version.mjs` promotes Unreleased). The store foundation (phase 1) ships behind no flag because it is behavior-preserving (settings move stores but stay open until phase 4). Auth (phase 4) is the only user-visible behavior change and is itself opt-in (inert until the first real user is added).
+
+---
+
+## As-built deltas (Phase 1 — PR #425, 2026-06-21)
+
+Phase 1 shipped `release:none` with four deviations from the design above (each fixes a real gap; the phase plans carry matching notes):
+
+1. **The `config.json` trim preserves server-only boot fields.** `server` (SSL array) + `allowedHosts` (PR #421, post-dates this spec) stay in the trimmed file — dropping them breaks SSL / reverse-proxy deploys. So `config.json` = boot trio **+ `server`/`allowedHosts`**, not trio-only.
+2. **DB directory = `dirname(configFilePath)`**, not `dataRoot ?? dirname(dependenciesPath)`. It equals `<dataRoot>` in production but follows a `CONFIG_PATH` override, which is what lets tests isolate (the `dataRoot`-based dir resolved to the real `ProgramData` on Windows). The open Db is reached via `Config.getInstance().db`; `dbDir()` takes a config file path.
+3. **Row types cast from `node:sqlite` `.all()` are `type` aliases / inline literals, never `interface`s** (an interface has no implicit index signature, so the cast fails). Relevant to Phase 4's UserStore auth methods.
+4. **Phase 4 `AuthGate` slots into the existing `src/server/security/requestGate.ts` chain** (added by #367 after this spec — origin/Host validation, not user-login). App-login is still greenfield, but the gate ordering must account for the request gate.

@@ -228,6 +228,19 @@ beta.66's security/quality pass restored the keyboard focus indicator, added a r
 
 ---
 
+## Module 17 — SQLite store migration (Phase 1 upgrade)
+
+> **Upgrade-only — pairs with Module 6 (Updates).** The one-time `config.json` + `device-labels.json` → `wsscrcpy.db` import runs on the **first boot of a Phase-1 build that updated from a pre-Phase-1 one**. Run this on the **beta.40 → latest** update path (Module 6's "from" build), after setting state on the old build first. `🧩` needs the pre-Phase-1 "from" build + pre-set state. *(Applies once Phase 1 — PR #425 — is in a beta; until then the rows are N/A.)*
+
+| Test | How to perform | Expected + verify |
+|---|---|---|
+| **17.1** `[Both]` 🧩 Settings + label migrate | On the **pre-Phase-1** build: set a non-default (switch update channel to beta, dismiss the bookmark prompt) and label a connected device. Update to the Phase-1 build and reopen. | The channel + dismissed-prompt + device label are all still in effect (settings carried over). A new `wsscrcpy.db` sits in the data dir beside `config.json`; `device-labels.json` is left inert. |
+| **17.2** `[Both]` 🧩 config.json trimmed to the boot skeleton | After 17.1, open `config.json` in the data dir. | It holds **only** the boot trio (`installMode` / `webPort` / `firstRunComplete`); the moved-out globals (channel/autoUpdate/…) and prompt flags are **gone from the file** (they're in `wsscrcpy.db` now). The app still runs on the same web port. |
+| **17.3** `[Both]` 🧩🌐 `allowedHosts` survives the trim | Before updating, add `"allowedHosts": ["x.example.com"]` to the pre-Phase-1 `config.json`. Update, then re-open `config.json`. | `allowedHosts` (and any `server` SSL array) is **still present** in the trimmed file — server-only boot fields are preserved, so a reverse-proxy / TLS deploy keeps working across the upgrade. |
+| **17.4** `[Both]` 🧩 Idempotent re-open | Restart the Phase-1 build a second time. | No re-import, no error; `config.json` unchanged from 17.2; settings stable (the `legacyImported` guard ran once). |
+
+---
+
 ## Global pass criteria
 
 | Criterion | Holds when |

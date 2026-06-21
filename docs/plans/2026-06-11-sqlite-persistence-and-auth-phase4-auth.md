@@ -10,6 +10,8 @@
 
 **Spec:** `docs/specs/2026-06-11-sqlite-persistence-and-auth-design.md` (Auth subsystem). **Depends on Phases 1–3.** **Coordination:** the Users modal, login page, admin-only section hiding, and change-password control land in the Settings modal area that **beta.62** restructures — the client tasks rebase onto post-beta.62.
 
+> **⚠️ Phase 1 as-built (read first, PR #425).** (1) New `UserStore` auth methods that cast `.all()` rows MUST use a `type` / inline literal, NOT an `interface` (the existing `UserRow` is already a `type` for this reason). (2) The app has a request gate now — `src/server/security/requestGate.ts` (#367, origin/Host validation, **not** user-login) — so order `AuthGate` relative to it in the HTTP chain rather than assuming an empty chain; user-login itself is still greenfield. (3) The DB is reached via `Config.getInstance().db`; the `users` + `sessions` tables already exist in the v1 schema. (4) Re-pin the Settings-modal / `WebSocketServer` line targets against the current (post-beta.66) tree.
+
 ---
 
 ## File structure

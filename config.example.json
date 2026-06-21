@@ -1,4 +1,5 @@
 {
-    "port": 8000,
-    "adbPath": "adb"
+  "installMode": null,
+  "webPort": 8000,
+  "firstRunComplete": false
 }
