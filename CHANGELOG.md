@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **App settings and device names now persist in a single SQLite database (foundation).** The server previously spread its state across a flat `config.json`, a separate `device-labels.json`, and per-origin browser `localStorage` — the last of which is unreliable on the Linux AppImage, where each launch can look like a new origin and silently lose preferences. This first phase introduces one `wsscrcpy.db` (through Node's built-in `node:sqlite`, so no native module or extra bundled binary) with WAL journaling, an integrity check with last-good-backup recovery on open, and a one-time automatic import of the existing `config.json` and `device-labels.json`. `config.json` is trimmed to the boot fields the launcher reads at startup (`installMode` / `webPort` / `firstRunComplete`, plus any `server` / `allowedHosts` entries); every other setting now lives in the database. The change is behavior-preserving — existing settings carry over and nothing requires a login — and lays the groundwork for per-user settings and optional accounts in later phases.
 - **The light theme's accent color now meets WCAG AA contrast.** The accent blue used for focus outlines and accent text was `#5b9aff` in both themes, which only reaches about 3.8:1 against the light theme's white background — below the 4.5:1 minimum. Light mode now uses a darker blue (`#0969da`, ~5.2:1), matching its existing info color; dark mode is unchanged.
 
 ### Removed
