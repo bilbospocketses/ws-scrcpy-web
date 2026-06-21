@@ -6,6 +6,7 @@ import { Logger } from '../Logger';
 import { resolveMac } from '../network/MacResolver';
 import { detectSubnet } from '../network/SubnetDetector';
 import { assertDeletablePaths, shArg } from '../security/deviceInput';
+import { upsertObservedDevices } from './deviceObserved';
 import { BodyTooLargeError, InvalidJsonError, readJsonBodyStrict, sendInternalError } from './utils';
 
 const log = Logger.for('DeviceDiscoveryApi');
@@ -40,12 +41,21 @@ export class DeviceDiscoveryApi {
                     })
                     .map((d) => {
                         const serial = parseSerialFromMdnsName(d.name, d.service);
+                        // Enrich with the remembered model from a prior observation
+                        // (read before the sighting upsert below).
+                        const observed = db.devices.getDevice(serial);
                         return {
                             ...d,
                             serial,
                             label: db.devices.getLabel(userId, serial) || '',
+                            model: observed?.model ?? null,
                         };
                     });
+                // Record this sighting in the shared observed table.
+                upsertObservedDevices(
+                    db,
+                    available.map((d) => ({ serial: d.serial, address: `${d.address}:${d.port}`, lastSeenAt: Date.now() })),
+                );
                 res.writeHead(200);
                 res.end(JSON.stringify(available));
                 return true;

@@ -2,6 +2,7 @@ import { TypedEmitter } from '../../common/TypedEmitter';
 import type GoogDeviceDescriptor from '../../types/GoogDeviceDescriptor';
 import type { NetInterface } from '../../types/NetInterface';
 import { AdbClient } from '../AdbClient';
+import { upsertObservedDevices } from '../api/deviceObserved';
 import { Config } from '../Config';
 import { Logger } from '../Logger';
 import { shArg } from '../security/deviceInput';
@@ -306,6 +307,20 @@ export class Device extends TypedEmitter<DeviceEvents> {
                         (this.descriptor[propName] as any) = props[propName];
                     }
                 });
+                // Record observed metadata (manufacturer/model) in the shared
+                // devices table — best-effort; never break device tracking.
+                try {
+                    upsertObservedDevices(Config.getInstance().db, [
+                        {
+                            serial: this.udid,
+                            manufacturer: this.descriptor['ro.product.manufacturer'] || null,
+                            model: this.descriptor['ro.product.model'] || null,
+                            lastSeenAt: Date.now(),
+                        },
+                    ]);
+                } catch {
+                    /* best-effort */
+                }
                 if (changed) this.emitUpdate();
                 return true;
             });
