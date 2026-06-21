@@ -63,14 +63,14 @@ export class Db {
 }
 
 /**
- * THE one resolver for the Db directory. Every `Db.getInstance(...)` call across
- * all phases MUST pass `dbDir(Config.getInstance())` — never an ad-hoc
- * `dataRoot ?? dependenciesPath`. Mirrors `resolveDataRoot` precedence; on a null
- * dataRoot (non-Windows dev) it falls back to the parent of the dependencies path
- * (matching `Config.restartMarkerPath`'s fallback), so the DB sits beside the
- * other writable state. Typed structurally (not against `Config`) to keep the db
- * layer decoupled from the server config module.
+ * THE one resolver for the Db directory: the directory that holds config.json, so
+ * the DB is always a sibling of config.json — one file, no split-brain, and it
+ * follows a CONFIG_PATH override (tests + custom deployments) automatically. In
+ * production that directory IS <dataRoot> (config.json lives at
+ * <dataRoot>/config.json); on a null-dataRoot dev host it is the repo root
+ * (matching the pre-existing config.json location). Pass
+ * `Config.getInstance().getConfigFilePath()`.
  */
-export function dbDir(config: { dataRoot: string | null; dependenciesPath: string }): string {
-    return config.dataRoot ?? path.dirname(config.dependenciesPath);
+export function dbDir(configFilePath: string): string {
+    return path.dirname(configFilePath);
 }

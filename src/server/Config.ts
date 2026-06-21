@@ -10,6 +10,10 @@ import {
     VALID_INSTALL_MODES,
 } from '../common/ConfigEvents';
 import type { ServerItem } from '../types/Configuration';
+import { DEFAULT_DEVICE_LABELS_PATH } from './DeviceLabelStore';
+import { Db, dbDir } from './db/Db';
+import { IMPLICIT_ADMIN_ID } from './db/constants';
+import { GLOBAL_KEYS, PROMPT_KEYS } from './db/import/importConfigJson';
 import { EnvName } from './EnvName';
 import { Logger } from './Logger';
 
@@ -348,6 +352,50 @@ function sanitizeAppConfig(raw: FlatConfig, warn: (msg: string) => void): AppCon
     return out;
 }
 
+/** The boot-trio keys that stay in config.json; everything else lives in the DB. */
+const TRIO_KEYS: ReadonlySet<string> = new Set(['installMode', 'webPort', 'firstRunComplete']);
+
+/**
+ * Overlay store-backed values (app_settings globals or the implicit admin's
+ * prompt flags) onto a composed AppConfig, validating each. Only the provided
+ * key list is consulted, so non-AppConfig store rows (authEnabled,
+ * legacyImported) are ignored. Invalid stored values fall back to whatever the
+ * compose-so-far already holds (defaults), matching sanitizeAppConfig semantics.
+ */
+function overlayStore(
+    out: AppConfig,
+    store: Record<string, unknown>,
+    keys: readonly string[],
+    warn: (msg: string) => void,
+): void {
+    for (const key of keys) {
+        const value = store[key];
+        if (value === undefined) continue;
+        const r = validateField(key as keyof AppConfig, value);
+        if (r.ok) (out as unknown as Record<string, unknown>)[key] = r.value;
+        else warn(`stored ${key}: ${r.error}; ignoring`);
+    }
+}
+
+/**
+ * Compose the effective AppConfig from the trimmed config.json boot trio
+ * (`fileConfig`) plus the store-backed globals (`app_settings`) and the implicit
+ * admin's prompt flags (`user_settings`). Pre-migration `fileConfig` still
+ * carries the globals/prompts; the store overlay is authoritative once the
+ * one-time import has moved them out.
+ */
+function composeAppConfig(
+    fileConfig: FlatConfig,
+    globals: Record<string, unknown>,
+    prompts: Record<string, unknown>,
+    warn: (msg: string) => void,
+): AppConfig {
+    const out = sanitizeAppConfig(fileConfig, warn);
+    overlayStore(out, globals, GLOBAL_KEYS, warn);
+    overlayStore(out, prompts, PROMPT_KEYS, warn);
+    return out;
+}
+
 /**
  * Validate the optional `allowedHosts` escape-hatch from config.json into a
  * clean string[]. Non-arrays and non-string / blank entries are dropped with a
@@ -475,33 +523,57 @@ export class Config {
                 fileConfig = Config.tryLoadFile(configFilePath, warn);
             }
 
-            const appConfig = sanitizeAppConfig(fileConfig, warn);
+            // Resolve the dependencies path BEFORE opening the DB: the DB's
+            // directory must never depend on a value stored INSIDE the DB (no
+            // load-order cycle). DEPS_PATH env / config.json / platform default.
+            const bootDependenciesPath = resolveDependenciesPath(process.env, fileConfig, process.argv[1] ?? '.');
+
+            // Open (or recover) the SQLite store and run the one-time legacy
+            // import. The DB lives beside config.json (so a CONFIG_PATH override —
+            // tests, custom deploys — co-locates it). The import reads the REAL
+            // config.json + the bundle-relative device-labels.json, moves their
+            // non-boot fields into the store, and trims config.json to the boot
+            // skeleton (trio + server-only fields).
+            const db = Db.getInstance(dbDir(configFilePath), {
+                configPath: configFilePath,
+                deviceLabelsPath: DEFAULT_DEVICE_LABELS_PATH,
+            });
+            const globals = db.appSettings.getAll();
+            const prompts = db.userSettings.getAll(IMPLICIT_ADMIN_ID);
+
+            // Compose the effective AppConfig from the trio + store-backed globals
+            // + the implicit admin's prompt flags.
+            const appConfig = composeAppConfig(fileConfig, globals, prompts, warn);
             const servers = Config.buildServers(fileConfig, appConfig.webPort);
 
-            const dependenciesPath = resolveDependenciesPath(process.env, fileConfig, process.argv[1] ?? '.');
+            // An app_settings override of dependenciesPath/adbPath is overlaid for
+            // downstream consumers (the adb spawn path) AFTER the DB opens — it
+            // does NOT relocate the DB or the boot deps folder.
+            const dependenciesPath = (globals['dependenciesPath'] as string | undefined) ?? bootDependenciesPath;
 
             // ADB resolution must come AFTER dependenciesPath. Always returns a path
-            // inside <dependenciesPath>/adb/ unless config.json explicitly overrides.
-            // No system-PATH fallback by design.
-            const adbResolution = resolveAdbPath(fileConfig, dependenciesPath);
+            // inside <dependenciesPath>/adb/ unless an override is configured. No
+            // system-PATH fallback by design.
+            const adbOverride = (globals['adbPath'] ?? fileConfig.adbPath) as string | undefined;
+            const adbResolution = resolveAdbPath(adbOverride ? { adbPath: adbOverride } : {}, dependenciesPath);
             const adbPath = adbResolution.path;
             log.info(`adbPath=${adbPath} (source=${adbResolution.source})`);
 
             const scanConcurrency =
                 Number.parseInt(process.env['SCAN_CONCURRENCY'] ?? '', 10) ||
-                fileConfig.scanConcurrency ||
+                (globals['scanConcurrency'] as number | undefined) ||
                 DEFAULT_SCAN_CONCURRENCY;
             const scanTcpTimeoutMs =
                 Number.parseInt(process.env['SCAN_TCP_TIMEOUT_MS'] ?? '', 10) ||
-                fileConfig.scanTcpTimeoutMs ||
+                (globals['scanTcpTimeoutMs'] as number | undefined) ||
                 DEFAULT_SCAN_TCP_TIMEOUT_MS;
             const scanAdbConnectTimeoutMs =
                 Number.parseInt(process.env['SCAN_ADB_CONNECT_TIMEOUT_MS'] ?? '', 10) ||
-                fileConfig.scanAdbConnectTimeoutMs ||
+                (globals['scanAdbConnectTimeoutMs'] as number | undefined) ||
                 DEFAULT_SCAN_ADB_CONNECT_TIMEOUT_MS;
             const scanProgressInterval =
                 Number.parseInt(process.env['SCAN_PROGRESS_INTERVAL'] ?? '', 10) ||
-                fileConfig.scanProgressInterval ||
+                (globals['scanProgressInterval'] as number | undefined) ||
                 DEFAULT_SCAN_PROGRESS_INTERVAL;
 
             const allowedHosts = sanitizeAllowedHosts(fileConfig.allowedHosts, warn);
@@ -518,14 +590,16 @@ export class Config {
                 configFilePath,
                 dataRoot,
                 allowedHosts,
+                db,
             );
         }
         return this.instance;
     }
 
-    /** Test-only: clear the cached singleton. */
+    /** Test-only: clear the cached singleton (and the DB it owns). */
     public static _resetForTest(): void {
         this.instance = undefined;
+        Db._resetForTest();
     }
 
     constructor(
@@ -538,8 +612,9 @@ export class Config {
         private readonly _scanProgressInterval: number,
         appConfig: AppConfig,
         configFilePath: string,
-        private readonly _dataRoot: string | null = null,
-        private readonly _allowedHosts: string[] = [],
+        private readonly _dataRoot: string | null,
+        private readonly _allowedHosts: string[],
+        private readonly _db: Db,
     ) {
         this._appConfig = appConfig;
         this._configFilePath = configFilePath;
@@ -570,6 +645,11 @@ export class Config {
      */
     public get dataRoot(): string | null {
         return this._dataRoot;
+    }
+
+    /** The SQLite store opened for this config's data directory (Phase 1). */
+    public get db(): Db {
+        return this._db;
     }
 
     /**
@@ -721,7 +801,18 @@ export class Config {
             if (!r.ok) {
                 throw new ConfigValidationError(r.error, key as string);
             }
-            (merged as any)[key] = r.value;
+            (merged as unknown as Record<string, unknown>)[k] = r.value;
+            // Route each field to its backing store: the boot trio stays in
+            // config.json (written by saveToDisk below); globals go to
+            // app_settings; prompt-dismissal flags go to the implicit admin's
+            // user_settings. The DB is the source of truth post-split.
+            if (TRIO_KEYS.has(k)) {
+                // persisted by saveToDisk()
+            } else if ((GLOBAL_KEYS as readonly string[]).includes(k)) {
+                this._db.appSettings.set(k, r.value);
+            } else if ((PROMPT_KEYS as readonly string[]).includes(k)) {
+                this._db.userSettings.set(IMPLICIT_ADMIN_ID, k, r.value);
+            }
         }
         const restartRequired = merged.webPort !== this._appConfig.webPort;
         this._appConfig = merged;
@@ -738,7 +829,24 @@ export class Config {
      * with 2-space indent and trailing newline (Contract 1).
      */
     public saveToDisk(): void {
-        const out = `${JSON.stringify(this._appConfig, null, 2)}\n`;
+        // config.json holds ONLY the boot trio now. Preserve the server-only boot
+        // fields (`server` SSL array, `allowedHosts`) that live in the file but
+        // aren't part of AppConfig — re-read them so a save never drops them.
+        const preserved: Record<string, unknown> = {};
+        try {
+            const existing = JSON.parse(fs.readFileSync(this._configFilePath, 'utf-8')) as Record<string, unknown>;
+            for (const k of ['server', 'allowedHosts']) {
+                if (existing[k] !== undefined) preserved[k] = existing[k];
+            }
+        } catch {
+            /* no existing file / unparseable — nothing to preserve */
+        }
+        const trio = {
+            installMode: this._appConfig.installMode,
+            webPort: this._appConfig.webPort,
+            firstRunComplete: this._appConfig.firstRunComplete,
+        };
+        const out = `${JSON.stringify({ ...trio, ...preserved }, null, 2)}\n`;
         const dir = path.dirname(this._configFilePath);
         if (!fs.existsSync(dir)) {
             fs.mkdirSync(dir, { recursive: true });

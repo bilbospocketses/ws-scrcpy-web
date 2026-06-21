@@ -37,7 +37,9 @@ export function importConfigJson(db: DatabaseSync, legacy: Record<string, unknow
 
     return {
         installMode: (legacy['installMode'] as string | undefined) ?? null,
-        webPort: legacy['webPort'] as number | undefined,
+        // Honor the legacy `port` alias (pre-`webPort`); the trim drops `port`,
+        // so fold it into `webPort` here or the value would be lost.
+        webPort: (legacy['webPort'] ?? legacy['port']) as number | undefined,
         firstRunComplete: (legacy['firstRunComplete'] as boolean | undefined) ?? false,
     };
 }

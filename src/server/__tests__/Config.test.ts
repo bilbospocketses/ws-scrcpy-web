@@ -65,13 +65,15 @@ describe('Config — AppConfig extension', () => {
         expect(Config.getInstance().getAppConfig().bookmarkDismissedGlobally).toBe(false);
     });
 
-    it('migrates legacy `port` → `webPort` in memory without rewriting file', () => {
+    it('migrates legacy `port` → `webPort` (now persisted via the config trim)', () => {
         const configPath = setup({ port: 8123 });
-        const before = fs.readFileSync(configPath, 'utf-8');
         const c = Config.getInstance().getAppConfig();
         expect(c.webPort).toBe(8123);
-        const after = fs.readFileSync(configPath, 'utf-8');
-        expect(after).toBe(before);
+        // Phase 1: the one-time import trims config.json — the legacy `port`
+        // alias is folded into `webPort` (the boot trio) and the old key is gone.
+        const after = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+        expect(after.webPort).toBe(8123);
+        expect(after.port).toBeUndefined();
     });
 
     it('falls back to default for an out-of-range webPort', () => {
@@ -95,7 +97,9 @@ describe('Config — AppConfig extension', () => {
         expect(text).toContain('  "firstRunComplete": true');
         const parsed = JSON.parse(text);
         expect(parsed.firstRunComplete).toBe(true);
-        expect(parsed.autoUpdate).toBe(false);
+        // autoUpdate is a global now → persisted to the SQLite store, not config.json.
+        expect(parsed.autoUpdate).toBeUndefined();
+        expect(cfg.getAppConfig().autoUpdate).toBe(false);
     });
 
     it('updateAppConfig sets restartRequired when webPort changes', () => {
@@ -204,8 +208,9 @@ describe('Config — AppConfig extension', () => {
 
     it('setActualWebPort with same port leaves portWasAutoShifted=false and does not rewrite file', () => {
         const configPath = setup({ webPort: 8000 });
-        const before = fs.readFileSync(configPath, 'utf-8');
         const cfg = Config.getInstance();
+        // Capture AFTER getInstance — the one-time import trims config.json on open.
+        const before = fs.readFileSync(configPath, 'utf-8');
         cfg.setActualWebPort(8000);
         const status = cfg.getFirstRunStatus();
         expect(status.portWasAutoShifted).toBe(false);

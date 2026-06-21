@@ -46,10 +46,8 @@ describe('Db singleton', () => {
 });
 
 describe('dbDir resolver', () => {
-    it('uses dataRoot when set, else the parent of dependenciesPath', () => {
-        expect(dbDir({ dataRoot: '/data/root', dependenciesPath: '/opt/app/dependencies' })).toBe('/data/root');
-        expect(dbDir({ dataRoot: null, dependenciesPath: '/opt/app/dependencies' })).toBe(
-            path.dirname('/opt/app/dependencies'),
-        );
+    it('is the directory holding config.json (the DB sits beside config.json)', () => {
+        const cfgPath = path.join('some', 'data', 'dir', 'config.json');
+        expect(dbDir(cfgPath)).toBe(path.dirname(cfgPath));
     });
 });
