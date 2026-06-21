@@ -1,11 +1,11 @@
-import { describe, it, expect, afterEach } from 'vitest';
 import { DatabaseSync } from 'node:sqlite';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { runMigrations } from '../migrations';
+import { afterEach, describe, expect, it } from 'vitest';
 import { AppSettingsStore } from '../AppSettingsStore';
 import { importLegacyIfNeeded } from '../import/importLegacy';
+import { runMigrations } from '../migrations';
 
 const dirs: string[] = [];
 function tmpdir(): string {

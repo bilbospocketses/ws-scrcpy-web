@@ -1,9 +1,9 @@
-import { describe, it, expect, beforeEach } from 'vitest';
 import { DatabaseSync } from 'node:sqlite';
-import { runMigrations } from '../migrations';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { IMPLICIT_ADMIN_ID } from '../constants';
 import { DeviceStore } from '../DeviceStore';
 import { importDeviceLabels } from '../import/importDeviceLabels';
-import { IMPLICIT_ADMIN_ID } from '../constants';
+import { runMigrations } from '../migrations';
 
 let db: DatabaseSync;
 beforeEach(() => {

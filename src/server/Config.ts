@@ -11,8 +11,8 @@ import {
 } from '../common/ConfigEvents';
 import type { ServerItem } from '../types/Configuration';
 import { DEFAULT_DEVICE_LABELS_PATH } from './DeviceLabelStore';
-import { Db, dbDir } from './db/Db';
 import { IMPLICIT_ADMIN_ID } from './db/constants';
+import { Db, dbDir } from './db/Db';
 import { GLOBAL_KEYS, PROMPT_KEYS } from './db/import/importConfigJson';
 import { EnvName } from './EnvName';
 import { Logger } from './Logger';

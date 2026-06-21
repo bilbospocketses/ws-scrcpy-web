@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import * as fs from 'fs';
-import { runMigrations } from './migrations';
 import { Logger } from '../Logger';
+import { runMigrations } from './migrations';
 
 function configure(db: DatabaseSync): void {
     db.exec('PRAGMA journal_mode = WAL');

@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
 import { DatabaseSync } from 'node:sqlite';
+import { describe, expect, it } from 'vitest';
 
 describe('node:sqlite smoke (verification spike)', () => {
     it('opens in-memory, execs DDL, prepares/run/get/all, reads pragmas', () => {

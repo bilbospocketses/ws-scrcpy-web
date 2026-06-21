@@ -1,10 +1,10 @@
-import { describe, it, expect, beforeEach } from 'vitest';
 import { DatabaseSync } from 'node:sqlite';
-import { runMigrations } from '../migrations';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { AppSettingsStore } from '../AppSettingsStore';
-import { UserSettingsStore } from '../UserSettingsStore';
-import { importConfigJson } from '../import/importConfigJson';
 import { IMPLICIT_ADMIN_ID } from '../constants';
+import { importConfigJson } from '../import/importConfigJson';
+import { runMigrations } from '../migrations';
+import { UserSettingsStore } from '../UserSettingsStore';
 
 let db: DatabaseSync;
 beforeEach(() => {

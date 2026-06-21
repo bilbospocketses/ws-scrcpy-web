@@ -1,7 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import * as fs from 'fs';
 import { AppSettingsStore } from '../AppSettingsStore';
-import { importConfigJson, type BootTrio } from './importConfigJson';
+import { type BootTrio, importConfigJson } from './importConfigJson';
 import { importDeviceLabels } from './importDeviceLabels';
 
 const MARKER = 'legacyImported';

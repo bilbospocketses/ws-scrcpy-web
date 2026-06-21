@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
-import type { Migration } from '../migrations';
 import { IMPLICIT_ADMIN_ID } from '../constants';
+import type { Migration } from '../migrations';
 
 const DDL = `
 CREATE TABLE users (

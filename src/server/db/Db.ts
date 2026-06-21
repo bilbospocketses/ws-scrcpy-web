@@ -1,13 +1,13 @@
 import type { DatabaseSync } from 'node:sqlite';
 import * as fs from 'fs';
 import * as path from 'path';
-import { openDatabase } from './openDatabase';
-import { importLegacyIfNeeded } from './import/importLegacy';
-import { UserStore } from './UserStore';
-import { UserSettingsStore } from './UserSettingsStore';
 import { AppSettingsStore } from './AppSettingsStore';
-import { DeviceStore } from './DeviceStore';
 import { DB_FILENAME } from './constants';
+import { DeviceStore } from './DeviceStore';
+import { importLegacyIfNeeded } from './import/importLegacy';
+import { openDatabase } from './openDatabase';
+import { UserSettingsStore } from './UserSettingsStore';
+import { UserStore } from './UserStore';
 
 export class Db {
     private static instance?: Db | undefined;

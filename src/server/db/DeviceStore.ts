@@ -35,10 +35,22 @@ export class DeviceStore {
         const r = this.db
             .prepare('SELECT serial, manufacturer, model, address, last_seen_at FROM devices WHERE serial = ?')
             .get(serial) as
-            | { serial: string; manufacturer: string | null; model: string | null; address: string | null; last_seen_at: number | null }
+            | {
+                  serial: string;
+                  manufacturer: string | null;
+                  model: string | null;
+                  address: string | null;
+                  last_seen_at: number | null;
+              }
             | undefined;
         return r
-            ? { serial: r.serial, manufacturer: r.manufacturer, model: r.model, address: r.address, lastSeenAt: r.last_seen_at }
+            ? {
+                  serial: r.serial,
+                  manufacturer: r.manufacturer,
+                  model: r.model,
+                  address: r.address,
+                  lastSeenAt: r.last_seen_at,
+              }
             : undefined;
     }
 
@@ -63,9 +75,9 @@ export class DeviceStore {
     }
 
     getLabel(userId: number, serial: string): string | undefined {
-        const r = this.db.prepare('SELECT label FROM device_labels WHERE user_id = ? AND serial = ?').get(userId, serial) as
-            | { label: string }
-            | undefined;
+        const r = this.db
+            .prepare('SELECT label FROM device_labels WHERE user_id = ? AND serial = ?')
+            .get(userId, serial) as { label: string } | undefined;
         return r?.label;
     }
 

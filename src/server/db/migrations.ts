@@ -13,7 +13,7 @@ export function runMigrations(db: DatabaseSync): void {
     if (current > MIGRATIONS.length) {
         throw new Error(
             `wsscrcpy.db schema v${current} is newer than supported v${MIGRATIONS.length}; ` +
-                `refusing to run (downgrade unsupported).`,
+                'refusing to run (downgrade unsupported).',
         );
     }
     for (const m of MIGRATIONS) {

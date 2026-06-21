@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeEach } from 'vitest';
 import { DatabaseSync } from 'node:sqlite';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { runMigrations } from '../migrations';
-import { UserStore, type User } from '../UserStore';
+import { type User, UserStore } from '../UserStore';
 
 let db: DatabaseSync;
 let store: UserStore;
@@ -21,7 +21,12 @@ describe('UserStore', () => {
     it('creates a user and lists all', () => {
         const u = store.create({ username: 'bob', role: 'user', passwordHash: 'scrypt$...' });
         expect(u).toMatchObject({ username: 'bob', role: 'user', disabled: false });
-        expect(store.list().map((x) => x.username).sort()).toEqual(['admin', 'bob']);
+        expect(
+            store
+                .list()
+                .map((x) => x.username)
+                .sort(),
+        ).toEqual(['admin', 'bob']);
     });
 
     it('rejects a duplicate username (case-insensitive)', () => {

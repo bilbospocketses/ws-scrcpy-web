@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
 import { DatabaseSync } from 'node:sqlite';
+import { describe, expect, it } from 'vitest';
 import { runMigrations } from '../migrations';
 
 function tables(db: DatabaseSync): string[] {
@@ -28,7 +28,9 @@ describe('migration 001', () => {
     it('seeds the implicit admin (id 1, role admin, no password) and authEnabled=false', () => {
         const db = new DatabaseSync(':memory:');
         runMigrations(db);
-        const admin = db.prepare('SELECT id, username, role, password_hash, disabled FROM users WHERE id = 1').get() as {
+        const admin = db
+            .prepare('SELECT id, username, role, password_hash, disabled FROM users WHERE id = 1')
+            .get() as {
             id: number;
             username: string;
             role: string;
@@ -43,8 +45,6 @@ describe('migration 001', () => {
     it('enforces the role CHECK constraint', () => {
         const db = new DatabaseSync(':memory:');
         runMigrations(db);
-        expect(() =>
-            db.exec("INSERT INTO users (username, role, created_at) VALUES ('x', 'superuser', 0)"),
-        ).toThrow();
+        expect(() => db.exec("INSERT INTO users (username, role, created_at) VALUES ('x', 'superuser', 0)")).toThrow();
     });
 });

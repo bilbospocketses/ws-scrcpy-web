@@ -1,7 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { AppSettingsStore } from '../AppSettingsStore';
-import { UserSettingsStore } from '../UserSettingsStore';
 import { IMPLICIT_ADMIN_ID } from '../constants';
+import { UserSettingsStore } from '../UserSettingsStore';
 
 export interface BootTrio {
     installMode: string | null;

@@ -11,7 +11,10 @@ export class AppSettingsStore {
     }
 
     getAll(): Record<string, unknown> {
-        const rows = this.db.prepare('SELECT key, value FROM app_settings').all() as Array<{ key: string; value: string }>;
+        const rows = this.db.prepare('SELECT key, value FROM app_settings').all() as Array<{
+            key: string;
+            value: string;
+        }>;
         const out: Record<string, unknown> = {};
         for (const r of rows) out[r.key] = JSON.parse(r.value);
         return out;
@@ -19,7 +22,9 @@ export class AppSettingsStore {
 
     set(key: string, value: unknown): void {
         this.db
-            .prepare('INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
+            .prepare(
+                'INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+            )
             .run(key, JSON.stringify(value));
     }
 }

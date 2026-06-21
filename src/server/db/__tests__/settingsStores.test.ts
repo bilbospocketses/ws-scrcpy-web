@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeEach } from 'vitest';
 import { DatabaseSync } from 'node:sqlite';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { AppSettingsStore } from '../AppSettingsStore';
 import { runMigrations } from '../migrations';
 import { UserSettingsStore } from '../UserSettingsStore';
-import { AppSettingsStore } from '../AppSettingsStore';
 import { UserStore } from '../UserStore';
 
 let db: DatabaseSync;
