@@ -10,6 +10,8 @@
 
 **Spec:** `docs/specs/2026-06-11-sqlite-persistence-and-auth-design.md` (Settings migration phase). **Depends on Phase 1** (stores) and **Phase 2** (`resolveUserId` seam). **Coordination:** this phase edits the Settings modal + player/file-browser client code that the **beta.62** restructure also touches — its tasks rebase onto the post-beta.62 tree; the exact line targets below are from the pre-beta.62 tree and pin at execution.
 
+> **⚠️ Phase 1 as-built (read first, PR #425).** The DB is reached via `Config.getInstance().db`; the legacy import lives in `src/server/db/import/`. Phase 1 composes the prompt-dismissal flags into `AppConfig` by overlaying `user_settings` (`Config.overlayStore(out, prompts, PROMPT_KEYS)`) — this phase moves them onto `SettingsApi`, so remove that overlay (and drop `PROMPT_KEYS` from the compose). The `config.json` trim preserves `server`/`allowedHosts`; don't re-introduce a trio-only trim. Re-pin the Settings-modal / player line targets against the current (post-beta.66) tree.
+
 ---
 
 ## File structure

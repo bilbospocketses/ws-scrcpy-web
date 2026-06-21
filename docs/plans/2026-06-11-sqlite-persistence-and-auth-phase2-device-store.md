@@ -10,6 +10,8 @@
 
 **Spec:** `docs/specs/2026-06-11-sqlite-persistence-and-auth-design.md` (Device store phase). **Depends on Phase 1** (the `Db`, `DeviceStore`, and the device-labels.json import already ran). The label data is already in `device_labels` for user 1; this phase only retargets the *consumers*.
 
+> **⚠️ Phase 1 as-built (read first, PR #425).** The Db is reached via **`Config.getInstance().db`** (`Config` owns it); `dbDir()` now takes a config FILE PATH, so the `Db.getInstance(dbDir(config)).devices` in the table below is superseded by `Config.getInstance().db.devices`. `DeviceStore` already exists with `upsertDevice` / `getDevice` / `listDevices` / `getLabel` / `setLabel` / `deleteLabel` / `getAllLabels`; this phase adds `resolveUserId` + retargets consumers + wires the `devices` upserts.
+
 **Conventions:** same as Phase 1 (vitest explicit imports; `Db._resetForTest()` between tests; per-user reads/writes go through `resolveUserId(req)`).
 
 ---

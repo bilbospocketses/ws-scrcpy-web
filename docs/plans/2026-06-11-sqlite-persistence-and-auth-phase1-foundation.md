@@ -10,6 +10,8 @@
 
 **Spec:** `docs/specs/2026-06-11-sqlite-persistence-and-auth-design.md`. This plan implements the **Store foundation** phase. The exact integration line-targets in `Config.ts`/`index.ts` pin against the post-beta.62 tree at execution time; the `db/` layer is greenfield and exact.
 
+> **AS-BUILT (PR #425, 2026-06-21).** Shipped with four deviations from the text below, each fixing a real gap: (1) the `config.json` trim **PRESERVES** the server-only `server` (SSL) + `allowedHosts` (#421) fields, not "only the trio" — see Task 10; (2) the DB directory is `dirname(configFilePath)` (co-located with config.json so a `CONFIG_PATH` override isolates tests), and `dbDir()` takes a config FILE PATH — not the `dataRoot ?? dirname(depsPath)` of Task 12; the open Db is reached via `Config.getInstance().db`; (3) `UserRow` is a `type`, not an `interface`, so the `.all()` cast type-checks; (4) `importConfigJson` folds the legacy `port` alias into `webPort`. Behavior-preserving; 1323 tests green.
+
 **Conventions (from the repo):**
 - Tests live in `src/server/db/__tests__/`, import `{ describe, it, expect, beforeEach, afterEach } from 'vitest'` (globals are OFF).
 - File-backed tests use `fs.mkdtempSync(path.join(os.tmpdir(), 'prefix-'))` and `fs.rmSync(dir, { recursive: true, force: true })`.
