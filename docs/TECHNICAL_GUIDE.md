@@ -1173,7 +1173,7 @@ Lifecycle: `scan.started -> [progress | hit]* -> (complete | draining -> cancell
 | `src/server/network/AdbHandshakeProbe.ts` | Single-socket CNXN handshake probe: TCP connect -> write CNXN -> read reply header -> close. Replaced an earlier two-socket path (`adb connect` for liveness then `adb disconnect`) that older embedded adbd stacks (notably the SM-T550) silently dropped on the second connection. CNXN packet matches AOSP byte-for-byte: version `0x01000001`, `max_data` `0x00100000`, full `host::features=shell_v2,cmd,stat_v2,...` banner, byte-sum `data_check` (the field is misnamed `data_crc32` in the AOSP struct — historical). Successful replies (`CNXN` or `AUTH`) are logged as hits. **Close behavior:** confirmed-ADB hits are shut down with `socket.end()` (FIN) plus a 250 ms safety-net `destroy()`, so adbd sees a clean teardown; closed-port and timeout paths call `destroy()` immediately to stay fast. The RST-on-probe behavior it replaced caused intermittent `adb connect` failures right after a scan — embedded adbd treated the abort as an in-progress session and refused new connections for its cleanup window. |
 | `src/server/network/SubnetDetector.ts` | Gateway subnet auto-detection with a three-level fallback: (1) parse `route print` (Windows) / `ip route` (Linux) for the default route, filtering Windows' synthetic `On-link` and `0.0.0.0` rows; (2) enumerate RFC1918 interfaces and pick the first usable; (3) return null. Exposed via `GET /api/devices/scan/subnet`. |
 | `src/server/network/MacResolver.ts` | ARP-cache lookup after probe traffic primes the table: `arp -a <ip>` on Windows, `ip neigh show to <ip>` on Linux (2s command timeout). Returns a lowercase colon-normalized MAC or `null`. Stateless — each `resolveMac()` call spawns the OS command fresh. |
-| `src/server/DeviceLabelStore.ts` | Label persistence (JSON file, in-memory cache). The store itself is a single-key map — the **dual-key storage** is a call-site pattern in `DeviceDiscoveryApi.connect()`: on a successful network connect, the label is written under *both* the device's real serial (`getprop ro.serialno`) and its MAC (resolved via `MacResolver`). Scanner hit lookup then does `labelFor(mac) ?? labelFor(serial)` — MAC-first catches TCP hits (where serial isn't known until after a follow-up connect), serial-fallback catches mDNS hits. |
+| `src/server/db/DeviceStore.ts` | Per-user label persistence (the `device_labels` table in `wsscrcpy.db`, keyed `(user, serial)`), reached via `Config.getInstance().db.devices`. The store is a per-user keyed map — the **dual-key storage** is a call-site pattern in `DeviceDiscoveryApi.connect()`: on a successful network connect, the label is written under *both* the device's real serial (`getprop ro.serialno`) and its MAC (resolved via `MacResolver`). Scanner hit lookup then does `labelFor(mac) ?? labelFor(serial)` — MAC-first catches TCP hits (where serial isn't known until after a follow-up connect), serial-fallback catches mDNS hits. Also owns the shared `devices` observed-metadata table. |
 | `src/server/api/DeviceDiscoveryApi.ts` | HTTP endpoint handler (scan, scan/subnet, connect, disconnect, labels, screen-state, sleep-wake). |
 | `src/server/AdbClient.ts` | `mdnsServices()`, `connect()`, `disconnect()`, plus `parseMdnsOutput()` and `parseSerialFromMdnsName()` parsers. mDNS display name normalizes to `adb-{parsedSerial}` format across `_adb._tcp` and `_adb-tls-connect._tcp` service types. |
 | `src/common/SubnetParser.ts` | Input parser used in both client (live validation) and server (re-parse on `scan.start`). Accepts CIDR (`192.168.1.0/24`, prefix `/16` to `/32`), bare IP (treated as `/32`), long-form range (`192.168.1.10-192.168.1.50`), and shorthand range (`192.168.1.10-50`). Range cap: 65,536 literal addresses. When a range aligns to a subnet boundary (first IP ends in `.0` and/or last IP ends in `.255`), the host generator skips those network/broadcast addresses, matching CIDR expansion exactly — so `10.0.0.0-10.0.255.255` yields 65,534 scannable hosts, identical to `10.0.0.0/16`. |
@@ -1306,23 +1306,20 @@ User-assigned names for devices that persist across sessions, disconnects, and r
 
 ### 16.1 Data Storage
 
-Labels are stored in `device-labels.json` in the project root, keyed by either hardware serial (`ro.serialno`) or MAC address. On a successful network connect, the label is written under BOTH keys when available — serial via `adb -s <addr> shell getprop ro.serialno`, MAC via `MacResolver` from the system ARP cache. A file may therefore mix key types:
+Labels are stored **per-user** in the `device_labels` table of the app's SQLite store (`<dataRoot>/wsscrcpy.db`), keyed `(user, serial)` where the serial key is either a hardware serial (`ro.serialno`) or a MAC address. On a successful network connect, the label is written under BOTH keys when available — serial via `adb -s <addr> shell getprop ro.serialno`, MAC via `MacResolver` from the system ARP cache — so one user's rows may mix key types:
 
-```json
-{
-  "49241HFAG07SUG": "Living Room TV",
-  "47121FDAQ000WC": "Jamie's Pixel 9",
-  "aa:bb:cc:dd:ee:ff": "Living Room TV"
-}
-```
+| user_id | serial | label |
+|---|---|---|
+| 1 | `49241HFAG07SUG` | Living Room TV |
+| 1 | `47121FDAQ000WC` | Jamie's Pixel 9 |
+| 1 | `aa:bb:cc:dd:ee:ff` | Living Room TV |
 
-The scanner's hit-lookup order is `labelFor(mac) ?? labelFor(serial) ?? ''` — MAC-first catches TCP hits (where the serial isn't known until after a follow-up `adb connect`), serial-fallback catches mDNS hits (where the serial is authoritatively in the service name). See 14.2.3 for the dual-key write site in `DeviceDiscoveryApi.connect()`.
+The scanner's hit-lookup order is `labelFor(mac) ?? labelFor(serial) ?? ''` — MAC-first catches TCP hits (where the serial isn't known until after a follow-up `adb connect`), serial-fallback catches mDNS hits (where the serial is authoritatively in the service name). See 14.2.3 for the dual-key write site in `DeviceDiscoveryApi.connect()`. In today's open mode every request resolves to the implicit admin (`user_id = 1`) via `resolveUserId(req)`; once auth lands, each user gets their own labels.
 
-**`DeviceLabelStore`** (`src/server/DeviceLabelStore.ts`):
-- Singleton with `getInstance()` / `resetInstance()`
-- `get(key)`, `set(key, label)`, `delete(key)`, `getAll()` — key is just a string; the dual-key semantics live in the caller.
-- Reads file on first access, caches in memory, sync writes on every change
-- File path resolves from `__dirname` (dist/) + `..` to project root (same pattern as Logger)
+**`DeviceStore`** (`src/server/db/DeviceStore.ts`), reached via `Config.getInstance().db.devices`:
+- `getLabel(userId, serial)` / `setLabel(userId, serial, label)` / `deleteLabel(userId, serial)` / `getAllLabels(userId)` — per-user upserts into `device_labels`; the dual-key serial/MAC semantics live in the caller.
+- Also owns the shared `devices` observed-metadata table (manufacturer/model/address/last-seen, upserted from scans + connected-device props).
+- The legacy `device-labels.json` was migrated into `device_labels` on first run (the Phase 1 SQLite import) and the old single-file `DeviceLabelStore` removed.
 
 ### 16.2 Device Identification
 
@@ -1359,7 +1356,7 @@ Each scan result card includes an optional "Name this device..." text input. If 
 
 | File | Purpose |
 |------|---------|
-| `src/server/DeviceLabelStore.ts` | Label persistence (JSON file, singleton) |
+| `src/server/db/DeviceStore.ts` | Per-user label persistence (`device_labels` table in `wsscrcpy.db`) |
 | `src/server/AdbClient.ts` | `parseSerialFromMdnsName()` helper |
 | `src/server/api/DeviceDiscoveryApi.ts` | REST endpoints for labels |
 | `src/app/googDevice/client/DeviceTracker.ts` | `buildLabelCell()` -- inline edit UI |
