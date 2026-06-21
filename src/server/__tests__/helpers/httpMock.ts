@@ -1,5 +1,5 @@
-import { Readable } from 'stream';
 import type { IncomingMessage, ServerResponse } from 'http';
+import { Readable } from 'stream';
 
 /**
  * A body-capable HTTP req/res pair for handler tests. The req is a real

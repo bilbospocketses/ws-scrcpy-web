@@ -1,9 +1,9 @@
-import { describe, it, expect, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { Db } from '../db/Db';
+import { afterEach, describe, expect, it } from 'vitest';
 import { upsertObservedDevices } from '../api/deviceObserved';
+import { Db } from '../db/Db';
 
 const dirs: string[] = [];
 function root(): string {

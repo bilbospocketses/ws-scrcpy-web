@@ -1,9 +1,9 @@
-import { describe, it, expect, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { Config } from '../Config';
+import { afterEach, describe, expect, it } from 'vitest';
 import { DeviceDiscoveryApi } from '../api/DeviceDiscoveryApi';
+import { Config } from '../Config';
 import { IMPLICIT_ADMIN_ID } from '../db/constants';
 import { EnvName } from '../EnvName';
 import { makeReqRes } from './helpers/httpMock';
@@ -59,7 +59,11 @@ describe('DeviceDiscoveryApi labels via DeviceStore', () => {
 });
 
 // Helper: spread the mock's req/res straight into api.handle(req, res).
-function reqResArgs(method: string, url: string, body?: unknown): [Parameters<DeviceDiscoveryApi['handle']>[0], Parameters<DeviceDiscoveryApi['handle']>[1]] {
+function reqResArgs(
+    method: string,
+    url: string,
+    body?: unknown,
+): [Parameters<DeviceDiscoveryApi['handle']>[0], Parameters<DeviceDiscoveryApi['handle']>[1]] {
     const { req, res } = makeReqRes(method, url, body);
     return [req, res];
 }

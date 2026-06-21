@@ -54,7 +54,11 @@ export class DeviceDiscoveryApi {
                 // Record this sighting in the shared observed table.
                 upsertObservedDevices(
                     db,
-                    available.map((d) => ({ serial: d.serial, address: `${d.address}:${d.port}`, lastSeenAt: Date.now() })),
+                    available.map((d) => ({
+                        serial: d.serial,
+                        address: `${d.address}:${d.port}`,
+                        lastSeenAt: Date.now(),
+                    })),
                 );
                 res.writeHead(200);
                 res.end(JSON.stringify(available));

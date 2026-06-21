@@ -1,7 +1,7 @@
-import { describe, it, expect } from 'vitest';
 import type { IncomingMessage } from 'http';
-import { resolveUserId } from '../currentUser';
+import { describe, expect, it } from 'vitest';
 import { IMPLICIT_ADMIN_ID } from '../../db/constants';
+import { resolveUserId } from '../currentUser';
 
 describe('resolveUserId (open mode)', () => {
     it('returns the implicit admin when no auth context is present', () => {
