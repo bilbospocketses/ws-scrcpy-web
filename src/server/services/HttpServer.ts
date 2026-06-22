@@ -71,6 +71,10 @@ export class HttpServer extends TypedEmitter<HttpServerEvents> implements Servic
         HttpServer.apiHandlers.push(handler);
     }
 
+    public static addFirstApiHandler(handler: ApiHandler): void {
+        HttpServer.apiHandlers.unshift(handler);
+    }
+
     public async getServers(): Promise<ServerAndPort[]> {
         if (this.started) {
             return [...this.servers];

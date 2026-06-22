@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { DependencyStatus } from '../../common/DependencyTypes';
 import type { DependencyManager } from '../DependencyManager';
+import { requireAdmin } from '../auth/requireAdmin';
 
 export class DependencyApi {
     constructor(private readonly manager: DependencyManager) {}
@@ -11,6 +12,8 @@ export class DependencyApi {
         if (!url.startsWith('/api/dependencies')) return false;
 
         res.setHeader('Content-Type', 'application/json');
+
+        if (!requireAdmin(req, res)) return true;
 
         try {
             // GET /api/dependencies — list all

@@ -2211,6 +2211,17 @@ describe('ServiceApi', () => {
     // ── reason discriminator + no-direct-uninstall guard (v0.1.25) ──────────
 
     it('service+LocalSystem uninstall writes marker and returns shutting-down (Phase 4 replaces handoff)', async () => {
+        // Use fake timers to prevent the hardcoded setTimeout(process.exit, 5000) in
+        // the LocalSystem uninstall path from leaking a real pending timer that fires
+        // during later tests (specifically the "schedules process.exit(0) after 5s"
+        // test that uses a global process.exit spy).
+        vi.useFakeTimers();
+        using _restoreTimers = {
+            [Symbol.dispose]() {
+                vi.useRealTimers();
+            },
+        };
+
         const uninstallSpy = vi.fn(async () => undefined);
         const client = fakeClient({
             uninstall: uninstallSpy,
@@ -2333,6 +2344,16 @@ describe('ServiceApi', () => {
 
     describe('handleUninstall — operation-server flow (Phase 4)', () => {
         it('writes uninstall-pending marker when service+LocalSystem on Windows', async () => {
+            // Use fake timers to prevent the hardcoded setTimeout(process.exit, 5000) in
+            // the LocalSystem uninstall path from leaking a real pending timer that fires
+            // during the "schedules process.exit(0) after 5s" test's global spy window.
+            vi.useFakeTimers();
+            using _restoreTimers = {
+                [Symbol.dispose]() {
+                    vi.useRealTimers();
+                },
+            };
+
             const client = fakeClient({ status: vi.fn(async () => 'running' as const) });
             const factoryResult: ServiceClientFactoryResult = {
                 client,
@@ -2356,6 +2377,16 @@ describe('ServiceApi', () => {
         });
 
         it('returns 200 with status=shutting-down and no redirectTo', async () => {
+            // Use fake timers to prevent the hardcoded setTimeout(process.exit, 5000) in
+            // the LocalSystem uninstall path from leaking a real pending timer that fires
+            // during the "schedules process.exit(0) after 5s" test's global spy window.
+            vi.useFakeTimers();
+            using _restoreTimers = {
+                [Symbol.dispose]() {
+                    vi.useRealTimers();
+                },
+            };
+
             const client = fakeClient({ status: vi.fn(async () => 'running' as const) });
             const factoryResult: ServiceClientFactoryResult = {
                 client,
