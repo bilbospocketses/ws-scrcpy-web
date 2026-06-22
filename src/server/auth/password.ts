@@ -24,3 +24,11 @@ export function verifyPassword(plain: string, stored: string): boolean {
     const actual = scryptSync(plain, salt, expected.length, { N: n, r, p });
     return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
+
+let dummyHash: string | undefined;
+/** Run a verification against a throwaway hash to blind login timing on the
+ *  unknown-user / disabled-user paths (defeats username enumeration). */
+export function blindVerify(plain: string): void {
+    dummyHash ??= hashPassword('timing-blind-dummy-password');
+    verifyPassword(plain, dummyHash);
+}

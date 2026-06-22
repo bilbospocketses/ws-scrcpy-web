@@ -1,6 +1,6 @@
 import type { Db } from '../db/Db';
 import { applyFailure, extendLock, isLocked } from './loginPolicy';
-import { verifyPassword } from './password';
+import { blindVerify, verifyPassword } from './password';
 import { SessionStore } from './session';
 
 export type LoginResult =
@@ -9,8 +9,14 @@ export type LoginResult =
 
 export function login(db: Db, username: string, password: string, now: number): LoginResult {
     const user = db.users.getByUsername(username);
-    if (!user) return { ok: false, reason: 'invalid' };
-    if (user.disabled) return { ok: false, reason: 'disabled' };
+    if (!user) {
+        blindVerify(password);
+        return { ok: false, reason: 'invalid' };
+    }
+    if (user.disabled) {
+        blindVerify(password);
+        return { ok: false, reason: 'disabled' };
+    }
 
     const state = {
         failedAttempts: user.failedAttempts,
