@@ -11,6 +11,7 @@ import type { ParamsStreamScrcpy } from '../../../types/ParamsStreamScrcpy';
 import { Attribute } from '../../Attribute';
 import { AudioSettingsStore } from '../../client/AudioSettingsStore';
 import { DeviceProbeClient } from '../../client/DeviceProbeClient';
+import { settingsService } from '../../client/SettingsService';
 import { DisplayInfo } from '../../DisplayInfo';
 import type { PlayerClass } from '../../player/BasePlayer';
 import Size from '../../Size';
@@ -40,7 +41,7 @@ export class ConfigureScrcpy extends Modal {
     private audioEnabledCheckbox?: HTMLInputElement;
     private readonly deviceKind?: 'phone' | 'tablet' | 'tv' | undefined;
     private readonly sdkInt: number;
-    private readonly savedAudio: ReturnType<typeof AudioSettingsStore.load>;
+    private savedAudio: ReturnType<typeof AudioSettingsStore.load>;
     private displayInfo?: DisplayInfo;
     private connectButton?: HTMLButtonElement;
     private fitToScreenCheckbox?: HTMLInputElement;
@@ -72,8 +73,26 @@ export class ConfigureScrcpy extends Modal {
         this.escapedUdid = Util.escapeUdid(this.udid);
         this.deviceKind = descriptor.deviceKind;
         this.sdkInt = Number.parseInt(descriptor['ro.build.version.sdk'], 10);
-        this.savedAudio = AudioSettingsStore.load(descriptor.udid);
+        this.savedAudio = null;
         this.TAG = `ConfigureScrcpy[${this.udid}]`;
+        // Hydrate then render: the device cache must be populated before
+        // populateUI() reads savedAudio (lines ~615/633) and before runProbe()
+        // reads it again (onProbeResult ~136). hydrateDevice covers both audio
+        // and video scopes so Task 4c's video reads also benefit from this call.
+        void this.init();
+    }
+
+    /**
+     * Async init: hydrate the per-device settings cache, set savedAudio from
+     * the now-populated cache, then render the UI and start the device probe.
+     * Called fire-and-forget from the constructor (`void this.init()`).
+     *
+     * populateUI() already tolerates a deferred run (it queries DOM built in
+     * buildBody), so the one-microtask defer is invisible to the user.
+     */
+    private async init(): Promise<void> {
+        await settingsService.hydrateDevice(this.udid);
+        this.savedAudio = AudioSettingsStore.load(this.udid);
         this.populateUI();
         this.runProbe();
     }

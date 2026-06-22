@@ -9,6 +9,7 @@ import type GoogDeviceDescriptor from '../../../types/GoogDeviceDescriptor';
 import type { ParamsDeviceTracker } from '../../../types/ParamsDeviceTracker';
 import { AudioSettingsStore } from '../../client/AudioSettingsStore';
 import { BaseDeviceTracker } from '../../client/BaseDeviceTracker';
+import { settingsService } from '../../client/SettingsService';
 import type { Tool } from '../../client/Tool';
 import Util from '../../Util';
 import { html } from '../../ui/HtmlTag';
@@ -425,6 +426,11 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
                 const hash = url.hash.startsWith('#!') ? url.hash.slice(2) : url.hash.slice(1);
                 const query = new URLSearchParams(hash);
                 const params = StreamClientScrcpy.parseParameters(query);
+
+                // Hydrate the per-device cache before reading audio prefs.
+                // hydrateDevice covers both audio and video scopes so Task 4c's
+                // video reads (line ~455) also benefit from this single call.
+                await settingsService.hydrateDevice(device.udid);
 
                 // Apply audio prefs: saved-from-ConfigureScrcpy if present,
                 // otherwise SDK-aware defaults so the connect-button respects

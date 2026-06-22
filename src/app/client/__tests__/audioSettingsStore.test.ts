@@ -1,14 +1,40 @@
-// @vitest-environment jsdom
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+// Stub the SettingsService singleton so AudioSettingsStore reads/writes go
+// through an in-test Map instead of fetch(). The stub mirrors the subset of
+// SettingsService used by AudioSettingsStore: getDeviceAudio, setDeviceAudio,
+// and hydrateDevice (which populates the cache from the "server").
+const _cache = new Map<string, Record<string, unknown>>();
+vi.mock('../SettingsService', () => {
+    return {
+        settingsService: {
+            getDeviceAudio(udid: string): Record<string, unknown> | undefined {
+                return _cache.get(udid)?.['audio'] as Record<string, unknown> | undefined;
+            },
+            setDeviceAudio(udid: string, audio: Record<string, unknown>): void {
+                const cur = _cache.get(udid) ?? {};
+                cur['audio'] = audio;
+                _cache.set(udid, cur);
+            },
+            hydrateDevice(_udid: string): Promise<void> {
+                // In tests that exercise read-after-hydrate: pre-seed _cache before
+                // calling hydrateDevice; this implementation is a no-op (the real
+                // service fetches from the server, but the stub treats the cache as
+                // already populated by the test).
+                return Promise.resolve();
+            },
+        },
+    };
+});
+
 import { AudioSettingsStore, type StoredAudioSettings } from '../AudioSettingsStore';
 
 beforeEach(() => {
-    localStorage.clear();
+    _cache.clear();
 });
 
 afterEach(() => {
-    localStorage.clear();
+    _cache.clear();
 });
 
 describe('AudioSettingsStore.load', () => {
@@ -29,21 +55,25 @@ describe('AudioSettingsStore.load', () => {
         expect(AudioSettingsStore.load('tv')?.enabled).toBe(false);
     });
 
-    it('returns null on corrupted storage value (defensive)', () => {
-        localStorage.setItem('ws-scrcpy-web:audio:dev1', 'not json');
-        expect(AudioSettingsStore.load('dev1')).toBeNull();
-    });
-
     it('returns null when stored value is missing required fields', () => {
-        localStorage.setItem('ws-scrcpy-web:audio:dev1', JSON.stringify({ source: 'playback' }));
+        // Seed the cache directly with a bad object (no JSON parse needed — cache holds parsed objects)
+        const cur = _cache.get('dev1') ?? {};
+        cur['audio'] = { source: 'playback' };
+        _cache.set('dev1', cur);
         expect(AudioSettingsStore.load('dev1')).toBeNull();
     });
 
     it('returns null when stored enum values are invalid', () => {
-        localStorage.setItem(
-            'ws-scrcpy-web:audio:dev1',
-            JSON.stringify({ enabled: true, source: 'voice-call', codec: 'opus' }),
-        );
+        const cur = _cache.get('dev1') ?? {};
+        cur['audio'] = { enabled: true, source: 'voice-call', codec: 'opus' };
+        _cache.set('dev1', cur);
+        expect(AudioSettingsStore.load('dev1')).toBeNull();
+    });
+
+    it('returns null when the cached audio value is not an object', () => {
+        const cur = _cache.get('dev1') ?? {};
+        cur['audio'] = 'not-an-object';
+        _cache.set('dev1', cur);
         expect(AudioSettingsStore.load('dev1')).toBeNull();
     });
 });
@@ -57,7 +87,7 @@ describe('AudioSettingsStore.save', () => {
 });
 
 describe('AudioSettingsStore.clear', () => {
-    it('removes saved settings for a udid', () => {
+    it('removes saved settings for a udid (cache-only)', () => {
         AudioSettingsStore.save('dev1', { enabled: true, source: 'playback', codec: 'opus' });
         AudioSettingsStore.clear('dev1');
         expect(AudioSettingsStore.load('dev1')).toBeNull();
