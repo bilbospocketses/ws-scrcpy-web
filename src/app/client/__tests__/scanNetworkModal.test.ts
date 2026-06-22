@@ -3,18 +3,43 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ScanNetworkModal } from '../ScanNetworkModal';
 
+// ---------------------------------------------------------------------------
+// Mock the SettingsService singleton so tests control scan-subnets storage
+// without a real fetch. patchGlobal records writes; getGlobalCached returns
+// the seeded scanSubnets array. The fake is module-level so all test cases
+// share the same reference and can inspect `patchGlobalCalls`.
+// ---------------------------------------------------------------------------
+const patchGlobalCalls: Array<Record<string, unknown>> = [];
+let seededSubnets: string[] = [];
+
+vi.mock('../SettingsService', () => {
+    const fakeService = {
+        loadGlobal: () => Promise.resolve({}),
+        getGlobalCached: () => ({ scanSubnets: seededSubnets }),
+        patchGlobal: (patch: Record<string, unknown>) => {
+            patchGlobalCalls.push(patch);
+            // Update the seed so subsequent getGlobalCached() calls reflect the write.
+            if (Array.isArray(patch['scanSubnets'])) {
+                seededSubnets = patch['scanSubnets'] as string[];
+            }
+            return Promise.resolve();
+        },
+    };
+    return { settingsService: fakeService };
+});
+
 beforeEach(() => {
     vi.restoreAllMocks();
     HTMLDialogElement.prototype.showModal = vi.fn();
     HTMLDialogElement.prototype.close = vi.fn();
-    localStorage.clear();
+    patchGlobalCalls.length = 0;
+    seededSubnets = [];
 });
 
 afterEach(() => {
     document.body.querySelectorAll('dialog').forEach((d) => {
         d.remove();
     });
-    localStorage.clear();
 });
 
 async function flush(): Promise<void> {
@@ -70,7 +95,7 @@ describe('ScanNetworkModal — gateway detection UI', () => {
 
 describe('ScanNetworkModal — row editing', () => {
     it('renders a pencil (edit) button on every user-added row', async () => {
-        localStorage.setItem('ws-scrcpy-web:scan-subnets', JSON.stringify(['10.0.0.0/24']));
+        seededSubnets = ['10.0.0.0/24'];
         const modal = new ScanNetworkModal({
             gatewaySubnet: { cidr: '192.168.1.0/24', hostCount: 254 },
             onStartScan: vi.fn(),
@@ -104,8 +129,8 @@ describe('ScanNetworkModal — row editing', () => {
         modal.close();
     });
 
-    it('updateUserRow replaces a row in place and persists the new value', async () => {
-        localStorage.setItem('ws-scrcpy-web:scan-subnets', JSON.stringify(['10.0.0.0/24', '172.16.0.0/24']));
+    it('updateUserRow replaces a row in place and persists the new value via patchGlobal', async () => {
+        seededSubnets = ['10.0.0.0/24', '172.16.0.0/24'];
         const modal = new ScanNetworkModal({
             gatewaySubnet: null,
             onStartScan: vi.fn(),
@@ -122,6 +147,8 @@ describe('ScanNetworkModal — row editing', () => {
         const targetId = firstUserRow!.id;
         expect(typeof targetId).toBe('string');
 
+        // Clear recorded calls before the update so we can isolate the update write
+        patchGlobalCalls.length = 0;
         await modal['updateUserRow'](targetId, '192.168.99.0/24');
 
         const rowsAfter = modal['rows'];
@@ -129,9 +156,11 @@ describe('ScanNetworkModal — row editing', () => {
         const positionBefore = rowsBefore.findIndex((r) => r.raw === '10.0.0.0/24');
         expect(rowsAfter[positionBefore]!.raw).toBe('192.168.99.0/24');
         expect(rowsAfter.length).toBe(rowsBefore.length);
-        // localStorage persists the new list
-        const persisted = JSON.parse(localStorage.getItem('ws-scrcpy-web:scan-subnets')!);
-        expect(persisted).toEqual(['192.168.99.0/24', '172.16.0.0/24']);
+
+        // patchGlobal was called with the updated list (storage substrate is settingsService now)
+        expect(patchGlobalCalls.length).toBeGreaterThan(0);
+        const lastCall = patchGlobalCalls[patchGlobalCalls.length - 1]!;
+        expect(lastCall['scanSubnets']).toEqual(['192.168.99.0/24', '172.16.0.0/24']);
 
         modal.close();
     });

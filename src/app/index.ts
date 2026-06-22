@@ -257,6 +257,22 @@ window.onload = async (): Promise<void> => {
     const parsedQuery = new URLSearchParams(hash);
     const action = parsedQuery.get('action');
 
+    // Migrate any legacy localStorage prefs into SQLite, then warm the global
+    // cache (iconSize, scanSubnets, theme). Placed ABOVE the deep-link early-
+    // returns so shell / file-listing sessions still migrate on first load.
+    // A network failure is logged and swallowed — the migration is idempotent and
+    // will retry on the next successful load.
+    {
+        const { settingsService } = await import('./client/SettingsService');
+        const { migrateLocalStorage } = await import('./client/migrateLocalStorage');
+        try {
+            await migrateLocalStorage(window.localStorage, settingsService);
+        } catch (e) {
+            console.error('[boot] settings migration failed; will retry next load', e);
+        }
+        await settingsService.loadGlobal().catch(() => {}); // warm global cache (iconSize, scanSubnets)
+    }
+
     // WebCodecs player must be registered so ConnectModal can find it
     const { WebCodecsPlayer } = await import('./player/WebCodecsPlayer');
     StreamClientScrcpy.registerPlayer(WebCodecsPlayer);

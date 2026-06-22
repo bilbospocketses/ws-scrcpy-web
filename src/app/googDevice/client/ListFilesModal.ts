@@ -15,7 +15,6 @@ import { attachFsChannelKeepAlive } from './fsChannelKeepAlive';
 import { buildFslsInitData, buildMultiplexUrl } from './multiplexConnection';
 
 const TAG = '[ListFilesModal]';
-const ICON_SIZE_KEY = 'file-browser-icon-size';
 const DEFAULT_ICON_SIZE = 24;
 const ICON_SIZES = [16, 20, 24, 28, 32];
 const REMOVE_ROW_TIMEOUT = 2000;
@@ -64,6 +63,7 @@ export class ListFilesModal extends Modal implements DragAndPushListener {
     };
 
     private iconSize = DEFAULT_ICON_SIZE;
+    private settings?: import('../../client/SettingsService').SettingsService | undefined;
     private currentPath = '/data/local/tmp';
     private entries: Entry[] = [];
     private filteredEntries: Entry[] = [];
@@ -121,10 +121,26 @@ export class ListFilesModal extends Modal implements DragAndPushListener {
         sizeBtn.addEventListener('click', () => this.showSizePicker());
         this.addHeaderButton(sizeBtn);
 
-        // Check localStorage for saved size preference
-        const savedSize = localStorage.getItem(ICON_SIZE_KEY);
-        if (savedSize) {
-            this.iconSize = parseInt(savedSize, 10);
+        // Defer the saved-size check until after the global cache is warm; one
+        // microtask is invisible to the user (icon-size open is not a hot path).
+        void this.initIconSizeAndOpen();
+    }
+
+    /**
+     * Async init: await loadGlobal() (cache hit after boot warm-up), then either
+     * apply the saved icon size and open the file browser, or show the size picker.
+     * Only this method reads icon size; `showSizePicker` uses getGlobalCached() for
+     * the checkbox state (after this.settings is set here).
+     */
+    private async initIconSizeAndOpen(): Promise<void> {
+        const { settingsService } = await import('../../client/SettingsService');
+        this.settings = settingsService;
+        await settingsService.loadGlobal(); // cache hit after boot warm-up
+        const saved = settingsService.getGlobalCached()['iconSize'];
+        // iconSize is "set" only when it is a positive number; 0 is the in-band
+        // sentinel for "clear preference" (sizes are 16-32 so 0 is unambiguous).
+        if (typeof saved === 'number' && saved > 0) {
+            this.iconSize = saved;
             this.dialog.style.setProperty('--file-icon-size', `${this.iconSize}px`);
             this.initFileBrowser();
         } else {
@@ -299,7 +315,9 @@ export class ListFilesModal extends Modal implements DragAndPushListener {
         const saveLabel = document.createElement('label');
         const saveCheck = document.createElement('input');
         saveCheck.type = 'checkbox';
-        const hasSavedPref = localStorage.getItem(ICON_SIZE_KEY) !== null;
+        // iconSize is "set" only when it is a positive number (0 is the in-band sentinel).
+        const saved = this.settings?.getGlobalCached()['iconSize'];
+        const hasSavedPref = typeof saved === 'number' && saved > 0;
         saveCheck.checked = hasSavedPref;
         saveLabel.appendChild(saveCheck);
         saveLabel.appendChild(document.createTextNode(' save preference (skip this dialog next time)'));
@@ -320,9 +338,17 @@ export class ListFilesModal extends Modal implements DragAndPushListener {
             this.iconSize = selectedSize;
             this.dialog.style.setProperty('--file-icon-size', `${this.iconSize}px`);
             if (saveCheck.checked) {
-                localStorage.setItem(ICON_SIZE_KEY, String(this.iconSize));
+                // Fire-and-forget: modal close is not blocked on the write.
+                void this.settings?.patchGlobal({ iconSize: this.iconSize }).catch((e) =>
+                    console.error('[ListFilesModal] patchGlobal iconSize failed', e),
+                );
             } else {
-                localStorage.removeItem(ICON_SIZE_KEY);
+                // No per-key server delete exists; write the in-band sentinel 0 so the
+                // server retains the key but the read sites treat it as "no preference".
+                // (Valid sizes are 16-32, so 0 is unambiguously "cleared".)
+                void this.settings?.patchGlobal({ iconSize: 0 }).catch((e) =>
+                    console.error('[ListFilesModal] patchGlobal iconSize clear failed', e),
+                );
             }
             this.initFileBrowser();
         });

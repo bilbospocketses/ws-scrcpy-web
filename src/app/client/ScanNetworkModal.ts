@@ -1,8 +1,7 @@
 import { Modal } from '../ui/Modal';
 import { AddSubnetModal } from './AddSubnetModal';
 import { LargeSubnetWarningModal } from './LargeSubnetWarningModal';
-
-const LS_KEY = 'ws-scrcpy-web:scan-subnets';
+import type { SettingsService } from './SettingsService';
 
 let nextRowId = 0;
 function makeRowId(): string {
@@ -32,14 +31,18 @@ export class ScanNetworkModal extends Modal {
     private subnetListEl!: HTMLElement;
     private startBtn!: HTMLButtonElement;
     private emptyNotice!: HTMLElement;
+    // Captured during loadInitialRows; sync callers (saveSubnets) reach it without re-importing.
+    private settings: SettingsService | undefined;
 
     constructor(options: ScanNetworkModalOptions) {
         super({ title: 'Scan Network for Devices' });
         this.opts = options;
         this.dialog.classList.add('scan-network-modal');
-        // super()'s buildBody deferred rendering — now run initial population
-        queueMicrotask(() => {
-            this.loadInitialRows();
+        // super()'s buildBody deferred rendering — now run initial population.
+        // loadInitialRows is async (awaits loadGlobal); the microtask body is async
+        // so the await lands correctly.
+        queueMicrotask(async () => {
+            await this.loadInitialRows();
             this.renderSubnetList();
             this.updateStartButton();
         });
@@ -116,7 +119,7 @@ export class ScanNetworkModal extends Modal {
         this.updateStartButton();
     }
 
-    private loadInitialRows(): void {
+    private async loadInitialRows(): Promise<void> {
         this.rows = [];
         if (this.opts.gatewaySubnet) {
             this.rows.push({
@@ -128,30 +131,25 @@ export class ScanNetworkModal extends Modal {
                 removable: false,
             });
         }
-        const saved = this.loadSavedSubnets();
-        for (const raw of saved) {
-            void this.addUserRow(raw);
-        }
-    }
-
-    private loadSavedSubnets(): string[] {
-        try {
-            const v = localStorage.getItem(LS_KEY);
-            if (!v) return [];
-            const arr = JSON.parse(v);
-            return Array.isArray(arr) ? arr.filter((x) => typeof x === 'string') : [];
-        } catch {
-            return [];
-        }
+        // Capture the singleton into a private field so the synchronous saveSubnets
+        // callers (addUserRow, updateUserRow, removeRowById) can reach it without
+        // re-importing. The await below precedes any save call, so this.settings is
+        // always populated before the first write.
+        const { settingsService } = await import('./SettingsService');
+        this.settings = settingsService;
+        await settingsService.loadGlobal(); // cache hit after boot warm-up
+        const v = settingsService.getGlobalCached()['scanSubnets'];
+        const saved = Array.isArray(v) ? v.filter((x) => typeof x === 'string') : [];
+        for (const raw of saved) void this.addUserRow(raw);
     }
 
     private saveSubnets(): void {
         const raws = this.rows.filter((r) => r.removable).map((r) => r.raw);
-        try {
-            localStorage.setItem(LS_KEY, JSON.stringify(raws));
-        } catch {
-            // Storage full or disabled — ignore
-        }
+        // Fire-and-forget: sync callers (addUserRow, updateUserRow, removeRowById)
+        // run only after loadInitialRows has populated this.settings.
+        void this.settings?.patchGlobal({ scanSubnets: raws }).catch((e) =>
+            console.error('[ScanNetworkModal] patchGlobal scanSubnets failed', e),
+        );
     }
 
     private async addUserRow(raw: string): Promise<void> {
