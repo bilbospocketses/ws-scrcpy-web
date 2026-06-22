@@ -188,7 +188,7 @@ export function probeAdb(
         socket.once('error', () => done({ isAdb: false }));
         socket.once('end', () => done(parseCnxnReply(Buffer.concat(chunks))));
         socket.once('close', () => done(parseCnxnReply(Buffer.concat(chunks))));
-        socket.on('data', (chunk) => {
+        socket.on('data', (chunk: Buffer) => {
             chunks.push(chunk);
             const all = Buffer.concat(chunks);
             if (all.length >= HEADER_SIZE) {

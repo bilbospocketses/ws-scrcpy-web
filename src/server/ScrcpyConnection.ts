@@ -476,7 +476,7 @@ export class ScrcpyConnection extends Mw {
         });
 
         // Control socket: device messages → channel 3 → WS
-        this.controlSocket!.on('data', (data) => {
+        this.controlSocket!.on('data', (data: Buffer) => {
             this.sendChannel(ChannelId.DEVICE_MSG, data);
         });
     }
