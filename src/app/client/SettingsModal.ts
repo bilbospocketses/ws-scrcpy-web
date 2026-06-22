@@ -16,6 +16,7 @@ import { ServiceOperationModal } from './ServiceOperationModal';
 import { settingsService } from './SettingsService';
 import { UninstallConfirmModal } from './UninstallConfirmModal';
 import { runUpgradingHandoff } from './UpgradingOverlay';
+import { UsersModal } from './UsersModal';
 
 /**
  * Follow-up copy shown after a Linux service uninstall begins, by scope.
@@ -417,6 +418,7 @@ export function buildResetControl(opts: { reload: () => void }): {
  */
 export class SettingsModal extends Modal {
     private role: Role | null = null;
+    private authEnabled = false;
     private serviceSection!: HTMLElement;
     private webPortInput: HTMLInputElement | null = null;
     private webPortStatus: HTMLElement | null = null;
@@ -459,12 +461,16 @@ export class SettingsModal extends Modal {
         queueMicrotask(() => {
             void (async () => {
                 let role: Role | null = 'admin';
+                let authEnabled = false;
                 try {
-                    role = (await authClient.me()).user?.role ?? null;
+                    const me = await authClient.me();
+                    role = me.user?.role ?? null;
+                    authEnabled = me.authEnabled;
                 } catch {
                     role = 'admin';
                 }
                 this.role = role;
+                this.authEnabled = authEnabled;
                 this.fillBody(this.bodyEl);
                 if (canSeeSection(role, 'service')) void this.refreshService();
                 if (canSeeSection(role, 'updates')) void this.refreshUpdates();
@@ -485,6 +491,8 @@ export class SettingsModal extends Modal {
         // port row; there is no longer a separate "App" section.
         // Admin-only sections are gated on the current user's role (set before
         // fillBody is called). The server enforces the same set via requireAdmin.
+        // The "Users" section (manage users button + auth toggle) is admin-only.
+        if (canSeeSection(this.role, 'users')) container.appendChild(this.buildUsersSection());
         if (canSeeSection(this.role, 'updates')) container.appendChild(this.buildUpdatesSection());
         if (canSeeSection(this.role, 'service')) container.appendChild(this.buildServiceSection());
         container.appendChild(this.buildServerSection()); // always (contains the user-level reset row)
@@ -557,6 +565,81 @@ export class SettingsModal extends Modal {
         return { row, labelEl };
     }
 
+    // ── Users section (admin-only) ─────────────────────────────────────────
+    private buildUsersSection(): HTMLElement {
+        const { section, body } = this.buildSection('Users');
+
+        // 1. Manage users button — opens UsersModal (admin-only action).
+        const manageBtn = document.createElement('button');
+        manageBtn.type = 'button';
+        manageBtn.className = 'modal-button';
+        manageBtn.textContent = 'manage users';
+        manageBtn.addEventListener('click', () => {
+            new UsersModal();
+        });
+        body.appendChild(this.buildRow('user accounts', manageBtn));
+
+        // 2. Auth toggle — disable login (authEnabled=true) or enable login
+        //    (authEnabled=false). window.location.reload() on success.
+        const toggleStatus = document.createElement('p');
+        toggleStatus.className = 'settings-status';
+        toggleStatus.style.gridColumn = '1 / -1';
+        toggleStatus.hidden = true;
+
+        if (this.authEnabled) {
+            const disableBtn = document.createElement('button');
+            disableBtn.type = 'button';
+            disableBtn.className = 'modal-button';
+            disableBtn.textContent = 'disable login (return to open mode)';
+            disableBtn.addEventListener('click', () => {
+                disableBtn.disabled = true;
+                void (async () => {
+                    try {
+                        await authClient.disableAuth();
+                        window.location.reload();
+                    } catch {
+                        toggleStatus.textContent = 'failed to disable login — see server logs.';
+                        toggleStatus.hidden = false;
+                        disableBtn.disabled = false;
+                    }
+                })();
+            });
+            body.appendChild(this.buildRow('login', disableBtn));
+        } else {
+            const enableBtn = document.createElement('button');
+            enableBtn.type = 'button';
+            enableBtn.className = 'modal-button';
+            enableBtn.textContent = 'enable login';
+            enableBtn.addEventListener('click', () => {
+                enableBtn.disabled = true;
+                void (async () => {
+                    try {
+                        const res = await authClient.enableAuth();
+                        if (res.ok) {
+                            window.location.reload();
+                            return;
+                        }
+                        if (res.status === 409) {
+                            toggleStatus.textContent = 'Add a user with an admin password first (Users → manage users)';
+                        } else {
+                            toggleStatus.textContent = `failed to enable login (${res.status})`;
+                        }
+                        toggleStatus.hidden = false;
+                        enableBtn.disabled = false;
+                    } catch {
+                        toggleStatus.textContent = 'failed to enable login — could not reach server.';
+                        toggleStatus.hidden = false;
+                        enableBtn.disabled = false;
+                    }
+                })();
+            });
+            body.appendChild(this.buildRow('login', enableBtn));
+        }
+
+        body.appendChild(toggleStatus);
+        return section;
+    }
+
     // ── Server section ─────────────────────────────────────────────────────
     private buildServerSection(): HTMLElement {
         const { section, body } = this.buildSection('Server');
@@ -568,6 +651,123 @@ export class SettingsModal extends Modal {
         //    prefs are read fresh.
         const reset = buildResetControl({ reload: () => window.location.reload() });
         body.appendChild(this.buildRow('reset all my settings', reset.button));
+
+        // 1b. change password — user-level, only shown when auth is enabled
+        //     (in open mode there is no password to change). Reveals an inline
+        //     form with current + new password inputs, each with an eye toggle.
+        //     On save → authClient.changePassword(); on success collapse the form;
+        //     on failure show inline status. Never throws.
+        if (this.authEnabled) {
+            const cpStatus = document.createElement('p');
+            cpStatus.className = 'settings-status';
+            cpStatus.style.gridColumn = '1 / -1';
+            cpStatus.hidden = true;
+
+            const cpForm = document.createElement('div');
+            cpForm.style.cssText = 'display:none; flex-direction:column; gap:6px; margin-top:4px;';
+
+            // Current password row
+            const curRow = document.createElement('div');
+            curRow.style.cssText = 'display:flex; align-items:center; gap:4px;';
+            const curInput = document.createElement('input');
+            curInput.type = 'password';
+            curInput.placeholder = 'current password';
+            curInput.className = 'settings-input';
+            curInput.setAttribute('data-field', 'cp-current');
+            const curEye = document.createElement('button');
+            curEye.type = 'button';
+            curEye.className = 'modal-button';
+            curEye.textContent = '👁';
+            curEye.title = 'show/hide';
+            curEye.addEventListener('click', () => {
+                curInput.type = curInput.type === 'password' ? 'text' : 'password';
+            });
+            curRow.appendChild(curInput);
+            curRow.appendChild(curEye);
+            cpForm.appendChild(curRow);
+
+            // New password row
+            const newRow = document.createElement('div');
+            newRow.style.cssText = 'display:flex; align-items:center; gap:4px;';
+            const newInput = document.createElement('input');
+            newInput.type = 'password';
+            newInput.placeholder = 'new password';
+            newInput.className = 'settings-input';
+            newInput.setAttribute('data-field', 'cp-new');
+            const newEye = document.createElement('button');
+            newEye.type = 'button';
+            newEye.className = 'modal-button';
+            newEye.textContent = '👁';
+            newEye.title = 'show/hide';
+            newEye.addEventListener('click', () => {
+                newInput.type = newInput.type === 'password' ? 'text' : 'password';
+            });
+            newRow.appendChild(newInput);
+            newRow.appendChild(newEye);
+            cpForm.appendChild(newRow);
+
+            // Save / cancel
+            const cpBtnRow = document.createElement('div');
+            cpBtnRow.style.cssText = 'display:flex; gap:6px;';
+            const saveBtn = document.createElement('button');
+            saveBtn.type = 'button';
+            saveBtn.className = 'modal-button';
+            saveBtn.textContent = 'save';
+            saveBtn.addEventListener('click', () => {
+                void (async () => {
+                    saveBtn.disabled = true;
+                    cpStatus.textContent = 'saving…';
+                    cpStatus.hidden = false;
+                    try {
+                        const ok = await authClient.changePassword(curInput.value, newInput.value);
+                        if (ok) {
+                            cpStatus.textContent = 'password changed';
+                            cpForm.style.display = 'none';
+                            cpBtn.style.display = '';
+                            curInput.value = '';
+                            newInput.value = '';
+                        } else {
+                            cpStatus.textContent = 'current password incorrect';
+                        }
+                    } catch {
+                        cpStatus.textContent = 'could not reach server';
+                    }
+                    saveBtn.disabled = false;
+                })();
+            });
+            const cancelBtn = document.createElement('button');
+            cancelBtn.type = 'button';
+            cancelBtn.className = 'modal-button';
+            cancelBtn.textContent = 'cancel';
+            cancelBtn.addEventListener('click', () => {
+                cpForm.style.display = 'none';
+                cpBtn.style.display = '';
+                cpStatus.hidden = true;
+                curInput.value = '';
+                newInput.value = '';
+            });
+            cpBtnRow.appendChild(saveBtn);
+            cpBtnRow.appendChild(cancelBtn);
+            cpForm.appendChild(cpBtnRow);
+
+            // The trigger button (shown by default, hides when form is open)
+            const cpBtn = document.createElement('button');
+            cpBtn.type = 'button';
+            cpBtn.className = 'modal-button';
+            cpBtn.textContent = 'change password';
+            cpBtn.setAttribute('data-action', 'change-password');
+            cpBtn.addEventListener('click', () => {
+                cpBtn.style.display = 'none';
+                cpStatus.hidden = true;
+                cpForm.style.display = 'flex';
+            });
+
+            const cpControl = document.createDocumentFragment();
+            cpControl.appendChild(cpBtn);
+            cpControl.appendChild(cpForm);
+            body.appendChild(this.buildRow('password', cpControl));
+            body.appendChild(cpStatus);
+        }
 
         // 2–5 below are admin-only. Skip building + storing them entirely for
         //    non-admin users so no DOM or ref is created. The refresh methods
