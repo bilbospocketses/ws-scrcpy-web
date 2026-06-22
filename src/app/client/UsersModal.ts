@@ -94,6 +94,7 @@ export class UsersModal extends Modal {
                     const res = await authClient.patchUser(u.id, { role: roleSelect.value as Role });
                     if (!res.ok) {
                         this.showStatus(`Failed to change role (HTTP ${res.status})`);
+                        return;
                     }
                     await this.refresh();
                 })();
@@ -112,7 +113,9 @@ export class UsersModal extends Modal {
                 void (async () => {
                     const res = await authClient.patchUser(u.id, { disabled: disabledCb.checked });
                     if (!res.ok) {
+                        disabledCb.checked = u.disabled;
                         this.showStatus(`Failed to update disabled state (HTTP ${res.status})`);
+                        return;
                     }
                     await this.refresh();
                 })();
@@ -133,6 +136,7 @@ export class UsersModal extends Modal {
                         const res = await authClient.patchUser(u.id, { unlock: true });
                         if (!res.ok) {
                             this.showStatus(`Failed to unlock (HTTP ${res.status})`);
+                            return;
                         }
                         await this.refresh();
                     })();

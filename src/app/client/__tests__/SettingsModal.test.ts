@@ -521,7 +521,7 @@ describe('Server section row order (folded App, beta.62)', () => {
 describe('Settings section restructure (beta.62)', () => {
     const flushMicrotasks = (): Promise<void> => new Promise((resolve) => queueMicrotask(resolve));
 
-    it('renders sections in order Updates, Service, Server — no standalone App section', async () => {
+    it('renders sections in order Users, Updates, Service, Server — no standalone App section', async () => {
         document.body.replaceChildren();
         stubMeAsAdmin();
         vi.stubGlobal('fetch', vi.fn().mockReturnValue(new Promise(() => undefined)));
@@ -533,7 +533,9 @@ describe('Settings section restructure (beta.62)', () => {
         const headings = Array.from(document.body.querySelectorAll<HTMLElement>('.settings-section-heading')).map(
             (el) => el.textContent ?? '',
         );
-        expect(headings).toEqual(['Updates', 'Service', 'Server']);
+        // stubMeAsAdmin returns role=admin: admin sees Users, Updates, Service, Server.
+        // No standalone App section (folded into Server in beta.62).
+        expect(headings).toEqual(['Users', 'Updates', 'Service', 'Server']);
     });
 
     it('places the web-port save button inline with the input in the same control cell', async () => {

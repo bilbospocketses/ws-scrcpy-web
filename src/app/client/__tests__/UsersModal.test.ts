@@ -158,6 +158,32 @@ describe('UsersModal — disable toggle', () => {
     });
 });
 
+describe('UsersModal — disable toggle failure keeps error visible', () => {
+    it('on failed patchUser (409) the error message stays visible and does not throw', async () => {
+        vi.spyOn(authClient, 'patchUser').mockResolvedValue({ ok: false, status: 409 } as Response);
+        vi.spyOn(authClient, 'listUsers').mockResolvedValue([adminUser, bobUser]);
+        vi.spyOn(authClient, 'me').mockResolvedValue({ authEnabled: true, user: adminUser });
+
+        new UsersModal();
+        await flush();
+        await flush();
+
+        // Find bob's disable checkbox (id=2)
+        const cb = document.querySelector('input[type="checkbox"][data-user-id="2"]') as HTMLInputElement | null;
+        expect(cb).toBeTruthy();
+        cb!.checked = true;
+        cb!.dispatchEvent(new Event('change'));
+
+        await flush();
+        await flush();
+
+        // Error must still be visible — refresh must NOT have been called (which would clear it)
+        const status = statusEl();
+        expect(status).toContain('Failed');
+        expect(status).toContain('409');
+    });
+});
+
 describe('UsersModal — unlock button', () => {
     it('shows unlock button for a locked user and calls patchUser({ unlock: true })', async () => {
         const patchSpy = vi.spyOn(authClient, 'patchUser').mockResolvedValue({ ok: true } as Response);

@@ -210,6 +210,42 @@ describe('SettingsModal auth controls', () => {
         });
     });
 
+    describe('change-password blank guard (FIX 2)', () => {
+        beforeEach(() => {
+            vi.spyOn(authClient, 'me').mockResolvedValue({
+                authEnabled: true,
+                user: { username: 'alice', role: 'user' },
+            });
+        });
+
+        it('clicking save with blank fields shows validation message and does NOT call changePassword', async () => {
+            const changePwSpy = vi.spyOn(authClient, 'changePassword').mockResolvedValue(true);
+
+            new SettingsModal();
+            await flush();
+            await flush();
+
+            // Open the change-password form
+            const cpTrigger = [...document.querySelectorAll('button')].find(
+                (b) => b.getAttribute('data-action') === 'change-password',
+            );
+            expect(cpTrigger).toBeDefined();
+            cpTrigger!.click();
+
+            // Leave inputs blank and click save
+            const saveBtn = [...document.querySelectorAll('button')].find(
+                (b) => b.textContent === 'save' && b.closest('.settings-section'),
+            );
+            expect(saveBtn).toBeDefined();
+            saveBtn!.click();
+            await flush();
+            await flush();
+
+            expect(changePwSpy).not.toHaveBeenCalled();
+            expect(bodyText()).toContain('enter your current and new password');
+        });
+    });
+
     describe('change-password form interactions', () => {
         beforeEach(() => {
             vi.spyOn(authClient, 'me').mockResolvedValue({
@@ -277,6 +313,79 @@ describe('SettingsModal auth controls', () => {
             await flush();
 
             expect(bodyText()).toContain('current password incorrect');
+        });
+    });
+
+    describe('logout control (FIX 3)', () => {
+        it('log out button is present for admin when authEnabled=true', async () => {
+            vi.spyOn(authClient, 'me').mockResolvedValue({
+                authEnabled: true,
+                user: { username: 'admin', role: 'admin' },
+            });
+
+            new SettingsModal();
+            await flush();
+            await flush();
+
+            const logoutBtn = [...document.querySelectorAll('button')].find(
+                (b) => b.getAttribute('data-action') === 'logout',
+            );
+            expect(logoutBtn).toBeDefined();
+        });
+
+        it('log out button is present for non-admin user when authEnabled=true', async () => {
+            vi.spyOn(authClient, 'me').mockResolvedValue({
+                authEnabled: true,
+                user: { username: 'bob', role: 'user' },
+            });
+
+            new SettingsModal();
+            await flush();
+            await flush();
+
+            const logoutBtn = [...document.querySelectorAll('button')].find(
+                (b) => b.getAttribute('data-action') === 'logout',
+            );
+            expect(logoutBtn).toBeDefined();
+        });
+
+        it('log out button is ABSENT when authEnabled=false', async () => {
+            vi.spyOn(authClient, 'me').mockResolvedValue({
+                authEnabled: false,
+                user: { username: 'admin', role: 'admin' },
+            });
+
+            new SettingsModal();
+            await flush();
+            await flush();
+
+            const logoutBtn = [...document.querySelectorAll('button')].find(
+                (b) => b.getAttribute('data-action') === 'logout',
+            );
+            expect(logoutBtn).toBeUndefined();
+        });
+
+        it('clicking log out calls authClient.logout() then window.location.reload()', async () => {
+            const logoutSpy = vi.spyOn(authClient, 'logout').mockResolvedValue(undefined);
+            vi.spyOn(authClient, 'me').mockResolvedValue({
+                authEnabled: true,
+                user: { username: 'alice', role: 'user' },
+            });
+
+            new SettingsModal();
+            await flush();
+            await flush();
+
+            const logoutBtn = [...document.querySelectorAll('button')].find(
+                (b) => b.getAttribute('data-action') === 'logout',
+            ) as HTMLButtonElement | undefined;
+            expect(logoutBtn).toBeDefined();
+            logoutBtn!.click();
+            await flush();
+            await flush();
+
+            expect(logoutSpy).toHaveBeenCalledOnce();
+            expect(window.location.reload).toHaveBeenCalledOnce();
         });
     });
 });

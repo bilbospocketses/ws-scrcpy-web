@@ -715,6 +715,11 @@ export class SettingsModal extends Modal {
             saveBtn.textContent = 'save';
             saveBtn.addEventListener('click', () => {
                 void (async () => {
+                    if (!curInput.value || !newInput.value) {
+                        cpStatus.textContent = 'enter your current and new password';
+                        cpStatus.hidden = false;
+                        return;
+                    }
                     saveBtn.disabled = true;
                     cpStatus.textContent = 'saving…';
                     cpStatus.hidden = false;
@@ -767,6 +772,32 @@ export class SettingsModal extends Modal {
             cpControl.appendChild(cpForm);
             body.appendChild(this.buildRow('password', cpControl));
             body.appendChild(cpStatus);
+
+            // Logout — user-level, only when authEnabled (you're only logged in when
+            // auth is enabled). Placed adjacent to change-password. Not admin-gated.
+            const logoutStatus = document.createElement('p');
+            logoutStatus.className = 'settings-status';
+            logoutStatus.style.gridColumn = '1 / -1';
+            logoutStatus.hidden = true;
+
+            const logoutBtn = document.createElement('button');
+            logoutBtn.type = 'button';
+            logoutBtn.className = 'modal-button';
+            logoutBtn.textContent = 'log out';
+            logoutBtn.setAttribute('data-action', 'logout');
+            logoutBtn.addEventListener('click', () => {
+                void (async () => {
+                    try {
+                        await authClient.logout();
+                    } catch {
+                        logoutStatus.textContent = 'logout request failed — reloading anyway.';
+                        logoutStatus.hidden = false;
+                    }
+                    window.location.reload();
+                })();
+            });
+            body.appendChild(this.buildRow('session', logoutBtn));
+            body.appendChild(logoutStatus);
         }
 
         // 2–5 below are admin-only. Skip building + storing them entirely for
