@@ -5,6 +5,7 @@ import ScreenInfo from '../ScreenInfo';
 import Size from '../Size';
 import Util from '../Util';
 import VideoSettings from '../VideoSettings';
+import { settingsService } from '../client/SettingsService';
 import { AnimationFrameGuard } from './animationFrameGuard';
 import { stringArraysDiffer } from './statsDiff';
 
@@ -176,78 +177,53 @@ export abstract class BasePlayer extends TypedEmitter<PlayerEvents> {
         return frame && frame.length > 4 && (frame[4]! & 31) === 5;
     }
 
-    private static getStorageKey(storageKeyPrefix: string, udid: string): string {
-        const { innerHeight, innerWidth } = window;
-        return `${storageKeyPrefix}:${udid}:${innerWidth}x${innerHeight}`;
-    }
+    // NOTE: getStorageKey, getFullStorageKey, and getFromStorageCompat have been
+    // removed — video settings now route through the SettingsService singleton
+    // (Task 4c). The legacy localStorage key scheme (viewport-keyed per udid) is
+    // no longer used; all video prefs are stored as one collapsed 'video' scope per
+    // udid by the migration and the new accessors below.
 
-    private static getFullStorageKey(storageKeyPrefix: string, udid: string, displayInfo?: DisplayInfo): string {
-        const { innerHeight, innerWidth } = window;
-        let base = `${storageKeyPrefix}:${udid}:${innerWidth}x${innerHeight}`;
-        if (displayInfo) {
-            const { displayId, size } = displayInfo;
-            base = `${base}:${displayId}:${size.width}x${size.height}`;
-        }
-        return base;
-    }
-
-    public static getFromStorageCompat(prefix: string, udid: string, displayInfo?: DisplayInfo): string | null {
-        const shortKey = this.getStorageKey(prefix, udid);
-        const savedInShort = window.localStorage.getItem(shortKey);
-        if (!displayInfo) {
-            return savedInShort;
-        }
-        const isDefaultDisplay = displayInfo.displayId === DisplayInfo.DEFAULT_DISPLAY;
-        const fullKey = this.getFullStorageKey(prefix, udid, displayInfo);
-        const savedInFull = window.localStorage.getItem(fullKey);
-        if (savedInFull) {
-            if (savedInShort && isDefaultDisplay) {
-                window.localStorage.removeItem(shortKey);
-            }
-            return savedInFull;
-        }
-        if (isDefaultDisplay) {
-            return savedInShort;
-        }
-        return null;
-    }
-
+    /**
+     * Returns whether fit-to-screen is enabled for the given udid.
+     * Reads from the SettingsService singleton's sync device cache; returns false
+     * when the udid has not been hydrated or has no stored fit value — identical
+     * to the previous localStorage-miss default.
+     *
+     * `storageKeyPrefix` and `displayInfo` are kept in the signature for call-site
+     * compatibility but are no longer used for storage (Task 3 collapsed all
+     * viewport-keyed entries into one 'video' scope per udid).
+     */
     public static getFitToScreenFromStorage(
-        storageKeyPrefix: string,
+        _storageKeyPrefix: string,
         udid: string,
-        displayInfo?: DisplayInfo,
+        _displayInfo?: DisplayInfo,
     ): boolean {
-        if (!window.localStorage) {
-            return false;
-        }
-        let parsedValue = false;
-        const key = `${this.getFullStorageKey(storageKeyPrefix, udid, displayInfo)}:fit`;
-        const saved = window.localStorage.getItem(key);
-        if (!saved) {
-            return false;
-        }
-        try {
-            parsedValue = JSON.parse(saved);
-        } catch (_error: any) {
-            console.error(`[${this.name}]`, 'Failed to parse', saved);
-        }
-        return parsedValue;
+        return settingsService.getDeviceVideo(udid)?.fit === true;
     }
 
+    /**
+     * Returns the stored VideoSettings for the given udid, coerced and defaulted,
+     * or `preferred` when no value is stored (cache miss / not hydrated).
+     *
+     * The coercion block is preserved verbatim from the pre-Task-4c implementation;
+     * only the source of `parsed` changes: was JSON.parse(localStorage), now the
+     * plain parsed object from the SettingsService sync cache (which holds the same
+     * shape written by the migration and by putVideoSettingsToStorage).
+     *
+     * `storageKeyPrefix` and `displayInfo` are kept for call-site compatibility but
+     * are no longer used for storage lookups (viewport-key collapse — see Task 3).
+     */
     public static getVideoSettingFromStorage(
         preferred: VideoSettings,
-        storageKeyPrefix: string,
+        _storageKeyPrefix: string,
         udid: string,
-        displayInfo?: DisplayInfo,
+        _displayInfo?: DisplayInfo,
     ): VideoSettings {
-        if (!window.localStorage) {
+        const stored = settingsService.getDeviceVideo(udid)?.settings;
+        if (!stored) {
             return preferred;
         }
-        const saved = this.getFromStorageCompat(storageKeyPrefix, udid, displayInfo);
-        if (!saved) {
-            return preferred;
-        }
-        const parsed = JSON.parse(saved);
+        const parsed = stored;
         const {
             displayId,
             crop,
@@ -263,50 +239,66 @@ export abstract class BasePlayer extends TypedEmitter<PlayerEvents> {
         // parsed.* come from JSON.parse and may be undefined / strings; wrap in
         // Number() so Number.isNaN replicates the old isNaN coercion (undefined -> NaN
         // -> fall back to the preferred default), which a bare Number.isNaN would not.
-        const maxFps = Number.isNaN(Number(parsed.maxFps)) ? parsed.frameRate : parsed.maxFps;
+        const maxFps = Number.isNaN(Number(parsed['maxFps'])) ? parsed['frameRate'] : parsed['maxFps'];
         // REMOVE `maxSize`
         let bounds: Size | null = null;
         if (
-            typeof parsed.bounds !== 'object' ||
-            Number.isNaN(Number(parsed.bounds.width)) ||
-            Number.isNaN(Number(parsed.bounds.height))
+            typeof parsed['bounds'] !== 'object' ||
+            Number.isNaN(Number((parsed['bounds'] as Record<string, unknown>)?.['width'])) ||
+            Number.isNaN(Number((parsed['bounds'] as Record<string, unknown>)?.['height']))
         ) {
-            if (!Number.isNaN(Number(parsed.maxSize))) {
-                bounds = new Size(parsed.maxSize, parsed.maxSize);
+            if (!Number.isNaN(Number(parsed['maxSize']))) {
+                bounds = new Size(Number(parsed['maxSize']), Number(parsed['maxSize']));
             }
         } else {
-            bounds = new Size(parsed.bounds.width, parsed.bounds.height);
+            const b = parsed['bounds'] as Record<string, unknown>;
+            bounds = new Size(Number(b['width']), Number(b['height']));
         }
         return new VideoSettings({
             displayId: typeof displayId === 'number' ? displayId : 0,
-            crop: crop ? new Rect(crop.left, crop.top, crop.right, crop.bottom) : preferred.crop,
-            bitrate: !Number.isNaN(Number(bitrate)) ? bitrate : preferred.bitrate,
+            crop: crop ? new Rect(
+                Number((crop as Record<string, unknown>)['left']),
+                Number((crop as Record<string, unknown>)['top']),
+                Number((crop as Record<string, unknown>)['right']),
+                Number((crop as Record<string, unknown>)['bottom']),
+            ) : preferred.crop,
+            bitrate: !Number.isNaN(Number(bitrate)) ? Number(bitrate) : preferred.bitrate,
             bounds: bounds !== null ? bounds : preferred.bounds,
-            maxFps: !Number.isNaN(Number(maxFps)) ? maxFps : preferred.maxFps,
-            iFrameInterval: !Number.isNaN(Number(iFrameInterval)) ? iFrameInterval : preferred.iFrameInterval,
+            maxFps: !Number.isNaN(Number(maxFps)) ? Number(maxFps) : preferred.maxFps,
+            iFrameInterval: !Number.isNaN(Number(iFrameInterval)) ? Number(iFrameInterval) : preferred.iFrameInterval,
             sendFrameMeta: typeof sendFrameMeta === 'boolean' ? sendFrameMeta : preferred.sendFrameMeta,
             lockedVideoOrientation: !Number.isNaN(Number(lockedVideoOrientation))
-                ? lockedVideoOrientation
+                ? Number(lockedVideoOrientation)
                 : preferred.lockedVideoOrientation,
-            codecOptions,
-            encoderName,
+            codecOptions: codecOptions as string | undefined,
+            encoderName: encoderName as string | undefined,
         });
     }
 
+    /**
+     * Persists video settings + fit-to-screen for the given udid via the
+     * SettingsService singleton (sync cache + fire-and-forget PATCH).
+     *
+     * Adjustment #3 (serialization consistency): settings are stored as a plain
+     * JSON-serializable object (JSON.parse(JSON.stringify(videoSettings))) so a
+     * subsequent cache read via getVideoSettingFromStorage behaves identically
+     * whether the value came from this in-memory write or from a server GET
+     * (which also yields a plain parsed object, never a class instance).
+     *
+     * `storageKeyPrefix` and `displayInfo` are kept for call-site compatibility
+     * but are no longer used (viewport-key collapse — see Task 3).
+     */
     protected static putVideoSettingsToStorage(
-        storageKeyPrefix: string,
+        _storageKeyPrefix: string,
         udid: string,
         videoSettings: VideoSettings,
         fitToScreen: boolean,
-        displayInfo?: DisplayInfo,
+        _displayInfo?: DisplayInfo,
     ): void {
-        if (!window.localStorage) {
-            return;
-        }
-        const key = this.getFullStorageKey(storageKeyPrefix, udid, displayInfo);
-        window.localStorage.setItem(key, JSON.stringify(videoSettings));
-        const fitKey = `${key}:fit`;
-        window.localStorage.setItem(fitKey, JSON.stringify(fitToScreen));
+        settingsService.setDeviceVideo(udid, {
+            settings: JSON.parse(JSON.stringify(videoSettings)) as Record<string, unknown>,
+            fit: fitToScreen,
+        });
     }
 
     public abstract getImageDataURL(): string;

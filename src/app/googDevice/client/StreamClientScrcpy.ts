@@ -28,6 +28,7 @@ import { GoogToolBox } from '../toolbox/GoogToolBox';
 import { UhidKeyboardHandler } from '../UhidKeyboardHandler';
 import { UhidManager } from '../UhidManager';
 import { UhidMouseHandler } from '../UhidMouseHandler';
+import { settingsService } from '../../client/SettingsService';
 import { ConfigureScrcpy } from './ConfigureScrcpy';
 import { DeviceTracker } from './DeviceTracker';
 import { RollingWindow } from './RollingWindow';
@@ -390,6 +391,13 @@ export class StreamClientScrcpy
         if (!udid) {
             throw Error(`Invalid udid value: "${udid}"`);
         }
+
+        // Hydrate the per-device cache before any sync video reads below (player
+        // ctor read and getFitToScreen call). The hydrateDevice is once-guarded so
+        // this is a cheap no-op on the modal flow (already hydrated by
+        // ConfigureScrcpy.init / DeviceTracker handler) and self-sufficient on a
+        // direct deep-link where no modal precedes startStream.
+        await settingsService.hydrateDevice(udid);
 
         this.fitToScreen = fitToScreen;
         if (!player) {
