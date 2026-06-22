@@ -351,13 +351,15 @@ export function buildUninstallControl(opts: { onUninstalled: () => void }): {
 }
 
 /**
- * Build the "reset welcome and bookmark prompts" trigger button. When clicked,
- * opens ResetConfirmModal (a top-layer <dialog>) instead of expanding an inline
- * panel — mirroring buildUninstallControl. On confirmation, PATCHes /api/config
- * with resetPromptsPayload() (clearing the first-run / bookmark flags) and calls
- * opts.reload so the appropriate modal re-fires. The reload runs regardless of
- * the PATCH outcome (the page reload re-reads config either way). Self-contained
- * DOM + wiring; no network call until the modal is confirmed.
+ * Build the "reset all my settings" trigger button. When clicked, opens
+ * ResetConfirmModal (a top-layer <dialog>). On confirmation, calls
+ * settingsService.reset() (POST /api/settings/reset — clears all user_settings,
+ * device_labels, and device_settings for the current user: theme, icon size,
+ * scan subnets, dismissed prompts, device names, and per-device stream/audio
+ * prefs) and also PATCHes /api/config with resetPromptsPayload() (clearing
+ * firstRunComplete, the boot-trio field that re-triggers first-run on reload).
+ * Both calls are fire-and-forget; the page reload re-reads both endpoints
+ * either way. Self-contained DOM + wiring; no network call until confirmed.
  */
 export function buildResetControl(opts: { reload: () => void }): {
     button: HTMLButtonElement;
@@ -371,16 +373,17 @@ export function buildResetControl(opts: { reload: () => void }): {
         void (async () => {
             const confirmed = await ResetConfirmModal.confirm();
             if (!confirmed) return;
-            // Dual-write reset: firstRunComplete → /api/config (boot-trio);
-            // the three per-user prompt flags → /api/settings. Both are
-            // fire-and-forget; the page reload re-reads both endpoints either way.
+            // Full user-settings reset: all user_settings + device_labels +
+            // device_settings via settingsService.reset(); and firstRunComplete
+            // → /api/config (boot-trio field, re-triggers first-run on reload).
+            // Both fire-and-forget; the page reload re-reads both endpoints.
             await Promise.all([
+                settingsService.reset().catch(() => undefined),
                 fetch('/api/config', {
                     method: 'PATCH',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(resetPromptsPayload()),
                 }).catch(() => undefined),
-                settingsService.patchGlobal(resetPromptSettingsPayload()).catch(() => undefined),
             ]);
             opts.reload();
         })();
@@ -541,11 +544,12 @@ export class SettingsModal extends Modal {
     private buildServerSection(): HTMLElement {
         const { section, body } = this.buildSection('Server');
 
-        // 1. reset welcome & bookmark prompts — opens ResetConfirmModal, then
-        //    clears the first-run / bookmark flags and reloads so the relevant
-        //    modal re-fires.
+        // 1. reset all my settings — opens ResetConfirmModal, then clears all
+        //    user settings (theme, device names, per-device stream/audio prefs,
+        //    icon size, scan subnets, dismissed prompts) and reloads so
+        //    first-run re-triggers and all prefs are read fresh.
         const reset = buildResetControl({ reload: () => window.location.reload() });
-        body.appendChild(this.buildRow('reset welcome and bookmark prompts', reset.button));
+        body.appendChild(this.buildRow('reset all my settings', reset.button));
 
         // 2. web port — number input with the SAVE button INLINE to its right
         //    (same control cell). The status line below the row is EMPTY at rest

@@ -20,6 +20,7 @@ import {
     systemServiceInstallGate,
     uninstallFollowupMessage,
 } from '../SettingsModal';
+import * as SettingsServiceModule from '../SettingsService';
 import * as UninstallConfirmModalModule from '../UninstallConfirmModal';
 
 /** Flush microtasks + a macrotask so the awaited fetch handlers settle. */
@@ -412,7 +413,11 @@ describe('buildResetControl', () => {
         expect(confirmSpy).toHaveBeenCalledTimes(1);
     });
 
-    it('on confirm=true PATCHes /api/config (firstRunComplete) and /api/settings (prompt flags) and reloads', async () => {
+    it('on confirm=true calls settingsService.reset() (full user-settings clear) and PATCHes /api/config (firstRunComplete) and reloads', async () => {
+        // Spy on the singleton's reset() method — the full user-settings wipe via
+        // POST /api/settings/reset. The spy replaces the real network call so fetch
+        // only sees the /api/config PATCH (firstRunComplete).
+        const resetSpy = vi.spyOn(SettingsServiceModule.settingsService, 'reset').mockResolvedValue(undefined);
         const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({}) });
         vi.stubGlobal('fetch', fetchMock);
         const reload = vi.fn();
@@ -422,14 +427,16 @@ describe('buildResetControl', () => {
         button.click();
         await flush();
 
-        // Two PATCHes: /api/config for firstRunComplete; /api/settings for the three prompt flags.
+        // settingsService.reset() must be called once (the full user-settings clear).
+        expect(resetSpy).toHaveBeenCalledTimes(1);
+        // /api/config PATCH must still fire (firstRunComplete → false, re-triggers first-run).
         const calls = fetchMock.mock.calls as [string, RequestInit][];
         const configCall = calls.find(([url]) => url === '/api/config');
-        const settingsCall = calls.find(([url]) => url === '/api/settings');
         expect(configCall).toBeTruthy();
         expect(JSON.parse(configCall![1].body as string)).toEqual(resetPromptsPayload());
-        expect(settingsCall).toBeTruthy();
-        expect(JSON.parse(settingsCall![1].body as string)).toEqual(resetPromptSettingsPayload());
+        // /api/settings PATCH must NOT be called separately (reset() covers all user flags).
+        const directSettingsCall = calls.find(([url]) => url === '/api/settings');
+        expect(directSettingsCall).toBeUndefined();
         expect(reload).toHaveBeenCalledTimes(1);
     });
 
@@ -483,7 +490,7 @@ describe('Server section row order (folded App, beta.62)', () => {
             (el) => el.textContent ?? '',
         );
 
-        const resetIdx = labels.indexOf('reset welcome and bookmark prompts');
+        const resetIdx = labels.indexOf('reset all my settings');
         const installIdx = labels.indexOf('install for all users');
         const stopIdx = labels.indexOf('stop the server and close the app');
         const uninstallIdx = labels.indexOf('uninstall ws-scrcpy-web');
