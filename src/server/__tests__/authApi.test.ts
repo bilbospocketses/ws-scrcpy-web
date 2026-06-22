@@ -1,11 +1,13 @@
-import { describe, it, expect, afterEach } from 'vitest';
-import * as fs from 'fs'; import * as os from 'os'; import * as path from 'path';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import { afterEach, describe, expect, it } from 'vitest';
 import { AuthApi } from '../api/AuthApi';
+import { SESSION_COOKIE, setAuthEnabled } from '../auth/authState';
+import { hashPassword } from '../auth/password';
+import { SessionStore } from '../auth/session';
 import { Config } from '../Config';
 import { IMPLICIT_ADMIN_ID } from '../db/constants';
-import { hashPassword } from '../auth/password';
-import { setAuthEnabled, SESSION_COOKIE } from '../auth/authState';
-import { SessionStore } from '../auth/session';
 import { EnvName } from '../EnvName';
 import { makeReqRes } from './helpers/httpMock';
 
@@ -21,8 +23,10 @@ function setup(): void {
 }
 afterEach(() => {
     Config._resetForTest();
-    if (saved.CONFIG === undefined) delete process.env[EnvName.CONFIG_PATH]; else process.env[EnvName.CONFIG_PATH] = saved.CONFIG;
-    if (saved.DEPS === undefined) delete process.env['DEPS_PATH']; else process.env['DEPS_PATH'] = saved.DEPS;
+    if (saved.CONFIG === undefined) delete process.env[EnvName.CONFIG_PATH];
+    else process.env[EnvName.CONFIG_PATH] = saved.CONFIG;
+    if (saved.DEPS === undefined) delete process.env['DEPS_PATH'];
+    else process.env['DEPS_PATH'] = saved.DEPS;
     while (tmpDirs.length) fs.rmSync(tmpDirs.pop()!, { recursive: true, force: true });
 });
 

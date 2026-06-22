@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'http';
-import { isAuthEnabled, parseCookie, setAuthEnabled, SESSION_COOKIE } from '../auth/authState';
+import { isAuthEnabled, parseCookie, SESSION_COOKIE, setAuthEnabled } from '../auth/authState';
 import { resolveUserId } from '../auth/currentUser';
 import { login } from '../auth/loginService';
 import { hashPassword, verifyPassword } from '../auth/password';
@@ -28,7 +28,10 @@ export class AuthApi {
             const result = login(db, username, password, Date.now());
             if (result.ok) {
                 const secure = Boolean((req.socket as { encrypted?: boolean } | undefined)?.encrypted);
-                res.setHeader('Set-Cookie', `${SESSION_COOKIE}=${result.token}; HttpOnly; SameSite=Lax; Path=/${secure ? '; Secure' : ''}`);
+                res.setHeader(
+                    'Set-Cookie',
+                    `${SESSION_COOKIE}=${result.token}; HttpOnly; SameSite=Lax; Path=/${secure ? '; Secure' : ''}`,
+                );
                 sendJson(res, 200, { ok: true });
             } else {
                 sendJson(res, 401, { ok: false, reason: result.reason });
@@ -48,7 +51,10 @@ export class AuthApi {
             // ALLOW-LISTED route → self-validate the cookie (AuthGate did not attach req.user here).
             if (!isAuthEnabled(db)) {
                 const admin = db.users.getById(IMPLICIT_ADMIN_ID);
-                sendJson(res, 200, { authEnabled: false, user: admin ? { username: admin.username, role: admin.role } : null });
+                sendJson(res, 200, {
+                    authEnabled: false,
+                    user: admin ? { username: admin.username, role: admin.role } : null,
+                });
                 return true;
             }
             const token = parseCookie(req.headers.cookie)[SESSION_COOKIE];
@@ -62,7 +68,10 @@ export class AuthApi {
             const body = await readJsonBody(req);
             const current = typeof body['currentPassword'] === 'string' ? body['currentPassword'] : '';
             const next = typeof body['newPassword'] === 'string' ? body['newPassword'] : '';
-            if (next.length === 0) { sendJson(res, 400, { error: 'newPassword required' }); return true; }
+            if (next.length === 0) {
+                sendJson(res, 400, { error: 'newPassword required' });
+                return true;
+            }
             const user = db.users.getById(resolveUserId(req));
             if (!user || !user.passwordHash || !verifyPassword(current, user.passwordHash)) {
                 sendJson(res, 400, { error: 'current password incorrect' });

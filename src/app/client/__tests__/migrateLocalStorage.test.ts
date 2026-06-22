@@ -30,7 +30,10 @@ class MemStorage implements Storage {
     }
 }
 
-function makeSink(): SettingsSink & { globalPatches: Array<Record<string, unknown>>; devicePatches: Array<{ udid: string; patch: Record<string, unknown> }> } {
+function makeSink(): SettingsSink & {
+    globalPatches: Array<Record<string, unknown>>;
+    devicePatches: Array<{ udid: string; patch: Record<string, unknown> }>;
+} {
     const globalPatches: Array<Record<string, unknown>> = [];
     const devicePatches: Array<{ udid: string; patch: Record<string, unknown> }> = [];
     return {

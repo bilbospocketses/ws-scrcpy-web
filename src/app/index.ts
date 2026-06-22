@@ -90,8 +90,9 @@ function maybeShowWelcomeModal(): void {
     // /api/settings for the three per-user prompt-dismissal flags which are
     // no longer part of AppConfig. Both are already warm from the boot sequence
     // above (loadGlobal() was awaited before onload reached here).
-    const configFetch = fetch('/api/config')
-        .then((r) => (r.ok ? (r.json() as Promise<Partial<AppConfigEnvelope>>) : null));
+    const configFetch = fetch('/api/config').then((r) =>
+        r.ok ? (r.json() as Promise<Partial<AppConfigEnvelope>>) : null,
+    );
 
     import('./client/SettingsService')
         .then(({ settingsService }) => Promise.all([configFetch, settingsService.loadGlobal()]))
@@ -120,11 +121,7 @@ function maybeShowWelcomeModal(): void {
                     });
                     return;
                 }
-                maybeShowPortChangeModal(
-                    bookmarkDismissedGlobally,
-                    bookmarkDismissedForPort,
-                    runtime.webPort,
-                );
+                maybeShowPortChangeModal(bookmarkDismissedGlobally, bookmarkDismissedForPort, runtime.webPort);
                 return;
             }
 
@@ -139,11 +136,7 @@ function maybeShowWelcomeModal(): void {
                 return;
             }
 
-            maybeShowPortChangeModal(
-                bookmarkDismissedGlobally,
-                bookmarkDismissedForPort,
-                runtime.webPort,
-            );
+            maybeShowPortChangeModal(bookmarkDismissedGlobally, bookmarkDismissedForPort, runtime.webPort);
         })
         .catch(() => {
             // /api/config or /api/settings absent (e.g., dev server without P2/P3

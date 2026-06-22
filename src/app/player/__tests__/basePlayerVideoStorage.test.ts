@@ -59,7 +59,12 @@ describe('BasePlayer video storage — Task 4c (SettingsService-backed)', () => 
 
     it('cold miss: getVideoSettingFromStorage returns preferred', async () => {
         const { BasePlayer, VideoSettings, Size } = await importModules();
-        const preferred = new VideoSettings({ bitrate: 1_000_000, maxFps: 30, iFrameInterval: 5, bounds: new Size(640, 480) });
+        const preferred = new VideoSettings({
+            bitrate: 1_000_000,
+            maxFps: 30,
+            iFrameInterval: 5,
+            bounds: new Size(640, 480),
+        });
         const result = BasePlayer.getVideoSettingFromStorage(preferred, 'WebCodecsPlayer', UDID);
         expect(result).toBe(preferred);
     });
@@ -86,7 +91,12 @@ describe('BasePlayer video storage — Task 4c (SettingsService-backed)', () => 
                 fit: true,
             },
         });
-        const preferred = new VideoSettings({ bitrate: 1_000_000, maxFps: 30, iFrameInterval: 5, bounds: new Size(640, 480) });
+        const preferred = new VideoSettings({
+            bitrate: 1_000_000,
+            maxFps: 30,
+            iFrameInterval: 5,
+            bounds: new Size(640, 480),
+        });
         const result = BasePlayer.getVideoSettingFromStorage(preferred, 'WebCodecsPlayer', UDID);
         expect(result).toBeInstanceOf(VideoSettings);
         expect(result.bitrate).toBe(2_000_000);
@@ -110,6 +120,7 @@ describe('BasePlayer video storage — Task 4c (SettingsService-backed)', () => 
         const vs = new VideoSettings({ bitrate: 3_000_000, maxFps: 30, iFrameInterval: 5, bounds: new Size(800, 600) });
 
         // Access the protected static via cast.
+        // biome-ignore lint/complexity/noBannedTypes: test-only cast to access protected static; exact signature not needed
         (BasePlayer as unknown as { putVideoSettingsToStorage: Function }).putVideoSettingsToStorage(
             'WebCodecsPlayer',
             UDID,
@@ -157,7 +168,12 @@ describe('BasePlayer video storage — Task 4c (SettingsService-backed)', () => 
             },
         });
         const preferredBounds = new Size(480, 480);
-        const preferred = new VideoSettings({ bitrate: 1_000_000, maxFps: 15, iFrameInterval: 5, bounds: preferredBounds });
+        const preferred = new VideoSettings({
+            bitrate: 1_000_000,
+            maxFps: 15,
+            iFrameInterval: 5,
+            bounds: preferredBounds,
+        });
 
         // Must not throw.
         const result = BasePlayer.getVideoSettingFromStorage(preferred, 'WebCodecsPlayer', UDID);
@@ -185,7 +201,12 @@ describe('BasePlayer video storage — Task 4c (SettingsService-backed)', () => 
                 },
             },
         });
-        const preferred = new VideoSettings({ bitrate: 1_000_000, maxFps: 15, iFrameInterval: 5, bounds: new Size(480, 480) });
+        const preferred = new VideoSettings({
+            bitrate: 1_000_000,
+            maxFps: 15,
+            iFrameInterval: 5,
+            bounds: new Size(480, 480),
+        });
         const result = BasePlayer.getVideoSettingFromStorage(preferred, 'WebCodecsPlayer', UDID);
 
         expect(result).toBeInstanceOf(VideoSettings);

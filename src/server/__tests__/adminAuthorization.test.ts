@@ -1,16 +1,16 @@
-import { describe, it, expect, afterEach } from 'vitest';
 import * as fs from 'fs';
+import type { IncomingMessage, ServerResponse } from 'http';
 import * as os from 'os';
 import * as path from 'path';
-import type { IncomingMessage, ServerResponse } from 'http';
-import { Config } from '../Config';
-import { requireAdmin } from '../auth/requireAdmin';
-import { EnvName } from '../EnvName';
+import { afterEach, describe, expect, it } from 'vitest';
 import { ConfigApi } from '../api/ConfigApi';
 import { DependencyApi } from '../api/DependencyApi';
+import { ServerShutdownApi } from '../api/ServerShutdownApi';
 import { ServiceApi } from '../api/ServiceApi';
 import { UpdatesApi } from '../api/UpdatesApi';
-import { ServerShutdownApi } from '../api/ServerShutdownApi';
+import { requireAdmin } from '../auth/requireAdmin';
+import { Config } from '../Config';
+import { EnvName } from '../EnvName';
 import { makeReqRes } from './helpers/httpMock';
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -46,7 +46,12 @@ describe('requireAdmin', () => {
         const db = Config.getInstance().db;
         const bob = db.users.create({ username: 'bob', role: 'user', passwordHash: 'x' });
         let status = 0;
-        const res = { writeHead: (s: number) => { status = s; }, end: () => {} } as unknown as ServerResponse;
+        const res = {
+            writeHead: (s: number) => {
+                status = s;
+            },
+            end: () => {},
+        } as unknown as ServerResponse;
         const req = { user: { id: bob.id } } as unknown as IncomingMessage;
         expect(requireAdmin(req, res)).toBe(false);
         expect(status).toBe(403);

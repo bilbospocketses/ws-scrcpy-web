@@ -31,6 +31,6 @@ describe('authState', () => {
         expect(isAllowlisted('/api/auth/me')).toBe(true); // login page reads authEnabled pre-login
         expect(isAllowlisted('/api/devices')).toBe(false);
         expect(isAllowlisted('/')).toBe(false); // app shell is gated → AuthGate serves the login page inline
-        expect(isAllowlisted('/login')).toBe(false);            // SPA-shell-leak defense: /login is served inline by AuthGate, never allow-listed
+        expect(isAllowlisted('/login')).toBe(false); // SPA-shell-leak defense: /login is served inline by AuthGate, never allow-listed
     });
 });

@@ -1,8 +1,8 @@
 import type { IncomingMessage, ServerResponse } from 'http';
+import { lockdown } from '../auth/lockdown';
 import { hashPassword } from '../auth/password';
 import { requireAdmin } from '../auth/requireAdmin';
 import { SessionStore } from '../auth/session';
-import { lockdown } from '../auth/lockdown';
 import { Config } from '../Config';
 import type { Role } from '../db/UserStore';
 import { readJsonBody } from './utils';
@@ -52,13 +52,17 @@ export class UsersApi {
                 const adminUsername = typeof body['adminUsername'] === 'string' ? body['adminUsername'] : '';
                 const adminPassword = typeof body['adminPassword'] === 'string' ? body['adminPassword'] : '';
                 if (adminUsername.length === 0 || adminPassword.length === 0) {
-                    sendJson(res, 400, { error: 'adminUsername and adminPassword are required to secure the admin account' });
+                    sendJson(res, 400, {
+                        error: 'adminUsername and adminPassword are required to secure the admin account',
+                    });
                     return true;
                 }
                 try {
                     lockdown(db, { adminUsername, adminPassword, newUser: { username, role, password } });
                 } catch {
-                    sendJson(res, 409, { error: 'could not complete first-user setup (the admin may already be secured, or the username is taken)' });
+                    sendJson(res, 409, {
+                        error: 'could not complete first-user setup (the admin may already be secured, or the username is taken)',
+                    });
                     return true;
                 }
                 sendJson(res, 201, { ok: true });
@@ -76,12 +80,19 @@ export class UsersApi {
         if (req.method === 'PATCH' && pathname.startsWith('/api/users/')) {
             const idStr = pathname.slice('/api/users/'.length);
             const id = Number(idStr);
-            if (!Number.isInteger(id) || String(id) !== idStr) { sendJson(res, 400, { error: 'invalid id' }); return true; }
+            if (!Number.isInteger(id) || String(id) !== idStr) {
+                sendJson(res, 400, { error: 'invalid id' });
+                return true;
+            }
             const target = db.users.getById(id);
-            if (!target) { sendJson(res, 404, { error: 'no such user' }); return true; }
+            if (!target) {
+                sendJson(res, 404, { error: 'no such user' });
+                return true;
+            }
             const body = await readJsonBody(req);
 
-            const isLastEnabledAdmin = target.role === 'admin' && !target.disabled && db.users.countEnabledAdmins() <= 1;
+            const isLastEnabledAdmin =
+                target.role === 'admin' && !target.disabled && db.users.countEnabledAdmins() <= 1;
             if (body['disabled'] === true && isLastEnabledAdmin) {
                 sendJson(res, 409, { error: 'cannot disable the last enabled admin' });
                 return true;
@@ -107,9 +118,15 @@ export class UsersApi {
         if (req.method === 'DELETE' && pathname.startsWith('/api/users/')) {
             const idStr = pathname.slice('/api/users/'.length);
             const id = Number(idStr);
-            if (!Number.isInteger(id) || String(id) !== idStr) { sendJson(res, 400, { error: 'invalid id' }); return true; }
+            if (!Number.isInteger(id) || String(id) !== idStr) {
+                sendJson(res, 400, { error: 'invalid id' });
+                return true;
+            }
             const target = db.users.getById(id);
-            if (!target) { sendJson(res, 404, { error: 'no such user' }); return true; }
+            if (!target) {
+                sendJson(res, 404, { error: 'no such user' });
+                return true;
+            }
             if (target.role === 'admin' && !target.disabled && db.users.countEnabledAdmins() <= 1) {
                 sendJson(res, 409, { error: 'cannot delete the last enabled admin' });
                 return true;

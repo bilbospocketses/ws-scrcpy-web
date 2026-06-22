@@ -1,11 +1,11 @@
 import { TypedEmitter } from '../../common/TypedEmitter';
-import { DisplayInfo } from '../DisplayInfo';
+import { settingsService } from '../client/SettingsService';
+import type { DisplayInfo } from '../DisplayInfo';
 import Rect from '../Rect';
 import ScreenInfo from '../ScreenInfo';
 import Size from '../Size';
 import Util from '../Util';
 import VideoSettings from '../VideoSettings';
-import { settingsService } from '../client/SettingsService';
 import { AnimationFrameGuard } from './animationFrameGuard';
 import { stringArraysDiffer } from './statsDiff';
 
@@ -256,12 +256,14 @@ export abstract class BasePlayer extends TypedEmitter<PlayerEvents> {
         }
         return new VideoSettings({
             displayId: typeof displayId === 'number' ? displayId : 0,
-            crop: crop ? new Rect(
-                Number((crop as Record<string, unknown>)['left']),
-                Number((crop as Record<string, unknown>)['top']),
-                Number((crop as Record<string, unknown>)['right']),
-                Number((crop as Record<string, unknown>)['bottom']),
-            ) : preferred.crop,
+            crop: crop
+                ? new Rect(
+                      Number((crop as Record<string, unknown>)['left']),
+                      Number((crop as Record<string, unknown>)['top']),
+                      Number((crop as Record<string, unknown>)['right']),
+                      Number((crop as Record<string, unknown>)['bottom']),
+                  )
+                : preferred.crop,
             bitrate: !Number.isNaN(Number(bitrate)) ? Number(bitrate) : preferred.bitrate,
             bounds: bounds !== null ? bounds : preferred.bounds,
             maxFps: !Number.isNaN(Number(maxFps)) ? Number(maxFps) : preferred.maxFps,

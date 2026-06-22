@@ -110,7 +110,9 @@ export async function migrateLocalStorage(ls: Storage, sink: SettingsSink): Prom
     }
 
     // ---- clear legacy keys + set marker (only reached on full success) ----
-    [LEGACY_KEYS.theme, LEGACY_KEYS.iconSize, LEGACY_KEYS.scanSubnets].forEach((k) => ls.removeItem(k));
+    [LEGACY_KEYS.theme, LEGACY_KEYS.iconSize, LEGACY_KEYS.scanSubnets].forEach((k) => {
+        ls.removeItem(k);
+    });
     for (let i = ls.length - 1; i >= 0; i--) {
         const k = ls.key(i);
         if (k && (k.startsWith(LEGACY_KEYS.audioPrefix) || k.startsWith(LEGACY_KEYS.videoPrefix))) ls.removeItem(k);

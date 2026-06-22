@@ -7,10 +7,10 @@ import type {
     UpdatesErrorResponse,
     UpdatesStatusResponse,
 } from '../../common/UpdateEvents';
+import { requireAdmin } from '../auth/requireAdmin';
 import { Config } from '../Config';
 import { Logger } from '../Logger';
 import type { UpdateService } from '../UpdateService';
-import { requireAdmin } from '../auth/requireAdmin';
 import { readJsonBody } from './utils';
 
 const log = Logger.for('UpdatesApi');

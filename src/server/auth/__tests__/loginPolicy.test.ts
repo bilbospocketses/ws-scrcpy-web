@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { applyFailure, isLocked, clearedState, extendLock, WINDOW_MS, LOCK_MS } from '../loginPolicy';
+import { describe, expect, it } from 'vitest';
+import { applyFailure, clearedState, extendLock, isLocked, LOCK_MS, WINDOW_MS } from '../loginPolicy';
 
 const base = { failedAttempts: 0, lockoutWindowStart: null as number | null, lockedUntil: null as number | null };
 
