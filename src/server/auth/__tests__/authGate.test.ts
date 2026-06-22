@@ -44,4 +44,14 @@ describe('AuthGate', () => {
         expect(handled).toBe(true);
         expect(status).toBe(200);
     });
+    it('blocks a disabled user even with a valid session cookie (fail-closed)', async () => {
+        const d = db(); setAuthEnabled(d, true);
+        const bob = d.users.create({ username: 'bob', role: 'user', passwordHash: 'x' });
+        const token = new SessionStore(d.sqlite).create(bob.id, Date.now(), SESSION_TTL_MS);
+        d.users.setDisabled(bob.id, true); // raw disable WITHOUT session revoke → exercises the gate's own check
+        const gate = new AuthGate(() => d);
+        const { status, handled } = await runGate(gate, 'GET', '/api/devices', `${SESSION_COOKIE}=${token}`);
+        expect(handled).toBe(true);
+        expect(status).toBe(401);
+    });
 });

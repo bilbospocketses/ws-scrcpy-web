@@ -57,8 +57,8 @@ export class UsersApi {
                 }
                 try {
                     lockdown(db, { adminUsername, adminPassword, newUser: { username, role, password } });
-                } catch (err) {
-                    sendJson(res, 409, { error: (err as Error).message });
+                } catch {
+                    sendJson(res, 409, { error: 'could not complete first-user setup (the admin may already be secured, or the username is taken)' });
                     return true;
                 }
                 sendJson(res, 201, { ok: true });
@@ -74,8 +74,9 @@ export class UsersApi {
         }
 
         if (req.method === 'PATCH' && pathname.startsWith('/api/users/')) {
-            const id = Number(pathname.slice('/api/users/'.length));
-            if (!Number.isInteger(id)) { sendJson(res, 400, { error: 'invalid id' }); return true; }
+            const idStr = pathname.slice('/api/users/'.length);
+            const id = Number(idStr);
+            if (!Number.isInteger(id) || String(id) !== idStr) { sendJson(res, 400, { error: 'invalid id' }); return true; }
             const target = db.users.getById(id);
             if (!target) { sendJson(res, 404, { error: 'no such user' }); return true; }
             const body = await readJsonBody(req);
@@ -104,8 +105,9 @@ export class UsersApi {
         }
 
         if (req.method === 'DELETE' && pathname.startsWith('/api/users/')) {
-            const id = Number(pathname.slice('/api/users/'.length));
-            if (!Number.isInteger(id)) { sendJson(res, 400, { error: 'invalid id' }); return true; }
+            const idStr = pathname.slice('/api/users/'.length);
+            const id = Number(idStr);
+            if (!Number.isInteger(id) || String(id) !== idStr) { sendJson(res, 400, { error: 'invalid id' }); return true; }
             const target = db.users.getById(id);
             if (!target) { sendJson(res, 404, { error: 'no such user' }); return true; }
             if (target.role === 'admin' && !target.disabled && db.users.countEnabledAdmins() <= 1) {

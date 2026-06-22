@@ -20,7 +20,11 @@ export function wsSessionUserId(db: Db, cookieHeader: string | undefined): numbe
     if (!isAuthEnabled(db)) return IMPLICIT_ADMIN_ID;
     const token = parseCookie(cookieHeader)[SESSION_COOKIE];
     const s = token ? new SessionStore(db.sqlite).findValid(token, Date.now()) : undefined;
-    return s?.userId;
+    if (!s) return undefined;
+    const user = db.users.getById(s.userId);
+    // Fail CLOSED: an orphan (deleted) or disabled user must not get a live socket.
+    if (!user || user.disabled) return undefined;
+    return user.id;
 }
 
 export class WebSocketServer implements Service {

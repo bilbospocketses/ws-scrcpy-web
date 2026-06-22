@@ -5,7 +5,9 @@ export const SESSION_COOKIE = 'wsscrcpy_sid';
 
 // `/login` is NOT here: AuthGate serves the login page body itself (see Task 8) so it never
 // falls through to the SPA catch-all (`createStaticHandler` serves index.html for any non-file
-// path — Auditor finding: app-shell leak). whoami + me are public reads (no secret).
+// path — Auditor finding: app-shell leak). whoami + me are exempt from the AUTH gate only;
+// /api/whoami is still gated upstream by the per-instance token check (requestGate #367), so
+// allow-listing it here does not make it reachable cross-instance without the instance token.
 const ALLOWLIST_EXACT = new Set(['/api/auth/login', '/api/auth/me', '/api/whoami']);
 const ALLOWLIST_PREFIX = ['/login-assets/']; // the login page's own self-contained assets
 

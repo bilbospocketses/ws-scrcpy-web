@@ -38,7 +38,10 @@ export class AuthGate {
 
         const token = parseCookie(req.headers.cookie)[SESSION_COOKIE];
         const session = token ? new SessionStore(db.sqlite).findValid(token, Date.now()) : undefined;
-        if (!session) {
+        const user = session ? db.users.getById(session.userId) : undefined;
+        // Fail CLOSED: no session, an orphan session (user deleted), or a disabled user → block.
+        // (Never fall back to the implicit admin here — resolveUserId would otherwise grant admin.)
+        if (!user || user.disabled) {
             if (url.pathname.startsWith('/api/')) {
                 res.writeHead(401, { 'content-type': 'application/json' });
                 res.end(JSON.stringify({ error: 'unauthorized' }));
@@ -49,7 +52,7 @@ export class AuthGate {
             }
             return true; // handled → short-circuit the chain
         }
-        (req as IncomingMessage & { user?: unknown }).user = db.users.getById(session.userId);
+        (req as IncomingMessage & { user?: unknown }).user = user;
         return false; // authenticated → let the real handler run
     }
 }

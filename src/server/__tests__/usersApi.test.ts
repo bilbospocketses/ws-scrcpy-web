@@ -46,6 +46,8 @@ describe('UsersApi', () => {
         const body = r.getJson() as { users: Array<{ username: string; hasPassword: boolean }> };
         expect(body.users.find((u) => u.username === 'bob')?.hasPassword).toBe(true);
         expect(body.users.find((u) => u.username === 'admin')?.hasPassword).toBe(false);
+        expect(JSON.stringify(body)).not.toContain('passwordHash');
+        expect(JSON.stringify(body)).not.toContain('password_hash');
     });
     it('normal create when an admin is already secured', async () => {
         setup();

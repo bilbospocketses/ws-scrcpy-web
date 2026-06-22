@@ -21,4 +21,12 @@ describe('wsSessionUserId', () => {
         const token = new SessionStore(db.sqlite).create(1, Date.now());
         expect(wsSessionUserId(db, `${SESSION_COOKIE}=${token}`)).toBe(1);
     });
+    it('returns undefined for a disabled user even with a valid session (fail-closed)', () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wsws-')); dirs.push(dir);
+        const db = Db.getInstance(dir); setAuthEnabled(db, true);
+        const bob = db.users.create({ username: 'bob', role: 'user', passwordHash: 'x' });
+        const token = new SessionStore(db.sqlite).create(bob.id, Date.now());
+        db.users.setDisabled(bob.id, true);
+        expect(wsSessionUserId(db, `${SESSION_COOKIE}=${token}`)).toBeUndefined();
+    });
 });
