@@ -3,7 +3,6 @@ import { SCAN_WS_PATH } from '../common/ScanMessage';
 import { AdbClient } from './AdbClient';
 import { AdbDaemonManager } from './AdbDaemonManager';
 import { AuthApi } from './api/AuthApi';
-import { UsersApi } from './api/UsersApi';
 import { CapabilitiesApi } from './api/CapabilitiesApi';
 import { ConfigApi } from './api/ConfigApi';
 import { DependencyApi } from './api/DependencyApi';
@@ -12,11 +11,12 @@ import { ServerShutdownApi } from './api/ServerShutdownApi';
 import { ServiceApi } from './api/ServiceApi';
 import { SettingsApi } from './api/SettingsApi';
 import { UpdatesApi } from './api/UpdatesApi';
+import { UsersApi } from './api/UsersApi';
 import { WhoamiApi } from './api/WhoamiApi';
+import { AuthGate } from './auth/AuthGate';
 import { Config } from './Config';
 import { DependencyManager } from './DependencyManager';
 import { DeviceProbe } from './DeviceProbe';
-import { IMPLICIT_ADMIN_ID } from './db/constants';
 import { Logger } from './Logger';
 import { HostTracker } from './mw/HostTracker';
 import type { MwFactory } from './mw/Mw';
@@ -29,7 +29,6 @@ import { NetworkScanner } from './network/NetworkScanner';
 import { consumeSuppressBrowserMarker, openBrowser, shouldAutoOpenBrowser } from './openBrowser';
 import { findAvailablePort, webPortOverride } from './PortPicker';
 import { ScrcpyConnection } from './ScrcpyConnection';
-import { AuthGate } from './auth/AuthGate';
 import { setAllowedHosts } from './security/originGuard';
 import { makeProductionCoreDeps, parseSystemServiceArgs, runSystemServiceCli } from './service/systemServiceCli';
 import { HttpServer } from './services/HttpServer';
@@ -194,7 +193,7 @@ if (__ssArgs) {
         // adb process is launched.
         adbStartServer: () => adbDaemon.ensureReady({ waitMs: 5_000 }),
         resolveMac,
-        labelFor: (key: string) => config.db.devices.getLabel(IMPLICIT_ADMIN_ID, key),
+        labelFor: (userId: number, key: string) => config.db.devices.getLabel(userId, key),
         concurrency: config.scanConcurrency,
         progressInterval: config.scanProgressInterval,
         tcpTimeoutMs: config.scanTcpTimeoutMs,
@@ -246,7 +245,7 @@ if (__ssArgs) {
                 WebsocketMultiplexer.registerMw(mwFactory);
             });
 
-            wsService.registerPathHandler(SCAN_WS_PATH, (ws) => ScanMw.attach(ws));
+            wsService.registerPathHandler(SCAN_WS_PATH, (ws, userId) => ScanMw.attach(ws, userId));
 
             // v0.1.9: auto-open browser on FIRST run, but only when this
             // is a normal user instance (not running as a service —

@@ -26,8 +26,9 @@ export interface NetworkScannerDeps {
     adbStartServer?: () => Promise<void>;
     /** Resolve an IPv4 to its MAC via ARP cache. Returns null when ARP has no entry. */
     resolveMac?: (ip: string) => Promise<string | null>;
-    /** Look up a saved label by device identifier (serial OR MAC). */
-    labelFor?: (key: string) => string | undefined;
+    /** Look up a saved label by userId and device identifier (serial OR MAC).
+     *  The userId ensures each user sees only their own labels. */
+    labelFor?: (userId: number, key: string) => string | undefined;
     concurrency: number;
     progressInterval: number;
     /** TCP connect timeout for the probe (fast-fail on closed port). Default 300ms. */
@@ -38,13 +39,31 @@ export interface NetworkScannerDeps {
 
 type State = 'idle' | 'scanning' | 'draining';
 
+/** Internal extension of ScanServerMessage that carries raw hit metadata for
+ *  per-spectator label resolution. The `_hitMeta` field is stripped before the
+ *  message is sent on the wire — it never reaches clients. */
+interface ScanHitInternal {
+    type: 'scan.hit';
+    source: 'mdns' | 'tcp';
+    address: string;
+    serial: string;
+    name: string;
+    /** Explicit label (from caller); takes precedence over DB lookup. */
+    label?: string;
+    /** Internal only — carries raw hit data so emit() can resolve labels per-spectator. */
+    _hitMeta: { mac: string | null; serial: string };
+}
+
+type InternalMessage = Exclude<ScanServerMessage, { type: 'scan.hit' }> | ScanHitInternal;
+
 export class NetworkScanner {
     private state: State = 'idle';
     private cancelFlag = false;
     // Resolves `cancelSignal` (created per scan in start()) the moment cancel()
     // fires, so the drain watcher reacts to an event instead of polling. (#77)
     private resolveCancel: (() => void) | null = null;
-    private spectators = new Set<WS | any>();
+    /** Map of ws → userId so each spectator gets labels resolved for their own user. */
+    private spectators = new Map<WS | any, number>();
     private emittedAddresses = new Set<string>();
     private foundSoFar = 0;
     private lastStartedMsg: ScanStartedMessage | null = null;
@@ -60,9 +79,9 @@ export class NetworkScanner {
         return this.state;
     }
 
-    attachSpectator(ws: WS | any): void {
+    attachSpectator(ws: WS | any, userId: number): void {
         if (this.state === 'idle') return;
-        this.spectators.add(ws);
+        this.spectators.set(ws, userId);
         // Send snapshot of current state so new spectators aren't stuck on empty chip
         if (this.lastStartedMsg && ws.readyState === ws.OPEN) {
             try {
@@ -91,7 +110,12 @@ export class NetworkScanner {
         this.resolveCancel?.();
     }
 
-    async start(subnets: ParsedSubnet[], ws: WS | any, options?: { mdnsOnly?: boolean }): Promise<void> {
+    async start(
+        subnets: ParsedSubnet[],
+        ws: WS | any,
+        userId: number,
+        options?: { mdnsOnly?: boolean },
+    ): Promise<void> {
         if (this.state !== 'idle') {
             throw new Error('scanner already scanning');
         }
@@ -108,7 +132,7 @@ export class NetworkScanner {
         this.lastStartedMsg = null;
         this.lastProgressMsg = null;
         this.spectators.clear();
-        this.spectators.add(ws);
+        this.spectators.set(ws, userId);
         if (typeof (ws as any).once === 'function') {
             (ws as any).once('close', () => this.spectators.delete(ws));
         }
@@ -296,36 +320,56 @@ export class NetworkScanner {
         if (this.emittedAddresses.has(partial.address)) return;
         this.emittedAddresses.add(partial.address);
         this.foundSoFar++;
-        // Label precedence: explicit > MAC lookup > serial lookup > ''.
-        // MAC-first helps TCP hits (where `serial` is address-as-placeholder);
-        // serial-fallback catches mDNS hits (where serial is authoritative).
-        let label = partial.label;
-        if (label === undefined && this.deps.labelFor) {
-            if (partial.mac) label = this.deps.labelFor(partial.mac);
-            if (label === undefined) label = this.deps.labelFor(partial.serial);
-        }
-        this.emit({
+        // Pass an internal hit message with raw metadata so emit() can resolve
+        // labels per-spectator. `_hitMeta` is stripped before sending on the wire.
+        const internalMsg: ScanHitInternal = {
             type: 'scan.hit',
             source: partial.source,
             address: partial.address,
             serial: partial.serial,
             name: partial.name,
-            label: label ?? '',
-        });
+            ...(partial.label !== undefined ? { label: partial.label } : {}),
+            _hitMeta: { mac: partial.mac ?? null, serial: partial.serial },
+        };
+        this.emit(internalMsg);
     }
 
-    protected emit(msg: ScanServerMessage): void {
+    protected emit(msg: InternalMessage): void {
         if (msg.type === 'scan.started') {
             this.lastStartedMsg = msg;
         } else if (msg.type === 'scan.progress') {
             this.lastProgressMsg = msg;
         }
-        for (const ws of this.spectators) {
-            if (ws.readyState !== ws.OPEN) continue;
-            try {
-                ws.send(JSON.stringify(msg));
-            } catch {
-                // Dropped spectator — silent
+
+        if (msg.type === 'scan.hit') {
+            // Per-spectator label resolution: each user sees their own saved labels.
+            const { _hitMeta, label: explicitLabel, ...hitBase } = msg;
+            for (const [ws, userId] of this.spectators) {
+                if (ws.readyState !== ws.OPEN) continue;
+                // Label precedence: explicit > MAC lookup > serial lookup > ''
+                let label = explicitLabel;
+                if (label === undefined && this.deps.labelFor) {
+                    if (_hitMeta.mac) label = this.deps.labelFor(userId, _hitMeta.mac);
+                    if (label === undefined) label = this.deps.labelFor(userId, _hitMeta.serial);
+                }
+                const wireMsg = { ...hitBase, label: label ?? '' };
+                try {
+                    ws.send(JSON.stringify(wireMsg));
+                } catch {
+                    // Dropped spectator — silent
+                }
+            }
+        } else {
+            // Non-hit messages (scan.started, scan.progress, scan.complete, etc.)
+            // are sent identically to all spectators — no per-user data.
+            const wireMsg = msg as ScanServerMessage;
+            for (const ws of this.spectators.keys()) {
+                if (ws.readyState !== ws.OPEN) continue;
+                try {
+                    ws.send(JSON.stringify(wireMsg));
+                } catch {
+                    // Dropped spectator — silent
+                }
             }
         }
     }

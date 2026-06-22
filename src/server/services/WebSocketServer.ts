@@ -1,10 +1,10 @@
 import type WS from 'ws';
 import { WebSocketServer as WSServer } from 'ws';
-import { Config } from '../Config';
 import { isAuthEnabled, parseCookie, SESSION_COOKIE } from '../auth/authState';
 import { SessionStore } from '../auth/session';
-import type { Db } from '../db/Db';
+import { Config } from '../Config';
 import { IMPLICIT_ADMIN_ID } from '../db/constants';
+import type { Db } from '../db/Db';
 import { Logger } from '../Logger';
 import type { MwFactory } from '../mw/Mw';
 import { evaluateWsConnection } from '../security/requestGate';
@@ -31,7 +31,7 @@ export class WebSocketServer implements Service {
     private static instance?: WebSocketServer;
     private servers: WSServer[] = [];
     private mwFactories: Set<MwFactory> = new Set();
-    private pathHandlers: Map<string, (ws: WS) => void> = new Map();
+    private pathHandlers: Map<string, (ws: WS, userId: number) => void> = new Map();
 
     protected constructor() {
         // nothing here
@@ -52,7 +52,7 @@ export class WebSocketServer implements Service {
         this.mwFactories.add(mwFactory);
     }
 
-    public registerPathHandler(path: string, handler: (ws: WS) => void): void {
+    public registerPathHandler(path: string, handler: (ws: WS, userId: number) => void): void {
         this.pathHandlers.set(path, handler);
     }
 
@@ -102,7 +102,7 @@ export class WebSocketServer implements Service {
             // Path-based handlers take priority over action-based MW dispatch.
             const pathHandler = this.pathHandlers.get(url.pathname);
             if (pathHandler) {
-                pathHandler(ws);
+                pathHandler(ws, userId);
                 return;
             }
 

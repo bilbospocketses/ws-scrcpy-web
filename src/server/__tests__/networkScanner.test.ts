@@ -44,7 +44,7 @@ describe('NetworkScanner — lifecycle', () => {
     it('emits scan.started then scan.complete on empty scan', async () => {
         const scanner = new NetworkScanner(baseDeps());
         const { ws, messages } = makeWs();
-        await scanner.start([makeSubnet([])], ws);
+        await scanner.start([makeSubnet([])], ws, 0);
         expect(messages[0]!.type).toBe('scan.started');
         expect(messages.at(-1)?.type).toBe('scan.complete');
     });
@@ -53,7 +53,7 @@ describe('NetworkScanner — lifecycle', () => {
         const scanner = new NetworkScanner(baseDeps());
         expect(scanner.isScanning()).toBe(false);
         const { ws } = makeWs();
-        const p = scanner.start([makeSubnet(['1.1.1.1', '1.1.1.2'])], ws);
+        const p = scanner.start([makeSubnet(['1.1.1.1', '1.1.1.2'])], ws, 0);
         expect(scanner.isScanning()).toBe(true);
         await p;
         expect(scanner.isScanning()).toBe(false);
@@ -66,8 +66,8 @@ describe('NetworkScanner — lifecycle', () => {
             }),
         );
         const { ws } = makeWs();
-        const p1 = scanner.start([makeSubnet(['1.1.1.1'])], ws);
-        await expect(scanner.start([makeSubnet(['1.1.1.2'])], ws)).rejects.toThrow(/already scanning/);
+        const p1 = scanner.start([makeSubnet(['1.1.1.1'])], ws, 0);
+        await expect(scanner.start([makeSubnet(['1.1.1.2'])], ws, 0)).rejects.toThrow(/already scanning/);
         await p1;
     });
 });
@@ -85,7 +85,7 @@ describe('NetworkScanner — failure surfacing', () => {
             }),
         );
         const { ws, messages } = makeWs();
-        await scanner.start([makeSubnet(['10.0.0.1'])], ws);
+        await scanner.start([makeSubnet(['10.0.0.1'])], ws, 0);
         const errors = messages.filter((m) => m.type === 'scan.error');
         expect(errors).toHaveLength(1);
         expect((errors[0] as { reason: string }).reason).toMatch(/ENOENT/);
@@ -104,7 +104,7 @@ describe('NetworkScanner — failure surfacing', () => {
             }),
         );
         const { ws, messages } = makeWs();
-        await scanner.start([], ws, { mdnsOnly: true });
+        await scanner.start([], ws, 0, { mdnsOnly: true });
         const errors = messages.filter((m) => m.type === 'scan.error');
         expect(errors).toHaveLength(1);
         expect((errors[0] as { reason: string }).reason).toMatch(/timeout/);
@@ -120,7 +120,7 @@ describe('NetworkScanner — failure surfacing', () => {
             }),
         );
         const { ws, messages } = makeWs();
-        await scanner.start([makeSubnet(['10.0.0.1'])], ws);
+        await scanner.start([makeSubnet(['10.0.0.1'])], ws, 0);
         expect(messages[0]!.type).toBe('scan.started');
         expect(messages.at(-1)?.type).toBe('scan.error');
     });
@@ -143,7 +143,7 @@ describe('NetworkScanner — failure surfacing', () => {
             }),
         );
         const { ws } = makeWs();
-        await scanner.start([makeSubnet(['10.0.0.1'])], ws);
+        await scanner.start([makeSubnet(['10.0.0.1'])], ws, 0);
         // startServer must precede any adb-worker invocation.
         expect(callOrder[0]).toBe('startServer');
     });
@@ -161,7 +161,7 @@ describe('NetworkScanner — failure surfacing', () => {
             }),
         );
         const { ws, messages } = makeWs();
-        await scanner.start([makeSubnet(['10.0.0.1'])], ws);
+        await scanner.start([makeSubnet(['10.0.0.1'])], ws, 0);
         const errors = messages.filter((m) => m.type === 'scan.error');
         expect(errors).toHaveLength(1);
         expect((errors[0] as { reason: string }).reason).toMatch(/adb daemon not ready/);
@@ -191,7 +191,7 @@ describe('NetworkScanner — mdnsOnly mode', () => {
             }),
         );
         const { ws, messages } = makeWs();
-        await scanner.start([makeSubnet(['192.168.1.10', '192.168.1.11'])], ws, { mdnsOnly: true });
+        await scanner.start([makeSubnet(['192.168.1.10', '192.168.1.11'])], ws, 0, { mdnsOnly: true });
         expect(probeSpy).not.toHaveBeenCalled();
         const hits = messages.filter((m) => m.type === 'scan.hit');
         expect(hits).toHaveLength(1);
@@ -206,7 +206,7 @@ describe('NetworkScanner — mdnsOnly mode', () => {
             }),
         );
         const { ws, messages } = makeWs();
-        await scanner.start([makeSubnet(['1.1.1.1', '1.1.1.2'])], ws, { mdnsOnly: true });
+        await scanner.start([makeSubnet(['1.1.1.1', '1.1.1.2'])], ws, 0, { mdnsOnly: true });
         const started = messages.find((m) => m.type === 'scan.started') as any;
         expect(started.totalHosts).toBe(0);
         expect(started.totalSubnets).toBe(0);
@@ -226,7 +226,7 @@ describe('NetworkScanner — mdnsOnly mode', () => {
             }),
         );
         const { ws, messages } = makeWs();
-        await scanner.start([], ws, { mdnsOnly: true });
+        await scanner.start([], ws, 0, { mdnsOnly: true });
         const hits = messages.filter((m) => m.type === 'scan.hit');
         expect(hits).toHaveLength(1);
     });
@@ -242,7 +242,7 @@ describe('NetworkScanner — TCP track', () => {
             }),
         );
         const { ws, messages } = makeWs();
-        await scanner.start([makeSubnet(['1.1.1.1', '1.1.1.2', '1.1.1.3'])], ws);
+        await scanner.start([makeSubnet(['1.1.1.1', '1.1.1.2', '1.1.1.3'])], ws, 0);
 
         const hits = messages.filter((m) => m.type === 'scan.hit');
         expect(hits).toHaveLength(1);
@@ -263,7 +263,7 @@ describe('NetworkScanner — TCP track', () => {
             }),
         );
         const { ws, messages } = makeWs();
-        await scanner.start([makeSubnet(['1.1.1.5'])], ws);
+        await scanner.start([makeSubnet(['1.1.1.5'])], ws, 0);
         const hits = messages.filter((m) => m.type === 'scan.hit');
         expect(hits[0]).toMatchObject({ name: '' });
     });
@@ -276,7 +276,7 @@ describe('NetworkScanner — TCP track', () => {
             }),
         );
         const { ws, messages } = makeWs();
-        await scanner.start([makeSubnet(['1.1.1.1', '1.1.1.2'])], ws);
+        await scanner.start([makeSubnet(['1.1.1.1', '1.1.1.2'])], ws, 0);
         expect(messages.filter((m) => m.type === 'scan.hit')).toHaveLength(0);
     });
 
@@ -294,21 +294,21 @@ describe('NetworkScanner — TCP track', () => {
             }),
         );
         const { ws } = makeWs();
-        await scanner.start([makeSubnet(['1.1.1.1'])], ws);
+        await scanner.start([makeSubnet(['1.1.1.1'])], ws, 0);
         expect(calls[0]).toEqual({ connect: 250, reply: 4000 });
     });
 
-    it('resolves MAC and looks up label by MAC', async () => {
+    it('resolves MAC and looks up label by MAC for the requesting user', async () => {
         const scanner = new NetworkScanner(
             baseDeps({
                 adbHandshakeProbe: async () => ({ isAdb: true, model: 'Pixel 3' }),
                 resolveMac: async (ip: string) => (ip === '1.1.1.2' ? 'aa:bb:cc:dd:ee:ff' : null),
-                labelFor: (k: string) => (k === 'aa:bb:cc:dd:ee:ff' ? 'Jamies Pixel' : undefined),
+                labelFor: (_userId: number, k: string) => (k === 'aa:bb:cc:dd:ee:ff' ? 'Jamies Pixel' : undefined),
                 progressInterval: 1,
             }),
         );
         const { ws, messages } = makeWs();
-        await scanner.start([makeSubnet(['1.1.1.2'])], ws);
+        await scanner.start([makeSubnet(['1.1.1.2'])], ws, 42);
         const hits = messages.filter((m) => m.type === 'scan.hit');
         expect(hits[0]).toMatchObject({
             source: 'tcp',
@@ -317,17 +317,17 @@ describe('NetworkScanner — TCP track', () => {
         });
     });
 
-    it('falls back to labelFor(serial) when MAC lookup misses', async () => {
+    it('falls back to labelFor(userId, serial) when MAC lookup misses', async () => {
         const scanner = new NetworkScanner(
             baseDeps({
                 adbHandshakeProbe: async () => ({ isAdb: true }),
                 resolveMac: async () => 'aa:bb:cc:dd:ee:ff',
-                labelFor: (k: string) => (k === '1.1.1.2:5555' ? 'Serial Match' : undefined),
+                labelFor: (_userId: number, k: string) => (k === '1.1.1.2:5555' ? 'Serial Match' : undefined),
                 progressInterval: 1,
             }),
         );
         const { ws, messages } = makeWs();
-        await scanner.start([makeSubnet(['1.1.1.2'])], ws);
+        await scanner.start([makeSubnet(['1.1.1.2'])], ws, 42);
         const hits = messages.filter((m) => m.type === 'scan.hit');
         expect(hits[0]).toMatchObject({ label: 'Serial Match' });
     });
@@ -342,7 +342,7 @@ describe('NetworkScanner — TCP track', () => {
             }),
         );
         const { ws, messages } = makeWs();
-        await scanner.start([makeSubnet(['1.1.1.2'])], ws);
+        await scanner.start([makeSubnet(['1.1.1.2'])], ws, 42);
         expect(messages.filter((m) => m.type === 'scan.hit')[0]?.label).toBe('');
     });
 
@@ -354,7 +354,7 @@ describe('NetworkScanner — TCP track', () => {
             }),
         );
         const { ws, messages } = makeWs();
-        await scanner.start([makeSubnet(['1.1.1.1', '1.1.1.2', '1.1.1.3', '1.1.1.4'])], ws);
+        await scanner.start([makeSubnet(['1.1.1.1', '1.1.1.2', '1.1.1.3', '1.1.1.4'])], ws, 0);
         const progress = messages.filter((m) => m.type === 'scan.progress');
         expect(progress.length).toBeGreaterThanOrEqual(2);
         expect((progress.at(-1) as any)?.checked).toBe(4);
@@ -374,7 +374,7 @@ describe('NetworkScanner — TCP track', () => {
             }),
         );
         const { ws, messages } = makeWs();
-        await scanner.start([makeSubnet(['1.1.1.1', '1.1.1.2'])], ws);
+        await scanner.start([makeSubnet(['1.1.1.1', '1.1.1.2'])], ws, 0);
         // handshake should have been called for .2 but not .1
         expect(callHosts).toContain('1.1.1.2');
         expect(callHosts).not.toContain('1.1.1.1');
@@ -400,7 +400,7 @@ describe('NetworkScanner — TCP track', () => {
         );
         const { ws } = makeWs();
         const hosts = Array.from({ length: 20 }, (_, i) => `10.0.0.${i + 1}`);
-        await scanner.start([makeSubnet(hosts)], ws);
+        await scanner.start([makeSubnet(hosts)], ws, 0);
         expect(maxObserved).toBeLessThanOrEqual(3);
     });
 });
@@ -420,7 +420,7 @@ describe('NetworkScanner — mDNS track', () => {
             }),
         );
         const { ws, messages } = makeWs();
-        await scanner.start([makeSubnet([])], ws);
+        await scanner.start([makeSubnet([])], ws, 0);
         const hits = messages.filter((m) => m.type === 'scan.hit');
         expect(hits).toHaveLength(1);
         expect(hits[0]).toMatchObject({
@@ -431,17 +431,17 @@ describe('NetworkScanner — mDNS track', () => {
         });
     });
 
-    it('looks up mDNS label by serial', async () => {
+    it('looks up mDNS label by serial for the requesting user', async () => {
         const scanner = new NetworkScanner(
             baseDeps({
                 adbMdnsServices: async () => [
                     { name: 'adb-SERIAL1', service: '_adb._tcp.', address: '1.1.1.5', port: 5555 },
                 ],
-                labelFor: (k: string) => (k === 'SERIAL1' ? 'Living Room TV' : undefined),
+                labelFor: (_userId: number, k: string) => (k === 'SERIAL1' ? 'Living Room TV' : undefined),
             }),
         );
         const { ws, messages } = makeWs();
-        await scanner.start([makeSubnet([])], ws);
+        await scanner.start([makeSubnet([])], ws, 42);
         const hits = messages.filter((m) => m.type === 'scan.hit');
         expect(hits[0]).toMatchObject({ label: 'Living Room TV' });
     });
@@ -459,7 +459,7 @@ describe('NetworkScanner — mDNS track', () => {
             }),
         );
         const { ws, messages } = makeWs();
-        await scanner.start([makeSubnet(['1.1.1.5'])], ws);
+        await scanner.start([makeSubnet(['1.1.1.5'])], ws, 0);
         const hits = messages.filter((m) => m.type === 'scan.hit');
         expect(hits).toHaveLength(1);
         expect(hits[0]).toMatchObject({ source: 'mdns', serial: 'SERIAL1' });
@@ -477,7 +477,7 @@ describe('NetworkScanner — mDNS track', () => {
             }),
         );
         const { ws, messages } = makeWs();
-        await scanner.start([makeSubnet([])], ws);
+        await scanner.start([makeSubnet([])], ws, 0);
         expect(messages.filter((m) => m.type === 'scan.hit')).toHaveLength(0);
     });
 });
@@ -501,7 +501,7 @@ describe('NetworkScanner — cancel drain', () => {
         );
         const { ws, messages } = makeWs();
         const hosts = Array.from({ length: 100 }, (_, i) => `10.0.0.${i + 1}`);
-        const p = scanner.start([makeSubnet(hosts)], ws);
+        const p = scanner.start([makeSubnet(hosts)], ws, 0);
         setTimeout(() => scanner.cancel(), 5);
         await p;
 
@@ -528,13 +528,13 @@ describe('NetworkScanner — spectator snapshot', () => {
         );
         const { ws: ws1 } = makeWs();
         const hosts = Array.from({ length: 20 }, (_, i) => `10.0.0.${i + 1}`);
-        const scanPromise = scanner.start([makeSubnet(hosts)], ws1);
+        const scanPromise = scanner.start([makeSubnet(hosts)], ws1, 0);
 
         while (inFlight === 0) await new Promise((r) => setTimeout(r, 5));
         await new Promise((r) => setTimeout(r, 40));
 
         const { ws: ws2, messages: spectatorMessages } = makeWs();
-        scanner.attachSpectator(ws2);
+        scanner.attachSpectator(ws2, 0);
         await new Promise((r) => setTimeout(r, 5));
 
         expect(spectatorMessages.some((m) => m.type === 'scan.started')).toBe(true);
@@ -556,7 +556,7 @@ describe('NetworkScanner — getState', () => {
             }),
         );
         const { ws } = makeWs();
-        const p = scanner.start([makeSubnet(['1.1.1.1', '1.1.1.2'])], ws);
+        const p = scanner.start([makeSubnet(['1.1.1.1', '1.1.1.2'])], ws, 0);
         expect(scanner.getState()).toBe('scanning');
         await p;
         expect(scanner.getState()).toBe('idle');
@@ -582,11 +582,102 @@ describe('NetworkScanner — spectator cleanup', () => {
                 listeners.set(event, handler);
             },
         };
-        const p = scanner.start([makeSubnet(['1.1.1.1'])], ws);
+        const p = scanner.start([makeSubnet(['1.1.1.1'])], ws, 0);
         const closeHandler = listeners.get('close');
         expect(closeHandler).toBeDefined();
         closeHandler?.();
         await p;
-        // No assertion error means spectators set accepted the removal.
+        // No assertion error means spectators map accepted the removal.
+    });
+});
+
+describe('NetworkScanner — per-user label isolation', () => {
+    it('sends different labels to two spectators with different userIds for same device', async () => {
+        // User 1 labels the device "label-one"; user 2 labels it "label-two".
+        // Both watch the same scan. Each must receive only their own label.
+        const labelFor = (userId: number, _key: string): string | undefined => {
+            if (userId === 1) return 'label-one';
+            if (userId === 2) return 'label-two';
+            return undefined;
+        };
+
+        const scanner = new NetworkScanner(
+            baseDeps({
+                adbHandshakeProbe: async () => ({ isAdb: true, model: 'TestDevice' }),
+                resolveMac: async () => null,
+                labelFor,
+                progressInterval: 1,
+            }),
+        );
+
+        const { ws: ws1, messages: msgs1 } = makeWs();
+        const { ws: ws2, messages: msgs2 } = makeWs();
+
+        // ws1 starts the scan as user 1
+        const scanPromise = scanner.start([makeSubnet(['10.0.0.1'])], ws1, 1);
+        // ws2 joins as a spectator as user 2
+        scanner.attachSpectator(ws2, 2);
+        await scanPromise;
+
+        const hit1 = msgs1.find((m) => m.type === 'scan.hit') as any;
+        const hit2 = msgs2.find((m) => m.type === 'scan.hit') as any;
+
+        expect(hit1).toBeDefined();
+        expect(hit2).toBeDefined();
+        // No cross-contamination
+        expect(hit1.label).toBe('label-one');
+        expect(hit2.label).toBe('label-two');
+    });
+
+    it('sends scan.started identically to all spectators (non-hit messages are not per-user)', async () => {
+        const scanner = new NetworkScanner(
+            baseDeps({
+                adbHandshakeProbe: async () => ({ isAdb: false }),
+                progressInterval: 10,
+            }),
+        );
+
+        const { ws: ws1, messages: msgs1 } = makeWs();
+        const { ws: ws2, messages: msgs2 } = makeWs();
+
+        const scanPromise = scanner.start([makeSubnet(['10.0.0.1'])], ws1, 1);
+        scanner.attachSpectator(ws2, 2);
+        await scanPromise;
+
+        const started1 = msgs1.find((m) => m.type === 'scan.started') as any;
+        const started2 = msgs2.find((m) => m.type === 'scan.started') as any;
+
+        expect(started1).toBeDefined();
+        expect(started2).toBeDefined();
+        // Both should see identical scan.started content
+        expect(started1).toEqual(started2);
+    });
+
+    it('labelFor is called with the correct userId for each spectator', async () => {
+        const labelForCalls: Array<{ userId: number; key: string }> = [];
+        const labelFor = (userId: number, key: string): string | undefined => {
+            labelForCalls.push({ userId, key });
+            return undefined;
+        };
+
+        const scanner = new NetworkScanner(
+            baseDeps({
+                adbHandshakeProbe: async () => ({ isAdb: true }),
+                resolveMac: async () => null,
+                labelFor,
+                progressInterval: 1,
+            }),
+        );
+
+        const { ws: ws1 } = makeWs();
+        const { ws: ws2 } = makeWs();
+
+        const scanPromise = scanner.start([makeSubnet(['10.0.0.1'])], ws1, 7);
+        scanner.attachSpectator(ws2, 13);
+        await scanPromise;
+
+        const userIds = labelForCalls.map((c) => c.userId);
+        expect(userIds).toContain(7);
+        expect(userIds).toContain(13);
     });
 });

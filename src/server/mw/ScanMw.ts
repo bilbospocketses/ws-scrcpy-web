@@ -29,7 +29,7 @@ export class ScanMw {
         ScanMw.scanner = scanner;
     }
 
-    public static attach(ws: WS): void {
+    public static attach(ws: WS, userId: number): void {
         const scanner = ScanMw.scanner;
         if (!scanner) {
             ScanMw.send(ws, { type: 'scan.error', reason: 'scanner not initialized' });
@@ -37,7 +37,7 @@ export class ScanMw {
         }
 
         if (scanner.isScanning()) {
-            scanner.attachSpectator(ws);
+            scanner.attachSpectator(ws, userId);
             // Subsequent messages from a spectator are ignored except cancel.
         }
 
@@ -89,7 +89,7 @@ export class ScanMw {
                     return;
                 }
                 // Fire and forget — scanner drives the WS directly.
-                scanner.start(parsed, ws, { mdnsOnly }).catch(() => {});
+                scanner.start(parsed, ws, userId, { mdnsOnly }).catch(() => {});
                 return;
             }
             if (msg.type === 'scan.cancel') {

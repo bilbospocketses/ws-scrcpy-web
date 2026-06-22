@@ -20,6 +20,9 @@ async function collectMessages(ws: WebSocket, until: (msg: any) => boolean): Pro
     });
 }
 
+// Default userId for integration tests (open-mode admin equivalent)
+const TEST_USER_ID = 1;
+
 describe('ScanMw integration', () => {
     it('accepts scan.start and streams through to scan.complete', async () => {
         const scanner = new NetworkScanner({
@@ -34,7 +37,7 @@ describe('ScanMw integration', () => {
         const server = http.createServer();
         const wss = new WebSocketServer({ server });
         wss.on('connection', (ws, req) => {
-            if (req.url === SCAN_WS_PATH) ScanMw.attach(ws);
+            if (req.url === SCAN_WS_PATH) ScanMw.attach(ws, TEST_USER_ID);
         });
         await new Promise<void>((r) => server.listen(0, r));
         const port = (server.address() as any).port;
@@ -73,7 +76,7 @@ describe('ScanMw integration', () => {
         const server = http.createServer();
         const wss = new WebSocketServer({ server });
         wss.on('connection', (ws, req) => {
-            if (req.url === SCAN_WS_PATH) ScanMw.attach(ws);
+            if (req.url === SCAN_WS_PATH) ScanMw.attach(ws, TEST_USER_ID);
         });
         await new Promise<void>((r) => server.listen(0, r));
         const port = (server.address() as any).port;
@@ -107,7 +110,7 @@ describe('ScanMw integration', () => {
         const server = http.createServer();
         const wss = new WebSocketServer({ server });
         wss.on('connection', (ws, req) => {
-            if (req.url === SCAN_WS_PATH) ScanMw.attach(ws);
+            if (req.url === SCAN_WS_PATH) ScanMw.attach(ws, TEST_USER_ID);
         });
         await new Promise<void>((r) => server.listen(0, r));
         const port = (server.address() as any).port;
@@ -139,7 +142,7 @@ describe('ScanMw integration', () => {
         const server = http.createServer();
         const wss = new WebSocketServer({ server });
         wss.on('connection', (ws, req) => {
-            if (req.url === SCAN_WS_PATH) ScanMw.attach(ws);
+            if (req.url === SCAN_WS_PATH) ScanMw.attach(ws, TEST_USER_ID);
         });
         await new Promise<void>((r) => server.listen(0, r));
         const port = (server.address() as any).port;
@@ -171,7 +174,7 @@ describe('ScanMw integration', () => {
         const server = http.createServer();
         const wss = new WebSocketServer({ server });
         wss.on('connection', (ws, req) => {
-            if (req.url === SCAN_WS_PATH) ScanMw.attach(ws);
+            if (req.url === SCAN_WS_PATH) ScanMw.attach(ws, TEST_USER_ID);
         });
         await new Promise<void>((r) => server.listen(0, r));
         const port = (server.address() as any).port;
@@ -186,6 +189,54 @@ describe('ScanMw integration', () => {
         const messages = await collected;
 
         expect(messages[0].type).toBe('scan.error');
+
+        client.close();
+        await new Promise<void>((r) => wss.close(() => server.close(() => r())));
+    });
+
+    it('threads userId from attach() through to scanner.start and attachSpectator', async () => {
+        // Verify that the userId passed to ScanMw.attach() is passed into
+        // scanner.start()/scanner.attachSpectator() so labels resolve per-user.
+        const labelCalls: Array<{ userId: number; key: string }> = [];
+        const scanner = new NetworkScanner({
+            adbDevices: async () => [],
+            adbMdnsServices: async () => [
+                {
+                    name: 'adb-TESTDEV._adb._tcp.local.',
+                    service: '_adb._tcp.',
+                    address: '10.0.0.99',
+                    port: 5555,
+                },
+            ],
+            adbHandshakeProbe: async () => ({ isAdb: false }),
+            labelFor: (userId: number, key: string) => {
+                labelCalls.push({ userId, key });
+                return undefined;
+            },
+            concurrency: 4,
+            progressInterval: 10,
+        });
+        ScanMw.setScanner(scanner);
+
+        const server = http.createServer();
+        const wss = new WebSocketServer({ server });
+        const THE_USER_ID = 99;
+        wss.on('connection', (ws, req) => {
+            if (req.url === SCAN_WS_PATH) ScanMw.attach(ws, THE_USER_ID);
+        });
+        await new Promise<void>((r) => server.listen(0, r));
+        const port = (server.address() as any).port;
+
+        const client = new WebSocket(`ws://127.0.0.1:${port}${SCAN_WS_PATH}`);
+        await new Promise<void>((r) => client.once('open', r));
+
+        const collected = collectMessages(client, (m) => m.type === 'scan.complete');
+        client.send(JSON.stringify({ type: 'scan.start', subnets: [], mdnsOnly: true }));
+        await collected;
+
+        // Every labelFor call must have used THE_USER_ID
+        expect(labelCalls.length).toBeGreaterThan(0);
+        expect(labelCalls.every((c) => c.userId === THE_USER_ID)).toBe(true);
 
         client.close();
         await new Promise<void>((r) => wss.close(() => server.close(() => r())));
