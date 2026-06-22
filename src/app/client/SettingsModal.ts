@@ -7,6 +7,8 @@ import type {
 import type { UpdatesConfigPatchRequest, UpdatesStatusResponse } from '../../common/UpdateEvents';
 import { Modal } from '../ui/Modal';
 import { AdminConfirmModal, type AdminConfirmOptions } from './AdminConfirmModal';
+import { authClient, type Role } from './AuthClient';
+import { canSeeSection } from './adminGate';
 import { ConfirmModal } from './ConfirmModal';
 import { pollServiceUninstalled } from './pollServiceUninstalled';
 import { ResetConfirmModal } from './ResetConfirmModal';
@@ -414,10 +416,11 @@ export function buildResetControl(opts: { reload: () => void }): {
  * "value column" across all rows.
  */
 export class SettingsModal extends Modal {
+    private role: Role | null = null;
     private serviceSection!: HTMLElement;
-    private webPortInput!: HTMLInputElement;
-    private webPortStatus!: HTMLElement;
-    private serverSaveBtn!: HTMLButtonElement;
+    private webPortInput: HTMLInputElement | null = null;
+    private webPortStatus: HTMLElement | null = null;
+    private serverSaveBtn: HTMLButtonElement | null = null;
     private currentWebPort: number | null = null;
     private serviceScopeSystemRadio: HTMLInputElement | null = null;
     private servicePlatform: 'win32' | 'linux' | null = null;
@@ -434,8 +437,8 @@ export class SettingsModal extends Modal {
     private uninstallButton: HTMLButtonElement | null = null;
 
     // ── Updates section state ─────────────────────────────────────────────
-    private updatesBody!: HTMLElement;
-    private updatesStatusEl!: HTMLElement;
+    private updatesBody: HTMLElement | null = null;
+    private updatesStatusEl: HTMLElement | null = null;
     private updatesAutoCheckbox: HTMLInputElement | null = null;
     private updatesIntervalInput: HTMLInputElement | null = null;
     private updatesChannelStableRadio: HTMLInputElement | null = null;
@@ -450,11 +453,23 @@ export class SettingsModal extends Modal {
         super({ title: 'Settings' });
         this.dialog.classList.add('settings-modal');
         // Defer body fill past class-field init phase (ES2022 useDefineForClassFields).
+        // Resolve the current user's role first so admin-only sections can be gated.
+        // Fail-open: on a me() error treat as admin (preserves today's full view;
+        // the server enforces 403 on admin endpoints regardless).
         queueMicrotask(() => {
-            this.fillBody(this.bodyEl);
-            void this.refreshServer();
-            void this.refreshService();
-            void this.refreshUpdates();
+            void (async () => {
+                let role: Role | null = 'admin';
+                try {
+                    role = (await authClient.me()).user?.role ?? null;
+                } catch {
+                    role = 'admin';
+                }
+                this.role = role;
+                this.fillBody(this.bodyEl);
+                if (canSeeSection(role, 'service')) void this.refreshService();
+                if (canSeeSection(role, 'updates')) void this.refreshUpdates();
+                void this.refreshServer(); // server section always present (has the user-level reset row)
+            })();
         });
     }
 
@@ -468,9 +483,11 @@ export class SettingsModal extends Modal {
         // former standalone "App" section (reset, install-for-all-users, stop &
         // exit, uninstall) was folded into "Server", which also keeps the web
         // port row; there is no longer a separate "App" section.
-        container.appendChild(this.buildUpdatesSection());
-        container.appendChild(this.buildServiceSection());
-        container.appendChild(this.buildServerSection());
+        // Admin-only sections are gated on the current user's role (set before
+        // fillBody is called). The server enforces the same set via requireAdmin.
+        if (canSeeSection(this.role, 'updates')) container.appendChild(this.buildUpdatesSection());
+        if (canSeeSection(this.role, 'service')) container.appendChild(this.buildServiceSection());
+        container.appendChild(this.buildServerSection()); // always (contains the user-level reset row)
     }
 
     // ── Layout primitives ──────────────────────────────────────────────────
@@ -544,90 +561,100 @@ export class SettingsModal extends Modal {
     private buildServerSection(): HTMLElement {
         const { section, body } = this.buildSection('Server');
 
-        // 1. reset all my settings — opens ResetConfirmModal, then clears all
-        //    user settings (theme, device names, per-device stream/audio prefs,
-        //    icon size, scan subnets, dismissed prompts) and reloads so
-        //    first-run re-triggers and all prefs are read fresh.
+        // 1. reset all my settings — user-level, always visible. Opens
+        //    ResetConfirmModal, then clears all user settings (theme, device
+        //    names, per-device stream/audio prefs, icon size, scan subnets,
+        //    dismissed prompts) and reloads so first-run re-triggers and all
+        //    prefs are read fresh.
         const reset = buildResetControl({ reload: () => window.location.reload() });
         body.appendChild(this.buildRow('reset all my settings', reset.button));
 
-        // 2. web port — number input with the SAVE button INLINE to its right
-        //    (same control cell). The status line below the row is EMPTY at rest
-        //    and only fills on save (saving → restarting/redirecting, "no change",
-        //    or an error) via setServerStatus / onSavePort.
-        this.webPortInput = document.createElement('input');
-        this.webPortInput.type = 'number';
-        this.webPortInput.min = '1024';
-        this.webPortInput.max = '65535';
-        this.webPortInput.className = 'settings-input';
-        this.webPortInput.style.maxWidth = '120px';
+        // 2–5 below are admin-only. Skip building + storing them entirely for
+        //    non-admin users so no DOM or ref is created. The refresh methods
+        //    (refreshServer, applyStopServerButtonState, applyAppSectionButtonsState)
+        //    are all null-safe on their stored refs — they guard with `if (this.x)`.
+        if (canSeeSection(this.role, 'webPort')) {
+            // 2. web port — number input with the SAVE button INLINE to its right
+            //    (same control cell). The status line below the row is EMPTY at rest
+            //    and only fills on save (saving → restarting/redirecting, "no change",
+            //    or an error) via setServerStatus / onSavePort.
+            this.webPortInput = document.createElement('input');
+            this.webPortInput.type = 'number';
+            this.webPortInput.min = '1024';
+            this.webPortInput.max = '65535';
+            this.webPortInput.className = 'settings-input';
+            this.webPortInput.style.maxWidth = '120px';
 
-        this.serverSaveBtn = document.createElement('button');
-        this.serverSaveBtn.type = 'button';
-        this.serverSaveBtn.className = 'settings-btn settings-btn-primary';
-        this.serverSaveBtn.textContent = 'save';
-        this.serverSaveBtn.style.marginLeft = '0.5rem';
-        this.serverSaveBtn.addEventListener('click', () => {
-            void this.onSavePort();
-        });
+            this.serverSaveBtn = document.createElement('button');
+            this.serverSaveBtn.type = 'button';
+            this.serverSaveBtn.className = 'settings-btn settings-btn-primary';
+            this.serverSaveBtn.textContent = 'save';
+            this.serverSaveBtn.style.marginLeft = '0.5rem';
+            this.serverSaveBtn.addEventListener('click', () => {
+                void this.onSavePort();
+            });
 
-        const portControl = document.createDocumentFragment();
-        portControl.appendChild(this.webPortInput);
-        portControl.appendChild(this.serverSaveBtn);
-        body.appendChild(this.buildRow('web port', portControl));
+            const portControl = document.createDocumentFragment();
+            portControl.appendChild(this.webPortInput);
+            portControl.appendChild(this.serverSaveBtn);
+            body.appendChild(this.buildRow('web port', portControl));
 
-        this.webPortStatus = document.createElement('p');
-        this.webPortStatus.className = 'settings-status';
-        this.webPortStatus.style.gridColumn = '1 / -1';
-        this.webPortStatus.hidden = true;
-        body.appendChild(this.webPortStatus);
+            this.webPortStatus = document.createElement('p');
+            this.webPortStatus.className = 'settings-status';
+            this.webPortStatus.style.gridColumn = '1 / -1';
+            this.webPortStatus.hidden = true;
+            body.appendChild(this.webPortStatus);
+        }
 
-        // 3. install for all users (Linux-only) — hidden until
-        //    applyAppSectionButtonsState reveals it on Linux. POSTs
-        //    /api/service/install-system-wide (pkexec → /opt → re-exec); the OS
-        //    pkexec dialog is the confirmation, so on success just reload.
-        const install = buildInstallAllUsersControl({ reload: () => window.location.reload() });
-        this.installAllUsersButton = install.button;
-        this.installAllUsersNote = install.note;
-        const installRow = this.buildRow('install for all users', install.button);
-        installRow.style.display = 'none';
-        this.installAllUsersRow = installRow;
-        body.appendChild(installRow);
-        body.appendChild(install.note);
+        if (canSeeSection(this.role, 'serverControls')) {
+            // 3. install for all users (Linux-only) — hidden until
+            //    applyAppSectionButtonsState reveals it on Linux. POSTs
+            //    /api/service/install-system-wide (pkexec → /opt → re-exec); the OS
+            //    pkexec dialog is the confirmation, so on success just reload.
+            const install = buildInstallAllUsersControl({ reload: () => window.location.reload() });
+            this.installAllUsersButton = install.button;
+            this.installAllUsersNote = install.note;
+            const installRow = this.buildRow('install for all users', install.button);
+            installRow.style.display = 'none';
+            this.installAllUsersRow = installRow;
+            body.appendChild(installRow);
+            body.appendChild(install.note);
 
-        // 4. stop the server and close the app — §27 graceful shutdown (exit 0,
-        //    the launcher supervisor will NOT restart it). Gated off in service
-        //    mode by applyStopServerButtonState once /api/service/status resolves.
-        const stopBtn = document.createElement('button');
-        stopBtn.type = 'button';
-        stopBtn.className = 'settings-btn settings-btn-primary';
-        stopBtn.textContent = 'stop server & exit';
-        stopBtn.addEventListener('click', () => void this.onStopServerExit(stopBtn));
-        this.stopServerButton = stopBtn;
-        body.appendChild(this.buildRow('stop the server and close the app', stopBtn));
+            // 4. stop the server and close the app — §27 graceful shutdown (exit 0,
+            //    the launcher supervisor will NOT restart it). Gated off in service
+            //    mode by applyStopServerButtonState once /api/service/status resolves.
+            const stopBtn = document.createElement('button');
+            stopBtn.type = 'button';
+            stopBtn.className = 'settings-btn settings-btn-primary';
+            stopBtn.textContent = 'stop server & exit';
+            stopBtn.addEventListener('click', () => void this.onStopServerExit(stopBtn));
+            this.stopServerButton = stopBtn;
+            body.appendChild(this.buildRow('stop the server and close the app', stopBtn));
 
-        const stopNote = document.createElement('p');
-        stopNote.className = 'settings-status';
-        stopNote.style.gridColumn = '1 / -1';
-        stopNote.hidden = true;
-        this.stopServerNote = stopNote;
-        body.appendChild(stopNote);
+            const stopNote = document.createElement('p');
+            stopNote.className = 'settings-status';
+            stopNote.style.gridColumn = '1 / -1';
+            stopNote.hidden = true;
+            this.stopServerNote = stopNote;
+            body.appendChild(stopNote);
 
-        // 5. uninstall ws-scrcpy-web (Linux + win32) — hidden until revealed.
-        //    Always enabled when shown (uninstalling is how you remove a
-        //    service). Opens UninstallConfirmModal; confirm POSTs
-        //    /api/service/uninstall-app { keep }.
-        const uninstall = buildUninstallControl({ onUninstalled: () => this.showUninstalledOverlay() });
-        this.uninstallButton = uninstall.button;
-        const uninstallRow = this.buildRow('uninstall ws-scrcpy-web', uninstall.button);
-        uninstallRow.style.display = 'none';
-        this.uninstallRow = uninstallRow;
-        body.appendChild(uninstallRow);
+            // 5. uninstall ws-scrcpy-web (Linux + win32) — hidden until revealed.
+            //    Always enabled when shown (uninstalling is how you remove a
+            //    service). Opens UninstallConfirmModal; confirm POSTs
+            //    /api/service/uninstall-app { keep }.
+            const uninstall = buildUninstallControl({ onUninstalled: () => this.showUninstalledOverlay() });
+            this.uninstallButton = uninstall.button;
+            const uninstallRow = this.buildRow('uninstall ws-scrcpy-web', uninstall.button);
+            uninstallRow.style.display = 'none';
+            this.uninstallRow = uninstallRow;
+            body.appendChild(uninstallRow);
+        }
 
         return section;
     }
 
     private async refreshServer(): Promise<void> {
+        if (!this.webPortInput) return; // web port row not built (non-admin)
         try {
             const r = await fetch('/api/config');
             if (!r.ok) {
@@ -646,6 +673,7 @@ export class SettingsModal extends Modal {
     }
 
     private async onSavePort(): Promise<void> {
+        if (!this.webPortInput || !this.serverSaveBtn) return; // not built (non-admin)
         const raw = this.webPortInput.value.trim();
         const port = Number.parseInt(raw, 10);
         if (!Number.isFinite(port) || port < 1024 || port > 65535) {
@@ -662,9 +690,10 @@ export class SettingsModal extends Modal {
         // serverSaveBtn. Captures `this` so the dispose also handles the
         // early-return inside the try (where the prior code had a manual
         // re-enable line that is now redundant — kept for symmetry, see below).
+        const saveBtn = this.serverSaveBtn;
         using _restoreBtn = {
             [Symbol.dispose]: (): void => {
-                this.serverSaveBtn.disabled = false;
+                saveBtn.disabled = false;
             },
         };
         try {
@@ -698,6 +727,7 @@ export class SettingsModal extends Modal {
     }
 
     private setServerStatus(msg: string, isError = false): void {
+        if (!this.webPortStatus) return; // web port row not built (non-admin)
         this.webPortStatus.textContent = msg;
         // The status line lives BELOW the web-port row and is empty at rest —
         // hide it when there is no message so it doesn't reserve a blank row.
@@ -735,6 +765,7 @@ export class SettingsModal extends Modal {
     }
 
     private renderUpdatesError(msg: string): void {
+        if (!this.updatesBody) return;
         this.updatesBody.replaceChildren();
         const retryBtn = document.createElement('button');
         retryBtn.type = 'button';
@@ -749,6 +780,7 @@ export class SettingsModal extends Modal {
     }
 
     private renderUpdatesSection(s: UpdatesStatusResponse): void {
+        if (!this.updatesBody) return;
         this.updatesBody.replaceChildren();
         this.updatesAutoCheckbox = null;
         this.updatesIntervalInput = null;
