@@ -54,26 +54,12 @@ export const AudioSettingsStore = {
     },
 
     /**
-     * Cache-only clear — removes the 'audio' key from the singleton's cached
-     * device entry with NO network write. There is no server per-scope DELETE
-     * endpoint; a real clear would require a future `DELETE /api/settings/device?scope=audio`.
-     *
-     * NOTE: no production caller exists for clear(); it is test-only.
-     * TODO: add a server `DELETE scope` endpoint if a production clear is ever needed.
+     * Cache-only clear: drops the 'audio' scope from the singleton's device
+     * cache with NO network write. NON-DURABLE — a page reload re-hydrates
+     * from the server, restoring the old value. Test-only; no production caller.
+     * A durable clear needs a future server DELETE-scope endpoint.
      */
     clear(udid: string): void {
-        const cached = settingsService.getDeviceAudio(udid);
-        if (cached === undefined) return; // nothing to clear
-        // Remove the audio key by writing a device patch that excludes it.
-        // Since setDeviceAudio would re-set the key, we manipulate the cache
-        // directly via setDeviceAudio with a sentinel then re-read: instead,
-        // we use setDeviceAudio to overwrite with an intentionally-invalid object
-        // that isValidStored will reject, making load() return null.
-        // This is simpler than exposing a clearDeviceAudio on the service.
-        // The PATCH is suppressed via a no-op: we call setDeviceAudio with a
-        // value that causes load() to return null without a server round-trip.
-        //
-        // Implementation: use an empty object (isValidStored({}) → false → null).
-        settingsService.setDeviceAudio(udid, {});
+        settingsService.clearDeviceAudio(udid);
     },
 };

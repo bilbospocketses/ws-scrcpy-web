@@ -143,6 +143,19 @@ export class SettingsService implements SettingsSink {
             console.error('[SettingsService] setDeviceAudio PATCH failed', e),
         );
     }
+
+    /**
+     * Cache-only: drop the 'audio' scope from the in-memory device cache.
+     * No network write — there is no server DELETE-scope endpoint this phase.
+     * NON-DURABLE: a page reload re-hydrates from the server, which still
+     * holds the old value. Intended for test teardown only; not called in
+     * production code. (A durable clear needs a future server DELETE-scope
+     * endpoint.)
+     */
+    clearDeviceAudio(udid: string): void {
+        const cur = this.deviceCache.get(udid);
+        if (cur && 'audio' in cur) delete cur['audio'];
+    }
 }
 
 // Singleton — the boot migration AND every call site import THIS so caches are
