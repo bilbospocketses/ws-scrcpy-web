@@ -2,6 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as AdminConfirmModalModule from '../AdminConfirmModal';
+import { authClient } from '../AuthClient';
 import * as ResetConfirmModalModule from '../ResetConfirmModal';
 import {
     applySystemInstallGate,
@@ -12,8 +13,8 @@ import {
     buildUninstallControl,
     classifyInstallPoll,
     lockScopeRadioControl,
-    resetPromptsPayload,
     resetPromptSettingsPayload,
+    resetPromptsPayload,
     SettingsModal,
     scopeRadioState,
     stopServerButtonState,
@@ -22,6 +23,13 @@ import {
 } from '../SettingsModal';
 import * as SettingsServiceModule from '../SettingsService';
 import * as UninstallConfirmModalModule from '../UninstallConfirmModal';
+
+/** Stub authClient.me to return an admin view — used in tests that construct SettingsModal
+ *  to ensure the async me() resolves (rather than hanging on a never-resolving fetch mock)
+ *  so fillBody() runs and the DOM is populated. */
+function stubMeAsAdmin(): void {
+    vi.spyOn(authClient, 'me').mockResolvedValue({ authEnabled: false, user: { username: 'admin', role: 'admin' } });
+}
 
 /** Flush microtasks + a macrotask so the awaited fetch handlers settle. */
 const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
@@ -473,6 +481,8 @@ describe('Server section row order (folded App, beta.62)', () => {
     const flushMicrotasks = (): Promise<void> => new Promise((resolve) => queueMicrotask(resolve));
 
     it('Server-section rows appear in order: reset, install-for-all-users, stop-server, uninstall', async () => {
+        // Stub authClient.me so the async queueMicrotask resolves as admin (full view).
+        stubMeAsAdmin();
         // Stub fetch so the refresh* calls inside the constructor never settle
         // (we only need the base DOM structure, not service-status overlays).
         vi.stubGlobal('fetch', vi.fn().mockReturnValue(new Promise(() => undefined)));
@@ -511,8 +521,9 @@ describe('Server section row order (folded App, beta.62)', () => {
 describe('Settings section restructure (beta.62)', () => {
     const flushMicrotasks = (): Promise<void> => new Promise((resolve) => queueMicrotask(resolve));
 
-    it('renders sections in order Updates, Service, Server — no standalone App section', async () => {
+    it('renders sections in order Users, Updates, Service, Server — no standalone App section', async () => {
         document.body.replaceChildren();
+        stubMeAsAdmin();
         vi.stubGlobal('fetch', vi.fn().mockReturnValue(new Promise(() => undefined)));
         HTMLDialogElement.prototype.showModal = vi.fn();
 
@@ -522,11 +533,14 @@ describe('Settings section restructure (beta.62)', () => {
         const headings = Array.from(document.body.querySelectorAll<HTMLElement>('.settings-section-heading')).map(
             (el) => el.textContent ?? '',
         );
-        expect(headings).toEqual(['Updates', 'Service', 'Server']);
+        // stubMeAsAdmin returns role=admin: admin sees Users, Updates, Service, Server.
+        // No standalone App section (folded into Server in beta.62).
+        expect(headings).toEqual(['Users', 'Updates', 'Service', 'Server']);
     });
 
     it('places the web-port save button inline with the input in the same control cell', async () => {
         document.body.replaceChildren();
+        stubMeAsAdmin();
         vi.stubGlobal('fetch', vi.fn().mockReturnValue(new Promise(() => undefined)));
         HTMLDialogElement.prototype.showModal = vi.fn();
 
@@ -611,6 +625,7 @@ describe('onInstallService takeover copy (§7 system-service hand-off)', () => {
     beforeEach(() => {
         document.body.replaceChildren();
         HTMLDialogElement.prototype.showModal = vi.fn();
+        stubMeAsAdmin();
         vi.useFakeTimers();
     });
 
