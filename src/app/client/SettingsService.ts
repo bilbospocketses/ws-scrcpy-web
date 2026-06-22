@@ -20,6 +20,9 @@ export class SettingsService implements SettingsSink {
     // null  = not hydrated yet → sync accessors fall back to defaults
     // object = hydrated (may be {} for a fresh device)
     private readonly deviceCache = new Map<string, Record<string, unknown>>();
+    // Deduplicates concurrent hydrateDevice() calls for the same udid so only
+    // one GET is issued even if multiple callers race before the first resolves.
+    private readonly pendingHydrations = new Map<string, Promise<void>>();
 
     // ── existing async surface (UNCHANGED) ──
 
@@ -74,11 +77,22 @@ export class SettingsService implements SettingsSink {
      * Hydrate the per-device cache for the given udid. Idempotent: the first
      * hydrate is authoritative. A later re-GET could return a stale value and
      * clobber a setting the user just wrote (whose fire-and-forget PATCH may not
-     * have landed yet). Subsequent calls for the same udid are no-ops.
+     * have landed yet). Sequential re-calls are no-ops; concurrent calls for the
+     * same udid share one in-flight GET rather than issuing duplicates.
      */
     async hydrateDevice(udid: string): Promise<void> {
         if (this.deviceCache.has(udid)) return; // once-guard: first hydrate wins
-        this.deviceCache.set(udid, await this.getDevice(udid));
+        const inflight = this.pendingHydrations.get(udid);
+        if (inflight) return inflight; // concurrent caller — share the same GET
+        const p = this.getDevice(udid)
+            .then((v) => {
+                this.deviceCache.set(udid, v);
+            })
+            .finally(() => {
+                this.pendingHydrations.delete(udid);
+            });
+        this.pendingHydrations.set(udid, p);
+        return p;
     }
 
     /**
@@ -115,6 +129,12 @@ export class SettingsService implements SettingsSink {
         );
     }
 
+    /**
+     * Write-through: update the sync cache immediately, then fire-and-forget the
+     * PATCH. Cache update is unconditional so a subsequent sync read reflects the
+     * write even if the network is slow/offline. PATCH errors are logged, never
+     * thrown (callers are sync/void).
+     */
     setDeviceAudio(udid: string, audio: Record<string, unknown>): void {
         const cur = this.deviceCache.get(udid) ?? {};
         cur['audio'] = audio;

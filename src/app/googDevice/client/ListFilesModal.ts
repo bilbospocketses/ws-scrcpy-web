@@ -13,6 +13,7 @@ import { parseDataChunk, parseDentReply, parseFailReply, parseStatReply, readSyn
 import { createFileIconForEntry } from './FileIconUtils';
 import { attachFsChannelKeepAlive } from './fsChannelKeepAlive';
 import { buildFslsInitData, buildMultiplexUrl } from './multiplexConnection';
+import type { SettingsService } from '../../client/SettingsService';
 
 const TAG = '[ListFilesModal]';
 const DEFAULT_ICON_SIZE = 24;
@@ -63,7 +64,7 @@ export class ListFilesModal extends Modal implements DragAndPushListener {
     };
 
     private iconSize = DEFAULT_ICON_SIZE;
-    private settings?: import('../../client/SettingsService').SettingsService | undefined;
+    private settings?: SettingsService | undefined;
     private currentPath = '/data/local/tmp';
     private entries: Entry[] = [];
     private filteredEntries: Entry[] = [];

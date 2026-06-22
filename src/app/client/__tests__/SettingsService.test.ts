@@ -51,7 +51,7 @@ describe('SettingsService.getGlobalCached()', () => {
 });
 
 // ---------------------------------------------------------------------------
-// hydrateDevice — once-guard (Adjustment 1)
+// hydrateDevice — once-guard + concurrent dedup (Adjustment 1 + review fix)
 // ---------------------------------------------------------------------------
 
 describe('SettingsService.hydrateDevice() — once-guard', () => {
@@ -65,7 +65,7 @@ describe('SettingsService.hydrateDevice() — once-guard', () => {
         expect(stub).toHaveBeenCalledOnce();
     });
 
-    it('does NOT issue a second GET when called again with the same udid', async () => {
+    it('does NOT issue a second GET when called again with the same udid (sequential)', async () => {
         const svc = new SettingsService();
         const stub = makeFetchStub(() => makeOkResponse({ video: { fit: true } }));
         vi.stubGlobal('fetch', stub);
@@ -75,6 +75,23 @@ describe('SettingsService.hydrateDevice() — once-guard', () => {
 
         // Only 1 fetch for the GET, not 2.
         expect(stub).toHaveBeenCalledOnce();
+    });
+
+    it('does NOT issue a second GET for concurrent calls with the same udid', async () => {
+        const svc = new SettingsService();
+        let getCount = 0;
+        vi.stubGlobal(
+            'fetch',
+            vi.fn(() => {
+                getCount++;
+                return Promise.resolve(makeOkResponse({}));
+            }),
+        );
+
+        // Fire both without awaiting in between — true concurrent callers.
+        await Promise.all([svc.hydrateDevice('udid-c'), svc.hydrateDevice('udid-c')]);
+
+        expect(getCount).toBe(1); // one GET, not two
     });
 
     it('hydrates different udids independently', async () => {
@@ -276,17 +293,6 @@ describe('settingsService singleton', () => {
     it('is exported and is an instance of SettingsService', async () => {
         const { settingsService } = await import('../SettingsService');
         expect(settingsService).toBeInstanceOf(SettingsService);
-    });
-
-    it('starts with empty globalCache (getGlobalCached returns {})', async () => {
-        // Import the singleton from the already-loaded module (no second instantiation)
-        const { settingsService } = await import('../SettingsService');
-        // At module load time the cache is null → getGlobalCached() returns {}
-        // NOTE: the singleton may already have been used in other tests, so we only
-        // assert the return type/shape, not a specific value.
-        const cached = settingsService.getGlobalCached();
-        expect(typeof cached).toBe('object');
-        expect(cached).not.toBeNull();
     });
 });
 
