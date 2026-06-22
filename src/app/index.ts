@@ -10,7 +10,7 @@ import { FirstRunBanner } from './client/FirstRunBanner';
 import { HostTracker } from './client/HostTracker';
 import { NetworkDiscoveryPanel } from './client/NetworkDiscoveryPanel';
 import { createSettingsHeader } from './client/SettingsHeader';
-import { createThemeToggle, initTheme } from './client/ThemeToggle';
+import { applyStoredTheme, createThemeToggle, initTheme } from './client/ThemeToggle';
 import type { Tool } from './client/Tool';
 import { createUpdateButton } from './client/UpdateButton';
 import { WelcomeModal } from './client/WelcomeModal';
@@ -284,6 +284,10 @@ window.onload = async (): Promise<void> => {
             console.error('[boot] settings migration failed; will retry next load', e);
         }
         await settingsService.loadGlobal().catch(() => {}); // warm global cache (iconSize, scanSubnets)
+        // Apply the stored theme now that the migration has run, so an upgrading
+        // user's saved theme shows on THIS load rather than the next one.
+        // (initTheme already did the synchronous OS first paint at module-eval.)
+        await applyStoredTheme();
     }
 
     // WebCodecs player must be registered so ConnectModal can find it
