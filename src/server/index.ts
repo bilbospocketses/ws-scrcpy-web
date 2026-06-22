@@ -2,6 +2,7 @@ import { VelopackApp } from 'velopack';
 import { SCAN_WS_PATH } from '../common/ScanMessage';
 import { AdbClient } from './AdbClient';
 import { AdbDaemonManager } from './AdbDaemonManager';
+import { AuthApi } from './api/AuthApi';
 import { CapabilitiesApi } from './api/CapabilitiesApi';
 import { ConfigApi } from './api/ConfigApi';
 import { DependencyApi } from './api/DependencyApi';
@@ -113,6 +114,8 @@ if (__ssArgs) {
     }
 
     HttpServer.addFirstApiHandler(new AuthGate(() => Config.getInstance().db));
+
+    HttpServer.addApiHandler(new AuthApi());
 
     const depManager = new DependencyManager(config.dependenciesPath, {
         restartMarkerPath: config.restartMarkerPath,

@@ -13,7 +13,7 @@ export function makeReqRes(
     url: string,
     body?: unknown,
     headers: Record<string, string> = {},
-): { req: IncomingMessage; res: ServerResponse; getStatus(): number; getJson(): unknown } {
+): { req: IncomingMessage; res: ServerResponse; getStatus(): number; getJson(): unknown; getHeader(name: string): string | undefined } {
     // Emit a Buffer (not a string) — readJsonBody does Buffer.concat(chunks),
     // which throws ERR_INVALID_ARG_TYPE on string chunks.
     const req = Readable.from(
@@ -24,13 +24,14 @@ export function makeReqRes(
     req.headers = { 'content-type': 'application/json', ...headers };
     let status = 0;
     const chunks: string[] = [];
+    const setHeaders: Record<string, string> = {};
     const res = {
         writeHead(s: number) {
             status = s;
             return res;
         },
-        setHeader() {
-            /* no-op */
+        setHeader(name: string, value: string) {
+            setHeaders[name.toLowerCase()] = value;
         },
         end(c?: string) {
             if (c) chunks.push(c);
@@ -41,5 +42,6 @@ export function makeReqRes(
         res,
         getStatus: () => status,
         getJson: () => (chunks.length ? JSON.parse(chunks.join('')) : undefined),
+        getHeader: (name: string) => setHeaders[name.toLowerCase()],
     };
 }
