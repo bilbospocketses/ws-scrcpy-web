@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { hashPassword, verifyPassword } from '../password';
 
 describe('password hashing', () => {
@@ -13,5 +13,8 @@ describe('password hashing', () => {
     });
     it('returns false for a malformed stored hash', () => {
         expect(verifyPassword('x', 'not-a-phc-string')).toBe(false);
+    });
+    it('returns false for a structurally valid hash whose key field is empty', () => {
+        expect(verifyPassword('x', 'scrypt$16384$8$1$AAAA$')).toBe(false);
     });
 });

@@ -20,6 +20,7 @@ export function verifyPassword(plain: string, stored: string): boolean {
     if (!Number.isFinite(n) || !Number.isFinite(r) || !Number.isFinite(p)) return false;
     const salt = Buffer.from(parts[4]!, 'base64');
     const expected = Buffer.from(parts[5]!, 'base64');
+    if (expected.length === 0) return false;
     const actual = scryptSync(plain, salt, expected.length, { N: n, r, p });
     return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
