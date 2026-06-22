@@ -4,9 +4,11 @@
  * Exposes the same get/set semantics used internally by ThemeToggle, plus
  * postMessage helpers so a parent window (e.g., a host page embedding
  * ws-scrcpy-web in an iframe) can push theme changes across origins.
+ *
+ * Theme persistence has moved from localStorage to the DB (SettingsService).
+ * This module is the public/embed layer — it must NOT import SettingsService.
+ * All DB persistence lives in ThemeToggle.ts.
  */
-
-const STORAGE_KEY = 'ws-scrcpy-web-theme';
 
 export type Theme = 'dark' | 'light';
 
@@ -22,14 +24,24 @@ export interface ThemeEmbedOptions {
     allowedOrigins?: '*' | string[];
 }
 
+/** Returns the live DOM theme attribute — authoritative after DB apply. */
 export function getTheme(): Theme {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    return stored === 'light' ? 'light' : 'dark';
+    return document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
 }
 
+/** Sets the data-theme DOM attribute only. Persistence is ThemeToggle's responsibility. */
 export function setTheme(theme: Theme): void {
     document.documentElement.setAttribute('data-theme', theme);
-    localStorage.setItem(STORAGE_KEY, theme);
+}
+
+/**
+ * Returns the first-paint theme based on the OS preference.
+ * Pure function — usable in tests without a DOM or SettingsService.
+ * ThemeToggle uses this synchronously to avoid a flash-of-wrong-colors
+ * before the DB value loads.
+ */
+export function firstPaintTheme(prefersDark: boolean): Theme {
+    return prefersDark ? 'dark' : 'light';
 }
 
 const DEFAULT_MESSAGE_TYPE = 'ws-scrcpy-web:theme';
@@ -84,6 +96,8 @@ export function installThemeEmbedListener(opts: ThemeEmbedOptions = {}): () => v
         if (type !== messageType) return;
         const theme = (data as { theme?: unknown }).theme;
         if (!isTheme(theme)) return;
+        // Host-pushed theme is transient (not persisted to DB) — this is
+        // intentional: the iframe embed layer does not own persistence.
         setTheme(theme);
     };
 

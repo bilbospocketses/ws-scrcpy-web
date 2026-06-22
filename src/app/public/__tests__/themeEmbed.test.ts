@@ -1,21 +1,36 @@
 // @vitest-environment jsdom
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { getTheme, installThemeEmbedListener, notifyThemeChanged, notifyThemeReady, setTheme } from '../themeEmbed';
+import {
+    firstPaintTheme,
+    getTheme,
+    installThemeEmbedListener,
+    notifyThemeChanged,
+    notifyThemeReady,
+    setTheme,
+} from '../themeEmbed';
+
+describe('firstPaintTheme', () => {
+    it('returns "dark" when prefersDark is true', () => {
+        expect(firstPaintTheme(true)).toBe('dark');
+    });
+
+    it('returns "light" when prefersDark is false', () => {
+        expect(firstPaintTheme(false)).toBe('light');
+    });
+});
 
 describe('getTheme / setTheme', () => {
     beforeEach(() => {
-        localStorage.clear();
         document.documentElement.removeAttribute('data-theme');
     });
 
-    it('returns "dark" by default when localStorage is empty', () => {
+    it('returns "dark" by default when data-theme is absent', () => {
         expect(getTheme()).toBe('dark');
     });
 
-    it('setTheme("light") writes localStorage and DOM attribute', () => {
+    it('setTheme("light") writes DOM attribute', () => {
         setTheme('light');
-        expect(localStorage.getItem('ws-scrcpy-web-theme')).toBe('light');
         expect(document.documentElement.getAttribute('data-theme')).toBe('light');
         expect(getTheme()).toBe('light');
     });
@@ -27,15 +42,21 @@ describe('getTheme / setTheme', () => {
         expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
     });
 
-    it('coerces unexpected localStorage values to "dark"', () => {
-        localStorage.setItem('ws-scrcpy-web-theme', 'garbage');
+    it('setTheme does not touch localStorage', () => {
+        const spy = vi.spyOn(Storage.prototype, 'setItem');
+        setTheme('light');
+        expect(spy).not.toHaveBeenCalled();
+        spy.mockRestore();
+    });
+
+    it('coerces absent data-theme to "dark"', () => {
+        document.documentElement.removeAttribute('data-theme');
         expect(getTheme()).toBe('dark');
     });
 });
 
 describe('installThemeEmbedListener', () => {
     beforeEach(() => {
-        localStorage.clear();
         document.documentElement.removeAttribute('data-theme');
     });
 
@@ -126,7 +147,6 @@ describe('installThemeEmbedListener', () => {
 
 describe('notifyThemeReady', () => {
     beforeEach(() => {
-        localStorage.clear();
         document.documentElement.removeAttribute('data-theme');
     });
 
@@ -168,7 +188,6 @@ describe('notifyThemeReady', () => {
 
 describe('notifyThemeChanged', () => {
     beforeEach(() => {
-        localStorage.clear();
         document.documentElement.removeAttribute('data-theme');
     });
 
