@@ -1043,7 +1043,7 @@ The home page (`http://localhost:8000`) is a single-page view with three section
 
 **Page layout:** All content is wrapped in a centered `.page-container` with `max-width: 1800px` (fits up to 5 device cards on 4K monitors). Page structure is created in `src/app/index.ts` in fixed order before `HostTracker.start()` to prevent race conditions across browsers.
 
-**Theme toggle:** A sun/moon button in the top-right corner switches between dark (default) and light themes. Preference is saved to localStorage (`ws-scrcpy-web-theme`). Themes use `data-theme` attribute on `<html>` with CSS custom properties. Colors match the Control Menu project palette.
+**Theme toggle:** A sun/moon button in the top-right corner switches between dark (default) and light themes. First paint follows the OS `prefers-color-scheme`; once the settings cache warms (after the localStorage→SQLite migration runs in `onload`), the stored theme applies and the DB is authoritative. The preference persists per-user in the SQLite store via `SettingsApi` (`user_settings['theme']`), not localStorage. Themes use the `data-theme` attribute on `<html>` with CSS custom properties. Colors match the Control Menu project palette.
 
 **Components:**
 - `src/app/client/ThemeToggle.ts` -- theme initialization and toggle button
@@ -1119,7 +1119,7 @@ A two-channel discovery model: **mDNS** advertisement (modern devices) plus a **
 **User flow:**
 
 1. Click **scan network** -> `ScanNetworkModal` opens.
-2. Dialog shows the auto-detected gateway subnet plus any user-added subnets (restored from `localStorage`).
+2. Dialog shows the auto-detected gateway subnet plus any user-added subnets (restored from the per-user settings store via `SettingsService.loadGlobal()` → `scanSubnets`, not `localStorage`).
 3. User can add subnets via `AddSubnetModal` (CIDR, bare IP, or IP range), edit an existing row via the **✎** icon (opens `AddSubnetModal` in edit mode with the current value pre-filled), or remove via **×**.
 4. If the combined scan size exceeds 2,048 hosts, `LargeSubnetWarningModal` prompts for confirmation with a per-subnet breakdown.
 5. Scan streams over a WebSocket; hits render as cards under "Available Network Devices" with an optional name input and Connect button.

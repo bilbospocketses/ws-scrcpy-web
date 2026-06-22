@@ -37,7 +37,7 @@ Input flows back as mouse, UHID keyboard, i16-fixed-point scroll, and a D-pad/To
 - **Network device discovery** -- two-channel scan for ADB devices on the local network: mDNS advertisement for modern devices plus TCP port-5555 sweep for older devices that don't advertise. Configuration dialog auto-detects your gateway subnet and accepts additional subnets (CIDR, bare IP, or IP range); subnets persist across sessions. Streaming progress chip with cancel support; scan skips already-connected devices and dedupes mDNS+TCP hits. Manual-add fallback for single-IP cases.
 - **Device disconnect** -- disconnect network devices directly from the device card
 - **Sleep/wake toggle** -- turn devices on or off from the device card; state polled server-side and pushed via WebSocket so buttons stay in sync even when the device sleeps on a timer or via the physical remote
-- **Dark/light theme** -- toggle between dark (default) and light modes, preference saved to localStorage
+- **Dark/light theme** -- toggle between dark (default) and light modes; first paint follows your OS preference, then your saved choice applies (persisted per-user in the app's SQLite store)
 - **Responsive layout** -- centered page container scales from mobile to 4K (up to 5 device cards)
 - **In-app dependency updater** -- check and update Node.js, ADB, and scrcpy-server from the home page
 - **System tray helper** -- shows connection status, quick-open browser, mode-aware text (local vs. service); auto-spawns and auto-recovers via the launcher's supervisor
