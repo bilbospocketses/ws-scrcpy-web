@@ -25,35 +25,6 @@ export interface AppConfig {
     updateCheckIntervalMinutes: number;
     channel: UpdateChannel;
     githubOwner: string;
-    /**
-     * v0.1.9: tracks whether the service-instance "remember to bookmark"
-     * informational modal has been dismissed. Separate from
-     * `firstRunComplete` because the two flows are semantically
-     * different: `firstRunComplete` means "the user picked an install
-     * mode" (always true once running as a service); this flag means
-     * "the user has acknowledged the bookmark hint on the service
-     * instance specifically." Defaults to false; flips to true when the
-     * service-instance modal is dismissed.
-     */
-    serviceFirstRunSeen: boolean;
-    /**
-     * v0.1.30-beta.8: the web port for which the user dismissed the
-     * "bookmark this URL" reminder with "don't show again" checked.
-     * `null` means never dismissed. Lived in localStorage pre-beta.8
-     * (key `wsScrcpy.bookmarkDismissedForPort`) but was unreliable on
-     * Linux AppImage where the browser may treat each launch as a
-     * different origin. Per-port semantics preserved by storing the
-     * port number rather than a boolean — port change still triggers
-     * the modal because the stored port won't match the current port.
-     */
-    bookmarkDismissedForPort: number | null;
-    /**
-     * v0.1.30-beta.31: global "don't show the bookmark reminder again, ever,
-     * even when the port changes". When true the bookmark modal never shows,
-     * regardless of port. Distinct from the per-port `bookmarkDismissedForPort`.
-     * (Stored in config.json for now; SQLite migration is item 37.)
-     */
-    bookmarkDismissedGlobally: boolean;
 
     // Pre-existing fields (kept for backward compatibility / runtime usage)
     webPort: number;
@@ -111,9 +82,6 @@ export const APP_CONFIG_DEFAULTS: AppConfig = {
     channel: 'stable',
     githubOwner: 'bilbospocketses',
     webPort: 8000,
-    serviceFirstRunSeen: false,
-    bookmarkDismissedForPort: null,
-    bookmarkDismissedGlobally: false,
 };
 
 export const VALID_INSTALL_MODES: ReadonlyArray<InstallMode> = ['user', 'user-service', 'system', 'system-service'];

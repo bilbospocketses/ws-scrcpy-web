@@ -11,6 +11,7 @@ import { ConfirmModal } from './ConfirmModal';
 import { pollServiceUninstalled } from './pollServiceUninstalled';
 import { ResetConfirmModal } from './ResetConfirmModal';
 import { ServiceOperationModal } from './ServiceOperationModal';
+import { settingsService } from './SettingsService';
 import { UninstallConfirmModal } from './UninstallConfirmModal';
 import { runUpgradingHandoff } from './UpgradingOverlay';
 
@@ -75,13 +76,26 @@ export function classifyInstallPoll(args: {
 }
 
 /**
- * The config patch sent by "reset welcome and bookmark prompts" — clears all
- * four first-run / bookmark flags so each relevant modal can re-fire. Exported
- * (pure) for testing. (v0.1.30-beta.31 #5d adds the global bookmark flag.)
+ * The /api/config patch sent by "reset welcome and bookmark prompts" — clears
+ * only `firstRunComplete`, which is the sole prompt-related boot-trio field.
+ * The three per-user prompt-dismissal flags (`serviceFirstRunSeen`,
+ * `bookmarkDismissedForPort`, `bookmarkDismissedGlobally`) are reset separately
+ * via `settingsService.patchGlobal()` inside buildResetControl. Exported (pure)
+ * for testing. (v0.1.30-beta.31 #5d moved global bookmark flag to user_settings.)
  */
 export function resetPromptsPayload(): Record<string, boolean | null> {
     return {
         firstRunComplete: false,
+    };
+}
+
+/**
+ * The per-user prompt flags reset by "reset welcome and bookmark prompts" —
+ * clears the three flags that live in user_settings (SettingsApi). Exported
+ * (pure) for testing; applied alongside resetPromptsPayload() in buildResetControl.
+ */
+export function resetPromptSettingsPayload(): Record<string, boolean | null> {
+    return {
         serviceFirstRunSeen: false,
         bookmarkDismissedForPort: null,
         bookmarkDismissedGlobally: false,
@@ -357,14 +371,17 @@ export function buildResetControl(opts: { reload: () => void }): {
         void (async () => {
             const confirmed = await ResetConfirmModal.confirm();
             if (!confirmed) return;
-            // Reset reloads regardless of the PATCH outcome; swallow any network
-            // error so it does not surface as an unhandled rejection (the page
-            // reload re-reads config either way).
-            await fetch('/api/config', {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(resetPromptsPayload()),
-            }).catch(() => undefined);
+            // Dual-write reset: firstRunComplete → /api/config (boot-trio);
+            // the three per-user prompt flags → /api/settings. Both are
+            // fire-and-forget; the page reload re-reads both endpoints either way.
+            await Promise.all([
+                fetch('/api/config', {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(resetPromptsPayload()),
+                }).catch(() => undefined),
+                settingsService.patchGlobal(resetPromptSettingsPayload()).catch(() => undefined),
+            ]);
             opts.reload();
         })();
     });

@@ -13,6 +13,7 @@ import {
     classifyInstallPoll,
     lockScopeRadioControl,
     resetPromptsPayload,
+    resetPromptSettingsPayload,
     SettingsModal,
     scopeRadioState,
     stopServerButtonState,
@@ -83,9 +84,14 @@ describe('classifyInstallPoll', () => {
 });
 
 describe('resetPromptsPayload', () => {
-    it('clears all four first-run / bookmark flags', () => {
-        expect(resetPromptsPayload()).toEqual({
-            firstRunComplete: false,
+    it('clears firstRunComplete (the boot-trio flag sent to /api/config)', () => {
+        expect(resetPromptsPayload()).toEqual({ firstRunComplete: false });
+    });
+});
+
+describe('resetPromptSettingsPayload', () => {
+    it('clears the three per-user prompt flags sent to /api/settings', () => {
+        expect(resetPromptSettingsPayload()).toEqual({
             serviceFirstRunSeen: false,
             bookmarkDismissedForPort: null,
             bookmarkDismissedGlobally: false,
@@ -406,8 +412,8 @@ describe('buildResetControl', () => {
         expect(confirmSpy).toHaveBeenCalledTimes(1);
     });
 
-    it('on confirm=true PATCHes /api/config with resetPromptsPayload and reloads', async () => {
-        const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    it('on confirm=true PATCHes /api/config (firstRunComplete) and /api/settings (prompt flags) and reloads', async () => {
+        const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({}) });
         vi.stubGlobal('fetch', fetchMock);
         const reload = vi.fn();
         vi.spyOn(ResetConfirmModalModule.ResetConfirmModal, 'confirm').mockResolvedValue(true);
@@ -416,11 +422,14 @@ describe('buildResetControl', () => {
         button.click();
         await flush();
 
-        expect(fetchMock).toHaveBeenCalledTimes(1);
-        const [url, init] = fetchMock.mock.calls[0]! as [string, RequestInit];
-        expect(url).toBe('/api/config');
-        expect(init.method).toBe('PATCH');
-        expect(JSON.parse(init.body as string)).toEqual(resetPromptsPayload());
+        // Two PATCHes: /api/config for firstRunComplete; /api/settings for the three prompt flags.
+        const calls = fetchMock.mock.calls as [string, RequestInit][];
+        const configCall = calls.find(([url]) => url === '/api/config');
+        const settingsCall = calls.find(([url]) => url === '/api/settings');
+        expect(configCall).toBeTruthy();
+        expect(JSON.parse(configCall![1].body as string)).toEqual(resetPromptsPayload());
+        expect(settingsCall).toBeTruthy();
+        expect(JSON.parse(settingsCall![1].body as string)).toEqual(resetPromptSettingsPayload());
         expect(reload).toHaveBeenCalledTimes(1);
     });
 
@@ -438,7 +447,7 @@ describe('buildResetControl', () => {
         expect(reload).not.toHaveBeenCalled();
     });
 
-    it('reloads even when the PATCH rejects (reset always reloads)', async () => {
+    it('reloads even when both PATCHes reject (reset always reloads)', async () => {
         const fetchMock = vi.fn().mockRejectedValue(new Error('network'));
         vi.stubGlobal('fetch', fetchMock);
         const reload = vi.fn();

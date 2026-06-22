@@ -55,16 +55,6 @@ describe('Config — AppConfig extension', () => {
         expect(c).toEqual(APP_CONFIG_DEFAULTS);
     });
 
-    it('persists bookmarkDismissedGlobally from config.json (#5a global bookmark dismiss)', () => {
-        setup({ bookmarkDismissedGlobally: true });
-        expect(Config.getInstance().getAppConfig().bookmarkDismissedGlobally).toBe(true);
-    });
-
-    it('defaults bookmarkDismissedGlobally to false when absent', () => {
-        setup({});
-        expect(Config.getInstance().getAppConfig().bookmarkDismissedGlobally).toBe(false);
-    });
-
     it('migrates legacy `port` → `webPort` (now persisted via the config trim)', () => {
         const configPath = setup({ port: 8123 });
         const c = Config.getInstance().getAppConfig();
@@ -144,55 +134,6 @@ describe('Config — AppConfig extension', () => {
         setup({});
         const cfg = Config.getInstance();
         expect(() => cfg.updateAppConfig({ updateCheckIntervalMinutes: 1 })).toThrow(/5/);
-    });
-
-    it('bookmarkDismissedForPort: defaults to null', () => {
-        setup({});
-        const cfg = Config.getInstance();
-        expect(cfg.getAppConfig().bookmarkDismissedForPort).toBeNull();
-    });
-
-    it('bookmarkDismissedForPort: accepts a valid port number', () => {
-        setup({});
-        const cfg = Config.getInstance();
-        const r = cfg.updateAppConfig({ bookmarkDismissedForPort: 8003 });
-        expect(r.config.bookmarkDismissedForPort).toBe(8003);
-        expect(r.restartRequired).toBe(false);
-    });
-
-    it('bookmarkDismissedForPort: accepts null (reset)', () => {
-        setup({ bookmarkDismissedForPort: 8000 });
-        const cfg = Config.getInstance();
-        const r = cfg.updateAppConfig({ bookmarkDismissedForPort: null });
-        expect(r.config.bookmarkDismissedForPort).toBeNull();
-    });
-
-    it('bookmarkDismissedForPort: rejects out-of-range port', () => {
-        setup({});
-        const cfg = Config.getInstance();
-        expect(() => cfg.updateAppConfig({ bookmarkDismissedForPort: 80 })).toThrow(ConfigValidationError);
-        expect(() => cfg.updateAppConfig({ bookmarkDismissedForPort: 70000 })).toThrow(ConfigValidationError);
-    });
-
-    it('bookmarkDismissedForPort: rejects non-integer values', () => {
-        setup({});
-        const cfg = Config.getInstance();
-        expect(() => cfg.updateAppConfig({ bookmarkDismissedForPort: 'abc' as unknown as number })).toThrow(
-            ConfigValidationError,
-        );
-        expect(() => cfg.updateAppConfig({ bookmarkDismissedForPort: 8000.5 })).toThrow(ConfigValidationError);
-    });
-
-    it('bookmarkDismissedForPort: loads valid value from disk', () => {
-        setup({ bookmarkDismissedForPort: 9090 });
-        const cfg = Config.getInstance();
-        expect(cfg.getAppConfig().bookmarkDismissedForPort).toBe(9090);
-    });
-
-    it('bookmarkDismissedForPort: falls back to null on malformed disk value', () => {
-        setup({ bookmarkDismissedForPort: 'garbage' as unknown as number });
-        const cfg = Config.getInstance();
-        expect(cfg.getAppConfig().bookmarkDismissedForPort).toBeNull();
     });
 
     it('setActualWebPort persists shifted port and flips flag', () => {

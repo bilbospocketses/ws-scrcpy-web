@@ -1,5 +1,6 @@
 import { Modal } from '../ui/Modal';
 import { ConfirmModal } from './ConfirmModal';
+import { settingsService } from './SettingsService';
 
 /**
  * v0.1.10: bookmark reminder shown whenever the page loads on a port
@@ -133,11 +134,7 @@ export class PortChangeModal extends Modal {
                 message: "you won't see this bookmark helper again, even when the port changes.",
             });
             if (!ok) return;
-            void fetch('/api/config', {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ bookmarkDismissedGlobally: true }),
-            }).catch(() => {
+            void settingsService.patchGlobal({ bookmarkDismissedGlobally: true }).catch(() => {
                 /* network hiccup — re-show next load */
             });
             this.opts.onDismissed?.();
@@ -147,11 +144,7 @@ export class PortChangeModal extends Modal {
         if (this.dismissBtn) this.dismissBtn.disabled = true;
         if (this.dontShowCheckbox?.checked) {
             // Fire-and-forget; modal closes regardless of network outcome.
-            void fetch('/api/config', {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ bookmarkDismissedForPort: this.opts.webPort }),
-            }).catch(() => {
+            void settingsService.patchGlobal({ bookmarkDismissedForPort: this.opts.webPort }).catch(() => {
                 /* network hiccup — modal will re-show next load */
             });
         }

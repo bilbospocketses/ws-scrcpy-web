@@ -60,8 +60,13 @@ describe('PortChangeModal global-dismiss (#5c)', () => {
         expect(perPort.disabled).toBe(true);
     });
 
-    it('global-checked + confirmed PATCHes bookmarkDismissedGlobally:true', async () => {
+    it('global-checked + confirmed PATCHes bookmarkDismissedGlobally:true to /api/settings', async () => {
         const confirmSpy = vi.spyOn(ConfirmModal, 'confirm').mockResolvedValue(true);
+        // settingsService.patchGlobal → fetch('/api/settings', { method: 'PATCH', ... })
+        vi.stubGlobal(
+            'fetch',
+            vi.fn(() => Promise.resolve({ ok: true, json: () => Promise.resolve({}) } as unknown as Response)),
+        );
         new PortChangeModal({ webPort: 8000 });
         await flush();
         const global = checkboxes()[1]!;
@@ -71,7 +76,7 @@ describe('PortChangeModal global-dismiss (#5c)', () => {
         await flush();
         expect(confirmSpy).toHaveBeenCalledTimes(1);
         const lastCall = fetchMock().mock.calls.at(-1);
-        expect(lastCall?.[0]).toBe('/api/config');
+        expect(lastCall?.[0]).toBe('/api/settings');
         expect(JSON.parse((lastCall?.[1] as RequestInit).body as string)).toEqual({ bookmarkDismissedGlobally: true });
     });
 
@@ -88,7 +93,11 @@ describe('PortChangeModal global-dismiss (#5c)', () => {
         expect(document.querySelector('dialog.port-change-modal')?.hasAttribute('open')).toBe(true);
     });
 
-    it('per-port only (global unchecked) PATCHes bookmarkDismissedForPort', async () => {
+    it('per-port only (global unchecked) PATCHes bookmarkDismissedForPort to /api/settings', async () => {
+        vi.stubGlobal(
+            'fetch',
+            vi.fn(() => Promise.resolve({ ok: true, json: () => Promise.resolve({}) } as unknown as Response)),
+        );
         new PortChangeModal({ webPort: 8000 });
         await flush();
         const perPort = checkboxes()[0]!;
@@ -96,6 +105,7 @@ describe('PortChangeModal global-dismiss (#5c)', () => {
         gotIt().click();
         await flush();
         const lastCall = fetchMock().mock.calls.at(-1);
+        expect(lastCall?.[0]).toBe('/api/settings');
         expect(JSON.parse((lastCall?.[1] as RequestInit).body as string)).toEqual({ bookmarkDismissedForPort: 8000 });
     });
 });

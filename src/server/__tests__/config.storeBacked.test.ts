@@ -32,34 +32,33 @@ afterEach(() => {
 });
 
 describe('Config store-backed composition', () => {
-    it('composes AppConfig from the JSON trio + app_settings + user-1 prompts', () => {
+    it('composes AppConfig from the JSON trio + app_settings', () => {
         setup({
             webPort: 8200,
             installMode: 'user',
             firstRunComplete: true,
             channel: 'beta',
-            bookmarkDismissedGlobally: true,
         });
         const cfg = Config.getInstance().getAppConfig();
         expect(cfg.webPort).toBe(8200); // trio (config.json)
         expect(cfg.installMode).toBe('user'); // trio (config.json)
         expect(cfg.channel).toBe('beta'); // global → app_settings (imported)
-        expect(cfg.bookmarkDismissedGlobally).toBe(true); // prompt → user-1 (imported)
+        // Prompt-dismissal flags (bookmarkDismissedGlobally etc.) are no longer
+        // part of AppConfig — they are served via GET /api/settings instead.
     });
 
     it('updateAppConfig routes fields to the right store and keeps config.json trio-only', () => {
         const configPath = setup({ webPort: 8200, installMode: 'user', firstRunComplete: false });
         const c = Config.getInstance();
-        c.updateAppConfig({ channel: 'stable', firstRunComplete: true, bookmarkDismissedGlobally: true });
-        // config.json holds ONLY the trio (channel + bookmark went to the DB).
+        c.updateAppConfig({ channel: 'stable', firstRunComplete: true });
+        // config.json holds ONLY the trio (channel went to the DB).
         const onDisk = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
         expect(Object.keys(onDisk).sort()).toEqual(['firstRunComplete', 'installMode', 'webPort']);
         expect(onDisk.firstRunComplete).toBe(true);
-        // Re-read composes the global + prompt back from the stores.
+        // Re-read composes the global back from the store.
         Config._resetForTest();
         const cfg2 = Config.getInstance().getAppConfig();
         expect(cfg2.channel).toBe('stable');
-        expect(cfg2.bookmarkDismissedGlobally).toBe(true);
     });
 
     it('preserves server-only boot fields (allowedHosts) across the trim and a save', () => {

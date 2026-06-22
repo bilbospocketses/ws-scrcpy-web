@@ -10,9 +10,8 @@ import {
     VALID_INSTALL_MODES,
 } from '../common/ConfigEvents';
 import type { ServerItem } from '../types/Configuration';
-import { IMPLICIT_ADMIN_ID } from './db/constants';
 import { Db, dbDir } from './db/Db';
-import { GLOBAL_KEYS, PROMPT_KEYS } from './db/import/importConfigJson';
+import { GLOBAL_KEYS } from './db/import/importConfigJson';
 import { EnvName } from './EnvName';
 import { Logger } from './Logger';
 import { DEFAULT_DEVICE_LABELS_PATH } from './legacyDeviceLabels';
@@ -47,9 +46,6 @@ export interface FlatConfig {
     webPort?: number;
     installMode?: InstallMode | null;
     firstRunComplete?: boolean;
-    serviceFirstRunSeen?: boolean;
-    bookmarkDismissedForPort?: number | null;
-    bookmarkDismissedGlobally?: boolean;
     autoUpdate?: boolean;
     updateCheckIntervalMinutes?: number;
     channel?: 'stable' | 'beta';
@@ -249,22 +245,9 @@ function validateField<K extends keyof AppConfig>(key: K, value: unknown): Valid
             return { ok: true, value: value as AppConfig[K] };
         }
         case 'firstRunComplete':
-        case 'autoUpdate':
-        case 'serviceFirstRunSeen':
-        case 'bookmarkDismissedGlobally': {
+        case 'autoUpdate': {
             if (typeof value !== 'boolean') {
                 return { ok: false, error: `${key} must be a boolean` };
-            }
-            return { ok: true, value: value as AppConfig[K] };
-        }
-        case 'bookmarkDismissedForPort': {
-            // null means "never dismissed"; otherwise must be a valid port.
-            if (value === null) return { ok: true, value: null as AppConfig[K] };
-            if (!isInteger(value) || (value as number) < 1024 || (value as number) > 65535) {
-                return {
-                    ok: false,
-                    error: 'bookmarkDismissedForPort must be null or an integer between 1024 and 65535',
-                };
             }
             return { ok: true, value: value as AppConfig[K] };
         }
@@ -303,21 +286,6 @@ function sanitizeAppConfig(raw: FlatConfig, warn: (msg: string) => void): AppCon
     if (raw.firstRunComplete !== undefined) {
         const r = validateField('firstRunComplete', raw.firstRunComplete);
         if (r.ok) out.firstRunComplete = r.value;
-        else warn(`config.json: ${r.error}; using default false`);
-    }
-    if ((raw as { serviceFirstRunSeen?: unknown }).serviceFirstRunSeen !== undefined) {
-        const r = validateField('serviceFirstRunSeen', (raw as { serviceFirstRunSeen?: unknown }).serviceFirstRunSeen);
-        if (r.ok) out.serviceFirstRunSeen = r.value;
-        else warn(`config.json: ${r.error}; using default false`);
-    }
-    if (raw.bookmarkDismissedForPort !== undefined) {
-        const r = validateField('bookmarkDismissedForPort', raw.bookmarkDismissedForPort);
-        if (r.ok) out.bookmarkDismissedForPort = r.value;
-        else warn(`config.json: ${r.error}; using default null`);
-    }
-    if (raw.bookmarkDismissedGlobally !== undefined) {
-        const r = validateField('bookmarkDismissedGlobally', raw.bookmarkDismissedGlobally);
-        if (r.ok) out.bookmarkDismissedGlobally = r.value;
         else warn(`config.json: ${r.error}; using default false`);
     }
     if (raw.autoUpdate !== undefined) {
@@ -379,20 +347,18 @@ function overlayStore(
 
 /**
  * Compose the effective AppConfig from the trimmed config.json boot trio
- * (`fileConfig`) plus the store-backed globals (`app_settings`) and the implicit
- * admin's prompt flags (`user_settings`). Pre-migration `fileConfig` still
- * carries the globals/prompts; the store overlay is authoritative once the
- * one-time import has moved them out.
+ * (`fileConfig`) plus the store-backed globals (`app_settings`).
+ * Prompt-dismissal flags (`bookmarkDismissedForPort`, `bookmarkDismissedGlobally`,
+ * `serviceFirstRunSeen`) are no longer part of AppConfig — they live exclusively
+ * in `user_settings` and are read by the frontend via `GET /api/settings`.
  */
 function composeAppConfig(
     fileConfig: FlatConfig,
     globals: Record<string, unknown>,
-    prompts: Record<string, unknown>,
     warn: (msg: string) => void,
 ): AppConfig {
     const out = sanitizeAppConfig(fileConfig, warn);
     overlayStore(out, globals, GLOBAL_KEYS, warn);
-    overlayStore(out, prompts, PROMPT_KEYS, warn);
     return out;
 }
 
@@ -539,11 +505,11 @@ export class Config {
                 deviceLabelsPath: DEFAULT_DEVICE_LABELS_PATH,
             });
             const globals = db.appSettings.getAll();
-            const prompts = db.userSettings.getAll(IMPLICIT_ADMIN_ID);
 
-            // Compose the effective AppConfig from the trio + store-backed globals
-            // + the implicit admin's prompt flags.
-            const appConfig = composeAppConfig(fileConfig, globals, prompts, warn);
+            // Compose the effective AppConfig from the trio + store-backed globals.
+            // Prompt-dismissal flags are no longer part of AppConfig — they live
+            // in user_settings and are read by the frontend via GET /api/settings.
+            const appConfig = composeAppConfig(fileConfig, globals, warn);
             const servers = Config.buildServers(fileConfig, appConfig.webPort);
 
             // An app_settings override of dependenciesPath/adbPath is overlaid for
@@ -804,14 +770,13 @@ export class Config {
             (merged as unknown as Record<string, unknown>)[k] = r.value;
             // Route each field to its backing store: the boot trio stays in
             // config.json (written by saveToDisk below); globals go to
-            // app_settings; prompt-dismissal flags go to the implicit admin's
-            // user_settings. The DB is the source of truth post-split.
+            // app_settings. Prompt-dismissal flags are no longer part of
+            // AppConfig and are no longer accepted here — they are written
+            // directly via PATCH /api/settings by the frontend.
             if (TRIO_KEYS.has(k)) {
                 // persisted by saveToDisk()
             } else if ((GLOBAL_KEYS as readonly string[]).includes(k)) {
                 this._db.appSettings.set(k, r.value);
-            } else if ((PROMPT_KEYS as readonly string[]).includes(k)) {
-                this._db.userSettings.set(IMPLICIT_ADMIN_ID, k, r.value);
             }
         }
         const restartRequired = merged.webPort !== this._appConfig.webPort;

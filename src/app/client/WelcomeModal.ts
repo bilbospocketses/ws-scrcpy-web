@@ -1,6 +1,7 @@
 import type { ServiceInstallResponse, ServiceStatusResponse } from '../../common/ServiceEvents';
 import { Modal } from '../ui/Modal';
 import { ServiceOperationModal } from './ServiceOperationModal';
+import { settingsService } from './SettingsService';
 
 export type WelcomeChoice = 'service' | 'on-demand';
 
@@ -379,16 +380,19 @@ export class WelcomeModal extends Modal {
         if (this.dontShowCheckbox.checked) {
             this.setBusy(true);
             this.setStatus('saving…');
-            const ok = await this.patchConfig({
+            // installMode + firstRunComplete are boot-trio fields → /api/config.
+            // bookmarkDismissedForPort is a per-user prompt flag → /api/settings.
+            const configOk = await this.patchConfig({
                 installMode: 'user',
                 firstRunComplete: true,
-                bookmarkDismissedForPort: this.opts.webPort,
             });
-            if (!ok) {
+            if (!configOk) {
                 this.setStatus("couldn't save preference. try again?", true);
                 this.setBusy(false);
                 return;
             }
+            // Fire-and-forget bookmark stamp — close succeeds even on network hiccup.
+            void settingsService.patchGlobal({ bookmarkDismissedForPort: this.opts.webPort }).catch(() => {});
         }
         this.opts.onDecision('on-demand');
         this.close();

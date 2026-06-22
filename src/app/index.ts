@@ -85,32 +85,44 @@ function maybeShowWelcomeModal(): void {
     // page on success, which re-runs maybeShowWelcomeModal cleanly
     // against the now-canonical post-uninstall state.
     if (isResumingUninstall()) return;
-    fetch('/api/config')
-        .then((r) => (r.ok ? (r.json() as Promise<Partial<AppConfigEnvelope>>) : null))
-        .then(async (data) => {
+
+    // Dual-source: /api/config for runtime + installMode + firstRunComplete;
+    // /api/settings for the three per-user prompt-dismissal flags which are
+    // no longer part of AppConfig. Both are already warm from the boot sequence
+    // above (loadGlobal() was awaited before onload reached here).
+    const configFetch = fetch('/api/config')
+        .then((r) => (r.ok ? (r.json() as Promise<Partial<AppConfigEnvelope>>) : null));
+
+    import('./client/SettingsService')
+        .then(({ settingsService }) => Promise.all([configFetch, settingsService.loadGlobal()]))
+        .then(async ([data, prefs]) => {
             const runtime = data?.runtime;
             const config = data?.config;
             if (!runtime || !config) return;
 
             const isServiceInstance = config.installMode === 'user-service' || config.installMode === 'system-service';
 
-            // Gate on server-side config flags (config.json), not
-            // localStorage. The modals PATCH these flags when dismissed;
-            // config.json survives port shifts (localStorage is per-origin
-            // and gets lost when the port changes). v0.1.10-v0.1.25-beta.53
-            // used localStorage; reverted to config.json gating because
-            // install/uninstall cycles no longer reset these flags (Phase 4
-            // only reverts installMode, not firstRunComplete/serviceFirstRunSeen).
+            // Gate on server-side flags, sourced per-flag:
+            //   installMode / firstRunComplete → /api/config (boot-trio, unchanged)
+            //   serviceFirstRunSeen / bookmarkDismissed* → /api/settings (per-user)
+            // The modals PATCH their respective endpoint when dismissed.
+            const serviceFirstRunSeen = Boolean(prefs['serviceFirstRunSeen']);
+            const bookmarkDismissedGlobally = Boolean(prefs['bookmarkDismissedGlobally']);
+            const bookmarkDismissedForPort =
+                typeof prefs['bookmarkDismissedForPort'] === 'number'
+                    ? (prefs['bookmarkDismissedForPort'] as number)
+                    : null;
+
             if (isServiceInstance) {
-                if (!config.serviceFirstRunSeen) {
+                if (!serviceFirstRunSeen) {
                     void import('./client/ServiceFirstRunModal').then(({ ServiceFirstRunModal }) => {
                         new ServiceFirstRunModal({ webPort: runtime.webPort });
                     });
                     return;
                 }
                 maybeShowPortChangeModal(
-                    config.bookmarkDismissedGlobally,
-                    config.bookmarkDismissedForPort,
+                    bookmarkDismissedGlobally,
+                    bookmarkDismissedForPort,
                     runtime.webPort,
                 );
                 return;
@@ -128,13 +140,14 @@ function maybeShowWelcomeModal(): void {
             }
 
             maybeShowPortChangeModal(
-                config.bookmarkDismissedGlobally,
-                config.bookmarkDismissedForPort,
+                bookmarkDismissedGlobally,
+                bookmarkDismissedForPort,
                 runtime.webPort,
             );
         })
         .catch(() => {
-            // /api/config absent (e.g., dev server without P2 wiring) — silently bail.
+            // /api/config or /api/settings absent (e.g., dev server without P2/P3
+            // wiring) — silently bail.
         });
 }
 

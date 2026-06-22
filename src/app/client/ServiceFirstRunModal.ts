@@ -1,4 +1,5 @@
 import { Modal } from '../ui/Modal';
+import { settingsService } from './SettingsService';
 
 /**
  * One-shot informational modal shown on the FIRST page load of a
@@ -118,13 +119,9 @@ export class ServiceFirstRunModal extends Modal {
         if (this.dismissBtn) this.dismissBtn.disabled = true;
         if (this.dontShowCheckbox?.checked) {
             try {
-                await fetch('/api/config', {
-                    method: 'PATCH',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        serviceFirstRunSeen: true,
-                        bookmarkDismissedForPort: this.opts.webPort,
-                    }),
+                await settingsService.patchGlobal({
+                    serviceFirstRunSeen: true,
+                    bookmarkDismissedForPort: this.opts.webPort,
                 });
             } catch {
                 /* fall-through: still close */
