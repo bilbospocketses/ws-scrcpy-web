@@ -17,14 +17,14 @@ export class SettingsService implements SettingsSink {
     }
 
     async patchGlobal(patch: Record<string, unknown>): Promise<void> {
-        await ok(
+        const res = await ok(
             await fetch('/api/settings', {
                 method: 'PATCH',
                 headers: { 'content-type': 'application/json' },
                 body: JSON.stringify(patch),
             }),
         );
-        this.globalCache = { ...(this.globalCache ?? {}), ...patch };
+        this.globalCache = (await res.json()) as Record<string, unknown>;
     }
 
     async getDevice(udid: string): Promise<Record<string, unknown>> {

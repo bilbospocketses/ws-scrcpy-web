@@ -101,6 +101,18 @@ describe('migrateLocalStorage — happy path', () => {
         expect(videoCall!.patch['video']).toEqual({ settings: { bitrate: 8000000 }, fit: true });
     });
 
+    it('migrates full-form video key with a network udid (displayId tokens, colon inside udid)', async () => {
+        // Full form: WebCodecsPlayer:<udid>:<WxH>:<displayId>:<WxH>  — displayId is a plain integer
+        ls.setItem('WebCodecsPlayer:192.168.1.5:5555:1920x1080:2:800x600', JSON.stringify({ bitrate: 4000000 }));
+        ls.setItem('WebCodecsPlayer:192.168.1.5:5555:1920x1080:2:800x600:fit', JSON.stringify(true));
+
+        await migrateLocalStorage(ls, sink);
+
+        const videoCall = sink.devicePatches.find((p) => p.udid === '192.168.1.5:5555');
+        expect(videoCall).toBeDefined();
+        expect(videoCall!.patch['video']).toEqual({ settings: { bitrate: 4000000 }, fit: true });
+    });
+
     it('migrates a USB-serial short video key (no displayId) to the correct udid', async () => {
         ls.setItem('WebCodecsPlayer:ABCD1234:1080x2400', JSON.stringify({ bitrate: 4000000 }));
 
