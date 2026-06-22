@@ -59,7 +59,7 @@ describe('BasePlayer video storage — Task 4c (SettingsService-backed)', () => 
 
     it('cold miss: getVideoSettingFromStorage returns preferred', async () => {
         const { BasePlayer, VideoSettings, Size } = await importModules();
-        const preferred = new VideoSettings({ bitrate: 1_000_000, maxFps: 30, bounds: new Size(640, 480) });
+        const preferred = new VideoSettings({ bitrate: 1_000_000, maxFps: 30, iFrameInterval: 5, bounds: new Size(640, 480) });
         const result = BasePlayer.getVideoSettingFromStorage(preferred, 'WebCodecsPlayer', UDID);
         expect(result).toBe(preferred);
     });
@@ -86,7 +86,7 @@ describe('BasePlayer video storage — Task 4c (SettingsService-backed)', () => 
                 fit: true,
             },
         });
-        const preferred = new VideoSettings({ bitrate: 1_000_000, maxFps: 30, bounds: new Size(640, 480) });
+        const preferred = new VideoSettings({ bitrate: 1_000_000, maxFps: 30, iFrameInterval: 5, bounds: new Size(640, 480) });
         const result = BasePlayer.getVideoSettingFromStorage(preferred, 'WebCodecsPlayer', UDID);
         expect(result).toBeInstanceOf(VideoSettings);
         expect(result.bitrate).toBe(2_000_000);
@@ -107,7 +107,7 @@ describe('BasePlayer video storage — Task 4c (SettingsService-backed)', () => 
 
     it('write-through: putVideoSettingsToStorage stores plain-JSON + fit and cache reflects it', async () => {
         const { BasePlayer, VideoSettings, Size } = await importModules();
-        const vs = new VideoSettings({ bitrate: 3_000_000, maxFps: 30, bounds: new Size(800, 600) });
+        const vs = new VideoSettings({ bitrate: 3_000_000, maxFps: 30, iFrameInterval: 5, bounds: new Size(800, 600) });
 
         // Access the protected static via cast.
         (BasePlayer as unknown as { putVideoSettingsToStorage: Function }).putVideoSettingsToStorage(
@@ -132,7 +132,7 @@ describe('BasePlayer video storage — Task 4c (SettingsService-backed)', () => 
         expect((video as Record<string, unknown>)['fit']).toBe(true);
 
         // Read back: getVideoSettingFromStorage should now return the written value.
-        const preferred = new VideoSettings({ bitrate: 1_000_000, maxFps: 15 });
+        const preferred = new VideoSettings({ bitrate: 1_000_000, maxFps: 15, iFrameInterval: 5 });
         const result = BasePlayer.getVideoSettingFromStorage(preferred, 'WebCodecsPlayer', UDID);
         expect(result).toBeInstanceOf(VideoSettings);
         expect(result.bitrate).toBe(3_000_000);
