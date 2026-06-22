@@ -27,6 +27,7 @@ import { NetworkScanner } from './network/NetworkScanner';
 import { consumeSuppressBrowserMarker, openBrowser, shouldAutoOpenBrowser } from './openBrowser';
 import { findAvailablePort, webPortOverride } from './PortPicker';
 import { ScrcpyConnection } from './ScrcpyConnection';
+import { AuthGate } from './auth/AuthGate';
 import { setAllowedHosts } from './security/originGuard';
 import { makeProductionCoreDeps, parseSystemServiceArgs, runSystemServiceCli } from './service/systemServiceCli';
 import { HttpServer } from './services/HttpServer';
@@ -110,6 +111,8 @@ if (__ssArgs) {
             }
         }
     }
+
+    HttpServer.addFirstApiHandler(new AuthGate(() => Config.getInstance().db));
 
     const depManager = new DependencyManager(config.dependenciesPath, {
         restartMarkerPath: config.restartMarkerPath,

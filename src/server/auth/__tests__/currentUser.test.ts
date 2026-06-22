@@ -8,4 +8,7 @@ describe('resolveUserId (open mode)', () => {
         expect(resolveUserId(undefined)).toBe(IMPLICIT_ADMIN_ID);
         expect(resolveUserId({} as IncomingMessage)).toBe(IMPLICIT_ADMIN_ID);
     });
+    it('returns the attached session user id when present', () => {
+        expect(resolveUserId({ user: { id: 7 } } as never)).toBe(7);
+    });
 });
