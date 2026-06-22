@@ -1,5 +1,5 @@
 import { Modal } from '../ui/Modal';
-import type { Role, UserRow } from './AuthClient';
+import type { MeResponse, Role, UserRow } from './AuthClient';
 import { authClient } from './AuthClient';
 
 export class UsersModal extends Modal {
@@ -23,7 +23,19 @@ export class UsersModal extends Modal {
     // -----------------------------------------------------------------------
 
     async refresh(): Promise<void> {
-        const me = await authClient.me().catch(() => ({ authEnabled: true, user: null }));
+        let me: MeResponse;
+        try {
+            me = await authClient.me();
+        } catch {
+            // Fail CLOSED on the UI: a transient me() error must not assume auth is
+            // enabled (that hides the lockdown affordance). Surface it instead.
+            const err = document.createElement('div');
+            err.className = 'users-modal-status';
+            err.style.cssText = 'color: #e05555; font-size: 13px; margin-bottom: 8px; min-height: 1.4em;';
+            err.textContent = "Couldn't load auth state — reload the page.";
+            this.bodyEl.replaceChildren(err);
+            return;
+        }
         const users = await authClient.listUsers().catch(() => [] as UserRow[]);
 
         const container = this.bodyEl;

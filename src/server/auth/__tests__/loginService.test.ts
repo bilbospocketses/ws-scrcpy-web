@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { Db } from '../../db/Db';
 import { LOCK_MS } from '../loginPolicy';
@@ -37,5 +37,36 @@ describe('login', () => {
         // auto-unlock after the window
         const r2 = login(db, 'admin', 'correct', 1000 + LOCK_MS + 1);
         expect(r2.ok).toBe(true);
+    });
+});
+
+describe('login timing-blind paths', () => {
+    it('calls blindVerify on unknown-username path and still returns invalid', async () => {
+        // Dynamic import so vi.spyOn can intercept the live module binding.
+        const passwordMod = await import('../password');
+        const spy = vi.spyOn(passwordMod, 'blindVerify');
+        const r = login(db, 'nobody', 'x', 1000);
+        expect(spy).toHaveBeenCalledTimes(1);
+        expect(r).toEqual({ ok: false, reason: 'invalid' });
+        spy.mockRestore();
+    });
+
+    it('calls blindVerify on disabled-user path and still returns disabled', async () => {
+        const passwordMod = await import('../password');
+        const spy = vi.spyOn(passwordMod, 'blindVerify');
+        db.users.setDisabled(1, true);
+        const r = login(db, 'admin', 'correct', 1000);
+        expect(spy).toHaveBeenCalledTimes(1);
+        expect(r).toEqual({ ok: false, reason: 'disabled' });
+        spy.mockRestore();
+    });
+
+    it('does NOT call blindVerify on the happy path (correct password)', async () => {
+        const passwordMod = await import('../password');
+        const spy = vi.spyOn(passwordMod, 'blindVerify');
+        const r = login(db, 'admin', 'correct', 1000);
+        expect(spy).not.toHaveBeenCalled();
+        expect(r.ok).toBe(true);
+        spy.mockRestore();
     });
 });

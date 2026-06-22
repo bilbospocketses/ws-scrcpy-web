@@ -295,6 +295,27 @@ describe('UsersModal — add user (authEnabled = true)', () => {
     });
 });
 
+describe('UsersModal — me() failure is fail-closed (not fail-open)', () => {
+    it('when me() rejects, shows a reload-page error and does NOT render add-user button', async () => {
+        vi.spyOn(authClient, 'me').mockRejectedValue(new Error('network error'));
+        new UsersModal();
+        await flush();
+        await flush();
+
+        // Must show the error message in the modal body
+        const body = modalBody();
+        expect(body).toContain("Couldn't load auth state");
+
+        // Must NOT render the Add user button (that would be fail-open)
+        const addBtn = findBtn('add user');
+        expect(addBtn).toBeUndefined();
+
+        // Must NOT render the lockdown section (authEnabled must not be assumed false)
+        const lockSection = document.querySelector('.lockdown-section');
+        expect(lockSection).toBeNull();
+    });
+});
+
 describe('UsersModal — add user lockdown flow (authEnabled = false)', () => {
     it('shows "Secure the admin account" section when authEnabled is false', async () => {
         mountModal({ authEnabled: false, user: null }, []);
