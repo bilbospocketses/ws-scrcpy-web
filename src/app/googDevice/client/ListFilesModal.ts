@@ -3,6 +3,7 @@ import Protocol from '../../../common/AdbProtocol';
 import { Multiplexer } from '../../../packages/multiplexer/Multiplexer';
 import { BinaryWriter } from '../../BinaryWriter';
 import { ManagerClient } from '../../client/ManagerClient';
+import type { SettingsService } from '../../client/SettingsService';
 import { basename, resolve } from '../../pathUtils';
 import { Modal } from '../../ui/Modal';
 import { debugLog } from '../../util/debugLog';
@@ -13,7 +14,6 @@ import { parseDataChunk, parseDentReply, parseFailReply, parseStatReply, readSyn
 import { createFileIconForEntry } from './FileIconUtils';
 import { attachFsChannelKeepAlive } from './fsChannelKeepAlive';
 import { buildFslsInitData, buildMultiplexUrl } from './multiplexConnection';
-import type { SettingsService } from '../../client/SettingsService';
 
 const TAG = '[ListFilesModal]';
 const DEFAULT_ICON_SIZE = 24;
@@ -340,16 +340,16 @@ export class ListFilesModal extends Modal implements DragAndPushListener {
             this.dialog.style.setProperty('--file-icon-size', `${this.iconSize}px`);
             if (saveCheck.checked) {
                 // Fire-and-forget: modal close is not blocked on the write.
-                void this.settings?.patchGlobal({ iconSize: this.iconSize }).catch((e) =>
-                    console.error('[ListFilesModal] patchGlobal iconSize failed', e),
-                );
+                void this.settings
+                    ?.patchGlobal({ iconSize: this.iconSize })
+                    .catch((e) => console.error('[ListFilesModal] patchGlobal iconSize failed', e));
             } else {
                 // No per-key server delete exists; write the in-band sentinel 0 so the
                 // server retains the key but the read sites treat it as "no preference".
                 // (Valid sizes are 16-32, so 0 is unambiguously "cleared".)
-                void this.settings?.patchGlobal({ iconSize: 0 }).catch((e) =>
-                    console.error('[ListFilesModal] patchGlobal iconSize clear failed', e),
-                );
+                void this.settings
+                    ?.patchGlobal({ iconSize: 0 })
+                    .catch((e) => console.error('[ListFilesModal] patchGlobal iconSize clear failed', e));
             }
             this.initFileBrowser();
         });

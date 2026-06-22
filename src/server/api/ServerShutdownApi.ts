@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'http';
-import { Logger } from '../Logger';
 import { requireAdmin } from '../auth/requireAdmin';
+import { Logger } from '../Logger';
 
 const log = Logger.for('ServerShutdownApi');
 

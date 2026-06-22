@@ -1,9 +1,9 @@
 import * as fs from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'http';
 import type { AppConfigEnvelope, AppConfigPatchResponse } from '../../common/ConfigEvents';
+import { requireAdmin } from '../auth/requireAdmin';
 import { Config, ConfigValidationError } from '../Config';
 import { Logger } from '../Logger';
-import { requireAdmin } from '../auth/requireAdmin';
 import { BodyTooLargeError, readBodyCapped } from './utils';
 
 const log = Logger.for('ConfigApi');

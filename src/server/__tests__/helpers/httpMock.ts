@@ -13,7 +13,13 @@ export function makeReqRes(
     url: string,
     body?: unknown,
     headers: Record<string, string> = {},
-): { req: IncomingMessage; res: ServerResponse; getStatus(): number; getJson(): unknown; getHeader(name: string): string | undefined } {
+): {
+    req: IncomingMessage;
+    res: ServerResponse;
+    getStatus(): number;
+    getJson(): unknown;
+    getHeader(name: string): string | undefined;
+} {
     // Emit a Buffer (not a string) — readJsonBody does Buffer.concat(chunks),
     // which throws ERR_INVALID_ARG_TYPE on string chunks.
     const req = Readable.from(

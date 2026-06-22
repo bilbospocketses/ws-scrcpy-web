@@ -2,11 +2,10 @@
 // Uses a fetch stub injected via vi.stubGlobal to avoid real network calls.
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-
+import type { StoredVideo } from '../SettingsService';
 // We import the class (not the singleton) so each test can instantiate fresh.
 // The singleton export is tested separately in the singleton test below.
 import { SettingsService } from '../SettingsService';
-import type { StoredVideo } from '../SettingsService';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -44,7 +43,10 @@ describe('SettingsService.getGlobalCached()', () => {
 
     it('returns the same object reference for repeated calls (no clone)', async () => {
         const svc = new SettingsService();
-        vi.stubGlobal('fetch', makeFetchStub(() => makeOkResponse({ theme: 'dark' })));
+        vi.stubGlobal(
+            'fetch',
+            makeFetchStub(() => makeOkResponse({ theme: 'dark' })),
+        );
         await svc.loadGlobal();
         expect(svc.getGlobalCached()).toBe(svc.getGlobalCached());
     });
@@ -124,7 +126,10 @@ describe('SettingsService.getDeviceVideo/Audio()', () => {
 
     it('returns undefined when hydrated but scope is absent', async () => {
         const svc = new SettingsService();
-        vi.stubGlobal('fetch', makeFetchStub(() => makeOkResponse({}))); // no video / no audio
+        vi.stubGlobal(
+            'fetch',
+            makeFetchStub(() => makeOkResponse({})),
+        ); // no video / no audio
         await svc.hydrateDevice('udid-y');
 
         expect(svc.getDeviceVideo('udid-y')).toBeUndefined();
@@ -134,7 +139,10 @@ describe('SettingsService.getDeviceVideo/Audio()', () => {
     it('returns stored video after hydration', async () => {
         const svc = new SettingsService();
         const videoData: StoredVideo = { settings: { bitRate: 4000000 }, fit: false };
-        vi.stubGlobal('fetch', makeFetchStub(() => makeOkResponse({ video: videoData })));
+        vi.stubGlobal(
+            'fetch',
+            makeFetchStub(() => makeOkResponse({ video: videoData })),
+        );
 
         await svc.hydrateDevice('udid-v');
         const result = svc.getDeviceVideo('udid-v');
@@ -144,7 +152,10 @@ describe('SettingsService.getDeviceVideo/Audio()', () => {
     it('returns stored audio after hydration', async () => {
         const svc = new SettingsService();
         const audioData = { enabled: true, source: 'output', codec: 'aac' };
-        vi.stubGlobal('fetch', makeFetchStub(() => makeOkResponse({ audio: audioData })));
+        vi.stubGlobal(
+            'fetch',
+            makeFetchStub(() => makeOkResponse({ audio: audioData })),
+        );
 
         await svc.hydrateDevice('udid-a2');
         const result = svc.getDeviceAudio('udid-a2');
@@ -230,7 +241,10 @@ describe('SettingsService.setDeviceVideo()', () => {
 describe('SettingsService.setDeviceAudio()', () => {
     it('updates the sync cache immediately so getDeviceAudio reflects the write', async () => {
         const svc = new SettingsService();
-        vi.stubGlobal('fetch', makeFetchStub(() => makeOkResponse({})));
+        vi.stubGlobal(
+            'fetch',
+            makeFetchStub(() => makeOkResponse({})),
+        );
 
         await svc.hydrateDevice('udid-sa');
         const audio = { enabled: true, source: 'mic', codec: 'opus' };

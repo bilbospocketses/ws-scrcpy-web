@@ -15,6 +15,7 @@ import {
     WS_SCRCPY_SERVICE_NAME,
 } from '../../common/ServiceEvents';
 import { getAppVersion } from '../appVersion';
+import { requireAdmin } from '../auth/requireAdmin';
 import { Config } from '../Config';
 import { detectInstallScope } from '../InstallScope';
 import { Logger } from '../Logger';
@@ -32,7 +33,6 @@ import {
 } from '../service/SystemdClient';
 import type { CommandRunner } from '../service/systemServiceCli';
 import { resolveSystemTool } from '../service/systemTools';
-import { requireAdmin } from '../auth/requireAdmin';
 import { readJsonBody } from './utils';
 
 const log = Logger.for('ServiceApi');

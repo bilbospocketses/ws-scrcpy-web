@@ -55,24 +55,18 @@ describe('getAppConfig() does not expose prompt-dismissal flags (Task 6)', () =>
     it('updateAppConfig rejects bookmarkDismissedForPort (unknown to /api/config now)', () => {
         setup({});
         const cfg = Config.getInstance();
-        expect(() =>
-            cfg.updateAppConfig(JSON.parse('{"bookmarkDismissedForPort":8000}')),
-        ).toThrow();
+        expect(() => cfg.updateAppConfig(JSON.parse('{"bookmarkDismissedForPort":8000}'))).toThrow();
     });
 
     it('updateAppConfig rejects bookmarkDismissedGlobally', () => {
         setup({});
         const cfg = Config.getInstance();
-        expect(() =>
-            cfg.updateAppConfig(JSON.parse('{"bookmarkDismissedGlobally":true}')),
-        ).toThrow();
+        expect(() => cfg.updateAppConfig(JSON.parse('{"bookmarkDismissedGlobally":true}'))).toThrow();
     });
 
     it('updateAppConfig rejects serviceFirstRunSeen', () => {
         setup({});
         const cfg = Config.getInstance();
-        expect(() =>
-            cfg.updateAppConfig(JSON.parse('{"serviceFirstRunSeen":true}')),
-        ).toThrow();
+        expect(() => cfg.updateAppConfig(JSON.parse('{"serviceFirstRunSeen":true}'))).toThrow();
     });
 });

@@ -147,9 +147,9 @@ export class ScanNetworkModal extends Modal {
         const raws = this.rows.filter((r) => r.removable).map((r) => r.raw);
         // Fire-and-forget: sync callers (addUserRow, updateUserRow, removeRowById)
         // run only after loadInitialRows has populated this.settings.
-        void this.settings?.patchGlobal({ scanSubnets: raws }).catch((e) =>
-            console.error('[ScanNetworkModal] patchGlobal scanSubnets failed', e),
-        );
+        void this.settings
+            ?.patchGlobal({ scanSubnets: raws })
+            .catch((e) => console.error('[ScanNetworkModal] patchGlobal scanSubnets failed', e));
     }
 
     private async addUserRow(raw: string): Promise<void> {

@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { DependencyStatus } from '../../common/DependencyTypes';
-import type { DependencyManager } from '../DependencyManager';
 import { requireAdmin } from '../auth/requireAdmin';
+import type { DependencyManager } from '../DependencyManager';
 
 export class DependencyApi {
     constructor(private readonly manager: DependencyManager) {}

@@ -1,10 +1,12 @@
-import { describe, it, expect, afterEach } from 'vitest';
-import * as fs from 'fs'; import * as os from 'os'; import * as path from 'path';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import { afterEach, describe, expect, it } from 'vitest';
 import { UsersApi } from '../api/UsersApi';
-import { Config } from '../Config';
 import { isAuthEnabled } from '../auth/authState';
 import { hashPassword } from '../auth/password';
 import { SessionStore } from '../auth/session';
+import { Config } from '../Config';
 import { IMPLICIT_ADMIN_ID } from '../db/constants';
 import { EnvName } from '../EnvName';
 import { makeReqRes } from './helpers/httpMock';
@@ -21,8 +23,10 @@ function setup(): void {
 }
 afterEach(() => {
     Config._resetForTest();
-    if (saved.CONFIG === undefined) delete process.env[EnvName.CONFIG_PATH]; else process.env[EnvName.CONFIG_PATH] = saved.CONFIG;
-    if (saved.DEPS === undefined) delete process.env['DEPS_PATH']; else process.env['DEPS_PATH'] = saved.DEPS;
+    if (saved.CONFIG === undefined) delete process.env[EnvName.CONFIG_PATH];
+    else process.env[EnvName.CONFIG_PATH] = saved.CONFIG;
+    if (saved.DEPS === undefined) delete process.env['DEPS_PATH'];
+    else process.env['DEPS_PATH'] = saved.DEPS;
     while (tmpDirs.length) fs.rmSync(tmpDirs.pop()!, { recursive: true, force: true });
 });
 
@@ -30,7 +34,13 @@ describe('UsersApi', () => {
     it('first POST /api/users runs lockdown and enables auth', async () => {
         setup();
         const db = Config.getInstance().db;
-        const r = makeReqRes('POST', '/api/users', { adminUsername: 'owner', adminPassword: 'pw1', username: 'bob', role: 'user', password: 'pw2' });
+        const r = makeReqRes('POST', '/api/users', {
+            adminUsername: 'owner',
+            adminPassword: 'pw1',
+            username: 'bob',
+            role: 'user',
+            password: 'pw2',
+        });
         await new UsersApi().handle(r.req, r.res);
         expect(r.getStatus()).toBe(201);
         expect(isAuthEnabled(db)).toBe(true);
@@ -68,7 +78,9 @@ describe('UsersApi', () => {
         await new UsersApi().handle(r.req, r.res);
         expect(r.getStatus()).toBe(200);
         expect(db.users.getById(bob.id)?.disabled).toBe(true);
-        expect((db.sqlite.prepare('SELECT COUNT(*) AS c FROM sessions WHERE user_id = ?').get(bob.id) as { c: number }).c).toBe(0);
+        expect(
+            (db.sqlite.prepare('SELECT COUNT(*) AS c FROM sessions WHERE user_id = ?').get(bob.id) as { c: number }).c,
+        ).toBe(0);
     });
     it('refuses to disable the last enabled admin', async () => {
         setup();

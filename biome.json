@@ -61,5 +61,20 @@
     },
     "files": {
         "includes": ["src/**", "webpack/**"]
-    }
+    },
+    "overrides": [
+        {
+            "includes": ["src/public/images/**"],
+            "linter": {
+                "rules": {
+                    "a11y": {
+                        "noSvgWithoutTitle": "off"
+                    }
+                }
+            },
+            "formatter": {
+                "enabled": false
+            }
+        }
+    ]
 }
