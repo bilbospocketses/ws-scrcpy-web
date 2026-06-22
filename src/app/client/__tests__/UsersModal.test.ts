@@ -298,7 +298,6 @@ describe('UsersModal — add user (authEnabled = true)', () => {
 describe('UsersModal — me() failure is fail-closed (not fail-open)', () => {
     it('when me() rejects, shows a reload-page error and does NOT render add-user button', async () => {
         vi.spyOn(authClient, 'me').mockRejectedValue(new Error('network error'));
-        vi.spyOn(authClient, 'listUsers').mockResolvedValue([adminUser]);
         new UsersModal();
         await flush();
         await flush();

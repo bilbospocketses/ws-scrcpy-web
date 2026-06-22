@@ -31,7 +31,7 @@ export class UsersModal extends Modal {
             // enabled (that hides the lockdown affordance). Surface it instead.
             const err = document.createElement('div');
             err.className = 'users-modal-status';
-            err.style.cssText = 'color:#e05555;font-size:13px;margin-bottom:8px;';
+            err.style.cssText = 'color: #e05555; font-size: 13px; margin-bottom: 8px; min-height: 1.4em;';
             err.textContent = "Couldn't load auth state — reload the page.";
             this.bodyEl.replaceChildren(err);
             return;

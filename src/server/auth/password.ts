@@ -26,8 +26,16 @@ export function verifyPassword(plain: string, stored: string): boolean {
 }
 
 let dummyHash: string | undefined;
-/** Run a verification against a throwaway hash to blind login timing on the
- *  unknown-user / disabled-user paths (defeats username enumeration). */
+/**
+ * Run a verification against a throwaway hash to blind login timing on the
+ * unknown-user / disabled-user paths (defeats username enumeration).
+ *
+ * Cold-start note: the first call warms `dummyHash` via `??=`, which runs
+ * hashPassword() once (2 scrypts: one to generate the salt+hash, one inside
+ * verifyPassword). Every subsequent call is 1 scrypt — matching the real
+ * wrong-password path. This one-time asymmetry on process start is negligible
+ * and does NOT constitute a per-username timing oracle.
+ */
 export function blindVerify(plain: string): void {
     dummyHash ??= hashPassword('timing-blind-dummy-password');
     verifyPassword(plain, dummyHash);
