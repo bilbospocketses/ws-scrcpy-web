@@ -283,11 +283,13 @@ window.onload = async (): Promise<void> => {
         } catch (e) {
             console.error('[boot] settings migration failed; will retry next load', e);
         }
-        await settingsService.loadGlobal().catch(() => {}); // warm global cache (iconSize, scanSubnets)
         // Apply the stored theme now that the migration has run, so an upgrading
-        // user's saved theme shows on THIS load rather than the next one.
-        // (initTheme already did the synchronous OS first paint at module-eval.)
-        await applyStoredTheme();
+        // user's saved theme shows on THIS load rather than the next one. (initTheme
+        // already did the synchronous OS first paint at module-eval.) applyStoredTheme
+        // awaits loadGlobal internally, which also warms the global cache (iconSize,
+        // scanSubnets) the settings modals read; the .catch keeps a boot-time
+        // /api/settings failure from rejecting onload.
+        await applyStoredTheme().catch((e) => console.error('[boot] applyStoredTheme failed', e));
     }
 
     // WebCodecs player must be registered so ConnectModal can find it
