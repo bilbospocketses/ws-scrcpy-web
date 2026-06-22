@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { Logger } from '../Logger';
+import { requireAdmin } from '../auth/requireAdmin';
 
 const log = Logger.for('ServerShutdownApi');
 
@@ -60,6 +61,8 @@ export class ServerShutdownApi {
 
     public async handle(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
         if (req.url !== '/api/server/shutdown' || req.method !== 'POST') return false;
+
+        if (!requireAdmin(req, res)) return true;
 
         log.info('shutdown requested via /api/server/shutdown');
         res.setHeader('Content-Type', 'application/json');

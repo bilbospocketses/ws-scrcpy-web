@@ -32,6 +32,7 @@ import {
 } from '../service/SystemdClient';
 import type { CommandRunner } from '../service/systemServiceCli';
 import { resolveSystemTool } from '../service/systemTools';
+import { requireAdmin } from '../auth/requireAdmin';
 import { readJsonBody } from './utils';
 
 const log = Logger.for('ServiceApi');
@@ -182,6 +183,8 @@ export class ServiceApi {
         if (!url.startsWith('/api/service/')) return false;
 
         res.setHeader('Content-Type', 'application/json');
+
+        if (!requireAdmin(req, res)) return true;
 
         try {
             if (req.method === 'GET' && url === '/api/service/status') {
