@@ -138,4 +138,57 @@ describe('BasePlayer video storage — Task 4c (SettingsService-backed)', () => 
         expect(result.bitrate).toBe(3_000_000);
         expect(BasePlayer.getFitToScreenFromStorage('WebCodecsPlayer', UDID)).toBe(true);
     });
+
+    it('null-bounds crash-fix: stored bounds:null falls through to preferred.bounds (no throw)', async () => {
+        // VideoSettings.toJSON() emits bounds:null for boundless settings. The old
+        // code would have thrown trying to read null.width. The new null-guard in
+        // getVideoSettingFromStorage must NOT throw and must fall back to preferred.bounds.
+        const { BasePlayer, VideoSettings, Size } = await importModules();
+        fakeDeviceCache.set(UDID, {
+            video: {
+                settings: {
+                    bitrate: 4_000_000,
+                    maxFps: 30,
+                    iFrameInterval: 5,
+                    lockedVideoOrientation: -1,
+                    sendFrameMeta: false,
+                    bounds: null, // shape VideoSettings.toJSON() produces for boundless
+                },
+            },
+        });
+        const preferredBounds = new Size(480, 480);
+        const preferred = new VideoSettings({ bitrate: 1_000_000, maxFps: 15, iFrameInterval: 5, bounds: preferredBounds });
+
+        // Must not throw.
+        const result = BasePlayer.getVideoSettingFromStorage(preferred, 'WebCodecsPlayer', UDID);
+
+        expect(result).toBeInstanceOf(VideoSettings);
+        // Stored bitrate applies (bounds null-guard fell through to preferred.bounds).
+        expect(result.bitrate).toBe(4_000_000);
+        // bounds falls back to preferred since stored bounds is null and no maxSize present.
+        expect(result.bounds).toEqual(preferredBounds);
+    });
+
+    it('maxSize fallback: stored settings with no valid bounds but numeric maxSize yields Size(maxSize, maxSize)', async () => {
+        // Legacy migration path: pre-Task-3 storage sometimes stored only maxSize.
+        // The coercion block must convert it to a square Size(maxSize, maxSize).
+        const { BasePlayer, VideoSettings, Size } = await importModules();
+        fakeDeviceCache.set(UDID, {
+            video: {
+                settings: {
+                    bitrate: 5_000_000,
+                    maxFps: 24,
+                    iFrameInterval: 5,
+                    lockedVideoOrientation: -1,
+                    sendFrameMeta: false,
+                    maxSize: 720, // no bounds field at all
+                },
+            },
+        });
+        const preferred = new VideoSettings({ bitrate: 1_000_000, maxFps: 15, iFrameInterval: 5, bounds: new Size(480, 480) });
+        const result = BasePlayer.getVideoSettingFromStorage(preferred, 'WebCodecsPlayer', UDID);
+
+        expect(result).toBeInstanceOf(VideoSettings);
+        expect(result.bounds).toEqual(new Size(720, 720));
+    });
 });
