@@ -73,4 +73,54 @@ export class UserStore {
             .run(input.username, input.role, input.passwordHash, now);
         return this.getById(Number(info.lastInsertRowid))!;
     }
+
+    setPasswordHash(id: number, hash: string): void {
+        this.db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, id);
+    }
+    setUsername(id: number, username: string): void {
+        this.db.prepare('UPDATE users SET username = ? WHERE id = ?').run(username, id);
+    }
+    setRole(id: number, role: Role): void {
+        this.db.prepare('UPDATE users SET role = ? WHERE id = ?').run(role, id);
+    }
+    setDisabled(id: number, disabled: boolean): void {
+        this.db.prepare('UPDATE users SET disabled = ? WHERE id = ?').run(disabled ? 1 : 0, id);
+    }
+    setLastLogin(id: number, at: number): void {
+        this.db.prepare('UPDATE users SET last_login_at = ? WHERE id = ?').run(at, id);
+    }
+    delete(id: number): void {
+        this.db.prepare('DELETE FROM users WHERE id = ?').run(id);
+    }
+    countEnabledAdmins(): number {
+        return (
+            this.db.prepare("SELECT COUNT(*) AS c FROM users WHERE role = 'admin' AND disabled = 0").get() as {
+                c: number;
+            }
+        ).c;
+    }
+    countEnabledAdminsWithPassword(): number {
+        return (
+            this.db
+                .prepare(
+                    "SELECT COUNT(*) AS c FROM users WHERE role = 'admin' AND disabled = 0 AND password_hash IS NOT NULL",
+                )
+                .get() as { c: number }
+        ).c;
+    }
+    setLockout(
+        id: number,
+        s: { failedAttempts: number; lockoutWindowStart: number | null; lockedUntil: number | null },
+    ): void {
+        this.db
+            .prepare('UPDATE users SET failed_attempts = ?, lockout_window_start = ?, locked_until = ? WHERE id = ?')
+            .run(s.failedAttempts, s.lockoutWindowStart, s.lockedUntil, id);
+    }
+    clearLockout(id: number): void {
+        this.db
+            .prepare(
+                'UPDATE users SET failed_attempts = 0, lockout_window_start = NULL, locked_until = NULL WHERE id = ?',
+            )
+            .run(id);
+    }
 }
