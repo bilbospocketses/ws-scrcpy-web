@@ -26,16 +26,17 @@ export function shouldSeedTheme(hasStoredTheme: boolean, migrationDone: boolean)
 }
 
 /**
- * Applies the stored DB theme after the settings cache warms.
- * On first run (no stored theme AND migration complete), seeds the DB from
- * the OS reading already applied by initTheme's synchronous first paint.
+ * Applies the stored DB theme. Invoked from the boot sequence (`index.ts`
+ * onload) AFTER the localStorage→DB migration completes, so the migrated theme
+ * is already in the cache and applies on the FIRST post-upgrade load — not a
+ * load later. On a genuinely fresh install (migration complete, no stored
+ * theme), seeds the DB from the OS reading initTheme's first paint already set.
  *
- * The seed is gated on migration completion to avoid a race with the
- * localStorage→DB migration that runs later in window.onload: if migration is
- * still pending, it will write the user's saved theme, and the next load will
- * seed correctly if the install is genuinely fresh.
+ * The seed stays gated on `shouldSeedTheme` (migration-complete) as a
+ * defensive guard: even though this now runs post-migration, the gate ensures
+ * the OS-seed can never race the migration's own `theme` write.
  */
-async function applyStoredTheme(): Promise<void> {
+export async function applyStoredTheme(): Promise<void> {
     await settingsService.loadGlobal();
     const stored = settingsService.getGlobalCached()['theme'];
     if (stored === 'dark' || stored === 'light') {
@@ -44,14 +45,13 @@ async function applyStoredTheme(): Promise<void> {
         // Fresh install (migration complete, no stored theme): persist the OS reading.
         void settingsService.patchGlobal({ theme: getTheme() }).catch(() => {});
     }
-    // If migration is pending: do nothing — migration will write the user's theme.
 }
 
 export function initTheme(): void {
-    // Synchronous first paint from OS preference — no await, no flash-to-blank.
+    // Synchronous first paint from the OS preference — no await, no flash-to-blank.
+    // The stored (migrated) theme is applied later by applyStoredTheme(), invoked
+    // from the boot sequence AFTER the localStorage→DB migration runs in onload.
     setTheme(firstPaintTheme(window.matchMedia('(prefers-color-scheme: dark)').matches));
-    // Async: DB becomes authoritative once the cache is warm.
-    void applyStoredTheme();
 }
 
 export function createThemeToggle(): HTMLElement {

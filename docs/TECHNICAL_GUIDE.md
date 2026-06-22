@@ -1832,10 +1832,10 @@ Windows and the Windows-service apply path are unchanged (Velopack `waitExitThen
 
 ### 23.1 Decision Flow
 
-On page load, `src/app/index.ts` fetches the config envelope from `GET /api/config` and evaluates:
+On page load, `src/app/index.ts` reads `installMode` + `firstRunComplete` from `GET /api/config` and the per-user prompt flags from the settings store (`SettingsService.loadGlobal()`), then evaluates:
 
 ```
-config.installMode is service AND config.serviceFirstRunSeen is false?
+installMode is service AND serviceFirstRunSeen (from settings) is false?
     → show ServiceFirstRunModal (section 23.3)
 config.firstRunComplete is false?
     → show WelcomeModal (section 23.2)
@@ -1859,20 +1859,22 @@ Shown on the first page load of a service-mode instance (after the service has b
 - The service runs at boot — this URL stays valid across reboots
 - The current port is the one to bookmark
 
-On dismissal, `serviceFirstRunSeen = true` is persisted to `config.json`.
+On dismissal, `serviceFirstRunSeen = true` is persisted to the per-user settings store (via `SettingsService.patchGlobal` → `SettingsApi`), not `config.json` — see §23.4.
 
-### 23.4 Config.json Persistence
+### 23.4 Persistence: config.json vs the per-user settings store
 
-The first-run and bookmark-dismissal flags are stored in `config.json` rather than localStorage:
+None of these flags live in browser `localStorage` (unreliable on the Linux AppImage, which can treat each launch as a different origin). As of the SQLite settings migration (PR #429), they split across two server-side homes:
 
-| Field | Default | Set by |
-|-------|---------|--------|
-| `firstRunComplete` | `false` | WelcomeModal dismissal |
-| `serviceFirstRunSeen` | `false` | ServiceFirstRunModal dismissal |
-| `bookmarkDismissedForPort` | `null` | PortChangeModal "got it" (stamps the current port) |
-| `bookmarkDismissedGlobally` | `false` | PortChangeModal "don't show again — ever" |
+| Field | Default | Home | Set by |
+|-------|---------|------|--------|
+| `firstRunComplete` | `false` | `config.json` (boot field) | WelcomeModal dismissal |
+| `serviceFirstRunSeen` | `false` | per-user settings store | ServiceFirstRunModal dismissal |
+| `bookmarkDismissedForPort` | `null` | per-user settings store | PortChangeModal "got it" (stamps the current port) |
+| `bookmarkDismissedGlobally` | `false` | per-user settings store | PortChangeModal "don't show again — ever" |
 
-This design means the state survives port changes, browser cache clears, and machine reboots (localStorage is unreliable on the Linux AppImage, which can treat each launch as a different origin). The **Settings → Server** panel includes a **"reset welcome and bookmark prompts"** button (`resetPromptsPayload()`) that clears all four fields at once — `firstRunComplete` and `serviceFirstRunSeen` back to `false`, `bookmarkDismissedForPort` to `null`, and `bookmarkDismissedGlobally` to `false` — re-triggering the first-run flow.
+`firstRunComplete` stays in `config.json` because the launcher reads it at boot, before the Node server (and the database) is up. The three prompt-dismissal flags are per-user UI state, so they moved onto the per-user SQLite settings store via `SettingsApi` — read with `SettingsService.loadGlobal()`, written with `patchGlobal`, served off `/api/settings` rather than the `/api/config` envelope. All other browser UI preferences (theme, file-browser icon size, network-scan subnets, per-device video/stream + audio) live in that same per-user store (`wsscrcpy.db`, served via `SettingsApi`) as of the Phase 3 frontend migration — `localStorage` is no longer used for any of them.
+
+The **Settings** modal's reset control — **"reset all my settings"** — now calls `SettingsService.reset()` (clearing the caller's entire `user_settings` + device labels + per-device settings, i.e. all of the prompt flags above plus theme/icon/subnets/audio/video) and also PATCHes `firstRunComplete = false` on `/api/config`, then reloads to re-trigger the first-run flow.
 
 ### 23.5 Port Change Modal
 
