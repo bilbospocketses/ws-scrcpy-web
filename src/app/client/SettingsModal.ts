@@ -7,6 +7,8 @@ import type {
 import type { UpdatesConfigPatchRequest, UpdatesStatusResponse } from '../../common/UpdateEvents';
 import { Modal } from '../ui/Modal';
 import { AdminConfirmModal, type AdminConfirmOptions } from './AdminConfirmModal';
+import { authClient, type Role } from './AuthClient';
+import { canSeeSection } from './adminGate';
 import { ConfirmModal } from './ConfirmModal';
 import { pollServiceUninstalled } from './pollServiceUninstalled';
 import { ResetConfirmModal } from './ResetConfirmModal';
@@ -14,6 +16,7 @@ import { ServiceOperationModal } from './ServiceOperationModal';
 import { settingsService } from './SettingsService';
 import { UninstallConfirmModal } from './UninstallConfirmModal';
 import { runUpgradingHandoff } from './UpgradingOverlay';
+import { UsersModal } from './UsersModal';
 
 /**
  * Follow-up copy shown after a Linux service uninstall begins, by scope.
@@ -414,10 +417,12 @@ export function buildResetControl(opts: { reload: () => void }): {
  * "value column" across all rows.
  */
 export class SettingsModal extends Modal {
+    private role: Role | null = null;
+    private authEnabled = false;
     private serviceSection!: HTMLElement;
-    private webPortInput!: HTMLInputElement;
-    private webPortStatus!: HTMLElement;
-    private serverSaveBtn!: HTMLButtonElement;
+    private webPortInput: HTMLInputElement | null = null;
+    private webPortStatus: HTMLElement | null = null;
+    private serverSaveBtn: HTMLButtonElement | null = null;
     private currentWebPort: number | null = null;
     private serviceScopeSystemRadio: HTMLInputElement | null = null;
     private servicePlatform: 'win32' | 'linux' | null = null;
@@ -434,8 +439,8 @@ export class SettingsModal extends Modal {
     private uninstallButton: HTMLButtonElement | null = null;
 
     // ── Updates section state ─────────────────────────────────────────────
-    private updatesBody!: HTMLElement;
-    private updatesStatusEl!: HTMLElement;
+    private updatesBody: HTMLElement | null = null;
+    private updatesStatusEl: HTMLElement | null = null;
     private updatesAutoCheckbox: HTMLInputElement | null = null;
     private updatesIntervalInput: HTMLInputElement | null = null;
     private updatesChannelStableRadio: HTMLInputElement | null = null;
@@ -450,11 +455,27 @@ export class SettingsModal extends Modal {
         super({ title: 'Settings' });
         this.dialog.classList.add('settings-modal');
         // Defer body fill past class-field init phase (ES2022 useDefineForClassFields).
+        // Resolve the current user's role first so admin-only sections can be gated.
+        // Fail-open: on a me() error treat as admin (preserves today's full view;
+        // the server enforces 403 on admin endpoints regardless).
         queueMicrotask(() => {
-            this.fillBody(this.bodyEl);
-            void this.refreshServer();
-            void this.refreshService();
-            void this.refreshUpdates();
+            void (async () => {
+                let role: Role | null = 'admin';
+                let authEnabled = false;
+                try {
+                    const me = await authClient.me();
+                    role = me.user?.role ?? null;
+                    authEnabled = me.authEnabled;
+                } catch {
+                    role = 'admin';
+                }
+                this.role = role;
+                this.authEnabled = authEnabled;
+                this.fillBody(this.bodyEl);
+                if (canSeeSection(role, 'service')) void this.refreshService();
+                if (canSeeSection(role, 'updates')) void this.refreshUpdates();
+                void this.refreshServer(); // server section always present (has the user-level reset row)
+            })();
         });
     }
 
@@ -468,9 +489,13 @@ export class SettingsModal extends Modal {
         // former standalone "App" section (reset, install-for-all-users, stop &
         // exit, uninstall) was folded into "Server", which also keeps the web
         // port row; there is no longer a separate "App" section.
-        container.appendChild(this.buildUpdatesSection());
-        container.appendChild(this.buildServiceSection());
-        container.appendChild(this.buildServerSection());
+        // Admin-only sections are gated on the current user's role (set before
+        // fillBody is called). The server enforces the same set via requireAdmin.
+        // The "Users" section (manage users button + auth toggle) is admin-only.
+        if (canSeeSection(this.role, 'users')) container.appendChild(this.buildUsersSection());
+        if (canSeeSection(this.role, 'updates')) container.appendChild(this.buildUpdatesSection());
+        if (canSeeSection(this.role, 'service')) container.appendChild(this.buildServiceSection());
+        container.appendChild(this.buildServerSection()); // always (contains the user-level reset row)
     }
 
     // ── Layout primitives ──────────────────────────────────────────────────
@@ -540,94 +565,327 @@ export class SettingsModal extends Modal {
         return { row, labelEl };
     }
 
+    // ── Users section (admin-only) ─────────────────────────────────────────
+    private buildUsersSection(): HTMLElement {
+        const { section, body } = this.buildSection('Users');
+
+        // 1. Manage users button — opens UsersModal (admin-only action).
+        const manageBtn = document.createElement('button');
+        manageBtn.type = 'button';
+        manageBtn.className = 'modal-button';
+        manageBtn.textContent = 'manage users';
+        manageBtn.addEventListener('click', () => {
+            new UsersModal();
+        });
+        body.appendChild(this.buildRow('user accounts', manageBtn));
+
+        // 2. Auth toggle — disable login (authEnabled=true) or enable login
+        //    (authEnabled=false). window.location.reload() on success.
+        const toggleStatus = document.createElement('p');
+        toggleStatus.className = 'settings-status';
+        toggleStatus.style.gridColumn = '1 / -1';
+        toggleStatus.hidden = true;
+
+        if (this.authEnabled) {
+            const disableBtn = document.createElement('button');
+            disableBtn.type = 'button';
+            disableBtn.className = 'modal-button';
+            disableBtn.textContent = 'disable login (return to open mode)';
+            disableBtn.addEventListener('click', () => {
+                disableBtn.disabled = true;
+                void (async () => {
+                    try {
+                        await authClient.disableAuth();
+                        window.location.reload();
+                    } catch {
+                        toggleStatus.textContent = 'failed to disable login — see server logs.';
+                        toggleStatus.hidden = false;
+                        disableBtn.disabled = false;
+                    }
+                })();
+            });
+            body.appendChild(this.buildRow('login', disableBtn));
+        } else {
+            const enableBtn = document.createElement('button');
+            enableBtn.type = 'button';
+            enableBtn.className = 'modal-button';
+            enableBtn.textContent = 'enable login';
+            enableBtn.addEventListener('click', () => {
+                enableBtn.disabled = true;
+                void (async () => {
+                    try {
+                        const res = await authClient.enableAuth();
+                        if (res.ok) {
+                            window.location.reload();
+                            return;
+                        }
+                        if (res.status === 409) {
+                            toggleStatus.textContent = 'Add a user with an admin password first (Users → manage users)';
+                        } else {
+                            toggleStatus.textContent = `failed to enable login (${res.status})`;
+                        }
+                        toggleStatus.hidden = false;
+                        enableBtn.disabled = false;
+                    } catch {
+                        toggleStatus.textContent = 'failed to enable login — could not reach server.';
+                        toggleStatus.hidden = false;
+                        enableBtn.disabled = false;
+                    }
+                })();
+            });
+            body.appendChild(this.buildRow('login', enableBtn));
+        }
+
+        body.appendChild(toggleStatus);
+        return section;
+    }
+
     // ── Server section ─────────────────────────────────────────────────────
     private buildServerSection(): HTMLElement {
         const { section, body } = this.buildSection('Server');
 
-        // 1. reset all my settings — opens ResetConfirmModal, then clears all
-        //    user settings (theme, device names, per-device stream/audio prefs,
-        //    icon size, scan subnets, dismissed prompts) and reloads so
-        //    first-run re-triggers and all prefs are read fresh.
+        // 1. reset all my settings — user-level, always visible. Opens
+        //    ResetConfirmModal, then clears all user settings (theme, device
+        //    names, per-device stream/audio prefs, icon size, scan subnets,
+        //    dismissed prompts) and reloads so first-run re-triggers and all
+        //    prefs are read fresh.
         const reset = buildResetControl({ reload: () => window.location.reload() });
         body.appendChild(this.buildRow('reset all my settings', reset.button));
 
-        // 2. web port — number input with the SAVE button INLINE to its right
-        //    (same control cell). The status line below the row is EMPTY at rest
-        //    and only fills on save (saving → restarting/redirecting, "no change",
-        //    or an error) via setServerStatus / onSavePort.
-        this.webPortInput = document.createElement('input');
-        this.webPortInput.type = 'number';
-        this.webPortInput.min = '1024';
-        this.webPortInput.max = '65535';
-        this.webPortInput.className = 'settings-input';
-        this.webPortInput.style.maxWidth = '120px';
+        // 1b. change password — user-level, only shown when auth is enabled
+        //     (in open mode there is no password to change). Reveals an inline
+        //     form with current + new password inputs, each with an eye toggle.
+        //     On save → authClient.changePassword(); on success collapse the form;
+        //     on failure show inline status. Never throws.
+        if (this.authEnabled) {
+            const cpStatus = document.createElement('p');
+            cpStatus.className = 'settings-status';
+            cpStatus.style.gridColumn = '1 / -1';
+            cpStatus.hidden = true;
 
-        this.serverSaveBtn = document.createElement('button');
-        this.serverSaveBtn.type = 'button';
-        this.serverSaveBtn.className = 'settings-btn settings-btn-primary';
-        this.serverSaveBtn.textContent = 'save';
-        this.serverSaveBtn.style.marginLeft = '0.5rem';
-        this.serverSaveBtn.addEventListener('click', () => {
-            void this.onSavePort();
-        });
+            const cpForm = document.createElement('div');
+            cpForm.style.cssText = 'display:none; flex-direction:column; gap:6px; margin-top:4px;';
 
-        const portControl = document.createDocumentFragment();
-        portControl.appendChild(this.webPortInput);
-        portControl.appendChild(this.serverSaveBtn);
-        body.appendChild(this.buildRow('web port', portControl));
+            // Current password row
+            const curRow = document.createElement('div');
+            curRow.style.cssText = 'display:flex; align-items:center; gap:4px;';
+            const curInput = document.createElement('input');
+            curInput.type = 'password';
+            curInput.placeholder = 'current password';
+            curInput.className = 'settings-input';
+            curInput.setAttribute('data-field', 'cp-current');
+            const curEye = document.createElement('button');
+            curEye.type = 'button';
+            curEye.className = 'modal-button';
+            curEye.textContent = '👁';
+            curEye.title = 'show/hide';
+            curEye.addEventListener('click', () => {
+                curInput.type = curInput.type === 'password' ? 'text' : 'password';
+            });
+            curRow.appendChild(curInput);
+            curRow.appendChild(curEye);
+            cpForm.appendChild(curRow);
 
-        this.webPortStatus = document.createElement('p');
-        this.webPortStatus.className = 'settings-status';
-        this.webPortStatus.style.gridColumn = '1 / -1';
-        this.webPortStatus.hidden = true;
-        body.appendChild(this.webPortStatus);
+            // New password row
+            const newRow = document.createElement('div');
+            newRow.style.cssText = 'display:flex; align-items:center; gap:4px;';
+            const newInput = document.createElement('input');
+            newInput.type = 'password';
+            newInput.placeholder = 'new password';
+            newInput.className = 'settings-input';
+            newInput.setAttribute('data-field', 'cp-new');
+            const newEye = document.createElement('button');
+            newEye.type = 'button';
+            newEye.className = 'modal-button';
+            newEye.textContent = '👁';
+            newEye.title = 'show/hide';
+            newEye.addEventListener('click', () => {
+                newInput.type = newInput.type === 'password' ? 'text' : 'password';
+            });
+            newRow.appendChild(newInput);
+            newRow.appendChild(newEye);
+            cpForm.appendChild(newRow);
 
-        // 3. install for all users (Linux-only) — hidden until
-        //    applyAppSectionButtonsState reveals it on Linux. POSTs
-        //    /api/service/install-system-wide (pkexec → /opt → re-exec); the OS
-        //    pkexec dialog is the confirmation, so on success just reload.
-        const install = buildInstallAllUsersControl({ reload: () => window.location.reload() });
-        this.installAllUsersButton = install.button;
-        this.installAllUsersNote = install.note;
-        const installRow = this.buildRow('install for all users', install.button);
-        installRow.style.display = 'none';
-        this.installAllUsersRow = installRow;
-        body.appendChild(installRow);
-        body.appendChild(install.note);
+            // Save / cancel
+            const cpBtnRow = document.createElement('div');
+            cpBtnRow.style.cssText = 'display:flex; gap:6px;';
+            const saveBtn = document.createElement('button');
+            saveBtn.type = 'button';
+            saveBtn.className = 'modal-button';
+            saveBtn.textContent = 'save';
+            saveBtn.addEventListener('click', () => {
+                void (async () => {
+                    if (!curInput.value || !newInput.value) {
+                        cpStatus.textContent = 'enter your current and new password';
+                        cpStatus.hidden = false;
+                        return;
+                    }
+                    saveBtn.disabled = true;
+                    cpStatus.textContent = 'saving…';
+                    cpStatus.hidden = false;
+                    try {
+                        const ok = await authClient.changePassword(curInput.value, newInput.value);
+                        if (ok) {
+                            cpStatus.textContent = 'password changed';
+                            cpForm.style.display = 'none';
+                            cpBtn.style.display = '';
+                            curInput.value = '';
+                            newInput.value = '';
+                        } else {
+                            cpStatus.textContent = 'current password incorrect';
+                        }
+                    } catch {
+                        cpStatus.textContent = 'could not reach server';
+                    }
+                    saveBtn.disabled = false;
+                })();
+            });
+            const cancelBtn = document.createElement('button');
+            cancelBtn.type = 'button';
+            cancelBtn.className = 'modal-button';
+            cancelBtn.textContent = 'cancel';
+            cancelBtn.addEventListener('click', () => {
+                cpForm.style.display = 'none';
+                cpBtn.style.display = '';
+                cpStatus.hidden = true;
+                curInput.value = '';
+                newInput.value = '';
+            });
+            cpBtnRow.appendChild(saveBtn);
+            cpBtnRow.appendChild(cancelBtn);
+            cpForm.appendChild(cpBtnRow);
 
-        // 4. stop the server and close the app — §27 graceful shutdown (exit 0,
-        //    the launcher supervisor will NOT restart it). Gated off in service
-        //    mode by applyStopServerButtonState once /api/service/status resolves.
-        const stopBtn = document.createElement('button');
-        stopBtn.type = 'button';
-        stopBtn.className = 'settings-btn settings-btn-primary';
-        stopBtn.textContent = 'stop server & exit';
-        stopBtn.addEventListener('click', () => void this.onStopServerExit(stopBtn));
-        this.stopServerButton = stopBtn;
-        body.appendChild(this.buildRow('stop the server and close the app', stopBtn));
+            // The trigger button (shown by default, hides when form is open)
+            const cpBtn = document.createElement('button');
+            cpBtn.type = 'button';
+            cpBtn.className = 'modal-button';
+            cpBtn.textContent = 'change password';
+            cpBtn.setAttribute('data-action', 'change-password');
+            cpBtn.addEventListener('click', () => {
+                cpBtn.style.display = 'none';
+                cpStatus.hidden = true;
+                cpForm.style.display = 'flex';
+            });
 
-        const stopNote = document.createElement('p');
-        stopNote.className = 'settings-status';
-        stopNote.style.gridColumn = '1 / -1';
-        stopNote.hidden = true;
-        this.stopServerNote = stopNote;
-        body.appendChild(stopNote);
+            const cpControl = document.createDocumentFragment();
+            cpControl.appendChild(cpBtn);
+            cpControl.appendChild(cpForm);
+            body.appendChild(this.buildRow('password', cpControl));
+            body.appendChild(cpStatus);
 
-        // 5. uninstall ws-scrcpy-web (Linux + win32) — hidden until revealed.
-        //    Always enabled when shown (uninstalling is how you remove a
-        //    service). Opens UninstallConfirmModal; confirm POSTs
-        //    /api/service/uninstall-app { keep }.
-        const uninstall = buildUninstallControl({ onUninstalled: () => this.showUninstalledOverlay() });
-        this.uninstallButton = uninstall.button;
-        const uninstallRow = this.buildRow('uninstall ws-scrcpy-web', uninstall.button);
-        uninstallRow.style.display = 'none';
-        this.uninstallRow = uninstallRow;
-        body.appendChild(uninstallRow);
+            // Logout — user-level, only when authEnabled (you're only logged in when
+            // auth is enabled). Placed adjacent to change-password. Not admin-gated.
+            const logoutStatus = document.createElement('p');
+            logoutStatus.className = 'settings-status';
+            logoutStatus.style.gridColumn = '1 / -1';
+            logoutStatus.hidden = true;
+
+            const logoutBtn = document.createElement('button');
+            logoutBtn.type = 'button';
+            logoutBtn.className = 'modal-button';
+            logoutBtn.textContent = 'log out';
+            logoutBtn.setAttribute('data-action', 'logout');
+            logoutBtn.addEventListener('click', () => {
+                void (async () => {
+                    try {
+                        await authClient.logout();
+                    } catch {
+                        logoutStatus.textContent = 'logout request failed — reloading anyway.';
+                        logoutStatus.hidden = false;
+                    }
+                    window.location.reload();
+                })();
+            });
+            body.appendChild(this.buildRow('session', logoutBtn));
+            body.appendChild(logoutStatus);
+        }
+
+        // 2–5 below are admin-only. Skip building + storing them entirely for
+        //    non-admin users so no DOM or ref is created. The refresh methods
+        //    (refreshServer, applyStopServerButtonState, applyAppSectionButtonsState)
+        //    are all null-safe on their stored refs — they guard with `if (this.x)`.
+        if (canSeeSection(this.role, 'webPort')) {
+            // 2. web port — number input with the SAVE button INLINE to its right
+            //    (same control cell). The status line below the row is EMPTY at rest
+            //    and only fills on save (saving → restarting/redirecting, "no change",
+            //    or an error) via setServerStatus / onSavePort.
+            this.webPortInput = document.createElement('input');
+            this.webPortInput.type = 'number';
+            this.webPortInput.min = '1024';
+            this.webPortInput.max = '65535';
+            this.webPortInput.className = 'settings-input';
+            this.webPortInput.style.maxWidth = '120px';
+
+            this.serverSaveBtn = document.createElement('button');
+            this.serverSaveBtn.type = 'button';
+            this.serverSaveBtn.className = 'settings-btn settings-btn-primary';
+            this.serverSaveBtn.textContent = 'save';
+            this.serverSaveBtn.style.marginLeft = '0.5rem';
+            this.serverSaveBtn.addEventListener('click', () => {
+                void this.onSavePort();
+            });
+
+            const portControl = document.createDocumentFragment();
+            portControl.appendChild(this.webPortInput);
+            portControl.appendChild(this.serverSaveBtn);
+            body.appendChild(this.buildRow('web port', portControl));
+
+            this.webPortStatus = document.createElement('p');
+            this.webPortStatus.className = 'settings-status';
+            this.webPortStatus.style.gridColumn = '1 / -1';
+            this.webPortStatus.hidden = true;
+            body.appendChild(this.webPortStatus);
+        }
+
+        if (canSeeSection(this.role, 'serverControls')) {
+            // 3. install for all users (Linux-only) — hidden until
+            //    applyAppSectionButtonsState reveals it on Linux. POSTs
+            //    /api/service/install-system-wide (pkexec → /opt → re-exec); the OS
+            //    pkexec dialog is the confirmation, so on success just reload.
+            const install = buildInstallAllUsersControl({ reload: () => window.location.reload() });
+            this.installAllUsersButton = install.button;
+            this.installAllUsersNote = install.note;
+            const installRow = this.buildRow('install for all users', install.button);
+            installRow.style.display = 'none';
+            this.installAllUsersRow = installRow;
+            body.appendChild(installRow);
+            body.appendChild(install.note);
+
+            // 4. stop the server and close the app — §27 graceful shutdown (exit 0,
+            //    the launcher supervisor will NOT restart it). Gated off in service
+            //    mode by applyStopServerButtonState once /api/service/status resolves.
+            const stopBtn = document.createElement('button');
+            stopBtn.type = 'button';
+            stopBtn.className = 'settings-btn settings-btn-primary';
+            stopBtn.textContent = 'stop server & exit';
+            stopBtn.addEventListener('click', () => void this.onStopServerExit(stopBtn));
+            this.stopServerButton = stopBtn;
+            body.appendChild(this.buildRow('stop the server and close the app', stopBtn));
+
+            const stopNote = document.createElement('p');
+            stopNote.className = 'settings-status';
+            stopNote.style.gridColumn = '1 / -1';
+            stopNote.hidden = true;
+            this.stopServerNote = stopNote;
+            body.appendChild(stopNote);
+
+            // 5. uninstall ws-scrcpy-web (Linux + win32) — hidden until revealed.
+            //    Always enabled when shown (uninstalling is how you remove a
+            //    service). Opens UninstallConfirmModal; confirm POSTs
+            //    /api/service/uninstall-app { keep }.
+            const uninstall = buildUninstallControl({ onUninstalled: () => this.showUninstalledOverlay() });
+            this.uninstallButton = uninstall.button;
+            const uninstallRow = this.buildRow('uninstall ws-scrcpy-web', uninstall.button);
+            uninstallRow.style.display = 'none';
+            this.uninstallRow = uninstallRow;
+            body.appendChild(uninstallRow);
+        }
 
         return section;
     }
 
     private async refreshServer(): Promise<void> {
+        if (!this.webPortInput) return; // web port row not built (non-admin)
         try {
             const r = await fetch('/api/config');
             if (!r.ok) {
@@ -646,6 +904,7 @@ export class SettingsModal extends Modal {
     }
 
     private async onSavePort(): Promise<void> {
+        if (!this.webPortInput || !this.serverSaveBtn) return; // not built (non-admin)
         const raw = this.webPortInput.value.trim();
         const port = Number.parseInt(raw, 10);
         if (!Number.isFinite(port) || port < 1024 || port > 65535) {
@@ -662,9 +921,10 @@ export class SettingsModal extends Modal {
         // serverSaveBtn. Captures `this` so the dispose also handles the
         // early-return inside the try (where the prior code had a manual
         // re-enable line that is now redundant — kept for symmetry, see below).
+        const saveBtn = this.serverSaveBtn;
         using _restoreBtn = {
             [Symbol.dispose]: (): void => {
-                this.serverSaveBtn.disabled = false;
+                saveBtn.disabled = false;
             },
         };
         try {
@@ -698,6 +958,7 @@ export class SettingsModal extends Modal {
     }
 
     private setServerStatus(msg: string, isError = false): void {
+        if (!this.webPortStatus) return; // web port row not built (non-admin)
         this.webPortStatus.textContent = msg;
         // The status line lives BELOW the web-port row and is empty at rest —
         // hide it when there is no message so it doesn't reserve a blank row.
@@ -735,6 +996,7 @@ export class SettingsModal extends Modal {
     }
 
     private renderUpdatesError(msg: string): void {
+        if (!this.updatesBody) return;
         this.updatesBody.replaceChildren();
         const retryBtn = document.createElement('button');
         retryBtn.type = 'button';
@@ -749,6 +1011,7 @@ export class SettingsModal extends Modal {
     }
 
     private renderUpdatesSection(s: UpdatesStatusResponse): void {
+        if (!this.updatesBody) return;
         this.updatesBody.replaceChildren();
         this.updatesAutoCheckbox = null;
         this.updatesIntervalInput = null;

@@ -2,6 +2,8 @@ import { VelopackApp } from 'velopack';
 import { SCAN_WS_PATH } from '../common/ScanMessage';
 import { AdbClient } from './AdbClient';
 import { AdbDaemonManager } from './AdbDaemonManager';
+import { AuthApi } from './api/AuthApi';
+import { UsersApi } from './api/UsersApi';
 import { CapabilitiesApi } from './api/CapabilitiesApi';
 import { ConfigApi } from './api/ConfigApi';
 import { DependencyApi } from './api/DependencyApi';
@@ -27,6 +29,7 @@ import { NetworkScanner } from './network/NetworkScanner';
 import { consumeSuppressBrowserMarker, openBrowser, shouldAutoOpenBrowser } from './openBrowser';
 import { findAvailablePort, webPortOverride } from './PortPicker';
 import { ScrcpyConnection } from './ScrcpyConnection';
+import { AuthGate } from './auth/AuthGate';
 import { setAllowedHosts } from './security/originGuard';
 import { makeProductionCoreDeps, parseSystemServiceArgs, runSystemServiceCli } from './service/systemServiceCli';
 import { HttpServer } from './services/HttpServer';
@@ -110,6 +113,11 @@ if (__ssArgs) {
             }
         }
     }
+
+    HttpServer.addFirstApiHandler(new AuthGate(() => Config.getInstance().db));
+
+    HttpServer.addApiHandler(new AuthApi());
+    HttpServer.addApiHandler(new UsersApi());
 
     const depManager = new DependencyManager(config.dependenciesPath, {
         restartMarkerPath: config.restartMarkerPath,

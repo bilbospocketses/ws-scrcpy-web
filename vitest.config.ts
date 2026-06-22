@@ -1,6 +1,12 @@
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
+    define: {
+        // Mirrors the webpack DefinePlugin constant so server-side modules that
+        // read __PATHNAME__ (HttpServer.ts) can be imported in vitest without
+        // the ReferenceError that fires when the constant is absent.
+        __PATHNAME__: '""',
+    },
     test: {
         // CSS imports are stubbed out (no stylesheet processing needed in tests)
         css: false,

@@ -1,10 +1,31 @@
 import type WS from 'ws';
 import { WebSocketServer as WSServer } from 'ws';
+import { Config } from '../Config';
+import { isAuthEnabled, parseCookie, SESSION_COOKIE } from '../auth/authState';
+import { SessionStore } from '../auth/session';
+import type { Db } from '../db/Db';
+import { IMPLICIT_ADMIN_ID } from '../db/constants';
 import { Logger } from '../Logger';
 import type { MwFactory } from '../mw/Mw';
 import { evaluateWsConnection } from '../security/requestGate';
 import { HttpServer, type ServerAndPort } from './HttpServer';
 import type { Service } from './Service';
+
+/**
+ * The acting user's id for a WS connection: the implicit admin in open mode, the
+ * session user when locked, or `undefined` when locked and the cookie is missing/invalid
+ * (→ the caller closes the socket). Exported for unit testing without a live socket.
+ */
+export function wsSessionUserId(db: Db, cookieHeader: string | undefined): number | undefined {
+    if (!isAuthEnabled(db)) return IMPLICIT_ADMIN_ID;
+    const token = parseCookie(cookieHeader)[SESSION_COOKIE];
+    const s = token ? new SessionStore(db.sqlite).findValid(token, Date.now()) : undefined;
+    if (!s) return undefined;
+    const user = db.users.getById(s.userId);
+    // Fail CLOSED: an orphan (deleted) or disabled user must not get a live socket.
+    if (!user || user.disabled) return undefined;
+    return user.id;
+}
 
 export class WebSocketServer implements Service {
     private static instance?: WebSocketServer;
@@ -71,6 +92,12 @@ export class WebSocketServer implements Service {
                 return;
             }
             const url = new URL(request.url, 'https://example.org/');
+
+            const userId = wsSessionUserId(Config.getInstance().db, request.headers.cookie);
+            if (userId === undefined) {
+                ws.close(4401, 'unauthorized');
+                return;
+            }
 
             // Path-based handlers take priority over action-based MW dispatch.
             const pathHandler = this.pathHandlers.get(url.pathname);

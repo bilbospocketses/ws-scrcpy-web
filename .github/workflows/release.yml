@@ -259,7 +259,7 @@ jobs:
           node scripts/extract-changelog.mjs ${{ github.ref_name }} $UNSIGNED_FLAG > release-notes.md
 
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
+        uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
         with:
           # v0.1.23 (item 8 of §1e): no prerelease flag for beta tags. GitHub's
           # /releases/latest API endpoint EXCLUDES prereleases, and Velopack's

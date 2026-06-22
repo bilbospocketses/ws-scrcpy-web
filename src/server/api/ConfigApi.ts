@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'http';
 import type { AppConfigEnvelope, AppConfigPatchResponse } from '../../common/ConfigEvents';
 import { Config, ConfigValidationError } from '../Config';
 import { Logger } from '../Logger';
+import { requireAdmin } from '../auth/requireAdmin';
 import { BodyTooLargeError, readBodyCapped } from './utils';
 
 const log = Logger.for('ConfigApi');
@@ -27,6 +28,7 @@ export class ConfigApi {
             }
 
             if (req.method === 'PATCH' && url === '/api/config') {
+                if (!requireAdmin(req, res)) return true;
                 let body: string;
                 try {
                     body = await readBodyCapped(req);

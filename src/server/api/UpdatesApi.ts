@@ -10,6 +10,7 @@ import type {
 import { Config } from '../Config';
 import { Logger } from '../Logger';
 import type { UpdateService } from '../UpdateService';
+import { requireAdmin } from '../auth/requireAdmin';
 import { readJsonBody } from './utils';
 
 const log = Logger.for('UpdatesApi');
@@ -41,6 +42,8 @@ export class UpdatesApi {
         if (!url.startsWith('/api/updates/')) return false;
 
         res.setHeader('Content-Type', 'application/json');
+
+        if (!requireAdmin(req, res)) return true;
 
         try {
             if (req.method === 'GET' && url === '/api/updates/status') {

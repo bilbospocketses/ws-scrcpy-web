@@ -1,6 +1,30 @@
+import * as fs from 'fs';
 import type { IncomingMessage, ServerResponse } from 'http';
-import { describe, expect, it, vi } from 'vitest';
+import * as os from 'os';
+import * as path from 'path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ServerShutdownApi } from '../api/ServerShutdownApi';
+import { Config } from '../Config';
+import { EnvName } from '../EnvName';
+
+const tmpDirs: string[] = [];
+const saved = { CONFIG: process.env[EnvName.CONFIG_PATH], DEPS: process.env['DEPS_PATH'] };
+beforeEach(() => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wsshutdown-'));
+    tmpDirs.push(dir);
+    fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ webPort: 8000 }));
+    process.env[EnvName.CONFIG_PATH] = path.join(dir, 'config.json');
+    process.env['DEPS_PATH'] = path.join(dir, 'deps');
+    Config._resetForTest();
+});
+afterEach(() => {
+    Config._resetForTest();
+    if (saved.CONFIG === undefined) delete process.env[EnvName.CONFIG_PATH];
+    else process.env[EnvName.CONFIG_PATH] = saved.CONFIG;
+    if (saved.DEPS === undefined) delete process.env['DEPS_PATH'];
+    else process.env['DEPS_PATH'] = saved.DEPS;
+    while (tmpDirs.length) fs.rmSync(tmpDirs.pop()!, { recursive: true, force: true });
+});
 
 function makeReqRes(url: string, method = 'GET') {
     const req = { url, method } as IncomingMessage;
