@@ -223,7 +223,7 @@ jobs:
       - name: Create versioned release
         # Runs before the state-file commit so release asset uploads are not
         # blocked by a git push race (main can move during the matrix run).
-        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
+        uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
         with:
           tag_name: node-pty-prebuilds-v${{ needs.precheck.outputs.node_pty_version }}
           name: "node-pty prebuilds v${{ needs.precheck.outputs.node_pty_version }}"
@@ -240,7 +240,7 @@ jobs:
             (linux-arm64-musl excluded — GH Actions JS-action runtime doesn't run in Alpine+arm64 containers; those users fall back to compile-at-install.)
 
       - name: Update "latest" alias
-        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
+        uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
         with:
           tag_name: node-pty-prebuilds-latest
           name: "node-pty prebuilds (latest)"
