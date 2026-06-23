@@ -1319,7 +1319,7 @@ The scanner's hit-lookup order is `labelFor(mac) ?? labelFor(serial) ?? ''` — 
 **`DeviceStore`** (`src/server/db/DeviceStore.ts`), reached via `Config.getInstance().db.devices`:
 - `getLabel(userId, serial)` / `setLabel(userId, serial, label)` / `deleteLabel(userId, serial)` / `getAllLabels(userId)` — per-user upserts into `device_labels`; the dual-key serial/MAC semantics live in the caller.
 - Also owns the shared `devices` observed-metadata table (manufacturer/model/address/last-seen, upserted from scans + connected-device props).
-- The legacy `device-labels.json` was migrated into `device_labels` on first run (the Phase 1 SQLite import) and the old single-file `DeviceLabelStore` removed.
+- The old single-file `DeviceLabelStore` was removed in favor of the per-user `device_labels` table. (The one-time `device-labels.json` → `device_labels` import that bridged pre-store installs was dropped in beta.69 — pre-1.0, there are no production installs to migrate.)
 
 ### 16.2 Device Identification
 
