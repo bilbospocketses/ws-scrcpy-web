@@ -12,18 +12,19 @@ All-encompassing manual smoke, grouped by function and tagged by platform (`[Win
 - **Windows:** Win11 VM, clean snapshot; three accounts `Admin` / `User1` / `User2`; `regedit` + Task Manager → Startup tab handy. Download `WsScrcpyWeb-beta.msi` from the **latest** release.
 - **Devices:** an Android device with **Wireless debugging** enabled (Android 11+) reachable from the VM, plus (Windows) one USB device if available.
 
-**Build-prep — the "update from" build (Module 6).** The releases page is curated to the latest only, so the update rows need an older build to update *from*. Don't rebuild — download the still-retained **beta.40** CI artifact (the exact published beta.40 AppImage: Velopack 1.1.1):
+**Build-prep — the "update from" build (Module 6).** The update rows need an older build to update *from*. The most recent **kept prior release** is **`v0.1.30-beta.68`** — deliberately retained as the update-from build (bump this when a newer prior release is kept and an older one is deleted). Download its AppImage (and the MSI, for the Windows pass) into a separate dir — the asset filename is identical across versions, so it'd otherwise collide with the latest:
 
 ```bash
 # Linux — the update "from" build
-gh run download 26859605903 --repo bilbospocketses/ws-scrcpy-web --name linux-final --dir ./beta40
-chmod +x ./beta40/WsScrcpyWeb-linux-beta.AppImage
-# Windows MSI (row 6.8 / the Windows pass): --name windows-final from the same run
+gh release download v0.1.30-beta.68 --repo bilbospocketses/ws-scrcpy-web --pattern 'WsScrcpyWeb-linux-beta.AppImage' --dir ./beta68
+chmod +x ./beta68/WsScrcpyWeb-linux-beta.AppImage
+# Windows MSI (row 6.8 / the Windows pass):
+gh release download v0.1.30-beta.68 --repo bilbospocketses/ws-scrcpy-web --pattern 'WsScrcpyWeb-beta.msi' --dir ./beta68
 ```
 
-Artifacts are retained ~90 days from 2026-06-03. **the latest release is feed-latest**, so any older install updates *to* it.
+It's a kept release (not an expiring CI artifact), so there's no retention window to beat. **The latest release is feed-latest**, so any older install updates *to* it.
 
-- **No-libfuse2 host (Module 11.1/11.2):** a minimal Fedora container/distro **without** `libfuse2`. This is the gate for closing item 31, not a 0.1.30-stable blocker on its own.
+- **No-libfuse2 host (Module 11.1/11.2) — fold it into this run.** Run the Linux smoke on a minimal Fedora host with **no** `libfuse2` (confirm: `ldconfig -p | grep -i libfuse.so.2` → empty and `rpm -q fuse-libs` → not installed; a base Fedora cloud/container image ships without it, else `sudo dnf remove fuse-libs` on a throwaway VM). Do the Module 6 update leg **on that host** and Module 11 rides along free — 11.1 = the AppImage launched there at all, 11.2 = that same in-app update. It's the regression check on the **already-removed** libfuse2 gate (PR #422); **revert #422 if 11.2 fails.** Not a 0.1.30-stable blocker on its own, so skip to a normal Fedora VM if the no-libfuse2 host is friction — but close Module 11 before any wide-publicity release.
 
 **Clean slate — `clear-install.sh` (recommended).** For a one-shot, verified teardown of the **entire** install footprint — user- *and* system-scope service, `/opt` + `/var/lib`, dataRoot, tray autostart, the system `.desktop`, **all** SELinux fcontext rules (incl. the legacy beta.40 `/opt/.../data`), the single-instance lock, and any stray processes — run `bash clear-install.sh` (sits beside this doc). It tears down, then prints a per-item PASS/FAIL ending in `CLEAN SLATE ✓` / `NOT CLEAN ✗` (exit 0/1); idempotent + safe on an already-clean VM.
 
@@ -105,17 +106,17 @@ sudo systemctl daemon-reload
 
 ## Module 6 — Updates
 
-Get the "update from" build first (Pre-flight build-prep: the beta.40 artifact). The latest release is feed-latest, so every row updates *to* it.
+Get the "update from" build first (Pre-flight build-prep: the kept **beta.68** release). The latest release is feed-latest, so every row updates *to* it.
 
 | Test | How to perform | Expected + verify |
 |---|---|---|
-| **6.1** `[Both]` Update check | Settings → Updates → Check for updates. | A beta.40 install **offers the latest**; the latest reports **up-to-date**; no error spam in `server.log` / `launcher.log`. |
-| **6.2** `[Linux]` Local-mode (home) update apply + relaunch *(#27)* | beta.40 home AppImage in **local mode** (no service) → Settings → Updates → Apply. | Downloads + SHA-256 verifies; the "updating…" overlay shows **above** Settings; the AppImage **swaps and auto-relaunches** onto the latest unattended; browser reconnects; About = the new version. **Edge:** also confirm apply on an instance **relaunched right after a user-scope service uninstall** (the `systemd-run --collect` cgroup case) still swaps + relaunches. |
+| **6.1** `[Both]` Update check | Settings → Updates → Check for updates. | A beta.68 install **offers the latest**; the latest reports **up-to-date**; no error spam in `server.log` / `launcher.log`. |
+| **6.2** `[Linux]` Local-mode (home) update apply + relaunch *(#27)* | beta.68 home AppImage in **local mode** (no service) → Settings → Updates → Apply. | Downloads + SHA-256 verifies; the "updating…" overlay shows **above** Settings; the AppImage **swaps and auto-relaunches** onto the latest unattended; browser reconnects; About = the new version. **Edge:** also confirm apply on an instance **relaunched right after a user-scope service uninstall** (the `systemd-run --collect` cgroup case) still swaps + relaunches. |
 | **6.3** `[Linux]` No-service `/opt` update *(one pkexec)* | Machine-wide `/opt`, **no** service → trigger update. | One pkexec; `/opt` swapped by **rename**; relabel bin_t + restorecon; VERSION bumps; relaunches **as the user**; reconnects. No `ETXTBSY`; FUSE intact. |
-| **6.4** `[Linux]` Newer home over `/opt` | `/opt` at beta.40; place a newer home AppImage; launch. | Bootstrapper runs home in place → offers "update the system-wide install to vX" → accept → swap → next launch runs updated `/opt`. |
+| **6.4** `[Linux]` Newer home over `/opt` | `/opt` at beta.68; place a newer home AppImage; launch. | Bootstrapper runs home in place → offers "update the system-wide install to vX" → accept → swap → next launch runs updated `/opt`. |
 | **6.5** `[Linux]` User-scope service update apply *(item 39)* | User-scope service installed → Settings → Updates → Apply. | The `--user` unit stops, the home `$APPIMAGE` swaps, the unit restarts on the **same** web port, browser reconnects via the overlay. **No prompt.** |
 | **6.6** `[Linux]` System-scope headless service update apply *(item 39 — the SELinux risk)* | System-scope service installed → Apply. | **No polkit prompt** (root self-update); `/opt` copy swaps; `restorecon` re-applies `bin_t`; unit restarts; **zero AVC**. The `systemd-run` apply helper **survives `systemctl stop`** of the unit it's restarting (out-of-cgroup); the FUSE unmount settles within the helper's ~15s swap-retry window (widen if the VM is slow). If SELinux blocks the `init_t` `/opt` write or relabel → **narrow targeted policy only, never broad `audit2allow`**. Updated deps land **bin_t** with no relabel (the dep manager `copyFileSync`s them into the bin_t `/opt/.../dependencies` tree, so new files inherit the label) — confirm `ls -Z /opt/ws-scrcpy-web/dependencies`. |
-| **6.8** `[Win]` In-app update apply + tray persists *(SE-2)* | From a prior installed build (beta.40 MSI) → Settings → Updates → Apply. | Applies clean; app reachable post-update; **the tray persists across the update** (the `apply-update-pending` marker gates the reap off; the relaunched launcher keeps it) — **one** tray after settling, no duplicate/orphan. |
+| **6.8** `[Win]` In-app update apply + tray persists *(SE-2)* | From a prior installed build (beta.68 MSI) → Settings → Updates → Apply. | Applies clean; app reachable post-update; **the tray persists across the update** (the `apply-update-pending` marker gates the reap off; the relaunched launcher keeps it) — **one** tray after settling, no duplicate/orphan. |
 
 ## Module 7 — Devices: scan & connect
 
@@ -154,14 +155,14 @@ Get the "update from" build first (Pre-flight build-prep: the beta.40 artifact).
 | **10.4** `[Both]` Per-instance token / reload-on-restart *(beta.66 security)* | With the app open in a tab, **restart the server** (change the web port → save, or stop & relaunch the app). Then, separately, `curl http://localhost:<port>/api/service/status` with no cookie. | After a restart the **already-open tab must be reloaded** to reconnect — the server mints a **new per-instance token** on each boot and hands it to the page as a `SameSite=Strict; HttpOnly` cookie, so the stale tab's socket/API calls are rejected until it reloads (then it works normally). A non-browser `curl` that never loaded the page (no cookie) is **rejected** on the sensitive API surface. Normal browser use is unchanged. |
 | **10.5** `[Both]` 404 + security headers *(beta.66 security)* | `curl -I http://localhost:<port>/no-such-asset.js` ; `curl -I http://localhost:<port>/` ; then load a deep in-app route in the browser and refresh it. | A missing **asset / unknown API path → `404`** (no longer the HTML shell with `200`); an **in-app route navigation still falls back to the shell**. Every static response carries **`X-Content-Type-Options: nosniff`** and **`X-Frame-Options: SAMEORIGIN`** (the documented same-origin embed still works). |
 
-## Module 11 — Velopack 1.2.0 / item-31
+## Module 11 — Velopack 1.2.0 / no-libfuse2 (PR #422 regression check)
 
-Velopack is at 1.2.0 (bumped in beta.44). These rows close out item 31 (the libfuse2 first-run gate) and guard the 1.2.0 apply path.
+Velopack is at 1.2.0 (bumped in beta.44). The libfuse2 first-run gate is **already removed** (PR #422, beta.67) — these rows are the regression check that the bet behind that removal holds (the type-2 runtime launches **and** self-updates with no host `libfuse2`), plus a guard on the 1.2.0 apply path. **Fold them into the main run** by doing the Module 6 update leg on the no-libfuse2 Fedora host (see Pre-flight): 11.1 + 11.2 then come for free. **Revert #422 if 11.2 fails.** Module 11 does **not** gate 0.1.30-stable on its own, but close it before any wide-publicity release.
 
 | Test | How to perform | Expected + verify |
 |---|---|---|
 | **11.1** `[Linux]` No-libfuse2 launch | On a minimal distro/container **without** `libfuse2` installed, run the smoke-target AppImage. | Launches (type-2 runtime has FUSE embedded); **no** `libfuse.so.2` / "dlopen libfuse" error. |
-| **11.2** `[Linux]` No-libfuse2 in-app update | From that no-libfuse2 host, run an in-app update (6.x flow). | Update succeeds. The libfuse2 gate code is already removed (`SystemdClient.ts`, `UpdatesApi.ts`, `UpdateEvents.ts`, `SettingsModal.ts`, README); this row is the regression check that the type-2 runtime self-updates with no host libfuse2. |
+| **11.2** `[Linux]` No-libfuse2 in-app update | From that no-libfuse2 host, run the **Module 6** in-app update (this row IS the 6.x flow, just done on the no-libfuse2 host). | Update succeeds. The libfuse2 gate code is already removed (`SystemdClient.ts`, `UpdatesApi.ts`, `UpdateEvents.ts`, `SettingsModal.ts`, README); this row is the regression check that the type-2 runtime self-updates with no host libfuse2 — **revert PR #422 if it fails.** |
 | **11.3** `[Linux]` Locator fix watch (velopack#921) | During **6.3 / 6.4 / 6.6** apply + relaunch on the machine-wide `/opt` install. | Apply + relaunch land correctly; no Velopack locator root-path regression (the 1.2.0 fix targets exactly this path). |
 | **11.4** `[Win]` PerMachine intact | After the 1.5 MSI install, check the install location. | Installed PerMachine to `C:\Program Files\WsScrcpyWeb\` (vpk 1.2.0 `--msi --instLocation PerMachine` unchanged). |
 
@@ -223,7 +224,7 @@ beta.66's security/quality pass restored the keyboard focus indicator, added a r
 | **16.1** `[Both]` Light/dark theme switch | Toggle the theme (the home-page theme control) light ↔ dark; open a couple of modals and the stream view in each. | The whole UI recolors live — backgrounds, text, borders, buttons — with no element stuck at the other theme's colors; the choice persists across a reload. |
 | **16.2** `[Both]` Keyboard focus ring *(WCAG 2.4.7)* | **Tab** through the home page and a modal's controls with the keyboard; then **click** controls with the mouse. | A clear **focus outline** (2px, accent color) appears on the **keyboard**-focused control (`:focus-visible`); it does **not** appear on a plain mouse click. Regression guard: the old global `:focus { outline: none }` that hid focus everywhere is gone. |
 | **16.3** `[Both]` Reduced motion *(WCAG 2.3.3)* | Turn on the OS "reduce motion" setting (GNOME: Settings → Accessibility; Windows: Settings → Accessibility → Visual effects → Animation effects **off**), reload the app, then trigger animated UI (open modals, spinners, transitions). | Animations and transitions collapse to **near-instant** — no meaningful slides / fades / spins (the global `prefers-reduced-motion: reduce` reset). Turn the setting back off → normal animation returns. |
-| **16.4** `[Both]` Light-mode status tints | In **light** theme: select a file row, hover the delete control, and (on a beta.40→latest update run) hover the apply-update control. | The selection / delete-hover / apply-update tints render as proper light-theme shades — they now resolve through the danger / success design tokens, **not** the slightly-off dark-theme channel values they were previously hardcoded to. |
+| **16.4** `[Both]` Light-mode status tints | In **light** theme: select a file row, hover the delete control, and (on a beta.68→latest update run) hover the apply-update control. | The selection / delete-hover / apply-update tints render as proper light-theme shades — they now resolve through the danger / success design tokens, **not** the slightly-off dark-theme channel values they were previously hardcoded to. |
 | **16.5** `[Both]` Embed page language | Open `embed.html` (the embeddable stream page); view source / inspect the `<html>` element. | `<html>` has a **`lang`** attribute set (assistive-tech hint), matching the main app shell. |
 
 ---
@@ -276,4 +277,4 @@ beta.66's security/quality pass restored the keyboard focus indicator, added a r
 | **Auth opt-in** | Off by default; enabling via the first-user lockdown gates **both** HTTP and the device/stream WebSockets; brute-force lockout + admin-unlock work; change-password / logout / disable-to-open-mode all work; the last admin can never be locked out. Open mode is unchanged. |
 | **Per-user labels** | Each logged-in account sees only its own device labels in scan hits + the connected list; open mode (single implicit admin) is unchanged from prior betas. |
 
-**If a `[Linux]` SELinux/lifecycle row (Modules 2, 4, 5, the service-mode update rows 6.5/6.6, or the Module 14 uninstall-cascade rows 14.4–14.7) or the core-flow criterion fails:** stop, run `capture-logs.sh <id>` (`.ps1` on Windows) for the evidence bundle, report back — fix before promoting 0.1.30 stable. Cosmetic/polish failures: note and triage as beta-territory vs stable-blocker. **Module 11 (no-libfuse2)** is the gate for closing item 31, not a 0.1.30-stable blocker on its own — a failure there means keep the libfuse2 gate, don't remove it.
+**If a `[Linux]` SELinux/lifecycle row (Modules 2, 4, 5, the service-mode update rows 6.5/6.6, or the Module 14 uninstall-cascade rows 14.4–14.7) or the core-flow criterion fails:** stop, run `capture-logs.sh <id>` (`.ps1` on Windows) for the evidence bundle, report back — fix before promoting 0.1.30 stable. Cosmetic/polish failures: note and triage as beta-territory vs stable-blocker. **Module 11 (no-libfuse2)** is the regression check on the already-removed libfuse2 gate (PR #422), not a 0.1.30-stable blocker on its own — an 11.2 failure means **revert #422** (restore the gate).

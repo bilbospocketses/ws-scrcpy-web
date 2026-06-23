@@ -83,12 +83,12 @@ This is **setup, not tests** — nothing here passes or fails the app; it just g
 5. Download `WsScrcpyWeb-linux-beta.AppImage` from the latest GitHub release. **Leave it non-executable** — double-clicking a NON-`chmod +x` AppImage straight from the file manager is the realistic path most users take, and it's exactly what surfaced the Linux service-mode bug. (Marking it runnable with `chmod +x WsScrcpyWeb-linux-beta.AppImage` is optional — only needed if you'd rather launch it from a terminal.)
 
 ### B. The older "update-from" build (only for the Module 6 update tests)
-The update tests need an **older** version installed first, then updated *to* the latest. The releases page now lists only the latest, so pull the older **beta.40** build from its saved CI artifact:
+The update tests need an **older** version installed first, then updated *to* the latest. The most recent **kept prior release** is **`v0.1.30-beta.68`** — download it into a separate dir (the AppImage filename is identical across versions, so it'd collide with the latest):
 ```bash
-gh run download 26859605903 --repo bilbospocketses/ws-scrcpy-web --name linux-final --dir ./beta40
-chmod +x ./beta40/WsScrcpyWeb-linux-beta.AppImage
+gh release download v0.1.30-beta.68 --repo bilbospocketses/ws-scrcpy-web --pattern 'WsScrcpyWeb-linux-beta.AppImage' --dir ./beta68
+chmod +x ./beta68/WsScrcpyWeb-linux-beta.AppImage
 ```
-(beta.40 = your "before", the smoke-target = your "after". The Windows MSI is in the same run under `--name windows-final`. Artifacts are kept ~90 days from 2026-06-03.)
+(beta.68 = your "before", the smoke-target = your "after". The Windows MSI is on the same release: add `--pattern 'WsScrcpyWeb-beta.msi'`. It's a kept release, so no artifact-expiry to track.)
 
 ### C. Android device
 An Android phone/tablet with **Wireless debugging** on (Settings → Developer options, Android 11+), reachable from the VM. Optionally one **USB**-connected device on Windows (for the single USB test, 7.3).
@@ -99,8 +99,8 @@ An Android phone/tablet with **Wireless debugging** on (Settings → Developer o
 3. Keep **Registry Editor** and **Task Manager → Startup** open (a few tests check those).
 4. Download `WsScrcpyWeb-beta.msi` from the same release.
 
-### E. No-libfuse2 host (optional — only for Module 11)
-A minimal Fedora container/VM **without** `libfuse2` installed. This only closes a cleanup item; it does **not** block 0.1.30 — safe to skip on a first pass.
+### E. No-libfuse2 host (recommended — folds Module 11 into the run)
+A minimal Fedora VM/container with **no** `libfuse2`. Confirm it's really absent: `ldconfig -p | grep -i libfuse.so.2` prints nothing and `rpm -q fuse-libs` says "not installed" (a base Fedora cloud/container image ships without it; otherwise `sudo dnf remove fuse-libs` on a throwaway VM). Run the **whole** Linux smoke on this host and Module 11 needs no extra steps — 11.1 is "the app launched here at all", 11.2 is the Module 6 update done here. It's the regression check on the already-removed libfuse2 gate — **revert PR #422 if 11.2 fails**. Not a 0.1.30 blocker on its own, so skip to a normal VM if this host is friction — but don't ship to a wide audience without it.
 
 ### F. Capture scripts — pull the logs at any checkpoint
 Beside this doc are two snapshot scripts. Run one **at every capture point, and the instant any test fails**, to collect a complete evidence bundle (a timestamped, labeled folder + an archive to attach):
@@ -320,17 +320,17 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 ```
 
 ### Module 6 — Updates
-*The smoke-target build is the newest, so every row updates **to** it. Get the beta.40 "from" build first (Pre-flight B).*
+*The smoke-target build is the newest, so every row updates **to** it. Get the beta.68 "from" build first (Pre-flight B).*
 
 ```text
 ┌──────────────────────┬──────┬──────────────────────────────┬──────────────────────────────────────────────────┬──────┐
 │ Test                 │ OS   │ Do this                      │ Pass - what you should see                       │ Done │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
-│ 6.1 Update check     │ Both │ Settings > Updates > "Check  │ A beta.40 install offers the latest; the latest  │ [ ]  │
+│ 6.1 Update check     │ Both │ Settings > Updates > "Check  │ A beta.68 install offers the latest; the latest  │ [ ]  │
 │                      │      │ for updates".                │ install says "up to date". No error spam in the  │      │
 │                      │      │                              │ server/launcher logs.                            │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
-│ 6.2 Local (home)     │ Lin  │ Start from the beta.40       │ It downloads, verifies the checksum, shows an    │ [ ]  │
+│ 6.2 Local (home)     │ Lin  │ Start from the beta.68       │ It downloads, verifies the checksum, shows an    │ [ ]  │
 │ update +             │      │ AppImage in plain local mode │ "updating..." overlay, swaps to the latest and   │      │
 │ auto-relaunch        │      │ (no service). Settings >     │ relaunches on its own; the browser reconnects;   │      │
 │                      │      │ Updates > Apply.             │ About = the new version. Also confirm on a copy  │      │
@@ -342,7 +342,7 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 │ password)            │      │ update.                      │ labels re-applied; the VERSION file bumps; it    │      │
 │                      │      │                              │ relaunches as you and reconnects.                │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
-│ 6.4 Newer home copy  │ Lin  │ With /opt at beta.40, drop a │ It runs the home copy, then offers "update the   │ [ ]  │
+│ 6.4 Newer home copy  │ Lin  │ With /opt at beta.68, drop a │ It runs the home copy, then offers "update the   │ [ ]  │
 │ over /opt            │      │ newer AppImage in            │ system-wide install to vX"; accept > it swaps    │      │
 │                      │      │ your home folder and launch  │ /opt; the next launch runs the updated /opt.     │      │
 │                      │      │ it.                          │                                                  │      │
@@ -358,7 +358,7 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 │                      │      │                              │ rule only - never a blanket audit2allow.         │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
 │ 6.8 Windows update   │ Win  │ From a prior installed build │ Updates cleanly; app reachable afterward; the    │ [ ]  │
-│ keeps the tray       │      │ (beta.40 MSI) > Settings >   │ tray icon SURVIVES the update - exactly one tray │      │
+│ keeps the tray       │      │ (beta.68 MSI) > Settings >   │ tray icon SURVIVES the update - exactly one tray │      │
 │                      │      │ Updates > Apply.             │ once it settles, no duplicate or orphan.         │      │
 └──────────────────────┴──────┴──────────────────────────────┴──────────────────────────────────────────────────┴──────┘
 ```
@@ -479,8 +479,8 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 └──────────────────────┴──────┴──────────────────────────────┴──────────────────────────────────────────────────┴──────┘
 ```
 
-### Module 11 — Velopack 1.2.0 / libfuse2 (optional)
-*Confirms the new packaging runs without the old libfuse2 dependency. Closes a cleanup item; does NOT block 0.1.30.*
+### Module 11 — Velopack 1.2.0 / no-libfuse2 (fold into the run)
+*The libfuse2 special-case code is already gone (PR #422); this confirms the packaging still launches and self-updates without it. Run the smoke on a no-libfuse2 host (Pre-flight E) and 11.1/11.2 ride along free. **Revert PR #422 if 11.2 fails.** Doesn't block 0.1.30 on its own — but close it before any wide release.*
 
 ```text
 ┌──────────────────────┬──────┬──────────────────────────────┬──────────────────────────────────────────────────┬──────┐
@@ -491,8 +491,8 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 │                      │      │ libfuse2, run the            │                                                  │      │
 │                      │      │ smoke-target AppImage.       │                                                  │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
-│ 11.2 Updates without │ Lin  │ From that same no-libfuse2   │ The update succeeds. (Passing this lets the old  │ [ ]  │
-│ libfuse2             │      │ machine, run an in-app       │ libfuse2 special-case code be deleted.)          │      │
+│ 11.2 Updates without │ Lin  │ From that same no-libfuse2   │ Update succeeds; gate code already gone (#422).  │ [ ]  │
+│ libfuse2             │      │ machine, run an in-app       │ Revert PR #422 if this row fails.                │      │
 │                      │      │ update.                      │                                                  │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
 │ 11.3 Update path     │ Lin  │ During the /opt update tests │ Apply and relaunch land correctly - no           │ [ ]  │
@@ -833,6 +833,6 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 └──────────────────────┴────────────────────────────────────────────────────────────────┴──────┘
 ```
 
-**If any Linux SELinux/lifecycle test (Modules 2, 4, 5, the service-update rows 6.5/6.6) — or the core-flow criterion — fails:** stop, **run `capture-logs.sh <id>` (Pre-flight F; `.ps1` on Windows)** for the evidence bundle, and report it before promoting 0.1.30 to stable. Cosmetic/polish failures: note and triage later. **Module 11 (no-libfuse2)** is optional — a failure there just means keep the libfuse2 code; it doesn't block 0.1.30.
+**If any Linux SELinux/lifecycle test (Modules 2, 4, 5, the service-update rows 6.5/6.6) — or the core-flow criterion — fails:** stop, **run `capture-logs.sh <id>` (Pre-flight F; `.ps1` on Windows)** for the evidence bundle, and report it before promoting 0.1.30 to stable. Cosmetic/polish failures: note and triage later. **Module 11 (no-libfuse2)** is the regression check on the already-removed libfuse2 gate — an 11.2 failure means **revert PR #422** (restore the gate); it doesn't block 0.1.30 on its own.
 
 *Plain-English companion to [`smoke-full.md`](./smoke-full.md), the canonical machine-precise checklist. The same tests as the repo doc, with the jargon spelled out; if the two ever diverge, the full doc wins.*

@@ -7,7 +7,7 @@ Execution-ordered, tickable checklist for the 0.1.30 Linux smoke gate. Regroups 
 stays the module-organized reference. Wherever a row shows a version, expect the **smoke-target version** (top of this doc),
 which carries the beta.48 port-discovery fix plus the Server-section UX (batch #15).
 
-**Legend:** ✅ passed · ☐ to run · 🧩 needs setup (fresh snapshot / 2nd user / 2nd admin / beta.40 artifact / no-libfuse2 host) · 📱 needs a real device · 🪟 Windows pass (separate snapshot) · 🌐 browser-only (no device or install state)
+**Legend:** ✅ passed · ☐ to run · 🧩 needs setup (fresh snapshot / 2nd user / 2nd admin / beta.68 from-build / no-libfuse2 host) · 📱 needs a real device · 🪟 Windows pass (separate snapshot) · 🌐 browser-only (no device or install state)
 
 ## Before each run — reset to a clean slate
 
@@ -104,20 +104,22 @@ Boxes start unticked — this is a fresh pass.
 | ☐ **5.2** `[L]` Different-admin uninstall | Uninstall via **pkexec as a different admin** (triggers `systemd-run --system` teardown) | PASS = teardown: service stopped + unit removed, `/opt/ws-scrcpy-web` and `/var/lib/ws-scrcpy-web` gone, fcontext clean, zero AVC. Tab: **relaunch the app manually** if it doesn't reconnect (auto-relaunch is a tracked follow-up) |
 | ☐ **5.3** `[L]` Headless uninstall | `sudo ./WsScrcpyWeb --uninstall-system-service` (no graphical session) | No relaunch; manual fallback; no orphan; no `data_root_for_linux` panic; full teardown verified |
 
-## #11 — Updates 🧩 *(needs the beta.40 "update-from" artifact)*
+## #11 — Updates 🧩 *(needs the beta.68 "update-from" release)*
 
-Get the from-build first: `gh run download 26859605903 --repo bilbospocketses/ws-scrcpy-web --name linux-final`.
+Get the from-build first: `gh release download v0.1.30-beta.68 --repo bilbospocketses/ws-scrcpy-web --pattern 'WsScrcpyWeb-linux-beta.AppImage'`.
 
 | Test | How to perform | Expected + verify |
 |---|---|---|
-| ☐ **6.1** `[B]` Update check | Settings → Updates → Check | beta.40 **offers the latest**; the latest = up-to-date; no log spam |
-| ☐ **6.2** `[L]` Local update apply | beta.40 home (local mode) → Apply | Verifies + swaps + **auto-relaunches** to the latest; reconnects |
+| ☐ **6.1** `[B]` Update check | Settings → Updates → Check | beta.68 **offers the latest**; the latest = up-to-date; no log spam |
+| ☐ **6.2** `[L]` Local update apply | beta.68 home (local mode) → Apply | Verifies + swaps + **auto-relaunches** to the latest; reconnects |
 | ☐ **6.3** `[L]` No-service /opt update | Machine-wide `/opt`, no service → update | One pkexec; **rename**-swap; relabel bin_t; **no ETXTBSY**; FUSE intact |
-| ☐ **6.4** `[L]` Newer home over /opt | `/opt` beta.40 + newer home AppImage → launch | Offers system-wide update → swap → next launch runs updated `/opt` |
+| ☐ **6.4** `[L]` Newer home over /opt | `/opt` beta.68 + newer home AppImage → launch | Offers system-wide update → swap → next launch runs updated `/opt` |
 | ☐ **6.5** `[L]` User-service update | User-service → Apply | Unit stops, home swaps, restarts **same port**, **no prompt** |
 | ☐ **6.6** `[L]` System-service update | System-service → Apply | **No polkit**; `/opt` swaps; restorecon bin_t; **zero AVC**; helper survives `systemctl stop`; updated deps stay **bin_t** (`ls -Z /opt/ws-scrcpy-web/dependencies` — copied into the bin_t tree, no relabel) |
 
-## #12 — Velopack / no-libfuse2 🧩 *(needs a minimal Fedora host without libfuse2)*
+## #12 — Velopack / no-libfuse2 🧩 *(run the smoke on a no-libfuse2 Fedora host — folds in 11.1/11.2)*
+
+> Run the whole Linux smoke on a Fedora host with **no** `libfuse2` (`ldconfig -p | grep -i libfuse.so.2` → empty) and these ride the normal launch + Module 6 update. Regression check on the already-removed gate (PR #422) — **revert #422 if 11.2 fails.** Skippable if that host is friction (doesn't gate 0.1.30), but close it before wide publicity.
 
 | Test | How to perform | Expected + verify |
 |---|---|---|
@@ -155,7 +157,7 @@ Get the from-build first: `gh run download 26859605903 --repo bilbospocketses/ws
 | ☐ **5.6** `[W]` Handoff-failure guard | Kill all `tray.exe`, then uninstall | ~5s/~30s messages; button freed; **service still installed** |
 | ☐ **5.7** `[W]` Full uninstall | Add/Remove → Uninstall as Admin | Service unregistered; `HKLM…\Run\WsScrcpyWebTray` gone; Program Files cleared; **dataRoot preserved** |
 | ☐ **5.10** `[W]` UAC declined | Standard user → uninstall → **decline** UAC | 403 `reason=uac-declined`; retry message; button freed; service still installed |
-| ☐ **6.8** `[W]` Update + tray persists | beta.40 MSI → Updates → Apply | Applies; reachable; **one** tray after settling (persists across update) |
+| ☐ **6.8** `[W]` Update + tray persists | beta.68 MSI → Updates → Apply | Applies; reachable; **one** tray after settling (persists across update) |
 | ☐ **7.3** `[W]` USB device | Plug USB, authorize the RSA prompt | Appears; survives a reload |
 | ☐ **10.2** `[W]` Logs clean | Tail `ProgramData\WsScrcpyWeb\logs\{launcher,server}.log` | No `ERR`/`Error:` except known node-pty AttachConsole noise |
 | ☐ **11.4** `[W]` PerMachine intact | After the MSI install, check the location | `C:\Program Files\WsScrcpyWeb\` (PerMachine) |
@@ -232,4 +234,4 @@ New in beta.51, the wipe self-deletion fixed in beta.52. Run on the clean Win11 
 | **Auth opt-in** | Off by default; enabling via the first-user lockdown gates **both** HTTP and device/stream WebSockets; brute-force lockout + admin-unlock work; change-password / logout / disable-to-open-mode all work; the last admin can never be locked out. Open mode is unchanged |
 | **Per-user labels** | Each logged-in account sees only its own device labels in scan hits + the connected list; open mode (single implicit admin) is unchanged from prior betas |
 
-**Stop-and-report:** a `[Linux]` SELinux/lifecycle failure in Modules 2/4/5, the service-update rows 6.5/6.6 — run `capture-logs.sh <id>` (`.ps1` on Windows) for the evidence bundle, then fix before promoting 0.1.30 stable. Cosmetic/polish → note as beta-territory. **Module 11 (no-libfuse2)** gates closing item 31, not 0.1.30-stable on its own.
+**Stop-and-report:** a `[Linux]` SELinux/lifecycle failure in Modules 2/4/5, the service-update rows 6.5/6.6 — run `capture-logs.sh <id>` (`.ps1` on Windows) for the evidence bundle, then fix before promoting 0.1.30 stable. Cosmetic/polish → note as beta-territory. **Module 11 (no-libfuse2)** is the regression check on the already-removed libfuse2 gate (PR #422) — **revert #422 if 11.2 fails**; it doesn't gate 0.1.30-stable on its own.
