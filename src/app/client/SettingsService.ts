@@ -3,7 +3,7 @@ async function ok(res: Response): Promise<Response> {
     return res;
 }
 
-// Shape stored under device scope 'video' (mirrors what the migration writes).
+// Shape stored under device scope 'video'.
 export interface StoredVideo {
     settings?: Record<string, unknown> | undefined; // raw VideoSettings JSON
     fit?: boolean | undefined;
@@ -143,7 +143,7 @@ export class SettingsService {
     }
 }
 
-// Singleton — the boot migration AND every call site import THIS so caches are
+// Singleton — every call site imports THIS so caches are
 // shared. A module singleton (rather than DI) is required because BasePlayer's
 // static methods have no `this`-instance to thread a service reference through.
 export const settingsService = new SettingsService();

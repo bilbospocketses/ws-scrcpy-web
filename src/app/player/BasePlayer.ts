@@ -181,7 +181,7 @@ export abstract class BasePlayer extends TypedEmitter<PlayerEvents> {
     // removed — video settings now route through the SettingsService singleton
     // (Task 4c). The legacy localStorage key scheme (viewport-keyed per udid) is
     // no longer used; all video prefs are stored as one collapsed 'video' scope per
-    // udid by the migration and the new accessors below.
+    // udid via the new accessors below.
 
     /**
      * Returns whether fit-to-screen is enabled for the given udid.
@@ -208,7 +208,7 @@ export abstract class BasePlayer extends TypedEmitter<PlayerEvents> {
      * The coercion block is preserved verbatim from the pre-Task-4c implementation;
      * only the source of `parsed` changes: was JSON.parse(localStorage), now the
      * plain parsed object from the SettingsService sync cache (which holds the same
-     * shape written by the migration and by putVideoSettingsToStorage).
+     * shape written by putVideoSettingsToStorage).
      *
      * `storageKeyPrefix` and `displayInfo` are kept for call-site compatibility but
      * are no longer used for storage lookups (viewport-key collapse — see Task 3).

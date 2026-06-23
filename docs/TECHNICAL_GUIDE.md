@@ -576,16 +576,7 @@ Calling `startStream()` a second time on the same container without first callin
 
 `embed.html` sets `body { background: transparent }` so iframe consumers can place any background they like behind the video. A small status overlay in the top-left shows `connecting...`, then `connected <codec> <resolution>` (auto-hides after 2 s), or an error / disconnect message.
 
-### 6.7 Migration from the Old Embed Mode
-
-This section replaces the previous CSS-hack embed mode. Breaking changes:
-
-- **`#!action=stream&udid=...` hash routing is REMOVED.** Direct-link stream access now uses `/embed.html?device=<udid>` (or call `startStream()` directly from your own page).
-- **`?embed=true` URL param is REMOVED** along with the `body.embed` CSS class. `embed.html` always runs with a transparent background — there is no flag to toggle.
-- **The `more-box` overflow UI is REMOVED** (YAGNI — all its functions were already duplicated in the toolbar). Clipboard sync is now first-class: the toolbar has separate GET and SET clipboard buttons.
-- **TypeScript types are shipped** as `dist/public/ws-scrcpy.d.ts`, bundled so no `src/**` imports leak.
-
-### 6.8 Internal Architecture
+### 6.7 Internal Architecture
 
 `StreamClientScrcpy` (in `src/app/googDevice/client/`) is the rendering engine. It handles the WebSocket connection, video demuxer, WebCodecs decoder, audio worklet, touch / keyboard / UHID input, and toolbar wiring.
 
