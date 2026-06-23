@@ -142,10 +142,6 @@ Get the latest release from the [Releases page](https://github.com/bilbospockets
 - **Windows portable ZIP** — unzip and run; no install required, no auto-updates. Useful for air-gapped setups.
 - **Linux AppImage** — download `WsScrcpyWeb-linux-stable.AppImage` (or `WsScrcpyWeb-linux-beta.AppImage` for the beta channel), `chmod +x` it, and run. See [Linux install](#linux-install-appimage) below.
 
-**Upgrading from v0.1.20 or earlier on Windows:** the install layout changed. See [docs/PROGRAMDATA-MIGRATION.md](docs/PROGRAMDATA-MIGRATION.md) for the uninstall-then-reinstall steps.
-
-**Upgrading from v0.1.21, v0.1.22, or v0.1.23-beta.{1..6}:** the in-app updater on those builds is broken at varying severity (multiple compounding bugs across Velopack PerMachine + ACL + Job Object + auto-apply paths — see CHANGELOG entries v0.1.23-beta.1 through beta.13 for the full diagnosis chain). Clicking "apply update" from those versions either hangs, loops, or silently no-ops. **You must uninstall via Settings → Apps and fresh-install the v0.1.23+ MSI to escape the broken-updater chain.** Once on v0.1.23-beta.7 or newer, the in-app updater is fully functional and subsequent updates apply with a single first-launch UAC prompt.
-
 Release artifacts are currently **unsigned** (no Authenticode / codesign) — code-signing is under evaluation. Each release ships a `SHA256SUMS` file and [Sigstore SLSA Provenance](https://slsa.dev/) attestations for supply-chain verification.
 
 For data-handling details, see our [Privacy Policy](PRIVACY.md).

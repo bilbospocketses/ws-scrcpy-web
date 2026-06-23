@@ -24,15 +24,11 @@ const DEFAULT_SCAN_PROGRESS_INTERVAL = 10;
  * Minimal flat config supported by config.json:
  *   { "webPort": 8000, "adbPath": "adb" }
  *
- * Legacy `port` is still accepted and mapped to `webPort` in memory (migration
- * is non-destructive: the file is not rewritten unless another save happens).
- *
  * The full ServerItem array form is also accepted for advanced SSL setups:
  *   { "server": [{ "secure": true, "port": 443, "options": { ... } }] }
  */
 export interface FlatConfig {
-    // Legacy / pre-existing
-    port?: number;
+    // Pre-existing flat options
     adbPath?: string;
     dependenciesPath?: string;
     scanConcurrency?: number;
@@ -269,8 +265,7 @@ function validateField<K extends keyof AppConfig>(key: K, value: unknown): Valid
 function sanitizeAppConfig(raw: FlatConfig, warn: (msg: string) => void): AppConfig {
     const out: AppConfig = { ...APP_CONFIG_DEFAULTS };
 
-    // Migrate legacy `port` → `webPort` (in memory only; do not rewrite file).
-    const candidateWebPort = raw.webPort ?? raw.port;
+    const candidateWebPort = raw.webPort;
     if (candidateWebPort !== undefined) {
         const r = validateField('webPort', candidateWebPort);
         if (r.ok) out.webPort = r.value;
