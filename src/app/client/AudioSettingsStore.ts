@@ -52,14 +52,4 @@ export const AudioSettingsStore = {
     save(udid: string, settings: StoredAudioSettings): void {
         settingsService.setDeviceAudio(udid, settings as unknown as Record<string, unknown>);
     },
-
-    /**
-     * Cache-only clear: drops the 'audio' scope from the singleton's device
-     * cache with NO network write. NON-DURABLE — a page reload re-hydrates
-     * from the server, restoring the old value. Test-only; no production caller.
-     * A durable clear needs a future server DELETE-scope endpoint.
-     */
-    clear(udid: string): void {
-        settingsService.clearDeviceAudio(udid);
-    },
 };

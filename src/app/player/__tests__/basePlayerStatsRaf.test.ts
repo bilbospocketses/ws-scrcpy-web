@@ -1,13 +1,19 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import VideoSettings from '../../VideoSettings';
+import { BasePlayer } from '../BasePlayer';
 
 /**
  * Finding #44 at the BasePlayer level: stop() must cancelAnimationFrame the
  * stored stats-loop id, and the loop must not double-start (a second pushFrame
  * while a frame is pending creates no second loop). resetStats() must also cancel.
  *
- * We stub raf/caf globally BEFORE constructing so AnimationFrameGuard's default
- * params capture the stubs, then drive a minimal concrete BasePlayer subclass.
+ * We stub raf/caf globally in beforeEach (BEFORE each test constructs a player)
+ * so AnimationFrameGuard's constructor default params capture the stubs. That
+ * capture happens at CONSTRUCTION time, not module-eval, so BasePlayer is a
+ * plain static import — which also keeps its (heavy) transform at file-collection
+ * time, out of the per-test timeout, avoiding the full-suite parallel-load flake
+ * an in-test `await import()` exposed (item 60a).
  */
 
 let rafSpy: ReturnType<typeof vi.fn>;
@@ -36,9 +42,6 @@ describe('BasePlayer quality-stats rAF lifecycle (finding #44)', () => {
     });
 
     async function makePlayer() {
-        const { BasePlayer } = await import('../BasePlayer');
-        const VideoSettingsMod = await import('../../VideoSettings');
-        const VideoSettings = VideoSettingsMod.default;
         class TestPlayer extends BasePlayer {
             public getImageDataURL(): string {
                 return '';

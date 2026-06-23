@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // Hoist the spy and the shared cache so they are available inside vi.mock()'s
 // factory (which is also hoisted). This is the standard vitest pattern for
 // accessing a vi.fn() from within a vi.mock() factory.
-const { _cache, mockClearDeviceAudio, mockSetDeviceAudio } = vi.hoisted(() => {
+const { _cache, mockSetDeviceAudio } = vi.hoisted(() => {
     const cache = new Map<string, Record<string, unknown>>();
     return {
         _cache: cache,
@@ -12,29 +12,22 @@ const { _cache, mockClearDeviceAudio, mockSetDeviceAudio } = vi.hoisted(() => {
             cur['audio'] = audio;
             cache.set(udid, cur);
         }),
-        mockClearDeviceAudio: vi.fn((udid: string) => {
-            const cur = cache.get(udid);
-            if (cur && 'audio' in cur) delete cur['audio'];
-        }),
     };
 });
 
 // Stub the SettingsService singleton so AudioSettingsStore reads/writes go
 // through an in-test Map instead of fetch(). The stub mirrors the subset of
 // SettingsService used by AudioSettingsStore: getDeviceAudio, setDeviceAudio,
-// clearDeviceAudio, and hydrateDevice.
+// and hydrateDevice.
 //
-// setDeviceAudio and clearDeviceAudio are vi.fn() spies (hoisted above) so
-// the clear() tests can assert clearDeviceAudio was called and setDeviceAudio
-// was NOT called — the assertion that catches a "clear fires a write-through
-// PATCH" regression.
+// setDeviceAudio is a vi.fn() spy (hoisted above) so the save() tests can
+// assert it routed through the write-through PATCH path.
 vi.mock('../SettingsService', () => ({
     settingsService: {
         getDeviceAudio(udid: string): Record<string, unknown> | undefined {
             return _cache.get(udid)?.['audio'] as Record<string, unknown> | undefined;
         },
         setDeviceAudio: mockSetDeviceAudio,
-        clearDeviceAudio: mockClearDeviceAudio,
         hydrateDevice(_udid: string): Promise<void> {
             // In tests that exercise read-after-hydrate: pre-seed _cache before
             // calling hydrateDevice; this is a no-op (the real service fetches
@@ -49,13 +42,11 @@ import { AudioSettingsStore, type StoredAudioSettings } from '../AudioSettingsSt
 beforeEach(() => {
     _cache.clear();
     mockSetDeviceAudio.mockClear();
-    mockClearDeviceAudio.mockClear();
 });
 
 afterEach(() => {
     _cache.clear();
     mockSetDeviceAudio.mockClear();
-    mockClearDeviceAudio.mockClear();
 });
 
 describe('AudioSettingsStore.load', () => {
@@ -104,26 +95,5 @@ describe('AudioSettingsStore.save', () => {
         AudioSettingsStore.save('dev1', { enabled: true, source: 'playback', codec: 'opus' });
         AudioSettingsStore.save('dev1', { enabled: false, source: 'output', codec: 'aac' });
         expect(AudioSettingsStore.load('dev1')).toEqual({ enabled: false, source: 'output', codec: 'aac' });
-    });
-});
-
-describe('AudioSettingsStore.clear', () => {
-    it('removes saved settings for a udid and does NOT trigger a network write', () => {
-        AudioSettingsStore.save('dev1', { enabled: true, source: 'playback', codec: 'opus' });
-        mockSetDeviceAudio.mockClear(); // reset after the save() above
-        AudioSettingsStore.clear('dev1');
-        // Post-clear load must return null (cache-only removal worked)
-        expect(AudioSettingsStore.load('dev1')).toBeNull();
-        // clear() must route through clearDeviceAudio (cache-only), NOT setDeviceAudio
-        // (which fires a write-through PATCH). This is the regression guard.
-        expect(mockClearDeviceAudio).toHaveBeenCalledOnce();
-        expect(mockClearDeviceAudio).toHaveBeenCalledWith('dev1');
-        expect(mockSetDeviceAudio).not.toHaveBeenCalled();
-    });
-
-    it('is a no-op when nothing was saved', () => {
-        expect(() => AudioSettingsStore.clear('dev1')).not.toThrow();
-        expect(mockClearDeviceAudio).toHaveBeenCalledOnce();
-        expect(mockSetDeviceAudio).not.toHaveBeenCalled();
     });
 });
