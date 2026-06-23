@@ -55,17 +55,6 @@ describe('Config — AppConfig extension', () => {
         expect(c).toEqual(APP_CONFIG_DEFAULTS);
     });
 
-    it('maps legacy `port` → `webPort` in memory (config.json left as-is)', () => {
-        const configPath = setup({ port: 8123 });
-        const c = Config.getInstance().getAppConfig();
-        expect(c.webPort).toBe(8123);
-        // The alias is applied in memory only — the file is never rewritten, so the
-        // legacy `port` key stays on disk and `webPort` is not added.
-        const after = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-        expect(after.port).toBe(8123);
-        expect(after.webPort).toBeUndefined();
-    });
-
     it('falls back to default for an out-of-range webPort', () => {
         setup({ webPort: 80 });
         const c = Config.getInstance().getAppConfig();

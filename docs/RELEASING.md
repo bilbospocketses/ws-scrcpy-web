@@ -107,17 +107,6 @@ The script is interactive -- it builds v0.1.0 + v0.1.1 in a sandbox, walks you t
 
 This is intentionally NOT a CI gate -- it requires a real install, a real browser, and a real user. It's a release-time smoke test, not a regression test.
 
-## Migration notes for users on broken-updater builds
-
-When cutting a stable release after a chain of yanked or partially-broken beta releases, mirror the migration narrative in:
-
-- **README.md** `## Downloads` — short paragraph identifying which versions need a fresh-MSI install vs which can in-app update.
-- **docs/PROGRAMDATA-MIGRATION.md** — full step-by-step migration including any per-bug fix-version table.
-
-Existing precedent: the v0.1.23 stable cut migration covers v0.1.21 / v0.1.22 / v0.1.23-beta.{1..6} → v0.1.23, since the in-app updater on those builds was broken at varying severity (Velopack PerMachine + ACL + Job Object + auto-apply paths). The full diagnosis chain is captured in CHANGELOG entries v0.1.23-beta.1 through beta.13.
-
-For future stable cuts after broken-beta chains: keep the same shape — README has a short pointer, MIGRATION doc has the full story.
-
 ## See also
 
 - `docs/specs/2026-04-26-sp3-velopack-installer.md` -- design rationale for the packaging stack.
