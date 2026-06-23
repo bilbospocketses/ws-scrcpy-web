@@ -1,6 +1,6 @@
 # ws-scrcpy-web — Smoke Run-Sheet
 
-> **Smoke target: `v0.1.30-beta.66`** — bump this one line each release; everything below is version-agnostic.
+> **Smoke target: `v0.1.30-beta.67`** — bump this one line each release; everything below is version-agnostic.
 
 Execution-ordered, tickable checklist for the 0.1.30 Linux smoke gate. Regroups the canonical rows from
 [`smoke-full.md`](./smoke-full.md) by **app state** — the order you actually run them; that doc
@@ -189,6 +189,46 @@ New in beta.51, the wipe self-deletion fixed in beta.52. Run on the clean Win11 
 
 ---
 
+## #17 — SQLite store migration 🧩 *(upgrade-only — run on the beta.40 → latest path after pre-setting state)*
+
+> N/A until Phase 1 (PR #425) lands in a beta.
+
+| Test | How to perform | Expected + verify |
+|---|---|---|
+| ☐ **17.1** `[B]` 🧩 Settings + label migrate | Pre-Phase-1 build: set a non-default channel, dismiss the bookmark prompt, label a connected device → update to Phase-1 | Channel + dismissed-prompt + device label still in effect; new `wsscrcpy.db` in data dir beside `config.json`; `device-labels.json` left inert |
+| ☐ **17.2** `[B]` 🧩 config.json trimmed | After 17.1, open `config.json` | Only boot trio (`installMode` / `webPort` / `firstRunComplete`) remains; app runs on the same port |
+| ☐ **17.3** `[B]` 🧩🌐 allowedHosts survives | Add `"allowedHosts":["x.example.com"]` to pre-Phase-1 `config.json` → update | `allowedHosts` (and any `server` SSL array) **still present** in the trimmed file |
+| ☐ **17.4** `[B]` 🧩 Idempotent re-open | Restart the Phase-1 build a second time | No re-import, no error; `config.json` unchanged from 17.2; settings stable |
+
+## #18 — Auth subsystem (opt-in login) 🔐 *(new in beta.67 — run top-to-bottom; finish with 18.11)*
+
+> Off by default. Rows after 18.2 assume auth is enabled. Use two browser profiles / private windows (one admin, one regular user). Finish with 18.11 so the rest of the smoke runs un-gated.
+
+| Test | How to perform | Expected + verify |
+|---|---|---|
+| ☐ **18.1** `[B]` Default open mode | Fresh install (auth never enabled): load app, open Settings | App loads with **no** login prompt — auth is inert until a user is added |
+| ☐ **18.2** `[B]` 🔐 Secure the admin account | Settings → manage users → Add user (auth off); in the red "Secure the admin account" block set admin username + password; also fill New user fields (user role); click **Secure & add user** | "Login is now required. Reloading…" → page reloads to the login page; admin password set in the same step (no password-less window) |
+| ☐ **18.3** `[B]` 🔐 Login | Sign in with the admin credentials from 18.2 | Reloads into the app authenticated; admin sees admin-only Settings sections (web port, dependencies, updates, service, Users) |
+| ☐ **18.4** `[B]` 🔐 Brute-force lockout + generic error | Log out; attempt login with a wrong password 5× within 5 min; also try a non-existent username | Every failure shows the **same generic** message (no username-existence hint, timing blinded); after 5th failure the account is locked ~15 min — correct password refused while locked |
+| ☐ **18.5** `[B]` 🔐 Admin clears a lockout | As admin: Settings → manage users → unlock the locked account | Account unlocks immediately; can log in again with correct password |
+| ☐ **18.6** `[B]` 🔐 Manage users (role / disable / reset / delete + last-admin guard) | As admin: change a user's role; toggle disable; reset password; delete a throwaway account; then try to delete or demote the **only** admin | Each change applies + list refreshes; disabled account cannot log in; deleting/demoting the **last admin is refused** |
+| ☐ **18.7** `[B]` 🔐 Non-admin authz (UI + server) | Log in as the regular user; inspect Settings; issue an admin request from dev-tools: `fetch('/api/users',{method:'POST',...})` | Admin Settings sections **hidden** in the UI **and** the direct admin request **rejected by the server (401/403)**, not merely hidden; user can still connect/scan/label |
+| ☐ **18.8** `[B]` 🔐 Change own password | Settings → change password → enter current + new → Save; log out; log back in with new password | "password changed"; new password works; old one refused |
+| ☐ **18.9** `[B]` 🔐 Logout | Click log out in Settings | Returns to login page; app gated until sign-in |
+| ☐ **18.10** `[B]` 🔐📱 WebSocket streams gated | While logged out (no valid session cookie), try to open a device stream / file-browser / shell or load the app un-authenticated | Device/video/audio/file **WebSocket connections refused** (closed unauthorized) — auth gates live streams, not just the HTML page |
+| ☐ **18.11** `[B]` 🔐 Return to open mode | As admin: Settings → disable login (return to open mode) | Page reloads; login no longer required; app open again |
+| ☐ **18.12** `[B]` 🔐 Sessions survive restart | Auth enabled + session active → restart the server (don't clear cookies) | Existing `HttpOnly` session cookie still valid after restart (sessions are DB-backed in `wsscrcpy.db`) — no surprise logout |
+
+## #19 — Per-user device labels 📱 *(new in beta.67)*
+
+> Open mode unchanged (19.1 is the no-regression check). Rows 19.2–19.3 need auth enabled (Module 18) with two accounts and at least one discoverable device.
+
+| Test | How to perform | Expected + verify |
+|---|---|---|
+| ☐ **19.1** `[B]` 📱 Open-mode labels unchanged | Auth off: scan/connect a device, set a label, reload | Label persists and shows as before — per-user storage is transparent in open mode (single implicit user); no regression vs prior betas |
+| ☐ **19.2** `[B]` 🔐📱🌐 Per-user label isolation | Auth enabled (Module 18), accounts A and B. As A: scan a device, label it **"A-name"**. Log out. As B: scan the **same** device | B sees **no label (or B's own)** — not "A-name". Set **"B-name"** as B. Log back in as A → still **"A-name"**. Labels are isolated per account |
+| ☐ **19.3** `[B]` 🔐📱🌐 Labels in live scan hits | With A and B each holding a distinct label (from 19.2): as **each** user run a network scan | Each user's scan hits show **that user's own label** (A sees "A-name", B sees "B-name") — labels resolved per logged-in user as the scan streams, not globally |
+
 ## Global pass criteria
 
 | Criterion | Holds when |
@@ -200,5 +240,7 @@ New in beta.51, the wipe self-deletion fixed in beta.52. Run on the clean Win11 
 | **Clean shutdown** | "stop server & exit" tears down adb (+ Win tray) with no orphans; gated off in service mode |
 | **Data preserved** | User config/deps/logs survive uninstall + reinstall |
 | **Core flow** | Scan → connect → stream (video + control) → shell works on both platforms |
+| **Auth opt-in** | Off by default; enabling via the first-user lockdown gates **both** HTTP and device/stream WebSockets; brute-force lockout + admin-unlock work; change-password / logout / disable-to-open-mode all work; the last admin can never be locked out. Open mode is unchanged |
+| **Per-user labels** | Each logged-in account sees only its own device labels in scan hits + the connected list; open mode (single implicit admin) is unchanged from prior betas |
 
 **Stop-and-report:** a `[Linux]` SELinux/lifecycle failure in Modules 2/4/5, the service-update rows 6.5/6.6 — run `capture-logs.sh <id>` (`.ps1` on Windows) for the evidence bundle, then fix before promoting 0.1.30 stable. Cosmetic/polish → note as beta-territory. **Module 11 (no-libfuse2)** gates closing item 31, not 0.1.30-stable on its own.

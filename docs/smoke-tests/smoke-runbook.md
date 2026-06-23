@@ -1,6 +1,6 @@
 # ws-scrcpy-web — Smoke Test Runbook (plain-English)
 
-> **Smoke target: `v0.1.30-beta.66`** — bump this one line each release; everything below is version-agnostic.
+> **Smoke target: `v0.1.30-beta.67`** — bump this one line each release; everything below is version-agnostic.
 
 **What this is.** A step-by-step manual test pass for the **ws-scrcpy-web** app. Completing it is the agreed gate before cutting the **0.1.30 final** release — the "prove it really installs, updates, and streams on Windows + Linux" check. You run it by hand on your test VMs plus a real Android device; it can't be automated from a chat.
 
@@ -687,6 +687,142 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 └──────────────────────┴──────┴──────────────────────────────┴──────────────────────────────────────────────────┴──────┘
 ```
 
+### Module 17 — SQLite store migration (Phase 1 upgrade)
+*One-time data migration from `config.json` + `device-labels.json` into `wsscrcpy.db` on the first boot of a Phase-1 build. Pairs with Module 6 — run on the beta.40 → latest update path after setting state on the old build first. All rows are N/A until Phase 1 (PR #425) lands in a beta.*
+
+```text
+┌──────────────────────┬──────┬──────────────────────────────┬──────────────────────────────────────────────────┬──────┐
+│ Test                 │ OS   │ Do this                      │ Pass - what you should see                       │ Done │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 17.1 🧩 Settings +   │ Both │ On the pre-Phase-1 build:    │ Channel + dismissed-prompt + device label are    │ [ ]  │
+│ label migrate        │      │ set a non-default channel,   │ still in effect after the update. A new          │ [ ]  │
+│                      │      │ dismiss the bookmark prompt, │ wsscrcpy.db sits in the data dir beside          │      │
+│                      │      │ label a connected device.    │ config.json; device-labels.json is left inert.   │      │
+│                      │      │ Then update to Phase-1 and   │                                                  │      │
+│                      │      │ reopen.                      │                                                  │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 17.2 🧩 config.json  │ Both │ After 17.1, open config.json │ Only the boot trio (installMode / webPort /      │ [ ]  │
+│ trimmed              │      │ in the data dir.             │ firstRunComplete) remains; moved-out globals +    │      │
+│                      │      │                              │ prompt flags are gone; the app runs on the same  │      │
+│                      │      │                              │ port.                                            │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 17.3 🧩🌐            │ Both │ Before updating, add         │ allowedHosts (and any server SSL array) is still │ [ ]  │
+│ allowedHosts         │      │ "allowedHosts":["x.example   │ present in the trimmed file — server-only boot   │      │
+│ survives trim        │      │ .com"] to the pre-Phase-1    │ fields are preserved; a reverse-proxy / TLS      │      │
+│                      │      │ config.json, then update.    │ deploy keeps working across the upgrade.         │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 17.4 🧩 Idempotent   │ Both │ Restart the Phase-1 build a  │ No re-import, no error; config.json unchanged    │ [ ]  │
+│ re-open              │      │ second time.                 │ from 17.2; settings stable (the legacyImported   │      │
+│                      │      │                              │ guard ran once).                                 │      │
+└──────────────────────┴──────┴──────────────────────────────┴──────────────────────────────────────────────────┴──────┘
+```
+
+---
+
+### Module 18 — Auth subsystem (opt-in login)
+*New in beta.67. The optional login system is off by default and inert until the first user is added. Run these rows top-to-bottom — rows after 18.2 assume auth is enabled. Finish with 18.11 (return to open mode) so the rest of the smoke runs un-gated. Two browser profiles / private windows help (one admin, one regular user). Rows tagged 📱 need a connected/discoverable device.*
+
+```text
+┌──────────────────────┬──────┬──────────────────────────────┬──────────────────────────────────────────────────┬──────┐
+│ Test                 │ OS   │ Do this                      │ Pass - what you should see                       │ Done │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 18.1 Default open    │ Both │ Fresh install (or auth never │ App loads with NO login prompt and works exactly  │ [ ]  │
+│ mode                 │      │ enabled): load the app, open │ as prior betas. Auth is inert — nothing requires │      │
+│                      │      │ Settings.                    │ signing in until a user is added.                │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 18.2 Secure the      │ Both │ Settings > manage users >    │ "Login is now required. Reloading..." then the   │ [ ]  │
+│ admin account        │      │ Add user (auth off). In the  │ page reloads to the login page. The admin        │      │
+│ (first user)         │      │ red "Secure the admin        │ password was set in the same step — there is     │      │
+│                      │      │ account" block set an admin  │ never a password-less window.                    │      │
+│                      │      │ username + password; fill the│                                                  │      │
+│                      │      │ New user fields (user role); │                                                  │      │
+│                      │      │ click Secure & add user.     │                                                  │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 18.3 Login           │ Both │ On the login page, sign in   │ Reloads into the app, authenticated. Admin sees  │ [ ]  │
+│                      │      │ with the admin credentials   │ the admin-only Settings sections (web port,      │      │
+│                      │      │ from 18.2.                   │ dependencies, updates, service, Users).          │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 18.4 Brute-force     │ Both │ Log out (or private window). │ Every failure shows the same generic message     │ [ ]  │
+│ lockout + generic    │      │ Attempt login with a WRONG   │ ("Invalid credentials or the account is          │      │
+│ error                │      │ password 5x within 5 min;   │ temporarily locked.") — no hint whether the      │      │
+│                      │      │ also try a non-existent      │ username exists, and the bad-username response   │      │
+│                      │      │ username.                    │ is not noticeably faster (timing blinded).       │      │
+│                      │      │                              │ After the 5th failure the account is locked      │      │
+│                      │      │                              │ ~15 min; even the correct password is refused    │      │
+│                      │      │                              │ while locked.                                    │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 18.5 Admin clears a  │ Both │ As admin (separate session,  │ The account unlocks immediately and can log in   │ [ ]  │
+│ lockout              │      │ or after the lock expires),  │ again with the correct password.                 │      │
+│                      │      │ Settings > manage users >    │                                                  │      │
+│                      │      │ unlock the locked account.   │                                                  │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 18.6 Manage users    │ Both │ In the Users modal as admin: │ Each change applies immediately and the list     │ [ ]  │
+│ (role / disable /    │      │ change a user's role; toggle │ refreshes. A disabled account cannot log in.     │      │
+│ reset / delete +     │      │ disable; reset password;     │ Deleting or demoting the LAST admin is refused   │      │
+│ last-admin guard)    │      │ delete a throwaway account.  │ (you can't orphan the install).                  │      │
+│                      │      │ Then try to delete or demote │                                                  │      │
+│                      │      │ the only admin.              │                                                  │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 18.7 Non-admin authz │ Both │ Log in as the regular user   │ Admin-only Settings sections are HIDDEN in the   │ [ ]  │
+│ (UI + server)        │      │ account. Check Settings;     │ UI AND the direct admin request is REJECTED by   │      │
+│                      │      │ then from dev-tools issue an │ the server (401/403), not merely hidden. The     │      │
+│                      │      │ admin request: fetch('/api/  │ user can still connect/scan and keeps their own  │      │
+│                      │      │ users',{method:'POST',...}).  │ theme/labels/settings.                          │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 18.8 Change own      │ Both │ As any user: Settings >      │ "password changed"; the new password works and   │ [ ]  │
+│ password             │      │ change password > enter      │ the old one no longer does.                      │      │
+│                      │      │ current + new > Save. Log    │                                                  │      │
+│                      │      │ out, log back in with the    │                                                  │      │
+│                      │      │ new password.                │                                                  │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 18.9 Logout          │ Both │ Click log out in Settings.   │ Returns to the login page; the app is gated      │ [ ]  │
+│                      │      │                              │ again until you sign in.                         │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 18.10 📱 WebSocket   │ Both │ While logged out (no valid   │ The device/video/audio/file WebSocket             │ [ ]  │
+│ streams gated        │      │ session cookie), try to open │ connections are refused (closed unauthorized) —  │      │
+│                      │      │ a device stream / file-      │ auth gates the live streams, not just the HTML   │      │
+│                      │      │ browser / shell, or load the │ page.                                            │      │
+│                      │      │ app un-authenticated.        │                                                  │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 18.11 Return to open │ Both │ As admin: Settings > disable │ Page reloads; login no longer required; the app  │ [ ]  │
+│ mode                 │      │ login (return to open mode). │ is open again. (Re-enabling still needs at least │      │
+│                      │      │                              │ one admin with a password.)                      │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 18.12 Sessions       │ Both │ With auth enabled and a      │ Users persist and the existing HttpOnly session  │ [ ]  │
+│ survive restart      │      │ session active, restart the  │ cookie is still valid after restart (sessions    │      │
+│                      │      │ server (don't clear          │ are DB-backed in wsscrcpy.db) — no surprise      │      │
+│                      │      │ cookies).                    │ logout.                                          │      │
+└──────────────────────┴──────┴──────────────────────────────┴──────────────────────────────────────────────────┴──────┘
+```
+
+---
+
+### Module 19 — Per-user device labels
+*New in beta.67. Device labels are now per-user — each logged-in account sees its own names in scan results and the connected list. In open mode (default) labels behave exactly as before, so 19.1 is the no-regression check. Rows 19.2–19.3 need auth enabled (Module 18) with two accounts and at least one discoverable device.*
+
+```text
+┌──────────────────────┬──────┬──────────────────────────────┬──────────────────────────────────────────────────┬──────┐
+│ Test                 │ OS   │ Do this                      │ Pass - what you should see                       │ Done │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 19.1 📱 Open-mode    │ Both │ In open mode (auth off):     │ The label persists and shows as before — per-    │ [ ]  │
+│ labels unchanged     │      │ scan or connect a device,    │ user storage is transparent in open mode (single │      │
+│                      │      │ set a label, reload.         │ implicit user). No regression vs prior betas.    │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 19.2 🔐📱🌐 Per-user │ Both │ Auth enabled (Module 18),    │ B sees no label (or B's own) for that device —   │ [ ]  │
+│ label isolation      │      │ accounts A and B. As A: scan │ NOT A's label. Set "B-name" as B. Log back in as │      │
+│                      │      │ a device, label it "A-name". │ A → still "A-name". Each account's labels are    │      │
+│                      │      │ Log out. As B: scan the SAME │ isolated.                                        │      │
+│                      │      │ device.                      │                                                  │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 19.3 🔐📱🌐 Labels   │ Both │ With A and B each holding a  │ Each user's scan hits show that user's own label │ [ ]  │
+│ in live scan hits    │      │ distinct label for the device│ (A sees "A-name", B sees "B-name") — labels are  │      │
+│                      │      │ (from 19.2): as each user    │ resolved per logged-in user as the scan streams, │      │
+│                      │      │ run a network scan.          │ not globally.                                    │      │
+└──────────────────────┴──────┴──────────────────────────────┴──────────────────────────────────────────────────┴──────┘
+```
+
+---
+
 ## Global pass criteria
 
 ```text
@@ -716,6 +852,16 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 ├──────────────────────┼────────────────────────────────────────────────────────────────┼──────┤
 │ Accessible UI        │ Keyboard focus stays visible (:focus-visible); reduce-motion is│ [ ]  │
 │                      │ honoured; both themes render fully with no off-theme tints.    │      │
+├──────────────────────┼────────────────────────────────────────────────────────────────┼──────┤
+│ Auth opt-in          │ Off by default; enabling via the first-user lockdown gates     │ [ ]  │
+│                      │ BOTH HTTP and device/stream WebSockets; brute-force lockout +  │      │
+│                      │ admin-unlock work; change-password / logout / disable-to-open- │      │
+│                      │ mode all work; the last admin can never be locked out. Open    │      │
+│                      │ mode is unchanged.                                             │      │
+├──────────────────────┼────────────────────────────────────────────────────────────────┼──────┤
+│ Per-user labels      │ Each logged-in account sees only its own device labels in scan │ [ ]  │
+│                      │ hits + the connected list; open mode (single implicit admin)   │      │
+│                      │ is unchanged from prior betas.                                 │      │
 └──────────────────────┴────────────────────────────────────────────────────────────────┴──────┘
 ```
 

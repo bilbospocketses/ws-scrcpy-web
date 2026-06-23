@@ -1,10 +1,10 @@
 # ws-scrcpy-web — Full Smoke Test
 
-> **Smoke target: `v0.1.30-beta.66`** — bump this one line each release; everything below is version-agnostic.
+> **Smoke target: `v0.1.30-beta.67`** — bump this one line each release; everything below is version-agnostic.
 
 All-encompassing manual smoke, grouped by function and tagged by platform (`[Win]` / `[Linux]` / `[Both]`). Each row is a single test: **what to verify**, **how to perform it**, and the **expected result + how to verify**. Walk top to bottom; some rows depend on state from earlier rows in the same module.
 
-> **Consolidated 2026-06-06.** This doc absorbs the three former per-feature checklists — Linux service-mode (`beta.37`), stop-server-&-exit (`beta.39`), and the Windows multi-user / MSI pass (`v0.1.25-beta.3`) — so it is the **single gate for `0.1.30` final** (the first true Windows + Linux release). It covers every shipped feature to date: install/first-run, Linux layout & SELinux, multi-user & single-instance, service mode (incl. the beta.45–48 stable-ExecStart + install hand-off + post-install port-discovery fix), lifecycle, updates (local / machine-wide / user- & system-service), devices, streaming, adb, logs, Velopack 1.2.0, stop-server-&-exit, settings prompts, and the **Linux Server-section UX** (install-for-all-users, start-menu icon, in-app complete uninstall — Module 14), plus the security/quality hardening and **accessibility & theming** (Module 16) shipped in beta.66.
+> **Consolidated 2026-06-06.** This doc absorbs the three former per-feature checklists — Linux service-mode (`beta.37`), stop-server-&-exit (`beta.39`), and the Windows multi-user / MSI pass (`v0.1.25-beta.3`) — so it is the **single gate for `0.1.30` final** (the first true Windows + Linux release). It covers every shipped feature to date: install/first-run, Linux layout & SELinux, multi-user & single-instance, service mode (incl. the beta.45–48 stable-ExecStart + install hand-off + post-install port-discovery fix), lifecycle, updates (local / machine-wide / user- & system-service), devices, streaming, adb, logs, Velopack 1.2.0, stop-server-&-exit, settings prompts, and the **Linux Server-section UX** (install-for-all-users, start-menu icon, in-app complete uninstall — Module 14), plus the security/quality hardening and **accessibility & theming** (Module 16) shipped in beta.66, and the **SQLite persistence migration** (Module 17), the **opt-in auth subsystem** (Module 18), and **per-user device labels** (Module 19) shipped in beta.67.
 
 ## Pre-flight
 
@@ -241,6 +241,39 @@ beta.66's security/quality pass restored the keyboard focus indicator, added a r
 
 ---
 
+## Module 18 — Auth subsystem (opt-in login)
+
+> **New in beta.67.** The optional accounts/login subsystem is **off by default and inert until the first user is added**. These rows walk the whole lifecycle: enable via the first-user lockdown, login + brute-force lockout, user management + roles + server-side authz, change-password, logout, and reversing back to open mode. Mostly browser-only (`🔐`); rows tagged `📱` need a connected/discoverable device. **Run top-to-bottom** — rows after 18.2 assume auth is enabled. **Finish with 18.11 (return to open mode)** so the rest of the smoke runs un-gated. Two browser profiles / private windows help (one admin, one regular user).
+
+| Test | How to perform | Expected + verify |
+|---|---|---|
+| **18.1** `[Both]` Default open mode | Fresh install (or auth never enabled): load the app, open Settings. | App loads with **no** login prompt and works exactly as prior betas. Auth is inert — nothing requires signing in until a user is added. |
+| **18.2** `[Both]` 🔐 Secure the admin account (first user) | Settings → **manage users** → **Add user** (with auth off). In the red **"Secure the admin account"** block set an admin username + password; fill the **New user** fields too (a `user`-role account); click **Secure & add user**. | "Login is now required. Reloading…", then the page reloads to the **login page**. The admin password was set in the same step — there is never a password-less window. |
+| **18.3** `[Both]` 🔐 Login | On the login page, sign in with the admin credentials from 18.2. | Reloads into the app, authenticated. Admin sees the admin-only Settings sections (web port, dependencies, updates, service, Users). |
+| **18.4** `[Both]` 🔐 Brute-force lockout + generic error | Log out (or use a private window). Attempt login with a **wrong** password 5× within 5 min; also try a **non-existent** username. | Every failure shows the **same generic** message ("Invalid credentials or the account is temporarily locked.") — no hint whether the username exists, and the bad-username response is not noticeably faster (timing is blinded). After the 5th failure the account is **locked ~15 min**; even the correct password is refused while locked. |
+| **18.5** `[Both]` 🔐 Admin clears a lockout | As admin (separate session, or after the lock expires), Settings → **manage users** → **unlock** the locked account. | The account unlocks immediately; it can log in again with the correct password. |
+| **18.6** `[Both]` 🔐 Manage users (role / disable / reset / delete + last-admin guard) | In the Users modal as admin: change a user's **role**; toggle **disable**; **reset password**; **delete** a throwaway account. Then try to delete or demote the **only** admin. | Each change applies immediately and the list refreshes. A **disabled** account cannot log in. Deleting/demoting the **last admin is refused** (you can't orphan the install). |
+| **18.7** `[Both]` 🔐 Non-admin authz (UI **and** server) | Log in as the regular `user` account. Check Settings; then from dev-tools issue an admin request, e.g. `fetch('/api/users',{method:'POST',headers:{'content-type':'application/json'},body:'{}'})`. | Admin-only Settings sections are **hidden** in the UI **and** the direct admin request is **rejected by the server (401/403)**, not merely hidden. The user can still connect/scan and keeps their own theme/labels/settings. |
+| **18.8** `[Both]` 🔐 Change own password | As any user: Settings → **change password** → enter current + new → Save. Log out, log back in with the **new** password. | "password changed"; the new password works and the old one no longer does. |
+| **18.9** `[Both]` 🔐 Logout | Click **log out** in Settings. | Returns to the login page; the app is gated again until you sign in. |
+| **18.10** `[Both]` 🔐📱 WebSocket streams are gated | While **logged out** (no valid session cookie), try to open a device stream / file-browser / shell directly, or load the app un-authenticated. | The device/video/audio/file **WebSocket** connections are refused (closed unauthorized) — auth gates the live streams, not just the HTML page. |
+| **18.11** `[Both]` 🔐 Return to open mode | As admin: Settings → **disable login (return to open mode)**. | Page reloads; login no longer required; the app is open again. (Re-enabling later still needs at least one admin with a password — you can't lock everyone out.) |
+| **18.12** `[Both]` 🔐 Sessions survive a restart | With auth enabled and a session active, restart the server (don't clear cookies). | Users persist and the existing `HttpOnly` session cookie is still valid after restart (sessions are DB-backed in `wsscrcpy.db`) — no surprise logout. |
+
+---
+
+## Module 19 — Per-user device labels
+
+> **New in beta.67.** Device labels are now **per-user** — each logged-in account sees its own names in scan results and the connected list. In **open mode (default)** labels behave exactly as before (the single implicit admin), so 19.1 is the no-regression check; 19.2–19.3 need auth enabled (Module 18) with two accounts and at least one discoverable device (`📱🌐`).
+
+| Test | How to perform | Expected + verify |
+|---|---|---|
+| **19.1** `[Both]` 📱 Open-mode labels unchanged | In **open mode** (auth off): scan or connect a device, set a label, reload. | The label persists and shows as before — per-user storage is transparent in open mode (single implicit user). No regression vs prior betas. |
+| **19.2** `[Both]` 🔐📱🌐 Per-user label isolation | Auth enabled (Module 18), two accounts **A** and **B**. As **A**: scan/add a device, label it **"A-name"**. Log out. As **B**: scan/add the **same** device. | **B sees no label (or B's own)** for that device — **not** "A-name". Set **"B-name"** as B. Log back in as **A** → still **"A-name"**. Each account's labels are isolated. |
+| **19.3** `[Both]` 🔐📱🌐 Per-user labels in live scan hits | With A and B each holding a distinct label for the device (from 19.2): as **each** user run a network **scan**. | Each user's scan **hits show that user's own label** (A sees "A-name", B sees "B-name") — labels are resolved per logged-in user as the scan streams, not globally. |
+
+---
+
 ## Global pass criteria
 
 | Criterion | Holds when |
@@ -253,5 +286,7 @@ beta.66's security/quality pass restored the keyboard focus indicator, added a r
 | **Data preserved** | User config/deps/logs survive uninstall + reinstall. |
 | **Core flow** | Scan → connect → stream (video + control) → shell works on both platforms. |
 | **Accessible UI** | Keyboard focus is always visible (`:focus-visible`); reduce-motion is honoured; both light + dark themes render fully with no hardcoded off-theme tints. |
+| **Auth opt-in** | Off by default; enabling via the first-user lockdown gates **both** HTTP and the device/stream WebSockets; brute-force lockout + admin-unlock work; change-password / logout / disable-to-open-mode all work; the last admin can never be locked out. Open mode is unchanged. |
+| **Per-user labels** | Each logged-in account sees only its own device labels in scan hits + the connected list; open mode (single implicit admin) is unchanged from prior betas. |
 
 **If a `[Linux]` SELinux/lifecycle row (Modules 2, 4, 5, the service-mode update rows 6.5/6.6, or the Module 14 uninstall-cascade rows 14.4–14.7) or the core-flow criterion fails:** stop, run `capture-logs.sh <id>` (`.ps1` on Windows) for the evidence bundle, report back — fix before promoting 0.1.30 stable. Cosmetic/polish failures: note and triage as beta-territory vs stable-blocker. **Module 11 (no-libfuse2)** is the gate for closing item 31, not a 0.1.30-stable blocker on its own — a failure there means keep the libfuse2 gate, don't remove it.
