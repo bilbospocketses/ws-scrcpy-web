@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **Removed the legacy `config.json` `port` alias.** Old config files could set a top-level `port` to pick the web server port; it was mapped to `webPort` in memory on load. Pre-1.0 there are no installs relying on it, so the alias and its in-memory mapping are gone — set `webPort` instead.
+
 ## [0.1.30-beta.69] - 2026-06-23
 
 ### Removed
