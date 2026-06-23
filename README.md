@@ -40,12 +40,15 @@ Input flows back as mouse, UHID keyboard, i16-fixed-point scroll, and a D-pad/To
 - **Dark/light theme** -- toggle between dark (default) and light modes; first paint follows your OS preference, then your saved choice applies (persisted per-user in the app's SQLite store)
 - **Responsive layout** -- centered page container scales from mobile to 4K (up to 5 device cards)
 - **In-app dependency updater** -- check and update Node.js, ADB, and scrcpy-server from the home page
-- **System tray helper** -- shows connection status, quick-open browser, mode-aware text (local vs. service); auto-spawns and auto-recovers via the launcher's supervisor
+- **System tray helper** *(Windows only)* -- shows connection status, quick-open browser, mode-aware text (local vs. service); auto-spawns and auto-recovers via the launcher's supervisor. Linux has no tray yet — stop the app from Settings → Server instead.
 - **Server logging** -- all server output logged to `ws-scrcpy-web.log` with timestamps, tag prefixes, and 5MB rotation
 
 ## Service Mode
 
-ws-scrcpy-web can run as a Windows service (via Servy) or a Linux systemd unit, starting at boot and surviving logouts. Install/uninstall is handled from the browser UI. Service install requires a single UAC prompt; uninstall requires none -- the service-mode Node hands off to a Rust operation-server that serves a "please wait" transition page while `post-stop.bat` runs `servy-cli uninstall` and spawns a fresh user-session launcher. The browser auto-navigates to the new instance when it is ready. No 30-second port sweep, no manual relaunch.
+ws-scrcpy-web can run as a background **service** that starts at boot/login and survives logout. Install and uninstall are driven from the browser UI on both platforms, but the underlying mechanism is platform-specific:
+
+- **Windows** — a Servy-managed Windows service. Install takes a single UAC prompt; uninstall takes none — the service-mode Node hands off to a Rust operation-server that serves a "please wait" transition page while `post-stop.bat` runs `servy-cli uninstall` and spawns a fresh user-session launcher, then the browser auto-navigates to the new instance. No 30-second port sweep, no manual relaunch.
+- **Linux** — a systemd unit, in one of two scopes: **user-scope** (`~/.config/systemd/user/`, no sudo, starts at login) or **system-scope** (`/etc/systemd/system/`, one `pkexec` prompt, starts at boot). See [Linux install](#linux-install-appimage) for the scope walkthrough and the machine-wide `/opt` option.
 
 ## Embedding
 
@@ -242,14 +245,14 @@ These dependencies are compiled into the `dist/` output during the build process
 
 ### How the Launcher Works
 
-Production installs (MSI/AppImage) use a compiled Rust launcher (`ws-scrcpy-web-launcher.exe`) that supervises Node.js and manages the full application lifecycle:
+Production installs (MSI/AppImage) use a compiled Rust launcher (`ws-scrcpy-web-launcher.exe` on Windows; the AppImage's bundled launcher on Linux) that supervises Node.js and manages the full application lifecycle. Items marked *(Windows)* below are Windows-specific; the Linux launcher uses the platform equivalents (e.g. `pkexec`/polkit for privileged prompts):
 
 1. **Supervisor loop** -- spawns Node as a child process, monitors its exit code. Exit code 75 or a `.restart` marker triggers a respawn (used by the dependency updater after Node.js updates). Normal exit shuts down cleanly.
-2. **Tray supervisor** -- spawns the standalone tray helper and polls every 10 seconds; respawns it automatically if it crashes or is killed by the user.
-3. **UAC elevation** -- uses `ShellExecuteExW` with the `runas` verb for privileged operations (service install, update apply). No PowerShell intermediary.
+2. **Tray supervisor** *(Windows only)* -- spawns the standalone tray helper and polls every 10 seconds; respawns it automatically if it crashes or is killed by the user. Linux has no tray yet.
+3. **Privileged elevation** -- Windows uses `ShellExecuteExW` with the `runas` verb (UAC) for service install / update apply, with no PowerShell intermediary; Linux uses `pkexec`/polkit for the equivalent graphical prompt.
 4. **Operation-server** -- during service uninstall or app update, spawns a minimal Rust HTTP server on the same port to serve a "please wait" transition page. The operation-server detects when the new instance is ready and winds down.
-5. **Job object** -- all child processes (Node, tray, operation-server) are assigned to a Windows Job Object with `KILL_ON_JOB_CLOSE`, so nothing orphans if the launcher is killed.
-6. **Single-instance mutex** -- prevents duplicate launcher instances.
+5. **Job object** *(Windows)* -- all child processes (Node, tray, operation-server) are assigned to a Windows Job Object with `KILL_ON_JOB_CLOSE`, so nothing orphans if the launcher is killed.
+6. **Single-instance guard** -- prevents duplicate launcher instances (a named mutex on Windows; a file lock on Linux).
 
 In dev mode, `start.cmd` / `start.sh` provide a simpler restart loop for the same purpose.
 
@@ -335,11 +338,12 @@ The server logs all output to `ws-scrcpy-web.log`. Every line includes an ISO 86
 
 **Log file locations:**
 
-- **Installed (Velopack MSI):** `C:\ProgramData\WsScrcpyWeb\logs\` holds all logs — each rotated at 10 MB (one `.1` backup):
+- **Installed (Windows / Velopack MSI):** `C:\ProgramData\WsScrcpyWeb\logs\` holds all logs — each rotated at 10 MB (one `.1` backup):
   - `ws-scrcpy-web.log` — **canonical Node-server log** (the `Logger` file)
   - `launcher.log` — **canonical launcher log** (Rust `common::log` file); `tray.log` is the same for the tray helper
   - `server.log` — **thin crash-catcher**: launcher redirects Node child stdout/stderr here, but `Logger` suppresses its own echo under the launcher (`isTTY` gate), so this file only fills on raw crashes / native failures
   - `service.log` — **thin crash-catcher** (service mode only): service manager captures launcher stderr here, but the launcher suppresses normal lines under a service (`is_terminal()` gate), so this file only fills on raw launcher panics
+- **Installed (Linux AppImage / systemd):** logs live under the Linux data root — `~/.local/share/WsScrcpyWeb/logs/` for a user-scope install, `/var/lib/ws-scrcpy-web/logs/` for a system-scope service — same file names and 10 MB rotation as Windows (`ws-scrcpy-web.log`, `launcher.log`; `service.log` only fills on raw launcher panics under the systemd unit).
 - **Dev / `npm start`:** `ws-scrcpy-web.log` lands at the project root (legacy dev fallback); `server.log` / `service.log` are absent.
 
 See `docs/TECHNICAL_GUIDE.md` section 15 for details on the Logger utility and adding logging to new modules.
