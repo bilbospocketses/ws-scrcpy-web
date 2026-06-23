@@ -13,6 +13,22 @@ const log = Logger.for('SettingsApi');
  *   GET/PATCH  /api/settings              → global `user_settings`
  *   GET/PATCH  /api/settings/device?udid= → per-device `device_settings`
  *   POST       /api/settings/reset        → clear the caller's settings + labels
+ *
+ * Storage is intentionally schema-less: PATCH bodies are persisted as opaque
+ * per-user JSON keyed by setting name (global) or scope (device), so adding a
+ * new client setting — theme, iconSize, scanSubnets, dismissed-prompt flags,
+ * video/audio — needs no server change. We deliberately do NOT validate
+ * individual keys/values here:
+ *   - the body is already size-capped (1 MiB) and guaranteed a plain object by
+ *     `readJsonBody` (arrays/primitives/parse-failures collapse to `{}`), and
+ *     values are bound through prepared statements (no injection);
+ *   - every row is scoped to the calling user, who is also the sole consumer,
+ *     and the frontend coerces on read (e.g. a non-number iconSize → null);
+ *   - a per-key allowlist would break the schema-less contract above and add
+ *     ongoing fragility for nil security/correctness benefit (item 60c — judged
+ *     by-design on review).
+ * If a single setting ever needs a server-enforced invariant, validate that one
+ * key explicitly rather than reintroducing a global schema.
  */
 export class SettingsApi {
     async handle(req: IncomingMessage, res: ServerResponse): Promise<boolean> {

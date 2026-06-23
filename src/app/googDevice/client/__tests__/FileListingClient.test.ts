@@ -3,6 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ACTION } from '../../../../common/Action';
 import type { ParamsFileListing } from '../../../../types/ParamsFileListing';
+import { FileListingClient } from '../FileListingClient';
 
 // Minimal WebSocket stub. jsdom does not implement WebSocket. Reporting
 // readyState=CONNECTING(0) makes Multiplexer buffer outgoing frames instead of
@@ -63,8 +64,7 @@ describe('FileListingClient hashchange listener lifecycle (#37)', () => {
         return call?.[1] as EventListener | undefined;
     }
 
-    it('removes the SAME hashchange handler reference on destroy()', async () => {
-        const { FileListingClient } = await import('../FileListingClient');
+    it('removes the SAME hashchange handler reference on destroy()', () => {
         const client = FileListingClient.start(params);
 
         const registered = getHashchangeHandler();
@@ -78,8 +78,7 @@ describe('FileListingClient hashchange listener lifecycle (#37)', () => {
         expect(removedCall?.[1]).toBe(registered);
     });
 
-    it('does not react to hashchange after destroy()', async () => {
-        const { FileListingClient } = await import('../FileListingClient');
+    it('does not react to hashchange after destroy()', () => {
         const client = FileListingClient.start(params);
         const loadSpy = vi.spyOn(client as any, 'loadContent');
 
