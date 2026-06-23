@@ -24,6 +24,7 @@ export function login(db: Db, username: string, password: string, now: number): 
         lockedUntil: user.lockedUntil,
     };
     if (isLocked(state, now)) {
+        blindVerify(password); // blind timing: a locked account must not answer faster than a wrong password
         db.users.setLockout(user.id, extendLock(now)); // inactivity timer resets on every attempt while locked
         return { ok: false, reason: 'locked' };
     }

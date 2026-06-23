@@ -61,6 +61,16 @@ describe('login timing-blind paths', () => {
         spy.mockRestore();
     });
 
+    it('calls blindVerify on the locked-account path and still returns locked', async () => {
+        const passwordMod = await import('../password');
+        for (let i = 0; i < 5; i++) login(db, 'admin', 'wrong', 1000); // lock the account
+        const spy = vi.spyOn(passwordMod, 'blindVerify');
+        const r = login(db, 'admin', 'correct', 1000); // correct pw, but locked
+        expect(spy).toHaveBeenCalledTimes(1);
+        expect(r).toEqual({ ok: false, reason: 'locked' });
+        spy.mockRestore();
+    });
+
     it('does NOT call blindVerify on the happy path (correct password)', async () => {
         const passwordMod = await import('../password');
         const spy = vi.spyOn(passwordMod, 'blindVerify');
