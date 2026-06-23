@@ -73,7 +73,7 @@ export class AuthApi {
                 return true;
             }
             const user = db.users.getById(resolveUserId(req));
-            if (!user || !user.passwordHash || !verifyPassword(current, user.passwordHash)) {
+            if (!user?.passwordHash || !verifyPassword(current, user.passwordHash)) {
                 sendJson(res, 400, { error: 'current password incorrect' });
                 return true;
             }
