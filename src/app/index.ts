@@ -263,27 +263,13 @@ window.onload = async (): Promise<void> => {
     const parsedQuery = new URLSearchParams(hash);
     const action = parsedQuery.get('action');
 
-    // Migrate any legacy localStorage prefs into SQLite, then warm the global
-    // cache (iconSize, scanSubnets, theme). Placed ABOVE the deep-link early-
-    // returns so shell / file-listing sessions still migrate on first load.
-    // A network failure is logged and swallowed — the migration is idempotent and
-    // will retry on the next successful load.
-    {
-        const { settingsService } = await import('./client/SettingsService');
-        const { migrateLocalStorage } = await import('./client/migrateLocalStorage');
-        try {
-            await migrateLocalStorage(window.localStorage, settingsService);
-        } catch (e) {
-            console.error('[boot] settings migration failed; will retry next load', e);
-        }
-        // Apply the stored theme now that the migration has run, so an upgrading
-        // user's saved theme shows on THIS load rather than the next one. (initTheme
-        // already did the synchronous OS first paint at module-eval.) applyStoredTheme
-        // awaits loadGlobal internally, which also warms the global cache (iconSize,
-        // scanSubnets) the settings modals read; the .catch keeps a boot-time
-        // /api/settings failure from rejecting onload.
-        await applyStoredTheme().catch((e) => console.error('[boot] applyStoredTheme failed', e));
-    }
+    // Apply the stored theme + warm the global settings cache (iconSize,
+    // scanSubnets the settings modals read). Placed ABOVE the deep-link early-
+    // returns so shell / file-listing sessions warm it on first load too.
+    // applyStoredTheme awaits loadGlobal internally; initTheme already did the
+    // synchronous OS first paint at module-eval, and the .catch keeps a boot-time
+    // /api/settings failure from rejecting onload.
+    await applyStoredTheme().catch((e) => console.error('[boot] applyStoredTheme failed', e));
 
     // WebCodecs player must be registered so ConnectModal can find it
     const { WebCodecsPlayer } = await import('./player/WebCodecsPlayer');

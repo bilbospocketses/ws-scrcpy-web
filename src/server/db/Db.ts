@@ -4,7 +4,6 @@ import * as path from 'path';
 import { AppSettingsStore } from './AppSettingsStore';
 import { DB_FILENAME } from './constants';
 import { DeviceStore } from './DeviceStore';
-import { importLegacyIfNeeded } from './import/importLegacy';
 import { openDatabase } from './openDatabase';
 import { UserSettingsStore } from './UserSettingsStore';
 import { UserStore } from './UserStore';
@@ -27,22 +26,11 @@ export class Db {
         this.devices = new DeviceStore(handle);
     }
 
-    /**
-     * Open (or recover) <dataRoot>/wsscrcpy.db and run the one-time legacy import.
-     * `opts` lets callers point the import at the ACTUAL legacy file locations:
-     * `configPath` defaults to <dataRoot>/config.json and `deviceLabelsPath` to
-     * <dataRoot>/device-labels.json, but the real device-labels.json is
-     * bundle-relative (see legacyDeviceLabels), so Config passes its true path. The
-     * defaults keep the unit test hermetic.
-     */
-    static getInstance(dataRoot: string, opts?: { configPath?: string; deviceLabelsPath?: string }): Db {
+    /** Open (or recover) <dataRoot>/wsscrcpy.db and expose the repos. */
+    static getInstance(dataRoot: string): Db {
         if (!this.instance) {
             const dbPath = path.join(dataRoot, DB_FILENAME);
             const handle = openDatabase(dbPath);
-            importLegacyIfNeeded(handle, {
-                configPath: opts?.configPath ?? path.join(dataRoot, 'config.json'),
-                deviceLabelsPath: opts?.deviceLabelsPath ?? path.join(dataRoot, 'device-labels.json'),
-            });
             this.instance = new Db(handle, dbPath);
         }
         return this.instance;

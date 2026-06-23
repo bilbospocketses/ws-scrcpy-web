@@ -1,6 +1,6 @@
 # ws-scrcpy-web — Smoke Run-Sheet
 
-> **Smoke target: `v0.1.30-beta.67`** — bump this one line each release; everything below is version-agnostic.
+> **Smoke target: `v0.1.30-beta.69`** — bump this one line each release; everything below is version-agnostic.
 
 Execution-ordered, tickable checklist for the 0.1.30 Linux smoke gate. Regroups the canonical rows from
 [`smoke-full.md`](./smoke-full.md) by **app state** — the order you actually run them; that doc
@@ -188,17 +188,6 @@ New in beta.51, the wipe self-deletion fixed in beta.52. Run on the clean Win11 
 | ☐ **15.5** `[W]` Server-section order | Settings → Server | Order top→bottom: **reset prompts → web port → stop server & exit → uninstall ws-scrcpy-web** (no "install for all users" on Windows) |
 
 ---
-
-## #17 — SQLite store migration 🧩 *(upgrade-only — run on the beta.40 → latest path after pre-setting state)*
-
-> N/A until Phase 1 (PR #425) lands in a beta.
-
-| Test | How to perform | Expected + verify |
-|---|---|---|
-| ☐ **17.1** `[B]` 🧩 Settings + label migrate | Pre-Phase-1 build: set a non-default channel, dismiss the bookmark prompt, label a connected device → update to Phase-1 | Channel + dismissed-prompt + device label still in effect; new `wsscrcpy.db` in data dir beside `config.json`; `device-labels.json` left inert |
-| ☐ **17.2** `[B]` 🧩 config.json trimmed | After 17.1, open `config.json` | Only boot trio (`installMode` / `webPort` / `firstRunComplete`) remains; app runs on the same port |
-| ☐ **17.3** `[B]` 🧩🌐 allowedHosts survives | Add `"allowedHosts":["x.example.com"]` to pre-Phase-1 `config.json` → update | `allowedHosts` (and any `server` SSL array) **still present** in the trimmed file |
-| ☐ **17.4** `[B]` 🧩 Idempotent re-open | Restart the Phase-1 build a second time | No re-import, no error; `config.json` unchanged from 17.2; settings stable |
 
 ## #18 — Auth subsystem (opt-in login) 🔐 *(new in beta.67 — run top-to-bottom; finish with 18.11)*
 

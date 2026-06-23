@@ -16,15 +16,10 @@ afterEach(() => {
 });
 
 describe('Db singleton', () => {
-    it('opens <dataRoot>/wsscrcpy.db, runs the import, and exposes repos', () => {
+    it('opens <dataRoot>/wsscrcpy.db and exposes repos', () => {
         const root = dataRoot();
-        fs.writeFileSync(
-            path.join(root, 'config.json'),
-            JSON.stringify({ webPort: 8000, installMode: 'user', firstRunComplete: true, channel: 'beta' }),
-        );
         const db = Db.getInstance(root);
         expect(fs.existsSync(path.join(root, 'wsscrcpy.db'))).toBe(true);
-        expect(db.appSettings.get('channel')).toBe('beta');
         expect(db.users.getById(1)?.role).toBe('admin');
     });
 

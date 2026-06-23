@@ -10,11 +10,10 @@ import {
     VALID_INSTALL_MODES,
 } from '../common/ConfigEvents';
 import type { ServerItem } from '../types/Configuration';
+import { GLOBAL_KEYS } from './db/constants';
 import { Db, dbDir } from './db/Db';
-import { GLOBAL_KEYS } from './db/import/importConfigJson';
 import { EnvName } from './EnvName';
 import { Logger } from './Logger';
-import { DEFAULT_DEVICE_LABELS_PATH } from './legacyDeviceLabels';
 
 const DEFAULT_SCAN_CONCURRENCY = 64;
 const DEFAULT_SCAN_TCP_TIMEOUT_MS = 300;
@@ -326,9 +325,9 @@ const TRIO_KEYS: ReadonlySet<string> = new Set(['installMode', 'webPort', 'first
 /**
  * Overlay store-backed values (app_settings globals or the implicit admin's
  * prompt flags) onto a composed AppConfig, validating each. Only the provided
- * key list is consulted, so non-AppConfig store rows (authEnabled,
- * legacyImported) are ignored. Invalid stored values fall back to whatever the
- * compose-so-far already holds (defaults), matching sanitizeAppConfig semantics.
+ * key list is consulted, so non-AppConfig store rows (e.g. authEnabled) are
+ * ignored. Invalid stored values fall back to whatever the compose-so-far
+ * already holds (defaults), matching sanitizeAppConfig semantics.
  */
 function overlayStore(
     out: AppConfig,
@@ -494,16 +493,9 @@ export class Config {
             // load-order cycle). DEPS_PATH env / config.json / platform default.
             const bootDependenciesPath = resolveDependenciesPath(process.env, fileConfig, process.argv[1] ?? '.');
 
-            // Open (or recover) the SQLite store and run the one-time legacy
-            // import. The DB lives beside config.json (so a CONFIG_PATH override —
-            // tests, custom deploys — co-locates it). The import reads the REAL
-            // config.json + the bundle-relative device-labels.json, moves their
-            // non-boot fields into the store, and trims config.json to the boot
-            // skeleton (trio + server-only fields).
-            const db = Db.getInstance(dbDir(configFilePath), {
-                configPath: configFilePath,
-                deviceLabelsPath: DEFAULT_DEVICE_LABELS_PATH,
-            });
+            // Open (or recover) the SQLite store. The DB lives beside config.json
+            // (so a CONFIG_PATH override — tests, custom deploys — co-locates it).
+            const db = Db.getInstance(dbDir(configFilePath));
             const globals = db.appSettings.getAll();
 
             // Compose the effective AppConfig from the trio + store-backed globals.

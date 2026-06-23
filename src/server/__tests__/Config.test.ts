@@ -55,15 +55,15 @@ describe('Config — AppConfig extension', () => {
         expect(c).toEqual(APP_CONFIG_DEFAULTS);
     });
 
-    it('migrates legacy `port` → `webPort` (now persisted via the config trim)', () => {
+    it('maps legacy `port` → `webPort` in memory (config.json left as-is)', () => {
         const configPath = setup({ port: 8123 });
         const c = Config.getInstance().getAppConfig();
         expect(c.webPort).toBe(8123);
-        // Phase 1: the one-time import trims config.json — the legacy `port`
-        // alias is folded into `webPort` (the boot trio) and the old key is gone.
+        // The alias is applied in memory only — the file is never rewritten, so the
+        // legacy `port` key stays on disk and `webPort` is not added.
         const after = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-        expect(after.webPort).toBe(8123);
-        expect(after.port).toBeUndefined();
+        expect(after.port).toBe(8123);
+        expect(after.webPort).toBeUndefined();
     });
 
     it('falls back to default for an out-of-range webPort', () => {
@@ -150,7 +150,7 @@ describe('Config — AppConfig extension', () => {
     it('setActualWebPort with same port leaves portWasAutoShifted=false and does not rewrite file', () => {
         const configPath = setup({ webPort: 8000 });
         const cfg = Config.getInstance();
-        // Capture AFTER getInstance — the one-time import trims config.json on open.
+        // Capture the file after getInstance — it is not rewritten on open.
         const before = fs.readFileSync(configPath, 'utf-8');
         cfg.setActualWebPort(8000);
         const status = cfg.getFirstRunStatus();

@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **Dropped the one-time legacy-upgrade import.** Pre-1.0, every build is a development milestone with no production installs to migrate, so the code that imported a pre-SQLite install's `config.json`, `device-labels.json`, and browser `localStorage` into the SQLite store on first upgrade has been removed (the server-side `importLegacy` / `importConfigJson` / `importDeviceLabels` plus the `device-labels.json` reader, the client-side `migrateLocalStorage`, and the boot/first-load wiring). Fresh installs are unaffected — they start directly on the SQLite store, and the store itself with all per-user settings, device labels, and accounts is unchanged. Settings from a pre-store dev build will not carry across the upgrade, which is acceptable since there are no production installs predating the store.
+
 ## [0.1.30-beta.68] - 2026-06-23
 
 ### Changed

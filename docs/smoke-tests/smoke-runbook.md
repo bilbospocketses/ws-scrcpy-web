@@ -1,6 +1,6 @@
 # ws-scrcpy-web — Smoke Test Runbook (plain-English)
 
-> **Smoke target: `v0.1.30-beta.67`** — bump this one line each release; everything below is version-agnostic.
+> **Smoke target: `v0.1.30-beta.69`** — bump this one line each release; everything below is version-agnostic.
 
 **What this is.** A step-by-step manual test pass for the **ws-scrcpy-web** app. Completing it is the agreed gate before cutting the **0.1.30 final** release — the "prove it really installs, updates, and streams on Windows + Linux" check. You run it by hand on your test VMs plus a real Android device; it can't be automated from a chat.
 
@@ -686,38 +686,6 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 │                      │      │ <html> element.              │                                                  │      │
 └──────────────────────┴──────┴──────────────────────────────┴──────────────────────────────────────────────────┴──────┘
 ```
-
-### Module 17 — SQLite store migration (Phase 1 upgrade)
-*One-time data migration from `config.json` + `device-labels.json` into `wsscrcpy.db` on the first boot of a Phase-1 build. Pairs with Module 6 — run on the beta.40 → latest update path after setting state on the old build first. All rows are N/A until Phase 1 (PR #425) lands in a beta.*
-
-```text
-┌──────────────────────┬──────┬──────────────────────────────┬──────────────────────────────────────────────────┬──────┐
-│ Test                 │ OS   │ Do this                      │ Pass - what you should see                       │ Done │
-├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
-│ 17.1 🧩 Settings +   │ Both │ On the pre-Phase-1 build:    │ Channel + dismissed-prompt + device label are    │ [ ]  │
-│ label migrate        │      │ set a non-default channel,   │ still in effect after the update. A new          │ [ ]  │
-│                      │      │ dismiss the bookmark prompt, │ wsscrcpy.db sits in the data dir beside          │      │
-│                      │      │ label a connected device.    │ config.json; device-labels.json is left inert.   │      │
-│                      │      │ Then update to Phase-1 and   │                                                  │      │
-│                      │      │ reopen.                      │                                                  │      │
-├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
-│ 17.2 🧩 config.json  │ Both │ After 17.1, open config.json │ Only the boot trio (installMode / webPort /      │ [ ]  │
-│ trimmed              │      │ in the data dir.             │ firstRunComplete) remains; moved-out globals +    │      │
-│                      │      │                              │ prompt flags are gone; the app runs on the same  │      │
-│                      │      │                              │ port.                                            │      │
-├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
-│ 17.3 🧩🌐            │ Both │ Before updating, add         │ allowedHosts (and any server SSL array) is still │ [ ]  │
-│ allowedHosts         │      │ "allowedHosts":["x.example   │ present in the trimmed file — server-only boot   │      │
-│ survives trim        │      │ .com"] to the pre-Phase-1    │ fields are preserved; a reverse-proxy / TLS      │      │
-│                      │      │ config.json, then update.    │ deploy keeps working across the upgrade.         │      │
-├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
-│ 17.4 🧩 Idempotent   │ Both │ Restart the Phase-1 build a  │ No re-import, no error; config.json unchanged    │ [ ]  │
-│ re-open              │      │ second time.                 │ from 17.2; settings stable (the legacyImported   │      │
-│                      │      │                              │ guard ran once).                                 │      │
-└──────────────────────┴──────┴──────────────────────────────┴──────────────────────────────────────────────────┴──────┘
-```
-
----
 
 ### Module 18 — Auth subsystem (opt-in login)
 *New in beta.67. The optional login system is off by default and inert until the first user is added. Run these rows top-to-bottom — rows after 18.2 assume auth is enabled. Finish with 18.11 (return to open mode) so the rest of the smoke runs un-gated. Two browser profiles / private windows help (one admin, one regular user). Rows tagged 📱 need a connected/discoverable device.*

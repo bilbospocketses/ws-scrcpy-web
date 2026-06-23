@@ -1,5 +1,3 @@
-import type { SettingsSink } from './migrateLocalStorage';
-
 async function ok(res: Response): Promise<Response> {
     if (!res.ok) throw new Error(`settings request failed: HTTP ${res.status}`);
     return res;
@@ -15,7 +13,7 @@ export interface StoredVideo {
 // keep this module dependency-light (avoids importing AudioSettingsStore which
 // would create a cycle). Callers validate the shape before use.
 
-export class SettingsService implements SettingsSink {
+export class SettingsService {
     private globalCache: Record<string, unknown> | null = null;
     // null  = not hydrated yet → sync accessors fall back to defaults
     // object = hydrated (may be {} for a fresh device)

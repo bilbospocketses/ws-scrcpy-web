@@ -1,10 +1,10 @@
 # ws-scrcpy-web — Full Smoke Test
 
-> **Smoke target: `v0.1.30-beta.67`** — bump this one line each release; everything below is version-agnostic.
+> **Smoke target: `v0.1.30-beta.69`** — bump this one line each release; everything below is version-agnostic.
 
 All-encompassing manual smoke, grouped by function and tagged by platform (`[Win]` / `[Linux]` / `[Both]`). Each row is a single test: **what to verify**, **how to perform it**, and the **expected result + how to verify**. Walk top to bottom; some rows depend on state from earlier rows in the same module.
 
-> **Consolidated 2026-06-06.** This doc absorbs the three former per-feature checklists — Linux service-mode (`beta.37`), stop-server-&-exit (`beta.39`), and the Windows multi-user / MSI pass (`v0.1.25-beta.3`) — so it is the **single gate for `0.1.30` final** (the first true Windows + Linux release). It covers every shipped feature to date: install/first-run, Linux layout & SELinux, multi-user & single-instance, service mode (incl. the beta.45–48 stable-ExecStart + install hand-off + post-install port-discovery fix), lifecycle, updates (local / machine-wide / user- & system-service), devices, streaming, adb, logs, Velopack 1.2.0, stop-server-&-exit, settings prompts, and the **Linux Server-section UX** (install-for-all-users, start-menu icon, in-app complete uninstall — Module 14), plus the security/quality hardening and **accessibility & theming** (Module 16) shipped in beta.66, and the **SQLite persistence migration** (Module 17), the **opt-in auth subsystem** (Module 18), and **per-user device labels** (Module 19) shipped in beta.67.
+> **Consolidated 2026-06-06.** This doc absorbs the three former per-feature checklists — Linux service-mode (`beta.37`), stop-server-&-exit (`beta.39`), and the Windows multi-user / MSI pass (`v0.1.25-beta.3`) — so it is the **single gate for `0.1.30` final** (the first true Windows + Linux release). It covers every shipped feature to date: install/first-run, Linux layout & SELinux, multi-user & single-instance, service mode (incl. the beta.45–48 stable-ExecStart + install hand-off + post-install port-discovery fix), lifecycle, updates (local / machine-wide / user- & system-service), devices, streaming, adb, logs, Velopack 1.2.0, stop-server-&-exit, settings prompts, and the **Linux Server-section UX** (install-for-all-users, start-menu icon, in-app complete uninstall — Module 14), plus the security/quality hardening and **accessibility & theming** (Module 16) shipped in beta.66, and the **opt-in auth subsystem** (Module 18) and **per-user device labels** (Module 19) shipped in beta.67. *(The former Module 17 SQLite-migration test was retired in beta.69 along with the one-time legacy-upgrade import.)*
 
 ## Pre-flight
 
@@ -225,19 +225,6 @@ beta.66's security/quality pass restored the keyboard focus indicator, added a r
 | **16.3** `[Both]` Reduced motion *(WCAG 2.3.3)* | Turn on the OS "reduce motion" setting (GNOME: Settings → Accessibility; Windows: Settings → Accessibility → Visual effects → Animation effects **off**), reload the app, then trigger animated UI (open modals, spinners, transitions). | Animations and transitions collapse to **near-instant** — no meaningful slides / fades / spins (the global `prefers-reduced-motion: reduce` reset). Turn the setting back off → normal animation returns. |
 | **16.4** `[Both]` Light-mode status tints | In **light** theme: select a file row, hover the delete control, and (on a beta.40→latest update run) hover the apply-update control. | The selection / delete-hover / apply-update tints render as proper light-theme shades — they now resolve through the danger / success design tokens, **not** the slightly-off dark-theme channel values they were previously hardcoded to. |
 | **16.5** `[Both]` Embed page language | Open `embed.html` (the embeddable stream page); view source / inspect the `<html>` element. | `<html>` has a **`lang`** attribute set (assistive-tech hint), matching the main app shell. |
-
----
-
-## Module 17 — SQLite store migration (Phase 1 upgrade)
-
-> **Upgrade-only — pairs with Module 6 (Updates).** The one-time `config.json` + `device-labels.json` → `wsscrcpy.db` import runs on the **first boot of a Phase-1 build that updated from a pre-Phase-1 one**. Run this on the **beta.40 → latest** update path (Module 6's "from" build), after setting state on the old build first. `🧩` needs the pre-Phase-1 "from" build + pre-set state. *(Applies once Phase 1 — PR #425 — is in a beta; until then the rows are N/A.)*
-
-| Test | How to perform | Expected + verify |
-|---|---|---|
-| **17.1** `[Both]` 🧩 Settings + label migrate | On the **pre-Phase-1** build: set a non-default (switch update channel to beta, dismiss the bookmark prompt) and label a connected device. Update to the Phase-1 build and reopen. | The channel + dismissed-prompt + device label are all still in effect (settings carried over). A new `wsscrcpy.db` sits in the data dir beside `config.json`; `device-labels.json` is left inert. |
-| **17.2** `[Both]` 🧩 config.json trimmed to the boot skeleton | After 17.1, open `config.json` in the data dir. | It holds **only** the boot trio (`installMode` / `webPort` / `firstRunComplete`); the moved-out globals (channel/autoUpdate/…) and prompt flags are **gone from the file** (they're in `wsscrcpy.db` now). The app still runs on the same web port. |
-| **17.3** `[Both]` 🧩🌐 `allowedHosts` survives the trim | Before updating, add `"allowedHosts": ["x.example.com"]` to the pre-Phase-1 `config.json`. Update, then re-open `config.json`. | `allowedHosts` (and any `server` SSL array) is **still present** in the trimmed file — server-only boot fields are preserved, so a reverse-proxy / TLS deploy keeps working across the upgrade. |
-| **17.4** `[Both]` 🧩 Idempotent re-open | Restart the Phase-1 build a second time. | No re-import, no error; `config.json` unchanged from 17.2; settings stable (the `legacyImported` guard ran once). |
 
 ---
 
