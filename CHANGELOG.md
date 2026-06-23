@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.68] - 2026-06-23
+
 ### Changed
 
 - Internal maintenance only — no user-facing changes. Stabilized two unit tests that could intermittently time out under full-suite parallel load (hoisted heavy in-test dynamic imports to the top level), removed an unused non-durable settings-clear code path, documented the per-user settings store's deliberately schema-less design, and a small lint cleanup (optional chaining) in the auth password-change handler.
