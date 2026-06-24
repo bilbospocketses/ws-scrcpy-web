@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.70] - 2026-06-24
+
 ### Changed
 
 - **The Linux system-service install no longer assumes SELinux tooling is present.** The SELinux relabel steps (`semanage` / `restorecon`) run during a system-scope install are now best-effort, matching the uninstall path — so installing the system service on a distro without SELinux (Debian, Ubuntu, and similar) can't be tripped up by those tools being absent. On Fedora/RHEL the relabel still applies exactly as before.
