@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.71] - 2026-06-24
+
 ### Changed
 
 - **Pinned the AppImage's embedded `type2-runtime` to an immutable release tag.** Packaging pinned the rolling `continuous` runtime channel, whose `runtime-x86_64` hash drifts as upstream rebuilds it — that drift broke a release build. It now pins a dated, immutable release (`20251108`), so the build is reproducible and won't break when upstream rebuilds. It is the same kind of static-FUSE type-2 runtime, so the AppImage still launches and self-updates without a host `libfuse2`.
