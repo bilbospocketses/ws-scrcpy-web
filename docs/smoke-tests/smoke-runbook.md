@@ -11,13 +11,22 @@
 1. Do the **Pre-flight setup** once (next section) to prepare each machine.
 2. Work through the modules **in order**, top to bottom — some rows rely on the state left by earlier rows in the same module.
 3. In the **Done** column mark each test: `x` = pass · `F` = fail · `-` = skipped / not applicable.
-4. The **OS** column says where to run it: `Lin` = the Fedora VM · `Win` = the Windows VM · `Both` = run it on each.
-5. **Stop rule:** if a Linux SELinux/lifecycle test — or the core flow (scan → connect → stream → shell) — **fails**, stop, **run `capture-logs.sh` / `capture-logs.ps1` (Pre-flight F)** to grab the evidence bundle, and report it before shipping. Cosmetic glitches: jot them down and keep going.
+4. The **OS** column says where to run it. As of 2026-06-24 we test **two** Linux families — **Ubuntu** (made by Canonical, uses the **AppArmor** security system) and **Fedora** (made by Red Hat, uses **SELinux**) — so the column is now distro-aware:
+   - `Fed` = the **Fedora VM only** (these check SELinux-specific things).
+   - `Ubu` = the **Ubuntu VM only** (these check AppArmor / user-namespace things).
+   - `Lin` = run on **both** Linux VMs (Fedora **and** Ubuntu — behaviour that doesn't depend on the distro).
+   - `Win` = the **Windows VM**.
+   - `Both` = run it **everywhere** (Windows + both Linux VMs).
+5. **Stop rule:** if a Linux security/lifecycle test (SELinux on Fedora, **or** AppArmor / app-launch on Ubuntu) — or the core flow (scan → connect → stream → shell) — **fails**, stop, **run `capture-logs.sh` / `capture-logs.ps1` (Pre-flight F)** to grab the evidence bundle, and report it before shipping. Cosmetic glitches: jot them down and keep going.
 
 ## Jargon key (read once, refer back as needed)
 
-**Linux / Fedora / SELinux**
+**Linux (Fedora = SELinux · Ubuntu = AppArmor)**
 - **SELinux** — Fedora's mandatory security system. It tags every file with a "label" and limits what each program may touch, on top of normal file permissions.
+- **AppArmor** — Ubuntu's mandatory security system: the Ubuntu counterpart to SELinux. Same idea (the system can block a program from doing things even when normal file permissions would allow it), but it confines programs by their **path/profile** rather than by file labels. Fedora has SELinux; Ubuntu has AppArmor; they don't both run.
+- **unprivileged user namespaces / the Ubuntu 23.10+/24.04 restriction** — a "user namespace" is a Linux feature that lets a normal (non-root) program briefly act as its own mini-root so it can, for example, mount a filesystem. An **AppImage uses exactly this** to mount and run itself. Ubuntu 23.10 and 24.04 ship a hardening setting (`kernel.apparmor_restrict_unprivileged_userns = 1`) that **blocks** unprivileged programs from doing this — which can stop an AppImage from launching. Fedora does not restrict it this way.
+- **libfuse2 absent by default on Ubuntu 24.04** — Ubuntu 24.04 ships with **no** `libfuse2` package at all (older AppImages needed it). Our newer "type-2" AppImage carries its own FUSE inside, so this should not matter — but it makes Ubuntu 24.04 a real-world "no-libfuse2 host" test for free.
+- **apt vs dnf** — the package managers: **apt** is Ubuntu's (`sudo apt install …`), **dnf** is Fedora's (`sudo dnf install …`). Same job, different distro.
 - **Enforcing** — the SELinux mode where violations are actually **blocked** (the other mode, *Permissive*, only logs them). Check with `getenforce`; set with `sudo setenforce 1`.
 - **AVC denial** — one "SELinux blocked something" event in the system log. **Zero AVC** = nothing got blocked.
 - **file context (fcontext)** — an SELinux rule: "files under this path get this label." `semanage fcontext -l` lists them.
@@ -26,7 +35,7 @@
 - **restorecon** — re-applies the correct SELinux labels to files (used after an update swaps the binary).
 - **pkexec / polkit** — Linux's "type your password to allow this one action" — roughly Linux's version of Windows UAC.
 - **AppImage** — an entire Linux app in one file. Mark it executable (`chmod +x`) and run it; nothing to install.
-- **FUSE / libfuse2** — the tech an AppImage uses to mount and run itself. Newer ("type-2") AppImages bundle FUSE inside, so the host no longer needs the `libfuse2` package.
+- **FUSE / libfuse2** — the tech an AppImage uses to mount and run itself. Newer ("type-2") AppImages bundle FUSE inside, so the host no longer needs the `libfuse2` package — which matters because **Ubuntu 24.04 ships no `libfuse2` at all** (see above).
 - **systemd / unit / service** — Linux's background-service manager; a "unit" file defines a service.
 - **user-scope vs system-scope service** — runs as *your* login (no admin, just you) **vs** runs as root for the *whole machine* (needs admin).
 - **ExecStart** — the line in a unit file naming which program the service runs.
@@ -67,7 +76,8 @@
 
 This is **setup, not tests** — nothing here passes or fails the app; it just gets each machine ready.
 
-### A. Linux — your Hyper-V Fedora VM (the main event)
+### A. Linux — your Hyper-V Fedora VM (the SELinux side)
+This VM runs every `Fed` row and every `Lin` row.
 1. Boot the VM. Confirm strict security mode — run `getenforce`; it must say **Enforcing**. (If not: `sudo setenforce 1`.)
 2. Create two extra accounts: a **2nd normal user** and a **2nd admin (sudo) user**. (For the multi-user tests and the "different admin uninstalls" test.)
 3. Confirm a clean slate — this must print **nothing**:
@@ -81,6 +91,31 @@ This is **setup, not tests** — nothing here passes or fails the app; it just g
    ```
    (Ideally nothing ever scrolls by.)
 5. Download `WsScrcpyWeb-linux-beta.AppImage` from the latest GitHub release. **Leave it non-executable** — double-clicking a NON-`chmod +x` AppImage straight from the file manager is the realistic path most users take, and it's exactly what surfaced the Linux service-mode bug. (Marking it runnable with `chmod +x WsScrcpyWeb-linux-beta.AppImage` is optional — only needed if you'd rather launch it from a terminal.)
+
+### A2. Linux — your Ubuntu 24.04 VM (the AppArmor side)
+This is the **second** Linux VM, new for the 2026-06-24 distro-parity pass. It runs every `Ubu` row **and** every `Lin` row (the `Lin` rows were only ever exercised on Fedora before — now they get a second home here). Use a **stock Ubuntu 24.04 LTS desktop, left untouched** — the whole point is to test the app on a default Ubuntu, so **do NOT pre-change any security settings**.
+1. Boot a stock Ubuntu 24.04 LTS desktop VM. Same as Fedora, create two extra accounts: a **2nd normal user** and a **2nd admin (sudo) user**.
+2. **Confirm the divergent baseline — do NOT "fix" any of these; they are the test conditions:**
+   - The user-namespace restriction is **on** (this is what can stop an AppImage launching) — this must print **`1`**:
+     ```bash
+     cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns
+     ```
+     **Leave it at `1`.** (Setting it to `0` is a *workaround* you only reach for if test 2b.1 fails — never up front.)
+   - Ubuntu 24.04 ships **no** `libfuse2` — this must print **nothing**:
+     ```bash
+     dpkg -l | grep -i libfuse2
+     ```
+   - There are **no** SELinux tools (this is AppArmor's machine) — this should say "not found":
+     ```bash
+     which semanage getenforce
+     ```
+3. In a spare terminal, start the **AppArmor** denial monitor (the Ubuntu equivalent of Fedora's AVC monitor) and leave it running all session:
+   ```bash
+   sudo journalctl -k -f | grep -i 'apparmor="DENIED"'
+   ```
+   (Keep `sudo dmesg -w | grep -i 'apparmor.*denied'` handy too. Ideally nothing ever scrolls by.)
+4. Download the same `WsScrcpyWeb-linux-beta.AppImage` (latest release) and **leave it non-executable** — same realistic double-click path as Fedora.
+5. **This VM doubles as your no-libfuse2 host (section E) for the Ubuntu side** — because it ships no `libfuse2` at all, running the smoke here exercises Module 11.1/11.2 on the Canonical side for free (Fedora-minus-`fuse-libs` covers the Red Hat side).
 
 ### B. The older "update-from" build (only for the Module 6 update tests)
 The update tests need an **older** version installed first, then updated *to* the latest. The most recent **kept prior release** is **`v0.1.30-beta.68`** — download it into a separate dir (the AppImage filename is identical across versions, so it'd collide with the latest):
@@ -167,30 +202,117 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 │ 1.8 Cold-start tab   │ Win  │ Fully quit, then relaunch    │ Exactly one browser tab opens (the beta.63 D4    │ [ ]  │
 │ (D4)                 │      │ (Start-menu / exe), no       │ fix); a web-port-change restart AND an in-app    │      │
 │                      │      │ service.                     │ update relaunch do NOT double-tab.               │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 1.9 First-run        │ Both │ Force a failed first-run     │ The home page shows a "Setup incomplete - <names>│ [ ]  │
+│ dependency banner +  │      │ dependency download: start   │ failed to download. Check your network           │      │
+│ Retry                │      │ the app OFFLINE (or block the│ connection." banner with a Retry button. Restore │      │
+│                      │      │ download host) so adb /      │ the network, click Retry -> it re-attempts the   │      │
+│                      │      │ scrcpy-server / the terminal │ download and the banner clears on success. This  │      │
+│                      │      │ helper can't fetch on the    │ is the ONLY in-app way to recover from a flaky   │      │
+│                      │      │ very first run.              │ first-run download.                              │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 1.10 Install-folder  │ Win  │ After a FRESH MSI install    │ The first launch fires exactly ONE expected UAC, │ [ ]  │
+│ permission grant +   │      │ (1.5), on the FIRST launch of│ to grant the install folder writable to all      │      │
+│ one-time UAC         │      │ the app watch for a one-time │ logged-in users (the MSI removes the install-time│      │
+│                      │      │ UAC prompt; then run icacls  │ grant, so the app re-grants it once on a clean   │      │
+│                      │      │ "C:\Program                  │ install). icacls then shows Authenticated Users  │      │
+│                      │      │ Files\WsScrcpyWeb"; then     │ with (M) modify rights. A SECOND launch fires NO │      │
+│                      │      │ launch the app a second time.│ further UAC. This grant is what lets the in-app  │      │
+│                      │      │                              │ updater write its swap - so also confirm an      │      │
+│                      │      │                              │ in-app update (6.8) then works.                  │      │
 └──────────────────────┴──────┴──────────────────────────────┴──────────────────────────────────────────────────┴──────┘
 ```
 
 ### Module 2 — Linux layout & SELinux
-*Checks the app's files get the right Fedora security labels.*
+*Checks the app's files get the right Fedora security labels. Fedora-only — these check SELinux, which Ubuntu doesn't have. Ubuntu's equivalent (AppArmor) is in Module 2b.*
 
 ```text
 ┌──────────────────────┬──────┬──────────────────────────────┬──────────────────────────────────────────────────┬──────┐
 │ Test                 │ OS   │ Do this                      │ Pass - what you should see                       │ Done │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
-│ 2.1 Binary/deps      │ Lin  │ After a machine-wide (or     │ The security label is bin_t (the "system         │ [ ]  │
+│ 2.1 Binary/deps      │ Fed  │ After a machine-wide (or     │ The security label is bin_t (the "system         │ [ ]  │
 │ labels               │      │ system-service) install: ls  │ program" label).                                 │      │
 │                      │      │ -Z /opt/ws-scrcpy-web        │                                                  │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
-│ 2.2 State labels     │ Lin  │ Run: ls -Z                   │ The label is var_lib_t (the "writable app data"  │ [ ]  │
+│ 2.2 State labels     │ Fed  │ Run: ls -Z                   │ The label is var_lib_t (the "writable app data"  │ [ ]  │
 │                      │      │ /var/lib/ws-scrcpy-web       │ label - config, logs, deps the service writes).  │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
-│ 2.3 Security rules   │ Lin  │ After a system-service       │ Only the /opt rule (bin_t) shows; /var/lib is    │ [ ]  │
+│ 2.3 Security rules   │ Fed  │ After a system-service       │ Only the /opt rule (bin_t) shows; /var/lib is    │ [ ]  │
 │ registered           │      │ install: semanage fcontext   │ var_lib_t by the policy default - no custom rule.│      │
 │                      │      │ -l | grep ws-scrcpy-web      │                                                  │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
-│ 2.4 No blocked       │ Lin  │ Watch your "journalctl ...   │ Nothing scrolls by - zero SELinux denials.       │ [ ]  │
+│ 2.4 No blocked       │ Fed  │ Watch your "journalctl ...   │ Nothing scrolls by - zero SELinux denials.       │ [ ]  │
 │ actions on install   │      │ avc" monitor through test    │                                                  │      │
 │                      │      │ 1.2 and a service install.   │                                                  │      │
+└──────────────────────┴──────┴──────────────────────────────┴──────────────────────────────────────────────────┴──────┘
+```
+
+### Module 2b — Ubuntu: AppArmor, unprivileged-userns & FUSE
+*Ubuntu's side of the same coin as Module 2. Ubuntu has no SELinux — instead it uses **AppArmor** and (on 23.10+/24.04) **restricts unprivileged user namespaces**, which is exactly the trick an AppImage uses to mount itself. None of this is covered by the SELinux module. Run every row on the **stock Ubuntu 24.04 VM** (Pre-flight A2) with the AppArmor monitor running. **Row 2b.1 is a potential blocker for the Ubuntu (Canonical) side of the release.***
+
+```text
+┌──────────────────────┬──────┬──────────────────────────────┬──────────────────────────────────────────────────┬──────┐
+│ Test                 │ OS   │ Do this                      │ Pass - what you should see                       │ Done │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 2b.1 AppImage launch │ Ubu  │ On the stock Ubuntu 24.04 VM │ PASS: the app launches and the web UI opens. FAIL│ [ ]  │
+│ (userns) - POTENTIAL │      │ (userns restriction left at  │ (the risk this row exists for): "fuse: mount     │      │
+│ BLOCKER              │      │ 1), run the AppImage BOTH    │ failed" / a permission error / it silently does  │      │
+│                      │      │ ways: from a terminal (./WsSc│ nothing, and the AppArmor monitor shows a DENIED │      │
+│                      │      │ rcpyWeb-linux-beta.AppImage; │ for a "namespace". This is a POTENTIAL release   │      │
+│                      │      │ echo "exit=$?") AND by       │ blocker for the Ubuntu (Canonical) side. On fail,│      │
+│                      │      │ double-clicking it in Files  │ the real fix (an in-app extract-and-run fallback)│      │
+│                      │      │ (the GUI hides the error a   │ is still being written; the temporary workaround │      │
+│                      │      │ terminal shows).             │ is 'sudo sysctl -w                               │      │
+│                      │      │                              │ kernel.apparmor_restrict_unprivileged_userns=0'  │      │
+│                      │      │                              │ OR launching with APPIMAGE_EXTRACT_AND_RUN=1 -   │      │
+│                      │      │                              │ but record the stock-VM result FIRST, do not     │      │
+│                      │      │                              │ quietly tweak the VM and re-run.                 │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 2b.2 No libfuse2     │ Ubu  │ Confirm Ubuntu 24.04 has no  │ It launches with libfuse2 NEVER installed - this │ [ ]  │
+│ needed               │      │ libfuse2 (dpkg -l | grep -i  │ is the real-world "no libfuse2" case on the      │      │
+│                      │      │ libfuse2 prints nothing;     │ Ubuntu side (Module 11.1/11.2 ride along here).  │      │
+│                      │      │ ldconfig -p | grep -i        │ The AppImage carries its own FUSE. No "dlopen    │      │
+│                      │      │ libfuse.so.2 prints nothing),│ libfuse" error.                                  │      │
+│                      │      │ then launch (assuming 2b.1   │                                                  │      │
+│                      │      │ passed).                     │                                                  │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 2b.3 AppArmor:       │ Ubu  │ With a system-scope service  │ Both empty - the /opt/ws-scrcpy-web program and  │ [ ]  │
+│ nothing blocked      │      │ running on Ubuntu (from      │ its dependencies run unconfined (no AppArmor     │      │
+│ (service)            │      │ 2b.4): sudo journalctl -b |  │ profile blocks them). Any DENIED naming          │      │
+│                      │      │ grep 'apparmor="DENIED"' and │ /opt/ws-scrcpy-web/... means it needs an AppArmor│      │
+│                      │      │ sudo dmesg | grep -i         │ profile (this is the Ubuntu equivalent of a      │      │
+│                      │      │ 'apparmor.*denied'.          │ Fedora AVC failure).                             │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 2b.4                 │ Ubu  │ Install the system service   │ Install finishes and binds the port EVEN THOUGH  │ [ ]  │
+│ Install/uninstall    │      │ via the GUI (one password    │ the SELinux commands (semanage / restorecon)     │      │
+│ with no SELinux tools│      │ prompt), then uninstall it   │ don't exist on Ubuntu - they just no-op.         │      │
+│                      │      │ from inside the app. Watch   │ Uninstall reaches a CLEAN SLATE (bash            │      │
+│                      │      │ journalctl -u                │ clear-install.sh -> CLEAN SLATE on Ubuntu,       │      │
+│                      │      │ WsScrcpyWeb.service (install)│ validating that script on Ubuntu for the first   │      │
+│                      │      │ and the launcher log         │ time); the harmless "... spawn failed" ERROR     │      │
+│                      │      │ (uninstall).                 │ lines for the missing semanage /                 │      │
+│                      │      │                              │ update-desktop-database do NOT stop the teardown │      │
+│                      │      │                              │ and are NOT a real failure.                      │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 2b.5 Password dialog │ Ubu  │ On Ubuntu GNOME, trigger a   │ A real graphical password dialog appears (not a  │ [ ]  │
+│ (GNOME polkit)       │      │ system-scope INSTALL and an  │ text prompt in a terminal, not an instant        │      │
+│                      │      │ in-app UNINSTALL; once,      │ refusal). Decline -> the local app relaunches and│      │
+│                      │      │ DECLINE the password prompt. │ your state is intact; approve -> it completes.   │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 2b.6 Per-user service│ Ubu  │ Install a USER-scope service │ The hand-off helper starts the service after the │ [ ]  │
+│ survives (systemd-run│      │ via the GUI, then uninstall  │ local copy exits (systemctl --user is-active     │      │
+│ --user)              │      │ it as that same user.        │ WsScrcpyWeb -> active; the browser reconnects).  │      │
+│                      │      │                              │ After uninstall, the local app actually reappears│      │
+│                      │      │                              │ (a window/tab comes back). Confirms the          │      │
+│                      │      │                              │ 'systemd-run --user --collect' mechanism - which │      │
+│                      │      │                              │ carried a "verify on Fedora" note and had never  │      │
+│                      │      │                              │ run on Ubuntu - works on Ubuntu's systemd.       │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 2b.7 Desktop menu    │ Ubu  │ After a machine-wide install,│ The ws-scrcpy-web entry and its icon appear (not │ [ ]  │
+│ entry + icon (GNOME) │      │ open GNOME Activities / the  │ a blank/placeholder icon; ls /usr/share/icons/hic│      │
+│                      │      │ app grid; then uninstall.    │ olor/256x256/apps/ws-scrcpy-web.png exists), and │      │
+│                      │      │                              │ DISAPPEAR after uninstall (the icon/desktop      │      │
+│                      │      │                              │ caches were refreshed).                          │      │
 └──────────────────────┴──────┴──────────────────────────────┴──────────────────────────────────────────────────┴──────┘
 ```
 
@@ -221,6 +343,34 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 │ rejected             │      │ manually start a 2nd         │ ~100ms; the original tray is fine.               │      │
 │                      │      │ ws-scrcpy-web-tray.exe from  │                                                  │      │
 │                      │      │ the install folder.          │                                                  │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 3.6 Tray comes back  │ Win  │ Service mode, tray showing > │ Within ~10s exactly ONE tray reappears, WITH its │ [ ]  │
+│ after you kill it    │      │ kill ws-scrcpy-web-tray.exe  │ startup balloon ("tray started by launcher... use│      │
+│                      │      │ in Task Manager (End task).  │ the exit option from the tray menu"); right-click│      │
+│                      │      │                              │ > Open still works; killing it again always      │      │
+│                      │      │                              │ brings exactly one back (a single-instance lock  │      │
+│                      │      │                              │ blocks duplicates). This is the "the tray keeps  │      │
+│                      │      │                              │ coming back" guarantee - the opposite of the     │      │
+│                      │      │                              │ cases where it deliberately does NOT come back   │      │
+│                      │      │                              │ (5.5 / 6.8).                                     │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 3.7 One normal + one │ Win  │ App running in local mode >  │ (a) the same-level 2nd launch is BLOCKED - it    │ [ ]  │
+│ admin instance may   │      │ (a) double-click the exe     │ exits almost immediately, no 2nd server/tray (on │      │
+│ coexist              │      │ again; (b) right-click > Run │ Windows it's a pure no-op, it doesn't even reopen│      │
+│                      │      │ as administrator a 2nd       │ the browser); (b) the ADMIN (elevated) instance  │      │
+│                      │      │ instance; (c) a 2nd elevated │ IS allowed to run alongside the normal one       │      │
+│                      │      │ launch.                      │ (separate lock - this is the documented "run the │      │
+│                      │      │                              │ normal app, then Run-as-admin to uninstall the   │      │
+│                      │      │                              │ service" workflow), then exits cleanly; (c) a 2nd│      │
+│                      │      │                              │ elevated launch is BLOCKED.                      │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 3.8 No startup       │ Win  │ After a fresh MSI install +  │ NOT found under HKLM OR HKCU, and NO             │ [ ]  │
+│ Run-key, yet a tray  │      │ service install (before any  │ ws-scrcpy-web entry on the Startup tab - yet a   │      │
+│ still appears        │      │ uninstall): reg query the    │ per-session tray still shows up (3.4). Proves the│      │
+│                      │      │ HKLM ...\Run\WsScrcpyWebTray │ background SUPERVISOR (not a startup registry    │      │
+│                      │      │ value, the same under HKCU,  │ entry) is what brings the tray up; the old       │      │
+│                      │      │ and check Task Manager >     │ Run-key code was removed.                        │      │
+│                      │      │ Startup tab.                 │                                                  │      │
 └──────────────────────┴──────┴──────────────────────────────┴──────────────────────────────────────────────────┴──────┘
 ```
 
@@ -282,7 +432,7 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 │ 5.3 Headless         │ Lin  │ Uninstall when nobody is     │ No relaunch attempt; you get a manual-restart    │ [ ]  │
 │ uninstall            │      │ logged into the desktop.     │ message; nothing left running; no crash.         │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
-│ 5.4 Security rules   │ Lin  │ After any uninstall:         │ Returns NOTHING - both SELinux rules were        │ [ ]  │
+│ 5.4 Security rules   │ Fed  │ After any uninstall:         │ Returns NOTHING - both SELinux rules were        │ [ ]  │
 │ cleaned up           │      │ sudo semanage fcontext -l    │ removed.                                         │      │
 │                      │      │ | grep ws-scrcpy-web         │                                                  │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
@@ -295,11 +445,15 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 │ safe                 │      │ uninstall.                   │ service is STILL installed (it did NOT silently  │      │
 │                      │      │                              │ remove itself).                                  │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
-│ 5.7 Full Windows     │ Win  │ Add/Remove Programs >        │ Service stops + unregisters; the startup         │ [ ]  │
-│ uninstall            │      │ ws-scrcpy-web > Uninstall as │ registry entry (HKLM ...\Run\WsScrcpyWebTray) is │      │
-│                      │      │ Admin.                       │ gone; Program Files\WsScrcpyWeb is cleared; YOUR │      │
-│                      │      │                              │ data (config/deps/logs) is kept; the admin's     │      │
-│                      │      │                              │ tray disappears.                                 │      │
+│ 5.7 Full Windows     │ Win  │ Add/Remove Programs >        │ Service stops + unregisters; Program             │ [ ]  │
+│ uninstall            │      │ ws-scrcpy-web > Uninstall as │ Files\WsScrcpyWeb is cleared; YOUR data          │      │
+│                      │      │ Admin.                       │ (config/deps/logs) is kept; the admin's tray     │      │
+│                      │      │                              │ disappears. (Legacy check: if an old HKLM        │      │
+│                      │      │                              │ ...\Run\WsScrcpyWebTray startup entry is present │      │
+│                      │      │                              │ it's removed - but fresh installs NO LONGER      │      │
+│                      │      │                              │ create one (the supervisor owns the tray), so on │      │
+│                      │      │                              │ a clean install this passes with nothing to      │      │
+│                      │      │                              │ remove; the live check is 3.8.)                  │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
 │ 5.8 User-scope       │ Lin  │ User-scope service installed │ The user service is stopped/disabled/removed     │ [ ]  │
 │ uninstall -> back to │      │ and in use - uninstall AS    │ (unit file gone); after relaunch only the local  │      │
@@ -375,8 +529,10 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 │                      │      │ subnet).                     │                                                  │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
 │ 7.2 Scan a subnet    │ Both │ Open the scan-network dialog │ Reachable devices are listed; picking one        │ [ ]  │
-│                      │      │ and scan a subnet.           │ connects; a bad/empty subnet is handled          │      │
-│                      │      │                              │ gracefully (no hang).                            │      │
+│                      │      │ and scan a subnet. Also try a│ connects; a bad/empty subnet is handled          │      │
+│                      │      │ PUBLIC range (e.g.           │ gracefully (no hang). A PUBLIC range is REFUSED -│      │
+│                      │      │ 8.8.8.0/24).                 │ scans are restricted to private home-network     │      │
+│                      │      │                              │ ranges. (beta.66 security)                       │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
 │ 7.3 USB device       │ Win  │ Plug in a USB Android device;│ It appears under connected devices and survives a│ [ ]  │
 │ (Windows)            │      │ approve the "allow debugging"│ page reload.                                     │      │
@@ -386,6 +542,11 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 │ place                │      │ disconnect a few devices;    │ whole-list flicker; labels load once per refresh,│      │
 │                      │      │ watch the connected-devices  │ not once per row; changes show within ~1s.       │      │
 │                      │      │ list.                        │ (beta.66 perf)                                   │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 7.5 Remembered device│ Both │ Connect a device once (so its│ The scan result shows the device's REMEMBERED    │ [ ]  │
+│ model in scan results│      │ details get recorded),       │ maker/model from its last connection - BEFORE you│      │
+│                      │      │ disconnect it, then run a    │ reconnect - because the saved device record fills│      │
+│                      │      │ network SCAN again.          │ it back in. (beta.67)                            │      │
 └──────────────────────┴──────┴──────────────────────────────┴──────────────────────────────────────────────────┴──────┘
 ```
 
@@ -409,9 +570,10 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 │ 8.3 Audio            │ Both │ Turn on audio in the stream  │ Audio plays; the codec/source toggles work.      │ [ ]  │
 │                      │      │ settings (needs Android 11+).│                                                  │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
-│ 8.4 Quality settings │ Both │ Change                       │ Changes take effect; the stream restarts with    │ [ ]  │
-│                      │      │ display/codec/encoder/fps/bit│ them; they're remembered per-device next time.   │      │
-│                      │      │ rate, then reconnect.        │                                                  │      │
+│ 8.4 Quality settings │ Both │ Change display/codec/encoder/│ Changes take effect; the stream restarts with    │ [ ]  │
+│                      │      │ fps/bitrate, then reconnect; │ them; they're remembered per-device next time AND│      │
+│                      │      │ then RESIZE the browser      │ survive resizing the window - they're keyed PER  │      │
+│                      │      │ window and reopen the device.│ DEVICE, not per window size. (beta.67 fix)       │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
 │ 8.5 H.265 (HEVC)     │ Both │ Set the video codec to       │ Both codecs decode and render in-browser         │ [ ]  │
 │ decode               │      │ H.265/HEVC, connect; then    │ (WebCodecs) — live frames, no decode errors.     │      │
@@ -440,6 +602,21 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 │ 9.3 Device buttons   │ Both │ Use sleep/wake and any       │ Buttons show the right state (green/red); the    │ [ ]  │
 │                      │      │ power/nav buttons on the     │ actions actually happen on the device.           │      │
 │                      │      │ device card.                 │                                                  │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 9.4 Dependencies     │ Both │ Home page > the Dependencies │ The table loads; "check for updates" fills in    │ [ ]  │
+│ panel (admin-only)   │      │ section: read the table      │ Latest; an update fetches and swaps that one     │      │
+│                      │      │ (Installed / Latest /        │ dependency; "restart server" cycles the server   │      │
+│                      │      │ Status), click "check for    │ and it comes back. With login enabled (Module 18)│      │
+│                      │      │ updates", run a              │ the whole panel and its APIs are ADMIN-ONLY: a   │      │
+│                      │      │ per-dependency update, then  │ regular 'user' account doesn't see it, and a     │      │
+│                      │      │ "restart server".            │ direct update request is rejected (401/403).     │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 9.5 Shell-unavailable│ Both │ On a host where the terminal │ Instead of the shell button silently vanishing,  │ [ ]  │
+│ shows a reason       │      │ helper (node-pty) is missing │ it surfaces an ACTIONABLE reason (the            │      │
+│                      │      │ or failed to load, open a    │ capabilities API reports shell:false plus a      │      │
+│                      │      │ device and look for the shell│ shellReason: download failed / no prebuilt for   │      │
+│                      │      │ button.                      │ this Node version / native load failure). (9.1 is│      │
+│                      │      │                              │ the working path; this is the failure path.)     │      │
 └──────────────────────┴──────┴──────────────────────────────┴──────────────────────────────────────────────────┴──────┘
 ```
 
@@ -476,6 +653,14 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 │                      │      │ in-app route in the browser  │ serves the shell. Static responses carry         │      │
 │                      │      │ and refresh.                 │ X-Content-Type-Options: nosniff and              │      │
 │                      │      │                              │ X-Frame-Options: SAMEORIGIN. (beta.66 security)  │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 10.6 allowedHosts    │ Both │ Set allowedHosts:            │ The LISTED host is served (200); an UNLISTED     │ [ ]  │
+│ reverse-proxy opt-in │      │ ["devices.example.com"] in   │ domain Host is refused (403) - this is the       │      │
+│                      │      │ config.json and restart. Then│ DNS-rebinding guard. With allowedHosts           │      │
+│                      │      │ curl with a matching Host    │ empty/unset, only localhost + IP addresses pass. │      │
+│                      │      │ header and again with an     │ This is the supported way to serve the app on a  │      │
+│                      │      │ unlisted one (Host:          │ real domain behind a TLS reverse proxy. (beta.67)│      │
+│                      │      │ evil.example.net).           │                                                  │      │
 └──────────────────────┴──────┴──────────────────────────────┴──────────────────────────────────────────────────┴──────┘
 ```
 
@@ -534,6 +719,17 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 │ folder honored       │      │ variable                     │ (both halves of the app agree). Mostly covered   │      │
 │                      │      │ DATA_ROOT=/tmp/wssw-dataroot │ by unit tests; this just confirms it end-to-end. │      │
 │                      │      │ set.                         │                                                  │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 12.5 Killing the     │ Win  │ Local mode, device + stream  │ Within ~1s the whole tree is gone - Task Manager │ [ ]  │
+│ launcher reaps the   │      │ live (node, node-pty,        │ shows NO node.exe / node-pty / adb.exe /         │      │
+│ whole tree           │      │ adb.exe, scrcpy.exe all      │ scrcpy.exe from this instance (the Windows Job   │      │
+│                      │      │ running) > KILL              │ Object kills the children when the launcher dies │      │
+│                      │      │ ws-scrcpy-web-launcher.exe in│ abnormally). Immediately MSI-repair/reinstall >  │      │
+│                      │      │ Task Manager (End task) - NOT│ NO leftover .rbf rename, no "file in use" (the   │      │
+│                      │      │ "stop server & exit". Repeat │ old orphan bug stays fixed). NB: this is the     │      │
+│                      │      │ for a service-mode launcher  │ OPPOSITE branch from 12.3 / 15.4, which test the │      │
+│                      │      │ via sc stop / Servy stop.    │ GRACEFUL exit that lets the updater survive -    │      │
+│                      │      │                              │ only the graceful path was covered before.       │      │
 └──────────────────────┴──────┴──────────────────────────────┴──────────────────────────────────────────────────┴──────┘
 ```
 
@@ -549,10 +745,14 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 │                      │      │ even when the port changes"  │ config.json).                                    │      │
 │                      │      │ > confirm.                   │                                                  │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
-│ 13.2 Reset the       │ Both │ Settings > "reset welcome    │ The welcome dialog shows again AND the bookmark  │ [ ]  │
-│ prompts              │      │ and bookmark prompts".       │ reminder is cleared (both per-port and "ever"),  │      │
-│                      │      │                              │ so it can re-appear. Check it does NOT           │      │
-│                      │      │                              │ immediately re-suppress the per-port reminder.   │      │
+│ 13.2 Reset the       │ Both │ FIRST set a non-default theme│ The welcome dialog shows again AND the bookmark  │ [ ]  │
+│ prompts (also wipes  │      │ + a device label + a         │ reminder is cleared (both per-port and "ever") - │      │
+│ ALL your settings)   │      │ per-device stream setting so │ AND it ALSO wipes every other per-user setting:  │      │
+│                      │      │ you can watch them get wiped.│ theme, device labels, per-device stream/audio,   │      │
+│                      │      │ Then Settings > "reset       │ icon size, saved scan subnets. The button's      │      │
+│                      │      │ welcome and bookmark         │ wording undersells it - it's a full per-user     │      │
+│                      │      │ prompts".                    │ reset. Check it does NOT immediately re-suppress │      │
+│                      │      │                              │ the per-port reminder.                           │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
 │ 13.3 Server-section  │ Both │ Open Settings; look at the   │ Top to bottom: reset prompts > web port > [Linux │ [ ]  │
 │ layout               │      │ Server section (3rd, after   │ only] install for all users > stop server & exit │      │
@@ -606,7 +806,7 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 │                      │      │                              │ removed either way; a later reinstall            │      │
 │                      │      │                              │ reuses the saved port.                           │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
-│ 14.7 Uninstall -     │ Lin  │ After any uninstall, run     │ The output is empty - the fcontext list          │ [ ]  │
+│ 14.7 Uninstall -     │ Fed  │ After any uninstall, run     │ The output is empty - the fcontext list          │ [ ]  │
 │ SELinux clean        │      │ sudo semanage fcontext -l    │ has no ws-scrcpy-web rules - and there           │      │
 │                      │      │ | grep ws-scrcpy-web.        │ are zero AVC denials.                            │      │
 └──────────────────────┴──────┴──────────────────────────────┴──────────────────────────────────────────────────┴──────┘
@@ -619,13 +819,18 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 ┌──────────────────────┬──────┬──────────────────────────────┬──────────────────────────────────────────────────┬──────┐
 │ Test                 │ OS   │ Do this                      │ Pass - what you should see                       │ Done │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
-│ 15.1 Uninstall -     │ Win  │ MSI install > Settings >     │ One UAC prompt (Update.exe self-elevates).       │ [ ]  │
-│ keep                 │      │ Server > "uninstall" > leave │ Program Files\WsScrcpyWeb gone; service gone (sc │      │
-│                      │      │ "keep my settings & logs"    │ query = not found); tray gone; the Add/Remove    │      │
-│                      │      │ CHECKED (default) >          │ Programs entry is gone. config.json + logs       │      │
-│                      │      │ uninstall.                   │ survive under ProgramData\WsScrcpyWeb;           │      │
-│                      │      │                              │ dependencies gone. A later reinstall reuses the  │      │
-│                      │      │                              │ saved port.                                      │      │
+│ 15.1 Uninstall - keep│ Win  │ From a STANDARD (non-admin)  │ One UAC prompt, RAISED BY Update.exe ITSELF -    │ [ ]  │
+│ (from a standard     │      │ user session (confirm the    │ verify the dialog's path/publisher is            │      │
+│ user)                │      │ launcher is medium-integrity │ ...\WsScrcpyWeb\Update.exe, NOT the launcher     │      │
+│                      │      │ in Process Explorer): MSI    │ (this is what proves the unelevated app hands off│      │
+│                      │      │ install > Settings > Server >│ to Update.exe's own self-elevation). Program     │      │
+│                      │      │ "uninstall" > leave "keep my │ Files\WsScrcpyWeb gone; service gone (sc query = │      │
+│                      │      │ settings & logs" CHECKED     │ not found); tray gone; the Add/Remove Programs   │      │
+│                      │      │ (default) > uninstall.       │ entry is gone. config.json + logs survive under  │      │
+│                      │      │                              │ ProgramData\WsScrcpyWeb; dependencies gone. A    │      │
+│                      │      │                              │ later reinstall reuses the saved port. Decline   │      │
+│                      │      │                              │ the UAC > install stays intact, no partial       │      │
+│                      │      │                              │ teardown.                                        │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
 │ 15.2 Uninstall -     │ Win  │ Same, but UNCHECK "keep my   │ As 15.1, AND the WHOLE ProgramData\WsScrcpyWeb   │ [ ]  │
 │ wipe                 │      │ settings & logs".            │ is gone - nothing left behind, including         │      │
@@ -649,6 +854,8 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 │                      │      │                              │ "install for all users" on Windows.)             │      │
 └──────────────────────┴──────┴──────────────────────────────┴──────────────────────────────────────────────────┴──────┘
 ```
+
+> **Resolved (this used to be an open "decide on the VM" question):** *Does `Update.exe --uninstall` raise its own admin prompt when the app that launches it is NOT running as admin?* **Yes — it does.** The app spawns the uninstall helper **unelevated**, and `Update.exe` puts up its own admin (UAC) prompt because of its all-users install manifest — the app does **not** add any extra elevation step of its own. That's exactly why **15.1 runs from a standard (non-admin) account**: it confirms the UAC dialog is raised by `…\WsScrcpyWeb\Update.exe` and not by the app. (The earlier worry that the wipe could orphan `control\operation-server\` is the separate **beta.52** fix that **15.2** confirms.)
 
 ---
 
@@ -684,6 +891,13 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 │ language             │      │ embeddable stream page);     │ hint), matching the main app shell.              │      │
 │                      │      │ view-source / inspect the    │                                                  │      │
 │                      │      │ <html> element.              │                                                  │      │
+├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
+│ 16.6 Theme           │ Both │ Set the OS to dark (or light)│ The first paint matches the OS light/dark setting│ [ ]  │
+│ first-paint follows  │      │ with NO saved theme choice in│ - NO flash of the wrong theme first - and then   │      │
+│ the OS               │      │ the app yet (fresh profile,  │ your own saved choice (if any) takes over once   │      │
+│                      │      │ or right after a settings    │ the app finishes loading. (beta.67)              │      │
+│                      │      │ reset), then load the app and│                                                  │      │
+│                      │      │ watch the very first paint.  │                                                  │      │
 └──────────────────────┴──────┴──────────────────────────────┴──────────────────────────────────────────────────┴──────┘
 ```
 
@@ -797,8 +1011,13 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 ┌──────────────────────┬────────────────────────────────────────────────────────────────┬──────┐
 │ Criterion            │ Holds when                                                     │ Done │
 ├──────────────────────┼────────────────────────────────────────────────────────────────┼──────┤
-│ SELinux clean (Lin)  │ Zero denials all session; the fcontext list is empty after     │ [ ]  │
-│                      │ every uninstall.                                               │      │
+│ SELinux clean (Fed)  │ Fedora VM: zero SELinux denials all session; the fcontext list │ [ ]  │
+│                      │ is empty after every uninstall.                                │      │
+├──────────────────────┼────────────────────────────────────────────────────────────────┼──────┤
+│ AppArmor/userns clean│ Ubuntu VM: the AppImage LAUNCHES on stock Ubuntu 24.04 (2b.1); │ [ ]  │
+│ (Ubu)                │ zero AppArmor denials for the app all session; install +       │      │
+│                      │ uninstall reach a CLEAN SLATE despite there being no SELinux   │      │
+│                      │ tools.                                                         │      │
 ├──────────────────────┼────────────────────────────────────────────────────────────────┼──────┤
 │ One instance         │ Never two trays (Windows) or two servers (Linux) per           │ [ ]  │
 │                      │ user/session.                                                  │      │
@@ -833,6 +1052,8 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 └──────────────────────┴────────────────────────────────────────────────────────────────┴──────┘
 ```
 
-**If any Linux SELinux/lifecycle test (Modules 2, 4, 5, the service-update rows 6.5/6.6) — or the core-flow criterion — fails:** stop, **run `capture-logs.sh <id>` (Pre-flight F; `.ps1` on Windows)** for the evidence bundle, and report it before promoting 0.1.30 to stable. Cosmetic/polish failures: note and triage later. **Module 11 (no-libfuse2)** is the regression check on the already-removed libfuse2 gate — an 11.2 failure means **revert PR #422** (restore the gate); it doesn't block 0.1.30 on its own.
+**If any Linux security/lifecycle test (Fedora SELinux: Modules 2, 4, 5, the service-update rows 6.5/6.6; Ubuntu AppArmor/lifecycle: Module 2b, the Module 14 uninstall-cascade rows) — or the core-flow criterion — fails:** stop, **run `capture-logs.sh <id>` (Pre-flight F; `.ps1` on Windows)** for the evidence bundle, and report it before promoting 0.1.30 to stable. Cosmetic/polish failures: note and triage later. **Module 11 (no-libfuse2)** is the regression check on the already-removed libfuse2 gate — an 11.2 failure means **revert PR #422** (restore the gate); it doesn't block 0.1.30 on its own.
+
+**Ubuntu, specifically (Module 2b):** an AppArmor / lifecycle failure on Ubuntu is captured the same way (the AppArmor denial monitor + `capture-logs.sh`, which now belongs to the Ubuntu run too). **Row 2b.1 (the AppImage launching on stock Ubuntu 24.04) is a potential 0.1.30 blocker for the Ubuntu (Canonical) side** — if the AppImage won't launch on a default Ubuntu 24.04, that holds back the Ubuntu side of the release until the in-app extract-and-run / userns fallback ships. **Do NOT quietly turn off the VM's userns restriction to make it pass** — record the stock-VM result first; the `sysctl` / `APPIMAGE_EXTRACT_AND_RUN` workarounds are only for *continuing* the rest of the pass, not for calling 2b.1 green.
 
 *Plain-English companion to [`smoke-full.md`](./smoke-full.md), the canonical machine-precise checklist. The same tests as the repo doc, with the jargon spelled out; if the two ever diverge, the full doc wins.*

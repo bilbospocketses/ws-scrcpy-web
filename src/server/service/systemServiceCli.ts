@@ -86,9 +86,13 @@ export async function installSystemService(opts: { port: number }, d: CoreDeps):
     await d.run([mkdir, '-p', STAGED_SYSTEM_DEPS_DIR]);
     await d.run([cp, '-a', `${d.depsSource}/.`, `${STAGED_SYSTEM_DEPS_DIR}/`]);
 
-    await d.run([semanage, 'fcontext', '-a', '-t', 'bin_t', SYSTEM_FCONTEXT_SPEC]);
-    await d.run([restorecon, '-R', STAGED_SYSTEM_DIR]);
-    await d.run([restorecon, '-R', SYSTEM_STATE_DIR]);
+    // SELinux relabel — best-effort, matching the uninstall path below.
+    // semanage/restorecon only exist on SELinux distros (Fedora/RHEL); on
+    // Ubuntu/Debian they're absent and these no-op. A genuine SELinux failure
+    // surfaces via Module 2's label/AVC smoke checks, not by aborting install.
+    await d.run([semanage, 'fcontext', '-a', '-t', 'bin_t', SYSTEM_FCONTEXT_SPEC]).catch(() => undefined);
+    await d.run([restorecon, '-R', STAGED_SYSTEM_DIR]).catch(() => undefined);
+    await d.run([restorecon, '-R', SYSTEM_STATE_DIR]).catch(() => undefined);
 
     const seed = buildSystemSeedConfig(opts.port);
     d.writeFile(`${SYSTEM_STATE_DIR}/config.json`, `${JSON.stringify(seed, null, 2)}\n`, { mode: 0o644 });

@@ -288,7 +288,9 @@ The bundled `node-pty` native binary is built against glibc. Musl-based distros 
 
 #### libfuse2 — not required
 
-The AppImage needs no host `libfuse2`. Packaging swaps in the static [type-2 AppImage runtime](https://github.com/AppImage/type2-runtime) (libfuse is statically linked), and the in-app updater uses Velopack's bundled type-2 runtime for the update mount — so the app both **launches** and **self-updates** on any glibc-based distro, including fresh Ubuntu 24+, Fedora 40+, and Arch installs that no longer ship libfuse2. Just `chmod +x` and run.
+The AppImage needs no host `libfuse2`. Packaging swaps in the static [type-2 AppImage runtime](https://github.com/AppImage/type2-runtime) (libfuse is statically linked), and the in-app updater uses Velopack's bundled type-2 runtime for the update mount — so on any glibc-based distro the app **self-updates** without a host `libfuse2`, and on Fedora 40+, Arch, and most distros it **launches** straight from a `chmod +x` (no libfuse2 install needed).
+
+> **Ubuntu 23.10+ / 24.04 note.** These releases ship an AppArmor profile that **restricts unprivileged user namespaces** (`kernel.apparmor_restrict_unprivileged_userns=1`) — the mechanism an AppImage uses to mount itself — which can block launch **independently of libfuse**. If the AppImage won't start on stock Ubuntu 24.04, run it extracted with `APPIMAGE_EXTRACT_AND_RUN=1 ./WsScrcpyWeb-linux-*.AppImage`, or (as admin) relax the restriction: `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`. A built-in extract-and-run fallback is planned (see the smoke-test Module 2b).
 
 #### Tray icon
 

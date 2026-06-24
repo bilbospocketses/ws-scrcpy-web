@@ -156,7 +156,7 @@ export async function runPkexec(shellCmd: string, label: string): Promise<string
         const e = err as NodeJS.ErrnoException & { code?: string | number; stderr?: string };
         if (e.code === 'ENOENT') {
             throw new Error(
-                `pkexec not found. install polkit (e.g. "sudo dnf install polkit" on fedora) or use user scope instead.`,
+                `pkexec not found. install polkit ("sudo apt install policykit-1" on debian/ubuntu, "sudo dnf install polkit" on fedora) or use user scope instead.`,
             );
         }
         const stderr = typeof e.stderr === 'string' ? e.stderr.trim() : '';

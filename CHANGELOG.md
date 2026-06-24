@@ -17,6 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The Linux system-service install no longer assumes SELinux tooling is present.** The SELinux relabel steps (`semanage` / `restorecon`) run during a system-scope install are now best-effort, matching the uninstall path — so installing the system service on a distro without SELinux (Debian, Ubuntu, and similar) can't be tripped up by those tools being absent. On Fedora/RHEL the relabel still applies exactly as before.
+- **Clearer "pkexec not found" guidance.** When polkit/pkexec isn't installed, the error now names the right package for Debian/Ubuntu (`policykit-1`) alongside Fedora (`polkit`), instead of mentioning only Fedora.
+- **Corrected the AppImage / libfuse2 notes for Ubuntu 23.10+ and 24.04.** The README no longer implies the AppImage always launches on a fresh Ubuntu 24 install. Those releases restrict unprivileged user namespaces — the mechanism an AppImage uses to mount itself — which can block launch independently of libfuse2. The workarounds (`APPIMAGE_EXTRACT_AND_RUN=1`, or relaxing the restriction with `sysctl`) are now documented.
+
 ### Removed
 
 - **Removed the legacy `config.json` `port` alias.** Old config files could set a top-level `port` to pick the web server port; it was mapped to `webPort` in memory on load. Pre-1.0 there are no installs relying on it, so the alias and its in-memory mapping are gone — set `webPort` instead.
