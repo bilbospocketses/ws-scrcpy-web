@@ -42,19 +42,22 @@ import { basename, join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { pathToFileURL } from 'node:url';
 
-// Pin to a known-good URL. The continuous channel is built from main and
-// updates frequently. If reproducibility ever matters, swap to a tagged
-// release URL.
+// Pin to a STABLE, immutable type2-runtime release (a dated tag), NOT the
+// rolling `continuous` channel. `continuous` is rebuilt from main frequently,
+// so its `runtime-x86_64` hash drifts out from under this pin and breaks the
+// release build (2026-06-24: continuous moved a2419dce... -> 1cc49bcf...). A
+// dated tag never changes. Latest immutable stable as of 2026-06-24 is
+// 20251108; bump the tag here AND the SHA below together to adopt a newer one.
 const RUNTIME_URL =
-    'https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64';
+    'https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64';
 
-// SHA-256 of the known-good runtime, verified before it is embedded into the
-// shipped .AppImage — this binary is the first code that runs on launch. The
-// continuous channel is rebuilt from main; when intentionally adopting a newer
-// runtime, download it from a trusted source, verify it, and update this
-// digest. The build refuses any runtime whose hash does not match.
+// SHA-256 of the pinned runtime, verified before it is embedded into the
+// shipped .AppImage — this binary is the first code that runs on launch. When
+// intentionally adopting a newer stable tag, download it from a trusted source,
+// verify it, and update BOTH the tag in RUNTIME_URL and this digest together.
+// The build refuses any runtime whose hash does not match.
 const RUNTIME_SHA256 =
-    'a2419dce47568395ae79c01ffa9a5a341dd339581352ff104d073527543177e5';
+    '2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d';
 
 /**
  * Verify downloaded runtime bytes against an expected SHA-256, throwing on
