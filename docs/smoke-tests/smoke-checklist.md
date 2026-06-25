@@ -9,12 +9,12 @@ which carries the beta.48 port-discovery fix plus the Server-section UX (batch #
 
 **Legend:** ✅ passed · ☐ to run · 🧩 needs setup (fresh snapshot / 2nd user / 2nd admin / beta.68 from-build / no-libfuse2 host) · 📱 needs a real device · 🪟 Windows pass (separate snapshot) · 🌐 browser-only (no device or install state) · 🐧 Ubuntu (AppArmor/userns/FUSE)
 
-**Platform tags (distro-aware as of 2026-06-24 — we target Windows + Ubuntu 26.04/Canonical/AppArmor (GNOME + optional Kubuntu/KDE) + Fedora/Red Hat/SELinux):** `[B]` everywhere (Windows + both Linux VMs) · `[L]` run on **both** Fedora + Ubuntu VMs (distro-neutral Linux) · `[Fed]` Fedora-only (SELinux: labels / `semanage` fcontext / AVC / `restorecon`) · `[Ubu]` Ubuntu-only (AppArmor / unprivileged-userns AppImage mount / libfuse2-absent / apt) · `[W]` Windows.
+**Platform tags (distro-aware as of 2026-06-24 — we target Windows + Ubuntu 26.04/Canonical/AppArmor (GNOME + optional Kubuntu/KDE) + Fedora 44/Red Hat/SELinux):** `[B]` everywhere (Windows + both Linux VMs) · `[L]` run on **both** Fedora + Ubuntu VMs (distro-neutral Linux) · `[Fed]` Fedora-only (SELinux: labels / `semanage` fcontext / AVC / `restorecon`) · `[Ubu]` Ubuntu-only (AppArmor / unprivileged-userns AppImage mount / libfuse2-absent / apt) · `[W]` Windows.
 
 ## Before each run — reset to a clean slate
 
 **VM targets (run the Linux pass on BOTH):**
-- **Fedora VM** (`[Fed]` + `[L]` rows): `getenforce` → **Enforcing**; 2nd user + 2nd admin; keep the **AVC monitor** `sudo journalctl -f | grep -i avc` running all session.
+- **Fedora 44 VM** (`[Fed]` + `[L]` rows): `getenforce` → **Enforcing**; 2nd user + 2nd admin; keep the **AVC monitor** `sudo journalctl -f | grep -i avc` running all session.
 - **Ubuntu 26.04 VM (GNOME, Wayland-only)** (`[Ubu]` + `[L]` rows): **stock, untouched** — do **NOT** pre-disable the userns restriction (default on 24.04 **and** 26.04). Confirm the divergent baseline: `cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns` → **`1`** (mount-blocking restriction active), `dpkg -l | grep -i libfuse2` → **empty** (24.04/26.04 ship none — the t64 lib `libfuse2t64` is in *universe*, not installed → this VM is itself a **no-libfuse2 host**, covers 11.1/11.2 natively), `which semanage getenforce` → **not found** (no SELinux tooling). Same 2nd user + 2nd admin. Keep the **AppArmor denial monitor** `sudo journalctl -k -f | grep -i 'apparmor="DENIED"'` (the Ubuntu analogue of the AVC monitor) running all session; have `sudo dmesg -w | grep -i 'apparmor.*denied'` handy. `[L]`-tagged rows run here too.
 - **Kubuntu 26.04 VM (KDE — recommended 2nd desktop)** (`[Ubu]` + `[L]` rows): same Ubuntu base + same userns/libfuse2/AppArmor conditions; exercises KDE's **polkit-kde** (2b.5), **Kickoff** menu + KDE icon cache (2b.7), **Dolphin** double-click (2b.1), and the native SNI tray; Plasma-on-X11 available to rule out Wayland. Ubuntu 26.04 GNOME alone covers the whole Ubuntu side.
 
@@ -141,9 +141,9 @@ Get the from-build first: `gh release download v0.1.30-beta.68 --repo bilbospock
 | ☐ **6.5** `[L]` User-service update | User-service → Apply | Unit stops, home swaps, restarts **same port**, **no prompt** |
 | ☐ **6.6** `[L]` System-service update | System-service → Apply | **No polkit**; `/opt` swaps; restorecon bin_t; **zero AVC**; helper survives `systemctl stop`; updated deps stay **bin_t** (`ls -Z /opt/ws-scrcpy-web/dependencies` — copied into the bin_t tree, no relabel) |
 
-## #12 — Velopack / no-libfuse2 🧩 *(run the smoke on a no-libfuse2 Fedora host — folds in 11.1/11.2)*
+## #12 — Velopack / no-libfuse2 🧩 *(run the smoke on a no-libfuse2 Fedora 44 host — folds in 11.1/11.2)*
 
-> Run the whole Linux smoke on a Fedora host with **no** `libfuse2` (`ldconfig -p | grep -i libfuse.so.2` → empty) and these ride the normal launch + Module 6 update. Regression check on the already-removed gate (PR #422) — **revert #422 if 11.2 fails.** Skippable if that host is friction (doesn't gate 0.1.30), but close it before wide publicity.
+> Run the whole Linux smoke on a Fedora 44 host with **no** `libfuse2` (`ldconfig -p | grep -i libfuse.so.2` → empty) and these ride the normal launch + Module 6 update. Regression check on the already-removed gate (PR #422) — **revert #422 if 11.2 fails.** Skippable if that host is friction (doesn't gate 0.1.30), but close it before wide publicity.
 
 | Test | How to perform | Expected + verify |
 |---|---|---|
