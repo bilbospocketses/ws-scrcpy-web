@@ -11,7 +11,7 @@
 1. Do the **Pre-flight setup** once (next section) to prepare each machine.
 2. Work through the modules **in order**, top to bottom — some rows rely on the state left by earlier rows in the same module.
 3. In the **Done** column mark each test: `x` = pass · `F` = fail · `-` = skipped / not applicable.
-4. The **OS** column says where to run it. As of 2026-06-24 we test **two** Linux families — **Ubuntu** (made by Canonical, uses the **AppArmor** security system) and **Fedora** (made by Red Hat, uses **SELinux**) — so the column is now distro-aware:
+4. The **OS** column says where to run it. As of 2026-06-24 we test **two** Linux families — **Ubuntu 26.04** (made by Canonical, uses the **AppArmor** security system; tested on GNOME + an optional Kubuntu/KDE host) and **Fedora** (made by Red Hat, uses **SELinux**) — so the column is now distro-aware:
    - `Fed` = the **Fedora VM only** (these check SELinux-specific things).
    - `Ubu` = the **Ubuntu VM only** (these check AppArmor / user-namespace things).
    - `Lin` = run on **both** Linux VMs (Fedora **and** Ubuntu — behaviour that doesn't depend on the distro).
@@ -24,8 +24,8 @@
 **Linux (Fedora = SELinux · Ubuntu = AppArmor)**
 - **SELinux** — Fedora's mandatory security system. It tags every file with a "label" and limits what each program may touch, on top of normal file permissions.
 - **AppArmor** — Ubuntu's mandatory security system: the Ubuntu counterpart to SELinux. Same idea (the system can block a program from doing things even when normal file permissions would allow it), but it confines programs by their **path/profile** rather than by file labels. Fedora has SELinux; Ubuntu has AppArmor; they don't both run.
-- **unprivileged user namespaces / the Ubuntu 23.10+/24.04 restriction** — a "user namespace" is a Linux feature that lets a normal (non-root) program briefly act as its own mini-root so it can, for example, mount a filesystem. An **AppImage uses exactly this** to mount and run itself. Ubuntu 23.10 and 24.04 ship a hardening setting (`kernel.apparmor_restrict_unprivileged_userns = 1`) that **blocks** unprivileged programs from doing this — which can stop an AppImage from launching. Fedora does not restrict it this way.
-- **libfuse2 absent by default on Ubuntu 24.04** — Ubuntu 24.04 ships with **no** `libfuse2` package at all (older AppImages needed it). Our newer "type-2" AppImage carries its own FUSE inside, so this should not matter — but it makes Ubuntu 24.04 a real-world "no-libfuse2 host" test for free.
+- **unprivileged user namespaces / the Ubuntu 23.10+ restriction (default on 24.04 and 26.04)** — a "user namespace" is a Linux feature that lets a normal (non-root) program briefly act as its own mini-root so it can, for example, mount a filesystem. An **AppImage uses exactly this** to mount and run itself. Ubuntu 23.10, 24.04 and 26.04 ship a hardening setting (`kernel.apparmor_restrict_unprivileged_userns = 1`) that **blocks** unprivileged programs from doing this — which can stop an AppImage from launching. Fedora does not restrict it this way.
+- **libfuse2 absent by default on Ubuntu 24.04/26.04** — Ubuntu 24.04 and 26.04 ship with **no** `libfuse2` package at all (older AppImages needed it). Our newer "type-2" AppImage carries its own FUSE inside, so this should not matter — but it makes a stock 26.04 a real-world "no-libfuse2 host" test for free.
 - **apt vs dnf** — the package managers: **apt** is Ubuntu's (`sudo apt install …`), **dnf** is Fedora's (`sudo dnf install …`). Same job, different distro.
 - **Enforcing** — the SELinux mode where violations are actually **blocked** (the other mode, *Permissive*, only logs them). Check with `getenforce`; set with `sudo setenforce 1`.
 - **AVC denial** — one "SELinux blocked something" event in the system log. **Zero AVC** = nothing got blocked.
@@ -35,7 +35,7 @@
 - **restorecon** — re-applies the correct SELinux labels to files (used after an update swaps the binary).
 - **pkexec / polkit** — Linux's "type your password to allow this one action" — roughly Linux's version of Windows UAC.
 - **AppImage** — an entire Linux app in one file. Mark it executable (`chmod +x`) and run it; nothing to install.
-- **FUSE / libfuse2** — the tech an AppImage uses to mount and run itself. Newer ("type-2") AppImages bundle FUSE inside, so the host no longer needs the `libfuse2` package — which matters because **Ubuntu 24.04 ships no `libfuse2` at all** (see above).
+- **FUSE / libfuse2** — the tech an AppImage uses to mount and run itself. Newer ("type-2") AppImages bundle FUSE inside, so the host no longer needs the `libfuse2` package — which matters because **Ubuntu 24.04 and 26.04 ship no `libfuse2` at all** (see above).
 - **systemd / unit / service** — Linux's background-service manager; a "unit" file defines a service.
 - **user-scope vs system-scope service** — runs as *your* login (no admin, just you) **vs** runs as root for the *whole machine* (needs admin).
 - **ExecStart** — the line in a unit file naming which program the service runs.
@@ -92,16 +92,16 @@ This VM runs every `Fed` row and every `Lin` row.
    (Ideally nothing ever scrolls by.)
 5. Download `WsScrcpyWeb-linux-beta.AppImage` from the latest GitHub release. **Leave it non-executable** — double-clicking a NON-`chmod +x` AppImage straight from the file manager is the realistic path most users take, and it's exactly what surfaced the Linux service-mode bug. (Marking it runnable with `chmod +x WsScrcpyWeb-linux-beta.AppImage` is optional — only needed if you'd rather launch it from a terminal.)
 
-### A2. Linux — your Ubuntu 24.04 VM (the AppArmor side)
-This is the **second** Linux VM, new for the 2026-06-24 distro-parity pass. It runs every `Ubu` row **and** every `Lin` row (the `Lin` rows were only ever exercised on Fedora before — now they get a second home here). Use a **stock Ubuntu 24.04 LTS desktop, left untouched** — the whole point is to test the app on a default Ubuntu, so **do NOT pre-change any security settings**.
-1. Boot a stock Ubuntu 24.04 LTS desktop VM. Same as Fedora, create two extra accounts: a **2nd normal user** and a **2nd admin (sudo) user**.
+### A2. Linux — your Ubuntu 26.04 VM (GNOME, AppArmor side) + optional Kubuntu 26.04 (KDE)
+This is the **second** Linux VM, new for the 2026-06-24 distro-parity pass. It runs every `Ubu` row **and** every `Lin` row (the `Lin` rows were only ever exercised on Fedora before — now they get a second home here). Use a **stock Ubuntu 26.04 LTS desktop** (GNOME 50, **Wayland-only** — 26.04 dropped the X11 GNOME session; XWayland covers legacy apps), **left untouched** — the whole point is to test the app on a default Ubuntu, so **do NOT pre-change any security settings**. (26.04 is the newest LTS; the userns restriction + no-libfuse2 are default on **both** 24.04 and 26.04, so it's a stricter, current venue for the same checks.) **Also recommended — a Kubuntu 26.04 (KDE Plasma 6.6) VM** as a second desktop: same Ubuntu base ⇒ same userns/libfuse2/AppArmor conditions, but it exercises KDE's **polkit-kde** prompt (2b.5), the **Kickoff** menu + KDE icon cache (2b.7), and **Dolphin** for the 2b.1 double-click; KDE also has a native SNI tray and still offers a Plasma-on-X11 session. Ubuntu 26.04 GNOME alone covers the whole Ubuntu side.
+1. Boot a stock Ubuntu 26.04 LTS desktop VM (and, for the KDE pass, a Kubuntu 26.04 VM). Same as Fedora, create two extra accounts: a **2nd normal user** and a **2nd admin (sudo) user**.
 2. **Confirm the divergent baseline — do NOT "fix" any of these; they are the test conditions:**
    - The user-namespace restriction is **on** (this is what can stop an AppImage launching) — this must print **`1`**:
      ```bash
      cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns
      ```
      **Leave it at `1`.** (Setting it to `0` is a *workaround* you only reach for if test 2b.1 fails — never up front.)
-   - Ubuntu 24.04 ships **no** `libfuse2` — this must print **nothing**:
+   - Ubuntu 26.04 ships **no** `libfuse2` (the t64 lib `libfuse2t64` is in *universe*, not installed) — this must print **nothing**:
      ```bash
      dpkg -l | grep -i libfuse2
      ```
@@ -248,13 +248,13 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 ```
 
 ### Module 2b — Ubuntu: AppArmor, unprivileged-userns & FUSE
-*Ubuntu's side of the same coin as Module 2. Ubuntu has no SELinux — instead it uses **AppArmor** and (on 23.10+/24.04) **restricts unprivileged user namespaces**, which is exactly the trick an AppImage uses to mount itself. None of this is covered by the SELinux module. Run every row on the **stock Ubuntu 24.04 VM** (Pre-flight A2) with the AppArmor monitor running. **Row 2b.1 is a potential blocker for the Ubuntu (Canonical) side of the release.***
+*Ubuntu's side of the same coin as Module 2. Ubuntu has no SELinux — instead it uses **AppArmor** and (on 23.10+; default on 24.04 and 26.04) **restricts unprivileged user namespaces**, which is exactly the trick an AppImage uses to mount itself. None of this is covered by the SELinux module. Run every row on the **stock Ubuntu 26.04 VM** (Pre-flight A2) with the AppArmor monitor running. Rows 2b.5 / 2b.7 are written for **GNOME** (the Ubuntu 26.04 host); on the **Kubuntu 26.04 (KDE)** host the equivalents are **polkit-kde** (2b.5) and the **Kickoff** launcher + KDE's per-user icon cache (2b.7) — same checks, different shell. **Row 2b.1 is a potential blocker for the Ubuntu (Canonical) side of the release.***
 
 ```text
 ┌──────────────────────┬──────┬──────────────────────────────┬──────────────────────────────────────────────────┬──────┐
 │ Test                 │ OS   │ Do this                      │ Pass - what you should see                       │ Done │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
-│ 2b.1 AppImage launch │ Ubu  │ On the stock Ubuntu 24.04 VM │ PASS: the app launches and the web UI opens. FAIL│ [ ]  │
+│ 2b.1 AppImage launch │ Ubu  │ On the stock Ubuntu 26.04 VM │ PASS: the app launches and the web UI opens. FAIL│ [ ]  │
 │ (userns) - POTENTIAL │      │ (userns restriction left at  │ (the risk this row exists for): "fuse: mount     │      │
 │ BLOCKER              │      │ 1), run the AppImage BOTH    │ failed" / a permission error / it silently does  │      │
 │                      │      │ ways: from a terminal (./WsSc│ nothing, and the AppArmor monitor shows a DENIED │      │
@@ -268,7 +268,7 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 │                      │      │                              │ but record the stock-VM result FIRST, do not     │      │
 │                      │      │                              │ quietly tweak the VM and re-run.                 │      │
 ├──────────────────────┼──────┼──────────────────────────────┼──────────────────────────────────────────────────┼──────┤
-│ 2b.2 No libfuse2     │ Ubu  │ Confirm Ubuntu 24.04 has no  │ It launches with libfuse2 NEVER installed - this │ [ ]  │
+│ 2b.2 No libfuse2     │ Ubu  │ Confirm Ubuntu 26.04 has no  │ It launches with libfuse2 NEVER installed - this │ [ ]  │
 │ needed               │      │ libfuse2 (dpkg -l | grep -i  │ is the real-world "no libfuse2" case on the      │      │
 │                      │      │ libfuse2 prints nothing;     │ Ubuntu side (Module 11.1/11.2 ride along here).  │      │
 │                      │      │ ldconfig -p | grep -i        │ The AppImage carries its own FUSE. No "dlopen    │      │
@@ -1014,7 +1014,7 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 │ SELinux clean (Fed)  │ Fedora VM: zero SELinux denials all session; the fcontext list │ [ ]  │
 │                      │ is empty after every uninstall.                                │      │
 ├──────────────────────┼────────────────────────────────────────────────────────────────┼──────┤
-│ AppArmor/userns clean│ Ubuntu VM: the AppImage LAUNCHES on stock Ubuntu 24.04 (2b.1); │ [ ]  │
+│ AppArmor/userns clean│ Ubuntu VM: the AppImage LAUNCHES on stock Ubuntu 26.04 (2b.1); │ [ ]  │
 │ (Ubu)                │ zero AppArmor denials for the app all session; install +       │      │
 │                      │ uninstall reach a CLEAN SLATE despite there being no SELinux   │      │
 │                      │ tools.                                                         │      │
@@ -1054,6 +1054,6 @@ Mark the **Done** column as you go: `x` pass · `F` fail · `-` skip.
 
 **If any Linux security/lifecycle test (Fedora SELinux: Modules 2, 4, 5, the service-update rows 6.5/6.6; Ubuntu AppArmor/lifecycle: Module 2b, the Module 14 uninstall-cascade rows) — or the core-flow criterion — fails:** stop, **run `capture-logs.sh <id>` (Pre-flight F; `.ps1` on Windows)** for the evidence bundle, and report it before promoting 0.1.30 to stable. Cosmetic/polish failures: note and triage later. **Module 11 (no-libfuse2)** is the regression check on the already-removed libfuse2 gate — an 11.2 failure means **revert PR #422** (restore the gate); it doesn't block 0.1.30 on its own.
 
-**Ubuntu, specifically (Module 2b):** an AppArmor / lifecycle failure on Ubuntu is captured the same way (the AppArmor denial monitor + `capture-logs.sh`, which now belongs to the Ubuntu run too). **Row 2b.1 (the AppImage launching on stock Ubuntu 24.04) is a potential 0.1.30 blocker for the Ubuntu (Canonical) side** — if the AppImage won't launch on a default Ubuntu 24.04, that holds back the Ubuntu side of the release until the in-app extract-and-run / userns fallback ships. **Do NOT quietly turn off the VM's userns restriction to make it pass** — record the stock-VM result first; the `sysctl` / `APPIMAGE_EXTRACT_AND_RUN` workarounds are only for *continuing* the rest of the pass, not for calling 2b.1 green.
+**Ubuntu, specifically (Module 2b):** an AppArmor / lifecycle failure on Ubuntu is captured the same way (the AppArmor denial monitor + `capture-logs.sh`, which now belongs to the Ubuntu run too). **Row 2b.1 (the AppImage launching on stock Ubuntu 26.04) is a potential 0.1.30 blocker for the Ubuntu (Canonical) side** — if the AppImage won't launch on a default Ubuntu 26.04, that holds back the Ubuntu side of the release until the in-app extract-and-run / userns fallback ships. **Do NOT quietly turn off the VM's userns restriction to make it pass** — record the stock-VM result first; the `sysctl` / `APPIMAGE_EXTRACT_AND_RUN` workarounds are only for *continuing* the rest of the pass, not for calling 2b.1 green.
 
 *Plain-English companion to [`smoke-full.md`](./smoke-full.md), the canonical machine-precise checklist. The same tests as the repo doc, with the jargon spelled out; if the two ever diverge, the full doc wins.*
