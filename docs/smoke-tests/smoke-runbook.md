@@ -11,7 +11,7 @@
 1. Do the **Pre-flight setup** once (next section) to prepare each machine.
 2. Work through the modules **in order**, top to bottom — some rows rely on the state left by earlier rows in the same module.
 3. In the **Done** column mark each test: `x` = pass · `F` = fail · `-` = skipped / not applicable.
-4. The **OS** column says where to run it. As of 2026-06-24 we test **two** Linux families — **Ubuntu 26.04** (made by Canonical, uses the **AppArmor** security system; tested on GNOME + an optional Kubuntu/KDE host) and **Fedora** (made by Red Hat, uses **SELinux**) — so the column is now distro-aware:
+4. The **OS** column says where to run it. As of 2026-06-24 we test **two** Linux families — **Ubuntu 26.04** (made by Canonical, uses the **AppArmor** security system; tested on GNOME + an optional Kubuntu/KDE host) and **Fedora 44** (made by Red Hat, uses **SELinux**) — so the column is now distro-aware:
    - `Fed` = the **Fedora VM only** (these check SELinux-specific things).
    - `Ubu` = the **Ubuntu VM only** (these check AppArmor / user-namespace things).
    - `Lin` = run on **both** Linux VMs (Fedora **and** Ubuntu — behaviour that doesn't depend on the distro).
@@ -76,7 +76,7 @@
 
 This is **setup, not tests** — nothing here passes or fails the app; it just gets each machine ready.
 
-### A. Linux — your Hyper-V Fedora VM (the SELinux side)
+### A. Linux — your Hyper-V Fedora 44 VM (the SELinux side)
 This VM runs every `Fed` row and every `Lin` row.
 1. Boot the VM. Confirm strict security mode — run `getenforce`; it must say **Enforcing**. (If not: `sudo setenforce 1`.)
 2. Create two extra accounts: a **2nd normal user** and a **2nd admin (sudo) user**. (For the multi-user tests and the "different admin uninstalls" test.)
@@ -135,7 +135,7 @@ An Android phone/tablet with **Wireless debugging** on (Settings → Developer o
 4. Download `WsScrcpyWeb-beta.msi` from the same release.
 
 ### E. No-libfuse2 host (recommended — folds Module 11 into the run)
-A minimal Fedora VM/container with **no** `libfuse2`. Confirm it's really absent: `ldconfig -p | grep -i libfuse.so.2` prints nothing and `rpm -q fuse-libs` says "not installed" (a base Fedora cloud/container image ships without it; otherwise `sudo dnf remove fuse-libs` on a throwaway VM). Run the **whole** Linux smoke on this host and Module 11 needs no extra steps — 11.1 is "the app launched here at all", 11.2 is the Module 6 update done here. It's the regression check on the already-removed libfuse2 gate — **revert PR #422 if 11.2 fails**. Not a 0.1.30 blocker on its own, so skip to a normal VM if this host is friction — but don't ship to a wide audience without it.
+A minimal Fedora 44 VM/container with **no** `libfuse2`. Confirm it's really absent: `ldconfig -p | grep -i libfuse.so.2` prints nothing and `rpm -q fuse-libs` says "not installed" (a base Fedora cloud/container image ships without it; otherwise `sudo dnf remove fuse-libs` on a throwaway VM). Run the **whole** Linux smoke on this host and Module 11 needs no extra steps — 11.1 is "the app launched here at all", 11.2 is the Module 6 update done here. It's the regression check on the already-removed libfuse2 gate — **revert PR #422 if 11.2 fails**. Not a 0.1.30 blocker on its own, so skip to a normal VM if this host is friction — but don't ship to a wide audience without it.
 
 ### F. Capture scripts — pull the logs at any checkpoint
 Beside this doc are two snapshot scripts. Run one **at every capture point, and the instant any test fails**, to collect a complete evidence bundle (a timestamped, labeled folder + an archive to attach):
