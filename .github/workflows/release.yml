@@ -141,7 +141,7 @@ jobs:
       # covers the signed MSI rather than the unsigned one — attestation
       # subject is the file content at this step's evaluation time.
       - name: Attest Windows build provenance
-        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
           subject-path: |
             Releases/*.msi
@@ -216,7 +216,7 @@ jobs:
       # Verify post-publish with:
       #   gh attestation verify <artifact>.AppImage --repo bilbospocketses/ws-scrcpy-web
       - name: Attest Linux build provenance
-        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
           subject-path: 'Releases/*.AppImage'
 
