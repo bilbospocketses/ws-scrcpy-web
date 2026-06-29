@@ -70,7 +70,7 @@
     "typescript": "^6.0.2",
     "vitest": "^4.1.9",
     "webpack": "^5.108.2",
-    "webpack-cli": "^7.0.3"
+    "webpack-cli": "^7.1.0"
   },
   "overrides": {
     "fast-uri": "3.1.2"
