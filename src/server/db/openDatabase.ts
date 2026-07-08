@@ -1,5 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import * as fs from 'fs';
+import * as path from 'path';
 import { Logger } from '../Logger';
 import { runMigrations } from './migrations';
 
@@ -19,22 +20,42 @@ function integrityOk(db: DatabaseSync): boolean {
 }
 
 export function openDatabase(dbPath: string): DatabaseSync {
+    // node:sqlite (like all SQLite) does NOT create missing parent directories:
+    // opening <dataRoot>/wsscrcpy.db before <dataRoot> exists fails with
+    // SQLITE_CANTOPEN (errcode 14). Create the directory first so a fresh data
+    // root (new install, fresh dev checkout, CI) can open the store on boot.
+    ensureParentDir(dbPath);
+
+    // A failure to OPEN the file at all (permissions, a read-only or otherwise
+    // unwritable location) is an environment problem, not a corrupt database. The
+    // recovery path below (move-aside → restore-backup → recreate) is for bad
+    // *content* and can't help here — it would just re-open the same unopenable
+    // path and re-throw a cryptic ERR_SQLITE_ERROR that crashes the supervisor.
+    // Split it out and surface a clear, actionable message instead.
     let db: DatabaseSync;
     try {
         db = new DatabaseSync(dbPath);
+    } catch (err) {
+        throw new Error(`unable to open database at ${dbPath}: ${(err as Error).message}`, { cause: err });
+    }
+
+    try {
         configure(db);
         if (!integrityOk(db)) throw new Error('integrity_check failed');
         runMigrations(db);
         return db;
     } catch (err) {
-        // Corrupt or unreadable. Recovery order: (1) move the corrupt file + its WAL sidecars
-        // aside; (2) restore the last-good `.bak` (VACUUM-INTO snapshot from graceful shutdown)
-        // if it opens clean — this preserves settings the migration moved OUT of the (now-trimmed)
-        // config.json, which a fresh+re-import would lose; (3) only if no valid backup, create a
-        // fresh schema (settings reset to defaults — the caller's legacy files were already trimmed).
+        // The file opened but its *content* is corrupt or unreadable. Recovery order:
+        // (1) move the corrupt file + its WAL sidecars aside; (2) restore the last-good
+        // `.bak` (VACUUM-INTO snapshot from graceful shutdown) if it opens clean — this
+        // preserves settings the migration moved OUT of the (now-trimmed) config.json,
+        // which a fresh+re-import would lose; (3) only if no valid backup, create a
+        // fresh schema (settings reset to defaults — the caller's legacy files were
+        // already trimmed). The re-opens below are safe: the successful open above
+        // proved the directory is writable.
         Logger.for('Db').error(`wsscrcpy.db unusable (${(err as Error).message}); attempting recovery`);
         try {
-            db!.close();
+            db.close();
         } catch {
             /* best effort */
         }
@@ -69,6 +90,15 @@ export function openDatabase(dbPath: string): DatabaseSync {
         }
         runMigrations(fresh); // a restored backup may be an older schema version → migrate it forward
         return fresh;
+    }
+}
+
+function ensureParentDir(dbPath: string): void {
+    const dir = path.dirname(dbPath);
+    try {
+        fs.mkdirSync(dir, { recursive: true });
+    } catch (err) {
+        throw new Error(`unable to create database directory ${dir}: ${(err as Error).message}`, { cause: err });
     }
 }
 

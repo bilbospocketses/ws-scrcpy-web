@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Fixed a first-run crash where the app failed to start with `unable to open database file` (`SQLITE_ERROR`, errcode 14).** When the data directory did not already exist — a fresh install, a fresh source checkout, or a CI run — the SQLite store was opened before that directory was created, so startup aborted immediately. The database directory is now created before the store is opened. A genuinely unopenable database path (for example a permissions problem) now also surfaces a clear, actionable error instead of a cryptic failure during recovery.
+
 ## [0.1.30-beta.71] - 2026-06-24
 
 ### Changed

@@ -1,6 +1,6 @@
 # ws-scrcpy-web — Smoke Test
 
-> **Smoke target: `v0.1.30-beta.71`** — bump this one line each release; everything below is version-agnostic.
+> **Smoke target: `v0.1.30-beta.72`** — bump this one line each release; everything below is version-agnostic.
 
 The single manual smoke for the **0.1.30 final** gate (the first true Windows + Linux release). It is **execution-ordered** — work top to bottom; within a phase, some rows depend on state left by earlier rows. This doc is the sole source of truth: it consolidates the former module-reference, plain-English, and run-sheet smoke docs into one. For a by-feature view use [§ Index by module](#index-by-module); for terminology use the [§ Glossary](#glossary).
 
