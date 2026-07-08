@@ -28,14 +28,14 @@ The single manual smoke for the **0.1.30 final** gate (the first true Windows + 
 
 **Devices:** an Android device with **Wireless debugging** enabled (Android 11+) reachable from the VM, plus (Windows) one USB device if available.
 
-**Build-prep — the "update from" build (Module 6).** The update rows need an older build to update *from*. The most recent **kept prior release** is **`v0.1.30-beta.68`** (bump when a newer prior is kept). Download its AppImage (and MSI, for Windows) into a separate dir — the asset filename is identical across versions:
+**Build-prep — the "update from" build (Module 6).** The update rows need an older build to update *from*. The most recent **kept prior release** is **`v0.1.30-beta.71`** (bump when a newer prior is kept). Download its AppImage (and MSI, for Windows) into a separate dir — the asset filename is identical across versions:
 
 ```bash
 # Linux — the update "from" build
-gh release download v0.1.30-beta.68 --repo bilbospocketses/ws-scrcpy-web --pattern 'WsScrcpyWeb-linux-beta.AppImage' --dir ./beta68
-chmod +x ./beta68/WsScrcpyWeb-linux-beta.AppImage
+gh release download v0.1.30-beta.71 --repo bilbospocketses/ws-scrcpy-web --pattern 'WsScrcpyWeb-linux-beta.AppImage' --dir ./beta71
+chmod +x ./beta71/WsScrcpyWeb-linux-beta.AppImage
 # Windows MSI (row 6.8 / the Windows pass):
-gh release download v0.1.30-beta.68 --repo bilbospocketses/ws-scrcpy-web --pattern 'WsScrcpyWeb-beta.msi' --dir ./beta68
+gh release download v0.1.30-beta.71 --repo bilbospocketses/ws-scrcpy-web --pattern 'WsScrcpyWeb-beta.msi' --dir ./beta71
 ```
 
 It's a kept release (not an expiring CI artifact), so no retention window to beat. **The latest release is feed-latest**, so any older install updates *to* it.
@@ -213,14 +213,14 @@ Mark each `☐`: `x` pass · `F` fail · `-` skip. Boxes start empty — this is
 | ☐ <a id="t-5-2"></a> **5.2** `[Linux]` Different-admin uninstall | Uninstall via **pkexec as a different admin** (triggers `systemd-run --system` teardown same as 5.1) | PASS = teardown verified: service stopped + unit removed; `/opt` + `/var/lib` gone; fcontext clean; zero AVC. Tab: **relaunch manually** if it doesn't reconnect — auto-relaunch is a tracked follow-up. |
 | ☐ <a id="t-5-3"></a> **5.3** `[Linux]` Headless uninstall | `sudo ./WsScrcpyWeb --uninstall-system-service` (no active graphical session) | No relaunch; manual fallback; **no orphan**; no `data_root_for_linux` panic; full teardown: unit removed, `/opt` + `/var/lib` gone. |
 
-### #11 — Updates 🧩 *(needs the beta.68 "update-from" release — see Pre-flight)*
+### #11 — Updates 🧩 *(needs the beta.71 "update-from" release — see Pre-flight)*
 
 | Test | How to perform | Expected + verify |
 |---|---|---|
-| ☐ <a id="t-6-1"></a> **6.1** `[Both]` Update check | Settings → Updates → Check | A beta.68 install **offers the latest**; the latest reports **up-to-date**; no error spam in `server.log`/`launcher.log`. |
-| ☐ <a id="t-6-2"></a> **6.2** `[Linux]` Local-mode (home) update apply + relaunch *(#27)* | beta.68 home AppImage in **local mode** (no service) → Settings → Updates → Apply | Downloads + SHA-256 verifies; the "updating…" overlay above Settings; the AppImage **swaps and auto-relaunches** onto the latest unattended; browser reconnects; About = the new version. **Edge:** also confirm apply on an instance relaunched right after a user-scope service uninstall (the `systemd-run --collect` cgroup case). |
+| ☐ <a id="t-6-1"></a> **6.1** `[Both]` Update check | Settings → Updates → Check | A beta.71 install **offers the latest**; the latest reports **up-to-date**; no error spam in `server.log`/`launcher.log`. |
+| ☐ <a id="t-6-2"></a> **6.2** `[Linux]` Local-mode (home) update apply + relaunch *(#27)* | beta.71 home AppImage in **local mode** (no service) → Settings → Updates → Apply | Downloads + SHA-256 verifies; the "updating…" overlay above Settings; the AppImage **swaps and auto-relaunches** onto the latest unattended; browser reconnects; About = the new version. **Edge:** also confirm apply on an instance relaunched right after a user-scope service uninstall (the `systemd-run --collect` cgroup case). |
 | ☐ <a id="t-6-3"></a> **6.3** `[Linux]` No-service `/opt` update *(one pkexec)* | Machine-wide `/opt`, **no** service → trigger update | One pkexec; `/opt` swapped by **rename**; relabel bin_t + [restorecon](#g-restorecon); VERSION bumps; relaunches as the user; reconnects. No [ETXTBSY](#g-etxtbsy); FUSE intact. |
-| ☐ <a id="t-6-4"></a> **6.4** `[Linux]` Newer home over `/opt` | `/opt` at beta.68; place a newer home AppImage; launch | Bootstrapper runs home in place → offers "update the system-wide install to vX" → accept → swap → next launch runs updated `/opt`. |
+| ☐ <a id="t-6-4"></a> **6.4** `[Linux]` Newer home over `/opt` | `/opt` at beta.71; place a newer home AppImage; launch | Bootstrapper runs home in place → offers "update the system-wide install to vX" → accept → swap → next launch runs updated `/opt`. |
 | ☐ <a id="t-6-5"></a> **6.5** `[Linux]` User-scope service update apply *(item 39)* | User-scope service installed → Settings → Updates → Apply | The `--user` unit stops, the home `$APPIMAGE` swaps, the unit restarts on the **same** web port, browser reconnects via the overlay. **No prompt.** |
 | ☐ <a id="t-6-6"></a> **6.6** `[Linux]` System-scope headless service update apply *(item 39 — the SELinux risk)* | System-scope service installed → Apply | **No** polkit prompt (root self-update); `/opt` copy swaps; restorecon re-applies bin_t; unit restarts; **zero AVC**. The `systemd-run` apply helper **survives `systemctl stop`** of the unit it's restarting (out-of-cgroup); the FUSE unmount settles within the helper's ~15s swap-retry window. If SELinux blocks the `init_t` `/opt` write or relabel → **narrow targeted policy only, never broad [audit2allow](#g-audit2allow)**. Updated deps land **bin_t** with no relabel — confirm `ls -Z /opt/ws-scrcpy-web/dependencies`. |
 
@@ -271,7 +271,7 @@ Mark each `☐`: `x` pass · `F` fail · `-` skip. Boxes start empty — this is
 | ☐ <a id="t-5-6"></a> **5.6** `[Win]` Uninstall handoff-failure guard | Service mode; kill all `ws-scrcpy-web-tray.exe`; then uninstall | ~5s → "still waiting…"; ~30s → "couldn't reach the user session…"; button freed; **service STILL installed** (no silent direct uninstall). |
 | ☐ <a id="t-5-7"></a> **5.7** `[Win]` Full uninstall | Add/Remove Programs → ws-scrcpy-web → Uninstall as `Admin` | Service stops/unregisters; `Program Files\WsScrcpyWeb` cleared; **user data under dataRoot preserved**; admin tray disappears. (Legacy `HKLM…\Run\WsScrcpyWebTray` removed **if present** — but fresh installs **no longer create any Run key**, so this passes vacuously; the live invariant is **3.8**.) |
 | ☐ <a id="t-5-10"></a> **5.10** `[Win]` Non-admin uninstall, UAC declined *(D.6)* | Service mode, as a **standard user** → uninstall service → continue → **decline/cancel** the UAC | Backend returns **403 `reason='uac-declined'`**; frontend "administrative privileges were declined. try again and approve the prompt."; button freed; **service still installed**. (UAC accepted → uninstalls cleanly, back to local mode.) |
-| ☐ <a id="t-6-8"></a> **6.8** `[Win]` In-app update apply + tray persists *(SE-2)* | From a prior installed build (beta.68 MSI) → Settings → Updates → Apply | Applies clean; app reachable post-update; the tray **persists across the update** (the `apply-update-pending` marker gates the reap off) — **one** tray after settling, no duplicate/orphan. |
+| ☐ <a id="t-6-8"></a> **6.8** `[Win]` In-app update apply + tray persists *(SE-2)* | From a prior installed build (beta.71 MSI) → Settings → Updates → Apply | Applies clean; app reachable post-update; the tray **persists across the update** (the `apply-update-pending` marker gates the reap off) — **one** tray after settling, no duplicate/orphan. |
 | ☐ <a id="t-7-3"></a> **7.3** `[Win]` USB device | Plug a USB device (authorize the RSA prompt on device) | Appears in connected devices; survives a home-page reload. |
 | ☐ <a id="t-10-2"></a> **10.2** `[Win]` Logs clean | Tail `C:\ProgramData\WsScrcpyWeb\logs\{launcher,ws-scrcpy-web}.log` during normal use (canonical logs). `server.log`/`service.log` are thin crash-catchers; a `.1` backup may appear | No `ERR` / `Error:` except known cosmetic node-pty AttachConsole noise. |
 | ☐ <a id="t-11-4"></a> **11.4** `[Win]` PerMachine intact | After the 1.5 MSI install, check the install location | Installed PerMachine to `C:\Program Files\WsScrcpyWeb\` (vpk 1.2.0 `--msi --instLocation PerMachine` unchanged). |
