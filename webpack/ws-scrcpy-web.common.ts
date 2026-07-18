@@ -72,8 +72,22 @@ export const common = () => {
                 },
                 {
                     test: /\.tsx?$/,
-                    use: [{ loader: 'ts-loader', options: { transpileOnly: true } }],
                     exclude: /node_modules/,
+                    use: {
+                        loader: 'swc-loader',
+                        options: {
+                            // Transpile-only (type-safety stays with the separate
+                            // `tsc --noEmit` CI step), matching the tsconfig emit:
+                            // ES2022, esModuleInterop-style default imports,
+                            // define-semantics class fields. Module form is left to
+                            // webpack (swc emits ESM; webpack bundles).
+                            jsc: {
+                                parser: { syntax: 'typescript', tsx: true },
+                                target: 'es2022',
+                                transform: { useDefineForClassFields: true },
+                            },
+                        },
+                    },
                 },
                 {
                     test: /\.svg$/,

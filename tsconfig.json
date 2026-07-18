@@ -20,18 +20,12 @@
         "skipLibCheck": true,
         "forceConsistentCasingInFileNames": true,
         "resolveJsonModule": true,
+        "isolatedModules": true,
         "declaration": true,
         "declarationMap": true,
         "sourceMap": true,
         "importHelpers": false
     },
     "include": ["src/**/*"],
-    "exclude": ["node_modules", "dist", "build"],
-    "ts-node": {
-        "compilerOptions": {
-            "module": "CommonJS",
-            "moduleResolution": "node",
-            "types": ["node"]
-        }
-    }
+    "exclude": ["node_modules", "dist", "build"]
 }
