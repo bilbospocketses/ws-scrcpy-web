@@ -32,7 +32,7 @@ jobs:
       prior_node_abi: ${{ steps.check.outputs.prior_node_abi }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '22'
       - id: check
@@ -87,7 +87,7 @@ jobs:
 
       - name: Setup Node (non-Alpine)
         if: matrix.container == ''
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: ${{ matrix.abi_label == 'current' && needs.precheck.outputs.current_node_version || needs.precheck.outputs.prior_node_version }}
 
@@ -223,7 +223,7 @@ jobs:
       - name: Create versioned release
         # Runs before the state-file commit so release asset uploads are not
         # blocked by a git push race (main can move during the matrix run).
-        uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           tag_name: node-pty-prebuilds-v${{ needs.precheck.outputs.node_pty_version }}
           name: "node-pty prebuilds v${{ needs.precheck.outputs.node_pty_version }}"
@@ -240,7 +240,7 @@ jobs:
             (linux-arm64-musl excluded — GH Actions JS-action runtime doesn't run in Alpine+arm64 containers; those users fall back to compile-at-install.)
 
       - name: Update "latest" alias
-        uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           tag_name: node-pty-prebuilds-latest
           name: "node-pty prebuilds (latest)"
