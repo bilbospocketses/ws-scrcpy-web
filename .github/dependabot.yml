@@ -22,6 +22,17 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: "chore(deps)"
+    # Batch all minor + patch bumps into ONE weekly PR. Interlocking families
+    # (@xterm/* addons must match the xterm core; webpack + its loaders; the
+    # typescript / ts-loader / ts-node toolchain) break when bumped singly.
+    # Grouping keeps them in lockstep; majors still open individually for review.
+    groups:
+      npm-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
 
   # github-actions: tracks SHA-pinned action references in .github/workflows/.
   # Dependabot keys on the `# vX.Y.Z` comment after each SHA to detect
