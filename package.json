@@ -67,7 +67,7 @@
     "mini-css-extract-plugin": "^2.6.1",
     "style-loader": "^4.0.0",
     "swc-loader": "^0.2.7",
-    "ts-node": "^10.9.1",
+    "tsx": "^4.23.1",
     "typescript": "^6.0.2",
     "vitest": "^4.1.10",
     "webpack": "^5.108.4",
