@@ -36,3 +36,10 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: "chore(actions)"
+    # Batch all action bumps into one PR — keeps the codeql-action init/analyze/
+    # upload-sarif refs in lockstep (a split bump mismatches CodeQL versions) and
+    # avoids weekly action-PR pile-ups.
+    groups:
+      actions:
+        patterns:
+          - "*"
