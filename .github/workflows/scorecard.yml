@@ -95,6 +95,6 @@ jobs:
         # — bare `# v4` would be a Dependabot blind spot for future major
         # bumps (v5+). Same SHA + version as our codeql.yml init + analyze
         # references after PR #27's v3→v4 bump.
-        uses: github/codeql-action/upload-sarif@54f647b7e1bb85c95cddabcd46b0c578ec92bc1a # v4.36.3
+        uses: github/codeql-action/upload-sarif@7188fc363630916deb702c7fdcf4e481b751f97a # v4.37.1
         with:
           sarif_file: results.sarif
