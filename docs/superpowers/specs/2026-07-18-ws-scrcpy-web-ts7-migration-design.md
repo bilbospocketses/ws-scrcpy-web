@@ -1,7 +1,7 @@
 # ws-scrcpy-web → TypeScript 7 migration (design)
 
 **Date:** 2026-07-18
-**Status:** Approved — Phase 1 ready to implement; Phase 2 outlined.
+**Status:** Phase 1 SHIPPED (#493 swc/tsx + #494 docs/ignore). Phase 2 APPROVED 2026-07-18 — Approach A (isolated TS 6 for `build:types`), in progress.
 **Scope:** The build-system changes needed for ws-scrcpy-web to run on the TypeScript 7 native compiler.
 
 ## Problem
@@ -63,13 +63,26 @@ Either fully removes `ts-node`; the choice is settled during Phase 1 verificatio
 
 ---
 
-## Phase 2 — TypeScript 7 (separate PR, outlined)
+## Phase 2 — TypeScript 7 native compiler (this PR)
 
-1. Bump `typescript` → `7.0.2`. `tsc --noEmit` already passes on TS 7 (per #487).
-2. Resolve **dts-bundle-generator** (the last TS-6-API tool). Decision taken at Phase 2 start:
-   - **(a)** keep the single bundled `ws-scrcpy.d.ts` by vendoring TypeScript 6 (an npm alias in devDependencies) for *only* the `build:types` step — respects the local-dependencies rule (no network fetch at build time); or
-   - **(b)** replace it with `tsc --emitDeclarationOnly` (TS 7 native) — no TS 6 anywhere, but emits per-file `.d.ts` instead of one bundle (a small change to the shipped types layout), pending confirmation of whether/how the `.d.ts` is consumed.
-3. Close Dependabot #487 — its naive whole-repo TS 7 bump is superseded by this staged migration; add a `typescript` major-bump `ignore` so the un-buildable jump stops being re-proposed until we do it deliberately.
+The app already type-checks clean on TS 7 (Dependabot #487's `tsc --noEmit` passed at CI step 2; only `npm run build` failed). After Phase 1 that build failure is isolated to the one remaining compiler-API tool — `dts-bundle-generator`, in `build:types`. So Phase 2 puts the root on TS 7 and keeps `dts-bundle-generator` on a vendored TS 6, walled off to `build:types` alone.
+
+### Decision: keep the single bundled `.d.ts` (option a), not `tsc --emitDeclarationOnly` (option b)
+
+`dist/public/ws-scrcpy.d.ts` is a **deliberately-shipped, single-file public artifact** — README, CONTRIBUTING, and `docs/TECHNICAL_GUIDE.md` all advertise "bundled TypeScript types," and the intended consumer usage is a one-file reference (`import type { StartStreamOptions } from './dist/public/ws-scrcpy'`). Option b was **already tried and rejected** during the original Stream API work: `docs/superpowers/plans/2026-04-17-stream-api.md` records that raw `tsc --emitDeclarationOnly` emits per-file declarations with relative imports (`from './startStream'`) that don't work as a single self-contained file — which is exactly why `dts-bundle-generator` was adopted. Reviving b would regress that public artifact to a per-file tree leaking `src/` internals and churn three docs. So we keep the bundle.
+
+### Mechanism: vendored TS 6, isolated to `build:types`
+
+Root `typescript` → `7.0.2`, used by `tsc --noEmit` and CI everywhere. `dts-bundle-generator` — the only tool still needing the TS ≤6 programmatic API (nothing lands natively until TS 7.1) — resolves a **separate vendored TS 6** (an `npm:typescript@6` alias in devDependencies) for that one release-time step. This is a temporary bridge: when `dts-bundle-generator` supports the TS 7.1 API, the alias is deleted and the root TS serves everything. Installing a second `typescript` devDependency is toolchain-only (never shipped) and does not touch the local-dependencies rule, which governs the app's *runtime* binaries.
+
+The exact isolation is confirmed empirically as the plan's first task (candidates, cleanest first: npm `overrides` nesting `dts-bundle-generator`'s `typescript` to the alias → a `require`-resolver shim in `scripts/build-types.js` → a nested standalone install). Guaranteed fallback if none isolate cleanly: hand-author the small, stable public `ws-scrcpy.d.ts` (the surface is just `startStream`, the theme helpers, `version`, and ~5 types) and copy it at build time — no generator, no TS 6 at all.
+
+### Steps
+
+1. **Confirm the isolation mechanism** (spike): `build:types` emits a functionally-identical `ws-scrcpy.d.ts` while root `tsc --version` reports 7.x.
+2. **Bump `typescript` → `7.0.2`** (root devDependencies); wire `dts-bundle-generator` to the vendored TS 6 per step 1.
+3. **Remove the `typescript` major-bump `ignore`** from `.github/dependabot.yml` (added in #494) — TS 7 is now deliberately adopted, so future `typescript` updates flow through the normal grouped path again. (#487 is already closed.)
+4. **Verify on the native compiler:** `npx tsc --noEmit` clean, `npm run build` (webpack/swc + `build:types`) succeeds with `dist/public/ws-scrcpy.d.ts` present and functionally equivalent to `main`, `npm test` (vitest) green, and the built app smoke-runs.
 
 ---
 
@@ -80,7 +93,7 @@ Either fully removes `ts-node`; the choice is settled during Phase 1 verificatio
 | swc emit differs subtly from tsc emit | `isolatedModules` on + build-output diff + smoke run; repo uses no decorators / `const enum` (the usual divergence points). |
 | Webpack config loses authoring type-safety when de-TS'd | Prefer keeping `.ts` behind `@swc-node/register`; if converting to `.cjs`, add JSDoc `@type`. Configs are not CI-type-checked today, so no CI coverage is lost. |
 | Regression on a shipping app | Phase 1 is TypeScript-version-neutral; gated on output diff + smoke before merge; Velopack release flow untouched. |
-| dts-bundle-generator has no TS 7 path | Isolated to Phase 2; two concrete, local-deps-compliant options. |
+| dts-bundle-generator has no TS 7 path (until 7.1) | Phase 2 isolates it on a vendored TS 6 for `build:types` only; hand-authored `.d.ts` is a guaranteed fallback. |
 
 ## Rollback
 
@@ -89,4 +102,4 @@ Phase 1 is a self-contained PR; reverting it restores ts-loader/ts-node. No data
 ## Success criteria
 
 - **Phase 1:** ts-loader + ts-node gone; `dist/` output functionally identical to `main`; `tsc --noEmit` (isolatedModules) + `npm test` green; app smoke-verified; on TS 6.
-- **Phase 2:** `typescript@7.0.2`; full build + type-check + tests green on the native compiler; `build:types` produces a working public type surface; #487 closed.
+- **Phase 2:** root `typescript@7.0.2`; `dts-bundle-generator` isolated on a vendored TS 6 (or the hand-authored fallback); `npx tsc --noEmit` + `npm run build` (incl. `build:types`) + `npm test` green on the native compiler; `dist/public/ws-scrcpy.d.ts` present and functionally equivalent to `main`; the #494 `typescript`-major dependabot `ignore` removed.
