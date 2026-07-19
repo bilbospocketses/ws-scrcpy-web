@@ -884,8 +884,8 @@ Run `npm outdated` to check all at once. Update one at a time, build + test afte
 | 3 | `webpack-cli` | 7.0.3 | Command-line interface for webpack | Major versions usually just drop old Node support |
 | 4 | `css-loader` | 7.1.4 | Processes CSS imports for webpack bundling | Major versions may need webpack config changes |
 | 5 | `mini-css-extract-plugin` | 2.10.2 | Extracts CSS into separate .css files | Tied to webpack version |
-| 6 | `ts-loader` | 9.6.0 | Lets webpack process TypeScript files | Must be compatible with TypeScript version |
-| 7 | `ts-node` | 10.9.2 | Runs webpack config files written in TypeScript | Must be compatible with TypeScript version |
+| 6 | `swc-loader` (+ `@swc/core`) | 0.2.7 | Transpiles TypeScript for webpack | Transpile-only; type-safety is the separate `tsc --noEmit` |
+| 7 | `tsx` | 4.x | Runs the TypeScript webpack config files | esbuild-based; webpack-cli loads the `.ts` config via `tsx/cjs` |
 | 8 | `@biomejs/biome` | 2.4.16 | Linter and code formatter (replaces ESLint + Prettier) | Major versions need config migration (`npx @biomejs/biome migrate`) |
 | 9 | `@types/node` | 24.12.2 | TypeScript type definitions for Node.js APIs | Must match target Node.js LTS major version (even numbers only, never odd) |
 | 10 | `@types/ws` | 8.18.1 | TypeScript type definitions for ws library | Must match `ws` major version |
