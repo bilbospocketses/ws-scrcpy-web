@@ -55,7 +55,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.4",
-    "@swc/core": "^1.15.43",
+    "@swc/core": "^1.15.46",
     "@types/node": "^26.1.1",
     "@types/ws": "^8",
     "@xterm/addon-attach": "^0.12.0",
