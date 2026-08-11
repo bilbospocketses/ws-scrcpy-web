@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { AdbClient, parseSerialFromMdnsName } from '../AdbClient';
+import { AdbQrPairingManager } from '../AdbQrPairing';
 import { resolveUserId } from '../auth/currentUser';
 import { Config } from '../Config';
 import { Logger } from '../Logger';
@@ -13,9 +14,11 @@ const log = Logger.for('DeviceDiscoveryApi');
 
 export class DeviceDiscoveryApi {
     private adbClient: AdbClient;
+    private qrPairing: AdbQrPairingManager;
 
     constructor() {
         this.adbClient = new AdbClient(Config.getInstance().adbPath);
+        this.qrPairing = new AdbQrPairingManager(this.adbClient);
     }
 
     async handle(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
@@ -25,6 +28,55 @@ export class DeviceDiscoveryApi {
         res.setHeader('Content-Type', 'application/json');
 
         try {
+            const parsedUrl = new URL(url, 'http://localhost');
+            if (parsedUrl.pathname === '/api/devices/pair/qr') {
+                res.setHeader('Cache-Control', 'no-store');
+                const id = parsedUrl.searchParams.get('id')?.trim() ?? '';
+                if (req.method === 'POST') {
+                    const body = await readJsonBodyStrict<{ mode?: unknown; host?: unknown }>(req);
+                    const mode =
+                        body.mode === 'tailscale'
+                            ? 'tailscale'
+                            : body.mode === 'lan' || body.mode === undefined
+                              ? 'lan'
+                              : null;
+                    if (!mode) {
+                        res.writeHead(400);
+                        res.end(JSON.stringify({ error: 'mode must be lan or tailscale' }));
+                        return true;
+                    }
+                    try {
+                        const started = this.qrPairing.start({
+                            mode,
+                            ...(typeof body.host === 'string' ? { host: body.host } : {}),
+                        });
+                        res.writeHead(200);
+                        res.end(JSON.stringify(started));
+                    } catch (error) {
+                        res.writeHead(400);
+                        res.end(JSON.stringify({ error: (error as Error).message }));
+                    }
+                    return true;
+                }
+                if (!id) {
+                    res.writeHead(400);
+                    res.end(JSON.stringify({ error: 'session id is required' }));
+                    return true;
+                }
+                if (req.method === 'GET') {
+                    const status = this.qrPairing.getStatus(id);
+                    res.writeHead(status ? 200 : 404);
+                    res.end(JSON.stringify(status ?? { error: 'QR pairing session not found' }));
+                    return true;
+                }
+                if (req.method === 'DELETE') {
+                    const cancelled = this.qrPairing.cancel(id);
+                    res.writeHead(cancelled ? 200 : 404);
+                    res.end(JSON.stringify(cancelled ? { success: true } : { error: 'QR pairing session not found' }));
+                    return true;
+                }
+            }
+
             if (req.method === 'POST' && url === '/api/devices/scan') {
                 const discovered = await this.adbClient.mdnsServices();
                 const connectable = discovered.filter(

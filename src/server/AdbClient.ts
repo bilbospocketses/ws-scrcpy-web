@@ -53,6 +53,7 @@ export const DEFAULT_TIMEOUT_MS = {
     devices: 5_000,
     mdnsServices: 8_000,
     connect: 8_000,
+    pair: 5_000,
     disconnect: 5_000,
     forwardOps: 5_000,
     shell: 30_000,
@@ -277,6 +278,16 @@ export class AdbClient {
     async mdnsServices(): Promise<MdnsDevice[]> {
         const output = await this.exec(['mdns', 'services'], { timeoutMs: DEFAULT_TIMEOUT_MS.mdnsServices });
         return parseMdnsOutput(output);
+    }
+
+    async pairQr(address: string, password: string, timeoutMs: number = DEFAULT_TIMEOUT_MS.pair): Promise<string> {
+        assertSerial(address);
+        try {
+            return await this.exec(['pair', address, password], { timeoutMs });
+        } catch {
+            // The QR password is an argv secret; never preserve it in an AdbExecError.
+            throw new Error('ADB QR pairing failed');
+        }
     }
 
     async connect(address: string): Promise<string> {
