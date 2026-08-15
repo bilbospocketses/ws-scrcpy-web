@@ -326,3 +326,46 @@ export function parseSPS(data: Uint8Array): SPS {
         sar,
     };
 }
+
+// ── AVCDecoderConfigurationRecord (avcC box) ────────────────────
+
+/**
+ * Build an avcC box (ISO/IEC 14496-15) from raw SPS/PPS NAL units — WebCodecs'
+ * `avc1.*` description requires this box format, not raw Annex B.
+ *
+ * Omits the optional high-profile chroma_format/bit_depth extension:
+ * Chromium's own box parser doesn't read it either, and decoding doesn't need
+ * it (already implied by the SPS NAL itself).
+ */
+export function buildAvcCBox(spsNalus: Uint8Array[], ppsNalus: Uint8Array[], sps: SPS): Uint8Array {
+    const chunks: Uint8Array[] = [
+        Uint8Array.of(
+            1, // configurationVersion
+            sps.profile_idc,
+            sps.constraint_set_flags,
+            sps.level_idc,
+            0xff, // reserved(6)='111111' + lengthSizeMinusOne(2)=3 (4-byte NAL lengths)
+            0xe0 | (spsNalus.length & 0x1f), // reserved(3)='111' + numOfSequenceParameterSets(5)
+        ),
+    ];
+    for (const nalu of spsNalus) {
+        chunks.push(Uint8Array.of((nalu.length >> 8) & 0xff, nalu.length & 0xff), nalu);
+    }
+    chunks.push(Uint8Array.of(ppsNalus.length & 0xff));
+    for (const nalu of ppsNalus) {
+        chunks.push(Uint8Array.of((nalu.length >> 8) & 0xff, nalu.length & 0xff), nalu);
+    }
+    return concatUint8Arrays(chunks);
+}
+
+/** Concatenate a list of byte chunks into one Uint8Array. */
+export function concatUint8Arrays(chunks: Uint8Array[]): Uint8Array {
+    const total = chunks.reduce((n, c) => n + c.length, 0);
+    const out = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+        out.set(chunk, offset);
+        offset += chunk.length;
+    }
+    return out;
+}
