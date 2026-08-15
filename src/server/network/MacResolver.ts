@@ -35,6 +35,10 @@ export async function resolveMac(ip: string, deps: MacResolverDeps = DEFAULT_DEP
             const out = await deps.runCommand('ip', ['neigh', 'show', 'to', ip]);
             return parseLinuxIpNeigh(out);
         }
+        if (deps.platform === 'darwin') {
+            const out = await deps.runCommand('arp', ['-n', ip]);
+            return parseDarwinArp(out);
+        }
     } catch {
         return null;
     }
@@ -64,17 +68,32 @@ export function parseLinuxIpNeigh(output: string): string | null {
     return match ? normalizeMac(match[1]!) : null;
 }
 
+export function parseDarwinArp(output: string): string | null {
+    // Expected row shape (BSD arp -n <ip>):
+    //   ? (192.168.86.231) at aa:bb:cc:dd:ee:ff on en0 ifscope [ethernet]
+    // BSD arp may omit leading zeros per octet (e.g. "8:0:20:ae:fd:7a"),
+    // unlike Linux/Windows which always zero-pad — normalizeMac pads back.
+    const match = output.match(/\bat\s+([0-9a-f]{1,2}(?::[0-9a-f]{1,2}){5})\b/i);
+    return match ? normalizeMac(match[1]!) : null;
+}
+
 function isMacString(s: string): boolean {
-    return /^[0-9a-f]{2}([-:][0-9a-f]{2}){5}$/i.test(s);
+    return /^[0-9a-f]{1,2}([-:][0-9a-f]{1,2}){5}$/i.test(s);
 }
 
 function normalizeMac(s: string): string {
-    return s.toLowerCase().replace(/-/g, ':');
+    return s
+        .toLowerCase()
+        .replace(/-/g, ':')
+        .split(':')
+        .map((octet) => octet.padStart(2, '0'))
+        .join(':');
 }
 
 export const __internals = {
     parseWindowsArp,
     parseLinuxIpNeigh,
+    parseDarwinArp,
     normalizeMac,
     isMacString,
 };

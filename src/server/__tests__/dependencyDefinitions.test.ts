@@ -3,9 +3,9 @@ import { getArch, getDependencyDefinitions, getPlatform, NODE_LTS_ABI, parseNode
 import * as NodePtyResolver from '../NodePtyResolver';
 
 describe('getPlatform', () => {
-    it('returns win32 or linux based on os.platform()', () => {
+    it('returns win32, linux, or darwin based on os.platform()', () => {
         const platform = getPlatform();
-        expect(['win32', 'linux']).toContain(platform);
+        expect(['win32', 'linux', 'darwin']).toContain(platform);
     });
 });
 

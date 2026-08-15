@@ -84,7 +84,7 @@ function detectLibc() {
 }
 
 function getHostInfo() {
-    const platform = process.platform === 'win32' ? 'win32' : 'linux';
+    const platform = process.platform === 'win32' ? 'win32' : process.platform === 'darwin' ? 'darwin' : 'linux';
     const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
     return { platform, arch, libc: detectLibc(), nodeAbi: process.versions.modules };
 }
@@ -115,6 +115,13 @@ async function main() {
     const host = getHostInfo();
     console.log(`[fetch-prebuilts] host: ${host.platform}-${host.arch}-${host.libc} abi=${host.nodeAbi}`);
     console.log(`[fetch-prebuilts] depsPath: ${depsPath}`);
+
+    // No darwin leg in node-pty-prebuilds.yml's build matrix yet — skip rather
+    // than 404 on every fetch.
+    if (host.platform === 'darwin') {
+        console.warn('[fetch-prebuilts] no darwin node-pty prebuilt is published yet — skipping fetch');
+        return;
+    }
 
     const { base: RELEASE_URL_BASE, overridden, ignoredOverride } = resolveReleaseUrlBase();
     if (overridden) {

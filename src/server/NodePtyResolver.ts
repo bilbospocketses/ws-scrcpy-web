@@ -59,7 +59,7 @@ export interface NodePtyHandle {
 }
 
 export interface HostInfo {
-    platform: 'win32' | 'linux';
+    platform: 'win32' | 'linux' | 'darwin';
     arch: 'x64' | 'arm64';
     libc: LibcFlavor;
     nodeAbi: string;
@@ -79,7 +79,9 @@ export function getNodePty(): NodePtyHandle | undefined {
 }
 
 export function getHostInfo(): HostInfo {
-    const platform = (process.platform === 'win32' ? 'win32' : 'linux') as HostInfo['platform'];
+    const platform = (
+        process.platform === 'win32' ? 'win32' : process.platform === 'darwin' ? 'darwin' : 'linux'
+    ) as HostInfo['platform'];
     const arch = (process.arch === 'arm64' ? 'arm64' : 'x64') as HostInfo['arch'];
     return {
         platform,

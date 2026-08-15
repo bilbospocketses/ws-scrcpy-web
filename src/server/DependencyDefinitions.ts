@@ -11,8 +11,10 @@ const log = Logger.for('DependencyDefinitions');
 
 const execFileAsync = promisify(execFile);
 
-export function getPlatform(): 'win32' | 'linux' {
-    return os.platform() === 'win32' ? 'win32' : 'linux';
+export function getPlatform(): 'win32' | 'linux' | 'darwin' {
+    if (os.platform() === 'win32') return 'win32';
+    if (os.platform() === 'darwin') return 'darwin';
+    return 'linux';
 }
 
 export function getArch(): 'x64' | 'arm64' {
@@ -116,6 +118,9 @@ export function getDependencyDefinitions(depsPath: string): DependencyDefinition
                 if (platform === 'win32') {
                     return `https://nodejs.org/dist/v${version}/node-v${version}-win-${arch}.zip`;
                 }
+                if (platform === 'darwin') {
+                    return `https://nodejs.org/dist/v${version}/node-v${version}-darwin-${arch}.tar.gz`;
+                }
                 return `https://nodejs.org/dist/v${version}/node-v${version}-linux-${arch}.tar.gz`;
             },
         },
@@ -141,6 +146,9 @@ export function getDependencyDefinitions(depsPath: string): DependencyDefinition
             getDownloadUrl: (_version) => {
                 if (platform === 'win32') {
                     return 'https://dl.google.com/android/repository/platform-tools-latest-windows.zip';
+                }
+                if (platform === 'darwin') {
+                    return 'https://dl.google.com/android/repository/platform-tools-latest-darwin.zip';
                 }
                 return 'https://dl.google.com/android/repository/platform-tools-latest-linux.zip';
             },

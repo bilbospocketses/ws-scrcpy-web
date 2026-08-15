@@ -53,6 +53,17 @@ const LINUX_ARCHIVE_SHA256 =
     '472655581fb851559730c48763e0c9d3bc25975c59d518003fc0849d3e4ba0f6';
 const LINUX_INNER_NODE_REL = path.join(`node-${NODE_VERSION}-linux-x64`, 'bin', 'node');
 
+// macOS: tar.xz archive, contains node at <root>/bin/node. Keyed by arch
+// since Apple Silicon (arm64) and Intel (x64) Macs need different builds.
+const DARWIN_ARCHIVE_NAME = {
+    x64: `node-${NODE_VERSION}-darwin-x64.tar.xz`,
+    arm64: `node-${NODE_VERSION}-darwin-arm64.tar.xz`,
+};
+const DARWIN_ARCHIVE_SHA256 = {
+    x64: '5d627245b9f53cb2512cc21b7aa6aad693106affadd91e0c8f42d600fb7ba444',
+    arm64: 'af5cfaeafe603aaf7599f287fd9d100bb41f16794f49788fa59dd3f25546930f',
+};
+
 const SEED_DIR = path.join(REPO_ROOT, 'seed', 'node');
 const CACHE_DIR = path.join(REPO_ROOT, 'dependencies', 'node-bootstrap', NODE_VERSION);
 // Windows bsdtar handles both .zip and .tar.xz; git-bash GNU tar can't read .zip.
@@ -131,9 +142,18 @@ function platformConfig() {
             seedNodeName: 'node',
         };
     }
+    if (process.platform === 'darwin') {
+        const arch = os.arch() === 'arm64' ? 'arm64' : 'x64';
+        return {
+            archiveName: DARWIN_ARCHIVE_NAME[arch],
+            archiveSha256: DARWIN_ARCHIVE_SHA256[arch],
+            innerRel: path.join(`node-${NODE_VERSION}-darwin-${arch}`, 'bin', 'node'),
+            seedNodeName: 'node',
+        };
+    }
     throw new Error(
         `Unsupported platform: ${process.platform}. ` +
-            'Node bootstrap fetch is implemented for win32 and linux only ' +
+            'Node bootstrap fetch is implemented for win32, linux, and darwin only ' +
             '(those are the platforms we ship installers for).',
     );
 }
