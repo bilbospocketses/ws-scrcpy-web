@@ -95,14 +95,27 @@ describe('WebCodecsPlayer keyframe decode (finding #41)', () => {
         expect(decoderState).toBe('configured');
         expect(lastConfig).toBeDefined();
         expect(lastConfig?.description).toBeInstanceOf(Uint8Array);
-        expect(Array.from(lastConfig?.description as Uint8Array)).toEqual(Array.from(H264_CONFIG));
+        // description must be a real avcC box (configurationVersion=1 header), not the
+        // raw Annex B config bytes — WebCodecs rejects Annex B start codes there.
+        const desc = lastConfig?.description as Uint8Array;
+        expect(desc[0]).toBe(1); // configurationVersion
+        expect(Array.from(desc)).not.toEqual(Array.from(H264_CONFIG));
+        const { buildAvcCBox, parseSPS, stripEmulationPrevention } = await import('../h264-utils');
+        // H264_CONFIG's SPS trailing zeros and the PPS start code overlap (00 00
+        // 00 | 00 00 00 01); the scanner attributes all 3 shared zeros to the
+        // start code, so the extracted SPS ends at index 16, not 19.
+        const sps = Uint8Array.from(H264_CONFIG.subarray(4, 16));
+        const pps = Uint8Array.from(H264_CONFIG.subarray(20));
+        expect(Array.from(desc)).toEqual(Array.from(buildAvcCBox([sps], [pps], parseSPS(stripEmulationPrevention(sps)))));
 
-        // Keyframe: the chunk data must equal the raw keyframe bytes — NOT config+frame.
+        // Keyframe: the chunk data must be the keyframe's NAL re-framed with a
+        // 4-byte length prefix (matching the avcC's lengthSizeMinusOne=3) — NOT
+        // config+frame, and NOT the raw Annex B start code either.
         player.pushVideoFrame(H264_KEYFRAME, 100n, false, true);
         expect(decodedChunks.length).toBe(1);
         const chunk = decodedChunks[0]!;
         expect(chunk.type).toBe('key');
-        expect(chunk.data.length).toBe(H264_KEYFRAME.length); // would be longer if prepended
-        expect(Array.from(chunk.data)).toEqual(Array.from(H264_KEYFRAME));
+        // H264_KEYFRAME's single 5-byte NAL (0x65,0xaa,0xbb,0xcc,0xdd) length-prefixed.
+        expect(Array.from(chunk.data)).toEqual([0, 0, 0, 5, 0x65, 0xaa, 0xbb, 0xcc, 0xdd]);
     });
 });
