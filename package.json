@@ -63,7 +63,7 @@
     "@xterm/xterm": "^6.0.0",
     "css-loader": "^7.1.4",
     "dts-bundle-generator": "^9.5.1",
-    "jsdom": "^29.1.1",
+    "jsdom": "^30.0.1",
     "mini-css-extract-plugin": "^2.6.1",
     "style-loader": "^4.0.0",
     "swc-loader": "^0.2.7",
