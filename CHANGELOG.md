@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Android Wireless-debugging QR pairing for same-LAN and Tailscale connections.
+
 ### Changed
 
 - **Swapped the webpack build's TypeScript tooling from `ts-loader`/`ts-node` to `swc-loader`/`tsx`.** These are transpile-only replacements (type-checking is unchanged — it stays with the separate `tsc --noEmit`), and the emitted `dist/` output was verified equivalent to the previous build. This is phase 1 of moving onto the TypeScript 7 native compiler: it removes the build tools that import the old compiler's programmatic API, which TypeScript 7.0 does not ship. `isolatedModules` was enabled to enforce the per-file transpile constraints swc relies on.

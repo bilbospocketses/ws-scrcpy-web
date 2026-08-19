@@ -57,9 +57,9 @@ limitations under the License.
 
 ## Bundled runtime dependencies (npm)
 
-The release artifacts bundle the following MIT-licensed npm packages: `ws` and
-`@xterm/xterm` (with the `@xterm/addon-attach` and `@xterm/addon-fit` addons)
-are compiled into the `dist/` bundles by webpack; `velopack` (the update SDK)
+The release artifacts bundle the following MIT-licensed npm packages: `ws`,
+`@xterm/xterm` (with the `@xterm/addon-attach` and `@xterm/addon-fit` addons),
+and `qrcode-generator` are compiled into the `dist/` bundles by webpack; `velopack` (the update SDK)
 is bundled into the server bundle; and the `node-pty` prebuilt native binary
 ships with the app. Their copyright notices are reproduced below; all are
 distributed under the MIT License (text reproduced once at the end).
@@ -88,13 +88,19 @@ Copyright (c) 2016, Daniel Imms (http://www.growingwiththeweb.com)
 Copyright (c) 2018 - present Microsoft Corporation
 ```
 
+**qrcode-generator** — https://github.com/kazuhikoarase/qrcode-generator
+
+```
+Copyright (c) 2016 Kazuhiko Arase
+```
+
 **velopack** — https://github.com/velopack/velopack
 
 ```
 Copyright (c) the Velopack authors
 ```
 
-All four packages are distributed under the MIT License:
+All five packages are distributed under the MIT License:
 
 ```
 Permission is hereby granted, free of charge, to any person obtaining a copy

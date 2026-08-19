@@ -9,6 +9,16 @@ interface ConnectResult {
     message: string;
 }
 
+interface QrPairingStatus {
+    id: string;
+    mode: 'lan' | 'tailscale';
+    state: 'waiting' | 'pairing' | 'connecting' | 'complete' | 'expired' | 'cancelled';
+    message: string;
+    expiresAt: number;
+    address?: string;
+    qrSvg?: string;
+}
+
 function escapeHtml(s: string): string {
     return s
         .replace(/&/g, '&amp;')
@@ -26,6 +36,8 @@ export class NetworkDiscoveryPanel {
     private scanWs?: WebSocket | undefined;
     private scanSessionHits = new Map<string, HTMLElement>();
     private defaultInfoText = '';
+    private qrSessionId: string | undefined;
+    private qrPollTimer: number | undefined;
 
     constructor() {
         this.container = document.createElement('div');
@@ -37,8 +49,20 @@ export class NetworkDiscoveryPanel {
                 <div class="discovery-header-actions">
                     <button class="dep-btn discovery-quick-scan-btn" title="mDNS-only — finds modern Android devices with wireless debugging enabled">quick scan</button>
                     <button class="dep-btn discovery-scan-btn">scan network</button>
+                    <button class="dep-btn discovery-qr-btn">pair with QR</button>
                     <button class="dep-btn discovery-manual-btn">manually add</button>
                 </div>
+            </div>
+            <div class="discovery-manual-form discovery-qr-form" hidden>
+                <select class="discovery-qr-mode" aria-label="QR pairing network">
+                    <option value="lan">same Wi-Fi</option>
+                    <option value="tailscale">Tailscale</option>
+                </select>
+                <input type="text" class="discovery-manual-address discovery-qr-host" placeholder="Android Tailscale IP (100.x.y.z)" hidden />
+                <button class="dep-btn discovery-connect-btn discovery-qr-generate">generate QR</button>
+                <button class="discovery-manual-close discovery-qr-close" aria-label="close" title="close">×</button>
+                <div class="discovery-qr-code"></div>
+                <div class="discovery-manual-result discovery-qr-status">Android: Wireless debugging → Pair device with QR code.</div>
             </div>
             <div class="discovery-manual-form" hidden>
                 <input type="text" class="discovery-manual-address" placeholder="192.168.86.50" />
@@ -56,6 +80,10 @@ export class NetworkDiscoveryPanel {
         this.resultsContainer = this.container.querySelector('.discovery-results')!;
         this.container.querySelector('.discovery-scan-btn')!.addEventListener('click', () => this.scan());
         this.container.querySelector('.discovery-quick-scan-btn')!.addEventListener('click', () => this.quickScan());
+        this.container.querySelector('.discovery-qr-btn')!.addEventListener('click', () => this.toggleQrForm());
+        this.container.querySelector('.discovery-qr-close')!.addEventListener('click', () => this.toggleQrForm(false));
+        this.container.querySelector('.discovery-qr-generate')!.addEventListener('click', () => void this.generateQr());
+        this.container.querySelector('.discovery-qr-mode')!.addEventListener('change', () => this.updateQrMode());
         this.container.querySelector('.discovery-manual-btn')!.addEventListener('click', () => this.toggleManualForm());
         this.container
             .querySelector('.discovery-manual-close')!
@@ -238,10 +266,114 @@ export class NetworkDiscoveryPanel {
         this.scanSessionHits.set(hit.address, card);
     }
 
+    private toggleQrForm(show?: boolean): void {
+        const form = this.container.querySelector('.discovery-qr-form') as HTMLElement;
+        const shouldShow = show ?? form.hasAttribute('hidden');
+        if (shouldShow) {
+            this.toggleManualForm(false);
+            form.removeAttribute('hidden');
+            this.updateQrMode();
+        } else {
+            form.setAttribute('hidden', '');
+            this.stopQrPairing(true);
+            (this.container.querySelector('.discovery-qr-code') as HTMLElement).innerHTML = '';
+            this.showQrStatus('Android: Wireless debugging → Pair device with QR code.');
+        }
+    }
+
+    private updateQrMode(): void {
+        const mode = (this.container.querySelector('.discovery-qr-mode') as HTMLSelectElement).value;
+        const host = this.container.querySelector('.discovery-qr-host') as HTMLInputElement;
+        host.toggleAttribute('hidden', mode !== 'tailscale');
+        if (mode === 'tailscale') host.focus();
+    }
+
+    private async generateQr(): Promise<void> {
+        const mode = (this.container.querySelector('.discovery-qr-mode') as HTMLSelectElement).value as
+            | 'lan'
+            | 'tailscale';
+        const host = (this.container.querySelector('.discovery-qr-host') as HTMLInputElement).value.trim();
+        if (mode === 'tailscale' && !host) {
+            this.showQrStatus('Enter the Android Tailscale 100.x address.', 'error');
+            return;
+        }
+        this.stopQrPairing(true);
+        try {
+            const res = await fetch('/api/devices/pair/qr', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(mode === 'tailscale' ? { mode, host } : { mode }),
+            });
+            const result = (await res.json()) as QrPairingStatus & { error?: string };
+            if (!res.ok || !result.id || !result.qrSvg) {
+                this.showQrStatus(result.error || 'Could not create QR code.', 'error');
+                return;
+            }
+            this.qrSessionId = result.id;
+            (this.container.querySelector('.discovery-qr-code') as HTMLElement).innerHTML = result.qrSvg;
+            this.showQrStatus(result.message);
+            this.scheduleQrPoll();
+        } catch (error) {
+            this.showQrStatus((error as Error).message || 'QR request failed.', 'error');
+        }
+    }
+
+    private scheduleQrPoll(): void {
+        if (!this.qrSessionId) return;
+        this.qrPollTimer = window.setTimeout(() => void this.pollQr(), 1_000);
+    }
+
+    private async pollQr(): Promise<void> {
+        this.qrPollTimer = undefined;
+        const id = this.qrSessionId;
+        if (!id) return;
+        try {
+            const res = await fetch(`/api/devices/pair/qr?id=${encodeURIComponent(id)}`, { cache: 'no-store' });
+            const status = (await res.json()) as QrPairingStatus & { error?: string };
+            if (this.qrSessionId !== id) return;
+            if (!res.ok) {
+                this.qrSessionId = undefined;
+                this.showQrStatus(status.error || 'QR pairing session ended.', 'error');
+                return;
+            }
+            const failed = ['expired', 'cancelled'].includes(status.state);
+            this.showQrStatus(status.message, status.state === 'complete' ? 'success' : failed ? 'error' : undefined);
+            if (status.state === 'complete') {
+                this.qrSessionId = undefined;
+                if (status.mode === 'lan') this.quickScan();
+                else if (status.address) this.setInfoText(`Android connected over Tailscale at ${status.address}.`);
+                return;
+            }
+            if (failed) {
+                this.qrSessionId = undefined;
+                return;
+            }
+            this.scheduleQrPoll();
+        } catch {
+            if (this.qrSessionId === id) this.scheduleQrPoll();
+        }
+    }
+
+    private stopQrPairing(cancelServer: boolean): void {
+        if (this.qrPollTimer !== undefined) window.clearTimeout(this.qrPollTimer);
+        this.qrPollTimer = undefined;
+        const id = this.qrSessionId;
+        this.qrSessionId = undefined;
+        if (cancelServer && id) void fetch(`/api/devices/pair/qr?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+    }
+
+    private showQrStatus(text: string, kind?: 'success' | 'error'): void {
+        const status = this.container.querySelector('.discovery-qr-status') as HTMLElement;
+        status.textContent = text;
+        status.classList.toggle('success', kind === 'success');
+        status.classList.toggle('error', kind === 'error');
+    }
+
     private toggleManualForm(show?: boolean): void {
         const form = this.container.querySelector('.discovery-manual-form') as HTMLElement;
         const shouldShow = show !== undefined ? show : form.hasAttribute('hidden');
         if (shouldShow) {
+            this.toggleQrForm(false);
             form.removeAttribute('hidden');
             (this.container.querySelector('.discovery-manual-address') as HTMLInputElement).focus();
         } else {

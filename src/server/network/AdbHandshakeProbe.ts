@@ -8,8 +8,10 @@ import * as net from 'net';
 
 const A_CNXN = 0x4e584e43; // "CNXN"
 const A_AUTH = 0x48545541; // "AUTH"
+const A_STLS = 0x534c5453; // "STLS" — Wireless debugging TLS upgrade
 const A_CNXN_MAGIC = (A_CNXN ^ 0xffffffff) >>> 0;
 const A_AUTH_MAGIC = (A_AUTH ^ 0xffffffff) >>> 0;
+const A_STLS_MAGIC = (A_STLS ^ 0xffffffff) >>> 0;
 // These match EXACTLY what Google's modern adb client emits. Some adbd
 // implementations strictly validate version and reject older values silently.
 // Captured from live `adb connect` on Android platform-tools 36.x.
@@ -75,6 +77,11 @@ export function parseCnxnReply(buf: Buffer): AdbHandshakeResult {
     if (command === A_AUTH) {
         if (magic !== A_AUTH_MAGIC) return { isAdb: false };
         // Device requires RSA auth; we still know it's ADB, just no banner yet.
+        return { isAdb: true };
+    }
+    if (command === A_STLS) {
+        if (magic !== A_STLS_MAGIC) return { isAdb: false };
+        // Android Wireless debugging asks the client to upgrade this ADB socket to TLS.
         return { isAdb: true };
     }
     return { isAdb: false };
