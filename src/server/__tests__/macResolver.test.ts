@@ -39,6 +39,32 @@ describe('parseWindowsArp', () => {
     });
 });
 
+describe('parseDarwinArp', () => {
+    it('extracts MAC from typical BSD arp -n <ip> output', () => {
+        const out = '? (192.168.86.231) at aa:bb:cc:dd:ee:ff on en0 ifscope [ethernet]';
+        expect(__internals.parseDarwinArp(out)).toBe('aa:bb:cc:dd:ee:ff');
+    });
+
+    it('zero-pads single-digit octets (BSD arp omits leading zeros)', () => {
+        const out = '? (192.168.1.5) at 8:0:20:ae:fd:7a on en0 ifscope [ethernet]';
+        expect(__internals.parseDarwinArp(out)).toBe('08:00:20:ae:fd:7a');
+    });
+
+    it('normalizes uppercase to lowercase', () => {
+        const out = '? (192.168.1.5) at AA:BB:CC:DD:EE:FF on en0 ifscope [ethernet]';
+        expect(__internals.parseDarwinArp(out)).toBe('aa:bb:cc:dd:ee:ff');
+    });
+
+    it('returns null when the entry is incomplete', () => {
+        const out = '? (192.168.1.5) at (incomplete) on en0 ifscope [ethernet]';
+        expect(__internals.parseDarwinArp(out)).toBeNull();
+    });
+
+    it('returns null on empty output', () => {
+        expect(__internals.parseDarwinArp('')).toBeNull();
+    });
+});
+
 describe('parseLinuxIpNeigh', () => {
     it('extracts MAC from typical ip neigh output', () => {
         const out = '192.168.86.231 dev eth0 lladdr aa:bb:cc:dd:ee:ff REACHABLE';
@@ -86,9 +112,19 @@ describe('resolveMac', () => {
         expect(mac).toBe('aa:bb:cc:dd:ee:ff');
     });
 
-    it('returns null on unsupported platform (darwin)', async () => {
-        const runCommand = vi.fn();
+    it('dispatches to arp -n on macOS', async () => {
+        const runCommand = vi.fn(async (bin: string, args: string[]) => {
+            expect(bin).toBe('arp');
+            expect(args).toEqual(['-n', '192.168.1.5']);
+            return '? (192.168.1.5) at aa:bb:cc:dd:ee:ff on en0 ifscope [ethernet]';
+        });
         const mac = await resolveMac('192.168.1.5', { runCommand, platform: 'darwin' });
+        expect(mac).toBe('aa:bb:cc:dd:ee:ff');
+    });
+
+    it('returns null on unsupported platform', async () => {
+        const runCommand = vi.fn();
+        const mac = await resolveMac('192.168.1.5', { runCommand, platform: 'aix' });
         expect(mac).toBeNull();
         expect(runCommand).not.toHaveBeenCalled();
     });
