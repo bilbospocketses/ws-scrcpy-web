@@ -33,6 +33,7 @@ import {
 } from '../service/SystemdClient';
 import type { CommandRunner } from '../service/systemServiceCli';
 import { resolveSystemTool } from '../service/systemTools';
+import { copyFileAtomicSync, writeFileAtomicSync } from '../util/atomicFile';
 import { readJsonBody } from './utils';
 
 const log = Logger.for('ServiceApi');
@@ -417,7 +418,7 @@ export class ServiceApi {
                 const markerPath = path.join(dataRoot, 'control', 'local-appimage');
                 try {
                     fs.mkdirSync(path.dirname(markerPath), { recursive: true });
-                    fs.writeFileSync(markerPath, appImage, 'utf8');
+                    writeFileAtomicSync(markerPath, appImage, 'utf8');
                 } catch (err) {
                     log.warn(`could not write local-appimage marker: ${(err as Error).message}`);
                 }
@@ -981,7 +982,7 @@ export class ServiceApi {
         if (fs.existsSync(bundledIcon)) {
             try {
                 const stagedIcon = path.join(os.tmpdir(), `ws-scrcpy-web-menu-icon-${process.pid}.png`);
-                fs.copyFileSync(bundledIcon, stagedIcon);
+                copyFileAtomicSync(bundledIcon, stagedIcon);
                 iconSource = stagedIcon;
             } catch {
                 iconSource = undefined;
@@ -1078,7 +1079,7 @@ export class ServiceApi {
         const marker = path.join(dataRoot, 'control', DECLINE_MARKER_NAME);
         try {
             fs.mkdirSync(path.dirname(marker), { recursive: true });
-            fs.writeFileSync(marker, '', 'utf8');
+            writeFileAtomicSync(marker, '', 'utf8');
             res.writeHead(200);
             res.end(JSON.stringify({ ok: true, status: 'declined' }));
         } catch (err) {

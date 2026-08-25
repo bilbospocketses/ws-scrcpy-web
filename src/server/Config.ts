@@ -14,6 +14,7 @@ import { GLOBAL_KEYS } from './db/constants';
 import { Db, dbDir } from './db/Db';
 import { EnvName } from './EnvName';
 import { Logger } from './Logger';
+import { writeFileAtomicSync } from './util/atomicFile';
 
 const DEFAULT_SCAN_CONCURRENCY = 64;
 const DEFAULT_SCAN_TCP_TIMEOUT_MS = 300;
@@ -803,7 +804,7 @@ export class Config {
         if (!fs.existsSync(dir)) {
             fs.mkdirSync(dir, { recursive: true });
         }
-        fs.writeFileSync(this._configFilePath, out, 'utf-8');
+        writeFileAtomicSync(this._configFilePath, out, 'utf-8');
     }
 
     public getFirstRunStatus(): FirstRunStatus {

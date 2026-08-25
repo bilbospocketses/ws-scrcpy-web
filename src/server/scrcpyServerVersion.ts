@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { SERVER_VERSION } from '../common/Constants';
+import { writeFileAtomicSync } from './util/atomicFile';
 
 const VERSION_MARKER = '.version';
 
@@ -45,5 +46,5 @@ export function getInstalledScrcpyServerVersion(depsPath: string): string {
 export function writeInstalledScrcpyServerVersion(depsPath: string, version: string): void {
     const dir = path.join(depsPath, 'scrcpy-server');
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, VERSION_MARKER), version, 'utf8');
+    writeFileAtomicSync(path.join(dir, VERSION_MARKER), version, 'utf8');
 }

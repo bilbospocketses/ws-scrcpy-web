@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { Logger } from './Logger';
 import { detectLibc, type LibcFlavor } from './libcDetect';
+import { writeFileAtomicSync } from './util/atomicFile';
 
 /*
  * Pre-beta.23: this resolver tried two webpack escape hatches:
@@ -217,7 +218,7 @@ export async function loadManifest(depsPath: string): Promise<Manifest | null> {
         if (res.ok) {
             const body = (await res.json()) as Manifest;
             fs.mkdirSync(path.dirname(cachedManifestPath), { recursive: true });
-            fs.writeFileSync(cachedManifestPath, JSON.stringify(body, null, 2));
+            writeFileAtomicSync(cachedManifestPath, JSON.stringify(body, null, 2));
             return body;
         }
         log.info(`manifest fetch returned ${res.status}; trying cached manifest`);
@@ -272,7 +273,7 @@ export async function downloadAndOverlayPtyNode(version: string, host: HostInfo,
         const stagingDir = path.join(packageDir, `.staging-${Date.now()}`);
         fs.mkdirSync(stagingDir, { recursive: true });
         const tarPath = path.join(stagingDir, `${key}.tar.gz`);
-        fs.writeFileSync(tarPath, Buffer.from(await tarRes.arrayBuffer()));
+        writeFileAtomicSync(tarPath, Buffer.from(await tarRes.arrayBuffer()));
 
         if (!(await verifyChecksum(tarPath, expectedSha))) {
             log.error(`checksum mismatch for ${key}.tar.gz`);
