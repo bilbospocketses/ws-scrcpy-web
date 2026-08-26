@@ -85,12 +85,24 @@ describe('DependencyManager.autoInstallMissing', () => {
         expect(updateSpy).toHaveBeenCalledWith('scrcpy-server');
     });
 
-    it('skips launcher-required deps in dev mode (no launcher available)', async () => {
+    it('installs every missing dep with no launcher present (dev / source checkout)', async () => {
+        // Regression guard for the gap this replaced. nodejs and adb used to be
+        // skipped whenever the packaged launcher was absent — true of every source
+        // checkout — because their install shelled out to its --unzip subcommand.
+        // The only trace was an info-level log line, which is why it went unnoticed
+        // on Windows (dev and MSI share %PROGRAMDATA%\WsScrcpyWeb\dependencies\, so
+        // adb was usually already present) and bit hard on Linux and macOS, where
+        // the dev deps folder starts empty. Extraction is in-process now, so a
+        // missing launcher must change nothing.
         vi.mocked(elevatedRunnerModule.launcherIsAvailable).mockResolvedValue(false);
 
         const nodejs = mgr.getByName('nodejs')!;
         nodejs.installedVersion = null;
-        nodejs.latestVersion = '24.15.0';
+        nodejs.latestVersion = '24.19.0';
+
+        const adb = mgr.getByName('adb')!;
+        adb.installedVersion = null;
+        adb.latestVersion = 'latest';
 
         const scrcpy = mgr.getByName('scrcpy-server')!;
         scrcpy.installedVersion = null;
@@ -98,9 +110,8 @@ describe('DependencyManager.autoInstallMissing', () => {
 
         await mgr.autoInstallMissing();
 
-        // nodejs is skipped (requiresLauncher && !launcherIsAvailable)
-        expect(updateSpy).not.toHaveBeenCalledWith('nodejs');
-        // scrcpy-server still gets installed (no launcher needed)
+        expect(updateSpy).toHaveBeenCalledWith('nodejs');
+        expect(updateSpy).toHaveBeenCalledWith('adb');
         expect(updateSpy).toHaveBeenCalledWith('scrcpy-server');
 
         vi.mocked(elevatedRunnerModule.launcherIsAvailable).mockResolvedValue(true);

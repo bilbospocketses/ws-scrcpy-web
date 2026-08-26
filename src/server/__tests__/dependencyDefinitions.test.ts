@@ -49,14 +49,16 @@ describe('getDependencyDefinitions', () => {
         expect(scrcpy?.requiresRestart).toBe(false);
     });
 
-    it('nodejs and adb require the launcher (extractZip path); scrcpy-server does not', () => {
+    it('carries no launcher requirement — extraction is in-process', () => {
+        // `requiresLauncher` is gone. It marked the dependencies whose install
+        // shelled out to the packaged launcher's --unzip, which meant they were
+        // skipped in every source checkout. Extraction moved in-process
+        // (src/server/zipExtract.ts), so nothing is gated on a packaged binary.
         const defs = getDependencyDefinitions('/tmp/test-deps');
-        const node = defs.find((d) => d.name === 'nodejs');
-        const adb = defs.find((d) => d.name === 'adb');
-        const scrcpy = defs.find((d) => d.name === 'scrcpy-server');
-        expect(node?.requiresLauncher).toBe(true);
-        expect(adb?.requiresLauncher).toBe(true);
-        expect(scrcpy?.requiresLauncher).toBe(false);
+        expect(defs.length).toBeGreaterThan(0);
+        for (const def of defs) {
+            expect(def).not.toHaveProperty('requiresLauncher');
+        }
     });
 });
 

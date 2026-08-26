@@ -11,8 +11,9 @@ import type { DependencyDefinition } from './DependencyDefinitions';
 import { getDependencyDefinitions, getPlatform } from './DependencyDefinitions';
 import { Logger } from './Logger';
 import { writeInstalledScrcpyServerVersion } from './scrcpyServerVersion';
-import { launcherIsAvailable, resolveLauncherPath } from './service/elevatedRunner';
+import { resolveSystemTool } from './service/systemTools';
 import { copyFileAtomicSync, writeFileAtomicSync } from './util/atomicFile';
+import { extractZipTo } from './zipExtract';
 
 const log = Logger.for('DependencyManager');
 const execFileAsync = promisify(execFile);
@@ -50,12 +51,15 @@ export class DependencyManager {
     }
 
     public async getAll(): Promise<DependencyInfo[]> {
-        const launcherAvail = await launcherIsAvailable();
         // In-place mutation: callers (incl. getByName) hold references to state
         // entries and mutate them; spread copies would orphan those mutations.
         for (const info of this.state.values()) {
-            const def = this.definitions.find((d) => d.name === info.name);
-            info.canUpdate = !def?.requiresLauncher || launcherAvail;
+            // Every dependency is updatable everywhere the server runs. This was
+            // gated on the packaged launcher being present, because extraction
+            // shelled out to it; extraction is in-process now, so the gate is
+            // gone. The field stays on the wire — the panel reads it, and a future
+            // dependency may genuinely need gating (a Docker-mode pin, say).
+            info.canUpdate = true;
         }
         return Array.from(this.state.values());
     }
@@ -127,17 +131,6 @@ export class DependencyManager {
         if (!def || !info) {
             return { success: false, errorMessage: `Unknown dependency: ${name}`, requiresRestart: false };
         }
-        if (def.requiresLauncher && !(await launcherIsAvailable())) {
-            return {
-                success: false,
-                reason: 'launcher-required',
-                errorMessage:
-                    `${def.displayName} updates require an installed build. ` +
-                    'In dev mode, populate dependencies/ via scripts/fetch-node.mjs.',
-                requiresRestart: false,
-            };
-        }
-
         info.status = DependencyStatus.Updating;
         const fromVersion = info.installedVersion ?? 'not installed';
         const tmpDir = path.join(os.tmpdir(), 'ws-scrcpy-web', `update-${name}-${Date.now()}`);
@@ -218,14 +211,15 @@ export class DependencyManager {
             log.warn(`seed-promote scrcpy-server failed: ${(err as Error).message}`);
         }
 
-        const launcherAvail = await launcherIsAvailable();
         for (const info of this.state.values()) {
             if (info.installedVersion === null && info.latestVersion !== null) {
-                const def = this.definitions.find((d) => d.name === info.name);
-                if (def?.requiresLauncher && !launcherAvail) {
-                    log.info(`Skipping auto-install of ${info.name} in dev mode (no launcher)`);
-                    continue;
-                }
+                // Nothing is skipped here any more. Node and adb used to be, on
+                // every platform, whenever the packaged launcher was absent —
+                // which is every source checkout. On Windows that was invisible
+                // (dev and MSI share %PROGRAMDATA%\WsScrcpyWeb\dependencies\, so
+                // adb was usually already there); on Linux and macOS, where the
+                // dev deps folder starts empty, it meant a from-source run had no
+                // adb and one info-level log line to say so.
                 log.info(`First-run: auto-installing ${info.name}`);
                 await this.update(info.name);
             }
@@ -348,9 +342,11 @@ export class DependencyManager {
 
         // 1. Non-destructive: extract to tmpDir (both platforms).
         if (platform === 'win32') {
-            await this.extractZip(downloadPath, tmpDir, platform);
+            await this.extractZip(downloadPath, tmpDir);
         } else {
-            await execFileAsync('tar', ['xzf', downloadPath, '-C', tmpDir]);
+            // Absolute path via resolveSystemTool -- never the bare name, which would
+            // resolve through $PATH (Local-Dependencies-Only).
+            await execFileAsync(resolveSystemTool('tar'), ['xzf', downloadPath, '-C', tmpDir]);
         }
         const archiveDir = fs.readdirSync(tmpDir).find((d) => d.startsWith('node-v'));
         if (!archiveDir) {
@@ -411,7 +407,7 @@ export class DependencyManager {
         }
 
         // 1. Non-destructive: extract to tmpDir.
-        await this.extractZip(downloadPath, tmpDir, platform);
+        await this.extractZip(downloadPath, tmpDir);
 
         const platformToolsDir = path.join(tmpDir, 'platform-tools');
         if (!fs.existsSync(platformToolsDir)) {
@@ -467,27 +463,20 @@ export class DependencyManager {
         writeInstalledScrcpyServerVersion(this.depsPath, version);
     }
 
-    private async extractZip(zipPath: string, destDir: string, _platform: 'win32' | 'linux'): Promise<void> {
-        // Cross-platform: shell out to the launcher's --unzip subcommand
-        // (pure-Rust zip crate). Replaces the prior PowerShell Expand-Archive
-        // (win32) + system `unzip` (linux) shellouts that resolved binaries
-        // via system PATH — local-dependencies-only violations
-        // that §30 missed because §30's scope was the elevation path only.
-        // The launcher binary is SHA-pinned-to-release and ships in
-        // `current/` alongside this Node process, so no external binary
-        // discovery is needed.
-        if (!(await launcherIsAvailable())) {
-            throw new Error(
-                `extractZip requires the packaged launcher binary at ${resolveLauncherPath()}. ` +
-                    'Dev mode should populate dependencies/ via scripts/fetch-node.mjs (Node) or ' +
-                    `by pre-seeding from a prior install; the dependency-manager's autoInstall ` +
-                    'extractZip path is intended for Velopack-installed deployments only.',
-            );
-        }
-        await execFileAsync(resolveLauncherPath(), ['--unzip', zipPath, destDir], {
-            windowsHide: true,
-            maxBuffer: 1024 * 1024,
-        });
+    private async extractZip(zipPath: string, destDir: string): Promise<void> {
+        // In-process, pure JS (src/server/zipExtract.ts). No PATH lookup and no
+        // external binary, so this satisfies Local-Dependencies-Only the same way
+        // `ws` does — compiled into the app's own artifact.
+        //
+        // History worth not repeating: this was PowerShell `Expand-Archive` /
+        // system `unzip` (PATH-resolved — the violation), then the Rust
+        // launcher's `--unzip` subcommand (no PATH, but the launcher only exists
+        // in a packaged install, so `autoInstallMissing` silently skipped adb and
+        // Node in every source checkout). Extracting in-process is the first
+        // version that is both PATH-free and available everywhere the server runs
+        // — including a Docker image, which would otherwise have needed a Rust
+        // build stage purely to unzip.
+        await extractZipTo(zipPath, destDir);
     }
 
     private copyDirContents(src: string, dest: string): void {

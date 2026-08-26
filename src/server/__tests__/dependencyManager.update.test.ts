@@ -71,12 +71,18 @@ describe('DependencyManager.update("scrcpy-server") — loop fix', () => {
     });
 });
 
-describe('DependencyManager.update() launcher-required gate', () => {
+describe('DependencyManager.update() has no launcher gate', () => {
     afterEach(() => {
         vi.doUnmock('../service/elevatedRunner');
     });
 
-    it('returns reason=launcher-required for nodejs when launcher is unavailable', async () => {
+    it('does not refuse nodejs when the launcher is unavailable', async () => {
+        // The inverse of the gate this replaced: nodejs and adb used to short-
+        // circuit with reason='launcher-required' before doing any work, because
+        // extraction shelled out to the packaged launcher. Extraction is in-process
+        // now, so update() must proceed and fail (or succeed) on its own merits.
+        // We assert on the *absence of the gate*, not on the outcome — the download
+        // is unmocked here and expected to fail.
         vi.doMock('../service/elevatedRunner', () => ({
             launcherIsAvailable: async () => false,
             resolveLauncherPath: () => '/fake/launcher.exe',
@@ -88,15 +94,20 @@ describe('DependencyManager.update() launcher-required gate', () => {
                 fs.rmSync(tmp, { recursive: true, force: true });
             },
         };
+        const fetchSpy = vi.spyOn(global, 'fetch').mockRejectedValue(new Error('network disabled in test'));
+        using _restoreFetch = {
+            [Symbol.dispose]() {
+                fetchSpy.mockRestore();
+            },
+        };
         const mgr = new Mgr(tmp);
         const result = await mgr.update('nodejs');
-        expect(result.success).toBe(false);
-        expect(result.reason).toBe('launcher-required');
-        expect(result.errorMessage).toMatch(/installed build/);
-        expect(result.requiresRestart).toBe(false);
-        const info = mgr.getByName('nodejs')!;
-        expect(info.status).not.toBe(DependencyStatus.Updating);
-        expect(info.status).not.toBe(DependencyStatus.Error);
+        // No `reason` field to assert on: it only ever carried 'launcher-required',
+        // and removing it from UpdateResult makes the old gate unrepresentable.
+        expect(result.errorMessage).not.toMatch(/installed build/);
+        // It got past the gate and into the real work, so the failure is a
+        // download failure and the entry is marked Error rather than left pristine.
+        expect(mgr.getByName('nodejs')!.status).toBe(DependencyStatus.Error);
     });
 
     it('does not gate scrcpy-server (no launcher needed)', async () => {
@@ -132,7 +143,6 @@ describe('DependencyManager.update() launcher-required gate', () => {
         info.latestVersion = '4.0';
         const result = await mgr.update('scrcpy-server');
         expect(result.success).toBe(true);
-        expect(result.reason).toBeUndefined();
     });
 });
 

@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Fixed ADB and Node.js never being downloaded when the app is run from source.** Unpacking a downloaded dependency was done by handing the archive to the launcher program that ships inside an installed copy — which does not exist in a source checkout, so on first run the app quietly declined to fetch either one and said so only in a log line. On Windows this was almost invisible, because a source run and an installed copy share the same dependency folder and ADB was usually already sitting there; on Linux and macOS, where a source run starts with an empty folder, it meant no ADB at all and nothing on screen to explain why. Archives are now unpacked by the app itself, so a source run sets itself up exactly like an installed one. The dependency panel's per-dependency update buttons, which were disabled for the same reason, now work there too.
+
 ### Changed
 
 - **The project now builds on TypeScript 7.** This completes the migration begun a release earlier: phase 1 replaced the build tools that reached into the old compiler's programmatic API, and this moves the compiler itself. The one remaining tool that still needs that API — the generator for the bundled type definitions used by embedders — is pinned to TypeScript 6 for that single build step. Nothing about how the app behaves changes; type-checking, the full test suite, and the emitted build were all verified against the new compiler.

@@ -38,11 +38,10 @@ export class DependencyApi {
             if (req.method === 'POST' && updateMatch) {
                 const name = updateMatch[1]!;
                 const result = await this.manager.update(name);
-                if (result.reason === 'launcher-required') {
-                    res.writeHead(503);
-                } else {
-                    res.writeHead(result.success ? 200 : 500);
-                }
+                // The 503 "launcher-required" branch is gone: extraction is
+                // in-process now, so no dependency is unupdatable for want of a
+                // packaged binary.
+                res.writeHead(result.success ? 200 : 500);
                 res.end(JSON.stringify(result));
                 return true;
             }

@@ -59,12 +59,15 @@ describe('DependencyApi.update endpoint', () => {
         while (tmpDirs.length) fs.rmSync(tmpDirs.pop()!, { recursive: true, force: true });
     });
 
-    it('returns 503 when update result has reason=launcher-required', async () => {
-        const mgr = new DependencyManager('/tmp/test-api-503');
+    it('returns 500 for any failed update — there is no special-cased status', async () => {
+        // This used to be a 503 branch for reason='launcher-required', emitted when
+        // a dependency could not be extracted without the packaged launcher.
+        // Extraction is in-process now, that reason no longer exists, and a failed
+        // update is just a failed update.
+        const mgr = new DependencyManager('/tmp/test-api-500');
         vi.spyOn(mgr, 'update').mockResolvedValue({
             success: false,
-            reason: 'launcher-required',
-            errorMessage: 'Node.js updates require an installed build.',
+            errorMessage: 'download failed',
             requiresRestart: false,
         });
         const api = new DependencyApi(mgr);
@@ -74,10 +77,10 @@ describe('DependencyApi.update endpoint', () => {
         const handled = await api.handle(req, res);
 
         expect(handled).toBe(true);
-        expect(res.statusCode).toBe(503);
+        expect(res.statusCode).toBe(500);
         const body = JSON.parse(res.body!);
         expect(body.success).toBe(false);
-        expect(body.reason).toBe('launcher-required');
+        expect(body.reason).toBeUndefined();
     });
 
     it('returns 200 when update succeeds (no launcher gate)', async () => {
