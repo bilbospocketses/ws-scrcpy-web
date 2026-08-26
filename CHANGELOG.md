@@ -23,8 +23,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.30-beta.75] - 2026-08-26
 
-## [0.1.30-beta.74] - 2026-08-26
-
 ### Changed
 
 - **The bundled Node.js runtime is now 24.19.0** (from 24.15.0). This is the copy that ships inside the installer to get the app running on first launch; installs past first run already track the newer version through the dependency panel.
@@ -35,6 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Fixed stream startup in browsers that require `requestAnimationFrame` to be called with a `Window` receiver.** The quality-stats scheduler now invokes `requestAnimationFrame` / `cancelAnimationFrame` with the browser global as their receiver instead of calling detached function references, preventing the `TypeError: 'requestAnimationFrame' called on an object that does not implement interface Window` failure reported in #498.
 
+## [0.1.30-beta.74] - 2026-08-26
+
+Never published — the tag exists but the build failed before the publish step, so there are no assets under this version. Its bump commit shipped a `package-lock.json` still pinned at beta.73, which the tag-time version-sync check correctly rejected. Everything intended for it shipped in beta.75 instead.
+
 ## [0.1.30-beta.73] - 2026-08-26
 
 ### Added
@@ -44,7 +46,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Swapped the webpack build's TypeScript tooling from `ts-loader`/`ts-node` to `swc-loader`/`tsx`.** These are transpile-only replacements (type-checking is unchanged — it stays with the separate `tsc --noEmit`), and the emitted `dist/` output was verified equivalent to the previous build. This is phase 1 of moving onto the TypeScript 7 native compiler: it removes the build tools that import the old compiler's programmatic API, which TypeScript 7.0 does not ship. `isolatedModules` was enabled to enforce the per-file transpile constraints swc relies on.
-- **Upgraded the root TypeScript to the 7.0 native compiler.** Phase 2, completing the move started above: `tsc --noEmit` (the type-check) now runs on the native compiler. `dts-bundle-generator` — the last tool still needing the old programmatic API (absent from TypeScript 7.0 until 7.1) — is isolated on a vendored TypeScript 6 for the `build:types` step alone. The emitted app bundles are unchanged (swc does the transpile) and the bundled `ws-scrcpy.d.ts` is byte-identical.
 
 ### Fixed
 

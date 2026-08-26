@@ -764,7 +764,7 @@ Browser WS connect (action=stream, udid=xxx, videoCodec=h265, ...)
 ### 10.2 Stack
 
 - **Runtime:** Node.js 24 LTS
-- **Language:** TypeScript 6.x
+- **Language:** TypeScript 7.x (native compiler; `dts-bundle-generator` is isolated on TS 6 for `build:types` only)
 - **Bundler:** Webpack 5 (separate configs for dev/prod in `webpack/`)
 - **Linter/Formatter:** Biome 2.x (replaces ESLint + Prettier)
 - **Tests:** Vitest 4.x
@@ -879,7 +879,7 @@ Run `npm outdated` to check all at once. Update one at a time, build + test afte
 
 | # | Package | Current | Purpose | Update notes |
 |---|---------|---------|---------|--------------|
-| 1 | `typescript` | 6.0.2 | Compiles TypeScript source to JavaScript | Major versions may need `tsconfig.json` changes |
+| 1 | `typescript` | 7.0.2 | Type-checks the source (`tsc --noEmit`); swc does the transpile | `dts-bundle-generator` still needs the TS 6 programmatic API, so it is pinned to 6.0.3 via a scoped override |
 | 2 | `webpack` | 5.106.2 | Bundles source into server and browser output | Patch updates are safe |
 | 3 | `webpack-cli` | 7.0.3 | Command-line interface for webpack | Major versions usually just drop old Node support |
 | 4 | `css-loader` | 7.1.4 | Processes CSS imports for webpack bundling | Major versions may need webpack config changes |

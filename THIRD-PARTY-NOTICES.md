@@ -34,7 +34,7 @@ THE SOFTWARE.
 
 ## scrcpy
 
-This project bundles the [scrcpy](https://github.com/Genymobile/scrcpy) server component (v3.3.4) by Genymobile, licensed under the Apache License 2.0. The vanilla, unmodified scrcpy-server binary is included in `assets/scrcpy-server`.
+This project bundles the [scrcpy](https://github.com/Genymobile/scrcpy) server component (v4.1) by Genymobile, licensed under the Apache License 2.0. The vanilla, unmodified scrcpy-server binary is included in `assets/scrcpy-server`.
 
 ```
 Copyright (c) 2018 Genymobile
