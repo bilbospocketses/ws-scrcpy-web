@@ -39,6 +39,34 @@ export function bumpPackageJson(content, newVersion) {
     return updated;
 }
 
+/**
+ * package-lock.json carries the app version twice: at the root and on the
+ * `packages[""]` self-entry. Both were previously left alone, so after every
+ * release the lock disagreed with package.json and the next `npm install`
+ * silently rewrote it — a dirty tree on a clean checkout.
+ *
+ * Parsed and re-serialised rather than regex-patched: the `packages[""]`
+ * version is indistinguishable by pattern from every dependency's own version
+ * field. npm writes exactly `JSON.stringify(x, null, 2) + '\n'`, so this
+ * round-trips byte-for-byte and the diff stays at the two intended lines.
+ */
+export function bumpPackageLock(content, newVersion) {
+    const lock = JSON.parse(content);
+    let changed = false;
+    if (typeof lock.version === 'string') {
+        lock.version = newVersion;
+        changed = true;
+    }
+    if (lock.packages && lock.packages[''] && typeof lock.packages[''].version === 'string') {
+        lock.packages[''].version = newVersion;
+        changed = true;
+    }
+    if (!changed) {
+        throw new Error('package-lock.json: no "version" field found to update');
+    }
+    return `${JSON.stringify(lock, null, 2)}\n`;
+}
+
 export function bumpCargoToml(content, newVersion) {
     // Match the version field within [workspace.package]. Non-greedy so we
     // stop at the FIRST `version = "..."` after `[workspace.package]`.
@@ -160,28 +188,33 @@ async function main() {
 
     const today = formatToday();
     const pkgPath = join(REPO_ROOT, 'package.json');
+    const pkgLockPath = join(REPO_ROOT, 'package-lock.json');
     const cargoPath = join(REPO_ROOT, 'Cargo.toml');
     const cargoLockPath = join(REPO_ROOT, 'Cargo.lock');
     const changelogPath = join(REPO_ROOT, 'CHANGELOG.md');
 
     const pkg = readFileSync(pkgPath, 'utf8');
+    const pkgLock = readFileSync(pkgLockPath, 'utf8');
     const cargo = readFileSync(cargoPath, 'utf8');
     const cargoLock = readFileSync(cargoLockPath, 'utf8');
     const changelog = readFileSync(changelogPath, 'utf8');
 
     // Compute first (so any failure leaves all files untouched).
     const newPkg = bumpPackageJson(pkg, newVersion);
+    const newPkgLock = bumpPackageLock(pkgLock, newVersion);
     const newCargo = bumpCargoToml(cargo, newVersion);
     const newCargoLock = bumpCargoLock(cargoLock, newVersion);
     const newChangelog = bumpChangelog(changelog, newVersion, today);
 
     writeFileSync(pkgPath, newPkg);
+    writeFileSync(pkgLockPath, newPkgLock);
     writeFileSync(cargoPath, newCargo);
     writeFileSync(cargoLockPath, newCargoLock);
     writeFileSync(changelogPath, newChangelog);
 
     console.log(`Bumped to v${newVersion}`);
     console.log('  package.json     OK');
+    console.log('  package-lock.json OK');
     console.log('  Cargo.toml       OK');
     console.log('  Cargo.lock       OK');
     console.log(`  CHANGELOG.md     OK ([${newVersion}] - ${today})`);

@@ -45,8 +45,31 @@ export function readCargoTomlVersion(content) {
     return match[1];
 }
 
-export function check({ pkgVersion, cargoVersion, tagVersion }) {
+/**
+ * package-lock.json carries the version twice — at the root and on the
+ * `packages[""]` self-entry — and both must agree with package.json, or the
+ * next `npm install` rewrites the lock and dirties a clean checkout.
+ */
+export function readPackageLockVersion(content) {
+    const lock = JSON.parse(content);
+    const root = lock.version;
+    if (typeof root !== 'string') {
+        throw new Error('package-lock.json: no root "version" field found');
+    }
+    const self = lock.packages?.['']?.version;
+    if (typeof self === 'string' && self !== root) {
+        throw new Error(`package-lock.json: root version "${root}" disagrees with packages[""] "${self}"`);
+    }
+    return root;
+}
+
+// `lockVersion` is optional so existing callers/tests that predate the
+// package-lock check keep working; when supplied it must match the rest.
+export function check({ pkgVersion, cargoVersion, tagVersion, lockVersion }) {
     const all = [pkgVersion, cargoVersion, tagVersion];
+    if (lockVersion !== undefined) {
+        all.push(lockVersion);
+    }
     const unique = new Set(all);
     if (unique.size === 1) {
         return { ok: true, version: pkgVersion };
@@ -56,6 +79,7 @@ export function check({ pkgVersion, cargoVersion, tagVersion }) {
         pkgVersion,
         cargoVersion,
         tagVersion,
+        lockVersion,
     };
 }
 
@@ -73,8 +97,11 @@ function main() {
     const cargoVersion = readCargoTomlVersion(
         readFileSync(join(REPO_ROOT, 'Cargo.toml'), 'utf8'),
     );
+    const lockVersion = readPackageLockVersion(
+        readFileSync(join(REPO_ROOT, 'package-lock.json'), 'utf8'),
+    );
 
-    const result = check({ pkgVersion, cargoVersion, tagVersion });
+    const result = check({ pkgVersion, cargoVersion, tagVersion, lockVersion });
 
     if (result.ok) {
         console.log(`Versions in sync: ${result.version}`);
@@ -83,10 +110,11 @@ function main() {
 
     console.error('Version mismatch detected:');
     console.error(`  package.json:      ${pkgVersion}`);
+    console.error(`  package-lock.json: ${lockVersion}`);
     console.error(`  Cargo.toml:        ${cargoVersion}`);
     console.error(`  git tag (input):   ${tagVersion}  (from "${tag}")`);
     console.error('');
-    console.error('Run `npm run version:bump <new-version>` to bring all three into sync,');
+    console.error('Run `npm run version:bump <new-version>` to bring them all into sync,');
     console.error('then commit and re-tag.');
     process.exit(1);
 }

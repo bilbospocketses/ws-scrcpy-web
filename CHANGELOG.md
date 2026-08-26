@@ -17,7 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The bundled Node.js runtime is now 24.19.0** (from 24.15.0). This is the copy that ships inside the installer to get the app running on first launch; installs past first run already track the newer version through the dependency panel.
+
 ### Fixed
+
+- **Fixed H.264 and H.265 streams showing a black screen.** The decoder was handed its start-up configuration in the wrong container format, so it refused to initialise and no picture ever arrived — the connection looked healthy and the device reported nonsense dimensions. AV1 was unaffected, which is why this went unnoticed. The configuration is now built in the format the browser's video decoder actually expects, and each frame is re-framed to match it. A related fault in how the incoming video was split into units — which could silently clip three bytes off a frame — was fixed at the same time.
 
 - **Fixed stream startup in browsers that require `requestAnimationFrame` to be called with a `Window` receiver.** The quality-stats scheduler now invokes `requestAnimationFrame` / `cancelAnimationFrame` with the browser global as their receiver instead of calling detached function references, preventing the `TypeError: 'requestAnimationFrame' called on an object that does not implement interface Window` failure reported in #498.
 
