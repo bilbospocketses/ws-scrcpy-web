@@ -499,7 +499,10 @@ describe('ServiceApi', () => {
         await api.handle(req, res);
         const body = JSON.parse((res as any).getBody());
         expect(body.installMode).toBe('system-service');
-        expect((installFn.mock.calls[0]?.[0] as { account?: unknown }).account).toBeUndefined();
+        // Guard first: without it the optional chain below would pass vacuously
+        // if the install were never invoked at all.
+        expect(installFn).toHaveBeenCalled();
+        expect((installFn.mock.calls[0]?.[0] as { account?: unknown } | undefined)?.account).toBeUndefined();
     });
 
     it('POST /install on win32 returns configMtime + diskWebPort (no redirectTo, no discover)', async () => {
