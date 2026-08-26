@@ -1543,6 +1543,17 @@ shell-disabled UI; everything else keeps working.
   `npm_config_arch=x64` and publishing a binary no runner can load, let
   alone test, which is a worse trade than the shell-disabled UI.
 
+**The Alpine legs pull a MAJOR Docker tag (`node:24-alpine`), never an exact
+patch.** nodejs.org publishes a release the moment it is cut; the official
+Docker images are built afterwards, so `node:<exact-patch>-alpine` 404s during
+that window. On 2026-08-26 the pre-check resolved 24.20.0, Docker Hub had no
+24.20.0 tag at all, the musl-current leg died on `docker pull` — and because
+`publish` is gated on *every* build leg succeeding, one upstream image lag
+blocked the release for all six platforms. The major tag is the honest key
+regardless: artifact names encode the ABI (`node-abi137`), not the patch, and
+every 24.x is ABI 137. It also self-follows when the LTS pair moves on, so the
+next major needs no edit here.
+
 Note that the darwin rows publish artifacts the resolver cannot yet find:
 `getHostInfo()` still collapses `darwin` to `linux`, so it looks for a
 `-linux-arm64-glibc` key. Widening that is the macOS-support work tracked
