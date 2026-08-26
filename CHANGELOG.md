@@ -31,6 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Fixed a phone appearing twice in the connected devices list.** A device with wireless debugging enabled is reachable over two connections at once — the one the app opens itself, and one Android advertises that ADB picks up automatically — and the app was treating each as a separate device. The result was two identical cards for one phone, and the second of them had no disconnect button, because that connection has no address to disconnect from. Devices are now identified by their hardware serial number rather than by which connection they arrived on, so each phone appears once, on the connection that supports every action. Two different devices of the same model are unaffected — the serial number distinguishes them where the model name would not.
+
 - **Fixed ADB and Node.js never being downloaded when the app is run from source.** Unpacking a downloaded dependency was done by handing the archive to the launcher program that ships inside an installed copy — which does not exist in a source checkout, so on first run the app quietly declined to fetch either one and said so only in a log line. On Windows this was almost invisible, because a source run and an installed copy share the same dependency folder and ADB was usually already sitting there; on Linux and macOS, where a source run starts with an empty folder, it meant no ADB at all and nothing on screen to explain why. Archives are now unpacked by the app itself, so a source run sets itself up exactly like an installed one. The dependency panel's per-dependency update buttons, which were disabled for the same reason, now work there too.
 
 ## [0.1.30-beta.75] - 2026-08-26
