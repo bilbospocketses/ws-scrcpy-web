@@ -46,7 +46,7 @@ dist/public/embed.js          embed page entry script
 ## Code Style
 
 - **Biome** is the single source of truth for linting and formatting. Run `npm run format` before committing.
-- **TypeScript 6** with `strict` enabled. No implicit `any`.
+- **TypeScript 7** with `strict` enabled. No implicit `any`.
 - **No Node.js Buffer polyfill in the browser** — use `Uint8Array` + the project's `BinaryReader` / `BinaryWriter`.
 - **Dynamic HTML via DOM manipulation**, not string interpolation — the `html\`\`` tagged template in `HtmlTag.ts` XSS-escapes interpolated values. Build complex DOM with `document.createElement`.
 - **Native `<dialog>` for modals** via the `Modal` base class in `src/app/ui/Modal.ts`. See existing subclasses for patterns.
