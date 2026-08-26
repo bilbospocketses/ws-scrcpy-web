@@ -3,15 +3,21 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { resolveSystemTool } from '../../service/systemTools';
 import { copyFileAtomicSync, writeFileAtomicSync } from '../atomicFile';
 
 /**
- * Absolute path rather than a bare `attrib` — same reason
- * `scripts/fetch-node.mjs` pins `C:\Windows\System32\tar.exe`: the
- * Local-Dependencies-Only rule forbids resolving binaries through the system
- * PATH. This is test-only scaffolding; nothing in `src/` shells out to it.
+ * Resolved through the repo's own `resolveSystemTool` rather than a hardcoded
+ * path: OS tools get an absolute path (System32 on Windows, via `%SystemRoot%`)
+ * instead of a bare name that would resolve through `%PATH%`. That is what the
+ * Local-Dependencies-Only rule requires and what review #20 added the helper
+ * for — `taskkill` and `icacls` already go through it.
+ *
+ * Test-only scaffolding: this is used to *create* the hidden condition. The fix
+ * itself is pure `fs` and shells out to nothing, which is precisely why no
+ * binary has to be vendored for a deployed endpoint.
  */
-const ATTRIB = 'C:\\Windows\\System32\\attrib.exe';
+const ATTRIB = resolveSystemTool('attrib');
 const isWindows = process.platform === 'win32';
 
 function setHidden(file: string): void {
@@ -133,7 +139,7 @@ describe.runIf(isWindows)('hidden destinations (Windows)', () => {
         expect(isHidden(dest)).toBe(false);
     });
 
-    it('writeFileAtomicSync overwrites a hidden destination and clears the attribute', () => {
+    it('writeFileAtomicSync overwrites a hidden destination and clears the attribute (windows)', () => {
         const dest = path.join(dir, 'dest.txt');
         fs.writeFileSync(dest, 'old');
         setHidden(dest);
@@ -142,5 +148,64 @@ describe.runIf(isWindows)('hidden destinations (Windows)', () => {
 
         expect(fs.readFileSync(dest, 'utf8')).toBe('new');
         expect(isHidden(dest)).toBe(false);
+    });
+});
+
+/**
+ * Replacing by rename installs a new inode, so the destination's permissions
+ * have to be carried across deliberately — otherwise the replacement would
+ * silently adopt the writing process's umask, which `fs.writeFileSync` and
+ * `fs.copyFileSync` never do. Windows only models the read-only bit, so this
+ * is POSIX-only; CI runs on ubuntu-latest, so it does get exercised.
+ */
+describe.runIf(!isWindows)('mode preservation (POSIX)', () => {
+    it('writeFileAtomicSync keeps the destination mode', () => {
+        const dest = path.join(dir, 'modes.txt');
+        fs.writeFileSync(dest, 'old');
+        fs.chmodSync(dest, 0o600);
+
+        writeFileAtomicSync(dest, 'new');
+
+        expect(fs.statSync(dest).mode & 0o777).toBe(0o600);
+        expect(fs.readFileSync(dest, 'utf8')).toBe('new');
+    });
+
+    it('copyFileAtomicSync adopts the source mode, matching fs.copyFileSync', () => {
+        const src = path.join(dir, 'src.bin');
+        const dest = path.join(dir, 'dest.bin');
+        fs.writeFileSync(src, 'new');
+        fs.chmodSync(src, 0o755);
+        fs.writeFileSync(dest, 'old');
+        fs.chmodSync(dest, 0o600);
+
+        copyFileAtomicSync(src, dest);
+
+        // Pinned against the real fs.copyFileSync rather than a literal, so the
+        // two can't drift. Note this is the OPPOSITE of writeFileAtomicSync:
+        // libuv fchmods the destination to match the source, so the 0o600 does
+        // not survive a copy the way it survives a write.
+        const control = path.join(dir, 'control.bin');
+        fs.writeFileSync(control, 'old');
+        fs.chmodSync(control, 0o600);
+        fs.copyFileSync(src, control);
+
+        expect(fs.statSync(dest).mode & 0o777).toBe(fs.statSync(control).mode & 0o777);
+        expect(fs.statSync(dest).mode & 0o777).toBe(0o755);
+        expect(fs.readFileSync(dest, 'utf8')).toBe('new');
+    });
+
+    it('an explicit mode from the caller outranks preservation', () => {
+        const dest = path.join(dir, 'explicit.txt');
+        fs.writeFileSync(dest, 'old');
+        fs.chmodSync(dest, 0o600);
+
+        writeFileAtomicSync(dest, 'new', { mode: 0o640 });
+
+        // Compared against a plain writeFileSync with the same mode rather than
+        // against 0o640 literally, so the assertion holds under any umask.
+        const control = path.join(dir, 'control.txt');
+        fs.writeFileSync(control, 'x', { mode: 0o640 });
+        expect(fs.statSync(dest).mode & 0o777).toBe(fs.statSync(control).mode & 0o777);
+        expect(fs.statSync(dest).mode & 0o777).not.toBe(0o600);
     });
 });
