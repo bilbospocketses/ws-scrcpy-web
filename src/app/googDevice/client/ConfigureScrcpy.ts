@@ -269,13 +269,21 @@ export class ConfigureScrcpy extends Modal {
     private async filterSupportedCodecs(codecs: string[]): Promise<string[]> {
         const supported: string[] = [];
         for (const codec of codecs) {
+            // A codec we have no probe strings for is unanswerable by
+            // definition, so keep it on offer. Resolving the list up front also
+            // keeps everything below working from this map's own contents
+            // rather than from the caller's string.
+            const probeStrings = CODEC_PROBE_STRINGS[codec];
+            if (!probeStrings) {
+                supported.push(codec);
+                continue;
+            }
             // Only a definite `false` drops a codec from the list. An
             // unanswerable probe leaves it on offer rather than hiding
             // something that might work — but a real "no" is now honoured for
             // H.264 too, which it previously was not. See issue #498.
             if ((await probeDecodeSupport(codec)) === false) {
-                const tried = CODEC_PROBE_STRINGS[codec]?.join(', ') ?? codec;
-                console.log(this.TAG, `Browser does not support decoding ${codec} (tried ${tried})`);
+                console.log(this.TAG, 'Browser does not support decoding', codec, `(tried ${probeStrings.join(', ')})`);
                 continue;
             }
             supported.push(codec);
