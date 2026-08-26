@@ -17,13 +17,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
+### Added
 
-- **Fixed ADB and Node.js never being downloaded when the app is run from source.** Unpacking a downloaded dependency was done by handing the archive to the launcher program that ships inside an installed copy — which does not exist in a source checkout, so on first run the app quietly declined to fetch either one and said so only in a log line. On Windows this was almost invisible, because a source run and an installed copy share the same dependency folder and ADB was usually already sitting there; on Linux and macOS, where a source run starts with an empty folder, it meant no ADB at all and nothing on screen to explain why. Archives are now unpacked by the app itself, so a source run sets itself up exactly like an installed one. The dependency panel's per-dependency update buttons, which were disabled for the same reason, now work there too.
+- **VP8 and VP9 can now be requested through the embedding APIs, not just the in-app codec dropdown.** Both codecs shipped a couple of releases ago, but the published type definitions and the `/embed.html` wrapper still only accepted H.264, H.265, and AV1 — so a page embedding the stream had no way to ask for them even though the server and the player both supported it. All five codecs are now accepted everywhere a codec can be named. Nothing changes for streams that don't specify one: automatic selection still picks H.265, H.264, or AV1, since VP8/VP9 exist for devices that offer none of those.
 
 ### Changed
 
+- **The version-bump file list and the release workflow can no longer drift apart.** The release pipeline builds its version-bump commit from an explicit list of files, and that list was kept in step with the bump script by nothing but a comment — which is how a release earlier this month shipped a stale lockfile and failed at the final check, retiring a version number. The bump script now publishes the list it writes, and a check compares the two on every pull request, so the mismatch fails a PR instead of a release.
+
+- **Node.js type definitions are pinned to the runtime we actually ship.** They had drifted two major versions ahead of the bundled Node, which lets the type-checker approve APIs that don't exist at runtime. Automatic major upgrades for that package are now held back until the bundled runtime itself moves.
+
 - **The project now builds on TypeScript 7.** This completes the migration begun a release earlier: phase 1 replaced the build tools that reached into the old compiler's programmatic API, and this moves the compiler itself. The one remaining tool that still needs that API — the generator for the bundled type definitions used by embedders — is pinned to TypeScript 6 for that single build step. Nothing about how the app behaves changes; type-checking, the full test suite, and the emitted build were all verified against the new compiler.
+
+### Fixed
+
+- **Fixed ADB and Node.js never being downloaded when the app is run from source.** Unpacking a downloaded dependency was done by handing the archive to the launcher program that ships inside an installed copy — which does not exist in a source checkout, so on first run the app quietly declined to fetch either one and said so only in a log line. On Windows this was almost invisible, because a source run and an installed copy share the same dependency folder and ADB was usually already sitting there; on Linux and macOS, where a source run starts with an empty folder, it meant no ADB at all and nothing on screen to explain why. Archives are now unpacked by the app itself, so a source run sets itself up exactly like an installed one. The dependency panel's per-dependency update buttons, which were disabled for the same reason, now work there too.
 
 ## [0.1.30-beta.75] - 2026-08-26
 

@@ -141,12 +141,17 @@ jobs:
           CL_BLOB=$(create_blob CHANGELOG.md)
 
           # Create a new tree with the five updated files.
-          # This list must stay in step with what bump-version.mjs writes --
+          # This list must stay in step with `BUMPED_FILES` in bump-version.mjs --
           # the script edits the working tree on the runner, but only the paths
           # named here become blobs and reach the commit. package-lock.json was
           # missing, so the bump for v0.1.30-beta.74 shipped a lock still
           # pinned at beta.73 and the tag-time version-sync gate failed the
           # release.
+          # That coupling is no longer comment-only: scripts/assert-bump-blob-sync.mjs
+          # compares the two lists and runs in CI on every PR, so adding a file to
+          # BUMPED_FILES without adding it here cannot reach main. If you edit the
+          # tree entries below, keep each one a JSON object whose first key is the
+          # file path -- that is the shape the checker parses.
           NEW_TREE=$(gh api "repos/$GITHUB_REPOSITORY/git/trees" \
             --input - --jq '.sha' <<TREEOF
           {

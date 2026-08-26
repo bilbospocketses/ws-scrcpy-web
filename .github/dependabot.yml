@@ -27,6 +27,17 @@ updates:
     # and phase 2 put the root on TypeScript 7, with dts-bundle-generator -- the last
     # tool needing the programmatic API -- isolated on TS 6 via a scoped override.
     # Majors are open for review again.
+    ignore:
+      # @types/node must track the MAJOR of the Node runtime we actually ship
+      # (see scripts/fetch-node.mjs NODE_VERSION), not the newest types on npm.
+      # A types major ahead of the runtime type-checks APIs the shipped Node
+      # does not have -- e.g. Node 24 has Event/CloseEvent/MessageEvent globals
+      # but no ErrorEvent, which tsc happily accepts from newer types and then
+      # fails at runtime. Drifted to 26.x against a Node 24 runtime before this
+      # ignore existed. Lift it in the same PR that bumps the bundled runtime
+      # to the next even-numbered LTS.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
     # Batch all minor + patch bumps into ONE weekly PR. Interlocking families
     # (@xterm/* addons must match the xterm core; webpack + its loaders; the
     # typescript / swc-loader / tsx toolchain) break when bumped singly.

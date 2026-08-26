@@ -40,6 +40,7 @@
     "fetch-prebuilts": "node scripts/fetch-prebuilts.mjs",
     "version:bump": "node scripts/bump-version.mjs",
     "version:check": "node scripts/assert-version-sync.mjs",
+    "version:check-blobs": "node scripts/assert-bump-blob-sync.mjs",
     "package:stage": "node scripts/stage-publish.mjs",
     "package:linux": "node scripts/package-linux.mjs",
     "package:pack": "node -e \"if (process.platform !== 'win32') { console.log('package:pack is Windows-only; use package:linux for AppImage'); process.exit(0); } require('child_process').spawnSync('vpk', ['pack','--packId','WsScrcpyWeb','--packVersion',process.env.npm_package_version,'--packDir','publish','--mainExe','ws-scrcpy-web-launcher.exe','--packTitle','ws-scrcpy-web','--packAuthors','ws-scrcpy-web contributors','--channel','stable','-o','Releases'], {stdio:'inherit',shell:true});\"",
@@ -56,7 +57,7 @@
   "devDependencies": {
     "@biomejs/biome": "^2.5.10",
     "@swc/core": "^1.16.1",
-    "@types/node": "^26.2.0",
+    "@types/node": "^24.13.3",
     "@types/ws": "^8",
     "@xterm/addon-attach": "^0.12.0",
     "@xterm/addon-fit": "^0.11.0",

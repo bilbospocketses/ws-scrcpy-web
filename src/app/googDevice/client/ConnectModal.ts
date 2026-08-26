@@ -1,7 +1,7 @@
 import type { ParamsStreamScrcpy } from '../../../types/ParamsStreamScrcpy';
 import type { BasePlayer } from '../../player/BasePlayer';
 import { startStream } from '../../public/startStream';
-import type { StreamHandle } from '../../public/types';
+import type { StartStreamOptions, StreamHandle } from '../../public/types';
 import { Modal } from '../../ui/Modal';
 import type VideoSettings from '../../VideoSettings';
 
@@ -75,7 +75,7 @@ export class ConnectModal extends Modal {
     }
 }
 
-function normalizeCodec(codec: string | undefined): 'h264' | 'h265' | 'av1' | undefined {
-    if (codec === 'h264' || codec === 'h265' || codec === 'av1') return codec;
+function normalizeCodec(codec: string | undefined): StartStreamOptions['codec'] {
+    if (codec === 'h264' || codec === 'h265' || codec === 'av1' || codec === 'vp8' || codec === 'vp9') return codec;
     return undefined;
 }

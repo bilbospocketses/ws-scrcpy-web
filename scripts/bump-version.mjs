@@ -21,6 +21,21 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const REPO_ROOT = join(__dirname, '..');
 
+/**
+ * Every repo-relative file this script rewrites, in write order.
+ *
+ * `.github/workflows/auto-release.yml` builds the API-signed bump commit from an
+ * explicit blob list (it has to: the commit is created through the GitHub API so
+ * web-flow signs it and `required_signatures` passes). Only paths named there
+ * reach the commit -- so a file added here but not there is silently dropped from
+ * the release. That is exactly how v0.1.30-beta.74 shipped a `package-lock.json`
+ * still pinned at beta.73: the tag-time version-sync gate caught it and burned the
+ * version. `scripts/assert-bump-blob-sync.mjs` asserts this list and the workflow's
+ * tree paths are the same set, and runs on every PR -- so the drift can no longer
+ * reach main. Add a file here and CI will tell you to add it there too.
+ */
+export const BUMPED_FILES = ['package.json', 'package-lock.json', 'Cargo.toml', 'Cargo.lock', 'CHANGELOG.md'];
+
 // Liberal semver regex: major.minor.patch with optional prerelease and build metadata.
 // Examples: 0.1.0, 0.1.0-pre.1, 1.0.0-beta.3+build.4
 const SEMVER_RE = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/;
@@ -187,11 +202,11 @@ async function main() {
     validateSemver(newVersion);
 
     const today = formatToday();
-    const pkgPath = join(REPO_ROOT, 'package.json');
-    const pkgLockPath = join(REPO_ROOT, 'package-lock.json');
-    const cargoPath = join(REPO_ROOT, 'Cargo.toml');
-    const cargoLockPath = join(REPO_ROOT, 'Cargo.lock');
-    const changelogPath = join(REPO_ROOT, 'CHANGELOG.md');
+    // Derived from BUMPED_FILES so the exported list can never disagree with what
+    // this function actually writes (that list is what CI checks the workflow against).
+    const [pkgPath, pkgLockPath, cargoPath, cargoLockPath, changelogPath] = BUMPED_FILES.map((f) =>
+        join(REPO_ROOT, f),
+    );
 
     const pkg = readFileSync(pkgPath, 'utf8');
     const pkgLock = readFileSync(pkgLockPath, 'utf8');

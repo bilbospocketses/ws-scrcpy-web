@@ -17,7 +17,13 @@ declare global {
     }
 }
 
-const CODECS = new Set(['h264', 'h265', 'av1']);
+// Keep in step with StartStreamOptions['codec'] — the `satisfies` rejects a value
+// that isn't in the contract; embedEntry.test.ts covers the other direction (a
+// codec added to the contract but not accepted here). This list drifted narrow
+// once already when VP8/VP9 shipped.
+const CODECS = new Set<string>(['h264', 'h265', 'av1', 'vp8', 'vp9'] satisfies NonNullable<
+    StartStreamOptions['codec']
+>[]);
 const DEVICE_KINDS = new Set(['phone', 'tablet', 'tv']);
 const AUDIO_SOURCES = new Set(['playback', 'output', 'mic']);
 const AUDIO_CODECS = new Set(['opus', 'aac', 'flac', 'raw']);

@@ -5,8 +5,10 @@ Thanks for your interest. This document covers the essentials for getting a deve
 ## Prerequisites
 
 - **Node.js 24 LTS or newer** (`engines` field pins `>=24`)
-- **ADB** (Android Debug Bridge) available on `PATH` or inside a `dependencies/adb/` folder at the repo root
-- **scrcpy-server** binary (downloaded by the in-app updater; no manual step needed for local dev)
+- **ADB and scrcpy-server** — nothing to install. The app downloads both on first run into its own dependencies folder (`%PROGRAMDATA%\WsScrcpyWeb\dependencies\` on Windows, `<repo>/dependencies/` on Linux) and resolves them from there by absolute path.
+
+  > **Do not put ADB on `PATH` and expect the app to find it — it won't, by design.** Every binary this project shells out to is resolved from its own dependencies folder, never from `PATH` or an environment variable. OS tools (`ip`, `arp`, `route`, `systemctl`, …) go through `resolveSystemTool()` in `src/server/service/systemTools.ts`, which scans the canonical system directories for an absolute path rather than trusting `PATH`. A PR that introduces a bare-name binary invocation will be sent back. See `docs/audits/2026-05-25-local-deps-compliance.md`.
+
 - An Android device (physical or emulator) reachable via ADB, USB or network
 
 ## Setup
@@ -19,16 +21,42 @@ npm run build
 node dist/index.js
 ```
 
-Server listens on port 8000. Open `http://localhost:8000/` in a Chromium browser (Chrome, Edge, Brave). Firefox works for H.264 streams only — its `VideoDecoder.isConfigSupported` rejects hardware-encoded HEVC.
+Server listens on port 8000. Open `http://localhost:8000/` in a Chromium browser (Chrome, Edge, Brave). Firefox works, with one gap: its `VideoDecoder.isConfigSupported` rejects hardware-encoded HEVC, so **H.265 streams won't play there** — H.264, AV1, VP8, and VP9 do. Firefox also returns a false `supported: false` for some H.264 profile strings it can actually decode; see `docs/TECHNICAL_GUIDE.md` §11.5 for the workaround already in the codebase.
 
 ## Development Workflow
 
 ```bash
 npm run build:dev     # dev build with source maps
+npx tsc --noEmit      # type-check — the build does NOT do this (see below)
 npm test              # vitest run (all tests)
 npm run lint          # biome check
 npm run format        # biome check --write
 ```
+
+> **`npm run build` does not type-check.** The webpack build transpiles through
+> `swc-loader`, which strips types without checking them — that is what made the
+> TypeScript 7 migration possible, since TS 7 ships no programmatic compiler API for
+> `ts-loader` to use. Type safety lives entirely in the separate `tsc --noEmit` pass.
+> A green build proves nothing about types; run `npx tsc --noEmit` before you push.
+> CI runs it, so a type error fails the PR rather than reaching `main` — but finding
+> out locally is faster than finding out from a red check.
+
+### Editor setup
+
+TypeScript 7 ships no `tsserver.js` and no `lib.*.d.ts`, so **VS Code's built-in
+TypeScript extension cannot drive it** — it reports the entire standard library as
+missing and lights up every file, while `tsc --noEmit` is perfectly clean. The
+squiggles are an artifact of the wrong language server, not real errors.
+
+Install the recommended extension (`.vscode/extensions.json` will prompt you on first
+open) and reload the window:
+
+```
+TypeScript (Native Preview) — typescriptteam.native-preview
+```
+
+If your editor isn't VS Code, point it at the native-preview language server or trust
+`npx tsc --noEmit` as the source of truth.
 
 A full build emits both the home-page bundle and the library bundles:
 
