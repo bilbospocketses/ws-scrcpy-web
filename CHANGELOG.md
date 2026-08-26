@@ -17,6 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Fixed a black screen on machines whose browser cannot actually decode H.264.** The app treated H.264 as supported everywhere and never asked the browser about it — a deliberate workaround, because Firefox sometimes reports that it cannot play a specific H.264 variant that it in fact plays fine. On a machine with no H.264 decoder at all, though, that workaround overrode an accurate refusal: H.264 was selected automatically, handed to a decoder that produced nothing, and the stream appeared as a black rectangle with no error anywhere to explain it. The app now asks about several H.264 variants and only accepts the answer when every one of them is refused, so a machine that genuinely cannot decode H.264 falls through to a codec it can play instead. Firefox on Windows is where this shows up, because it asks the operating system to decode H.264 while carrying its own AV1 decoder — which is why AV1 kept working when nothing else would.
+
+- **A stream that never produces a picture now says so.** A video decoder that starts up cleanly, accepts every frame sent to it and then emits nothing used to leave a black screen and a silent console, indistinguishable from a slow connection. The app now reports the stall, names the codec involved, and points at the things worth trying — a different codec, or a Chromium-based browser.
+
 ## [0.1.30-beta.76] - 2026-08-26
 
 ### Added

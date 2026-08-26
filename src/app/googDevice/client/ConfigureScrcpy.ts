@@ -14,7 +14,7 @@ import { DeviceProbeClient } from '../../client/DeviceProbeClient';
 import { settingsService } from '../../client/SettingsService';
 import { DisplayInfo } from '../../DisplayInfo';
 import type { PlayerClass } from '../../player/BasePlayer';
-import { WEBCODECS_CODEC_STRING } from '../../player/webCodecsConfig';
+import { CODEC_PROBE_STRINGS, probeDecodeSupport } from '../../player/webCodecsConfig';
 import Size from '../../Size';
 import Util from '../../Util';
 import { Modal } from '../../ui/Modal';
@@ -267,32 +267,18 @@ export class ConfigureScrcpy extends Modal {
     }
 
     private async filterSupportedCodecs(codecs: string[]): Promise<string[]> {
-        if (typeof VideoDecoder === 'undefined' || typeof VideoDecoder.isConfigSupported !== 'function') {
-            return codecs;
-        }
         const supported: string[] = [];
         for (const codec of codecs) {
-            // H.264 is universally supported — skip the check (Firefox isConfigSupported
-            // returns false for some H.264 profile strings despite decoding fine)
-            if (codec === 'h264') {
-                supported.push(codec);
+            // Only a definite `false` drops a codec from the list. An
+            // unanswerable probe leaves it on offer rather than hiding
+            // something that might work — but a real "no" is now honoured for
+            // H.264 too, which it previously was not. See issue #498.
+            if ((await probeDecodeSupport(codec)) === false) {
+                const tried = CODEC_PROBE_STRINGS[codec]?.join(', ') ?? codec;
+                console.log(this.TAG, `Browser does not support decoding ${codec} (tried ${tried})`);
                 continue;
             }
-            const webCodecStr = WEBCODECS_CODEC_STRING[codec];
-            if (!webCodecStr) {
-                supported.push(codec);
-                continue;
-            }
-            try {
-                const result = await VideoDecoder.isConfigSupported({ codec: webCodecStr });
-                if (result.supported) {
-                    supported.push(codec);
-                } else {
-                    console.log(this.TAG, `Browser does not support decoding ${codec} (${webCodecStr})`);
-                }
-            } catch {
-                console.log(this.TAG, `Browser does not support decoding ${codec} (${webCodecStr})`);
-            }
+            supported.push(codec);
         }
         return supported.length > 0 ? supported : codecs;
     }

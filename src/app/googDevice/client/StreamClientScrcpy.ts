@@ -18,6 +18,7 @@ import {
 } from '../../interactionHandler/FeaturedInteractionHandler';
 import { BasePlayer, type PlayerClass } from '../../player/BasePlayer';
 import type { WebCodecsPlayer } from '../../player/WebCodecsPlayer';
+import { probeDecodeSupport } from '../../player/webCodecsConfig';
 import { ScrcpyDemuxer, type SessionMetadata } from '../../ScrcpyDemuxer';
 import Size from '../../Size';
 import Util from '../../Util';
@@ -44,12 +45,6 @@ type StartParams = {
 
 const TAG = '[StreamClientScrcpy]';
 
-const CODEC_WEBCODEC_MAP: Record<string, string> = {
-    h264: 'avc1.42E01E',
-    h265: 'hev1.1.6.L93.B0',
-    av1: 'av01.0.04M.08',
-};
-
 // Maps codec names to patterns that identify them in encoder names
 const CODEC_ENCODER_PATTERN: Record<string, string> = {
     h264: '.avc.',
@@ -61,20 +56,12 @@ const CODEC_ENCODER_PATTERN: Record<string, string> = {
 const HW_ENCODER_RE = /\.mtk\.|\.qcom\.|\.exynos\.|\.intel\.|\.nvidia\./i;
 
 async function browserSupportsCodec(codec: string): Promise<boolean> {
-    // H.264 is universally supported — skip the check (Firefox isConfigSupported
-    // returns false for some H.264 profile strings despite decoding fine)
-    if (codec === 'h264') return true;
-    if (typeof VideoDecoder === 'undefined' || typeof VideoDecoder.isConfigSupported !== 'function') {
-        return false;
-    }
-    const webCodecStr = CODEC_WEBCODEC_MAP[codec];
-    if (!webCodecStr) return false;
-    try {
-        const result = await VideoDecoder.isConfigSupported({ codec: webCodecStr });
-        return !!result.supported;
-    } catch {
-        return false;
-    }
+    // An unanswerable probe (no WebCodecs API) resolves to false so the caller
+    // exhausts its preference loop and falls through to its plain h264 default,
+    // rather than committing to a codec we have even less reason to believe in.
+    // A definite `false` is honoured for every codec, H.264 included — see
+    // probeDecodeSupport and issue #498.
+    return (await probeDecodeSupport(codec)) ?? false;
 }
 
 async function detectBestCodecAndEncoder(

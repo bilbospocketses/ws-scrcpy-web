@@ -82,6 +82,13 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
     private metadataWidth = 0;
     private metadataHeight = 0;
     private loggedFrameSize = false;
+    /**
+     * Grace period between configuring the decoder and the first frame landing.
+     * Generous on purpose: this only has to beat "the user gives up", and a
+     * cold hardware decoder plus a wait for the first keyframe can take a while.
+     */
+    private static readonly DECODE_WATCHDOG_MS = 5000;
+    private decodeWatchdog: ReturnType<typeof setTimeout> | undefined;
 
     constructor(udid: string, displayInfo?: DisplayInfo, name = WebCodecsPlayer.playerFullName) {
         super(udid, displayInfo, name, WebCodecsPlayer.storageKeyPrefix);
@@ -96,6 +103,8 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
     private createDecoder(): VideoDecoder {
         return new VideoDecoder({
             output: (frame) => {
+                // Frames are flowing; whatever the watchdog was waiting for happened.
+                this.clearDecodeWatchdog();
                 if (!this.loggedFrameSize) {
                     console.log(
                         `[WebCodecsPlayer] First decoded frame: display=${frame.displayWidth}x${frame.displayHeight} coded=${frame.codedWidth}x${frame.codedHeight} canvas=${this.tag.width}x${this.tag.height}`,
@@ -109,6 +118,37 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
                 this.stop();
             },
         });
+    }
+
+    /**
+     * Watch for a decoder that configures cleanly, accepts every chunk, and
+     * then never emits a frame.
+     *
+     * The `error` callback covers decoders that fault. This covers the silent
+     * shape: on a browser that reports support it does not actually have — or
+     * delegates to an OS decoder that isn't installed — `configure()` and
+     * `decode()` both succeed and nothing ever comes out, leaving a black
+     * canvas and an empty console. That cost issue #498 three round trips to
+     * identify, so it now says so out loud.
+     */
+    private armDecodeWatchdog(codec: string): void {
+        this.clearDecodeWatchdog();
+        this.decodeWatchdog = setTimeout(() => {
+            this.decodeWatchdog = undefined;
+            console.error(
+                `[WebCodecsPlayer] ${codec}: decoder configured but produced no frames after ` +
+                    `${WebCodecsPlayer.DECODE_WATCHDOG_MS}ms. Video is arriving but this browser is not ` +
+                    'decoding it — try a different video codec, or a Chromium-based browser. Firefox on ' +
+                    'Windows relies on the operating system to decode H.264 and cannot decode H.265 at all.',
+            );
+        }, WebCodecsPlayer.DECODE_WATCHDOG_MS);
+    }
+
+    private clearDecodeWatchdog(): void {
+        if (this.decodeWatchdog !== undefined) {
+            clearTimeout(this.decodeWatchdog);
+            this.decodeWatchdog = undefined;
+        }
     }
 
     /**
@@ -153,6 +193,7 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
                         configData: data,
                     }),
                 );
+                this.armDecodeWatchdog(this.detectedCodec ?? result.codec);
             }
             this.configData = new Uint8Array(data);
             return;
@@ -304,6 +345,7 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
                 configData: new Uint8Array(0),
             }),
         );
+        this.armDecodeWatchdog(codec);
     }
 
     protected scaleCanvas(width: number, height: number): void {
@@ -377,6 +419,7 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
 
     public override stop(): void {
         super.stop();
+        this.clearDecodeWatchdog();
         if (this.decoder.state === 'configured') {
             this.decoder.close();
         }
