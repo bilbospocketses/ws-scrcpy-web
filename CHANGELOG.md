@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.73] - 2026-08-26
+
 ### Added
 
 - **Added VP8 and VP9 to the video codec options.** Some devices — older and lower-end hardware in particular — ship no H.264, H.265, or AV1 encoder but do support VP8 or VP9, and previously had no working codec to fall back on. Both now appear in the codec dropdown when the connected device offers a matching encoder *and* your browser can decode them, so devices and browsers without support are unaffected. Supporting them needed a change to how playback starts: unlike every other codec, VP8 and VP9 send no separate configuration packet, so the decoder is now set up from the stream's session details rather than waiting for a packet that never arrives.
