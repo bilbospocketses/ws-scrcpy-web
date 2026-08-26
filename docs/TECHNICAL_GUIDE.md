@@ -1463,44 +1463,59 @@ our own prebuilt matrix.
 At server startup, `src/server/NodePtyResolver.ts` executes a chain
 and caches the result:
 
-0. **Bundled-first (v0.1.10+).** Try `import('node-pty')` directly,
-   gated by `cacheDirHasBinary(node_modules/node-pty/build/Release/)`.
-   The Velopack image ships `pty.node` from `npm ci --omit=dev` at
-   `<base>/current/node_modules/node-pty/build/Release/`, so on a fresh
-   install the bundled binary already covers the running Node ABI. If
-   the import succeeds, we're done — no manifest fetch, no network.
-   Pre-v0.1.10 the resolver always went through manifest fetch, so a
-   clean VM with restrictive networking returned `available: false`
-   even with a working `pty.node` already on disk.
+**The install image is never loaded from and never written to.** node-pty
+is shipped as a *seed* at
+`<installRoot>/current/seed/node-pty-pkg/node_modules/` and copied out to
+the data root before anything loads it. Pre-v0.1.23 the resolver both read
+from and copied back into `<installRoot>/current/node_modules/`, which is
+the Local-Dependencies-Only violation that surfaced as `EIO Access is
+denied` on conpty in pre-beta.7 logs — beta.7's icacls grant made the
+write *succeed*, which fixed the symptom and left the violation. Approach C
+removed it: runtime state lives under the data root, full stop.
 
-1. **Load manifest** — only when the bundled import isn't viable. Fetch
-   `manifest.json` from our GH Release `node-pty-prebuilds-latest`
-   (falls back to a cached copy at `dependencies/node-pty/manifest.json`
-   for offline boot). The manifest names the current upstream node-pty
-   version and the Node ABIs covered.
+0. **Seed version** — read the upstream version from the seed package's
+   `package.json`. No seed → `{ available: false, reason: 'no-seed-package' }`;
+   nothing else is attempted.
 
-2. **Local cache** — look under
-   `dependencies/node-pty/v{upstreamVersion}/{platform}-{arch}[-{libc}]/`.
-   Populated by a prior run, by `npm run fetch-prebuilts`, or (eventually)
-   by the installer / Docker image.
+1. **Stage into the data root** — target is
+   `<dataRoot>/dependencies/node-pty/v{version}-{platform}-{arch}[-{libc}]/`.
+   If it has no `pty.node` yet (first launch, or a wiped data root), copy
+   the whole seed package tree there. Failure →
+   `{ available: false, reason: 'seed-stage-failed' }`.
 
-3. **Download if cache misses** — fetch the tarball from
-   `node-pty-prebuilds-v{upstreamVersion}`, verify SHA256 against the
-   release's `SHA256SUMS`, extract with `tar --strip-components=1` into
-   the cache directory.
+2. **Load from the data root** — via `createRequire()` anchored on a marker
+   path *inside* that directory, obtained through
+   `process.getBuiltinModule('module')`. Both halves matter: the builtin
+   lookup dodges webpack's static-import rewriting (webpack does not analyze
+   `process.*` expressions), and anchoring the require inside the package
+   dir means Node resolves `node-pty` against *that* tree rather than the
+   install image's `node_modules`. If the seeded `pty.node` matches the
+   running Node ABI, this succeeds and the chain ends here — no network.
 
-Either way, the resolver then copies the cache directory contents into
-`node_modules/node-pty/build/Release/`. Upstream `node-pty`'s standard
-loader (`lib/utils.js`) iterates `build/Release/`, `build/Debug/`, and
-`prebuilds/{platform}-{arch}/` uniformly on all platforms, so the binary
-is found with no platform-specific branching.
+3. **Download + overlay on ABI mismatch** — the normal case after a Node
+   auto-update bumps the ABI. Fetch the matching prebuilt tarball, verify
+   SHA256, extract into a staging dir with `--strip-components=1`, overlay
+   it into the staged package's `build/Release/`, then retry step 2.
+   Failures → `download-failed` or `load-failed-after-download`.
 
-If the manifest doesn't cover the current ABI, or download fails, or
-`require('node-pty')` rejects, the resolver returns
-`{ available: false, reason }`. `/api/capabilities` reports
-`{ shell: false }`, and the shell anchor on every device card is
-disabled-via-CSS + `aria-disabled` + tooltip. Every other feature
-continues to work.
+There is deliberately **no fallback to `node_modules/node-pty`** — not the
+install image's, and not a dev checkout's. A `pty.node` that npm compiled
+during `npm ci` is never consulted.
+
+On any failure the resolver returns `{ available: false, reason }`,
+`/api/capabilities` reports `{ shell: false }` with the reason, and the
+shell anchor on every device card is disabled-via-CSS + `aria-disabled` +
+tooltip (smoke row 9.5). Every other feature continues to work.
+
+> **macOS has no shell modal yet, and the reason is worth understanding.**
+> Because there is no `node_modules` fallback, the `pty.node` that node-gyp
+> would happily build on a Mac during `npm ci` is never reachable — the only
+> route is step 3, which needs a published darwin prebuilt *and* a resolver
+> that asks for the right key. The matrix below now publishes `darwin-arm64`,
+> so the first half is done. The second half is not: `getHostInfo()` still
+> collapses `darwin` to `linux`, so the resolver asks for
+> `…-linux-arm64-glibc` and finds nothing. Widening that is the macOS-support
+> work in flight; until it lands, the tarballs exist but go unused.
 
 ### 18.2 Fallback Publisher Workflow
 
@@ -1563,7 +1578,7 @@ card as disabled-via-CSS + `aria-disabled` + tooltip when
 
 | File | Purpose |
 |------|---------|
-| `src/server/NodePtyResolver.ts` | Two-source resolution chain: local cache → download-if-missing |
+| `src/server/NodePtyResolver.ts` | Resolution chain: seed → stage into dataRoot → load via anchored `createRequire` → download + overlay on ABI mismatch. Never reads or writes the install image. |
 | `src/server/libcDetect.ts` | glibc vs musl detection via process.report, alpine-release, ldd |
 | `src/server/api/CapabilitiesApi.ts` | `GET /api/capabilities` endpoint returning `{ shell: boolean }` |
 | `src/app/googDevice/client/DeviceTracker.ts` | Fetch capabilities on mount, gate shell anchor client-side |
