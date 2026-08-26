@@ -25,10 +25,10 @@ jobs:
       changed: ${{ steps.check.outputs.changed }}
       node_pty_version: ${{ steps.check.outputs.node_pty_version }}
       current_node_version: ${{ steps.check.outputs.current_node_version }}
-      current_node_version_bare: ${{ steps.check.outputs.current_node_version_bare }}
+      current_node_major: ${{ steps.check.outputs.current_node_major }}
       current_node_abi: ${{ steps.check.outputs.current_node_abi }}
       prior_node_version: ${{ steps.check.outputs.prior_node_version }}
-      prior_node_version_bare: ${{ steps.check.outputs.prior_node_version_bare }}
+      prior_node_major: ${{ steps.check.outputs.prior_node_major }}
       prior_node_abi: ${{ steps.check.outputs.prior_node_abi }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -50,9 +50,34 @@ jobs:
           jq -r '.fresh | "node_pty_version=\(.nodePtyVersion)"' /tmp/check.json >> "$GITHUB_OUTPUT"
           jq -r '.fresh.nodeCurrentLts | "current_node_version=\(.version)\ncurrent_node_abi=\(.abi)"' /tmp/check.json >> "$GITHUB_OUTPUT"
           jq -r '.fresh.nodePriorLts | "prior_node_version=\(.version)\nprior_node_abi=\(.abi)"' /tmp/check.json >> "$GITHUB_OUTPUT"
-          # v-stripped forms for Docker Hub tags (node:24.15.0-alpine etc.)
-          jq -r '.fresh.nodeCurrentLts.version | sub("^v"; "") | "current_node_version_bare=\(.)"' /tmp/check.json >> "$GITHUB_OUTPUT"
-          jq -r '.fresh.nodePriorLts.version | sub("^v"; "") | "prior_node_version_bare=\(.)"' /tmp/check.json >> "$GITHUB_OUTPUT"
+          # MAJOR only, for the Alpine legs' Docker Hub tag (node:24-alpine).
+          # Deliberately not the exact patch: nodejs.org publishes a release the
+          # moment it is cut, but the official Docker images are built afterwards,
+          # so `node:<exact-patch>-alpine` 404s during that window. On 2026-08-26
+          # precheck resolved 24.20.0, Docker Hub had no 24.20.0 tag at all, the
+          # musl-current leg died on `docker pull`, and because publish requires
+          # every build leg to succeed it took the whole release with it --
+          # blocking all six platforms over one upstream lag.
+          #
+          # The major tag is the honest key anyway: the artifact name encodes the
+          # Node ABI (node-abi137), not the patch, and every 24.x is ABI 137. It
+          # also self-follows -- when the LTS pair moves to 26, precheck emits 26
+          # and `node:26-alpine` is what gets pulled, with nothing here to edit.
+          CUR_MAJOR=$(jq -r '.fresh.nodeCurrentLts.version | sub("^v"; "") | split(".")[0]' /tmp/check.json)
+          PRI_MAJOR=$(jq -r '.fresh.nodePriorLts.version | sub("^v"; "") | split(".")[0]' /tmp/check.json)
+          # Fail here, with the offending value, rather than three retries into a
+          # `docker pull` 404 twenty lines deep in a container-init log.
+          for pair in "current:$CUR_MAJOR" "prior:$PRI_MAJOR"; do
+            case "${pair#*:}" in
+              ''|*[!0-9]*)
+                echo "::error::could not derive the ${pair%%:*} Node major (got '${pair#*:}') — check compute-matrix-versions.mjs output"
+                exit 1
+                ;;
+            esac
+          done
+          echo "Alpine container tags: node:${CUR_MAJOR}-alpine (current), node:${PRI_MAJOR}-alpine (prior)"
+          echo "current_node_major=$CUR_MAJOR" >> "$GITHUB_OUTPUT"
+          echo "prior_node_major=$PRI_MAJOR" >> "$GITHUB_OUTPUT"
 
   build:
     needs: precheck
@@ -86,7 +111,7 @@ jobs:
           - { os: macos-latest,      arch: arm64, libc: '',    abi_label: current, container: '' }
           - { os: macos-latest,      arch: arm64, libc: '',    abi_label: prior,   container: '' }
     runs-on: ${{ matrix.os }}
-    container: ${{ matrix.container == 'alpine' && format('node:{0}-alpine', matrix.abi_label == 'current' && needs.precheck.outputs.current_node_version_bare || needs.precheck.outputs.prior_node_version_bare) || null }}
+    container: ${{ matrix.container == 'alpine' && format('node:{0}-alpine', matrix.abi_label == 'current' && needs.precheck.outputs.current_node_major || needs.precheck.outputs.prior_node_major) || null }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 

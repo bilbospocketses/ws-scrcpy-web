@@ -1,12 +1,12 @@
 {
   "nodePtyVersion": "1.1.0",
   "nodeCurrentLts": {
-    "version": "v24.15.0",
+    "version": "v24.20.0",
     "abi": "137"
   },
   "nodePriorLts": {
-    "version": "v22.22.2",
+    "version": "v22.23.2",
     "abi": "127"
   },
-  "lastBuiltAt": "2026-04-21T12:57:41Z"
+  "lastBuiltAt": "2026-08-26T18:34:32.598Z"
 }
