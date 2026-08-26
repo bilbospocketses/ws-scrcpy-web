@@ -8,7 +8,7 @@ import { BaseCanvasBasedPlayer } from './BaseCanvasBasedPlayer';
 import { BasePlayer } from './BasePlayer';
 import { parseSPS, stripEmulationPrevention } from './h264-utils';
 import { HEVC_NAL_TYPE, hevcNalType, parseHevcSPS } from './h265-utils';
-import { findFirstNaluOffset, findNaluByHeader } from './naluScanner';
+import { annexBToLengthPrefixed, findFirstNaluOffset, findNaluByHeader } from './naluScanner';
 import { buildDecoderConfig, isConfiglessCodec, type VideoCodecName, WEBCODECS_CODEC_STRING } from './webCodecsConfig';
 
 function toHex(value: number) {
@@ -160,6 +160,13 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
 
         if (this.decoder.state !== 'configured') return;
 
+        // The avcC/hvcC `description` set at configure() time declares 4-byte
+        // length-prefixed NAL framing — every chunk must match it. scrcpy's wire
+        // format is Annex B, so H.264/H.265 need re-framing; AV1, VP8 and VP9
+        // have no NAL framing concept and pass through untouched.
+        const chunkData =
+            this.detectedCodec === 'h264' || this.detectedCodec === 'h265' ? annexBToLengthPrefixed(data) : data;
+
         // `configData` is the readiness signal for codecs that send a config
         // packet. VP8/VP9 never send one — the decoder was configured up front
         // from session metadata instead — so gate on "decoder is ready" rather
@@ -170,15 +177,11 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
             }
             this.seenKeyframe = true;
 
-            // SPS/PPS (and VPS for H.265) were handed to the decoder via the
-            // `description` field of VideoDecoderConfig at configure() time, and
-            // AV1 carries its sequence header inline — so decode the keyframe
-            // data directly with no per-frame config concatenation (finding #41).
             this.decoder.decode(
                 new EncodedVideoChunk({
                     type: 'key',
                     timestamp: Number(pts),
-                    data,
+                    data: chunkData,
                 }),
             );
             return;
@@ -190,7 +193,7 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
             new EncodedVideoChunk({
                 type: isKeyframe ? 'key' : 'delta',
                 timestamp: Number(pts),
-                data,
+                data: chunkData,
             }),
         );
     }
