@@ -135,17 +135,25 @@ jobs:
               | gh api "repos/$GITHUB_REPOSITORY/git/blobs" --input - --jq '.sha'
           }
           PKG_BLOB=$(create_blob package.json)
+          PKGLOCK_BLOB=$(create_blob package-lock.json)
           CARGO_BLOB=$(create_blob Cargo.toml)
           LOCK_BLOB=$(create_blob Cargo.lock)
           CL_BLOB=$(create_blob CHANGELOG.md)
 
-          # Create a new tree with the four updated files
+          # Create a new tree with the five updated files.
+          # This list must stay in step with what bump-version.mjs writes --
+          # the script edits the working tree on the runner, but only the paths
+          # named here become blobs and reach the commit. package-lock.json was
+          # missing, so the bump for v0.1.30-beta.74 shipped a lock still
+          # pinned at beta.73 and the tag-time version-sync gate failed the
+          # release.
           NEW_TREE=$(gh api "repos/$GITHUB_REPOSITORY/git/trees" \
             --input - --jq '.sha' <<TREEOF
           {
             "base_tree": "$TREE_SHA",
             "tree": [
               {"path": "package.json", "mode": "100644", "type": "blob", "sha": "$PKG_BLOB"},
+              {"path": "package-lock.json", "mode": "100644", "type": "blob", "sha": "$PKGLOCK_BLOB"},
               {"path": "Cargo.toml", "mode": "100644", "type": "blob", "sha": "$CARGO_BLOB"},
               {"path": "Cargo.lock", "mode": "100644", "type": "blob", "sha": "$LOCK_BLOB"},
               {"path": "CHANGELOG.md", "mode": "100644", "type": "blob", "sha": "$CL_BLOB"}
