@@ -1841,9 +1841,15 @@ The upgrade-server's wind-down probe detects when the new Node process is ready:
 | `control/local-appimage` | Node (install) | `linux_service.rs` | (Linux) home AppImage path, used to relaunch local mode after a user-scope service uninstall |
 | `.restart` | Node (DependencyManager) | Launcher supervisor | Triggers a Node respawn after dep updates |
 
-### 22.4 Dev-Mode Safety
+### 22.4 Dev Mode
 
-The `requiresLauncher` flag in `DependencyDefinitions.ts` gates Node.js and ADB updates in dev mode. When running without the Rust launcher (i.e., `npm start`), these updates are blocked because there is no supervisor to handle the restart. The browser UI shows the updates as available but disables the apply button with an explanatory tooltip.
+**Dependency updates work from source, the same as in an installed build.** They did not always: a `requiresLauncher` flag on the Node.js and ADB definitions blocked them whenever the packaged Rust launcher was absent — which is every source checkout — because extraction shelled out to the launcher's `--unzip` subcommand. `autoInstallMissing` skipped those two dependencies with a single info-level log line, and the panel disabled their apply buttons via `canUpdate: false`.
+
+Extraction moved in-process (`src/server/zipExtract.ts`), so nothing is gated on a packaged binary any more. `requiresLauncher`, the `launcher-required` `UpdateResult` reason, and the 503 branch that rendered it were all removed together — they existed solely to describe that limitation. `canUpdate` remains on the wire because the dependency panel reads it, but nothing sets it false today.
+
+The restart half was never the problem: `scripts/dev-supervisor.mjs` mirrors `launcher/src/supervisor.rs`'s `decide_restart` semantics, so the exit-75 / `.restart` handshake in §22.3 works identically under `npm start`.
+
+Where dev and an installed build genuinely differ is the dependencies path, not the code: on Windows both resolve to `%PROGRAMDATA%\WsScrcpyWeb\dependencies\`, so a source run and an MSI install share one folder; on Linux a source run falls back to `<repo>/dependencies` while an install uses `<dataRoot>/dependencies`. See `dependencies/README.md`.
 
 ### 22.5 Linux Apply (download + swap)
 
