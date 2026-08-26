@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Fixed stream startup in browsers that require `requestAnimationFrame` to be called with a `Window` receiver.** The quality-stats scheduler now invokes `requestAnimationFrame` / `cancelAnimationFrame` with the browser global as their receiver instead of calling detached function references, preventing the `TypeError: 'requestAnimationFrame' called on an object that does not implement interface Window` failure reported in #498.
+
 ## [0.1.30-beta.73] - 2026-08-26
 
 ### Added
