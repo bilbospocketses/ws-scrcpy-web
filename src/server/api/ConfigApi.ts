@@ -1,9 +1,9 @@
-import * as fs from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'http';
 import type { AppConfigEnvelope, AppConfigPatchResponse } from '../../common/ConfigEvents';
 import { requireAdmin } from '../auth/requireAdmin';
 import { Config, ConfigValidationError } from '../Config';
 import { Logger } from '../Logger';
+import { writeFileAtomicSync } from '../util/atomicFile';
 import { BodyTooLargeError, readBodyCapped } from './utils';
 
 const log = Logger.for('ConfigApi');
@@ -74,7 +74,7 @@ export class ConfigApi {
                         response.redirectTo = `http://localhost:${result.config.webPort}`;
                         const markerPath = cfg.restartMarkerPath;
                         try {
-                            fs.writeFileSync(markerPath, `restart-requested-${Date.now()}`);
+                            writeFileAtomicSync(markerPath, `restart-requested-${Date.now()}`);
                         } catch (err) {
                             log.warn(
                                 `could not write .restart marker (port change won't take effect until manual restart): ${(err as Error).message}`,
