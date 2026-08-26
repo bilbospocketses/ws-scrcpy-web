@@ -27,6 +27,11 @@ jobs:
       - run: cargo test --workspace
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: npm run build
+      - name: Bump/blob sync
+        # The auto-release bump commit is assembled from an explicit blob list.
+        # Fail here if it no longer matches what bump-version.mjs writes -- the
+        # drift that burned v0.1.30-beta.74.
+        run: node scripts/assert-bump-blob-sync.mjs
       - name: Version sync (on tags only)
         if: startsWith(github.ref, 'refs/tags/v')
         run: node scripts/assert-version-sync.mjs ${{ github.ref_name }}
