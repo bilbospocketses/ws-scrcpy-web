@@ -4,6 +4,7 @@ import { Config } from '../../Config';
 import { Logger } from '../../Logger';
 import type { Service } from '../../services/Service';
 import { Device } from '../Device';
+import { dedupeByHardwareSerial, survivesDedupe } from '../dedupeDescriptors';
 
 import Timeout = NodeJS.Timeout;
 
@@ -80,6 +81,13 @@ export class ControlCenter extends BaseControlCenter<GoogDeviceDescriptor> imple
     private onDeviceUpdate = (device: Device): void => {
         const { udid, descriptor } = device;
         this.descriptors.set(udid, descriptor);
+        // An Android 11+ device reaches adb twice — our `ip:port` transport and
+        // the one adb's mDNS auto-connect opens — so emitting every update would
+        // push a second card for a phone the client already has. Suppress the
+        // losing transport; the survivor's own updates keep the card current.
+        if (!survivesDedupe(descriptor, Array.from(this.descriptors.values()))) {
+            return;
+        }
         this.emit('device', descriptor);
     };
 
@@ -137,7 +145,7 @@ export class ControlCenter extends BaseControlCenter<GoogDeviceDescriptor> imple
     }
 
     public getDevices(): GoogDeviceDescriptor[] {
-        return Array.from(this.descriptors.values());
+        return dedupeByHardwareSerial(Array.from(this.descriptors.values()));
     }
 
     public getDevice(udid: string): Device | undefined {
