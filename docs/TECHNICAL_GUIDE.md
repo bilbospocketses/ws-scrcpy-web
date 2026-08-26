@@ -4,7 +4,7 @@ This document covers the internal architecture of ws-scrcpy-web -- a browser-bas
 
 **Target audience:** Developers who need to understand, modify, or debug the codebase without re-discovering its internals.
 
-**scrcpy-server version:** 3.3.4 (vanilla Genymobile binary, no modifications)
+**scrcpy-server version:** 4.1 — the bundled seed, vanilla Genymobile binary, no modifications. Authoritative source is `SERVER_VERSION` in `src/common/Constants.ts`; an install that has run the in-app dependency updater may be newer.
 
 ---
 
@@ -212,7 +212,7 @@ The connection lifecycle in `ScrcpyConnection.start()`:
 1. **Push binary:** ADB-push `scrcpy-server.jar` to `/data/local/tmp/scrcpy-server.jar`
 2. **TCP server:** Create an ephemeral-port TCP server on `127.0.0.1`
 3. **ADB reverse tunnel:** `adb reverse localabstract:scrcpy_<scid> tcp:<port>` so scrcpy-server can connect back
-4. **Launch scrcpy-server:** Via `adb shell` with `CLASSPATH=/data/local/tmp/scrcpy-server.jar app_process / com.genymobile.scrcpy.Server 3.3.4 <options>`
+4. **Launch scrcpy-server:** Via `adb shell` with `CLASSPATH=/data/local/tmp/scrcpy-server.jar app_process / com.genymobile.scrcpy.Server <version> <options>` — `<version>` is not hard-coded here: it resolves from the on-disk marker via `src/server/scrcpyServerVersion.ts` (falling back to `SERVER_VERSION`, currently `4.1`), because the version string the server is launched with **must** match the JAR that was pushed in step 1. Mismatching the two is what broke mirroring on fresh installs before beta.73 — a v3 server started with a v4 parser reading its output.
 5. **Accept 3 TCP sockets:** Video, audio, and control, in that order (10-second timeout)
 6. **Parse metadata:** 76 bytes from the video socket:
    - Bytes 0-63: Device name (null-terminated UTF-8, padded to 64 bytes)
@@ -252,23 +252,33 @@ WebSocket -> ScrcpyDemuxer.onMessage()
 
 **AV1 detection:** No Annex B start codes present. First tries `parseAv1ConfigRecord()` (4-byte AV1CodecConfigurationRecord with marker bit = 1), then falls back to raw OBU Sequence Header parsing via `parseAv1SequenceHeader()`. Generates codec strings like `av01.0.04M.08`.
 
-### 3.4 Config Prepending
+**VP8 / VP9 — no detection, because there is no config packet.** scrcpy sets its config flag straight from MediaCodec's `BUFFER_FLAG_CODEC_CONFIG`, and VP8/VP9 carry no out-of-band parameter sets — everything the decoder needs is in the keyframe — so MediaCodec emits no such buffer and scrcpy sends no config packet. `parseConfig()` is therefore never reached for them. Instead `setSessionInfo()` sees a codec in `CONFIGLESS_CODECS` (`webCodecsConfig.ts`) and calls `configureFromMetadata()`, configuring the decoder from the session metadata's dimensions. Codec strings are `vp8` and `vp09.00.10.08` — VP9 needs the full parameterised form, since a bare `vp9` is not a registered WebCodecs string.
 
-A critical difference between codecs:
+The full codec-string map lives in `WEBCODECS_CODEC_STRING` (`src/app/player/webCodecsConfig.ts`), which is also what `VideoDecoder.isConfigSupported()` is probed with.
 
-- **H.264 and H.265:** The `configData` (SPS/PPS or VPS/SPS/PPS) must be prepended to every keyframe before passing to `VideoDecoder.decode()`. Without this, the decoder cannot decode the keyframe independently.
-- **AV1:** Config prepending is not needed. Keyframes are self-contained.
+### 3.4 Decoder Configuration and Frame Framing
+
+Config data reaches the decoder **once, via `VideoDecoderConfig.description`** at `configure()` time — it is not prepended per keyframe. `buildDecoderConfig()` in `webCodecsConfig.ts` owns this:
+
+- **H.264 / H.265:** `description` must be a real ISOBMFF `avcC` / `hvcC` box, **not** raw Annex B — WebCodecs rejects Annex B start codes there. `buildAvcCBox()` / `buildHvcCBox()` extract the SPS/PPS (and VPS) NALs out of the Annex B config packet and build the box. Passing raw Annex B instead is what made H.264 and H.265 render a black screen until beta.75; AV1 was unaffected, which is why it went unnoticed.
+- **AV1, VP8, VP9:** no `description` at all. AV1 carries its sequence header in the keyframe; VP8/VP9 have no parameter sets.
+
+Because the `avcC`/`hvcC` box declares **4-byte length-prefixed** NAL framing, every subsequent chunk must match it — and scrcpy's wire format is Annex B. So H.264/H.265 frames are re-framed on the way in:
 
 ```typescript
-if (this.detectedCodec === 'av1') {
-    // AV1: decode keyframe directly
-    this.decoder.decode(new EncodedVideoChunk({ type: 'key', timestamp: Number(pts), data }));
-} else {
-    // H.264/H.265: prepend config data
-    const fullData = new Uint8Array(this.configData.length + data.length);
-    fullData.set(this.configData);
-    fullData.set(data, this.configData.length);
-    this.decoder.decode(new EncodedVideoChunk({ type: 'key', timestamp: Number(pts), data: fullData }));
+// The avcC/hvcC `description` set at configure() time declares 4-byte
+// length-prefixed NAL framing — every chunk must match it. scrcpy's wire
+// format is Annex B, so H.264/H.265 need re-framing; AV1, VP8 and VP9
+// have no NAL framing concept and pass through untouched.
+const chunkData =
+    this.detectedCodec === 'h264' || this.detectedCodec === 'h265' ? annexBToLengthPrefixed(data) : data;
+
+// `configData` is the readiness signal for codecs that send a config packet.
+// VP8/VP9 never send one — the decoder was configured up front from session
+// metadata instead — so gate on "decoder is ready" rather than "config bytes
+// arrived", or every frame would be dropped.
+if (isKeyframe && (this.configData || isConfiglessCodec(this.detectedCodec))) {
+    this.decoder.decode(new EncodedVideoChunk({ type: 'key', timestamp: Number(pts), data: chunkData }));
 }
 ```
 
@@ -484,7 +494,7 @@ export interface StartStreamOptions {
     pathname?: string;
 
     // Stream settings (optional — smart auto-selection if omitted)
-    codec?: 'h264' | 'h265' | 'av1';
+    codec?: 'h264' | 'h265' | 'av1' | 'vp8' | 'vp9';
     encoder?: string;
     bitrate?: number;
     maxFps?: number;
@@ -510,11 +520,13 @@ export interface StartStreamOptions {
 | `secure` | Use `wss://` / `https://` when `true`. Defaults to `location.protocol === 'https:'`. |
 | `pathname` | HTTP path prefix for the WebSocket endpoint. Defaults to `location.pathname`. |
 
-**Stream settings** — all optional. Omit them and the library runs smart auto-selection against the device's probed encoder list (H.265 preferred, then H.264, then AV1, filtered by what the browser can decode).
+**Stream settings** — all optional. Omit them and the library runs smart auto-selection against the device's probed encoder list (H.265 preferred, then H.264, then AV1, filtered by what the browser can decode; see `detectBestCodecAndEncoder()` in `StreamClientScrcpy.ts`).
+
+**VP8 and VP9 are never auto-selected** — they exist for devices whose encoder list has no H.264/H.265/AV1 at all, which is the low-end and older hardware case, so they are opt-in via an explicit `codec`. The auto-selection list is deliberately the three mainstream codecs.
 
 | Field | Purpose |
 |-------|---------|
-| `codec` | Force a specific codec: `'h264'`, `'h265'`, or `'av1'`. |
+| `codec` | Force a specific codec: `'h264'`, `'h265'`, `'av1'`, `'vp8'`, or `'vp9'`. |
 | `encoder` | Force a specific encoder name (e.g. `'c2.mtk.hevc.encoder'`). Must be paired with a valid `codec`. |
 | `bitrate` | Target video bitrate in bits per second. |
 | `maxFps` | Frame rate cap. |
@@ -564,7 +576,7 @@ Calling `startStream()` a second time on the same container without first callin
 | `port`      | int    | `location.port`                  | Parsed via `parseInt`; `NaN` falls back to the default.   |
 | `secure`    | bool   | `location.protocol === 'https:'` | `"true"` / `"false"` string-to-bool.                      |
 | `pathname`  | string | `location.pathname`              | HTTP path prefix for the WebSocket endpoint.              |
-| `codec`     | string | auto                             | Only `"h264"`, `"h265"`, `"av1"` accepted; others ignored.|
+| `codec`     | string | auto                             | Only `"h264"`, `"h265"`, `"av1"`, `"vp8"`, `"vp9"` accepted; others ignored.|
 | `encoder`   | string | auto                             | Forced encoder name.                                      |
 | `bitrate`   | int    | auto                             | Video bitrate in bps.                                     |
 | `maxFps`    | int    | auto                             | Frame rate cap.                                           |
@@ -877,39 +889,47 @@ Before building a new version of ws-scrcpy-web, check the following:
 
 Run `npm outdated` to check all at once. Update one at a time, build + test after each.
 
-| # | Package | Current | Purpose | Update notes |
-|---|---------|---------|---------|--------------|
-| 1 | `typescript` | 7.0.2 | Type-checks the source (`tsc --noEmit`); swc does the transpile | `dts-bundle-generator` still needs the TS 6 programmatic API, so it is pinned to 6.0.3 via a scoped override |
-| 2 | `webpack` | 5.106.2 | Bundles source into server and browser output | Patch updates are safe |
-| 3 | `webpack-cli` | 7.0.3 | Command-line interface for webpack | Major versions usually just drop old Node support |
-| 4 | `css-loader` | 7.1.4 | Processes CSS imports for webpack bundling | Major versions may need webpack config changes |
-| 5 | `mini-css-extract-plugin` | 2.10.2 | Extracts CSS into separate .css files | Tied to webpack version |
-| 6 | `swc-loader` (+ `@swc/core`) | 0.2.7 | Transpiles TypeScript for webpack | Transpile-only; type-safety is the separate `tsc --noEmit` |
-| 7 | `tsx` | 4.x | Runs the TypeScript webpack config files | esbuild-based; webpack-cli loads the `.ts` config via `tsx/cjs` |
-| 8 | `@biomejs/biome` | 2.4.16 | Linter and code formatter (replaces ESLint + Prettier) | Major versions need config migration (`npx @biomejs/biome migrate`) |
-| 9 | `@types/node` | 24.12.2 | TypeScript type definitions for Node.js APIs | Must match target Node.js LTS major version (even numbers only, never odd) |
-| 10 | `@types/ws` | 8.18.1 | TypeScript type definitions for ws library | Must match `ws` major version |
-| 11 | `vitest` | 4.1.8 | Test runner for unit and integration tests | Usually safe to update |
-| 12 | `@xterm/xterm` | 6.0.0 | Terminal emulator rendered in the browser (Microsoft) | Major versions may have API changes affecting `ShellClient.ts` and `ShellModal.ts` |
-| 13 | `@xterm/addon-attach` | 0.12.0 | Connects xterm to a WebSocket for remote shell | Must match `@xterm/xterm` major version |
-| 14 | `@xterm/addon-fit` | 0.11.0 | Auto-resizes terminal to fit its container | Must match `@xterm/xterm` major version |
+> **These tables carry no version numbers on purpose.** `package.json` is the single
+> source of truth for every npm package below, and Dependabot moves it weekly — a
+> hand-copied "current version" column here is stale by construction, and was: it
+> drifted across seven rows (and, in one case, listed a version *newer* than the pin)
+> before being removed. Read the versions from `package.json`, or run `npm outdated`.
+> What belongs here is the part a manifest can't tell you: what each package is for,
+> and what breaks when you move it.
+
+| # | Package | Purpose | Update notes |
+|---|---------|---------|--------------|
+| 1 | `typescript` | Type-checks the source (`tsc --noEmit`); swc does the transpile | `dts-bundle-generator` still needs the TS 6 programmatic API, so it is pinned to 6.0.3 via a scoped override |
+| 2 | `webpack` | Bundles source into server and browser output | Patch updates are safe |
+| 3 | `webpack-cli` | Command-line interface for webpack | Major versions usually just drop old Node support |
+| 4 | `css-loader` | Processes CSS imports for webpack bundling | Major versions may need webpack config changes |
+| 5 | `mini-css-extract-plugin` | Extracts CSS into separate .css files | Tied to webpack version |
+| 6 | `swc-loader` (+ `@swc/core`) | Transpiles TypeScript for webpack | Transpile-only; type-safety is the separate `tsc --noEmit` |
+| 7 | `tsx` | Runs the TypeScript webpack config files | esbuild-based; webpack-cli loads the `.ts` config via `tsx/cjs` |
+| 8 | `@biomejs/biome` | Linter and code formatter (replaces ESLint + Prettier) | Major versions need config migration (`npx @biomejs/biome migrate`) |
+| 9 | `@types/node` | TypeScript type definitions for Node.js APIs | **Must match the major of the Node runtime we actually ship** (`NODE_VERSION` in `scripts/fetch-node.mjs`), not the newest types on npm — types ahead of the runtime type-check APIs the shipped Node doesn't have. `.github/dependabot.yml` ignores majors for this package to hold the line; lift that ignore in the same PR that bumps the bundled runtime to the next even-numbered LTS |
+| 10 | `@types/ws` | TypeScript type definitions for ws library | Must match `ws` major version |
+| 11 | `vitest` | Test runner for unit and integration tests | Usually safe to update |
+| 12 | `@xterm/xterm` | Terminal emulator rendered in the browser (Microsoft) | Major versions may have API changes affecting `ShellClient.ts` and `ShellModal.ts` |
+| 13 | `@xterm/addon-attach` | Connects xterm to a WebSocket for remote shell | Must match `@xterm/xterm` major version |
+| 14 | `@xterm/addon-fit` | Auto-resizes terminal to fit its container | Must match `@xterm/xterm` major version |
 
 ### Runtime dependency bundled into build
 
-| # | Package | Current | Purpose | Update notes |
-|---|---------|---------|---------|--------------|
-| 15 | `ws` | 8.21.0 | WebSocket server powering all browser-to-server communication | Bundled into webpack output; not user-updatable. Stable, rarely updates. Check before every release. |
+| # | Package | Purpose | Update notes |
+|---|---------|---------|--------------|
+| 15 | `ws` | WebSocket server powering all browser-to-server communication | Bundled into webpack output; not user-updatable. Stable, rarely updates. Check before every release. |
 
 ### Runtime dependencies managed by in-app updater
 
-These are not npm packages in the build -- they are external binaries bundled in the `dependencies/` folder and updatable by users through the app UI.
+These are not npm packages in the build -- they are external binaries bundled in the `dependencies/` folder and updatable by users through the app UI. Their versions don't live in `package.json`, so the table names the file that does hold each one.
 
-| # | Dependency | Current | Purpose | Update source | Update notes |
-|---|------------|---------|---------|---------------|--------------|
-| 16 | `node-pty` | 1.1.0 | Provides pseudo-terminal for ADB shell sessions in the browser | npm prebuilt binaries | Native DLL (conpty.dll + OpenConsole.exe) is ABI-locked to Node.js version. Must update together with Node.js. |
-| 17 | Node.js | 24.14.1 LTS | JavaScript runtime that runs the ws-scrcpy-web server | nodejs.org | Paired with node-pty (#16). Only use LTS (even-numbered) releases. |
-| 18 | ADB (platform-tools) | latest | Communicates with Android devices (push, shell, tunnel) | Google SDK | Standalone zip download and extract |
-| 19 | scrcpy-server | 3.3.4 (bundled seed) | Runs on Android device to capture screen, audio, and accept input | Genymobile/scrcpy releases | Single binary replace via the in-app dep panel — installed version is tracked at `<deps>/scrcpy-server/.version` and read by `src/server/scrcpyServerVersion.ts`; both the UI display and the wire-protocol arg passed to `app_process` resolve from the marker. `SERVER_VERSION` in `src/common/Constants.ts` is the fallback for legacy seed installs predating the marker — bump it only when bumping the bundled seed binary, not on every user-facing scrcpy release. |
+| # | Dependency | Pinned in | Purpose | Update source | Update notes |
+|---|------------|-----------|---------|---------------|--------------|
+| 16 | `node-pty` | `package.json` (`optionalDependencies`) | Provides pseudo-terminal for ADB shell sessions in the browser | npm prebuilt binaries | Native DLL (conpty.dll + OpenConsole.exe) is ABI-locked to Node.js version. Must update together with Node.js. |
+| 17 | Node.js | `NODE_VERSION` in `scripts/fetch-node.mjs` (with the per-platform sha256 pins beside it) | JavaScript runtime that runs the ws-scrcpy-web server | nodejs.org | Paired with node-pty (#16) and with `@types/node` (#9). Only use LTS (even-numbered) releases. |
+| 18 | ADB (platform-tools) | unpinned — always latest | Communicates with Android devices (push, shell, tunnel) | Google SDK | Standalone zip download and extract |
+| 19 | scrcpy-server | `SERVER_VERSION` in `src/common/Constants.ts` (bundled seed), `<deps>/scrcpy-server/.version` (installed) | Runs on Android device to capture screen, audio, and accept input | Genymobile/scrcpy releases | Single binary replace via the in-app dep panel — installed version is tracked at `<deps>/scrcpy-server/.version` and read by `src/server/scrcpyServerVersion.ts`; both the UI display and the wire-protocol arg passed to `app_process` resolve from the marker. `SERVER_VERSION` is the fallback for legacy seed installs predating the marker — bump it only when bumping the bundled seed binary, not on every user-facing scrcpy release. The bundled JAR is checksum-pinned per version and asserted by `scrcpyServerAsset.test.ts`, so the binary and the version the app reports cannot drift apart. |
 
 ### Quick check
 
@@ -917,7 +937,7 @@ These are not npm packages in the build -- they are external binaries bundled in
 npm outdated
 ```
 
-Shows all npm packages (1-15) with available updates. For runtime dependencies (16-19), check their respective release pages.
+Shows all npm packages (1-15) with available updates. For runtime dependencies (16-19), read the pin from the file named in the table, then check the upstream release page.
 
 ---
 

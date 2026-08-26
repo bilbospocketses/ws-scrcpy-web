@@ -18,10 +18,18 @@ This is the operational runbook for cutting a release. Every step is a concrete 
 4. **Sanity-check the working tree.**
    ```bash
    node scripts/assert-version-sync.mjs vX.Y.Z
+   npx tsc --noEmit          # the build transpiles via swc and does NOT type-check
    npm test
    cargo test --workspace
    npm run build
+   node scripts/assert-bump-blob-sync.mjs
    ```
+
+   `tsc --noEmit` is not optional here: since the swc migration, `npm run build`
+   strips types without checking them, so a green build says nothing about type
+   safety. `assert-bump-blob-sync.mjs` confirms the files `bump-version.mjs` writes
+   are all uploaded by the auto-release workflow — the drift that burned
+   `v0.1.30-beta.74`. Both also run in CI; running them here just fails faster.
 5. **Preview the release notes.**
    ```bash
    node scripts/extract-changelog.mjs vX.Y.Z
@@ -66,11 +74,13 @@ gh pr merge --squash --delete-branch --auto
 
 The release workflow detects `*-beta*` in the tag name, sets `channel=beta`, and uses a separate Velopack feed file (`releases.beta.json`) so beta and stable channels are independent.
 
-**Note (post-v0.1.23):** `softprops/action-gh-release` is NOT invoked with `prerelease: true`. GitHub's `/releases/latest` API endpoint excludes prereleases, and Velopack's GithubSource queries that endpoint to find the latest release in the configured channel — flagging beta tags as prereleases broke in-app updater discovery for beta-channel users. Channel separation is handled by the per-channel feed file alone. See `feedback_velopack_permachine_lessons.md` Gotcha 5 for the full diagnosis.
+**Note (post-v0.1.23):** `softprops/action-gh-release` is NOT invoked with `prerelease: true`. GitHub's `/releases/latest` API endpoint excludes prereleases, and Velopack's GithubSource queries that endpoint to find the latest release in the configured channel — flagging beta tags as prereleases broke in-app updater discovery for beta-channel users. Channel separation is handled by the per-channel feed file alone.
+
+**Do not "fix" this by adding `prerelease: true` back.** The failure is silent from the release side — the tag publishes, the assets upload, the Release page looks correct — and only shows up as beta installs never seeing an update, because Velopack's `GithubSource` asks `/releases/latest`, which skips prereleases entirely. If you need a build hidden from the Releases banner, that is what the rollback procedure below does deliberately, and it has the same consequence.
 
 Beta users opt in by setting `channel=beta` in Settings (writes to `config.json`).
 
-**Note on no-op companion releases:** earlier in the v0.1.23-beta.{1..18} chain, every fix beta was paired with a no-op target beta (e.g., beta.13 fix + beta.14 no-op) so we could test the in-app updater itself. Once the updater stabilized at beta.23, that practice was retired — fix betas now ship solo and are tested by upgrading from any earlier installed beta. See `todo_ws_scrcpy_web.md` "Release-cycle convention" for context.
+**Note on no-op companion releases:** earlier in the v0.1.23-beta.{1..18} chain, every fix beta was paired with a no-op target beta (e.g., beta.13 fix + beta.14 no-op) so we could test the in-app updater itself. Once the updater stabilized at beta.23, that practice was retired — fix betas now ship solo, and the upgrade path is tested by installing any earlier kept beta and updating to the new one (the smoke doc's Module 6 names the current "update from" build).
 
 ## Rollback procedure
 

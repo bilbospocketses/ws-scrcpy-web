@@ -1,0 +1,12 @@
+{
+    // TypeScript 7 ships no tsserver.js and no lib.*.d.ts, so VS Code's built-in
+    // TypeScript extension cannot drive it: it reports the whole standard library
+    // as missing and marks every file with errors, while `npx tsc --noEmit` is
+    // clean. The native-preview extension is the language server that speaks TS 7.
+    //
+    // The built-in extension is bundled with VS Code, so it cannot be listed as
+    // unwanted here -- disable "TypeScript and JavaScript Language Features" for
+    // this workspace if the phantom errors persist after installing the below.
+    // See CONTRIBUTING.md -> Editor setup.
+    "recommendations": ["typescriptteam.native-preview", "biomejs.biome"]
+}
