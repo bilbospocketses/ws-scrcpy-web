@@ -4,6 +4,7 @@ import { buildCnxnPacket, dedupModel, parseCnxnReply, probeAdb } from '../networ
 
 const A_CNXN = 0x4e584e43;
 const A_AUTH = 0x48545541;
+const A_STLS = 0x534c5453;
 const HEADER_SIZE = 24;
 
 function adbChecksum(buf: Buffer): number {
@@ -98,6 +99,11 @@ describe('parseCnxnReply', () => {
         const r = parseCnxnReply(reply);
         expect(r.isAdb).toBe(true);
         expect(r.model).toBeUndefined();
+    });
+
+    it('recognizes the STLS greeting from Android Wireless debugging', () => {
+        const reply = buildReply(A_STLS, Buffer.alloc(0));
+        expect(parseCnxnReply(reply)).toMatchObject({ isAdb: true });
     });
 
     it('returns isAdb=false for unknown command', () => {

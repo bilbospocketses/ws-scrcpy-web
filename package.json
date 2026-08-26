@@ -47,6 +47,7 @@
     "release-notes": "node scripts/extract-changelog.mjs $npm_package_version"
   },
   "dependencies": {
+    "qrcode-generator": "^2.0.4",
     "velopack": "^1.2.0",
     "ws": "^8.21.3"
   },
