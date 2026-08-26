@@ -14,6 +14,7 @@ import { DeviceProbeClient } from '../../client/DeviceProbeClient';
 import { settingsService } from '../../client/SettingsService';
 import { DisplayInfo } from '../../DisplayInfo';
 import type { PlayerClass } from '../../player/BasePlayer';
+import { WEBCODECS_CODEC_STRING } from '../../player/webCodecsConfig';
 import Size from '../../Size';
 import Util from '../../Util';
 import { Modal } from '../../ui/Modal';
@@ -216,6 +217,10 @@ export class ConfigureScrcpy extends Modal {
                 return lower.includes('.hevc.');
             case 'av1':
                 return lower.includes('.av1.');
+            case 'vp8':
+                return lower.includes('.vp8.');
+            case 'vp9':
+                return lower.includes('.vp9.');
             default:
                 return true;
         }
@@ -255,6 +260,8 @@ export class ConfigureScrcpy extends Modal {
         if (joined.includes('.avc.') || joined.includes('.h264.')) codecs.push('h264');
         if (joined.includes('.hevc.')) codecs.push('h265');
         if (joined.includes('.av1.')) codecs.push('av1');
+        if (joined.includes('.vp8.')) codecs.push('vp8');
+        if (joined.includes('.vp9.')) codecs.push('vp9');
         if (codecs.length === 0) codecs.push('h264');
         return codecs;
     }
@@ -263,11 +270,6 @@ export class ConfigureScrcpy extends Modal {
         if (typeof VideoDecoder === 'undefined' || typeof VideoDecoder.isConfigSupported !== 'function') {
             return codecs;
         }
-        const codecMap: Record<string, string> = {
-            h264: 'avc1.42E01E',
-            h265: 'hev1.1.6.L93.B0',
-            av1: 'av01.0.04M.08',
-        };
         const supported: string[] = [];
         for (const codec of codecs) {
             // H.264 is universally supported — skip the check (Firefox isConfigSupported
@@ -276,7 +278,7 @@ export class ConfigureScrcpy extends Modal {
                 supported.push(codec);
                 continue;
             }
-            const webCodecStr = codecMap[codec];
+            const webCodecStr = WEBCODECS_CODEC_STRING[codec];
             if (!webCodecStr) {
                 supported.push(codec);
                 continue;

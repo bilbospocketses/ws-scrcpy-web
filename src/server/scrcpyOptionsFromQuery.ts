@@ -22,7 +22,7 @@ export function scrcpyOptionsFromQuery(params: URLSearchParams, scid: string): S
     if (displayId) options.displayId = Number.parseInt(displayId, 10);
 
     const videoCodec = params.get('videoCodec');
-    if (videoCodec === 'h265' || videoCodec === 'av1') {
+    if (videoCodec === 'h265' || videoCodec === 'av1' || videoCodec === 'vp8' || videoCodec === 'vp9') {
         options.videoCodec = videoCodec;
     }
 

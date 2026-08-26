@@ -2,6 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import * as fs from 'fs';
 import * as path from 'path';
 import { Logger } from '../Logger';
+import { copyFileAtomicSync } from '../util/atomicFile';
 import { runMigrations } from './migrations';
 
 function configure(db: DatabaseSync): void {
@@ -70,7 +71,7 @@ export function openDatabase(dbPath: string): DatabaseSync {
                     'ok';
                 probe.close();
                 if (ok) {
-                    fs.copyFileSync(bak, dbPath);
+                    copyFileAtomicSync(bak, dbPath);
                     Logger.for('Db').error('restored wsscrcpy.db from wsscrcpy.db.bak');
                 }
             } catch {

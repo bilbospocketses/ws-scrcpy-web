@@ -76,10 +76,13 @@ describe('scrcpyOptionsFromQuery — other params carry over', () => {
         expect(opts.displayId).toBe(2);
     });
 
-    it('accepts h265/av1 but ignores other videoCodec values', () => {
+    it('accepts h265/av1/vp8/vp9 but ignores other videoCodec values', () => {
         expect(scrcpyOptionsFromQuery(qp({ videoCodec: 'h265' }), 's').videoCodec).toBe('h265');
         expect(scrcpyOptionsFromQuery(qp({ videoCodec: 'av1' }), 's').videoCodec).toBe('av1');
-        expect(scrcpyOptionsFromQuery(qp({ videoCodec: 'vp9' }), 's').videoCodec).toBeUndefined();
+        expect(scrcpyOptionsFromQuery(qp({ videoCodec: 'vp8' }), 's').videoCodec).toBe('vp8');
+        expect(scrcpyOptionsFromQuery(qp({ videoCodec: 'vp9' }), 's').videoCodec).toBe('vp9');
+        // h264 is the default and is never echoed back as an explicit option.
+        expect(scrcpyOptionsFromQuery(qp({ videoCodec: 'vp10' }), 's').videoCodec).toBeUndefined();
     });
 
     it('accepts aac/flac/raw but ignores other audioCodec values', () => {

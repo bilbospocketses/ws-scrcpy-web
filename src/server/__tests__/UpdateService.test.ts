@@ -627,129 +627,127 @@ describe('UpdateService', () => {
     // LocalSystem launcher that holds the single-instance mutex and starves out
     // Servy's --recoveryAction=RestartProcess attempts, leaving SCM with the
     // service stuck Stopped until reboot. See §32 in todo_ws_scrcpy_web.md.
-    it.each([
-        ['user-service' as const],
-        ['system-service' as const],
-    ])('applyUpdate (%s): waitExitThenApplyUpdate called with restart=false', async (installMode) => {
-        Config.getInstance().updateAppConfig({ autoUpdate: false, installMode });
-        const info = fakeUpdateInfo('0.2.0');
-        const applyFn = vi.fn();
-        const mgr = fakeMgr({
-            checkForUpdatesAsync: async () => info,
-            waitExitThenApplyUpdate: applyFn,
-        });
-        const svc = new UpdateService({
-            // Windows service mode keeps Velopack's waitExitThenApplyUpdate. Linux
-            // service mode now uses the download-based apply (item 39), so this
-            // assertion is win32-specific — without the pin it breaks on Linux CI.
-            platform: 'win32',
-            installRoot: '/fake',
-            existsSync: () => true,
-            updateManagerFactory: () => mgr,
-            setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
-            clearIntervalFn: () => undefined,
-        });
-        svc.init();
-        await svc.checkForUpdates();
-        expect(svc.getStatus().status).toBe('ready');
-        await svc.applyUpdate();
-        expect(applyFn).toHaveBeenCalledTimes(1);
-        const args = applyFn.mock.calls[0]!;
-        expect(args[0]).toBe(info);
-        expect(args[1]).toBe(true);
-        // restart=false in service mode — hook's servy-cli restart handles relaunch.
-        expect(args[2]).toBe(false);
-    });
+    it.each([['user-service' as const], ['system-service' as const]])(
+        'applyUpdate (%s): waitExitThenApplyUpdate called with restart=false',
+        async (installMode) => {
+            Config.getInstance().updateAppConfig({ autoUpdate: false, installMode });
+            const info = fakeUpdateInfo('0.2.0');
+            const applyFn = vi.fn();
+            const mgr = fakeMgr({
+                checkForUpdatesAsync: async () => info,
+                waitExitThenApplyUpdate: applyFn,
+            });
+            const svc = new UpdateService({
+                // Windows service mode keeps Velopack's waitExitThenApplyUpdate. Linux
+                // service mode now uses the download-based apply (item 39), so this
+                // assertion is win32-specific — without the pin it breaks on Linux CI.
+                platform: 'win32',
+                installRoot: '/fake',
+                existsSync: () => true,
+                updateManagerFactory: () => mgr,
+                setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
+                clearIntervalFn: () => undefined,
+            });
+            svc.init();
+            await svc.checkForUpdates();
+            expect(svc.getStatus().status).toBe('ready');
+            await svc.applyUpdate();
+            expect(applyFn).toHaveBeenCalledTimes(1);
+            const args = applyFn.mock.calls[0]!;
+            expect(args[0]).toBe(info);
+            expect(args[1]).toBe(true);
+            // restart=false in service mode — hook's servy-cli restart handles relaunch.
+            expect(args[2]).toBe(false);
+        },
+    );
 
     // §40: local-mode variants (user/system) also skip waitExitThenApplyUpdate.
     // The supervisor's local-post-stop.bat calls Update.exe apply directly.
-    it.each([
-        ['user' as const],
-        ['system' as const],
-    ])('applyUpdate (%s): does NOT call waitExitThenApplyUpdate (local mode)', async (installMode) => {
-        Config.getInstance().updateAppConfig({ autoUpdate: false, installMode });
-        const info = fakeUpdateInfo('0.2.0');
-        const applyFn = vi.fn();
-        const mgr = fakeMgr({
-            checkForUpdatesAsync: async () => info,
-            waitExitThenApplyUpdate: applyFn,
-        });
-        const svc = new UpdateService({
-            // Windows local mode; Linux local mode is tested separately. Pin
-            // win32 so this Windows assertion holds on a Linux CI host too.
-            platform: 'win32',
-            installRoot: '/fake',
-            existsSync: () => true,
-            updateManagerFactory: () => mgr,
-            setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
-            clearIntervalFn: () => undefined,
-        });
-        svc.init();
-        await svc.checkForUpdates();
-        expect(svc.getStatus().status).toBe('ready');
-        await svc.applyUpdate();
-        expect(applyFn).not.toHaveBeenCalled();
-    });
+    it.each([['user' as const], ['system' as const]])(
+        'applyUpdate (%s): does NOT call waitExitThenApplyUpdate (local mode)',
+        async (installMode) => {
+            Config.getInstance().updateAppConfig({ autoUpdate: false, installMode });
+            const info = fakeUpdateInfo('0.2.0');
+            const applyFn = vi.fn();
+            const mgr = fakeMgr({
+                checkForUpdatesAsync: async () => info,
+                waitExitThenApplyUpdate: applyFn,
+            });
+            const svc = new UpdateService({
+                // Windows local mode; Linux local mode is tested separately. Pin
+                // win32 so this Windows assertion holds on a Linux CI host too.
+                platform: 'win32',
+                installRoot: '/fake',
+                existsSync: () => true,
+                updateManagerFactory: () => mgr,
+                setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
+                clearIntervalFn: () => undefined,
+            });
+            svc.init();
+            await svc.checkForUpdates();
+            expect(svc.getStatus().status).toBe('ready');
+            await svc.applyUpdate();
+            expect(applyFn).not.toHaveBeenCalled();
+        },
+    );
 
     // §40: applyUpdate writes the apply-update-pending marker in ALL modes.
     // In local mode, Node also spawns the operation-server helper and polls
     // for its port file (spawn is module-mocked via vi.mock('child_process')).
     // In service mode, Servy's post-stop bat handles the operation-server.
-    it.each([
-        ['user-service' as const],
-        ['system-service' as const],
-        ['user' as const],
-        ['system' as const],
-    ])('applyUpdate (%s): writes marker (§40)', async (installMode) => {
-        Config.getInstance().updateAppConfig({ autoUpdate: false, installMode });
-        // Spy on fs.promises.writeFile + mkdir to capture the marker write
-        // without polluting real ProgramData. Mock as no-ops since we only
-        // care about the call shape, not the effect on disk.
-        const writeFileSpy = vi.spyOn(fs.promises, 'writeFile').mockResolvedValue(undefined);
-        const mkdirSpy = vi.spyOn(fs.promises, 'mkdir').mockResolvedValue(undefined);
-        using _restore = {
-            [Symbol.dispose]() {
-                writeFileSpy.mockRestore();
-                mkdirSpy.mockRestore();
-            },
-        };
+    it.each([['user-service' as const], ['system-service' as const], ['user' as const], ['system' as const]])(
+        'applyUpdate (%s): writes marker (§40)',
+        async (installMode) => {
+            Config.getInstance().updateAppConfig({ autoUpdate: false, installMode });
+            // Spy on fs.promises.writeFile + mkdir to capture the marker write
+            // without polluting real ProgramData. Mock as no-ops since we only
+            // care about the call shape, not the effect on disk.
+            const writeFileSpy = vi.spyOn(fs.promises, 'writeFile').mockResolvedValue(undefined);
+            const mkdirSpy = vi.spyOn(fs.promises, 'mkdir').mockResolvedValue(undefined);
+            using _restore = {
+                [Symbol.dispose]() {
+                    writeFileSpy.mockRestore();
+                    mkdirSpy.mockRestore();
+                },
+            };
 
-        const info = fakeUpdateInfo('0.2.0');
-        const applyFn = vi.fn();
-        const mgr = fakeMgr({
-            checkForUpdatesAsync: async () => info,
-            waitExitThenApplyUpdate: applyFn,
-        });
-        const svc = new UpdateService({
-            // Pin win32: service variants call waitExitThenApplyUpdate; the
-            // local (user/system) variants use the Windows operation-server
-            // helper (not waitExitThenApplyUpdate). Linux local mode differs and
-            // is covered separately — without this pin the local variants fail
-            // on a Linux CI host (they'd hit the new Linux apply branch).
-            platform: 'win32',
-            installRoot: '/fake-install-root',
-            existsSync: () => true,
-            updateManagerFactory: () => mgr,
-            setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
-            clearIntervalFn: () => undefined,
-        });
-        svc.init();
-        await svc.checkForUpdates();
-        await svc.applyUpdate();
-        const isServiceMode = installMode === 'user-service' || installMode === 'system-service';
-        if (isServiceMode) {
-            expect(applyFn).toHaveBeenCalledTimes(1);
-            expect(applyFn.mock.calls[0]![2]).toBe(false);
-        } else {
-            expect(applyFn).not.toHaveBeenCalled();
-        }
+            const info = fakeUpdateInfo('0.2.0');
+            const applyFn = vi.fn();
+            const mgr = fakeMgr({
+                checkForUpdatesAsync: async () => info,
+                waitExitThenApplyUpdate: applyFn,
+            });
+            const svc = new UpdateService({
+                // Pin win32: service variants call waitExitThenApplyUpdate; the
+                // local (user/system) variants use the Windows operation-server
+                // helper (not waitExitThenApplyUpdate). Linux local mode differs and
+                // is covered separately — without this pin the local variants fail
+                // on a Linux CI host (they'd hit the new Linux apply branch).
+                platform: 'win32',
+                installRoot: '/fake-install-root',
+                existsSync: () => true,
+                updateManagerFactory: () => mgr,
+                setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
+                clearIntervalFn: () => undefined,
+            });
+            svc.init();
+            await svc.checkForUpdates();
+            await svc.applyUpdate();
+            const isServiceMode = installMode === 'user-service' || installMode === 'system-service';
+            if (isServiceMode) {
+                expect(applyFn).toHaveBeenCalledTimes(1);
+                expect(applyFn.mock.calls[0]![2]).toBe(false);
+            } else {
+                expect(applyFn).not.toHaveBeenCalled();
+            }
 
-        const markerCalls = writeFileSpy.mock.calls.filter(
-            (c) => typeof c[0] === 'string' && (c[0] as string).endsWith('apply-update-pending'),
-        );
-        expect(markerCalls).toHaveLength(1);
-        expect(mkdirSpy).toHaveBeenCalled();
-    });
+            const markerCalls = writeFileSpy.mock.calls.filter(
+                (c) => typeof c[0] === 'string' && (c[0] as string).endsWith('apply-update-pending'),
+            );
+            expect(markerCalls).toHaveLength(1);
+            expect(mkdirSpy).toHaveBeenCalled();
+        },
+    );
 
     // §49: in Windows LOCAL mode (user/system) the operation-server re-extracts
     // the nupkg itself, so Node must hand it the Velopack-authenticated
@@ -760,55 +758,58 @@ describe('UpdateService', () => {
         ['system' as const, true],
         ['user-service' as const, false],
         ['system-service' as const, false],
-    ])('applyUpdate (%s): writes apply-update-verify.json only in local mode (§49)', async (installMode, expectManifest) => {
-        Config.getInstance().updateAppConfig({ autoUpdate: false, installMode });
-        const writeFileSpy = vi.spyOn(fs.promises, 'writeFile').mockResolvedValue(undefined);
-        const mkdirSpy = vi.spyOn(fs.promises, 'mkdir').mockResolvedValue(undefined);
-        // Local mode polls for the operation-server port file; return one so the
-        // poll resolves immediately instead of waiting out the 5s timeout.
-        const readFileSpy = vi.spyOn(fs.promises, 'readFile').mockResolvedValue('8001' as never);
-        using _restore = {
-            [Symbol.dispose]() {
-                writeFileSpy.mockRestore();
-                mkdirSpy.mockRestore();
-                readFileSpy.mockRestore();
-            },
-        };
+    ])(
+        'applyUpdate (%s): writes apply-update-verify.json only in local mode (§49)',
+        async (installMode, expectManifest) => {
+            Config.getInstance().updateAppConfig({ autoUpdate: false, installMode });
+            const writeFileSpy = vi.spyOn(fs.promises, 'writeFile').mockResolvedValue(undefined);
+            const mkdirSpy = vi.spyOn(fs.promises, 'mkdir').mockResolvedValue(undefined);
+            // Local mode polls for the operation-server port file; return one so the
+            // poll resolves immediately instead of waiting out the 5s timeout.
+            const readFileSpy = vi.spyOn(fs.promises, 'readFile').mockResolvedValue('8001' as never);
+            using _restore = {
+                [Symbol.dispose]() {
+                    writeFileSpy.mockRestore();
+                    mkdirSpy.mockRestore();
+                    readFileSpy.mockRestore();
+                },
+            };
 
-        const info = fakeUpdateInfo('0.2.0');
-        info.TargetFullRelease.SHA256 = 'A1B2C3';
-        info.TargetFullRelease.FileName = 'ws-scrcpy-web-0.2.0-full.nupkg';
-        const mgr = fakeMgr({
-            checkForUpdatesAsync: async () => info,
-            waitExitThenApplyUpdate: vi.fn(),
-        });
-        const svc = new UpdateService({
-            platform: 'win32',
-            installRoot: '/fake-install-root',
-            existsSync: () => true,
-            updateManagerFactory: () => mgr,
-            setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
-            clearIntervalFn: () => undefined,
-        });
-        svc.init();
-        await svc.checkForUpdates();
-        await svc.applyUpdate();
-
-        const manifestCalls = writeFileSpy.mock.calls.filter(
-            (c) => typeof c[0] === 'string' && (c[0] as string).endsWith('apply-update-verify.json'),
-        );
-        if (expectManifest) {
-            expect(manifestCalls).toHaveLength(1);
-            const written = JSON.parse(manifestCalls[0]![1] as string);
-            expect(written).toEqual({
-                version: '0.2.0',
-                fileName: 'ws-scrcpy-web-0.2.0-full.nupkg',
-                sha256: 'A1B2C3',
+            const info = fakeUpdateInfo('0.2.0');
+            info.TargetFullRelease.SHA256 = 'A1B2C3';
+            info.TargetFullRelease.FileName = 'ws-scrcpy-web-0.2.0-full.nupkg';
+            const mgr = fakeMgr({
+                checkForUpdatesAsync: async () => info,
+                waitExitThenApplyUpdate: vi.fn(),
             });
-        } else {
-            expect(manifestCalls).toHaveLength(0);
-        }
-    });
+            const svc = new UpdateService({
+                platform: 'win32',
+                installRoot: '/fake-install-root',
+                existsSync: () => true,
+                updateManagerFactory: () => mgr,
+                setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
+                clearIntervalFn: () => undefined,
+            });
+            svc.init();
+            await svc.checkForUpdates();
+            await svc.applyUpdate();
+
+            const manifestCalls = writeFileSpy.mock.calls.filter(
+                (c) => typeof c[0] === 'string' && (c[0] as string).endsWith('apply-update-verify.json'),
+            );
+            if (expectManifest) {
+                expect(manifestCalls).toHaveLength(1);
+                const written = JSON.parse(manifestCalls[0]![1] as string);
+                expect(written).toEqual({
+                    version: '0.2.0',
+                    fileName: 'ws-scrcpy-web-0.2.0-full.nupkg',
+                    sha256: 'A1B2C3',
+                });
+            } else {
+                expect(manifestCalls).toHaveLength(0);
+            }
+        },
+    );
 
     // Linux local-mode apply: replaces Velopack's broken UpdateNix apply with a
     // hand-rolled download -> verify-sha256 -> spawn-helper. (Velopack 1.0.1's apply
@@ -904,60 +905,63 @@ describe('UpdateService', () => {
     it.each([
         ['user-service' as const, 'user' as const],
         ['system-service' as const, 'system' as const],
-    ])('applyUpdate (linux %s): spawns helper with --service-restart; no waitExitThenApplyUpdate', async (installMode, scope) => {
-        const { createHash } = await import('crypto');
-        Config.getInstance().updateAppConfig({
-            autoUpdate: false,
-            installMode,
-            channel: 'beta',
-            githubOwner: 'bilbospocketses',
-        });
-        const appImageBytes = Buffer.from('NEW-APPIMAGE-CONTENT');
-        const goodHash = createHash('sha256').update(appImageBytes).digest('hex');
-        const sums = `${goodHash}  ./linux-final/WsScrcpyWeb-linux-beta.AppImage\n`;
-        const fetchFn = vi.fn(async (url: string) =>
-            url.endsWith('.AppImage') ? new Response(appImageBytes) : new Response(sums),
-        ) as unknown as typeof fetch;
-        const applyFn = vi.fn();
-        const mgr = fakeMgr({
-            checkForUpdatesAsync: async () => fakeUpdateInfo('0.1.30-beta.40'),
-            waitExitThenApplyUpdate: applyFn,
-        });
-        const spawnMock = vi.mocked(child_process.spawn);
-        spawnMock.mockClear();
-        const svc = new UpdateService({
-            platform: 'linux',
-            installRoot: path.join('/fake', 'mount', 'usr'),
-            existsSync: () => true,
-            updateManagerFactory: () => mgr,
-            setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
-            clearIntervalFn: () => undefined,
-            fetchFn,
-        });
-        process.env['APPIMAGE'] = '/home/u/Downloads/WsScrcpyWeb-linux-beta.AppImage';
-        svc.init();
-        await svc.checkForUpdates();
-        expect(svc.getStatus().status).toBe('ready');
+    ])(
+        'applyUpdate (linux %s): spawns helper with --service-restart; no waitExitThenApplyUpdate',
+        async (installMode, scope) => {
+            const { createHash } = await import('crypto');
+            Config.getInstance().updateAppConfig({
+                autoUpdate: false,
+                installMode,
+                channel: 'beta',
+                githubOwner: 'bilbospocketses',
+            });
+            const appImageBytes = Buffer.from('NEW-APPIMAGE-CONTENT');
+            const goodHash = createHash('sha256').update(appImageBytes).digest('hex');
+            const sums = `${goodHash}  ./linux-final/WsScrcpyWeb-linux-beta.AppImage\n`;
+            const fetchFn = vi.fn(async (url: string) =>
+                url.endsWith('.AppImage') ? new Response(appImageBytes) : new Response(sums),
+            ) as unknown as typeof fetch;
+            const applyFn = vi.fn();
+            const mgr = fakeMgr({
+                checkForUpdatesAsync: async () => fakeUpdateInfo('0.1.30-beta.40'),
+                waitExitThenApplyUpdate: applyFn,
+            });
+            const spawnMock = vi.mocked(child_process.spawn);
+            spawnMock.mockClear();
+            const svc = new UpdateService({
+                platform: 'linux',
+                installRoot: path.join('/fake', 'mount', 'usr'),
+                existsSync: () => true,
+                updateManagerFactory: () => mgr,
+                setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
+                clearIntervalFn: () => undefined,
+                fetchFn,
+            });
+            process.env['APPIMAGE'] = '/home/u/Downloads/WsScrcpyWeb-linux-beta.AppImage';
+            svc.init();
+            await svc.checkForUpdates();
+            expect(svc.getStatus().status).toBe('ready');
 
-        const result = await svc.applyUpdate();
-        expect(result.redirectPort).toBeNull();
-        // Linux service mode no longer routes to Velopack's (broken) apply.
-        expect(applyFn).not.toHaveBeenCalled();
-        expect(spawnMock).toHaveBeenCalledTimes(1);
-        const [bin, argv] = spawnMock.mock.calls[0]!;
-        const cmdline = [String(bin), ...(argv as string[]).map(String)].join(' ');
-        expect(cmdline).toMatch(/control[\\/]operation-server[\\/]ws-scrcpy-web-launcher\.exe/);
-        expect(cmdline).toContain('--linux-apply');
-        expect(cmdline).toContain(`--service-restart ${scope}`);
-        expect(cmdline).toContain('--unit WsScrcpyWeb');
-        if (scope === 'system') {
-            expect(cmdline).toContain('--target /opt/ws-scrcpy-web/WsScrcpyWeb.AppImage');
-            expect(cmdline).toContain('--relabel');
-        } else {
-            expect(cmdline).toContain('--target /home/u/Downloads/WsScrcpyWeb-linux-beta.AppImage');
-            expect(cmdline).not.toContain('--relabel');
-        }
-    });
+            const result = await svc.applyUpdate();
+            expect(result.redirectPort).toBeNull();
+            // Linux service mode no longer routes to Velopack's (broken) apply.
+            expect(applyFn).not.toHaveBeenCalled();
+            expect(spawnMock).toHaveBeenCalledTimes(1);
+            const [bin, argv] = spawnMock.mock.calls[0]!;
+            const cmdline = [String(bin), ...(argv as string[]).map(String)].join(' ');
+            expect(cmdline).toMatch(/control[\\/]operation-server[\\/]ws-scrcpy-web-launcher\.exe/);
+            expect(cmdline).toContain('--linux-apply');
+            expect(cmdline).toContain(`--service-restart ${scope}`);
+            expect(cmdline).toContain('--unit WsScrcpyWeb');
+            if (scope === 'system') {
+                expect(cmdline).toContain('--target /opt/ws-scrcpy-web/WsScrcpyWeb.AppImage');
+                expect(cmdline).toContain('--relabel');
+            } else {
+                expect(cmdline).toContain('--target /home/u/Downloads/WsScrcpyWeb-linux-beta.AppImage');
+                expect(cmdline).not.toContain('--relabel');
+            }
+        },
+    );
 
     // Linux MACHINE-WIDE-NO-SERVICE apply (Phase 3 / P3b): the user runs the
     // root-owned /opt AppImage directly (NOT a service), so $APPIMAGE lives under
@@ -967,78 +971,77 @@ describe('UpdateService', () => {
     // swap via ONE pkexec (buildMachineWideUpdateScript), then (2) spawns a
     // relaunch-ONLY helper (NO --staged) that waits for our pid to exit (releasing
     // the flock) + relaunches /opt. The relaunch must NOT be elevated.
-    it.each([
-        ['user' as const],
-        ['system' as const],
-        [null],
-    ])('applyUpdate (linux machine-wide-no-service, installMode=%s): pkexec rename-swap + relaunch-only helper', async (installMode) => {
-        const { createHash } = await import('crypto');
-        Config.getInstance().updateAppConfig({
-            autoUpdate: false,
-            installMode,
-            channel: 'beta',
-            githubOwner: 'bilbospocketses',
-        });
-        const appImageBytes = Buffer.from('NEW-APPIMAGE-CONTENT');
-        const goodHash = createHash('sha256').update(appImageBytes).digest('hex');
-        const sums = `${goodHash}  ./linux-final/WsScrcpyWeb-linux-beta.AppImage\n`;
-        const fetchFn = vi.fn(async (url: string) =>
-            url.endsWith('.AppImage') ? new Response(appImageBytes) : new Response(sums),
-        ) as unknown as typeof fetch;
-        const applyFn = vi.fn();
-        const mgr = fakeMgr({
-            checkForUpdatesAsync: async () => fakeUpdateInfo('0.1.31-beta.2'),
-            waitExitThenApplyUpdate: applyFn,
-        });
-        const pkexecMock = vi.fn<(shellCmd: string, label: string) => Promise<string>>(async () => '');
-        const spawnMock = vi.mocked(child_process.spawn);
-        spawnMock.mockClear();
-        const svc = new UpdateService({
-            platform: 'linux',
-            installRoot: path.join('/fake', 'mount', 'usr'),
-            existsSync: () => true,
-            updateManagerFactory: () => mgr,
-            setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
-            clearIntervalFn: () => undefined,
-            fetchFn,
-            runPkexecFn: pkexecMock,
-        });
-        // The discriminator is the /opt $APPIMAGE path (not installMode); the
-        // machine-wide install leaves installMode at whatever it was (user/system/null).
-        process.env['APPIMAGE'] = '/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage';
-        svc.init();
-        await svc.checkForUpdates();
-        expect(svc.getStatus().status).toBe('ready');
+    it.each([['user' as const], ['system' as const], [null]])(
+        'applyUpdate (linux machine-wide-no-service, installMode=%s): pkexec rename-swap + relaunch-only helper',
+        async (installMode) => {
+            const { createHash } = await import('crypto');
+            Config.getInstance().updateAppConfig({
+                autoUpdate: false,
+                installMode,
+                channel: 'beta',
+                githubOwner: 'bilbospocketses',
+            });
+            const appImageBytes = Buffer.from('NEW-APPIMAGE-CONTENT');
+            const goodHash = createHash('sha256').update(appImageBytes).digest('hex');
+            const sums = `${goodHash}  ./linux-final/WsScrcpyWeb-linux-beta.AppImage\n`;
+            const fetchFn = vi.fn(async (url: string) =>
+                url.endsWith('.AppImage') ? new Response(appImageBytes) : new Response(sums),
+            ) as unknown as typeof fetch;
+            const applyFn = vi.fn();
+            const mgr = fakeMgr({
+                checkForUpdatesAsync: async () => fakeUpdateInfo('0.1.31-beta.2'),
+                waitExitThenApplyUpdate: applyFn,
+            });
+            const pkexecMock = vi.fn<(shellCmd: string, label: string) => Promise<string>>(async () => '');
+            const spawnMock = vi.mocked(child_process.spawn);
+            spawnMock.mockClear();
+            const svc = new UpdateService({
+                platform: 'linux',
+                installRoot: path.join('/fake', 'mount', 'usr'),
+                existsSync: () => true,
+                updateManagerFactory: () => mgr,
+                setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
+                clearIntervalFn: () => undefined,
+                fetchFn,
+                runPkexecFn: pkexecMock,
+            });
+            // The discriminator is the /opt $APPIMAGE path (not installMode); the
+            // machine-wide install leaves installMode at whatever it was (user/system/null).
+            process.env['APPIMAGE'] = '/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage';
+            svc.init();
+            await svc.checkForUpdates();
+            expect(svc.getStatus().status).toBe('ready');
 
-        const result = await svc.applyUpdate();
-        expect(result.redirectPort).toBeNull();
-        // Velopack's (broken) apply is never used.
-        expect(applyFn).not.toHaveBeenCalled();
+            const result = await svc.applyUpdate();
+            expect(result.redirectPort).toBeNull();
+            // Velopack's (broken) apply is never used.
+            expect(applyFn).not.toHaveBeenCalled();
 
-        // (1) the elevated RENAME-swap ran under ONE pkexec with the right label.
-        expect(pkexecMock).toHaveBeenCalledTimes(1);
-        const [script, label] = pkexecMock.mock.calls[0]!;
-        expect(label).toBe('machine-wide-update');
-        expect(script).toContain('mv -f');
-        expect(script).toContain('/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage.bak'); // old → .bak
-        expect(script).toContain('"/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"'); // staged → /opt
-        expect(script).toContain('.new'); // the staged download moved in
-        expect(script).toContain("'0.1.31-beta.2' > /opt/ws-scrcpy-web/VERSION"); // new VERSION
-        expect(script).not.toMatch(/\bcp\b/); // never cp (ETXTBSY)
+            // (1) the elevated RENAME-swap ran under ONE pkexec with the right label.
+            expect(pkexecMock).toHaveBeenCalledTimes(1);
+            const [script, label] = pkexecMock.mock.calls[0]!;
+            expect(label).toBe('machine-wide-update');
+            expect(script).toContain('mv -f');
+            expect(script).toContain('/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage.bak'); // old → .bak
+            expect(script).toContain('"/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"'); // staged → /opt
+            expect(script).toContain('.new'); // the staged download moved in
+            expect(script).toContain("'0.1.31-beta.2' > /opt/ws-scrcpy-web/VERSION"); // new VERSION
+            expect(script).not.toMatch(/\bcp\b/); // never cp (ETXTBSY)
 
-        // (2) the relaunch-only helper is spawned (NOT under pkexec): no --staged,
-        // no --service-restart — just --target /opt + --wait-pid <ourpid>.
-        expect(spawnMock).toHaveBeenCalledTimes(1);
-        const [bin, argv] = spawnMock.mock.calls[0]!;
-        const cmdline = [String(bin), ...(argv as string[]).map(String)].join(' ');
-        expect(cmdline).toMatch(/control[\\/]operation-server[\\/]ws-scrcpy-web-launcher\.exe/);
-        expect(cmdline).toContain('--linux-apply');
-        expect(cmdline).toContain('--target /opt/ws-scrcpy-web/WsScrcpyWeb.AppImage');
-        expect(cmdline).toContain(`--wait-pid ${process.pid}`);
-        expect(cmdline).not.toContain('--staged'); // relaunch-only: no swap by the helper
-        expect(cmdline).not.toContain('--service-restart');
-        expect(cmdline).not.toContain('--relabel');
-    });
+            // (2) the relaunch-only helper is spawned (NOT under pkexec): no --staged,
+            // no --service-restart — just --target /opt + --wait-pid <ourpid>.
+            expect(spawnMock).toHaveBeenCalledTimes(1);
+            const [bin, argv] = spawnMock.mock.calls[0]!;
+            const cmdline = [String(bin), ...(argv as string[]).map(String)].join(' ');
+            expect(cmdline).toMatch(/control[\\/]operation-server[\\/]ws-scrcpy-web-launcher\.exe/);
+            expect(cmdline).toContain('--linux-apply');
+            expect(cmdline).toContain('--target /opt/ws-scrcpy-web/WsScrcpyWeb.AppImage');
+            expect(cmdline).toContain(`--wait-pid ${process.pid}`);
+            expect(cmdline).not.toContain('--staged'); // relaunch-only: no swap by the helper
+            expect(cmdline).not.toContain('--service-restart');
+            expect(cmdline).not.toContain('--relabel');
+        },
+    );
 
     // ── reconfigure ─────────────────────────────────────────────────────
 
