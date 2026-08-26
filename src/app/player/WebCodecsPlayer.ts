@@ -9,7 +9,7 @@ import { BasePlayer } from './BasePlayer';
 import { parseSPS, stripEmulationPrevention } from './h264-utils';
 import { HEVC_NAL_TYPE, hevcNalType, parseHevcSPS } from './h265-utils';
 import { findFirstNaluOffset, findNaluByHeader } from './naluScanner';
-import { buildDecoderConfig } from './webCodecsConfig';
+import { buildDecoderConfig, isConfiglessCodec, type VideoCodecName, WEBCODECS_CODEC_STRING } from './webCodecsConfig';
 
 function toHex(value: number) {
     return value.toString(16).padStart(2, '0').toUpperCase();
@@ -66,7 +66,19 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
     private context: CanvasRenderingContext2D;
     private decoder: VideoDecoder;
     private configData?: Uint8Array | undefined;
-    private detectedCodec: 'h264' | 'h265' | 'av1' | null = null;
+    private detectedCodec: VideoCodecName | null = null;
+    /**
+     * Whether a keyframe has been handed to the decoder yet. Deltas before that
+     * point reference frames the decoder never saw.
+     *
+     * Deliberately NOT `receivedFirstFrame`: `BasePlayer.pushFrame` — which
+     * `pushVideoFrame` calls first thing for stats — sets that on the first
+     * frame of any kind, so it is already true by the time a delta is checked.
+     * The codecs that send a config packet never noticed, because their decoder
+     * stays unconfigured until it arrives and the state check drops early
+     * frames instead. VP8/VP9 configure up front, so they need the real gate.
+     */
+    private seenKeyframe = false;
     private metadataWidth = 0;
     private metadataHeight = 0;
     private loggedFrameSize = false;
@@ -148,10 +160,15 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
 
         if (this.decoder.state !== 'configured') return;
 
-        if (isKeyframe && this.configData) {
+        // `configData` is the readiness signal for codecs that send a config
+        // packet. VP8/VP9 never send one — the decoder was configured up front
+        // from session metadata instead — so gate on "decoder is ready" rather
+        // than "config bytes arrived", or every frame would be dropped below.
+        if (isKeyframe && (this.configData || isConfiglessCodec(this.detectedCodec))) {
             if (!this.receivedFirstFrame) {
                 this.receivedFirstFrame = true;
             }
+            this.seenKeyframe = true;
 
             // SPS/PPS (and VPS for H.265) were handed to the decoder via the
             // `description` field of VideoDecoderConfig at configure() time, and
@@ -167,7 +184,7 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
             return;
         }
 
-        if (!this.receivedFirstFrame) return; // Skip delta frames before first keyframe
+        if (!this.seenKeyframe) return; // Skip delta frames before first keyframe
 
         this.decoder.decode(
             new EncodedVideoChunk({
@@ -239,6 +256,51 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
     public setMetadataSize(width: number, height: number): void {
         this.metadataWidth = width;
         this.metadataHeight = height;
+    }
+
+    /**
+     * VP8/VP9 arrive without a config packet (see `CONFIGLESS_CODECS`), so the
+     * `isConfig` branch in {@link pushVideoFrame} — where every other codec has
+     * its decoder configured — is never reached for them. Session metadata
+     * carries everything the decoder needs, so configure from that instead.
+     *
+     * Safe to do here: `StreamClientScrcpy.onMetadata` calls
+     * {@link setMetadataSize} before this, so the dimensions are already in
+     * place by the time we run.
+     */
+    public override setSessionInfo(videoCodec: string, audioCodec: string, encoder?: string): void {
+        super.setSessionInfo(videoCodec, audioCodec, encoder);
+        const codec = videoCodec?.toLowerCase();
+        if (isConfiglessCodec(codec)) {
+            this.configureFromMetadata(codec as VideoCodecName);
+        }
+    }
+
+    private configureFromMetadata(codec: VideoCodecName): void {
+        const width = this.metadataWidth;
+        const height = this.metadataHeight;
+        if (!width || !height) {
+            console.error(`[WebCodecsPlayer] ${codec}: no metadata dimensions, cannot configure decoder`);
+            return;
+        }
+        const codecString = WEBCODECS_CODEC_STRING[codec];
+        if (!codecString) {
+            console.error(`[WebCodecsPlayer] no WebCodecs codec string for ${codec}`);
+            return;
+        }
+        this.detectedCodec = codec;
+        this.scaleCanvas(width, height);
+        this.decoder.configure(
+            buildDecoderConfig({
+                codec: codecString,
+                detectedCodec: codec,
+                codedWidth: width,
+                codedHeight: height,
+                // These codecs have no parameter sets; buildDecoderConfig only
+                // reads configData for H.264/H.265.
+                configData: new Uint8Array(0),
+            }),
+        );
     }
 
     protected scaleCanvas(width: number, height: number): void {
@@ -318,5 +380,6 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
         this.decoder = this.createDecoder();
         this.configData = undefined;
         this.detectedCodec = null;
+        this.seenKeyframe = false;
     }
 }
