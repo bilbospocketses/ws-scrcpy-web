@@ -3,8 +3,54 @@ import {
     check,
     readCargoTomlVersion,
     readPackageJsonVersion,
+    readPackageLockVersion,
     stripVPrefix,
 } from '../assert-version-sync.mjs';
+
+describe('readPackageLockVersion', () => {
+    const lock = (root, self) =>
+        JSON.stringify({ name: 'x', version: root, packages: { '': { name: 'x', version: self } } });
+
+    it('reads the root version', () => {
+        expect(readPackageLockVersion(lock('0.1.0', '0.1.0'))).toBe('0.1.0');
+    });
+
+    it('throws when the root and the packages[""] self-entry disagree', () => {
+        // The exact drift this check exists to catch: a half-applied bump.
+        expect(() => readPackageLockVersion(lock('0.1.0', '0.0.9'))).toThrow(/disagrees with/);
+    });
+
+    it('throws when there is no root version', () => {
+        expect(() => readPackageLockVersion('{"name":"x"}')).toThrow(/no root "version" field/);
+    });
+});
+
+describe('check with lockVersion', () => {
+    it('passes when the lock agrees with the rest', () => {
+        const r = check({
+            pkgVersion: '0.1.0',
+            cargoVersion: '0.1.0',
+            tagVersion: '0.1.0',
+            lockVersion: '0.1.0',
+        });
+        expect(r.ok).toBe(true);
+    });
+
+    it('fails when only the lock is stale — the beta.73 case', () => {
+        const r = check({
+            pkgVersion: '0.1.30-beta.73',
+            cargoVersion: '0.1.30-beta.73',
+            tagVersion: '0.1.30-beta.73',
+            lockVersion: '0.1.30-beta.72',
+        });
+        expect(r.ok).toBe(false);
+        expect(r.lockVersion).toBe('0.1.30-beta.72');
+    });
+
+    it('stays backward compatible when lockVersion is omitted', () => {
+        expect(check({ pkgVersion: '0.1.0', cargoVersion: '0.1.0', tagVersion: '0.1.0' }).ok).toBe(true);
+    });
+});
 
 describe('stripVPrefix', () => {
     it('strips leading v', () => {

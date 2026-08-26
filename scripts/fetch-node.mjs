@@ -38,19 +38,19 @@ const __dirname = path.dirname(__filename);
 const REPO_ROOT = path.join(__dirname, '..');
 
 // ---- Pinned constants (update together if Node is bumped) ------------------
-const NODE_VERSION = 'v24.15.0';
+const NODE_VERSION = 'v24.19.0';
 const NODE_DIST_BASE = `https://nodejs.org/dist/${NODE_VERSION}`;
 
 // Windows: ZIP archive, contains node.exe at <root>/node.exe
 const WIN_ARCHIVE_NAME = `node-${NODE_VERSION}-win-x64.zip`;
 const WIN_ARCHIVE_SHA256 =
-    'cc5149eabd53779ce1e7bdc5401643622d0c7e6800ade18928a767e940bb0e62';
+    '57f71ab3652e797d84acddc79c81cc9ff1c6ddb2a1974cdb83f00fee9bff4c73';
 const WIN_INNER_NODE_REL = path.join(`node-${NODE_VERSION}-win-x64`, 'node.exe');
 
 // Linux: tar.xz archive, contains node at <root>/bin/node
 const LINUX_ARCHIVE_NAME = `node-${NODE_VERSION}-linux-x64.tar.xz`;
 const LINUX_ARCHIVE_SHA256 =
-    '472655581fb851559730c48763e0c9d3bc25975c59d518003fc0849d3e4ba0f6';
+    '14b342e71204f811bde6153be8e04b62aef63c236fef92b55f9c83154b409647';
 const LINUX_INNER_NODE_REL = path.join(`node-${NODE_VERSION}-linux-x64`, 'bin', 'node');
 
 const SEED_DIR = path.join(REPO_ROOT, 'seed', 'node');

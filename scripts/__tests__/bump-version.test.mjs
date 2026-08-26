@@ -4,9 +4,53 @@ import {
     bumpCargoToml,
     bumpChangelog,
     bumpPackageJson,
+    bumpPackageLock,
     formatToday,
     validateSemver,
 } from '../bump-version.mjs';
+
+/**
+ * package-lock.json was previously left out of the bump entirely, so after
+ * every release the lock disagreed with package.json and the next
+ * `npm install` silently rewrote it — a dirty tree on a clean checkout.
+ */
+describe('bumpPackageLock', () => {
+    const sample = `${JSON.stringify(
+        {
+            name: 'ws-scrcpy-web',
+            version: '0.1.0',
+            lockfileVersion: 3,
+            packages: {
+                '': { name: 'ws-scrcpy-web', version: '0.1.0', dependencies: { ws: '^8.0.0' } },
+                'node_modules/ws': { version: '8.21.1' },
+            },
+        },
+        null,
+        2,
+    )}\n`;
+
+    it('updates both the root version and the packages[""] self-entry', () => {
+        const out = JSON.parse(bumpPackageLock(sample, '0.2.0'));
+        expect(out.version).toBe('0.2.0');
+        expect(out.packages[''].version).toBe('0.2.0');
+    });
+
+    it('leaves dependency versions alone', () => {
+        const out = JSON.parse(bumpPackageLock(sample, '0.2.0'));
+        expect(out.packages['node_modules/ws'].version).toBe('8.21.1');
+        expect(out.packages[''].dependencies.ws).toBe('^8.0.0');
+    });
+
+    it('round-trips npm formatting (2-space indent, trailing newline)', () => {
+        // Same version in means byte-identical out — proves the rewrite cannot
+        // reformat the 150KB lockfile into a huge diff.
+        expect(bumpPackageLock(sample, '0.1.0')).toBe(sample);
+    });
+
+    it('throws when there is no version field to update', () => {
+        expect(() => bumpPackageLock('{"name":"x"}', '0.2.0')).toThrow(/no "version" field/);
+    });
+});
 
 describe('validateSemver', () => {
     it('accepts plain semver', () => {
