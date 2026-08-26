@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.76] - 2026-08-26
+
 ### Added
 
 - **VP8 and VP9 can now be requested through the embedding APIs, not just the in-app codec dropdown.** Both codecs shipped a couple of releases ago, but the published type definitions and the `/embed.html` wrapper still only accepted H.264, H.265, and AV1 — so a page embedding the stream had no way to ask for them even though the server and the player both supported it. All five codecs are now accepted everywhere a codec can be named. Nothing changes for streams that don't specify one: automatic selection still picks H.265, H.264, or AV1, since VP8/VP9 exist for devices that offer none of those.
