@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { Logger } from './Logger';
 import { detectLibc, type LibcFlavor } from './libcDetect';
+import { resolveSystemTool } from './service/systemTools';
 import { writeFileAtomicSync } from './util/atomicFile';
 
 /*
@@ -284,7 +285,11 @@ export async function downloadAndOverlayPtyNode(version: string, host: HostInfo,
         const { execFileSync } = await import('child_process');
         // GNU tar on Windows (Git Bash) interprets 'C:\\...' as 'host:path'.
         // Pass only the filename and cwd into staging so tar uses relative paths.
-        execFileSync('tar', ['-xzf', path.basename(tarPath), '--strip-components=1'], {
+        // resolveSystemTool gives an absolute path rather than the bare name, which
+        // would resolve through $PATH (Local-Dependencies-Only) -- and on Windows it
+        // pins System32's bsdtar instead of whichever GNU tar a Git Bash install
+        // happens to put ahead of it, which is what the note above is about.
+        execFileSync(resolveSystemTool('tar'), ['-xzf', path.basename(tarPath), '--strip-components=1'], {
             stdio: 'inherit',
             cwd: stagingDir,
         });

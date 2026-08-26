@@ -25,7 +25,6 @@ export interface UpdateResult {
     newVersion?: string | undefined;
     errorMessage?: string | undefined;
     requiresRestart: boolean;
-    reason?: 'launcher-required' | undefined;
 }
 
 interface ParsedVersion {

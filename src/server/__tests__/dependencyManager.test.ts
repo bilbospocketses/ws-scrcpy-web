@@ -55,7 +55,11 @@ describe('DependencyManager.getAll() canUpdate', () => {
         vi.resetModules();
     });
 
-    it('reports canUpdate=false for launcher-required deps when launcher is unavailable', async () => {
+    it('reports canUpdate=true with no launcher present — extraction is in-process', async () => {
+        // Previously nodejs and adb reported canUpdate=false whenever the packaged
+        // launcher was missing, which is every source checkout: the dependency
+        // panel's update buttons were dead in dev on all three platforms. Nothing
+        // consults the launcher any more, so the absence of one changes nothing.
         vi.resetModules();
         vi.doMock('../service/elevatedRunner', () => ({
             launcherIsAvailable: async () => false,
@@ -64,8 +68,8 @@ describe('DependencyManager.getAll() canUpdate', () => {
         const { DependencyManager: Mgr } = await import('../DependencyManager');
         const mgr = new Mgr('/tmp/test-deps-canupdate-no');
         const byName = Object.fromEntries((await mgr.getAll()).map((d) => [d.name, d]));
-        expect(byName['nodejs']?.canUpdate).toBe(false);
-        expect(byName['adb']?.canUpdate).toBe(false);
+        expect(byName['nodejs']?.canUpdate).toBe(true);
+        expect(byName['adb']?.canUpdate).toBe(true);
         expect(byName['scrcpy-server']?.canUpdate).toBe(true);
         vi.resetModules();
     });
