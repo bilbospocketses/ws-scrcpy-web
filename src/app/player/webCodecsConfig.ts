@@ -33,6 +33,56 @@ export const WEBCODECS_CODEC_STRING: Record<string, string> = {
 };
 
 /**
+ * Candidate codec strings to probe for support, per scrcpy codec name.
+ *
+ * H.264 carries three profiles because Firefox answers a definite `false` for
+ * individual profile strings it can in fact decode; probing baseline alone
+ * under-reports. Any one candidate reporting `supported` proves the codec is
+ * usable, so the list only has to contain something the browser will admit to.
+ */
+export const CODEC_PROBE_STRINGS: Record<string, readonly string[]> = {
+    h264: ['avc1.42E01E', 'avc1.4D401E', 'avc1.640028'],
+    h265: ['hev1.1.6.L93.B0'],
+    av1: ['av01.0.04M.08'],
+    vp8: ['vp8'],
+    vp9: ['vp09.00.10.08'],
+};
+
+/**
+ * Ask the browser whether it can decode `codec`.
+ *
+ * `true` / `false` are real answers from `VideoDecoder.isConfigSupported()`.
+ * `undefined` means no answer was obtainable — WebCodecs is missing, or every
+ * candidate string threw — and the caller decides what to assume, because the
+ * two call sites want different fallbacks.
+ *
+ * A definite `false` is authoritative and must never be overridden. Both call
+ * sites used to special-case H.264 to "supported" without asking, which meant a
+ * machine with no H.264 decoder at all (Windows N lacking the Media Feature
+ * Pack, for instance) still got h264 auto-selected, fed to a decoder that
+ * emitted nothing, and shown a black screen with no error. See issue #498.
+ */
+export async function probeDecodeSupport(codec: string): Promise<boolean | undefined> {
+    const candidates = CODEC_PROBE_STRINGS[codec];
+    if (!candidates || candidates.length === 0) return undefined;
+    if (typeof VideoDecoder === 'undefined' || typeof VideoDecoder.isConfigSupported !== 'function') {
+        return undefined;
+    }
+    let answered = false;
+    for (const codecString of candidates) {
+        try {
+            const result = await VideoDecoder.isConfigSupported({ codec: codecString });
+            answered = true;
+            if (result.supported) return true;
+        } catch {
+            // A throw is a refusal to answer (malformed string, unimplemented
+            // path), not a "no" — keep asking about the remaining candidates.
+        }
+    }
+    return answered ? false : undefined;
+}
+
+/**
  * Codecs that never produce a config packet.
  *
  * scrcpy sets its config flag straight from MediaCodec's
