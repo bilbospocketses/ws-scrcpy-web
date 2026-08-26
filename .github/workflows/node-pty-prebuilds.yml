@@ -76,6 +76,15 @@ jobs:
           - { os: ubuntu-24.04-arm,  arch: arm64, libc: glibc, abi_label: prior,   container: '' }
           - { os: ubuntu-latest,     arch: x64,   libc: musl,  abi_label: current, container: 'alpine' }
           - { os: ubuntu-latest,     arch: x64,   libc: musl,  abi_label: prior,   container: 'alpine' }
+          # macOS: Apple silicon only. GitHub's macOS runners are arm64, and
+          # node-pty builds natively there with the Xcode command line tools the
+          # image already carries -- no conpty equivalent, no extra toolchain.
+          # Intel Macs are NOT covered: producing an x64 tarball would mean
+          # cross-compiling with npm_config_arch=x64 and publishing a binary no
+          # runner can load, let alone test. Tracked as a follow-up rather than
+          # shipped untested.
+          - { os: macos-latest,      arch: arm64, libc: '',    abi_label: current, container: '' }
+          - { os: macos-latest,      arch: arm64, libc: '',    abi_label: prior,   container: '' }
     runs-on: ${{ matrix.os }}
     container: ${{ matrix.container == 'alpine' && format('node:{0}-alpine', matrix.abi_label == 'current' && needs.precheck.outputs.current_node_version_bare || needs.precheck.outputs.prior_node_version_bare) || null }}
     steps:
@@ -132,7 +141,11 @@ jobs:
 
           UPSTREAM_VER="${{ needs.precheck.outputs.node_pty_version }}"
           ABI="${{ matrix.abi_label == 'current' && needs.precheck.outputs.current_node_abi || needs.precheck.outputs.prior_node_abi }}"
-          PLATFORM="${{ startsWith(matrix.os, 'windows') && 'win32' || 'linux' }}"
+          # Must match composePrebuiltKey() in src/server/NodePtyResolver.ts.
+          # This used to be a two-way windows/else split, which would have keyed a
+          # macOS build as linux -- and appended a libc suffix it has no business
+          # carrying -- so it is spelled out per-OS.
+          PLATFORM="${{ startsWith(matrix.os, 'windows') && 'win32' || startsWith(matrix.os, 'macos') && 'darwin' || 'linux' }}"
           ARCH="${{ matrix.arch }}"
           LIBC_SUFFIX=""
           if [ "$PLATFORM" = "linux" ]; then LIBC_SUFFIX="-${{ matrix.libc }}"; fi
