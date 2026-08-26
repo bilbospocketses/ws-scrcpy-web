@@ -22,8 +22,18 @@ import {
  * the dev tree already has (vitest globalSetup ensures node-pty's
  * postinstall has placed pty.node). We mock `seedPackageRoot()` to
  * point at a temp dir where we mirror the seed layout.
+ *
+ * Skipped when no real pty.node is present — today that's every macOS
+ * host, since node-pty-prebuilds.yml's build matrix only publishes
+ * win32/linux tarballs (scripts/fetch-prebuilts.mjs skips the fetch on
+ * darwin rather than 404ing). Remove this guard once that matrix grows
+ * a macOS leg.
  */
-describe('NodePtyResolver — integration (seed → dataRoot)', () => {
+const hasRealPtyBinary = fs.existsSync(
+    path.join(process.cwd(), 'node_modules', 'node-pty', 'build', 'Release', 'pty.node'),
+);
+
+describe.skipIf(!hasRealPtyBinary)('NodePtyResolver — integration (seed → dataRoot)', () => {
     let tempDepsPath: string;
     let fakeSeedRoot: string;
 

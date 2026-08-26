@@ -341,7 +341,7 @@ export class DependencyManager {
         downloadPath: string,
         _version: string,
         tmpDir: string,
-        platform: 'win32' | 'linux',
+        platform: 'win32' | 'linux' | 'darwin',
     ): Promise<void> {
         const destDir = path.join(this.depsPath, 'node');
         fs.mkdirSync(destDir, { recursive: true });
@@ -395,7 +395,7 @@ export class DependencyManager {
         }
     }
 
-    private async installAdb(downloadPath: string, tmpDir: string, platform: 'win32' | 'linux'): Promise<void> {
+    private async installAdb(downloadPath: string, tmpDir: string, platform: 'win32' | 'linux' | 'darwin'): Promise<void> {
         const destDir = path.join(this.depsPath, 'adb');
         fs.mkdirSync(destDir, { recursive: true });
 
@@ -467,7 +467,7 @@ export class DependencyManager {
         writeInstalledScrcpyServerVersion(this.depsPath, version);
     }
 
-    private async extractZip(zipPath: string, destDir: string, _platform: 'win32' | 'linux'): Promise<void> {
+    private async extractZip(zipPath: string, destDir: string, _platform: 'win32' | 'linux' | 'darwin'): Promise<void> {
         // Cross-platform: shell out to the launcher's --unzip subcommand
         // (pure-Rust zip crate). Replaces the prior PowerShell Expand-Archive
         // (win32) + system `unzip` (linux) shellouts that resolved binaries

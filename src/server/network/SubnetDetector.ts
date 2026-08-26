@@ -74,6 +74,26 @@ async function detectViaGateway(deps: DetectorDeps): Promise<DetectedSubnet | nu
         return fromCidrString(cidrM[1]!, 'gateway', bestIface);
     }
 
+    if (deps.platform === 'darwin') {
+        // No CIDR in `route`'s output — resolve the interface name, then read
+        // its IPv4/netmask from os.networkInterfaces().
+        const output = await deps.runCommand('route -n get default');
+        const ifaceMatch = output.match(/interface:\s*(\S+)/);
+        if (!ifaceMatch) return null;
+        const ifaceName = ifaceMatch[1]!;
+        const entries = deps.getInterfaces()[ifaceName];
+        if (!entries) return null;
+        for (const entry of entries) {
+            if (entry.family === 'IPv4' && !entry.internal) {
+                const prefix = __internals.netmaskToPrefix(entry.netmask);
+                if (prefix === null) return null;
+                const network = __internals.cidrNetwork(entry.address, prefix);
+                return buildDetected(`${network}/${prefix}`, 'gateway', ifaceName);
+            }
+        }
+        return null;
+    }
+
     if (deps.platform === 'win32') {
         // `route print -4` lists a default route (0.0.0.0/0) for every adapter —
         // even those without a real gateway, which show "On-link" in the gateway

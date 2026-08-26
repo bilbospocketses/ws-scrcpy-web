@@ -213,6 +213,60 @@ describe('SubnetDetector', () => {
         expect(result?.cidr).toBe('192.168.87.0/24');
     });
 
+    it('uses gateway detection on macOS (route -n get default)', async () => {
+        const interfaces: NodeJS.Dict<os.NetworkInterfaceInfo[]> = {
+            en0: [
+                {
+                    address: '192.168.1.42',
+                    netmask: '255.255.255.0',
+                    family: 'IPv4',
+                    mac: 'aa:bb:cc:dd:ee:ff',
+                    internal: false,
+                    cidr: '192.168.1.42/24',
+                },
+            ],
+        };
+        const routeOutput = [
+            '   route to: default',
+            'destination: default',
+            '       mask: default',
+            '    gateway: 192.168.1.1',
+            '  interface: en0',
+        ].join('\n');
+        const result = await detectSubnet({
+            getInterfaces: () => interfaces,
+            runCommand: async () => routeOutput,
+            platform: 'darwin',
+        });
+        expect(result?.cidr).toBe('192.168.1.0/24');
+        expect(result?.source).toBe('gateway');
+        expect(result?.interfaceName).toBe('en0');
+    });
+
+    it('falls back to interface heuristic on macOS when route lookup fails', async () => {
+        const interfaces: NodeJS.Dict<os.NetworkInterfaceInfo[]> = {
+            en0: [
+                {
+                    address: '192.168.86.50',
+                    netmask: '255.255.255.0',
+                    family: 'IPv4',
+                    mac: 'aa:bb:cc:dd:ee:ff',
+                    internal: false,
+                    cidr: '192.168.86.50/24',
+                },
+            ],
+        };
+        const result = await detectSubnet({
+            getInterfaces: () => interfaces,
+            runCommand: async () => {
+                throw new Error('no route');
+            },
+            platform: 'darwin',
+        });
+        expect(result?.source).toBe('interface');
+        expect(result?.cidr).toBe('192.168.86.0/24');
+    });
+
     it('skips 0.0.0.0 gateway on Linux and picks real gateway', async () => {
         const interfaces: NodeJS.Dict<os.NetworkInterfaceInfo[]> = {
             eth0: [

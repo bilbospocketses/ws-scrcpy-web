@@ -22,7 +22,7 @@ const log = Logger.for('OpenBrowser');
  *     quoted token as a window title; without it, the URL would be
  *     misparsed.
  *   - Linux:   `xdg-open <url>`. Standard freedesktop.org launcher.
- *   - macOS:   `open <url>`. (Reserved; we don't ship macOS today.)
+ *   - macOS:   `open <url>`.
  */
 export function openBrowser(url: string): void {
     try {
