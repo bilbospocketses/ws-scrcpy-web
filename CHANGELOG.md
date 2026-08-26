@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.74] - 2026-08-26
+
 ### Changed
 
 - **The bundled Node.js runtime is now 24.19.0** (from 24.15.0). This is the copy that ships inside the installer to get the app running on first launch; installs past first run already track the newer version through the dependency panel.
