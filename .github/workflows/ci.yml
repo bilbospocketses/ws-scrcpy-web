@@ -35,3 +35,38 @@ jobs:
       - name: Version sync (on tags only)
         if: startsWith(github.ref, 'refs/tags/v')
         run: node scripts/assert-version-sync.mjs ${{ github.ref_name }}
+
+  # macOS is a run-from-source platform: no installer, no launcher, no tray, no
+  # service, and no packaged build. This leg exists so the darwin code paths are
+  # not permanently unverified -- nobody on the team has a Mac, and every
+  # `process.platform === 'darwin'` branch would otherwise ship on the author's
+  # word alone.
+  #
+  # Deliberately a SEPARATE job, not a matrix on build-and-test: main's ruleset
+  # requires a status check named exactly `build-and-test`, and a matrix renames
+  # the context to `build-and-test (ubuntu-latest)`, which no PR could then
+  # satisfy. Keep this job's name out of the required-checks list too, so a
+  # darwin-only failure never blocks a Windows/Linux release.
+  #
+  # Node steps only. Nothing here builds Rust: the launcher is entirely
+  # `#[cfg(windows)]` / `#[cfg(target_os = "linux")]`, so there is no darwin
+  # launcher to compile.
+  #
+  # NOT covered yet: the per-arch Node sha256 pins in scripts/fetch-node.mjs.
+  # Those are exercised only by release.yml, which is why they can go stale
+  # unnoticed (they did -- pinned to v24.15.0 while NODE_VERSION moved to
+  # v24.19.0). fetch-node.mjs throws on darwin today, so wiring it up here has
+  # to land with the PR that adds the darwin branch; add
+  # `- run: node scripts/fetch-node.mjs` to this job in that PR and the pins
+  # verify themselves on every run.
+  macos-node-checks:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.x
+          cache: npm
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm test
