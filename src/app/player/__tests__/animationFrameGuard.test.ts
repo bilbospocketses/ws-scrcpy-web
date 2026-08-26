@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AnimationFrameGuard } from '../animationFrameGuard';
 
 /**
@@ -9,6 +9,34 @@ import { AnimationFrameGuard } from '../animationFrameGuard';
  * injectable so it unit-tests in node with no DOM.
  */
 describe('AnimationFrameGuard', () => {
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    it('calls browser animation-frame APIs with the global receiver', () => {
+        let callback: FrameRequestCallback | undefined;
+        const raf = vi.fn(function (this: typeof globalThis, cb: FrameRequestCallback): number {
+            if (this !== globalThis) throw new TypeError('Illegal invocation');
+            callback = cb;
+            return 41;
+        });
+        const caf = vi.fn(function (this: typeof globalThis, _id: number): void {
+            if (this !== globalThis) throw new TypeError('Illegal invocation');
+        });
+        vi.stubGlobal('requestAnimationFrame', raf);
+        vi.stubGlobal('cancelAnimationFrame', caf);
+
+        const guard = new AnimationFrameGuard();
+        expect(() => guard.start(vi.fn())).not.toThrow();
+        expect(raf).toHaveBeenCalledTimes(1);
+        callback?.(0);
+        expect(() => {
+            guard.start(vi.fn());
+            guard.stop();
+        }).not.toThrow();
+        expect(caf).toHaveBeenCalledWith(41);
+    });
+
     function makeFakes() {
         let nextId = 1;
         const pending = new Map<number, FrameRequestCallback>();

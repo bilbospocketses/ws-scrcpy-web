@@ -17,8 +17,8 @@ export class AnimationFrameGuard {
     private id: number | null = null;
 
     constructor(
-        private readonly raf: Raf = requestAnimationFrame,
-        private readonly caf: Caf = cancelAnimationFrame,
+        private readonly raf: Raf = (cb) => globalThis.requestAnimationFrame(cb),
+        private readonly caf: Caf = (handle) => globalThis.cancelAnimationFrame(handle),
     ) {}
 
     public isPending(): boolean {
