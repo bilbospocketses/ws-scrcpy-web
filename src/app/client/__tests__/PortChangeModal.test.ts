@@ -76,8 +76,9 @@ describe('PortChangeModal global-dismiss (#5c)', () => {
         await flush();
         expect(confirmSpy).toHaveBeenCalledTimes(1);
         const lastCall = fetchMock().mock.calls.at(-1);
+        expect(lastCall).toBeDefined();
         expect(lastCall?.[0]).toBe('/api/settings');
-        expect(JSON.parse((lastCall?.[1] as RequestInit).body as string)).toEqual({ bookmarkDismissedGlobally: true });
+        expect(JSON.parse((lastCall?.[1] as RequestInit)?.body as string)).toEqual({ bookmarkDismissedGlobally: true });
     });
 
     it('global-checked + cancelled does NOT PATCH and keeps the modal open', async () => {
@@ -105,7 +106,8 @@ describe('PortChangeModal global-dismiss (#5c)', () => {
         gotIt().click();
         await flush();
         const lastCall = fetchMock().mock.calls.at(-1);
+        expect(lastCall).toBeDefined();
         expect(lastCall?.[0]).toBe('/api/settings');
-        expect(JSON.parse((lastCall?.[1] as RequestInit).body as string)).toEqual({ bookmarkDismissedForPort: 8000 });
+        expect(JSON.parse((lastCall?.[1] as RequestInit)?.body as string)).toEqual({ bookmarkDismissedForPort: 8000 });
     });
 });
