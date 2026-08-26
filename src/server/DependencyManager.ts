@@ -12,6 +12,7 @@ import { getDependencyDefinitions, getPlatform } from './DependencyDefinitions';
 import { Logger } from './Logger';
 import { writeInstalledScrcpyServerVersion } from './scrcpyServerVersion';
 import { launcherIsAvailable, resolveLauncherPath } from './service/elevatedRunner';
+import { copyFileAtomicSync, writeFileAtomicSync } from './util/atomicFile';
 
 const log = Logger.for('DependencyManager');
 const execFileAsync = promisify(execFile);
@@ -264,12 +265,12 @@ export class DependencyManager {
             return; // no seed available — autoInstallMissing will fall through to network download
         }
         fs.mkdirSync(destDir, { recursive: true });
-        fs.copyFileSync(seedFile, destFile);
+        copyFileAtomicSync(seedFile, destFile);
         log.info(`promoted seed scrcpy-server → ${destFile}`);
     }
 
     public requestRestart(): void {
-        fs.writeFileSync(this.restartMarkerPath, `restart-requested-${Date.now()}`);
+        writeFileAtomicSync(this.restartMarkerPath, `restart-requested-${Date.now()}`);
         log.info(`Restart requested; writing marker at ${this.restartMarkerPath} and exiting with code 75`);
         process.exit(75);
     }
@@ -458,7 +459,7 @@ export class DependencyManager {
         const destDir = path.join(this.depsPath, 'scrcpy-server');
         fs.mkdirSync(destDir, { recursive: true });
         const destFile = path.join(destDir, 'scrcpy-server');
-        fs.copyFileSync(downloadPath, destFile);
+        copyFileAtomicSync(downloadPath, destFile);
         // Persist the installed version so checkInstalled can report it back
         // accurately on subsequent calls. Without this, the bundled
         // SERVER_VERSION constant would be returned for any updater-installed
@@ -498,7 +499,7 @@ export class DependencyManager {
                 fs.mkdirSync(destPath, { recursive: true });
                 this.copyDirContents(srcPath, destPath);
             } else {
-                fs.copyFileSync(srcPath, destPath);
+                copyFileAtomicSync(srcPath, destPath);
                 // Preserve executable permissions on Linux
                 if (getPlatform() !== 'win32') {
                     try {
