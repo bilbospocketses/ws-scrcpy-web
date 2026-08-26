@@ -22,14 +22,11 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: "chore(deps)"
-    # TypeScript 7 is the native compiler with no programmatic API until 7.1, so the
-    # webpack build (dts-bundle-generator; historically ts-loader/ts-node) can't build
-    # against it yet. The 6->7 migration is staged deliberately -- see
-    # docs/superpowers/specs/2026-07-18-ws-scrcpy-web-ts7-migration-design.md. Block the
-    # major so Dependabot stops re-proposing the un-buildable jump.
-    ignore:
-      - dependency-name: "typescript"
-        update-types: ["version-update:semver-major"]
+    # The typescript-major ignore is gone: the 6->7 migration is complete. Phase 1
+    # removed the compiler-API-bound build tools (ts-loader/ts-node -> swc-loader/tsx)
+    # and phase 2 put the root on TypeScript 7, with dts-bundle-generator -- the last
+    # tool needing the programmatic API -- isolated on TS 6 via a scoped override.
+    # Majors are open for review again.
     # Batch all minor + patch bumps into ONE weekly PR. Interlocking families
     # (@xterm/* addons must match the xterm core; webpack + its loaders; the
     # typescript / swc-loader / tsx toolchain) break when bumped singly.

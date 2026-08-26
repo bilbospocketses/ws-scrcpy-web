@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The project now builds on TypeScript 7.** This completes the migration begun a release earlier: phase 1 replaced the build tools that reached into the old compiler's programmatic API, and this moves the compiler itself. The one remaining tool that still needs that API — the generator for the bundled type definitions used by embedders — is pinned to TypeScript 6 for that single build step. Nothing about how the app behaves changes; type-checking, the full test suite, and the emitted build were all verified against the new compiler.
+
 ## [0.1.30-beta.75] - 2026-08-26
 
 ## [0.1.30-beta.74] - 2026-08-26
