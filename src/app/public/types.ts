@@ -11,7 +11,7 @@ export interface StartStreamOptions {
     pathname?: string | undefined;
 
     // Stream settings (optional — smart auto-selection if omitted)
-    codec?: 'h264' | 'h265' | 'av1' | undefined;
+    codec?: 'h264' | 'h265' | 'av1' | 'vp8' | 'vp9' | undefined;
     encoder?: string | undefined;
     bitrate?: number | undefined;
     maxFps?: number | undefined;

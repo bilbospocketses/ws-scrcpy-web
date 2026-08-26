@@ -35,8 +35,14 @@ describe('parseEmbedParams', () => {
         expect(options.keyboard).toBe(true);
     });
 
-    it('accepts only h264/h265/av1 for codec; ignores others', () => {
-        expect(parse('device=x&codec=h265').options.codec).toBe('h265');
+    it('accepts every codec the public API offers; ignores others', () => {
+        // Guards the narrowing direction: embed-entry's CODECS set drifted behind
+        // StartStreamOptions['codec'] when VP8/VP9 shipped, so an embedder could not
+        // request them even though startStream() could. Add a codec to the public
+        // contract and this test fails until embed-entry accepts it too.
+        for (const codec of ['h264', 'h265', 'av1', 'vp8', 'vp9']) {
+            expect(parse(`device=x&codec=${codec}`).options.codec).toBe(codec);
+        }
         expect(parse('device=x&codec=bogus').options.codec).toBeUndefined();
     });
 

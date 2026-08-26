@@ -39,6 +39,8 @@ export function startStream(container: HTMLElement, deviceId: string, options: S
         h264: 'h264',
         h265: 'h265',
         av1: 'av1',
+        vp8: 'vp8',
+        vp9: 'vp9',
     };
     const videoCodec = options.codec ? codecMap[options.codec] : undefined;
 
