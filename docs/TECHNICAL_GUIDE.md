@@ -1488,19 +1488,31 @@ A GitHub Actions workflow at `.github/workflows/node-pty-prebuilds.yml`
 runs weekly (Mondays 09:00 UTC) and on manual dispatch. A pre-check
 compares tracked state in `.github/state/node-pty-prebuilds-state.json`
 against the latest Node LTS list from `nodejs.org/dist/index.json` and
-the latest `microsoft/node-pty` upstream release. On any change, a 10-row
+the latest `microsoft/node-pty` upstream release. On any change, a 12-row
 matrix builds prebuilts for:
 
 ```
-{win32 x64, win32 arm64, linux x64 glibc, linux arm64 glibc, linux x64 musl}
+{win32 x64, win32 arm64, linux x64 glibc, linux arm64 glibc, linux x64 musl, darwin arm64}
 × {current LTS, prior LTS}
 ```
 
-`linux arm64 musl` is intentionally excluded: GitHub Actions' JS-action
-runtime (checkout, setup-node, upload-artifact) cannot execute inside an
-Alpine container on an ARM64 runner. Hosts on arm64+musl land in the
-`{ available: false, reason: 'no-prebuilt-for-abi-...' }` path and use the
-shell-disabled UI. See `actions/runner#801`.
+Two gaps, both deliberate. Hosts in either land in the
+`{ available: false, reason: 'no-prebuilt-for-abi-...' }` path and get the
+shell-disabled UI; everything else keeps working.
+
+- **`linux arm64 musl`** — GitHub Actions' JS-action runtime (checkout,
+  setup-node, upload-artifact) cannot execute inside an Alpine container on
+  an ARM64 runner. See `actions/runner#801`.
+- **`darwin x64` (Intel Macs)** — GitHub's macOS runners are Apple silicon.
+  Producing an Intel tarball would mean cross-compiling with
+  `npm_config_arch=x64` and publishing a binary no runner can load, let
+  alone test, which is a worse trade than the shell-disabled UI.
+
+Note that the darwin rows publish artifacts the resolver cannot yet find:
+`getHostInfo()` still collapses `darwin` to `linux`, so it looks for a
+`-linux-arm64-glibc` key. Widening that is the macOS-support work tracked
+separately — publishing the tarballs is the half that has to come first,
+because there is nothing to find otherwise.
 
 The workflow attaches the tarballs + `SHA256SUMS` + `manifest.json` to a
 versioned GitHub Release and updates a `node-pty-prebuilds-latest`
@@ -1537,7 +1549,7 @@ card as disabled-via-CSS + `aria-disabled` + tooltip when
 | `src/app/googDevice/client/DeviceTracker.ts` | Fetch capabilities on mount, gate shell anchor client-side |
 | `scripts/fetch-prebuilts.mjs` | Pure-JS CLI for pre-fetching prebuilts (air-gapped setups, CI pre-test) |
 | `vitest.globalSetup.ts` | Runs fetch-prebuilts before any test to ensure node-pty binary is present |
-| `.github/workflows/node-pty-prebuilds.yml` | Weekly/manual dispatch CI; 10-row matrix, SHA256 verification, release publish |
+| `.github/workflows/node-pty-prebuilds.yml` | Weekly/manual dispatch CI; 12-row matrix, SHA256 verification, release publish |
 | `.github/state/node-pty-prebuilds-state.json` | Tracked build state (Node LTS versions, upstream release) |
 | `scripts/compute-matrix-versions.mjs` | Pre-check script for workflow matrix computation |
 | `.npmrc` | `ignore-scripts=true` — prevents node-pty's install script from firing node-gyp rebuild |
