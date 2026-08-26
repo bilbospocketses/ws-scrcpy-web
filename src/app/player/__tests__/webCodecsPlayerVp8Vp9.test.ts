@@ -27,7 +27,6 @@ let configureCalls = 0;
 
 class FakeVideoDecoder {
     public state = 'unconfigured';
-    constructor(_init: unknown) {}
     configure(cfg: VideoDecoderConfig) {
         lastConfig = cfg;
         configureCalls += 1;

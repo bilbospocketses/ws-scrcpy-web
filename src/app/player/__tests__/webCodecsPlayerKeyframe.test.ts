@@ -106,7 +106,9 @@ describe('WebCodecsPlayer keyframe decode (finding #41)', () => {
         // start code, so the extracted SPS ends at index 16, not 19.
         const sps = Uint8Array.from(H264_CONFIG.subarray(4, 16));
         const pps = Uint8Array.from(H264_CONFIG.subarray(20));
-        expect(Array.from(desc)).toEqual(Array.from(buildAvcCBox([sps], [pps], parseSPS(stripEmulationPrevention(sps)))));
+        expect(Array.from(desc)).toEqual(
+            Array.from(buildAvcCBox([sps], [pps], parseSPS(stripEmulationPrevention(sps)))),
+        );
 
         // Keyframe: the chunk data must be the keyframe's NAL re-framed with a
         // 4-byte length prefix (matching the avcC's lengthSizeMinusOne=3) — NOT
