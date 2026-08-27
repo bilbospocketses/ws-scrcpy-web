@@ -17,6 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Closing a stream no longer leaves an error in the browser console.** Stopping a stream tore the audio player down twice — once directly, and once more when the closing connection reported itself closed — and the second teardown tried to shut down an audio session that was already shut down. The browser refused, and the refusal surfaced as an unhandled error. Audio stopped correctly either way and nothing was actually broken, but it was noise sitting in exactly the place people look when they are trying to report a problem. Teardown is now safe to run more than once.
+
+- **The stalled-video message no longer recommends the browser you are already using.** When a video decoder starts up cleanly and then produces no picture, the app reports the stall and suggests what to try. That advice was fixed text: it recommended a Chromium-based browser even when you were in Chrome, and it appended an explanation of Firefox's H.264 and H.265 handling to every stall, including ones on codecs where neither is involved. The message now accounts for which browser is running and which codec actually failed — Chromium users get pointed at `chrome://gpu`, where a graphics-driver problem shows up, and the Firefox note only appears when it is relevant.
+
 ## [0.1.30-beta.79] - 2026-08-27
 
 ### Fixed

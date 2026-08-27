@@ -3,10 +3,13 @@ import { PCM_WORKLET_NAME, PCM_WORKLET_SOURCE } from './PcmWorklet';
 import { decodeS16LEToFloat32Planar } from './pcmConvert';
 
 export class AudioPlayer {
-    private audioContext?: AudioContext;
-    private decoder?: AudioDecoder;
-    private workletNode?: AudioWorkletNode;
-    private gainNode?: GainNode;
+    // Explicit `| undefined` (matching `configData` below) because
+    // `exactOptionalPropertyTypes` is on: stop() clears these back to
+    // undefined, which a bare `?:` optional does not permit.
+    private audioContext?: AudioContext | undefined;
+    private decoder?: AudioDecoder | undefined;
+    private workletNode?: AudioWorkletNode | undefined;
+    private gainNode?: GainNode | undefined;
     private started = false;
     private workletReady = false;
     private configData?: Uint8Array | undefined;
@@ -155,13 +158,36 @@ export class AudioPlayer {
         }
     }
 
+    /**
+     * Tear the player down. Safe to call repeatedly.
+     *
+     * A single user-initiated stop reaches here twice: `StreamClientScrcpy`
+     * calls it directly, and the `demuxer.close()` alongside it triggers a
+     * WebSocket `onclose` → `onDisconnected`, which calls it again. A real
+     * `AudioContext` rejects a second `close()` with `InvalidStateError:
+     * Can't close an AudioContext twice`, and nothing awaits that promise —
+     * which is how it surfaced as an uncaught rejection in issue #498.
+     *
+     * So: guard on state the way the decoder above already did, drop the
+     * references so a repeat call has nothing left to act on, and catch the
+     * promise in case the browser closed the context out from under us.
+     */
     stop(): void {
         if (this.decoder && this.decoder.state !== 'closed') {
             this.decoder.close();
         }
         this.workletNode?.disconnect();
         this.gainNode?.disconnect();
-        this.audioContext?.close();
+        if (this.audioContext && this.audioContext.state !== 'closed') {
+            this.audioContext.close().catch(() => {
+                // Already closed elsewhere — nothing to do, and an unhandled
+                // rejection here is the exact bug this method is fixing.
+            });
+        }
+        this.decoder = undefined;
+        this.workletNode = undefined;
+        this.gainNode = undefined;
+        this.audioContext = undefined;
         this.started = false;
         this.workletReady = false;
         this.configData = undefined;
