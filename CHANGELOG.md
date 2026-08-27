@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.81] - 2026-08-27
+
 ### Fixed
 
 - **Losing the connection to the server no longer throws errors in the browser console.** If the server stopped while a page was still open — an update, a restart, a crash — every reconnect attempt raised an internal error on top of the ordinary "connection refused" message, filling the console with stack traces. The reconnection itself always worked and nothing was actually broken, but the noise landed in exactly the place someone looks when trying to work out what went wrong. A connection error with nothing waiting on it is now ignored, which is what it should always have been.
