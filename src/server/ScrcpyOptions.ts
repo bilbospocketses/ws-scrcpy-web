@@ -17,9 +17,15 @@ export interface ScrcpyOptions {
     tunnelForward?: boolean;
     cleanup?: boolean;
     videoEncoder?: string;
+    /**
+     * MediaFormat codec options as `key[:type]=value[,...]`, e.g.
+     * `i-frame-interval:int=2`. scrcpy has no dedicated argument for the
+     * keyframe interval, so it travels here.
+     */
+    videoCodecOptions?: string;
 }
 
-const DEFAULTS: Omit<Required<ScrcpyOptions>, 'scid' | 'videoEncoder'> = {
+const DEFAULTS: Omit<Required<ScrcpyOptions>, 'scid' | 'videoEncoder' | 'videoCodecOptions'> = {
     videoCodec: 'h264',
     audioCodec: 'opus',
     audioSource: 'output',
@@ -53,6 +59,9 @@ export function serializeOptions(options: ScrcpyOptions): string[] {
     args.push(`scid=${options.scid}`);
     if (options.videoEncoder) {
         args.push(`video_encoder=${options.videoEncoder}`);
+    }
+    if (options.videoCodecOptions) {
+        args.push(`video_codec_options=${options.videoCodecOptions}`);
     }
     return args;
 }

@@ -33,6 +33,17 @@ export function assertSerial(serial: unknown): string {
     return serial;
 }
 
+// scrcpy codec options are a comma-separated list of `key[:type]=value`, e.g.
+// `i-frame-interval:int=2,profile:int=8`. Values are MediaFormat keys, type
+// names and numbers — never paths, quotes or shell metacharacters. Like the
+// encoder name, this is browser input that ends up inside the `app_process ...`
+// string run via `adb shell`, so it is allowlisted rather than escaped.
+const CODEC_OPTIONS_RE = /^[A-Za-z0-9_.:,=-]{1,256}$/;
+
+export function isSafeCodecOptions(value: unknown): value is string {
+    return typeof value === 'string' && value.length > 0 && CODEC_OPTIONS_RE.test(value);
+}
+
 // Encoder names look like `OMX.qcom.video.encoder.avc` / `c2.android.avc.encoder`.
 const ENCODER_RE = /^[A-Za-z0-9_.-]{1,128}$/;
 

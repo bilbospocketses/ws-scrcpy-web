@@ -38,10 +38,13 @@ export interface PlayerEvents {
      * out — either nothing has been fed to it, or it faulted. The listener is
      * expected to ask the device for a fresh keyframe.
      *
-     * VP8/VP9 make this non-optional: scrcpy emits exactly ONE keyframe per
-     * session for them (measured: 398 frames / 1 keyframe over 28s at a 2s
-     * i-frame interval), so a stream that misses it can never resynchronise on
-     * its own. Requesting a new one is the only way back.
+     * This is not optional, and not a VP8/VP9 quirk — keyframes are scarce for
+     * every codec. Measured on a Pixel 10a over ~24s each: h264 gave 1 keyframe
+     * in 307 frames; h265, av1 and vp9 gave 2 apiece, against the ~12 a
+     * 2-second interval implies. Asking for a shorter interval does not help
+     * (Android encoders largely ignore it — see `buildVideoCodecOptions`), so a
+     * stream that misses its keyframe cannot resynchronise on its own and
+     * requesting one is the only way back.
      */
     'video-stalled': { codec: string; reason: 'no-frames' | 'decoder-error' };
 }

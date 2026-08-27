@@ -1,5 +1,5 @@
 import type { ScrcpyOptions } from './ScrcpyOptions';
-import { isSafeEncoderName } from './security/deviceInput';
+import { isSafeCodecOptions, isSafeEncoderName } from './security/deviceInput';
 
 /**
  * Pure translation from the stream WebSocket's query string to a ScrcpyOptions
@@ -52,6 +52,15 @@ export function scrcpyOptionsFromQuery(params: URLSearchParams, scid: string): S
     const videoEncoder = params.get('videoEncoder');
     if (videoEncoder && isSafeEncoderName(videoEncoder)) {
         options.videoEncoder = videoEncoder;
+    }
+
+    // Carries the keyframe interval, which scrcpy has no top-level argument for
+    // — it goes to MediaFormat as `i-frame-interval:int=N`. Serialized into the
+    // same `app_process ...` string as videoEncoder, so it gets the same
+    // allowlist treatment rather than being escaped.
+    const videoCodecOptions = params.get('videoCodecOptions');
+    if (videoCodecOptions && isSafeCodecOptions(videoCodecOptions)) {
+        options.videoCodecOptions = videoCodecOptions;
     }
 
     return options;
