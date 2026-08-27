@@ -19,6 +19,7 @@ import Size from '../../Size';
 import Util from '../../Util';
 import { Modal } from '../../ui/Modal';
 import VideoSettings from '../../VideoSettings';
+import { CODEC_ENCODER_PATTERNS, encoderMatchesCodec as matchesCodec } from './codecSelection';
 import type { DeviceTracker } from './DeviceTracker';
 import { StreamClientScrcpy } from './StreamClientScrcpy';
 
@@ -207,23 +208,18 @@ export class ConfigureScrcpy extends Modal {
         }
     }
 
+    /**
+     * Delegates to the shared table. This used to be a private switch with its
+     * own spellings, which is how it drifted from automatic selection: this one
+     * knew about `.h264.`, `codecSelection` did not, and the two disagreed
+     * about which encoders a device had.
+     */
     private encoderMatchesCodec(encoderName: string, codec: string): boolean {
+        // Blank means "any encoder", and an unknown codec is not something to
+        // filter on.
         if (!encoderName) return true;
-        const lower = encoderName.toLowerCase();
-        switch (codec) {
-            case 'h264':
-                return lower.includes('.avc.') || lower.includes('.h264.');
-            case 'h265':
-                return lower.includes('.hevc.');
-            case 'av1':
-                return lower.includes('.av1.');
-            case 'vp8':
-                return lower.includes('.vp8.');
-            case 'vp9':
-                return lower.includes('.vp9.');
-            default:
-                return true;
-        }
+        if (!CODEC_ENCODER_PATTERNS[codec]) return true;
+        return matchesCodec(encoderName, codec);
     }
 
     private populateEncoderDropdown(codec: string): void {
@@ -254,16 +250,18 @@ export class ConfigureScrcpy extends Modal {
         this.populateEncoderDropdown(this.videoCodecSelect.value);
     };
 
+    /**
+     * Which codecs this device can encode, in the dropdown's display order.
+     * Driven by the shared spelling table so it cannot drift from automatic
+     * selection again.
+     */
     private detectVideoCodecs(encoders: string[]): string[] {
-        const codecs: string[] = [];
-        const joined = encoders.join(' ').toLowerCase();
-        if (joined.includes('.avc.') || joined.includes('.h264.')) codecs.push('h264');
-        if (joined.includes('.hevc.')) codecs.push('h265');
-        if (joined.includes('.av1.')) codecs.push('av1');
-        if (joined.includes('.vp8.')) codecs.push('vp8');
-        if (joined.includes('.vp9.')) codecs.push('vp9');
-        if (codecs.length === 0) codecs.push('h264');
-        return codecs;
+        const codecs = ['h264', 'h265', 'av1', 'vp8', 'vp9'].filter((codec) =>
+            encoders.some((e) => matchesCodec(e, codec)),
+        );
+        // A device that reported nothing usable still gets the default offered,
+        // rather than an empty dropdown.
+        return codecs.length > 0 ? codecs : ['h264'];
     }
 
     private async filterSupportedCodecs(codecs: string[]): Promise<string[]> {

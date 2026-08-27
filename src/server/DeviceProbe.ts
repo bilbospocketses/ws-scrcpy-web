@@ -124,7 +124,11 @@ export class DeviceProbe extends Mw {
     private async listEncodersViaDumpsys(): Promise<{ videoEncoders: string[]; audioEncoders: string[] }> {
         const output = await this.adbClient.shell(this.serial, 'dumpsys media.player');
         const regex = /Encoder "([^"]+)" supports/g;
-        const videoCodecs = ['avc', 'hevc', 'av1', 'vp8', 'vp9'];
+        // `h264`/`h265` are not aliases nobody uses — this Pixel 10a names its
+        // hardware AVC encoder `c2.exynos.h264.encoder`, so leaving them out
+        // dropped it here and the device only ever saw the software
+        // `c2.android.avc.encoder`. scrcpy's own `list_encoders` reports both.
+        const videoCodecs = ['avc', 'h264', 'hevc', 'h265', 'av1', 'vp8', 'vp9'];
         const audioCodecs = ['opus', 'aac', 'flac'];
         const videoEncoders: string[] = [];
         const audioEncoders: string[] = [];
