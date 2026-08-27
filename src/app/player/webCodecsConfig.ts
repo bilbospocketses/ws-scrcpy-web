@@ -83,14 +83,27 @@ export async function probeDecodeSupport(codec: string): Promise<boolean | undef
 }
 
 /**
- * Codecs that never produce a config packet.
+ * Codecs whose decoder must be configured from session metadata rather than
+ * from a config packet.
  *
- * scrcpy sets its config flag straight from MediaCodec's
- * `BUFFER_FLAG_CODEC_CONFIG` (`Streamer.writePacket`), with no video-codec
- * special-casing. VP8 and VP9 carry no out-of-band parameter sets — everything
- * the decoder needs is in the keyframe — so MediaCodec emits no such buffer and
- * scrcpy sends no config packet. Players must therefore configure these from
- * session metadata rather than waiting for a config frame that never arrives.
+ * ⚠️ The name is about what we can *use*, not about what arrives. An earlier
+ * version of this comment claimed VP8/VP9 send no config packet at all. That is
+ * wrong, and a wire capture disproves it: every VP9 session opens with a frame
+ * carrying MediaCodec's `BUFFER_FLAG_CODEC_CONFIG` — 12 bytes, ~15ms ahead of
+ * the first keyframe.
+ *
+ * What is true is that those 12 bytes are not parameter sets we can build a
+ * `VideoDecoderConfig.description` from. `parseConfig` looks for Annex B
+ * SPS/PPS (H.264/H.265) or an AV1 sequence header, finds neither, and returns
+ * null — so the config branch never configures anything for these codecs.
+ * Everything the decoder actually needs is in the keyframe, and the dimensions
+ * come from session metadata. Hence: configure up front, ignore the packet.
+ *
+ * The consequence that matters is in the keyframe gate, not here — see
+ * `WebCodecsPlayer.pushVideoFrame`. scrcpy emits exactly ONE keyframe per
+ * VP8/VP9 session (measured: 398 frames, 1 keyframe, over 28s at a 2s i-frame
+ * interval), so a session that misses it cannot resynchronise without asking
+ * the device for a new one.
  */
 export const CONFIGLESS_CODECS: readonly VideoCodecName[] = ['vp8', 'vp9'];
 

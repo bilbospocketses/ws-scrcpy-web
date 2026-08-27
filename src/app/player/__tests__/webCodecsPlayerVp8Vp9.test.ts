@@ -2,13 +2,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
- * VP8/VP9 are the only codecs scrcpy streams that never send a config packet.
+ * VP8/VP9 are the only codecs whose decoder is configured from session metadata
+ * instead of from a config packet.
  *
- * scrcpy sets its config flag straight from MediaCodec's
- * `BUFFER_FLAG_CODEC_CONFIG` (`Streamer.writePacket`) with no video-codec
- * special-casing, and VP8/VP9 carry no out-of-band parameter sets — everything
- * the decoder needs is in the keyframe. So MediaCodec emits no config buffer
- * and no config packet is ever sent.
+ * (An earlier version of this comment said they send no config packet at all.
+ * They do — 12 bytes, just ahead of the first keyframe — but it carries no
+ * parameter sets we can turn into a `VideoDecoderConfig.description`, so
+ * `parseConfig` returns null and the config branch configures nothing. See
+ * `CONFIGLESS_CODECS`.)
  *
  * That breaks two assumptions the player made before VP8/VP9 support:
  *   1. the decoder is configured inside the `isConfig` branch, which never runs;

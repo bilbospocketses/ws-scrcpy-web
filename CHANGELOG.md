@@ -17,6 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A VP8 or VP9 stream that starts black now recovers by itself.** These two codecs send a single keyframe at the very start of a session and then nothing but full-motion updates — measured on a real device at 398 frames with exactly one keyframe over 28 seconds. The player will not start drawing until it has seen that keyframe, because everything after it is described relative to it, so if anything caused the app to miss that one frame the picture never appeared at all and no amount of waiting helped. The app now asks the device to send a fresh keyframe when a stream has gone quiet for five seconds, which it will do up to three times before concluding the browser genuinely cannot play the codec. Recovery takes about a fifth of a second.
+
+- **A video decoding error no longer ends the session.** When the browser's decoder reported a fault, the player shut itself down — and nothing could start it again while the stream was still arriving, so the window stayed black until you reconnected by hand. The decoder is now rebuilt in place and a new keyframe requested, so a momentary fault costs a brief interruption instead of the whole session.
+
 ## [0.1.30-beta.80] - 2026-08-27
 
 ### Fixed

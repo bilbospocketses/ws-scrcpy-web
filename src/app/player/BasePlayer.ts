@@ -33,6 +33,17 @@ export interface PlayerEvents {
     'video-view-resize': Size;
     'input-video-resize': ScreenInfo;
     'video-settings': VideoSettings;
+    /**
+     * The decoder is configured and video is arriving, but no picture is coming
+     * out — either nothing has been fed to it, or it faulted. The listener is
+     * expected to ask the device for a fresh keyframe.
+     *
+     * VP8/VP9 make this non-optional: scrcpy emits exactly ONE keyframe per
+     * session for them (measured: 398 frames / 1 keyframe over 28s at a 2s
+     * i-frame interval), so a stream that misses it can never resynchronise on
+     * its own. Requesting a new one is the only way back.
+     */
+    'video-stalled': { codec: string; reason: 'no-frames' | 'decoder-error' };
 }
 
 export interface PlayerClass {
