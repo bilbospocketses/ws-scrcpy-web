@@ -14,6 +14,7 @@ import type { Tool } from '../../client/Tool';
 import Util from '../../Util';
 import { html } from '../../ui/HtmlTag';
 import SvgImage from '../../ui/SvgImage';
+import { pickDeviceInterface } from './pickDeviceInterface';
 import { StreamClientScrcpy } from './StreamClientScrcpy';
 
 // ---------- capability gating ----------
@@ -315,9 +316,7 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
         // Auto-select best interface: prefer wifi/direct IP, fallback to proxy
         let selectedInterfaceUrl = '';
         if (isActive) {
-            const wifiInterface = device.interfaces.find((i) => i.name === device['wifi.interface']);
-            const firstInterface = device.interfaces[0];
-            const bestInterface = wifiInterface || firstInterface;
+            const bestInterface = pickDeviceInterface(device.interfaces, device['wifi.interface']);
             if (bestInterface) {
                 const params = {
                     ...this.params,

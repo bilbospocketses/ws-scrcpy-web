@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A video decoding error no longer ends the session.** When the browser's decoder reported a fault, the player shut itself down — and nothing could start it again while the stream was still arriving, so the window stayed black until you reconnected by hand. The decoder is now rebuilt in place and a new keyframe requested, so a momentary fault costs a brief interruption instead of the whole session.
 
+- **Phones with mobile data switched on are no longer offered under their cellular address.** A device can report more than one network address, and the app picked between them by asking Android which one was Wi-Fi — a question current versions of Android no longer answer. With no answer it fell back to whichever address came first alphabetically, and on a phone that is the mobile-data one, which nothing on your network can reach. The app now recognises Wi-Fi and wired connections by name, prefers a genuine home-network address, and pushes cellular, tunnel and USB-tethering addresses to the back. Devices with only one address — most TV boxes — are unaffected, which is why this went unnoticed.
+
 ## [0.1.30-beta.80] - 2026-08-27
 
 ### Fixed
