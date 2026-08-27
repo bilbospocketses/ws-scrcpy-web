@@ -316,6 +316,14 @@ protected drawDecoded = (): void => {
 
 The frame queue is drained via `requestAnimationFrame`. When the queue is empty, the rAF loop stops and restarts when new frames arrive.
 
+### 3.7 Decode Watchdog
+
+The `VideoDecoder` `error` callback covers a decoder that faults. It does not cover one that configures cleanly, accepts every chunk it is given, and simply never emits a frame — which is what a browser advertising support it does not actually have looks like from the inside. That shape used to produce a black canvas and a silent console, indistinguishable from a slow connection.
+
+`WebCodecsPlayer` arms a timer (`DECODE_WATCHDOG_MS`, 5s) after each `configure()`, clears it on the first `output` callback and on `stop()`, and logs an actionable error if it expires — naming the codec and pointing at a different codec or a Chromium-based browser. Re-arming on each `configure()` means a stream that reconfigures mid-flight gets a fresh grace period rather than a spurious warning.
+
+It is purely diagnostic; nothing about playback changes. See [8.3](#83-codec-support-probing-and-the-firefox-quirk) for the check that runs before this point, and issue #498 for the report that prompted both.
+
 ---
 
 ## 4. Audio Pipeline
@@ -678,23 +686,37 @@ Browser                          Server
 1. **Probe the device** for available encoders
 2. **For each codec in preference order** (`h265` > `h264` > `av1`):
    a. Check if the device has an encoder for this codec (pattern match in encoder names)
-   b. Check if the browser can decode it (`VideoDecoder.isConfigSupported()`)
+   b. Check if the browser can decode it (`probeDecodeSupport()` — see 8.3; several candidate profile strings per codec, and a definite "no" is honoured for every codec including H.264)
    c. If both pass, select this codec
 3. **Pick the best encoder** for the selected codec:
    - Hardware encoders preferred: match against `/\.mtk\.|\.qcom\.|\.exynos\.|\.intel\.|\.nvidia\./i`
    - Fall back to first available (typically `c2.android.*` software encoders)
 4. **Fallback:** If probe fails entirely, try browser-only detection (same codec preference order) and default to H.264
 
-### 8.3 Firefox Quirk
+### 8.3 Codec Support Probing (and the Firefox Quirk)
 
-Firefox's `VideoDecoder.isConfigSupported()` incorrectly returns `false` for some H.264 profile strings (e.g., `avc1.42E01E`) despite being able to decode them. The workaround:
+Firefox's `VideoDecoder.isConfigSupported()` returns a definite `false` for some H.264 profile strings it can in fact decode — `avc1.42E01E` among them. The app used to work around that by skipping the check for H.264 altogether and treating it as universally supported.
 
-```typescript
-async function browserSupportsCodec(codec: string): Promise<boolean> {
-    if (codec === 'h264') return true;  // Skip the check for H.264
-    // ... normal isConfigSupported check for h265/av1
-}
-```
+That was too blunt. It could not tell Firefox being pessimistic about one profile string apart from a machine that genuinely has no H.264 decoder, and on the latter it overrode an accurate refusal: H.264 was auto-selected, handed to a decoder that emitted nothing, and rendered as a black canvas with no error anywhere (issue #498). Firefox on Windows is where this bites, because it delegates H.264 to the operating system while bundling its own AV1 decoder — which is why AV1 keeps working when H.264 cannot.
+
+`probeDecodeSupport()` in `webCodecsConfig.ts` replaces it. It probes several candidate strings per codec from `CODEC_PROBE_STRINGS` and returns a tri-state:
+
+| Result | Meaning |
+|---|---|
+| `true` | at least one candidate reported supported |
+| `false` | every candidate gave a definite no |
+| `undefined` | no answer obtainable — WebCodecs absent, or every candidate threw |
+
+Probing three H.264 profiles (baseline, main, high) absorbs the Firefox pessimism without ignoring the answer, and a throw counts as a refusal to answer rather than as a "no".
+
+The tri-state exists because the two call sites want different fallbacks for `undefined`:
+
+- **`browserSupportsCodec()`** (`StreamClientScrcpy.ts`) maps it to `false`, so the preference loop in 8.2 runs out and falls through to its plain H.264 default rather than committing to a codec with even less evidence behind it.
+- **`filterSupportedCodecs()`** (`ConfigureScrcpy.ts`) keeps the codec on offer, so the dropdown does not hide something that might work. It resolves `CODEC_PROBE_STRINGS` up front and bails when the lookup misses, which also retires a fallback branch that could never run — `probeDecodeSupport` returns `undefined`, not `false`, for a codec absent from the table.
+
+> **Logging note.** `ConfigureScrcpy`'s `this.TAG` embeds the device UDID, so it is externally influenced and must never sit in a `console.log` format-string position (argument 0) when substitution arguments follow — CodeQL flags that as `js/tainted-format-string`. Pass a literal format string and move the TAG into a `%s` substitution instead.
+
+A codec that survives this check can still fail to produce frames — see [3.7 Decode Watchdog](#37-decode-watchdog).
 
 ---
 
