@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.80] - 2026-08-27
+
 ### Fixed
 
 - **Closing a stream no longer leaves an error in the browser console.** Stopping a stream tore the audio player down twice — once directly, and once more when the closing connection reported itself closed — and the second teardown tried to shut down an audio session that was already shut down. The browser refused, and the refusal surfaced as an unhandled error. Audio stopped correctly either way and nothing was actually broken, but it was noise sitting in exactly the place people look when they are trying to report a problem. Teardown is now safe to run more than once.
