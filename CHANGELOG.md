@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.79] - 2026-08-27
+
 ### Fixed
 
 - **A diagnostic log line no longer builds its message around the device identifier.** The connection identifier a device supplies was being used as the template for one log message rather than as a value inserted into it, which a security scan flagged. A device that reported a deliberately odd identifier could have produced garbled output in the browser console — nothing more than that, since the value never leaves the console — but the message is now built from a fixed template with the identifier filled in, which is the correct shape regardless. This also completes the previous release's attempt at the same finding, which corrected the wrong value.
