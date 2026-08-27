@@ -7,14 +7,30 @@
  * `scrcpyOptionsFromQuery` on the server side.
  */
 
-/** Substring that identifies a codec inside an Android encoder name. */
-export const CODEC_ENCODER_PATTERN: Record<string, string> = {
-    h264: '.avc.',
-    h265: '.hevc.',
-    av1: '.av1.',
-    vp8: '.vp8.',
-    vp9: '.vp9.',
+/**
+ * Substrings that identify a codec inside an Android encoder name.
+ *
+ * H.264 and H.265 each have two spellings in the wild, and the difference is
+ * not cosmetic: this Pixel 10a reports **both** `c2.android.avc.encoder` (the
+ * software one) and `c2.exynos.h264.encoder` (hardware). Matching only `.avc.`
+ * hid the hardware encoder completely and quietly forced every h264 session
+ * onto the software path.
+ */
+export const CODEC_ENCODER_PATTERNS: Record<string, readonly string[]> = {
+    h264: ['.avc.', '.h264.'],
+    h265: ['.hevc.', '.h265.'],
+    av1: ['.av1.'],
+    vp8: ['.vp8.'],
+    vp9: ['.vp9.'],
 };
+
+/** Does this encoder name belong to `codec`, under any of its spellings? */
+export function encoderMatchesCodec(encoderName: string, codec: string): boolean {
+    const patterns = CODEC_ENCODER_PATTERNS[codec];
+    if (!patterns) return false;
+    const lower = encoderName.toLowerCase();
+    return patterns.some((p) => lower.includes(p));
+}
 
 /**
  * Preference order for automatic selection.
@@ -42,13 +58,25 @@ export const CODEC_PREFERENCE: readonly string[] = ['h265', 'h264', 'av1', 'vp8'
 export const FALLBACK_CODEC = 'h264';
 
 /**
- * Hardware encoder vendor markers, preferred over the software `c2.android.*`
- * encoders.
+ * Recognise the *software* encoders rather than enumerating hardware vendors.
  *
- * Known to be incomplete — Amlogic, HiSilicon and Rockchip are missing, so
- * Android TV boxes on those SoCs silently take the software path.
+ * This used to be an allow-list of vendor markers —
+ * `.mtk.|.qcom.|.exynos.|.intel.|.nvidia.` — which meant every SoC nobody had
+ * thought of silently fell through to a software encoder: Amlogic (very common
+ * in Android TV boxes), HiSilicon, Rockchip, and anything shipped since. The
+ * gap was invisible in testing because both TV Streamers here are MediaTek and
+ * both phones Exynos, so they all matched.
+ *
+ * Inverting it fails safe. Android's software codecs are named by a short,
+ * stable convention (`c2.android.*`, and the legacy `OMX.google.*`), so
+ * anything else is vendor silicon whether or not we have heard of it.
  */
-const HW_ENCODER_RE = /\.mtk\.|\.qcom\.|\.exynos\.|\.intel\.|\.nvidia\./i;
+const SOFTWARE_ENCODER_RE = /(^|\.)c2\.android\.|^omx\.google\./i;
+
+/** Whether this is one of Android's own software encoders. */
+export function isSoftwareEncoder(encoderName: string): boolean {
+    return SOFTWARE_ENCODER_RE.test(encoderName);
+}
 
 export interface CodecChoice {
     videoCodec: string;
@@ -57,17 +85,13 @@ export interface CodecChoice {
 
 /** Does this device report any encoder for `codec`? */
 export function deviceHasEncoderFor(videoEncoders: readonly string[], codec: string): boolean {
-    const pattern = CODEC_ENCODER_PATTERN[codec];
-    if (!pattern) return false;
-    return videoEncoders.some((e) => e.toLowerCase().includes(pattern));
+    return videoEncoders.some((e) => encoderMatchesCodec(e, codec));
 }
 
 /** Best encoder for `codec` on this device — hardware if one is offered. */
 export function pickEncoderForCodec(videoEncoders: readonly string[], codec: string): string | undefined {
-    const pattern = CODEC_ENCODER_PATTERN[codec];
-    if (!pattern) return undefined;
-    const matching = videoEncoders.filter((e) => e.toLowerCase().includes(pattern));
-    return matching.find((e) => HW_ENCODER_RE.test(e)) ?? matching[0];
+    const matching = videoEncoders.filter((e) => encoderMatchesCodec(e, codec));
+    return matching.find((e) => !isSoftwareEncoder(e)) ?? matching[0];
 }
 
 /**

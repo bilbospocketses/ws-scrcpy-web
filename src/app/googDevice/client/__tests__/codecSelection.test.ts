@@ -1,5 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
-import { CODEC_PREFERENCE, chooseCodec, pickEncoderForCodec } from '../codecSelection';
+import {
+    CODEC_PREFERENCE,
+    chooseCodec,
+    deviceHasEncoderFor,
+    encoderMatchesCodec,
+    isSoftwareEncoder,
+    pickEncoderForCodec,
+} from '../codecSelection';
 
 /**
  * VP8/VP9 shipped for devices that offer no H.264, H.265 or AV1 encoder — but
@@ -80,6 +87,79 @@ describe('chooseCodec', () => {
         await chooseCodec([SW_VP8], canDecode);
         expect(canDecode).toHaveBeenCalledTimes(1);
         expect(canDecode).toHaveBeenCalledWith('vp8');
+    });
+});
+
+/**
+ * Encoder names have more than one spelling, and vendors we had not enumerated
+ * were being treated as software.
+ *
+ * The Pixel 10a used for this work reports its hardware AVC encoder as
+ * `c2.exynos.h264.encoder` — scrcpy's own `list_encoders` shows it — while our
+ * matching only looked for `.avc.`. The result was that the hardware encoder
+ * was invisible end to end and every h264 session silently used
+ * `c2.android.avc.encoder` instead.
+ */
+describe('encoder name spellings', () => {
+    const HW_H264_ALT = 'c2.exynos.h264.encoder';
+
+    it('recognises both h264 spellings', () => {
+        expect(encoderMatchesCodec('c2.android.avc.encoder', 'h264')).toBe(true);
+        expect(encoderMatchesCodec(HW_H264_ALT, 'h264')).toBe(true);
+    });
+
+    it('recognises both h265 spellings', () => {
+        expect(encoderMatchesCodec('c2.mtk.hevc.encoder', 'h265')).toBe(true);
+        expect(encoderMatchesCodec('c2.vendor.h265.encoder', 'h265')).toBe(true);
+    });
+
+    it('does not confuse h264 and h265', () => {
+        expect(encoderMatchesCodec(HW_H264_ALT, 'h265')).toBe(false);
+        expect(encoderMatchesCodec('c2.mtk.hevc.encoder', 'h264')).toBe(false);
+    });
+
+    it('sees the device as having h264 when only the alternate spelling is present', () => {
+        expect(deviceHasEncoderFor([HW_H264_ALT], 'h264')).toBe(true);
+    });
+
+    it('prefers the hardware encoder over the software one for h264', () => {
+        // The real list from the Pixel: both are present, and the hardware one
+        // used to lose because its name says h264 rather than avc.
+        expect(pickEncoderForCodec([SW_AVC, HW_H264_ALT], 'h264')).toBe(HW_H264_ALT);
+    });
+});
+
+describe('isSoftwareEncoder', () => {
+    it('identifies Android own software encoders', () => {
+        expect(isSoftwareEncoder('c2.android.avc.encoder')).toBe(true);
+        expect(isSoftwareEncoder('c2.android.vp9.encoder')).toBe(true);
+        expect(isSoftwareEncoder('OMX.google.h264.encoder')).toBe(true);
+    });
+
+    it('treats vendor silicon as hardware, including SoCs never enumerated here', () => {
+        // The old allow-list named only mtk/qcom/exynos/intel/nvidia, so these
+        // fell through to the software path on the devices that have them.
+        expect(isSoftwareEncoder('c2.amlogic.avc.encoder')).toBe(false);
+        expect(isSoftwareEncoder('c2.hisi.hevc.encoder')).toBe(false);
+        expect(isSoftwareEncoder('c2.rk.avc.encoder')).toBe(false);
+        expect(isSoftwareEncoder('c2.exynos.h264.encoder')).toBe(false);
+        expect(isSoftwareEncoder('OMX.qcom.video.encoder.avc')).toBe(false);
+        expect(isSoftwareEncoder('c2.some.future.vendor.encoder')).toBe(false);
+    });
+
+    it('prefers an unenumerated vendor encoder over the software one', () => {
+        expect(pickEncoderForCodec(['c2.android.avc.encoder', 'c2.amlogic.avc.encoder'], 'h264')).toBe(
+            'c2.amlogic.avc.encoder',
+        );
+        expect(pickEncoderForCodec(['c2.android.hevc.encoder', 'c2.rk.hevc.encoder'], 'h265')).toBe(
+            'c2.rk.hevc.encoder',
+        );
+    });
+
+    it('does not mistake a vendor named like google for a software encoder', () => {
+        // `OMX.google.` is anchored, so a vendor string merely containing it
+        // mid-name is not swept up.
+        expect(isSoftwareEncoder('c2.notgoogle.avc.encoder')).toBe(false);
     });
 });
 
