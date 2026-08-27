@@ -81,6 +81,34 @@ describe('ServiceApi', () => {
     };
 
     beforeEach(() => {
+        // Fake timers for EVERY test in this file, so no test can leave a real
+        // pending timer behind.
+        //
+        // `ServiceApi`'s default `scheduleExit` (constructor param 5) is
+        // `setTimeout(fn, ms).unref()` — a real 5s timer that calls
+        // `process.exit(0)`. `unref()` stops it holding the process open; it
+        // does NOT stop it firing while vitest is still working through the
+        // rest of the suite. Any test that reaches an exit-scheduling path
+        // without overriding that default leaves a live timer that fires ~5s
+        // later, inside whatever test happens to be running by then.
+        //
+        // When that landed on "schedules process.exit(0) after 5s", the foreign
+        // exit tripped its `expect(exitSpy).not.toHaveBeenCalled()` and the
+        // suite failed for reasons unrelated to the test — roughly one run in
+        // eight, and always green in isolation.
+        //
+        // Nine `POST /install` tests were doing this. Earlier attempts to fix it
+        // added `vi.useFakeTimers()` to three *uninstall* tests, which is why
+        // the comments there blamed the uninstall path — the leak was actually
+        // on install, which also calls `scheduleExit`. Doing it here covers
+        // every path at once, and pending fake timers are discarded at the end
+        // of each test rather than escaping into the next one.
+        //
+        // Safe file-wide: nothing here depends on real timer progression, and
+        // fake timers don't touch promises or microtasks, so `await` still
+        // behaves normally.
+        vi.useFakeTimers();
+
         const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-svc-api-'));
         tmpDirs.push(tmpRoot);
         const configPath = path.join(tmpRoot, 'config.json');
@@ -105,6 +133,10 @@ describe('ServiceApi', () => {
     });
 
     afterEach(() => {
+        // Discard any timer this test scheduled and hand the next one real
+        // timers to start from. See the beforeEach note.
+        vi.useRealTimers();
+
         // Capture paths that need cleanup BEFORE resetting the Config singleton.
         let uninstallMarkerPath: string | undefined;
         try {
@@ -2214,17 +2246,6 @@ describe('ServiceApi', () => {
     // ── reason discriminator + no-direct-uninstall guard (v0.1.25) ──────────
 
     it('service+LocalSystem uninstall writes marker and returns shutting-down (Phase 4 replaces handoff)', async () => {
-        // Use fake timers to prevent the hardcoded setTimeout(process.exit, 5000) in
-        // the LocalSystem uninstall path from leaking a real pending timer that fires
-        // during later tests (specifically the "schedules process.exit(0) after 5s"
-        // test that uses a global process.exit spy).
-        vi.useFakeTimers();
-        using _restoreTimers = {
-            [Symbol.dispose]() {
-                vi.useRealTimers();
-            },
-        };
-
         const uninstallSpy = vi.fn(async () => undefined);
         const client = fakeClient({
             uninstall: uninstallSpy,
@@ -2347,16 +2368,6 @@ describe('ServiceApi', () => {
 
     describe('handleUninstall — operation-server flow (Phase 4)', () => {
         it('writes uninstall-pending marker when service+LocalSystem on Windows', async () => {
-            // Use fake timers to prevent the hardcoded setTimeout(process.exit, 5000) in
-            // the LocalSystem uninstall path from leaking a real pending timer that fires
-            // during the "schedules process.exit(0) after 5s" test's global spy window.
-            vi.useFakeTimers();
-            using _restoreTimers = {
-                [Symbol.dispose]() {
-                    vi.useRealTimers();
-                },
-            };
-
             const client = fakeClient({ status: vi.fn(async () => 'running' as const) });
             const factoryResult: ServiceClientFactoryResult = {
                 client,
@@ -2380,16 +2391,6 @@ describe('ServiceApi', () => {
         });
 
         it('returns 200 with status=shutting-down and no redirectTo', async () => {
-            // Use fake timers to prevent the hardcoded setTimeout(process.exit, 5000) in
-            // the LocalSystem uninstall path from leaking a real pending timer that fires
-            // during the "schedules process.exit(0) after 5s" test's global spy window.
-            vi.useFakeTimers();
-            using _restoreTimers = {
-                [Symbol.dispose]() {
-                    vi.useRealTimers();
-                },
-            };
-
             const client = fakeClient({ status: vi.fn(async () => 'running' as const) });
             const factoryResult: ServiceClientFactoryResult = {
                 client,
