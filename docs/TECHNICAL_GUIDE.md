@@ -1998,3 +1998,123 @@ By default only `localhost` + IP literals pass layer 1, so terminating TLS at a 
 | `src/server/security/instanceToken.ts` | Per-launch token mint, cookie build, constant-time validation |
 | `src/server/Config.ts` | Reads + sanitizes `allowedHosts` from config.json (`sanitizeAllowedHosts`, `Config.allowedHosts`) |
 | `src/server/index.ts` | Applies `allowedHosts` at boot via `setAllowedHosts(config.allowedHosts)` |
+
+---
+
+## 25. Why the Screen Is Black
+
+Four separate mechanisms produce "the stream connected but I see a black
+rectangle", and they need entirely different responses. Issue #498 spent
+several days moving between them, so each is recorded here with the
+measurement that identified it.
+
+All figures below come from a Pixel 10a (Android 17, Exynos) with the stream
+instrumented at both the WebSocket and the `VideoDecoder`.
+
+### 25.1 The device is locked — not our bug, and by far the most common
+
+**Android does not permit screen capture while the keyguard is up.** It hands
+scrcpy a black surface. This is not scrcpy-specific and not something an app
+can opt out of: the device's own `screencap` returns black under the same
+conditions, with `isKeyguardShowing=true` and `mScreenOnFully=true`.
+
+Measured across an unlock, with the stream running throughout:
+
+```
+locked     15 fps    13 bytes/frame
+UNLOCK     15 fps    47,078 bytes/frame
+unlocked   15 fps    30-50 KB/frame
+```
+
+The frame rate never dips. The decode path is entirely healthy; it is
+faithfully painting black frames because black is what arrived.
+
+**Consequences worth internalising:**
+
+- A locked phone is indistinguishable from a broken stream by looking at the
+  picture. Only the device can tell you which it is.
+- A phone that auto-locks mid-session produces "it worked for twenty minutes
+  then stopped", which reads like a leak or a timeout and is neither.
+- **Any codec comparison run against a phone that may be locked is worthless.**
+  Issue #498 produced an elaborate per-codec pass/fail matrix that turned out
+  to be tracking lock state, not codecs.
+
+Handled by `StreamClientScrcpy.refreshLockedNotice()` → `deviceScreenState.ts`,
+which asks the device and shows a banner over the video.
+
+### 25.2 Keyframes are scarce, and missing one is fatal
+
+`WebCodecsPlayer.pushVideoFrame` refuses to decode until it has seen a
+keyframe, which is correct — delta frames reference frames the decoder never
+received. The trap is that keyframes are far rarer than the configured i-frame
+interval implies. Over ~24s each:
+
+| codec | frames | keyframes |
+|-------|--------|-----------|
+| h264  | 307    | 1         |
+| h265  | 706    | 2         |
+| av1   | 720    | 2         |
+| vp9   | 718    | 2         |
+
+A 2-second interval implies roughly twelve. **This is not a VP8/VP9 trait** —
+an earlier version of this section said it was, and that was wrong.
+
+So a session that misses its keyframe can wait a long time or forever. The
+recovery is `ControlMessage.TYPE_RESET_VIDEO`, sent by the decode watchdog;
+the device answers with a fresh config packet **and** keyframe, measured at
++180ms and +188ms respectively.
+
+**Asking for a shorter interval does not help.** scrcpy applies
+`video_codec_options` after its own `KEY_I_FRAME_INTERVAL` default of 10s, so
+the value genuinely reaches `MediaFormat` (verified on the device command
+line) — but Android encoders commonly ignore it, because an I-frame is not
+necessarily an IDR frame and only IDR frames carry `BUFFER_FLAG_KEY_FRAME`.
+Upstream reports the same: Genymobile/scrcpy issues 3260 and 4857.
+
+### 25.3 The browser genuinely cannot decode the codec
+
+The real case the decode watchdog was built for: `configure()` and `decode()`
+both succeed and no frame ever comes out. Distinguishable from 25.2 because a
+keyframe *was* delivered to the decoder. Firefox on Windows delegates H.264 to
+the OS and cannot decode H.265 at all, so this is most often seen there.
+
+### 25.4 A decoder fault
+
+Reported through the `VideoDecoder` error callback. Recovered in place by
+`recoverDecoder()` rather than by stopping the player — see §25.5.
+
+### 25.5 Two traps in this area
+
+**Small frames do not mean a broken stream.** They mean the picture is not
+changing: a static app, a screensaver, a locked phone. Earlier code treated
+this as "quality degradation" and forced a reconnect, which could not help —
+the next frame was black too — and interrupted the video every ~30s while
+explaining nothing. Its thresholds had been loosened twice (10s → 30s, 25% →
+10%) chasing false positives rather than questioning the premise. The signal is
+now used only to prompt a lock-state query.
+
+**`stop()` is not a recovery.** It parks the player in `STOPPED`, and
+`onVideoFrame` only revives from `PAUSED` — so a single decoder fault used to
+kill a session permanently while video kept arriving.
+
+### 25.6 Diagnosing one of these from a report
+
+`First decoded frame` is logged **once per page**, not once per session
+(`loggedFrameSize` is never reset by `stop()`). Its absence after a reconnect
+proves nothing. Ask instead for:
+
+1. Whether the phone was unlocked *and stayed unlocked* for the whole test.
+2. `[WebCodecsPlayer] ...: requesting a fresh keyframe (attempt n/3)` — present
+   means the watchdog fired, which separates 25.2/25.3 from 25.1.
+3. Average frame size if available. Around 13 bytes means a black surface;
+   tens of KB means real content is arriving and the fault is downstream.
+
+### 25.7 Key Files
+
+| File | Purpose |
+|------|---------|
+| `src/server/deviceScreenState.ts` | `dumpsys` command + parser for `awake` / `locked` |
+| `src/app/googDevice/client/StreamClientScrcpy.ts` | `looksLikeNoPicture`, lock-state query, banner |
+| `src/app/player/WebCodecsPlayer.ts` | Keyframe gate, decode watchdog, `recoverDecoder` |
+| `src/app/player/webCodecsConfig.ts` | `CONFIGLESS_CODECS`, decode-support probe |
+| `src/common/StreamUrlParams.ts` | `buildVideoCodecOptions` and why the interval is not a lever |
