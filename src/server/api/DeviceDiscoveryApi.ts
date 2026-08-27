@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'http';
 import { AdbClient, parseSerialFromMdnsName } from '../AdbClient';
 import { resolveUserId } from '../auth/currentUser';
 import { Config } from '../Config';
+import { parseScreenState, SCREEN_STATE_COMMAND } from '../deviceScreenState';
 import { Logger } from '../Logger';
 import { resolveMac } from '../network/MacResolver';
 import { detectSubnet } from '../network/SubnetDetector';
@@ -144,10 +145,12 @@ export class DeviceDiscoveryApi {
                     res.end(JSON.stringify({ error: 'udid is required' }));
                     return true;
                 }
-                const output = await this.adbClient.shell(udid, 'dumpsys power 2>/dev/null | grep mWakefulness');
-                const awake = output.includes('Awake');
+                // Also reports `locked`: while the keyguard is up Android hands
+                // scrcpy a black surface, so a locked phone is otherwise
+                // indistinguishable from a broken stream (see issue #498).
+                const output = await this.adbClient.shell(udid, SCREEN_STATE_COMMAND);
                 res.writeHead(200);
-                res.end(JSON.stringify({ awake }));
+                res.end(JSON.stringify(parseScreenState(output)));
                 return true;
             }
 
