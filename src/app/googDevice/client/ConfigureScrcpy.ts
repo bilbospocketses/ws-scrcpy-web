@@ -283,7 +283,17 @@ export class ConfigureScrcpy extends Modal {
             // something that might work — but a real "no" is now honoured for
             // H.264 too, which it previously was not. See issue #498.
             if ((await probeDecodeSupport(codec)) === false) {
-                console.log(this.TAG, 'Browser does not support decoding', codec, `(tried ${probeStrings.join(', ')})`);
+                // `this.TAG` embeds the device UDID, so it is externally
+                // influenced and must not occupy argument 0 — console.log
+                // treats that as the format string, which CodeQL flags as
+                // js/tainted-format-string. Keep a literal there and pass
+                // every variable through a %s substitution instead.
+                console.log(
+                    '%s Browser does not support decoding %s (tried %s)',
+                    this.TAG,
+                    codec,
+                    probeStrings.join(', '),
+                );
                 continue;
             }
             supported.push(codec);

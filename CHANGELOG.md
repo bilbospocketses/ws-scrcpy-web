@@ -17,11 +17,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A diagnostic log line no longer builds its message around the device identifier.** The connection identifier a device supplies was being used as the template for one log message rather than as a value inserted into it, which a security scan flagged. A device that reported a deliberately odd identifier could have produced garbled output in the browser console — nothing more than that, since the value never leaves the console — but the message is now built from a fixed template with the identifier filled in, which is the correct shape regardless. This also completes the previous release's attempt at the same finding, which corrected the wrong value.
+
 ## [0.1.30-beta.78] - 2026-08-26
 
 ### Changed
 
-- **Tightened the codec-support check after a static-analysis finding.** The rewrite in the previous release removed a table lookup that had implicitly proven a codec name was one of a fixed set before it reached a log line, and the security scanner correctly flagged the result as an unconstrained value reaching a log format. The value was never attacker-controlled — it can only ever be one of five fixed codec names, chosen by the app rather than supplied by the device — but the check now resolves each codec against its own table first and passes the name as a separate log argument, so that guarantee is explicit instead of incidental. A dead fallback branch left over from the same rewrite is gone as well. Nothing behaves differently.
+- **Tidied the codec-support check.** The rewrite in the previous release left behind a fallback branch that could never run, and the codec name reaching the "unsupported" log line was no longer resolved against the table that defines it. Both are now handled at the top of the loop. Nothing behaves differently.
+
+  *Correction:* this entry originally described the change as resolving a static-analysis finding about the codec name. That was a misreading — the scanner was flagging the log message's device identifier, not the codec, and the finding was not resolved by this release. It is fixed in the next one.
 
 ## [0.1.30-beta.77] - 2026-08-26
 
