@@ -90,6 +90,13 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
      */
     private static readonly DECODE_WATCHDOG_MS = 5000;
     private decodeWatchdog: ReturnType<typeof setTimeout> | undefined;
+    /**
+     * Cap on keyframe requests per session. A stalled stream usually recovers
+     * on the first one; a browser that cannot decode the codec at all never
+     * will, and re-requesting forever would just pin the device's encoder.
+     */
+    private static readonly MAX_KEYFRAME_REQUESTS = 3;
+    private keyframeRequests = 0;
 
     constructor(udid: string, displayInfo?: DisplayInfo, name = WebCodecsPlayer.playerFullName) {
         super(udid, displayInfo, name, WebCodecsPlayer.storageKeyPrefix);
@@ -116,9 +123,43 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
             },
             error: (error: DOMException) => {
                 console.error('[WebCodecsPlayer]', error, `code: ${error.code}`);
-                this.stop();
+                // Deliberately NOT stop(). stop() puts the player in STOPPED,
+                // and `StreamClientScrcpy.onVideoFrame` only revives a player
+                // from PAUSED — so a single decoder fault used to kill the
+                // session permanently while video kept arriving. Recover in
+                // place instead and ask for a keyframe to resynchronise on.
+                this.recoverDecoder('decoder-error');
             },
         });
+    }
+
+    /**
+     * Rebuild the decoder after a fault and ask for a fresh keyframe.
+     *
+     * The re-configure only applies to VP8/VP9: every other codec re-configures
+     * when its next config packet arrives, and those codecs send one alongside
+     * every keyframe. VP8/VP9 send no usable one (see `CONFIGLESS_CODECS`), so
+     * the decoder has to be set up from session metadata again here or the
+     * keyframe we are about to request would arrive with nowhere to go.
+     */
+    private recoverDecoder(reason: 'no-frames' | 'decoder-error'): void {
+        const codec = this.detectedCodec;
+        this.clearDecodeWatchdog();
+        if (this.decoder.state !== 'closed') {
+            try {
+                this.decoder.close();
+            } catch {
+                // Already closing/closed — the replacement below is what matters.
+            }
+        }
+        this.decoder = this.createDecoder();
+        this.seenKeyframe = false;
+        this.configData = undefined;
+        if (codec && isConfiglessCodec(codec)) {
+            this.detectedCodec = codec;
+            this.configureFromMetadata(codec);
+        }
+        this.emit('video-stalled', { codec: codec ?? 'unknown', reason });
     }
 
     /**
@@ -136,16 +177,35 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
         this.clearDecodeWatchdog();
         this.decodeWatchdog = setTimeout(() => {
             this.decodeWatchdog = undefined;
-            // Prefix stays a constant in the format position; the codec-bearing
-            // message goes in as a substitution arg (see TECHNICAL_GUIDE §8.3).
-            console.error(
-                '[WebCodecsPlayer]',
-                decodeWatchdogMessage({
-                    codec,
-                    timeoutMs: WebCodecsPlayer.DECODE_WATCHDOG_MS,
-                    ...detectBrowserFamily(),
-                }),
-            );
+            // The full explanation is worth saying once. Retries below add a
+            // short line each instead, so a stream that never recovers does not
+            // paste the same paragraph into the console every five seconds.
+            if (this.keyframeRequests === 0) {
+                // Prefix stays a constant in the format position; the
+                // codec-bearing message goes in as a substitution arg (see
+                // TECHNICAL_GUIDE §8.3).
+                console.error(
+                    '[WebCodecsPlayer]',
+                    decodeWatchdogMessage({
+                        codec,
+                        timeoutMs: WebCodecsPlayer.DECODE_WATCHDOG_MS,
+                        ...detectBrowserFamily(),
+                    }),
+                );
+            }
+            // Reporting the stall was never enough on its own. Ask the device
+            // for a keyframe, then wait again — bounded, because a browser that
+            // genuinely cannot decode this codec will never recover and should
+            // not have reset requests pinned on it forever.
+            if (this.keyframeRequests < WebCodecsPlayer.MAX_KEYFRAME_REQUESTS) {
+                this.keyframeRequests += 1;
+                console.log(
+                    '[WebCodecsPlayer]',
+                    `${codec}: requesting a fresh keyframe (attempt ${this.keyframeRequests}/${WebCodecsPlayer.MAX_KEYFRAME_REQUESTS})`,
+                );
+                this.emit('video-stalled', { codec, reason: 'no-frames' });
+                this.armDecodeWatchdog(codec);
+            }
         }, WebCodecsPlayer.DECODE_WATCHDOG_MS);
     }
 
@@ -432,5 +492,6 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
         this.configData = undefined;
         this.detectedCodec = null;
         this.seenKeyframe = false;
+        this.keyframeRequests = 0;
     }
 }

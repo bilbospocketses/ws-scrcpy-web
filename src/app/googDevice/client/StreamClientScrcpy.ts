@@ -9,7 +9,8 @@ import { Attribute } from '../../Attribute';
 import { AudioPlayer } from '../../audio/AudioPlayer';
 import { BaseClient } from '../../client/BaseClient';
 import { settingsService } from '../../client/SettingsService';
-import type { ControlMessage } from '../../controlMessage/ControlMessage';
+import { CommandControlMessage } from '../../controlMessage/CommandControlMessage';
+import { ControlMessage } from '../../controlMessage/ControlMessage';
 import type { KeyCodeControlMessage } from '../../controlMessage/KeyCodeControlMessage';
 import type { DisplayInfo } from '../../DisplayInfo';
 import {
@@ -374,6 +375,14 @@ export class StreamClientScrcpy
         }
         this.player = player;
         this.setTouchListeners(player);
+
+        // A stalled decoder can only resynchronise on a keyframe, and for
+        // VP8/VP9 scrcpy sends exactly one per session — so if that one is
+        // missed there is nothing to recover on until we ask for another.
+        player.on('video-stalled', ({ codec, reason }) => {
+            console.log(TAG, `video stalled (codec=${codec}, reason=${reason}); requesting a keyframe`);
+            this.demuxer?.sendControl(new CommandControlMessage(ControlMessage.TYPE_RESET_VIDEO));
+        });
 
         if (!videoSettings) {
             videoSettings = player.getVideoSettings();
