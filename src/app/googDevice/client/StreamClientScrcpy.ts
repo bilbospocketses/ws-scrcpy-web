@@ -31,6 +31,7 @@ import { UhidKeyboardHandler } from '../UhidKeyboardHandler';
 import { UhidManager } from '../UhidManager';
 import { UhidMouseHandler } from '../UhidMouseHandler';
 import { ConfigureScrcpy } from './ConfigureScrcpy';
+import { chooseCodec, chooseCodecWithoutProbe } from './codecSelection';
 import { DeviceTracker } from './DeviceTracker';
 import { RollingWindow } from './RollingWindow';
 
@@ -44,16 +45,6 @@ type StartParams = {
 };
 
 const TAG = '[StreamClientScrcpy]';
-
-// Maps codec names to patterns that identify them in encoder names
-const CODEC_ENCODER_PATTERN: Record<string, string> = {
-    h264: '.avc.',
-    h265: '.hevc.',
-    av1: '.av1.',
-};
-
-// Hardware encoder vendor prefixes (preferred over software c2.android.* encoders)
-const HW_ENCODER_RE = /\.mtk\.|\.qcom\.|\.exynos\.|\.intel\.|\.nvidia\./i;
 
 async function browserSupportsCodec(codec: string): Promise<boolean> {
     // An unanswerable probe (no WebCodecs API) resolves to false so the caller
@@ -81,35 +72,12 @@ async function detectBestCodecAndEncoder(
         console.log(TAG, `Probe returned encoders: ${videoEncoders.join(', ')}`);
     } catch (err) {
         console.warn(TAG, 'Device probe failed, falling back to browser-only detection:', (err as Error).message);
-        // Fall back to browser-only detection without device info
-        for (const codec of ['h265', 'h264', 'av1']) {
-            if (await browserSupportsCodec(codec)) {
-                console.log(TAG, `Auto-detected best codec (no probe): ${codec}`);
-                return { videoCodec: codec };
-            }
-        }
-        return { videoCodec: 'h264' };
+        return chooseCodecWithoutProbe(browserSupportsCodec, (message) => console.log(TAG, message));
     }
 
-    // 2. For each codec in preference order, check device has encoder AND browser can decode
-    const joined = videoEncoders.join(' ').toLowerCase();
-    for (const codec of ['h265', 'h264', 'av1'] as const) {
-        const pattern = CODEC_ENCODER_PATTERN[codec]!;
-        if (!joined.includes(pattern)) continue;
-        if (!(await browserSupportsCodec(codec))) {
-            console.log(TAG, `Device has ${codec} encoder but browser cannot decode it`);
-            continue;
-        }
-
-        // 3. Pick the best encoder for this codec (prefer hardware)
-        const matchingEncoders = videoEncoders.filter((e) => e.toLowerCase().includes(pattern));
-        const hwEncoder = matchingEncoders.find((e) => HW_ENCODER_RE.test(e));
-        const encoder = hwEncoder || matchingEncoders[0];
-        console.log(TAG, `Auto-detected: codec=${codec}, encoder=${encoder}`);
-        return { videoCodec: codec, encoderName: encoder };
-    }
-
-    return { videoCodec: 'h264' };
+    // 2. Walk the preference order for a codec the device can encode and the
+    //    browser can decode, and pick the best encoder for it.
+    return chooseCodec(videoEncoders, browserSupportsCodec, (message) => console.log(TAG, message));
 }
 
 export class StreamClientScrcpy
