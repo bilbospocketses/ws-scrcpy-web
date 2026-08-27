@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.82] - 2026-08-27
+
 ### Fixed
 
 - **Hardware video encoders that name themselves "h264" are no longer overlooked.** Android devices spell the same encoder two ways, and the app only recognised one of them. On the phone this was found with, that meant its hardware H.264 encoder was invisible — it never appeared in the encoder list and every H.264 stream quietly used the slower software encoder instead. Both spellings are now recognised everywhere, and the same table drives the dropdown and automatic selection so the two cannot disagree again.
