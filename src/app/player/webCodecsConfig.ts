@@ -100,10 +100,11 @@ export async function probeDecodeSupport(codec: string): Promise<boolean | undef
  * come from session metadata. Hence: configure up front, ignore the packet.
  *
  * The consequence that matters is in the keyframe gate, not here — see
- * `WebCodecsPlayer.pushVideoFrame`. scrcpy emits exactly ONE keyframe per
- * VP8/VP9 session (measured: 398 frames, 1 keyframe, over 28s at a 2s i-frame
- * interval), so a session that misses it cannot resynchronise without asking
- * the device for a new one.
+ * `WebCodecsPlayer.pushVideoFrame`. Keyframes are extremely scarce, and that
+ * is NOT a VP8/VP9 trait: measured on a Pixel 10a over ~24s each, h264 gave 1
+ * keyframe in 307 frames, and h265/av1/vp9 gave 2 apiece — where the configured
+ * 2-second interval implies about twelve. So any codec that misses its keyframe
+ * is stuck until the device is asked for a new one.
  */
 export const CONFIGLESS_CODECS: readonly VideoCodecName[] = ['vp8', 'vp9'];
 

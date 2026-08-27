@@ -136,10 +136,13 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
     /**
      * Rebuild the decoder after a fault and ask for a fresh keyframe.
      *
-     * The re-configure only applies to VP8/VP9: every other codec re-configures
-     * when its next config packet arrives, and those codecs send one alongside
-     * every keyframe. VP8/VP9 send no usable one (see `CONFIGLESS_CODECS`), so
-     * the decoder has to be set up from session metadata again here or the
+     * The re-configure only applies to VP8/VP9. For the other codecs a
+     * `TYPE_RESET_VIDEO` brings a fresh config packet back with the keyframe —
+     * verified on hardware, h264 returned config at +180ms and keyframe at
+     * +188ms — so their replacement decoder configures itself on arrival. (Not
+     * every keyframe carries a config packet; a reset-triggered one does.)
+     * VP8/VP9 send no usable config packet at all (see `CONFIGLESS_CODECS`), so
+     * their decoder has to be set up from session metadata again here, or the
      * keyframe we are about to request would arrive with nowhere to go.
      */
     private recoverDecoder(reason: 'no-frames' | 'decoder-error'): void {
