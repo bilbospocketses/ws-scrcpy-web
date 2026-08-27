@@ -345,6 +345,10 @@ export class StreamClientScrcpy
 
     public onDisconnected = (ev?: CloseEvent): void => {
         this.audioPlayer?.stop();
+        // Drop the reference the way refreshStream does. The session is over,
+        // every remaining use site is optional-chained, and a live reference
+        // is what let a user-initiated stop reach AudioPlayer.stop() twice.
+        this.audioPlayer = undefined;
         this.uhidKeyboard?.detach();
         this.uhidMouse?.detach();
         this.uhidManager?.stop();
@@ -423,6 +427,7 @@ export class StreamClientScrcpy
             document.removeEventListener('keydown', resumeAudio);
             this.demuxer?.close();
             this.audioPlayer?.stop();
+            this.audioPlayer = undefined;
             if (this.player) this.player.stop();
         };
 

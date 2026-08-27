@@ -6,6 +6,7 @@ import VideoSettings from '../VideoSettings';
 import { OBU_TYPE, obuType, parseAv1ConfigRecord, parseAv1SequenceHeader } from './av1-utils';
 import { BaseCanvasBasedPlayer } from './BaseCanvasBasedPlayer';
 import { BasePlayer } from './BasePlayer';
+import { decodeWatchdogMessage, detectBrowserFamily } from './decodeWatchdogMessage';
 import { parseSPS, stripEmulationPrevention } from './h264-utils';
 import { HEVC_NAL_TYPE, hevcNalType, parseHevcSPS } from './h265-utils';
 import { annexBToLengthPrefixed, findFirstNaluOffset, findNaluByHeader } from './naluScanner';
@@ -135,11 +136,15 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
         this.clearDecodeWatchdog();
         this.decodeWatchdog = setTimeout(() => {
             this.decodeWatchdog = undefined;
+            // Prefix stays a constant in the format position; the codec-bearing
+            // message goes in as a substitution arg (see TECHNICAL_GUIDE §8.3).
             console.error(
-                `[WebCodecsPlayer] ${codec}: decoder configured but produced no frames after ` +
-                    `${WebCodecsPlayer.DECODE_WATCHDOG_MS}ms. Video is arriving but this browser is not ` +
-                    'decoding it — try a different video codec, or a Chromium-based browser. Firefox on ' +
-                    'Windows relies on the operating system to decode H.264 and cannot decode H.265 at all.',
+                '[WebCodecsPlayer]',
+                decodeWatchdogMessage({
+                    codec,
+                    timeoutMs: WebCodecsPlayer.DECODE_WATCHDOG_MS,
+                    ...detectBrowserFamily(),
+                }),
             );
         }, WebCodecsPlayer.DECODE_WATCHDOG_MS);
     }
