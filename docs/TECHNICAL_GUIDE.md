@@ -890,16 +890,13 @@ Applied in both `ScrcpyConnection.ts` and `DeviceProbe.ts`.
 
 **Problem:** Firefox's `VideoDecoder.isConfigSupported()` returns `{ supported: false }` for the H.264 profile string `avc1.42E01E`, despite being fully capable of decoding H.264 content. This caused the auto-detection algorithm to skip H.264 and fall back to worse options on Firefox.
 
-**Fix:** The `browserSupportsCodec()` function unconditionally returns `true` for H.264, bypassing the `isConfigSupported` check:
+**First fix (beta.75 era) — since removed.** `browserSupportsCodec()` unconditionally returned `true` for H.264, bypassing the check entirely, on the reasoning that H.264 support is universal across browsers implementing WebCodecs.
 
-```typescript
-async function browserSupportsCodec(codec: string): Promise<boolean> {
-    if (codec === 'h264') return true;
-    // ...
-}
-```
+**That reasoning was wrong, and it caused issue #498.** H.264 support is *not* universal: Firefox on Windows delegates H.264 decoding to the operating system while bundling its own AV1 decoder, so a machine without an OS-level H.264 decoder — a Windows N edition lacking the Media Feature Pack, for instance — answers `supported: false` truthfully. The bypass could not tell that apart from Firefox's spurious rejection, so it overrode a correct refusal: H.264 was auto-selected, handed to a decoder that emitted nothing, and rendered as a black canvas with no error anywhere.
 
-This is safe because H.264 baseline profile support is universal across all browsers that implement WebCodecs.
+**Current fix (beta.77):** `probeDecodeSupport()` probes **several** H.264 profile strings and treats the codec as supported if any one of them is accepted, which absorbs Firefox's per-profile pessimism without discarding the answer. A definite `false` across every candidate is now honoured for H.264 exactly as it is for every other codec. See [8.3](#83-codec-support-probing-and-the-firefox-quirk) for the full contract and [3.7](#37-decode-watchdog) for the watchdog that reports a decoder which accepts data and produces nothing.
+
+**The general lesson:** a workaround that suppresses a capability check cannot distinguish a browser being wrong from a browser being right. Widen the probe instead of ignoring the result.
 
 ---
 

@@ -21,7 +21,9 @@ npm run build
 node dist/index.js
 ```
 
-Server listens on port 8000. Open `http://localhost:8000/` in a Chromium browser (Chrome, Edge, Brave). Firefox works, with one gap: its `VideoDecoder.isConfigSupported` rejects hardware-encoded HEVC, so **H.265 streams won't play there** — H.264, AV1, VP8, and VP9 do. Firefox also returns a false `supported: false` for some H.264 profile strings it can actually decode; see `docs/TECHNICAL_GUIDE.md` §11.5 for the workaround already in the codebase.
+Server listens on port 8000. Open `http://localhost:8000/` in a Chromium browser (Chrome, Edge, Brave). Firefox works, with one gap: it cannot decode HEVC at all, so **H.265 streams won't play there** — H.264, AV1, VP8, and VP9 do. Firefox also returns a false `supported: false` for some H.264 profile strings it can actually decode, which the app handles by probing several profiles rather than one; see `docs/TECHNICAL_GUIDE.md` §8.3.
+
+One thing worth knowing if you test on Firefox/Windows: it asks the operating system to decode H.264 while carrying its own AV1 decoder. On a machine with no OS-level H.264 decoder, H.264 genuinely will not play there while AV1 still does — that is the browser telling the truth, not a bug in the app.
 
 ## Development Workflow
 
