@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A locked phone now says so, instead of showing you a black screen.** Android does not allow anything to capture the lock screen — not this app, not any other, not even the phone's own screenshot tool. It hands over a black image instead. So a phone that locked itself while you were watching, or was locked when you connected, produced a completely black window with no explanation, which is indistinguishable from the app being broken. The stream window now tells you the device is locked and clears the message the moment you unlock it.
+
+- **The app no longer reconnects the stream over and over when the picture is not moving.** It watched for the video "degrading" and reconnected when frames became small — but a still screen legitimately produces small frames, and a locked one produces almost nothing at all. The result was a stream that interrupted itself every thirty seconds, achieved nothing (the picture was still black afterwards), and explained none of it. It now asks the device what is actually going on rather than guessing, and reconnects only when you ask it to.
+
 - **The advanced stream settings now actually reach the device.** The "i-frame interval" and "codec options" boxes were collected, saved with the rest of your settings, and then dropped on the way to the device — so the codec-options box, which exists to pass any encoder setting the device understands, did nothing at all. Both are now sent. **One caveat, because it would be misleading to leave it out:** Android encoders very often ignore a requested keyframe interval, and on the hardware tested here changing it made no observable difference. The setting is delivered faithfully; whether the device honours it is up to the device.
 
 ## [0.1.30-beta.81] - 2026-08-27

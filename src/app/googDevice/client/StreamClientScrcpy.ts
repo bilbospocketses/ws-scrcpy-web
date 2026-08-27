@@ -47,6 +47,35 @@ type StartParams = {
 
 const TAG = '[StreamClientScrcpy]';
 
+/**
+ * Average encoded frame size below which there is almost certainly no picture.
+ * A black screen measured 13 bytes per frame on a Pixel 10a against 30-50KB
+ * once unlocked, so even a still photo sits far above this.
+ */
+export const NO_PICTURE_FRAME_BYTES = 1000;
+
+/**
+ * Whether the stream appears to have stopped showing anything, which is the cue
+ * to ask the device whether its keyguard is up.
+ *
+ * Two independent conditions, because one alone is not enough:
+ *
+ * - **Relative** catches a stream that *becomes* static, i.e. the phone locking
+ *   part-way through a session.
+ * - **Absolute** catches one that starts that way. Connecting to an
+ *   already-locked phone builds the baseline out of black frames, so nothing
+ *   can ever look small relative to it — that is exactly what a reconnect onto
+ *   a locked phone does, and the case that left issue #498's reporter staring
+ *   at black with no explanation.
+ *
+ * Being liberal here is safe: crossing the line only prompts a question to the
+ * device, and the banner is driven by its answer rather than by this guess.
+ */
+export function looksLikeNoPicture(averageFrameBytes: number, baselineFrameBytes: number): boolean {
+    const relativeDrop = baselineFrameBytes > 0 && averageFrameBytes < baselineFrameBytes * 0.1;
+    return relativeDrop || averageFrameBytes < NO_PICTURE_FRAME_BYTES;
+}
+
 async function browserSupportsCodec(codec: string): Promise<boolean> {
     // An unanswerable probe (no WebCodecs API) resolves to false so the caller
     // exhausts its preference loop and falls through to its plain h264 default,
@@ -106,7 +135,11 @@ export class StreamClientScrcpy
     private frameSampleCount = 0;
     private baselineFrameSize = 0;
     private degradationCount = 0;
-    private lastRefreshTime = 0;
+    /** Banner shown over the video while the device reports its keyguard is up. */
+    private lockedNotice?: HTMLElement | undefined;
+    private lastLockCheckTime = 0;
+    /** Each check is an adb round trip, so do not ask more often than this. */
+    private static readonly LOCK_CHECK_INTERVAL_MS = 5000;
     private stopFn?: (() => void) | undefined;
 
     /** Public hook — fires after session metadata is parsed. Used by the public startStream API. */
@@ -418,6 +451,14 @@ export class StreamClientScrcpy
         deviceView.appendChild(this.controlButtons);
         const video = document.createElement('div');
         video.className = 'video';
+        // Overlay for "this device is locked". Android refuses to capture the
+        // keyguard, so the stream is genuinely black through no fault of ours —
+        // without this the app looks broken (see issue #498).
+        this.lockedNotice = document.createElement('div');
+        this.lockedNotice.className = 'stream-locked-notice';
+        this.lockedNotice.hidden = true;
+        this.lockedNotice.textContent = 'device is locked — unlock it to see the screen';
+        video.appendChild(this.lockedNotice);
         deviceView.appendChild(video);
         player.setParent(video);
         player.pause();
@@ -499,38 +540,75 @@ export class StreamClientScrcpy
         this.demuxer?.sendControl(message);
     }
 
+    /**
+     * Watch for the frames going very small, and find out why.
+     *
+     * This used to conclude "the stream has degraded" and force a reconnect.
+     * That premise was wrong: small frames mean the *picture is not changing*,
+     * which is a perfectly healthy stream of a static screen. The thresholds
+     * had already been loosened twice (10s → 30s, 25% → 10%) chasing false
+     * positives rather than questioning the idea.
+     *
+     * The dominant cause is a locked phone. Android will not let anything
+     * capture the keyguard, so it hands scrcpy a black surface, which encodes
+     * to almost nothing — measured at 13 bytes per frame against 30-50KB once
+     * unlocked. Reconnecting could never have fixed that; it just interrupted
+     * the video for a second and landed on the same black screen, repeatedly
+     * and without explanation. Issue #498 spent days on it.
+     *
+     * So the small-frame signal is now a prompt to *ask the device* what is
+     * going on, rather than a verdict about the stream.
+     */
     private checkForDegradation(): void {
-        if (this.baselineFrameSize === 0) return;
-        const now = Date.now();
-        // Don't check within 30s of a refresh (was 10s — too aggressive)
-        if (now - this.lastRefreshTime < 30000) return;
-        // Need at least 10 samples for a reliable average
         if (this.frameSizes.count < 10) return;
 
         const avg = this.frameSizes.average();
-        // If average frame size drops below 10% of baseline for sustained period
-        // (was 25% — too sensitive for static content like screensavers)
-        if (avg < this.baselineFrameSize * 0.1) {
+        if (looksLikeNoPicture(avg, this.baselineFrameSize)) {
             this.degradationCount++;
             if (this.degradationCount >= 5) {
-                console.log(
-                    TAG,
-                    `Quality degradation detected (avg=${Math.round(avg)} vs baseline=${Math.round(this.baselineFrameSize)}), refreshing stream`,
-                );
                 this.degradationCount = 0;
-                this.frameSizes.clear();
-                this.frameSampleCount = 0;
-                this.baselineFrameSize = 0;
-                this.refreshStream();
+                void this.refreshLockedNotice();
             }
         } else {
             this.degradationCount = 0;
+            // Picture is moving again, so whatever it was has passed.
+            this.setLockedNotice(false);
+        }
+    }
+
+    /**
+     * Ask the device whether its keyguard is up, and show or hide the notice.
+     *
+     * Throttled because it costs an adb round trip, and deliberately fails
+     * quiet: if we cannot get an answer we say nothing rather than accusing a
+     * working device of being locked.
+     */
+    private async refreshLockedNotice(): Promise<void> {
+        const now = Date.now();
+        if (now - this.lastLockCheckTime < StreamClientScrcpy.LOCK_CHECK_INTERVAL_MS) return;
+        this.lastLockCheckTime = now;
+        try {
+            const response = await fetch(`/api/devices/screen-state?udid=${encodeURIComponent(this.params.udid)}`);
+            if (!response.ok) return;
+            const state = (await response.json()) as { awake?: boolean; locked?: boolean };
+            this.setLockedNotice(state.locked === true);
+        } catch {
+            // Offline, server restarting, endpoint unavailable — stay silent.
+        }
+    }
+
+    private setLockedNotice(locked: boolean): void {
+        if (!this.lockedNotice) return;
+        const alreadyCorrect = this.lockedNotice.hidden === !locked;
+        if (alreadyCorrect) return;
+        this.lockedNotice.hidden = !locked;
+        if (locked) {
+            console.log(TAG, 'device reports its keyguard is up; screen capture will be black until it is unlocked');
         }
     }
 
     public refreshStream(): void {
         console.log(TAG, 'Refreshing stream (reconnect for fresh keyframe)');
-        this.lastRefreshTime = Date.now();
         this.frameSizes.clear();
         this.frameSampleCount = 0;
         this.baselineFrameSize = 0;

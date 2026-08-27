@@ -72,6 +72,30 @@
     max-height: 100vh;
 }
 
+/* Shown over the canvas while the device reports its keyguard is up. Android
+ * will not let anything capture the lock screen, so the stream is legitimately
+ * black and there is nothing to fix on our side — the point is to say so
+ * instead of leaving a black rectangle with no explanation. */
+.stream-locked-notice {
+    grid-area: 1 / 1;
+    align-self: center;
+    justify-self: center;
+    z-index: 2;
+    padding: 0.6rem 1rem;
+    border: 1px solid var(--warning-color);
+    border-radius: 4px;
+    background-color: var(--controls-bg-color);
+    color: var(--warning-color);
+    font-size: 0.85rem;
+    text-align: center;
+    /* Never swallow touches meant for the device. */
+    pointer-events: none;
+}
+
+.stream-locked-notice[hidden] {
+    display: none;
+}
+
 .control-wrapper > input[type="checkbox"] {
     display: none;
 }
