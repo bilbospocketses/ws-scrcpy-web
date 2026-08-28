@@ -48,7 +48,9 @@ src/
 │   │   ├── BaseCanvasBasedPlayer.ts  # Canvas/layer management, frame queue, rAF loop
 │   │   ├── h264-utils.ts             # H.264 SPS parser (profile, level, dimensions, SAR)
 │   │   ├── h265-utils.ts             # H.265 SPS/VPS parser, NALU type detection
-│   │   └── av1-utils.ts              # AV1 OBU parser, Sequence Header, AV1CodecConfigurationRecord
+│   │   ├── av1-utils.ts              # AV1 OBU parser, Sequence Header, AV1CodecConfigurationRecord
+│   │   ├── webCodecsConfig.ts        # Codec strings, decode-support probe, CONFIGLESS_CODECS
+│   │   └── decodeWatchdogMessage.ts  # Browser-aware stall message (see 3.7)
 │   ├── audio/
 │   │   ├── AudioPlayer.ts            # WebCodecs AudioDecoder, multi-codec, worklet orchestration
 │   │   └── PcmWorklet.ts             # AudioWorklet source (ring buffer, inline as string literal)
@@ -108,7 +110,8 @@ src/
 │   ├── Constants.ts                  # Server version, package name, device paths
 │   ├── Action.ts                     # WebSocket action identifiers (STREAM_SCRCPY, PROBE_DEVICE, etc.)
 │   ├── ProbeResult.ts                # Probe response interface
-│   └── TypedEmitter.ts              # Type-safe event emitter
+│   ├── StreamUrlParams.ts           # Stream URL params + video_codec_options builder
+│   └── TypedEmitter.ts              # Type-safe event emitter ('error' guarded — see 25.7)
 └── style/app.css                      # Home-page CSS (@imports ws-scrcpy.css for stream/toolbar styles)
 ```
 
@@ -252,7 +255,9 @@ WebSocket -> ScrcpyDemuxer.onMessage()
 
 **AV1 detection:** No Annex B start codes present. First tries `parseAv1ConfigRecord()` (4-byte AV1CodecConfigurationRecord with marker bit = 1), then falls back to raw OBU Sequence Header parsing via `parseAv1SequenceHeader()`. Generates codec strings like `av01.0.04M.08`.
 
-**VP8 / VP9 — no detection, because there is no config packet.** scrcpy sets its config flag straight from MediaCodec's `BUFFER_FLAG_CODEC_CONFIG`, and VP8/VP9 carry no out-of-band parameter sets — everything the decoder needs is in the keyframe — so MediaCodec emits no such buffer and scrcpy sends no config packet. `parseConfig()` is therefore never reached for them. Instead `setSessionInfo()` sees a codec in `CONFIGLESS_CODECS` (`webCodecsConfig.ts`) and calls `configureFromMetadata()`, configuring the decoder from the session metadata's dimensions. Codec strings are `vp8` and `vp09.00.10.08` — VP9 needs the full parameterised form, since a bare `vp9` is not a registered WebCodecs string.
+**VP8 / VP9 — no *usable* config packet.** ⚠️ An earlier version of this paragraph said scrcpy sends no config packet at all for these codecs. **That is wrong**, and a wire capture disproves it: every VP9 session opens with a frame carrying MediaCodec's `BUFFER_FLAG_CODEC_CONFIG` — 12 bytes, roughly 15ms ahead of the first keyframe.
+
+What is true is that those 12 bytes are not parameter sets we can build a `VideoDecoderConfig.description` from. `parseConfig()` looks for Annex B SPS/PPS or an AV1 sequence header, finds neither, and returns null — so the config branch configures nothing for them. Instead `setSessionInfo()` sees a codec in `CONFIGLESS_CODECS` (`webCodecsConfig.ts`) and calls `configureFromMetadata()`, configuring the decoder from the session metadata's dimensions. Codec strings are `vp8` and `vp09.00.10.08` — VP9 needs the full parameterised form, since a bare `vp9` is not a registered WebCodecs string.
 
 The full codec-string map lives in `WEBCODECS_CODEC_STRING` (`src/app/player/webCodecsConfig.ts`), which is also what `VideoDecoder.isConfigSupported()` is probed with.
 
@@ -320,9 +325,16 @@ The frame queue is drained via `requestAnimationFrame`. When the queue is empty,
 
 The `VideoDecoder` `error` callback covers a decoder that faults. It does not cover one that configures cleanly, accepts every chunk it is given, and simply never emits a frame — which is what a browser advertising support it does not actually have looks like from the inside. That shape used to produce a black canvas and a silent console, indistinguishable from a slow connection.
 
-`WebCodecsPlayer` arms a timer (`DECODE_WATCHDOG_MS`, 5s) after each `configure()`, clears it on the first `output` callback and on `stop()`, and logs an actionable error if it expires — naming the codec and pointing at a different codec or a Chromium-based browser. Re-arming on each `configure()` means a stream that reconfigures mid-flight gets a fresh grace period rather than a spurious warning.
+`WebCodecsPlayer` arms a timer (`DECODE_WATCHDOG_MS`, 5s) after each `configure()` and clears it on the first `output` callback and on `stop()`. Re-arming on each `configure()` means a stream that reconfigures mid-flight gets a fresh grace period rather than a spurious warning.
 
-It is purely diagnostic; nothing about playback changes. See [8.3](#83-codec-support-probing-and-the-firefox-quirk) for the check that runs before this point, and issue #498 for the report that prompted both.
+**It is no longer purely diagnostic.** On expiry it does two things:
+
+1. **Reports**, via `decodeWatchdogMessage()` — which takes the browser family, so it does not tell a Chrome user to switch to a Chromium browser, and only mentions Firefox's H.264/H.265 handling when that is actually the codec involved. Chromium gets pointed at `chrome://gpu` instead.
+2. **Asks the device for a fresh keyframe**, by emitting `video-stalled`, which `StreamClientScrcpy` turns into `TYPE_RESET_VIDEO`. Bounded to `MAX_KEYFRAME_REQUESTS` (3): a browser that genuinely cannot decode the codec will never recover, and should not have reset requests pinned on the device forever. The full explanation is logged once; retries add a short line each.
+
+That second half matters because keyframes are scarce — see §25.2 — so a stream that misses one has nothing to resynchronise on. A related change lives in the `error` callback: it calls `recoverDecoder()` rather than `stop()`, because `stop()` parks the player in `STOPPED` and `onVideoFrame` only revives from `PAUSED`, so a single fault used to end the session permanently.
+
+See [8.3](#83-codec-support-probing-and-the-firefox-quirk) for the check that runs before this point, §25 for the four different things a black picture can mean, and issue #498 for the report that prompted all of it.
 
 ---
 
@@ -528,9 +540,9 @@ export interface StartStreamOptions {
 | `secure` | Use `wss://` / `https://` when `true`. Defaults to `location.protocol === 'https:'`. |
 | `pathname` | HTTP path prefix for the WebSocket endpoint. Defaults to `location.pathname`. |
 
-**Stream settings** — all optional. Omit them and the library runs smart auto-selection against the device's probed encoder list (H.265 preferred, then H.264, then AV1, filtered by what the browser can decode; see `detectBestCodecAndEncoder()` in `StreamClientScrcpy.ts`).
+**Stream settings** — all optional. Omit them and the library runs smart auto-selection against the device's probed encoder list, filtered by what the browser can decode. The order is H.265 → H.264 → AV1 → VP8 → VP9; see `chooseCodec()` in `codecSelection.ts`.
 
-**VP8 and VP9 are never auto-selected** — they exist for devices whose encoder list has no H.264/H.265/AV1 at all, which is the low-end and older hardware case, so they are opt-in via an explicit `codec`. The auto-selection list is deliberately the three mainstream codecs.
+**VP8/VP9 sit at the tail deliberately.** They exist for devices whose encoder list has no H.264/H.265/AV1 at all — the low-end and older hardware case — so a device offering any of the mainstream three still gets one of those. ⚠️ They were originally excluded from auto-selection entirely, which meant the exact devices the feature was added for could only reach it by naming the codec explicitly, and anyone who did not know to do that got a stream that could not start. Appending them changes nothing for a device that offers a mainstream codec, because such a device never reaches the tail.
 
 | Field | Purpose |
 |-------|---------|
@@ -611,53 +623,79 @@ The home page's `ConnectModal` imports `startStream` from the same TypeScript so
 
 ---
 
-## 7. Quality Protection System
+## 7. Frame-Size Monitoring
 
-The quality protection system in `StreamClientScrcpy` detects when the video encoder's output quality has degraded (typically due to scrcpy-server's internal rate control) and automatically refreshes the stream to request a fresh keyframe.
+`StreamClientScrcpy` tracks the encoded size of every non-config video frame.
+It exists to notice that **the picture has stopped changing** — which is not
+the same thing as the stream being broken, and the difference is the whole
+point of this section.
 
-### 7.1 Frame Size Monitoring
+### 7.1 What is measured
 
 ```
-frameSizes[]: rolling window of 30 non-config frame sizes (in bytes)
-baselineFrameSize: average of the first 30 frames (established once)
-degradationCount: consecutive windows that fail the threshold check
+frameSizes[]:       rolling window of 30 non-config frame sizes (bytes)
+baselineFrameSize:  average of the first 30 frames (established once)
+degradationCount:   consecutive windows below the threshold
 ```
 
-Every non-config video frame's byte size is appended to `frameSizes[]`. After the first 30 frames establish the baseline, the window shifts (oldest frame removed) and `checkForDegradation()` runs.
+### 7.2 What it concludes — a question, not a verdict
 
-### 7.2 Degradation Detection
+When the window looks empty (`looksLikeNoPicture`), the app **asks the device
+whether its keyguard is up** and, if so, shows a banner over the video. It does
+not act on the frame sizes alone.
 
-```typescript
-const avg = frameSizes.reduce((a, b) => a + b, 0) / frameSizes.length;
-if (avg < baselineFrameSize * 0.10) {
-    degradationCount++;
-    if (degradationCount >= 5) {
-        // 5 consecutive bad windows -> refresh
-    }
-} else {
-    degradationCount = 0;  // Reset on recovery
-}
+Two conditions, and the second is not optional:
+
+- **Relative** — `avg < baseline * 0.1`. Catches a stream that *becomes*
+  static, i.e. the phone locking mid-session.
+- **Absolute** — `avg < NO_PICTURE_FRAME_BYTES` (1000). Catches one that starts
+  that way. Connecting to an already-locked phone builds the baseline out of
+  black frames, so nothing can ever be "small relative to" it.
+
+Being liberal about *when to ask* is safe: the banner is driven by the device's
+answer, and an unparseable `dumpsys` reads as unlocked.
+
+### 7.3 ⚠️ What this used to do, and why it was wrong
+
+Until beta.82 this was a "quality protection system": the same signal was read
+as proof the encoder's output had degraded, and the app forced a reconnect.
+
+The premise was wrong. **Small frames mean the picture is not changing** — a
+static app, a screensaver, a locked phone — which is a healthy stream. And the
+remedy could not work: the reconnect landed on the same black screen, because
+the cause was still there.
+
+Its thresholds had been loosened twice (10s → 30s cooldown, 25% → 10%) chasing
+false positives rather than questioning the idea. The user-visible result was
+video that interrupted itself every ~30 seconds, fixed nothing, and explained
+nothing. From issue #498's own logs, with the baseline collapsing as it rebuilt
+from black frames:
+
+```
+Quality degradation detected (avg=38  vs baseline=16413), refreshing stream
+Quality degradation detected (avg=13  vs baseline=19020), refreshing stream
+Quality degradation detected (avg=185 vs baseline=2200),  refreshing stream
 ```
 
-The threshold is 10% of baseline. The 10% value was tuned after 25% proved too sensitive for static content (screensavers, idle screens produce legitimately small delta frames).
+The automatic refresh and its `lastRefreshTime` cooldown are **gone**. See §25
+for what a black picture actually means, and the measurements behind it.
 
-### 7.3 Stream Refresh
+### 7.4 Stream refresh (manual only)
 
-`refreshStream()` performs a full reconnection cycle:
+`refreshStream()` still exists and is still wired to the toolbar button. It is
+no longer called automatically.
 
 1. Set `isRefreshing = true` (protects the touch handler from being destroyed)
 2. Close the existing `ScrcpyDemuxer`
-3. Stop the `AudioPlayer`
-4. Stop and re-pause the player (clears decoded frame queue)
+3. Stop the `AudioPlayer` and clear the reference
+4. Stop and re-pause the player (clears the decoded frame queue)
 5. Create a new `ScrcpyDemuxer` with the same stream URL
 6. Re-wire all callbacks
 7. Set `isRefreshing = false`
 
-This triggers a new scrcpy-server session on the server side, which starts with a fresh keyframe.
-
-### 7.4 Cooldown
-
-A 30-second cooldown (`lastRefreshTime`) prevents refresh storms. The cooldown was increased from 10 seconds after testing showed encoder quality sometimes needs time to stabilize after a refresh.
+This starts a new scrcpy-server session, which begins with a fresh keyframe.
+For recovering a stalled stream *without* a reconnect, see the decode watchdog
+and `TYPE_RESET_VIDEO` in §25.2.
 
 ---
 
@@ -681,17 +719,20 @@ Browser                          Server
 
 ### 8.2 Auto-Selection Algorithm
 
-`detectBestCodecAndEncoder()` in `StreamClientScrcpy.ts`:
+`detectBestCodecAndEncoder()` in `StreamClientScrcpy.ts` delegates the decision to `chooseCodec()` in `codecSelection.ts`, which is pure and unit-tested (the browser probe is injected):
 
 1. **Probe the device** for available encoders
-2. **For each codec in preference order** (`h265` > `h264` > `av1`):
-   a. Check if the device has an encoder for this codec (pattern match in encoder names)
+2. **For each codec in `CODEC_PREFERENCE`** (`h265` > `h264` > `av1` > `vp8` > `vp9`):
+   a. Check if the device has an encoder for this codec (`encoderMatchesCodec()`)
    b. Check if the browser can decode it (`probeDecodeSupport()` — see 8.3; several candidate profile strings per codec, and a definite "no" is honoured for every codec including H.264)
    c. If both pass, select this codec
-3. **Pick the best encoder** for the selected codec:
-   - Hardware encoders preferred: match against `/\.mtk\.|\.qcom\.|\.exynos\.|\.intel\.|\.nvidia\./i`
-   - Fall back to first available (typically `c2.android.*` software encoders)
-4. **Fallback:** If probe fails entirely, try browser-only detection (same codec preference order) and default to H.264
+3. **Pick the best encoder** for the selected codec (`pickEncoderForCodec()`): prefer any encoder that is **not** one of Android's own software codecs, falling back to the first match.
+4. **Fallback:** If probe fails entirely, try browser-only detection (same preference order) and default to H.264
+
+**Two things here were wrong for a long time, and both were invisible on the hardware we own:**
+
+- **Encoder names have two spellings.** `h264`/`h265` appear as both `.avc.`/`.hevc.` and `.h264.`/`.h265.`. A Pixel 10a reports *both* `c2.android.avc.encoder` (software) and `c2.exynos.h264.encoder` (hardware); matching only `.avc.` hid the hardware encoder end to end — `DeviceProbe` dropped it before it left the server — and every h264 session silently used software. `ConfigureScrcpy` knew about `.h264.` in a private copy of the matching, which is how the divergence survived; both now share `CODEC_ENCODER_PATTERNS`.
+- **Hardware detection was an allow-list of vendors** (`.mtk.|.qcom.|.exynos.|.intel.|.nvidia.`), so any SoC not on it — Amlogic especially, which is ubiquitous in Android TV boxes — fell through to a software encoder. Inverted to `isSoftwareEncoder()`, which recognises `c2.android.*` / `OMX.google.*` and prefers anything else, so unfamiliar silicon fails safe.
 
 ### 8.3 Codec Support Probing (and the Firefox Quirk)
 
@@ -1132,7 +1173,11 @@ Rendered by `DeviceTracker` via WebSocket updates from `ControlCenter`. The serv
 
 Both buttons are built via DOM manipulation (not the `html` template tag) because the template's XSS protection escapes raw HTML strings.
 
-**Interface auto-selection:** The interface dropdown was removed. The best connection path is selected automatically: WiFi interface (direct IP) is preferred, falls back to the first available interface, then to ADB proxy as a last resort.
+**Interface auto-selection:** The interface dropdown was removed; the connection path is chosen automatically by `pickDeviceInterface()` (`src/app/googDevice/client/pickDeviceInterface.ts`), falling back to the ADB proxy when the device reports no usable interface.
+
+An explicit `wifi.interface` property still wins when the device sets one. ⚠️ **Modern Android does not** — `getprop wifi.interface` returns empty on Android 17 — and the old fallback was simply `interfaces[0]` over an alphabetically-sorted list. On a phone with mobile data that picks `rmnet16` over `wlan0`, so the app advertised the device's **carrier CGNAT address** (`100.90.22.137`), which nothing on the LAN can route to. Single-homed devices such as TV boxes hid this completely, since there was nothing to choose between.
+
+Candidates are now ranked by interface-name family — `wlan*`/`wifi*` first, then `eth*`, then USB tethering, then tunnels, then cellular (`rmnet*`, `ccmni*`, `pdp_ip*`) — plus a bonus for an RFC1918 address, which deliberately **excludes** 100.64.0.0/10. That range is shared by Tailscale and every mobile carrier, so treating CGNAT as "private" would defeat the whole check.
 
 **Removed legacy features:**
 - Interface dropdown (replaced by auto-selection)
@@ -1166,7 +1211,7 @@ A **manually add** button sits next to **scan network** and opens an inline form
 | POST | `/api/devices/disconnect` | JSON body `{ address }`. |
 | GET | `/api/devices/labels` | All labels as `{ key: label }` where key is serial or MAC. |
 | PUT | `/api/devices/labels` | `{ serial, label }`. Empty label deletes. |
-| GET | `/api/devices/screen-state` | `?udid=ip:port` -> `{ awake }` via `dumpsys power > mWakefulness`. |
+| GET | `/api/devices/screen-state` | `?udid=ip:port` -> `{ awake, locked }` from one shell round trip (`dumpsys power > mWakefulness` + `dumpsys window > isKeyguardShowing`, both grepped on-device). `locked` drives the stream window's lock banner — Android will not capture the keyguard, so a locked device is otherwise indistinguishable from a broken stream (§25.1). Parser: `src/server/deviceScreenState.ts`. |
 | POST | `/api/devices/sleep-wake` | `{ udid, action: 'sleep'|'wake' }` -> sends keyevent 223/224, re-checks after 500 ms. |
 
 #### 14.2.2 Scan WebSocket (`/ws-scan`)
@@ -2109,7 +2154,35 @@ proves nothing. Ask instead for:
 3. Average frame size if available. Around 13 bytes means a black surface;
    tens of KB means real content is arriving and the fault is downstream.
 
-### 25.7 Key Files
+### 25.7 `TypedEmitter` and Node's reserved `'error'` event
+
+Not a black-screen cause, but it lives in the same failure neighbourhood and is
+worth knowing before touching either.
+
+`TypedEmitter` presents a DOM `EventTarget` surface (`addEventListener` /
+`dispatchEvent`) over Node's `EventEmitter`, and lets callers declare `'error'`
+as an ordinary entry in a typed event map. Node disagrees: it **reserves**
+`'error'` and throws when it is emitted with no listener attached. So the type
+says "ordinary event" while the runtime treats it as a fatal channel.
+
+Two live consequences before this was guarded:
+
+- **`dispatchEvent`** — `Multiplexer` dispatches its socket's error event, and a
+  channel's transport is itself a `Multiplexer`, so the event makes two hops and
+  the inner one had nothing behind it. A dropped connection filled the console
+  with `Unhandled error. (undefined)` on every reconnect attempt. (`undefined`
+  because the `events` polyfill formats `er.message`, and a plain `Event` has
+  none — that detail is what identifies this rather than something else.)
+- **`emit`** — `HostTrackerEvents` types `'error'` as a plain `string` and
+  **nothing in the codebase listens for it**, so every `MessageType.ERROR` from
+  the server threw inside `onSocketMessage` and abandoned the rest of the
+  handler.
+
+Both methods now return `false` instead of emitting when `'error'` has no
+listener. Attaching a listener restores ordinary delivery, which is how
+`AdbkitFilePushStream` → `FilePushHandler` works.
+
+### 25.8 Key Files
 
 | File | Purpose |
 |------|---------|
