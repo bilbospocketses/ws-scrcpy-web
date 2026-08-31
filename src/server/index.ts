@@ -7,6 +7,7 @@ import { CapabilitiesApi } from './api/CapabilitiesApi';
 import { ConfigApi } from './api/ConfigApi';
 import { DependencyApi } from './api/DependencyApi';
 import { DeviceDiscoveryApi } from './api/DeviceDiscoveryApi';
+import { EmbedRequestApi } from './api/EmbedRequestApi';
 import { ServerShutdownApi } from './api/ServerShutdownApi';
 import { ServiceApi } from './api/ServiceApi';
 import { SettingsApi } from './api/SettingsApi';
@@ -29,6 +30,7 @@ import { NetworkScanner } from './network/NetworkScanner';
 import { consumeSuppressBrowserMarker, openBrowser, shouldAutoOpenBrowser } from './openBrowser';
 import { findAvailablePort, webPortOverride } from './PortPicker';
 import { ScrcpyConnection } from './ScrcpyConnection';
+import { setFrameAncestors } from './security/frameGuard';
 import { setAllowedHosts } from './security/originGuard';
 import { makeProductionCoreDeps, parseSystemServiceArgs, runSystemServiceCli } from './service/systemServiceCli';
 import { HttpServer } from './services/HttpServer';
@@ -88,8 +90,13 @@ if (__ssArgs) {
     // Apply the operator-configured Host allowlist to the security layer before
     // any server starts accepting requests. Empty by default (localhost + IP
     // literals only); a config.json `allowedHosts` opts a domain/reverse-proxy
-    // deployment in. See docs/SECURITY.md.
+    // deployment in. See SECURITY.md.
     setAllowedHosts(config.allowedHosts);
+
+    // Origins allowed to embed the app in a frame, beyond its own. Empty by
+    // default (SAMEORIGIN only); a config.json `frameAncestors` opts a specific
+    // local embedder in. See SECURITY.md.
+    setFrameAncestors(config.frameAncestors);
 
     // Detect port collision: walk forward from the configured webPort until a free
     // port is found (range = configured..+99). On shift, persist the new port and
@@ -132,6 +139,9 @@ if (__ssArgs) {
 
     const configApi = new ConfigApi();
     HttpServer.addApiHandler(configApi);
+
+    const embedRequestApi = new EmbedRequestApi();
+    HttpServer.addApiHandler(embedRequestApi);
 
     const settingsApi = new SettingsApi();
     HttpServer.addApiHandler(settingsApi);

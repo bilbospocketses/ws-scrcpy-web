@@ -17,6 +17,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`PRIVACY.md` said "No cookies of any kind"; the app sets two.** The published policy asserted in four places that no cookies are used, while the project's own `SECURITY.md` documents a per-launch `HttpOnly; SameSite=Strict` instance token handed to every browser that loads a page, and smoke Module 18 exercises an `HttpOnly` session cookie that survives restart. The policy now describes both — a per-launch instance token that exists only as a CSRF / DNS-rebinding defence and carries no identity, and a session cookie present only when the optional login is enabled — while keeping the claim that actually matters and is true: no tracking cookies, no third-party cookies, nothing that leaves your machine. The stale "no login" line is corrected to "no project-operated account" (the opt-in login shipped in beta.67), the §"Web UI storage (no cookies)" heading is retitled, and the Effective date is bumped per the policy's own §Changes rule.
+
+- **README told contributors to put ADB on `PATH`, which the architecture forbids.** `## Requirements` listed "**ADB** installed and in PATH" and the Quick Start repeated it, while `CONTRIBUTING.md` states in bold that PATH is deliberately never consulted and that a PR introducing a bare-name binary invocation will be sent back. Both README lines now match reality: ADB is downloaded into the app's own `dependencies/` folder on first run and invoked by absolute path.
+
+### Added
+
+- **`frameAncestors` in `config.json` — allow a named origin to embed the app in an iframe.** Static responses have carried `X-Frame-Options: SAMEORIGIN` since the security pass in #377, which also blocks a legitimate case: another local tool framing the app from a different port, since a different port is a different origin. Chrome and Edge render that refusal as *"localhost refused to connect"*, so it reads as a dead server when the app is serving normally.
+
+  ```json
+  { "frameAncestors": ["http://localhost:5159"] }
+  ```
+
+  adds `Content-Security-Policy: frame-ancestors 'self' http://localhost:5159`. Both headers are sent on purpose — a browser supporting CSP `frame-ancestors` must ignore `X-Frame-Options` when both are present, so the allowlist applies in modern browsers while older ones keep the stricter behaviour. Configure nothing and the headers are byte-identical to before.
+
+  Entries must be bare origins (`scheme://host[:port]`, no path, query or fragment) and `*` is rejected outright, since allowing any embedder is what the header exists to prevent. Bad entries are dropped with a warning rather than throwing, so a malformed value cannot stop the server booting. Like `allowedHosts`, the key is server-only and read at boot — never exposed or mutable through `/api/config` — and `saveToDisk` preserves it. The trade-off it makes is documented in `SECURITY.md` §Framing: each listed origin may frame the app, so anything able to serve on that port can attempt clickjacking.
+
+- **Another local app can request embedding permission, instead of you hand-editing `config.json`.** ws-scrcpy-web shows a prompt naming the app and the origin; approving writes the origin to `frameAncestors` and applies it to the running server immediately, with no restart.
+
+  The split between asking and granting is the whole security design. **Asking is unauthenticated but powerless**: `POST /embed-request` only raises a prompt, never touches config, is accepted from **loopback only** (LAN clients may use the app but not raise a consent prompt on your desktop), keeps exactly one request pending at a time, and expires after five minutes. **Granting is admin-gated, same-origin and loopback-only**: only `POST /api/embed-request/decision`, driven by a human clicking Approve in this app's own UI, writes anything. The loopback check on the approval surface is load-bearing rather than defence in depth — in open mode `requireAdmin` resolves to the implicit admin, and the per-instance token that gates `/api` is handed to any unauthenticated GET of an extensionless path, so without it a LAN client could mint a token and approve its own request.
+
+  Both `/embed-request` routes are allow-listed in the auth gate, because they are unauthenticated by design and grant nothing. Without that, locked mode answers them with `200` plus the login page, which a JSON client reads as a malformed success rather than "sign in first". The gate's login page and its `401` now carry the framing headers too — a credential form is the one page that must never be framed, and it previously shipped without `X-Frame-Options` or CSP. A stale prompt cannot grant — a decision naming an id that is not currently pending is refused, so an already-answered, expired or superseded request can never be flipped to approved.
+
+  A web page cannot even ask: browsers always send `Origin` on `fetch()`, and the Origin check rejects a cross-origin one on every non-GET request, so only a non-browser local caller reaches the endpoint at all. The residual risk — a local program asking for an origin it controls and hoping you click through — is why the prompt shows the origin verbatim and deny is the safe answer. `SECURITY.md` §Framing says so plainly.
+
+  **Settings → Embedding lists the approved origins, each with a revoke button.** Granting was otherwise a one-way door: an approval wrote the origin into `config.json` and the only way back was hand-editing the file. Revoking is admin- and loopback-gated like approving, since it is the same class of decision, and applies to the running server immediately — the next response omits that origin and whatever it was displaying stops rendering. It asks for confirmation first, because the breakage appears in the *other* app as "refused to connect", which is easy to misread as the server being down.
+
+  **The asking app can withdraw a request** via `POST /embed-request/{id}/cancel` — loopback-only like the ask, and retract-only: a cancel naming a request that is not currently pending is refused, so it can never undo a decision a human already made. The open prompt learns about it by polling its own status every three seconds, because the background poller is paused while a dialog is up and nothing else would notice. It then becomes a read-and-close notice saying the app withdrew the request. Without this, cancelling on the other side left a prompt counting down for an app that had stopped listening, where approving would have granted permission nobody was asking for.
+
+  Expiry and withdrawal end the same way — a close-button acknowledgement that does not vanish on its own, and **no decision is sent**. Only the deny and approve buttons ever produce one.
+
+  **The prompt is a forced choice** (`dismissible: false`): no close button, and Escape or a click on the backdrop is ignored. Granting an origin permission to frame the app has to be deliberate, and dismissing the dialog by mis-clicking beside it previously reported a *denial the user never made* back to the asking app. The only exits are the two buttons and the countdown reaching zero.
+
 ## [0.1.30-beta.82] - 2026-08-27
 
 ### Fixed

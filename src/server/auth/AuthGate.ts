@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import type { Db } from '../db/Db';
+import { securityHeaders } from '../security/frameGuard';
 import { isAllowlisted, isAuthEnabled, parseCookie, SESSION_COOKIE } from './authState';
 import { SessionStore } from './session';
 
@@ -22,7 +23,11 @@ if(r.ok){location.href='/';}else{e.textContent='Invalid credentials or the accou
 </script></body></html>`;
 
 function serveLoginPage(res: ServerResponse): void {
-    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    // securityHeaders() matters more here than on any other response: this page carries a
+    // credential form, so it is the one page that must never be framed. It previously shipped
+    // with neither X-Frame-Options nor CSP, which also let an embed pre-check that reads these
+    // headers conclude the server was embeddable when it is not.
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', ...securityHeaders() });
     res.end(LOGIN_PAGE_HTML);
 }
 
@@ -43,7 +48,7 @@ export class AuthGate {
         // (Never fall back to the implicit admin here — resolveUserId would otherwise grant admin.)
         if (!user || user.disabled) {
             if (url.pathname.startsWith('/api/')) {
-                res.writeHead(401, { 'content-type': 'application/json' });
+                res.writeHead(401, { 'content-type': 'application/json', ...securityHeaders() });
                 res.end(JSON.stringify({ error: 'unauthorized' }));
             } else {
                 // Serve the login page INLINE — never redirect to /login (that would fall through

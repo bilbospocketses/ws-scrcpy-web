@@ -420,6 +420,7 @@ export class SettingsModal extends Modal {
     private role: Role | null = null;
     private authEnabled = false;
     private serviceSection!: HTMLElement;
+    private embedOriginsBody: HTMLElement | null = null;
     private webPortInput: HTMLInputElement | null = null;
     private webPortStatus: HTMLElement | null = null;
     private serverSaveBtn: HTMLButtonElement | null = null;
@@ -493,6 +494,8 @@ export class SettingsModal extends Modal {
         // fillBody is called). The server enforces the same set via requireAdmin.
         // The "Users" section (manage users button + auth toggle) is admin-only.
         if (canSeeSection(this.role, 'users')) container.appendChild(this.buildUsersSection());
+        // Next to Users: both answer "who is allowed to do what with this server".
+        if (canSeeSection(this.role, 'embedOrigins')) container.appendChild(this.buildEmbedOriginsSection());
         if (canSeeSection(this.role, 'updates')) container.appendChild(this.buildUpdatesSection());
         if (canSeeSection(this.role, 'service')) container.appendChild(this.buildServiceSection());
         container.appendChild(this.buildServerSection()); // always (contains the user-level reset row)
@@ -566,6 +569,96 @@ export class SettingsModal extends Modal {
     }
 
     // ── Users section (admin-only) ─────────────────────────────────────────
+    /**
+     * Origins allowed to frame this app, each with a revoke button.
+     *
+     * Permission is granted through the consent prompt, which is a one-way door without this —
+     * approving wrote an origin into config.json and there was no way back short of hand-editing
+     * the file. Revoking takes effect on the running server immediately.
+     */
+    private buildEmbedOriginsSection(): HTMLElement {
+        const { section, body } = this.buildSection('Embedding');
+        this.embedOriginsBody = body;
+        this.renderEmbedOrigins(null);
+        void this.refreshEmbedOrigins();
+        return section;
+    }
+
+    private async refreshEmbedOrigins(): Promise<void> {
+        try {
+            const res = await fetch('/api/embed-origins', { headers: { Accept: 'application/json' } });
+            if (!res.ok) {
+                this.renderEmbedOrigins([], 'could not read the list — see server logs.');
+                return;
+            }
+            const body = (await res.json()) as { origins?: string[] };
+            this.renderEmbedOrigins(body.origins ?? []);
+        } catch {
+            this.renderEmbedOrigins([], 'could not reach the server.');
+        }
+    }
+
+    /** `origins === null` means "still loading". */
+    private renderEmbedOrigins(origins: string[] | null, error?: string): void {
+        const body = this.embedOriginsBody;
+        if (!body) return;
+        body.textContent = '';
+
+        if (error) {
+            body.appendChild(this.buildRow(error, document.createElement('span')));
+            return;
+        }
+        if (origins === null) {
+            body.appendChild(this.buildRow('loading…', document.createElement('span')));
+            return;
+        }
+        if (origins.length === 0) {
+            body.appendChild(this.buildRow('No other origins may embed this app.', document.createElement('span')));
+            return;
+        }
+
+        for (const origin of origins) {
+            const revokeBtn = document.createElement('button');
+            revokeBtn.type = 'button';
+            revokeBtn.className = 'modal-button';
+            revokeBtn.textContent = 'revoke';
+            revokeBtn.addEventListener('click', () => {
+                void (async () => {
+                    // Confirm first: revoking silently breaks a working embed in the other app,
+                    // and the browser reports that as "refused to connect" — easy to misread as
+                    // the server being down.
+                    const sure = await ConfirmModal.confirm({
+                        title: 'revoke embedding permission?',
+                        message:
+                            `${origin} will no longer be able to display this app in a frame. ` +
+                            'Anything it is currently showing will stop working immediately. ' +
+                            'It can ask again.',
+                    });
+                    if (!sure) return;
+
+                    revokeBtn.disabled = true;
+                    try {
+                        const res = await fetch('/api/embed-origins/revoke', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ origin }),
+                        });
+                        if (res.ok) {
+                            const updated = (await res.json()) as { origins?: string[] };
+                            this.renderEmbedOrigins(updated.origins ?? []);
+                        } else {
+                            // Most likely a stale list — re-read rather than guess.
+                            await this.refreshEmbedOrigins();
+                        }
+                    } catch {
+                        this.renderEmbedOrigins([], 'could not reach the server.');
+                    }
+                })();
+            });
+            body.appendChild(this.buildRow(origin, revokeBtn));
+        }
+    }
+
     private buildUsersSection(): HTMLElement {
         const { section, body } = this.buildSection('Users');
 
