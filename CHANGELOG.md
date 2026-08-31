@@ -17,6 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`PRIVACY.md` said "No cookies of any kind"; the app sets two.** The published policy asserted in four places that no cookies are used, while the project's own `SECURITY.md` documents a per-launch `HttpOnly; SameSite=Strict` instance token handed to every browser that loads a page, and smoke Module 18 exercises an `HttpOnly` session cookie that survives restart. The policy now describes both — a per-launch instance token that exists only as a CSRF / DNS-rebinding defence and carries no identity, and a session cookie present only when the optional login is enabled — while keeping the claim that actually matters and is true: no tracking cookies, no third-party cookies, nothing that leaves your machine. The stale "no login" line is corrected to "no project-operated account" (the opt-in login shipped in beta.67), the §"Web UI storage (no cookies)" heading is retitled, and the Effective date is bumped per the policy's own §Changes rule.
+
+- **README told contributors to put ADB on `PATH`, which the architecture forbids.** `## Requirements` listed "**ADB** installed and in PATH" and the Quick Start repeated it, while `CONTRIBUTING.md` states in bold that PATH is deliberately never consulted and that a PR introducing a bare-name binary invocation will be sent back. Both README lines now match reality: ADB is downloaded into the app's own `dependencies/` folder on first run and invoked by absolute path.
+
 ### Added
 
 - **`frameAncestors` in `config.json` — allow a named origin to embed the app in an iframe.** Static responses have carried `X-Frame-Options: SAMEORIGIN` since the security pass in #377, which also blocks a legitimate case: another local tool framing the app from a different port, since a different port is a different origin. Chrome and Edge render that refusal as *"localhost refused to connect"*, so it reads as a dead server when the app is serving normally.

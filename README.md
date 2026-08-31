@@ -154,7 +154,7 @@ For data-handling details, see our [Privacy Policy](PRIVACY.md).
 Required for building from source. See [Self-Contained Deployment](#self-contained-deployment) for standalone installations that bundle everything.
 
 - **Node.js** 24 LTS or later
-- **ADB** installed and in PATH
+- **ADB** — nothing to install. The dependency manager downloads ADB into the app's own `dependencies/` folder on first run and invokes it by absolute path; **`PATH` is deliberately never consulted**, so putting ADB on `PATH` will not make the app find it (see [CONTRIBUTING](CONTRIBUTING.md))
 - **Android device** with USB debugging or wireless debugging enabled
 
 ## Quick Start (Developer Mode)
@@ -168,7 +168,7 @@ npm start
 
 Open `http://localhost:8000` in your browser.
 
-This mode requires Node.js and ADB installed on your system. See [Self-Contained Deployment](#self-contained-deployment) for a standalone installation that bundles everything.
+This mode requires Node.js on your system; ADB is fetched into `dependencies/` on first run and resolved by absolute path, never from `PATH`. See [Self-Contained Deployment](#self-contained-deployment) for a standalone installation that bundles everything.
 
 ### Optional: `npm run fetch-prebuilts`
 

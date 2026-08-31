@@ -1,6 +1,6 @@
 # Privacy Policy
 
-**Effective: 2026-04-27**
+**Effective: 2026-08-31**
 
 ## TL;DR
 
@@ -14,7 +14,7 @@ Everything you do with ws-scrcpy-web stays on your computer:
 - **scrcpy stream data** (video, audio, touch/keyboard input) -- bounces between the device, the local server, and your browser. Never leaves the LAN.
 - **Network device discovery** (mDNS + TCP port-5555 sweep) -- your machine talks to your local network only.
 - **Web UI** -- served from `localhost`. No third-party scripts, no analytics, no tracking pixels.
-- **UI preferences** -- theme choice (dark/light), per-device video/audio stream settings, file-browser icon size, and saved subnets for network scans -- persist **server-side in the app's local SQLite database** (`wsscrcpy.db`, in your data directory), written by the localhost server. They no longer use browser `localStorage` (which now holds only a one-time migration marker). No cookies.
+- **UI preferences** -- theme choice (dark/light), per-device video/audio stream settings, file-browser icon size, and saved subnets for network scans -- persist **server-side in the app's local SQLite database** (`wsscrcpy.db`, in your data directory), written by the localhost server. They no longer use browser `localStorage` (which now holds only a one-time migration marker). No tracking or third-party cookies — see [Web UI storage](#web-ui-storage) for the two first-party cookies the app does set.
 
 ## What leaves your machine
 
@@ -54,8 +54,8 @@ Release artifacts are currently unsigned, so there is no code-signing revocation
 - **No telemetry.** We don't ping a metrics endpoint on startup, on feature use, or on shutdown.
 - **No analytics.** We don't send page views, click events, or session times anywhere.
 - **No crash reporting.** We don't ship Sentry, Bugsnag, or anything similar. If we add this in the future, the change will be flagged in `CHANGELOG.md` and this file will be updated.
-- **No project-operated server.** There is no ws-scrcpy-web cloud account, no login, no sync. The app is local-only.
-- **No cookies.** UI preferences persist server-side in the local SQLite store (see below); the browser keeps only a one-time migration marker in `localStorage`. No cookies of any kind.
+- **No project-operated account.** There is no ws-scrcpy-web cloud account and no sync — the app is local-only. It has an optional login for the app's own UI, which authenticates against accounts stored on your machine; no credentials ever leave it.
+- **No tracking cookies.** UI preferences persist server-side in the local SQLite store (see below); the browser keeps only a one-time migration marker in `localStorage`. The app does set two first-party, `HttpOnly`, same-site cookies that never leave your machine — see [Web UI storage](#web-ui-storage).
 
 ## Third-party operators
 
@@ -69,9 +69,20 @@ When traffic does leave your machine, it goes to one of these well-known operato
 | Velopack | Update SDK (the SDK runs locally; no data goes to Velopack itself) | https://velopack.io |
 | Genymobile (scrcpy) | Source of scrcpy-server binary, hosted on GitHub | See GitHub policy above |
 
-## Web UI storage (no cookies)
+## Web UI storage
 
-The browser side of the app uses no cookies. UI preferences — theme, per-device video/stream settings (codec, encoder, fps, bitrate), per-device audio settings, file-browser icon size, and saved network-scan subnets — persist **server-side in the app's local SQLite database** (`wsscrcpy.db`, in your data directory alongside `config.json` and `logs/`), written by the localhost server through its settings API. The database stays on your machine; nothing is transmitted off-device.
+The browser side of the app sets **no tracking and no third-party cookies**. It does set two
+first-party cookies, both `HttpOnly` and same-site, neither of which ever leaves your machine and
+neither of which identifies you to anyone:
+
+- **A per-launch instance token.** Issued to any browser that loads a page, and discarded when the
+  server restarts. It exists so a non-browser client cannot drive the API, and so another site
+  cannot make your browser act on the app behind your back (CSRF / DNS-rebinding defence). It
+  carries no identity — only a random value that is valid for the life of that one server process.
+- **A session cookie, only if you enable login.** Present only when the optional login is turned on,
+  and tied to an account stored in the local SQLite database on your machine.
+
+Both are described in [SECURITY.md](SECURITY.md). UI preferences — theme, per-device video/stream settings (codec, encoder, fps, bitrate), per-device audio settings, file-browser icon size, and saved network-scan subnets — persist **server-side in the app's local SQLite database** (`wsscrcpy.db`, in your data directory alongside `config.json` and `logs/`), written by the localhost server through its settings API. The database stays on your machine; nothing is transmitted off-device.
 
 Browser `localStorage` now holds only a one-time migration marker (`ws-scrcpy-web:migrated-to-sqlite`, set after any legacy preferences are imported into the database) and, if you turn it on, a verbose-logging debug flag (`ws-scrcpy-web-debug`). No preferences, no identifiers.
 
