@@ -30,10 +30,18 @@ One thing worth knowing if you test on Firefox/Windows: it asks the operating sy
 ```bash
 npm run build:dev     # dev build with source maps
 npx tsc --noEmit      # type-check — the build does NOT do this (see below)
-npm test              # vitest run (all tests)
+npm test              # vitest run (unit tests)
+npm run test:e2e      # Playwright end-to-end suite — see tests/e2e/README.md
+npm run test:e2e:types # type-check the e2e suite (tests/ sits outside the root tsconfig)
 npm run lint          # biome check
 npm run format        # biome check --write
 ```
+
+> **`npm test` does not run the end-to-end suite.** Vitest covers the unit tests;
+> `npm run test:e2e` starts a real server on its own port against a throwaway config
+> and drives it with Playwright. CI runs **both** inside `build-and-test`, so a change
+> that passes `npm test` can still fail the required check. `tests/e2e/README.md`
+> explains the isolation model and why the suite runs serially.
 
 > **`npm run build` does not type-check.** The webpack build transpiles through
 > `swc-loader`, which strips types without checking them — that is what made the

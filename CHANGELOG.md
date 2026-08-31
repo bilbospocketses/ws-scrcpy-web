@@ -17,6 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`npm run lint` did not lint the end-to-end suite it was configured to cover.** `biome.json` lists `tests/**` and `playwright.config.ts` in its `includes`, but the `lint` and `format` scripts pass an explicit `src/` path, which overrides the config — so the harness added alongside the e2e suite was configured for biome and then never checked, in CI or locally. Both scripts now name the paths they are meant to cover. (The same mismatch still applies to `webpack/**`, which `biome.json` includes and no script has ever checked; that gap predates this change and is tracked separately rather than fixed here.)
+
+- **`CONTRIBUTING.md` documented a test workflow that no longer matches CI.** Its command block listed `npm test` and nothing else, while `build-and-test` — the check `main`'s ruleset requires — now runs the Playwright suite and its typecheck as well. A contributor following the documented workflow could pass everything locally and still fail the required check, with nothing in the docs explaining why. The block now lists `test:e2e` and `test:e2e:types`, and says plainly that `npm test` does not run the e2e suite.
+
 ### Added
 
 - **Playwright end-to-end suite (`npm run test:e2e`).** Fourteen specs covering the embed-consent protocol, the framing headers and Settings → Embedding, running against a real server process rather than mocks. This is the layer the existing vitest suite cannot reach: `frameGuard` and `embedRequests` are already covered as pure functions, but a header that never reaches the wire, or an approval that rewrites `config.json` and drops `webPort` out from under the running server, both look fine to a unit test. Every consent spec asserts the keys it must not have touched.
