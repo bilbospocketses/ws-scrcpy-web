@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import type { IncomingMessage, ServerResponse } from 'http';
 import * as path from 'path';
+import { securityHeaders } from './security/frameGuard';
 
 const MIME_TYPES: Record<string, string> = {
     '.html': 'text/html',
@@ -22,10 +23,10 @@ const MIME_TYPES: Record<string, string> = {
 // reinterpreted as script); `SAMEORIGIN` blocks cross-origin framing
 // (clickjacking) while still allowing the same-origin iframe embedding the app
 // documents. (#24)
-const SECURITY_HEADERS = {
-    'X-Content-Type-Options': 'nosniff',
-    'X-Frame-Options': 'SAMEORIGIN',
-} as const;
+//
+// Resolved per response rather than frozen in a const: an operator can allow
+// specific embedding origins via config.json `frameAncestors`, which adds a CSP
+// `frame-ancestors` header. See security/frameGuard.ts.
 
 // A missing path falls back to the SPA shell only for a navigation: an
 // HTML-accepting request for an extensionless (route-like) path. Asset requests
@@ -44,7 +45,7 @@ export function createStaticHandler(publicDir: string): (req: IncomingMessage, r
         // Normalize and prevent directory traversal
         filePath = path.resolve(filePath);
         if (!filePath.startsWith(path.resolve(publicDir))) {
-            res.writeHead(403, { 'Content-Type': 'text/plain', ...SECURITY_HEADERS });
+            res.writeHead(403, { 'Content-Type': 'text/plain', ...securityHeaders() });
             res.end('Forbidden');
             return;
         }
@@ -54,18 +55,18 @@ export function createStaticHandler(publicDir: string): (req: IncomingMessage, r
                 if (isSpaNavigation(urlPath, req.headers.accept)) {
                     // Navigation to a client-side route → serve the SPA shell.
                     const indexPath = path.join(publicDir, 'index.html');
-                    res.writeHead(200, { 'Content-Type': 'text/html', ...SECURITY_HEADERS });
+                    res.writeHead(200, { 'Content-Type': 'text/html', ...securityHeaders() });
                     fs.createReadStream(indexPath).pipe(res);
                 } else {
                     // Missing asset (or a non-navigation request) → 404, not the shell.
-                    res.writeHead(404, { 'Content-Type': 'text/plain', ...SECURITY_HEADERS });
+                    res.writeHead(404, { 'Content-Type': 'text/plain', ...securityHeaders() });
                     res.end('Not Found');
                 }
                 return;
             }
             const ext = path.extname(filePath).toLowerCase();
             const contentType = MIME_TYPES[ext] || 'application/octet-stream';
-            res.writeHead(200, { 'Content-Type': contentType, ...SECURITY_HEADERS });
+            res.writeHead(200, { 'Content-Type': contentType, ...securityHeaders() });
             fs.createReadStream(filePath).pipe(res);
         });
     };

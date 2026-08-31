@@ -54,4 +54,18 @@ ws-scrcpy-web exposes an **unauthenticated** control surface intended for a trus
 
 `allowedHosts` is read only at startup and is **not** exposed or mutable through `/api/config`. The proxy must forward the original `Host` header (not rewrite it to `localhost`), or the Origin check will reject requests. List only domains you control, and leave it empty for local/LAN-only use.
 
+## Framing (clickjacking)
+
+Static responses carry `X-Frame-Options: SAMEORIGIN`, so by default the app can only be embedded in a page on its own origin. A different port is a different origin, so a local tool serving on, say, `http://localhost:5159` cannot iframe the app running on `http://localhost:8000` — the browser blocks it, and Chrome and Edge report that as *"localhost refused to connect"*, which looks like the server is down when it is serving normally.
+
+Allow a specific embedder via the server-only `frameAncestors` array in `config.json`:
+
+```json
+{ "frameAncestors": ["http://localhost:5159"] }
+```
+
+That adds `Content-Security-Policy: frame-ancestors 'self' http://localhost:5159` alongside the existing header. Both are sent deliberately: a browser that supports CSP `frame-ancestors` must ignore `X-Frame-Options` when both are present, so the allowlist applies in modern browsers while older ones keep the stricter same-origin behaviour. Leave the key out and the headers are unchanged.
+
+**Understand what you are allowing.** Each listed origin may frame the app, which means clickjacking is possible from any page served on that origin — on a shared or multi-user machine, anything able to listen on that port qualifies. Entries must be bare origins (`scheme://host[:port]`, no path); `*` is rejected outright, since allowing every site is exactly what the header exists to prevent. Like `allowedHosts`, this is read only at startup and is **not** exposed or mutable through `/api/config`. List only origins you run yourself, and leave it empty unless you actually need the embed.
+
 Thanks for helping keep the project safe.

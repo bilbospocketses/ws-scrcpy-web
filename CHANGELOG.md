@@ -17,6 +17,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`frameAncestors` in `config.json` — allow a named origin to embed the app in an iframe.** Static responses have carried `X-Frame-Options: SAMEORIGIN` since the security pass in #377, which also blocks a legitimate case: another local tool framing the app from a different port, since a different port is a different origin. Chrome and Edge render that refusal as *"localhost refused to connect"*, so it reads as a dead server when the app is serving normally.
+
+  ```json
+  { "frameAncestors": ["http://localhost:5159"] }
+  ```
+
+  adds `Content-Security-Policy: frame-ancestors 'self' http://localhost:5159`. Both headers are sent on purpose — a browser supporting CSP `frame-ancestors` must ignore `X-Frame-Options` when both are present, so the allowlist applies in modern browsers while older ones keep the stricter behaviour. Configure nothing and the headers are byte-identical to before.
+
+  Entries must be bare origins (`scheme://host[:port]`, no path, query or fragment) and `*` is rejected outright, since allowing any embedder is what the header exists to prevent. Bad entries are dropped with a warning rather than throwing, so a malformed value cannot stop the server booting. Like `allowedHosts`, the key is server-only and read at boot — never exposed or mutable through `/api/config` — and `saveToDisk` preserves it. The trade-off it makes is documented in `SECURITY.md` §Framing: each listed origin may frame the app, so anything able to serve on that port can attempt clickjacking.
+
 ## [0.1.30-beta.82] - 2026-08-27
 
 ### Fixed

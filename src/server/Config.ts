@@ -52,6 +52,14 @@ export interface FlatConfig {
     // boot — deliberately NOT part of AppConfig, so it is never exposed or
     // mutable via the frontend-facing GET/PATCH /api/config surface.
     allowedHosts?: string[];
+
+    // Security: origins allowed to embed the app in an iframe, beyond its own
+    // (e.g. ["http://localhost:5159"] for a local tool that frames it). Adds a
+    // CSP `frame-ancestors` header; empty by default, leaving the SAMEORIGIN
+    // clickjacking defense untouched. Server-only and read at boot — like
+    // allowedHosts, deliberately NOT part of AppConfig, so it is never exposed
+    // or mutable via the frontend-facing GET/PATCH /api/config surface.
+    frameAncestors?: string[];
 }
 
 /**
@@ -380,6 +388,51 @@ export function sanitizeAllowedHosts(raw: unknown, warn: (msg: string) => void):
     return out;
 }
 
+/**
+ * Validate the optional `frameAncestors` opt-in from config.json into a clean
+ * string[] of origins. Like sanitizeAllowedHosts this never throws (Contract 1)
+ * and drops bad entries with a warning, but it is stricter about shape: each
+ * entry must be a bare absolute origin (scheme + host, optional port) because
+ * that is all CSP `frame-ancestors` accepts, and `*` is rejected outright —
+ * allowing any embedder is exactly what the header exists to prevent.
+ */
+export function sanitizeFrameAncestors(raw: unknown, warn: (msg: string) => void): string[] {
+    if (raw === undefined) return [];
+    if (!Array.isArray(raw)) {
+        warn('config.json: frameAncestors must be an array of origin strings; ignoring');
+        return [];
+    }
+    const out: string[] = [];
+    for (const entry of raw) {
+        if (typeof entry !== 'string' || entry.trim().length === 0) {
+            warn(`config.json: frameAncestors entry ${JSON.stringify(entry)} is not a non-empty string; skipping`);
+            continue;
+        }
+        const value = entry.trim();
+        if (value === '*') {
+            warn('config.json: frameAncestors "*" would allow any site to frame the app; skipping');
+            continue;
+        }
+        let parsed: URL;
+        try {
+            parsed = new URL(value);
+        } catch {
+            warn(`config.json: frameAncestors entry ${JSON.stringify(entry)} is not an absolute origin; skipping`);
+            continue;
+        }
+        // `new URL('http://host')` yields pathname '/', so anything longer is a
+        // path the operator wrote by mistake — frame-ancestors matches origins.
+        if (parsed.pathname !== '/' || parsed.search || parsed.hash) {
+            warn(
+                `config.json: frameAncestors entry ${JSON.stringify(entry)} must be an origin only (no path); skipping`,
+            );
+            continue;
+        }
+        out.push(parsed.origin);
+    }
+    return out;
+}
+
 export class Config {
     private static instance?: Config | undefined;
 
@@ -531,6 +584,7 @@ export class Config {
                 DEFAULT_SCAN_PROGRESS_INTERVAL;
 
             const allowedHosts = sanitizeAllowedHosts(fileConfig.allowedHosts, warn);
+            const frameAncestors = sanitizeFrameAncestors(fileConfig.frameAncestors, warn);
 
             this.instance = new Config(
                 servers,
@@ -544,6 +598,7 @@ export class Config {
                 configFilePath,
                 dataRoot,
                 allowedHosts,
+                frameAncestors,
                 db,
             );
         }
@@ -568,6 +623,7 @@ export class Config {
         configFilePath: string,
         private readonly _dataRoot: string | null,
         private readonly _allowedHosts: string[],
+        private readonly _frameAncestors: string[],
         private readonly _db: Db,
     ) {
         this._appConfig = appConfig;
@@ -613,6 +669,16 @@ export class Config {
      */
     public get allowedHosts(): string[] {
         return this._allowedHosts;
+    }
+
+    /**
+     * Operator-configured origins allowed to embed the app in a frame
+     * (config.json `frameAncestors`), beyond its own origin. Read once at boot
+     * and applied to the security layer via setFrameAncestors(); never
+     * frontend-mutable.
+     */
+    public get frameAncestors(): string[] {
+        return this._frameAncestors;
     }
 
     /**
@@ -783,12 +849,13 @@ export class Config {
      */
     public saveToDisk(): void {
         // config.json holds ONLY the boot trio now. Preserve the server-only boot
-        // fields (`server` SSL array, `allowedHosts`) that live in the file but
-        // aren't part of AppConfig — re-read them so a save never drops them.
+        // fields (`server` SSL array, `allowedHosts`, `frameAncestors`) that live
+        // in the file but aren't part of AppConfig — re-read them so a save never
+        // drops them.
         const preserved: Record<string, unknown> = {};
         try {
             const existing = JSON.parse(fs.readFileSync(this._configFilePath, 'utf-8')) as Record<string, unknown>;
-            for (const k of ['server', 'allowedHosts']) {
+            for (const k of ['server', 'allowedHosts', 'frameAncestors']) {
                 if (existing[k] !== undefined) preserved[k] = existing[k];
             }
         } catch {

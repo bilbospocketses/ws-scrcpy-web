@@ -29,6 +29,7 @@ import { NetworkScanner } from './network/NetworkScanner';
 import { consumeSuppressBrowserMarker, openBrowser, shouldAutoOpenBrowser } from './openBrowser';
 import { findAvailablePort, webPortOverride } from './PortPicker';
 import { ScrcpyConnection } from './ScrcpyConnection';
+import { setFrameAncestors } from './security/frameGuard';
 import { setAllowedHosts } from './security/originGuard';
 import { makeProductionCoreDeps, parseSystemServiceArgs, runSystemServiceCli } from './service/systemServiceCli';
 import { HttpServer } from './services/HttpServer';
@@ -90,6 +91,11 @@ if (__ssArgs) {
     // literals only); a config.json `allowedHosts` opts a domain/reverse-proxy
     // deployment in. See docs/SECURITY.md.
     setAllowedHosts(config.allowedHosts);
+
+    // Origins allowed to embed the app in a frame, beyond its own. Empty by
+    // default (SAMEORIGIN only); a config.json `frameAncestors` opts a specific
+    // local embedder in. See docs/SECURITY.md.
+    setFrameAncestors(config.frameAncestors);
 
     // Detect port collision: walk forward from the configured webPort until a free
     // port is found (range = configured..+99). On shift, persist the new port and
