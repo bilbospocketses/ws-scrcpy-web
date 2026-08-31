@@ -690,9 +690,37 @@ export class Config {
         if (!this._frameAncestors.includes(normalized)) {
             this._frameAncestors.push(normalized);
         }
-        // Apply before persisting: the running policy is what the user is
-        // waiting on, and a write failure should not leave them told "approved"
-        // by a server still refusing the frame.
+        this.applyAndPersistFrameAncestors();
+        return true;
+    }
+
+    /**
+     * Withdraw an origin's permission to frame the app. Returns false if it was not permitted in
+     * the first place, so a stale settings list cannot report a revocation that did not happen.
+     *
+     * Takes effect immediately, like granting: the next response carries a CSP without it, and the
+     * embed in that other app stops rendering. No restart.
+     */
+    public removeFrameAncestor(origin: string): boolean {
+        const normalized = parseFrameAncestorOrigin(origin);
+        if (normalized === null) return false;
+
+        const index = this._frameAncestors.indexOf(normalized);
+        if (index === -1) return false;
+
+        this._frameAncestors.splice(index, 1);
+        this.applyAndPersistFrameAncestors();
+        return true;
+    }
+
+    /**
+     * Apply the current list to the running server, then write it to config.json.
+     *
+     * Apply first, deliberately: the live policy is what the user is waiting on, and a write
+     * failure should not leave them told "approved" (or "revoked") by a server still doing the
+     * opposite. The file is re-read and rewritten whole so every other key survives.
+     */
+    private applyAndPersistFrameAncestors(): void {
         setFrameAncestors(this._frameAncestors);
 
         const existing: Record<string, unknown> = {};
@@ -708,7 +736,6 @@ export class Config {
             fs.mkdirSync(dir, { recursive: true });
         }
         writeFileAtomicSync(this._configFilePath, `${JSON.stringify(existing, null, 2)}\n`);
-        return true;
     }
 
     /**

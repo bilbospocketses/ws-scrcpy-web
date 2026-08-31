@@ -79,6 +79,10 @@ A web page cannot even ask. Browsers always send an `Origin` header on `fetch()`
 
 **The risk this cannot remove** is a local program asking for an origin it controls and hoping you click Approve. That is why the prompt shows the requesting origin verbatim and deny is the safe answer: approve only a request you just started yourself, from an app you recognise.
 
+### Revoking
+
+**Settings → Embedding** lists every origin currently allowed to frame the app, each with a **revoke** button (admin, and loopback-only, like approving — it is the same class of decision). Revoking rewrites `frameAncestors` and applies to the running server immediately: the next response carries a policy without that origin, and whatever it was displaying stops working. Without this, approving a request was a one-way door short of hand-editing `config.json`.
+
 **Understand what you are allowing.** Each listed origin may frame the app, which means clickjacking is possible from any page served on that origin — on a shared or multi-user machine, anything able to listen on that port qualifies. Entries must be bare origins (`scheme://host[:port]`, no path); `*` is rejected outright, since allowing every site is exactly what the header exists to prevent. Like `allowedHosts`, this is read only at startup and is **not** exposed or mutable through `/api/config`. List only origins you run yourself, and leave it empty unless you actually need the embed.
 
 Thanks for helping keep the project safe.

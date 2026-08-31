@@ -43,7 +43,47 @@ export class EmbedRequestApi {
         if (url === '/api/embed-request/decision' && req.method === 'POST') {
             return this.handleDecision(req, res);
         }
+        if (url === '/api/embed-origins' && req.method === 'GET') {
+            return this.handleListOrigins(req, res);
+        }
+        if (url === '/api/embed-origins/revoke' && req.method === 'POST') {
+            return this.handleRevokeOrigin(req, res);
+        }
         return false;
+    }
+
+    /** The origins currently allowed to frame the app, for the settings UI. */
+    private handleListOrigins(req: IncomingMessage, res: ServerResponse): boolean {
+        res.setHeader('Content-Type', 'application/json');
+        if (!this.requireLocalAdmin(req, res)) return true;
+        res.writeHead(200);
+        res.end(JSON.stringify({ origins: Config.getInstance().frameAncestors }));
+        return true;
+    }
+
+    /**
+     * Withdraw an origin's permission to frame the app. Same guard as approving, because it is the
+     * same class of decision — and revoking takes effect on the running server immediately.
+     */
+    private async handleRevokeOrigin(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+        res.setHeader('Content-Type', 'application/json');
+        if (!this.requireLocalAdmin(req, res)) return true;
+
+        const body = await readJsonBody(req);
+        const origin = typeof body['origin'] === 'string' ? body['origin'] : '';
+
+        const revoked = Config.getInstance().removeFrameAncestor(origin);
+        if (!revoked) {
+            // Not permitted in the first place — a stale settings list, or a bad value.
+            res.writeHead(404);
+            res.end(JSON.stringify({ error: 'that origin is not currently allowed to embed this app' }));
+            return true;
+        }
+
+        log.info(`Embedding permission for ${origin} was revoked`);
+        res.writeHead(200);
+        res.end(JSON.stringify({ origins: Config.getInstance().frameAncestors }));
+        return true;
     }
 
     private async handleAsk(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
