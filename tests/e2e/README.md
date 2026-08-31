@@ -51,7 +51,13 @@ Because of that isolation you can run the suite while your normal instance is up
    `WS_SCRCPY_CONFIG` names a missing file, so the seed config is written at
    *config-load* time in `playwright.config.ts`, guarded to the runner process
    (workers re-import that module and would otherwise re-seed mid-run).
-2. **`globalSetup` therefore has a live server to talk to**, which is where the
+2. **Four first-run dialogs must be suppressed, by three different mechanisms.**
+   `ServiceFirstRunModal` (gated by `installMode`) and `WelcomeModal` (by
+   `firstRunComplete`) are handled by the seed config. `SystemWideInstallModal` is
+   **Linux-only** and gated by a marker *file*, `<dataRoot>/control/system-install-declined`,
+   so it passes locally on Windows and fails only in CI — it is written at seed time.
+   `PortChangeModal` is gated by per-user settings, covered below.
+3. **`globalSetup` therefore has a live server to talk to**, which is where the
    bookmark reminder gets switched off. `PortChangeModal` opens on every page load
    for an unacknowledged port — every load, against a virgin data root — and being a
    plain `<dialog>` it stacks over the consent prompt and swallows its clicks.

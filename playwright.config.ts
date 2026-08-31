@@ -1,4 +1,5 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { defineConfig, devices } from '@playwright/test';
 import {
     E2E_BASE_URL,
@@ -46,6 +47,22 @@ import {
 if (process.env['TEST_WORKER_INDEX'] === undefined) {
     mkdirSync(E2E_DATA_ROOT, { recursive: true });
     writeFileSync(E2E_CONFIG_PATH, JSON.stringify(SEED_CONFIG, null, 4), 'utf8');
+
+    /**
+     * Decline the Linux system-wide install offer up front.
+     *
+     * On Linux `SystemWideInstallModal` opens on first load unless this marker
+     * exists (`offerMachineWide` in `src/app/index.ts` gates on
+     * `systemInstallDeclined`, which `ServiceApi` derives from the file's presence
+     * rather than from a setting). Like the bookmark reminder it is a plain
+     * <dialog> stacked over the consent prompt, so it swallows the clicks meant for
+     * it — and being Linux-only it passes locally on Windows and fails only in CI.
+     *
+     * Name mirrors DECLINE_MARKER_NAME in `src/server/service/SystemdClient.ts`;
+     * copied rather than imported to keep server modules out of this config.
+     */
+    mkdirSync(join(E2E_DATA_ROOT, 'control'), { recursive: true });
+    writeFileSync(join(E2E_DATA_ROOT, 'control', 'system-install-declined'), '', 'utf8');
 }
 
 export default defineConfig({
