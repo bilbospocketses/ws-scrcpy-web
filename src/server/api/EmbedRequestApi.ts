@@ -56,14 +56,9 @@ export class EmbedRequestApi {
             return true;
         }
 
-        let body: Record<string, unknown>;
-        try {
-            body = await readJsonBody(req);
-        } catch {
-            res.writeHead(400);
-            res.end(JSON.stringify({ error: 'invalid JSON body' }));
-            return true;
-        }
+        // readJsonBody never throws — it returns {} for a malformed, oversized or non-object body
+        // — so a bad body simply yields an empty origin and is rejected below as such.
+        const body = await readJsonBody(req);
 
         const origin = typeof body['origin'] === 'string' ? body['origin'] : '';
         const appName = typeof body['appName'] === 'string' ? body['appName'] : '';
@@ -83,7 +78,17 @@ export class EmbedRequestApi {
 
     private handleStatus(url: string, res: ServerResponse): boolean {
         res.setHeader('Content-Type', 'application/json');
-        const id = decodeURIComponent(url.slice('/embed-request/'.length));
+        const raw = url.slice('/embed-request/'.length);
+        let id: string;
+        try {
+            id = decodeURIComponent(raw);
+        } catch {
+            // A malformed percent-escape is by definition not a known request id; answering
+            // 'unknown' is truer than the 500 an escaping URIError would produce.
+            res.writeHead(200);
+            res.end(JSON.stringify({ id: raw, status: 'unknown' }));
+            return true;
+        }
         res.writeHead(200);
         res.end(JSON.stringify({ id, status: getStatus(id) }));
         return true;
@@ -91,24 +96,37 @@ export class EmbedRequestApi {
 
     private handlePending(req: IncomingMessage, res: ServerResponse): boolean {
         res.setHeader('Content-Type', 'application/json');
-        if (!requireAdmin(req, res)) return true;
+        if (!this.requireLocalAdmin(req, res)) return true;
         res.writeHead(200);
         res.end(JSON.stringify({ request: getPendingRequest() }));
         return true;
     }
 
+    /**
+     * Admin AND loopback, for the two endpoints that read or decide a request.
+     *
+     * requireAdmin alone is not sufficient. In open mode (the default) it resolves to the implicit
+     * admin, and the per-instance token that gates /api is handed to any unauthenticated GET of an
+     * extensionless path — so a LAN client can mint a token and approve its own request. The
+     * approval surface therefore carries the same loopback restriction the asking surface has:
+     * consent is given at the machine, not over the network.
+     */
+    private requireLocalAdmin(req: IncomingMessage, res: ServerResponse): boolean {
+        if (!isLoopback(req.socket.remoteAddress ?? '')) {
+            res.writeHead(403);
+            res.end(JSON.stringify({ error: 'embed permission is decided on this machine only' }));
+            return false;
+        }
+        return requireAdmin(req, res);
+    }
+
     private async handleDecision(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
         res.setHeader('Content-Type', 'application/json');
-        if (!requireAdmin(req, res)) return true;
+        if (!this.requireLocalAdmin(req, res)) return true;
 
-        let body: Record<string, unknown>;
-        try {
-            body = await readJsonBody(req);
-        } catch {
-            res.writeHead(400);
-            res.end(JSON.stringify({ error: 'invalid JSON body' }));
-            return true;
-        }
+        // readJsonBody is best-effort and returns {} rather than throwing, so a malformed body
+        // falls through to the id check below and is answered as "no pending request".
+        const body = await readJsonBody(req);
 
         const id = typeof body['id'] === 'string' ? body['id'] : '';
         const approved = body['approved'] === true;

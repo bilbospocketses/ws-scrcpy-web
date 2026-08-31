@@ -8,8 +8,12 @@ export const SESSION_COOKIE = 'wsscrcpy_sid';
 // path — Auditor finding: app-shell leak). whoami + me are exempt from the AUTH gate only;
 // /api/whoami is still gated upstream by the per-instance token check (requestGate #367), so
 // allow-listing it here does not make it reachable cross-instance without the instance token.
-const ALLOWLIST_EXACT = new Set(['/api/auth/login', '/api/auth/me', '/api/whoami']);
-const ALLOWLIST_PREFIX = ['/login-assets/']; // the login page's own self-contained assets
+// `/embed-request` is exempt because it is unauthenticated BY DESIGN and grants nothing — it only
+// records that another local app would like to be allowed to frame us, and a human still has to
+// approve that in the (gated) UI. Without the exemption, locked mode answers it with 200 + the
+// login HTML, which a JSON client reads as a malformed success rather than "you must sign in".
+const ALLOWLIST_EXACT = new Set(['/api/auth/login', '/api/auth/me', '/api/whoami', '/embed-request']);
+const ALLOWLIST_PREFIX = ['/login-assets/', '/embed-request/']; // login page assets; embed-request status polls
 
 export function isAuthEnabled(db: Db): boolean {
     return db.appSettings.get(AUTH_ENABLED_KEY) === true;

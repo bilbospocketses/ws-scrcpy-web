@@ -73,7 +73,7 @@ Another local app can ask for embedding permission rather than making you hand-e
 The split between asking and granting is the security design:
 
 - **Asking is unauthenticated, and can do nothing but raise the prompt.** `POST /embed-request` never touches config. It is accepted only from **loopback** — LAN clients are allowed to *use* the app but not to raise a consent prompt on your desktop — only one request is pending at a time, and it expires after five minutes.
-- **Granting is admin-gated and same-origin.** Only `POST /api/embed-request/decision`, driven by a human clicking Approve in this app's own UI, writes anything.
+- **Granting is admin-gated, same-origin, and loopback-only.** Only `POST /api/embed-request/decision`, driven by a human clicking Approve in this app's own UI, writes anything — and both it and `GET /api/embed-request` refuse a non-loopback caller. The loopback restriction is load-bearing, not belt-and-braces: in open mode the admin check resolves to the implicit admin, and the per-instance token that gates `/api` is handed to any unauthenticated GET of an extensionless path, so without it a LAN client could mint a token and approve its own request. Consent is given at the machine, not over the network.
 
 A web page cannot even ask. Browsers always send an `Origin` header on `fetch()`, and the Origin check rejects a cross-origin one on every non-GET request, so only a non-browser local caller reaches the request endpoint.
 

@@ -33,4 +33,15 @@ describe('authState', () => {
         expect(isAllowlisted('/')).toBe(false); // app shell is gated → AuthGate serves the login page inline
         expect(isAllowlisted('/login')).toBe(false); // SPA-shell-leak defense: /login is served inline by AuthGate, never allow-listed
     });
+    it('allow-lists the embed-request routes, which are unauthenticated by design', () => {
+        // These grant nothing — they record that another local app would like to be allowed to
+        // frame us, and a human still approves that through the gated UI. Without the exemption
+        // locked mode answers them with 200 + login HTML, which a JSON client reads as a
+        // malformed success rather than "sign in first".
+        expect(isAllowlisted('/embed-request')).toBe(true);
+        expect(isAllowlisted('/embed-request/9d4c1f2e-0000-4000-8000-000000000000')).toBe(true);
+        // The admin decision surface is NOT exempt — it is what actually grants permission.
+        expect(isAllowlisted('/api/embed-request')).toBe(false);
+        expect(isAllowlisted('/api/embed-request/decision')).toBe(false);
+    });
 });

@@ -90,12 +90,12 @@ if (__ssArgs) {
     // Apply the operator-configured Host allowlist to the security layer before
     // any server starts accepting requests. Empty by default (localhost + IP
     // literals only); a config.json `allowedHosts` opts a domain/reverse-proxy
-    // deployment in. See docs/SECURITY.md.
+    // deployment in. See SECURITY.md.
     setAllowedHosts(config.allowedHosts);
 
     // Origins allowed to embed the app in a frame, beyond its own. Empty by
     // default (SAMEORIGIN only); a config.json `frameAncestors` opts a specific
-    // local embedder in. See docs/SECURITY.md.
+    // local embedder in. See SECURITY.md.
     setFrameAncestors(config.frameAncestors);
 
     // Detect port collision: walk forward from the configured webPort until a free
