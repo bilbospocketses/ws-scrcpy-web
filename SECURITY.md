@@ -40,7 +40,7 @@ Out of scope:
 
 ## Access Control Model
 
-ws-scrcpy-web exposes an **unauthenticated** control surface intended for a trusted local or LAN network — anyone who can reach the port can drive connected devices. There is no built-in user login yet. The server does defend that surface against cross-network and cross-site attackers with three layers (see `docs/TECHNICAL_GUIDE.md` §24 for the implementation):
+ws-scrcpy-web is **open (no login) by default**, intended for a trusted local or LAN network — anyone who can reach the port can drive connected devices. An opt-in login subsystem exists (see smoke Module 18); while it is disabled, the server defends that surface against cross-network and cross-site attackers with the layers below, plus the framing policy in §Framing (see `docs/TECHNICAL_GUIDE.md` §24 for the implementation):
 
 - **Host allowlist** — the `Host` header must be `localhost`, an IP literal, or a configured `allowedHosts` entry. Bare domains are rejected (DNS-rebinding defense).
 - **Origin match** — for the API / WebSocket surface, a present `Origin` must be same-origin (CSRF defense).
@@ -83,6 +83,6 @@ A web page cannot even ask. Browsers always send an `Origin` header on `fetch()`
 
 **Settings → Embedding** lists every origin currently allowed to frame the app, each with a **revoke** button (admin, and loopback-only, like approving — it is the same class of decision). Revoking rewrites `frameAncestors` and applies to the running server immediately: the next response carries a policy without that origin, and whatever it was displaying stops working. Without this, approving a request was a one-way door short of hand-editing `config.json`.
 
-**Understand what you are allowing.** Each listed origin may frame the app, which means clickjacking is possible from any page served on that origin — on a shared or multi-user machine, anything able to listen on that port qualifies. Entries must be bare origins (`scheme://host[:port]`, no path); `*` is rejected outright, since allowing every site is exactly what the header exists to prevent. Like `allowedHosts`, this is read only at startup and is **not** exposed or mutable through `/api/config`. List only origins you run yourself, and leave it empty unless you actually need the embed.
+**Understand what you are allowing.** Each listed origin may frame the app, which means clickjacking is possible from any page served on that origin — on a shared or multi-user machine, anything able to listen on that port qualifies. Entries must be bare origins (`scheme://host[:port]`, no path); `*` is rejected outright, since allowing every site is exactly what the header exists to prevent. Unlike `allowedHosts`, this key is **not** boot-only: it is read at startup and thereafter changed by an admin approval or revocation (`POST /api/embed-request/decision`, `POST /api/embed-origins/revoke`), each of which applies to the running server immediately and rewrites `config.json`. It remains **not** exposed or mutable through `/api/config`. List only origins you run yourself, and leave it empty unless you actually need the embed.
 
 Thanks for helping keep the project safe.
