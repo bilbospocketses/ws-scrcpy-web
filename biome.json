@@ -60,7 +60,7 @@
         }
     },
     "files": {
-        "includes": ["src/**", "webpack/**"]
+        "includes": ["src/**", "webpack/**", "tests/**", "playwright.config.ts"]
     },
     "overrides": [
         {
