@@ -43,6 +43,23 @@ async function fetchPending(): Promise<PendingEmbedRequest | null> {
     }
 }
 
+/**
+ * Server-side status of one request. Used while a prompt is open, since the background poller is
+ * paused then and nothing else would notice the asking app withdrawing.
+ */
+async function fetchStatus(id: string): Promise<string | null> {
+    try {
+        const res = await fetch(`/embed-request/${encodeURIComponent(id)}`, {
+            headers: { Accept: 'application/json' },
+        });
+        if (!res.ok) return null;
+        const body = (await res.json()) as { status?: string };
+        return body.status ?? null;
+    } catch {
+        return null;
+    }
+}
+
 async function sendDecision(id: string, approved: boolean): Promise<void> {
     try {
         await fetch('/api/embed-request/decision', {
@@ -71,11 +88,13 @@ async function checkOnce(): Promise<void> {
             appName: request.appName,
             origin: request.origin,
             expiresInMs: Math.max(0, REQUEST_TTL_MS - elapsed),
+            pollStatus: () => fetchStatus(request.id),
         });
 
-        // Nothing is sent on expiry: the server has already expired it, and a
-        // decision naming a non-pending request is refused anyway.
-        if (decision !== 'expired') {
+        // Nothing is sent when the request ended on its own — expired, or withdrawn by the app
+        // that asked. The server has already moved it out of pending, and a decision naming a
+        // non-pending request is refused anyway. Only the two buttons produce a decision.
+        if (decision === 'approved' || decision === 'denied') {
             await sendDecision(request.id, decision === 'approved');
         }
     } finally {

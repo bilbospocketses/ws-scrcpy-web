@@ -5,9 +5,15 @@ export interface EmbedRequestModalOptions {
     origin: string;
     /** Milliseconds left before the server expires the request. */
     expiresInMs: number;
+    /**
+     * Current server-side status of this request, polled while the dialog is open. The asking app
+     * can withdraw a request it no longer wants an answer to, and nothing else would tell us:
+     * the background poller stops while a prompt is up. Omit to skip watching.
+     */
+    pollStatus?: () => Promise<string | null>;
 }
 
-export type EmbedRequestDecision = 'approved' | 'denied' | 'expired';
+export type EmbedRequestDecision = 'approved' | 'denied' | 'cancelled' | 'expired';
 
 /**
  * Asks the user whether another local app may embed this one in an iframe.
@@ -18,8 +24,9 @@ export type EmbedRequestDecision = 'approved' | 'denied' | 'expired';
  * asking for an origin it controls and hoping the user clicks through — so the
  * thing being granted must be the most legible part of the dialog.
  *
- * Resolves 'expired' if the countdown runs out, matching what the server has
- * already decided by then; no decision is sent in that case.
+ * Only the two buttons produce a decision. It also resolves 'expired' when the countdown runs out
+ * and 'cancelled' when the asking app withdraws the request — both match what the server has
+ * already recorded by then, and neither sends a decision.
  */
 export class EmbedRequestModal extends Modal {
     private resolveFn: ((value: EmbedRequestDecision) => void) | null = null;
@@ -28,7 +35,9 @@ export class EmbedRequestModal extends Modal {
     private deadline = 0;
     private countdownEl: HTMLElement | null = null;
     private ticker: ReturnType<typeof setInterval> | null = null;
+    private watcher: ReturnType<typeof setInterval> | null = null;
     private expired = false;
+    private cancelled = false;
 
     public static ask(options: EmbedRequestModalOptions): Promise<EmbedRequestDecision> {
         return new Promise((resolve) => {
@@ -78,6 +87,24 @@ export class EmbedRequestModal extends Modal {
 
         this.renderCountdown();
         this.ticker = setInterval(() => this.renderCountdown(), 1000);
+
+        if (this.opts.pollStatus) {
+            this.watcher = setInterval(() => void this.checkStillPending(), 3000);
+        }
+    }
+
+    private async checkStillPending(): Promise<void> {
+        if (this.resolved || this.expired || this.cancelled) return;
+
+        let status: string | null;
+        try {
+            status = (await this.opts.pollStatus?.()) ?? null;
+        } catch {
+            return; // a failed read is not an answer — keep the dialog up
+        }
+
+        // null means we could not find out (server restarting); only act on a definite withdrawal.
+        if (status === 'cancelled') this.showWithdrawn();
     }
 
     private renderCountdown(): void {
@@ -121,22 +148,42 @@ export class EmbedRequestModal extends Modal {
      * it becomes an acknowledgement with a single close button.
      */
     private showExpired(): void {
-        if (this.expired || this.resolved) return;
+        if (this.expired || this.cancelled || this.resolved) return;
         this.expired = true;
-        if (this.ticker !== null) {
-            clearInterval(this.ticker);
-            this.ticker = null;
-        }
+        this.becomeAcknowledgement(
+            'expired',
+            `The five-minute window to approve this request has timed out. ${this.opts.appName} was not granted permission to embed this app.`,
+            'Ask again from that app if you still want to allow it.',
+        );
+    }
+
+    /** The asking app withdrew the request — approving it now would grant nobody anything. */
+    private showWithdrawn(): void {
+        if (this.expired || this.cancelled || this.resolved) return;
+        this.cancelled = true;
+        this.becomeAcknowledgement(
+            'cancelled',
+            `${this.opts.appName} withdrew this request, so there is nothing left to decide. It was not granted permission to embed this app.`,
+            'Ask again from that app if you still want to allow it.',
+        );
+    }
+
+    /**
+     * Turn the dialog into a read-and-close notice. Deliberately does not vanish: the user may be
+     * mid-read, and a prompt disappearing on its own is indistinguishable from one they dismissed.
+     */
+    private becomeAcknowledgement(outcome: EmbedRequestDecision, message: string, hintText: string): void {
+        this.stopTimers();
 
         this.bodyEl.textContent = '';
-        const message = document.createElement('p');
-        message.style.cssText = 'margin: 0 0 8px;';
-        message.textContent = `The five-minute window to approve this request has timed out. ${this.opts.appName} was not granted permission to embed this app.`;
-        this.bodyEl.appendChild(message);
+        const messageEl = document.createElement('p');
+        messageEl.style.cssText = 'margin: 0 0 8px;';
+        messageEl.textContent = message;
+        this.bodyEl.appendChild(messageEl);
 
         const hint = document.createElement('p');
         hint.style.cssText = 'margin: 0; opacity: 0.75;';
-        hint.textContent = 'Ask again from that app if you still want to allow it.';
+        hint.textContent = hintText;
         this.bodyEl.appendChild(hint);
 
         const footer = this.frameEl.querySelector('.modal-footer');
@@ -146,8 +193,19 @@ export class EmbedRequestModal extends Modal {
             closeBtn.type = 'button';
             closeBtn.className = 'modal-button modal-button-primary';
             closeBtn.textContent = 'close';
-            closeBtn.addEventListener('click', () => this.resolveAndClose('expired'));
+            closeBtn.addEventListener('click', () => this.resolveAndClose(outcome));
             footer.appendChild(closeBtn);
+        }
+    }
+
+    private stopTimers(): void {
+        if (this.ticker !== null) {
+            clearInterval(this.ticker);
+            this.ticker = null;
+        }
+        if (this.watcher !== null) {
+            clearInterval(this.watcher);
+            this.watcher = null;
         }
     }
 
@@ -157,10 +215,7 @@ export class EmbedRequestModal extends Modal {
     private resolveAndClose(value: EmbedRequestDecision): void {
         if (this.resolved) return;
         this.resolved = true;
-        if (this.ticker !== null) {
-            clearInterval(this.ticker);
-            this.ticker = null;
-        }
+        this.stopTimers();
         this.resolveFn?.(value);
         this.resolveFn = null;
         this.close(value);

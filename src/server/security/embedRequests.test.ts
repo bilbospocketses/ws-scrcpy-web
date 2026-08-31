@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
     _resetForTest,
     _setClockForTest,
+    cancelRequest,
     createRequest,
     getPendingRequest,
     getStatus,
@@ -98,5 +99,42 @@ describe('embedRequests', () => {
 
     it('reports an unknown id rather than guessing', () => {
         expect(getStatus('never-existed')).toBe('unknown');
+    });
+
+    it('lets the asking app withdraw a request it no longer wants answered', () => {
+        const created = createRequest('http://localhost:5159', 'Control Menu');
+
+        expect(cancelRequest(created?.id ?? '')).toBe(true);
+        expect(getStatus(created?.id ?? '')).toBe('cancelled');
+        // The prompt is gone, so nothing is left for a human to approve.
+        expect(getPendingRequest()).toBeNull();
+    });
+
+    it('never lets a cancel undo a decision already made', () => {
+        const approved = createRequest('http://localhost:5159', 'Control Menu');
+        resolveRequest(approved?.id ?? '', true);
+        expect(cancelRequest(approved?.id ?? '')).toBe(false);
+        expect(getStatus(approved?.id ?? '')).toBe('approved');
+
+        const denied = createRequest('http://localhost:6000', 'Control Menu');
+        resolveRequest(denied?.id ?? '', false);
+        expect(cancelRequest(denied?.id ?? '')).toBe(false);
+        expect(getStatus(denied?.id ?? '')).toBe('denied');
+    });
+
+    it('cannot resolve a request that was withdrawn', () => {
+        const created = createRequest('http://localhost:5159', 'Control Menu');
+        cancelRequest(created?.id ?? '');
+
+        // A prompt left open in another tab must not be able to grant after the withdrawal.
+        expect(resolveRequest(created?.id ?? '', true)).toBeNull();
+        expect(getStatus(created?.id ?? '')).toBe('cancelled');
+    });
+
+    it('ignores a cancel for an id that is not the current request', () => {
+        createRequest('http://localhost:5159', 'Control Menu');
+
+        expect(cancelRequest('some-other-id')).toBe(false);
+        expect(getPendingRequest()).not.toBeNull();
     });
 });

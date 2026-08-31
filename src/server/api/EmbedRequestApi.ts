@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'http';
 import { requireAdmin } from '../auth/requireAdmin';
 import { Config } from '../Config';
 import { Logger } from '../Logger';
-import { createRequest, getPendingRequest, getStatus, resolveRequest } from '../security/embedRequests';
+import { cancelRequest, createRequest, getPendingRequest, getStatus, resolveRequest } from '../security/embedRequests';
 import { readJsonBody } from './utils';
 
 const log = Logger.for('EmbedRequestApi');
@@ -30,6 +30,9 @@ export class EmbedRequestApi {
 
         if (url === '/embed-request' && req.method === 'POST') {
             return this.handleAsk(req, res);
+        }
+        if (url.startsWith('/embed-request/') && url.endsWith('/cancel') && req.method === 'POST') {
+            return this.handleCancel(req, url, res);
         }
         if (url.startsWith('/embed-request/') && req.method === 'GET') {
             return this.handleStatus(url, res);
@@ -91,6 +94,36 @@ export class EmbedRequestApi {
         }
         res.writeHead(200);
         res.end(JSON.stringify({ id, status: getStatus(id) }));
+        return true;
+    }
+
+    /**
+     * The asking app withdrawing its own request. Loopback-only like handleAsk, and it can only
+     * ever retract — cancelRequest refuses anything not currently pending, so this cannot undo a
+     * decision a human already made.
+     */
+    private handleCancel(req: IncomingMessage, url: string, res: ServerResponse): boolean {
+        res.setHeader('Content-Type', 'application/json');
+        if (!isLoopback(req.socket.remoteAddress ?? '')) {
+            res.writeHead(403);
+            res.end(JSON.stringify({ error: 'embed requests are cancelled from this machine only' }));
+            return true;
+        }
+
+        const raw = url.slice('/embed-request/'.length, -'/cancel'.length);
+        let id: string;
+        try {
+            id = decodeURIComponent(raw);
+        } catch {
+            id = raw;
+        }
+
+        const cancelled = cancelRequest(id);
+        if (cancelled) {
+            log.info('An embed request was withdrawn by the app that asked');
+        }
+        res.writeHead(200);
+        res.end(JSON.stringify({ id, cancelled, status: getStatus(id) }));
         return true;
     }
 

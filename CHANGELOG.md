@@ -37,6 +37,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   A web page cannot even ask: browsers always send `Origin` on `fetch()`, and the Origin check rejects a cross-origin one on every non-GET request, so only a non-browser local caller reaches the endpoint at all. The residual risk — a local program asking for an origin it controls and hoping you click through — is why the prompt shows the origin verbatim and deny is the safe answer. `SECURITY.md` §Framing says so plainly.
 
+  **The asking app can withdraw a request** via `POST /embed-request/{id}/cancel` — loopback-only like the ask, and retract-only: a cancel naming a request that is not currently pending is refused, so it can never undo a decision a human already made. The open prompt learns about it by polling its own status every three seconds, because the background poller is paused while a dialog is up and nothing else would notice. It then becomes a read-and-close notice saying the app withdrew the request. Without this, cancelling on the other side left a prompt counting down for an app that had stopped listening, where approving would have granted permission nobody was asking for.
+
+  Expiry and withdrawal end the same way — a close-button acknowledgement that does not vanish on its own, and **no decision is sent**. Only the deny and approve buttons ever produce one.
+
   **The prompt is a forced choice** (`dismissible: false`): no close button, and Escape or a click on the backdrop is ignored. Granting an origin permission to frame the app has to be deliberate, and dismissing the dialog by mis-clicking beside it previously reported a *denial the user never made* back to the asking app. The only exits are the two buttons and the countdown reaching zero.
 
 ## [0.1.30-beta.82] - 2026-08-27

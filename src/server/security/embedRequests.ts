@@ -26,7 +26,7 @@ import { parseFrameAncestorOrigin } from './frameGuard';
 
 export const REQUEST_TTL_MS = 5 * 60 * 1000;
 
-export type EmbedRequestStatus = 'pending' | 'approved' | 'denied' | 'expired' | 'unknown';
+export type EmbedRequestStatus = 'pending' | 'approved' | 'denied' | 'cancelled' | 'expired' | 'unknown';
 
 export interface EmbedRequest {
     id: string;
@@ -106,4 +106,20 @@ export function resolveRequest(id: string, approved: boolean): EmbedRequest | nu
 
     current.status = approved ? 'approved' : 'denied';
     return { id: current.id, origin: current.origin, appName: current.appName, createdAt: current.createdAt };
+}
+
+/**
+ * Withdraw a request the asking app no longer wants an answer to. Returns whether anything was
+ * withdrawn.
+ *
+ * Only ever retracts: like resolveRequest it refuses an id that is not currently pending, so a
+ * cancel can never undo a decision a human already made. Leaving an abandoned prompt on screen is
+ * worse than closing it — approving it would grant permission to an app that stopped waiting.
+ */
+export function cancelRequest(id: string): boolean {
+    expireIfStale();
+    if (!current || current.id !== id || current.status !== 'pending') return false;
+
+    current.status = 'cancelled';
+    return true;
 }
