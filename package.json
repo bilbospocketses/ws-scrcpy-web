@@ -45,7 +45,9 @@
     "package:linux": "node scripts/package-linux.mjs",
     "package:pack": "node -e \"if (process.platform !== 'win32') { console.log('package:pack is Windows-only; use package:linux for AppImage'); process.exit(0); } require('child_process').spawnSync('vpk', ['pack','--packId','WsScrcpyWeb','--packVersion',process.env.npm_package_version,'--packDir','publish','--mainExe','ws-scrcpy-web-launcher.exe','--packTitle','ws-scrcpy-web','--packAuthors','ws-scrcpy-web contributors','--channel','stable','-o','Releases'], {stdio:'inherit',shell:true});\"",
     "test:update-flow": "pwsh scripts/test-update-flow.ps1",
-    "release-notes": "node scripts/extract-changelog.mjs $npm_package_version"
+    "release-notes": "node scripts/extract-changelog.mjs $npm_package_version",
+    "test:e2e": "playwright test",
+    "test:e2e:types": "tsc -p tests/e2e --noEmit"
   },
   "dependencies": {
     "velopack": "^1.2.0",
@@ -56,6 +58,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.11",
+    "@playwright/test": "^1.62.1",
     "@swc/core": "^1.16.1",
     "@types/node": "^24.13.3",
     "@types/ws": "^8",

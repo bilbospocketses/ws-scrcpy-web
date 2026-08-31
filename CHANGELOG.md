@@ -17,6 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Playwright end-to-end suite (`npm run test:e2e`).** Fourteen specs covering the embed-consent protocol, the framing headers and Settings → Embedding, running against a real server process rather than mocks. This is the layer the existing vitest suite cannot reach: `frameGuard` and `embedRequests` are already covered as pure functions, but a header that never reaches the wire, or an approval that rewrites `config.json` and drops `webPort` out from under the running server, both look fine to a unit test. Every consent spec asserts the keys it must not have touched.
+
+  The suite is fully isolated — its own port (8123) and its own throwaway data root, via `PROGRAMDATA`/`DATA_ROOT`, `WS_SCRCPY_CONFIG` and `WS_SCRCPY_WEB_PORT` — so it never reads or writes an installed config or `wsscrcpy.db`, and it can run while a normal instance is up on 8000. It runs serially by design: the server holds one pending embed request at a time, so parallel specs would cancel each other's prompts. Wired into `build-and-test` (steps, not a new job, so the ruleset's required check name is unchanged) along with a `test:e2e:types` typecheck, since `tests/` sits outside the root tsconfig's `rootDir` and was otherwise never typechecked. See `tests/e2e/README.md`.
+
 ### Fixed
 
 - **`PRIVACY.md` said "No cookies of any kind"; the app sets two.** The published policy asserted in four places that no cookies are used, while the project's own `SECURITY.md` documents a per-launch `HttpOnly; SameSite=Strict` instance token handed to every browser that loads a page, and smoke Module 18 exercises an `HttpOnly` session cookie that survives restart. The policy now describes both — a per-launch instance token that exists only as a CSRF / DNS-rebinding defence and carries no identity, and a session cookie present only when the optional login is enabled — while keeping the claim that actually matters and is true: no tracking cookies, no third-party cookies, nothing that leaves your machine. The stale "no login" line is corrected to "no project-operated account" (the opt-in login shipped in beta.67), the §"Web UI storage (no cookies)" heading is retitled, and the Effective date is bumped per the policy's own §Changes rule.
