@@ -14,6 +14,7 @@ import { GLOBAL_KEYS } from './db/constants';
 import { Db, dbDir } from './db/Db';
 import { EnvName } from './EnvName';
 import { Logger } from './Logger';
+import { parseFrameAncestorOrigin, setFrameAncestors } from './security/frameGuard';
 import { writeFileAtomicSync } from './util/atomicFile';
 
 const DEFAULT_SCAN_CONCURRENCY = 64;
@@ -408,27 +409,20 @@ export function sanitizeFrameAncestors(raw: unknown, warn: (msg: string) => void
             warn(`config.json: frameAncestors entry ${JSON.stringify(entry)} is not a non-empty string; skipping`);
             continue;
         }
-        const value = entry.trim();
-        if (value === '*') {
+        if (entry.trim() === '*') {
             warn('config.json: frameAncestors "*" would allow any site to frame the app; skipping');
             continue;
         }
-        let parsed: URL;
-        try {
-            parsed = new URL(value);
-        } catch {
-            warn(`config.json: frameAncestors entry ${JSON.stringify(entry)} is not an absolute origin; skipping`);
-            continue;
-        }
-        // `new URL('http://host')` yields pathname '/', so anything longer is a
-        // path the operator wrote by mistake — frame-ancestors matches origins.
-        if (parsed.pathname !== '/' || parsed.search || parsed.hash) {
+        // Same validator the embed-request API uses, so a hand-written entry and
+        // a requested one are held to identical standards.
+        const origin = parseFrameAncestorOrigin(entry);
+        if (origin === null) {
             warn(
-                `config.json: frameAncestors entry ${JSON.stringify(entry)} must be an origin only (no path); skipping`,
+                `config.json: frameAncestors entry ${JSON.stringify(entry)} must be an http(s) origin only (no path); skipping`,
             );
             continue;
         }
-        out.push(parsed.origin);
+        out.push(origin);
     }
     return out;
 }
@@ -679,6 +673,42 @@ export class Config {
      */
     public get frameAncestors(): string[] {
         return this._frameAncestors;
+    }
+
+    /**
+     * Persist an approved embedding origin to config.json and apply it to the
+     * running server, so an approved request takes effect without a restart.
+     *
+     * Only ever called after a human approved the request in the UI — see
+     * EmbedRequestApi. Returns false if the origin is not a usable frame
+     * ancestor; a duplicate is a no-op that still returns true.
+     */
+    public addFrameAncestor(origin: string): boolean {
+        const normalized = parseFrameAncestorOrigin(origin);
+        if (normalized === null) return false;
+
+        if (!this._frameAncestors.includes(normalized)) {
+            this._frameAncestors.push(normalized);
+        }
+        // Apply before persisting: the running policy is what the user is
+        // waiting on, and a write failure should not leave them told "approved"
+        // by a server still refusing the frame.
+        setFrameAncestors(this._frameAncestors);
+
+        const existing: Record<string, unknown> = {};
+        try {
+            Object.assign(existing, JSON.parse(fs.readFileSync(this._configFilePath, 'utf-8')));
+        } catch {
+            /* no existing file / unparseable — write a fresh one below */
+        }
+        existing['frameAncestors'] = this._frameAncestors;
+
+        const dir = path.dirname(this._configFilePath);
+        if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+        }
+        writeFileAtomicSync(this._configFilePath, `${JSON.stringify(existing, null, 2)}\n`);
+        return true;
     }
 
     /**

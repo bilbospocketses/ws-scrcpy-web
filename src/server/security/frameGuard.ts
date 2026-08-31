@@ -19,6 +19,33 @@ const BASE_HEADERS = {
     'X-Frame-Options': 'SAMEORIGIN',
 } as const;
 
+/**
+ * Normalise one frame-ancestor entry, or return null if it is not usable.
+ *
+ * Shared by the config loader and the embed-request API so a value an operator
+ * types into config.json and a value another app asks for are held to exactly
+ * the same standard. `frame-ancestors` matches origins, so anything carrying a
+ * path, query or fragment is an authoring mistake the browser would ignore,
+ * and `*` is refused outright — allowing every embedder is the thing the header
+ * exists to prevent.
+ */
+export function parseFrameAncestorOrigin(value: string): string | null {
+    const trimmed = value.trim();
+    if (trimmed.length === 0 || trimmed === '*') return null;
+
+    let parsed: URL;
+    try {
+        parsed = new URL(trimmed);
+    } catch {
+        return null;
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+    // `new URL('http://host')` yields pathname '/', so anything longer is a path.
+    if (parsed.pathname !== '/' || parsed.search || parsed.hash) return null;
+
+    return parsed.origin;
+}
+
 // Origins permitted to frame the app, beyond its own. Populated once at boot
 // from `Config.frameAncestors`; empty by default, so the default policy is
 // unchanged unless an operator opts in.

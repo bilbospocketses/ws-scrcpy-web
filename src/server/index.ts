@@ -7,6 +7,7 @@ import { CapabilitiesApi } from './api/CapabilitiesApi';
 import { ConfigApi } from './api/ConfigApi';
 import { DependencyApi } from './api/DependencyApi';
 import { DeviceDiscoveryApi } from './api/DeviceDiscoveryApi';
+import { EmbedRequestApi } from './api/EmbedRequestApi';
 import { ServerShutdownApi } from './api/ServerShutdownApi';
 import { ServiceApi } from './api/ServiceApi';
 import { SettingsApi } from './api/SettingsApi';
@@ -138,6 +139,9 @@ if (__ssArgs) {
 
     const configApi = new ConfigApi();
     HttpServer.addApiHandler(configApi);
+
+    const embedRequestApi = new EmbedRequestApi();
+    HttpServer.addApiHandler(embedRequestApi);
 
     const settingsApi = new SettingsApi();
     HttpServer.addApiHandler(settingsApi);

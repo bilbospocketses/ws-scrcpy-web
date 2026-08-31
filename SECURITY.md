@@ -66,6 +66,19 @@ Allow a specific embedder via the server-only `frameAncestors` array in `config.
 
 That adds `Content-Security-Policy: frame-ancestors 'self' http://localhost:5159` alongside the existing header. Both are sent deliberately: a browser that supports CSP `frame-ancestors` must ignore `X-Frame-Options` when both are present, so the allowlist applies in modern browsers while older ones keep the stricter same-origin behaviour. Leave the key out and the headers are unchanged.
 
+### Approving a request instead of editing the file
+
+Another local app can ask for embedding permission rather than making you hand-edit `config.json`. When it does, ws-scrcpy-web shows a prompt naming the app and the origin; approving writes that origin to `frameAncestors` and applies it to the running server immediately, with no restart.
+
+The split between asking and granting is the security design:
+
+- **Asking is unauthenticated, and can do nothing but raise the prompt.** `POST /embed-request` never touches config. It is accepted only from **loopback** — LAN clients are allowed to *use* the app but not to raise a consent prompt on your desktop — only one request is pending at a time, and it expires after five minutes.
+- **Granting is admin-gated and same-origin.** Only `POST /api/embed-request/decision`, driven by a human clicking Approve in this app's own UI, writes anything.
+
+A web page cannot even ask. Browsers always send an `Origin` header on `fetch()`, and the Origin check rejects a cross-origin one on every non-GET request, so only a non-browser local caller reaches the request endpoint.
+
+**The risk this cannot remove** is a local program asking for an origin it controls and hoping you click Approve. That is why the prompt shows the requesting origin verbatim and deny is the safe answer: approve only a request you just started yourself, from an app you recognise.
+
 **Understand what you are allowing.** Each listed origin may frame the app, which means clickjacking is possible from any page served on that origin — on a shared or multi-user machine, anything able to listen on that port qualifies. Entries must be bare origins (`scheme://host[:port]`, no path); `*` is rejected outright, since allowing every site is exactly what the header exists to prevent. Like `allowedHosts`, this is read only at startup and is **not** exposed or mutable through `/api/config`. List only origins you run yourself, and leave it empty unless you actually need the embed.
 
 Thanks for helping keep the project safe.

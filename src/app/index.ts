@@ -6,6 +6,7 @@ import type { AppConfigEnvelope } from '../common/ConfigEvents';
 import type { ServiceStatusResponse } from '../common/ServiceEvents';
 import { shouldShowBookmark } from './client/bookmarkGate';
 import { DependencyPanel } from './client/DependencyPanel';
+import { startEmbedRequestWatch, stopEmbedRequestWatch } from './client/EmbedRequestPrompt';
 import { FirstRunBanner } from './client/FirstRunBanner';
 import { HostTracker } from './client/HostTracker';
 import { NetworkDiscoveryPanel } from './client/NetworkDiscoveryPanel';
@@ -343,9 +344,16 @@ window.onload = async (): Promise<void> => {
     // §36: DependencyPanel + FirstRunBanner poll on intervals for the page
     // lifetime; release them on teardown so the intervals don't keep firing into
     // bfcache/unload. destroy() (= stopPolling) is idempotent.
+    // Another local app can ask permission to embed this one; the prompt is
+    // raised here and nowhere else, because approving is what writes the origin
+    // to config. Home page only — a shell or file-listing deep link returned
+    // long before this point.
+    startEmbedRequestWatch();
+
     onPageTeardown(() => {
         firstRunBanner?.destroy();
         dependencyPanel?.destroy();
+        stopEmbedRequestWatch();
     });
 
     HostTracker.start();
