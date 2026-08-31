@@ -37,6 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   A web page cannot even ask: browsers always send `Origin` on `fetch()`, and the Origin check rejects a cross-origin one on every non-GET request, so only a non-browser local caller reaches the endpoint at all. The residual risk — a local program asking for an origin it controls and hoping you click through — is why the prompt shows the origin verbatim and deny is the safe answer. `SECURITY.md` §Framing says so plainly.
 
+  **The prompt is a forced choice** (`dismissible: false`): no close button, and Escape or a click on the backdrop is ignored. Granting an origin permission to frame the app has to be deliberate, and dismissing the dialog by mis-clicking beside it previously reported a *denial the user never made* back to the asking app. The only exits are the two buttons and the countdown reaching zero.
+
 ## [0.1.30-beta.82] - 2026-08-27
 
 ### Fixed

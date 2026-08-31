@@ -37,7 +37,11 @@ export class EmbedRequestModal extends Modal {
     }
 
     private constructor(options: EmbedRequestModalOptions, resolve: (value: EmbedRequestDecision) => void) {
-        super({ title: 'allow embedding?' });
+        // A forced choice: no close button, and Escape / backdrop clicks are ignored. Granting
+        // another origin permission to frame this app must be an explicit act, and dismissing the
+        // dialog by mis-clicking outside it previously reported a denial the user never made.
+        // The only exits are the deny and approve buttons, or the request expiring.
+        super({ title: 'allow embedding?', dismissible: false });
         this.opts = options;
         this.resolveFn = resolve;
         this.deadline = Date.now() + options.expiresInMs;
@@ -147,19 +151,8 @@ export class EmbedRequestModal extends Modal {
         }
     }
 
-    // Dismissing the dialog any other way is a refusal, never a grant — except
-    // after expiry, where there is nothing left to refuse.
-    protected override onEscapeKey(_event: Event): void {
-        this.resolveAndClose(this.expired ? 'expired' : 'denied');
-    }
-
-    protected override onBackdropClick(_event: MouseEvent): void {
-        this.resolveAndClose(this.expired ? 'expired' : 'denied');
-    }
-
-    protected override onCloseButtonClick(): void {
-        this.resolveAndClose(this.expired ? 'expired' : 'denied');
-    }
+    // No onEscapeKey / onBackdropClick / onCloseButtonClick overrides: with dismissible:false the
+    // base never invokes them, and a handler here would imply an exit route that does not exist.
 
     private resolveAndClose(value: EmbedRequestDecision): void {
         if (this.resolved) return;
