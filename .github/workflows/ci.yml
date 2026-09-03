@@ -63,7 +63,12 @@ jobs:
       # This is a fast-tier step under spec §9: it runs on a GitHub-hosted runner
       # and holds no secrets. The tier boundary is secrets and devices, not
       # containers.
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      # No docker/setup-buildx-action step, deliberately. This repo restricts
+      # Actions to an allow-list (`allowed_actions: selected`), and that action
+      # is not on it — adding the step made the whole workflow fail to start,
+      # with no job and no annotation naming the cause. ubuntu-latest ships the
+      # buildx plugin already, and a single native-platform build with --load
+      # needs nothing more, so the step buys nothing here anyway.
       - name: Build the container image
         run: docker buildx build --platform linux/amd64 --load -t ws-scrcpy-web:ci .
       # NOTE: the `@docker` Playwright project (npm run test:e2e:docker) lands

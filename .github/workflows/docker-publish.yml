@@ -16,10 +16,19 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # Inert while `platforms:` names a single native architecture, and kept
-      # deliberately: it is what makes re-enabling arm64 a one-line change once
-      # docs/adr/2026-09-01-linux-arm64-adb.md is lifted.
-      - uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4.3.0
+      # No setup-qemu-action: it exists to emulate a foreign architecture, and
+      # `platforms:` below names one native arch. Re-add it alongside arm64 if
+      # docs/adr/2026-09-01-linux-arm64-adb.md is ever lifted.
+      #
+      # setup-buildx IS required, and not as boilerplate: `provenance` and `sbom`
+      # below are BuildKit attestations, which the runner's default docker driver
+      # cannot produce. Dropping this step would silently publish an image with
+      # no provenance and no SBOM.
+      #
+      # This repo restricts Actions to an allow-list (`allowed_actions: selected`)
+      # with SHA pinning enforced, so this action must be present in
+      # actions/permissions/selected-actions or the workflow fails to START --
+      # no job, no annotation naming the cause. Added there 2026-09-03.
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
