@@ -71,10 +71,22 @@ jobs:
       # needs nothing more, so the step buys nothing here anyway.
       - name: Build the container image
         run: docker buildx build --platform linux/amd64 --load -t ws-scrcpy-web:ci .
-      # NOTE: the `@docker` Playwright project (npm run test:e2e:docker) lands
-      # with the suite partition and is added here then. A step invoking a script
-      # that does not exist yet would fail every PR for a reason unrelated to the
-      # change under review.
+
+      # The @docker project: the same specs and the same support library as the
+      # fast tier above, against the built image instead of a bare
+      # `node dist/index.js`. It runs on a GitHub-hosted runner and holds no
+      # secrets, so it belongs in the fast tier under spec §9 — the tier boundary
+      # is secrets and devices, not containers.
+      #
+      # WSSW_IMAGE points compose at the tag the step above just built, so the
+      # image is not built a second time under another name.
+      #
+      # Ordering is load-bearing: after `npm run build` (the fast-tier Playwright
+      # steps need the host dist/) and after the image build (this starts it).
+      - name: E2E — container suite
+        run: npm run test:e2e:docker
+        env:
+          WSSW_IMAGE: ws-scrcpy-web:ci
 
       - name: Bump/blob sync
         # The auto-release bump commit is assembled from an explicit blob list.

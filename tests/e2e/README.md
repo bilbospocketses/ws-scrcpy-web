@@ -26,6 +26,40 @@ unit test cannot see, and that this suite would:
   and move the running server to another port. Every consent spec asserts the
   untouched keys for that reason.
 
+## Three tiers, one suite
+
+| Tag | Subject | Runs in | Command |
+|---|---|---|---|
+| *(untagged)* | `node dist/index.js`, throwaway data root | `build-and-test` | `npm run test:e2e` |
+| `@docker` | the built image, via docker-compose.yml | `build-and-test` | `npm run test:e2e:docker` |
+| `@device` | the image + an Android emulator | qa-harness only | `npm run test:e2e:device` |
+
+Tag by putting the marker in the test **TITLE** — `test('@device streams h264', …)`
+— which is what Playwright's `--grep` matches. A tag in a comment or in a
+`describe` block's metadata does nothing, and the spec silently joins the default
+tier.
+
+One suite, partitioned by tag rather than split across directories or repos: the
+default config `grepInvert`s the two tags, and `playwright.docker.config.ts`
+greps them back in. A feature's specs therefore stay together — the device
+streaming specs belong beside the settings specs that configure the codec they
+stream — and there is one support library and one selector vocabulary.
+
+`@device` specs are authored here and run there. Nothing about them is
+qa-harness-specific except the emulator's presence, so keeping them beside their
+feature's other specs costs nothing and forking the support library would cost a
+lot.
+
+**`test:e2e:device` uses an inline env assignment** (`QA_DEVICE=1 QA_EXTERNAL_STACK=1 …`).
+That is POSIX syntax and is correct: the script is invoked by `qa-harness` from
+inside its Linux runner, never from PowerShell. It is not broken on Windows, it
+is simply not for Windows — please do not "fix" it with `cross-env`.
+
+`QA_EXTERNAL_STACK=1` tells the container config **not** to start a stack of its
+own, because qa-harness already owns one (its compose topology adds the emulator
+and a network this repo knows nothing about) and points `PLAYWRIGHT_BASE_URL` at
+it.
+
 ## Isolation
 
 The suite never touches a real install. It runs its own server on **port 8123**
