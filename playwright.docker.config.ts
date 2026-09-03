@@ -35,6 +35,18 @@ export default defineConfig({
      * rather than failing them.
      */
     grep: process.env['QA_DEVICE'] === '1' ? /@docker|@device/ : /@docker/,
+    /**
+     * `@docker-host` marks the container rows that drive a compose stack of
+     * their own through the docker CLI (1.9's offline stack, 9.5's no-node-pty
+     * image). They belong to this repo's CI, where the daemon is the tier's
+     * execution environment; inside qa-harness's runner there is no docker CLI
+     * by design, and the harness owns the one stack there is. Filtered by tag
+     * when the harness owns the stack — a partition, not a skip: a filtered row
+     * is not in the run at all, so it can neither pass vacuously nor fail for a
+     * reason that names nothing near the cause (`spawnSync docker ENOENT`,
+     * measured 2026-09-03 on every harness run before this).
+     */
+    ...(external ? { grepInvert: /@docker-host/ } : {}),
 
     fullyParallel: false,
     workers: 1,

@@ -188,7 +188,7 @@ test.describe('dependencies (smoke §9.4, §9.5, §1.9)', () => {
         }
     });
 
-    test('@docker 9.5 a host without the node-pty prebuilt reports shell:false with a reason, where the full image reports shell:true', async () => {
+    test('@docker @docker-host 9.5 a host without the node-pty prebuilt reports shell:false with a reason, where the full image reports shell:true', async () => {
         test.setTimeout(600_000);
         const FILE = 'compose.no-node-pty.yml';
         const BASE = 'http://127.0.0.1:8125';
@@ -228,7 +228,7 @@ test.describe('dependencies (smoke §9.4, §9.5, §1.9)', () => {
         }
     });
 
-    test('@docker 1.9 a failed first-run download shows the setup-incomplete banner, and Retry clears it once the network is back', async () => {
+    test('@docker @docker-host 1.9 a failed first-run download shows the setup-incomplete banner, and Retry clears it once the network is back', async () => {
         test.setTimeout(600_000);
         const FILE = 'compose.offline.yml';
         const CONTAINER = 'wssw-offline';
