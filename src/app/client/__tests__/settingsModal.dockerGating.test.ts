@@ -15,7 +15,7 @@ import { buildDockerServiceNote, buildDockerUpdatesNote, SettingsModal } from '.
 // decision 4. Written out here rather than imported so a silent reword of the
 // source string fails this test instead of travelling with it.
 const SERVICE_COPY = 'service install not applicable — this instance runs in a container.';
-const UPDATES_COPY = 'update via `docker pull bilbospocketses/ws-scrcpy-web:latest`.';
+const UPDATES_COPY = 'update via `docker pull jchapz30/ws-scrcpy-web:latest`.';
 
 describe('container replacements for Service and Updates', () => {
     beforeEach(() => {

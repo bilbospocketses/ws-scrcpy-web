@@ -34,7 +34,7 @@ Ship a multi-stage, multi-arch Docker image for ws-scrcpy-web so the app can be 
 | # | Decision | Rationale |
 |---|----------|-----------|
 | D1 | **Dependency bootstrap = seed + first-run hydrate.** Bake the existing desktop `seed/` (node + scrcpy-server + node-pty) into the image; `DependencyManager.autoInstallMissing` fills the empty `/data/dependencies` volume (incl. adb) on first boot. | Smallest image; reuses the exact host first-run code path; works with named volumes *and* bind mounts. Cost: first boot needs outbound network (to fetch adb at minimum). |
-| D2 | **Registry = Docker Hub** (`bilbospocketses/ws-scrcpy-web`). | Matches the locked UI copy verbatim; cleanest pull UX; most discoverable. Cost: needs `DOCKER_USERNAME` + a PAT secret; anonymous pulls are rate-limited. |
+| D2 | **Registry = Docker Hub** (`jchapz30/ws-scrcpy-web` — the Docker Hub account that exists; there is no `bilbospocketses` namespace there, and an organisation is a paid plan; renamed 2026-09-03 at the first real publish). | Matches the locked UI copy verbatim; cleanest pull UX; most discoverable. Cost: needs `DOCKER_USERNAME` + a PAT secret; anonymous pulls are rate-limited. |
 | D3 | **Channel-aware tags.** Every release → immutable `:X.Y.Z[-beta.N]`. Beta release also moves `:beta`; stable release also moves `:latest` + `:stable`. | Mirrors the Velopack beta/stable channels; lets the Docker path be smoked on `:beta` now; `:latest` never surprises users with a beta. |
 | D4 | **Single `/data` state volume** (`DATA_ROOT=/data`, `DEPS_PATH=/data/dependencies`). Refines the locked "`/dependencies` only" wording. | One mount; `config.json` + `logs/` + `dependencies/` all persist across `docker rm`/image update; identical to the on-host dataRoot layout. |
 
@@ -102,7 +102,7 @@ VOLUME /data
 `ENV WS_SCRCPY_DOCKER=1` → the server exposes `docker: true` on the config-runtime / service-status envelopes (so the frontend gates without a second probe):
 
 - **Settings → Service:** hidden; replaced with informational copy *"service install not applicable — this instance runs in a container."*
-- **Settings → Updates:** the "check for updates now" control hidden; replaced with *"update via `docker pull bilbospocketses/ws-scrcpy-web:latest`."* (locked copy, verbatim).
+- **Settings → Updates:** the "check for updates now" control hidden; replaced with *"update via `docker pull jchapz30/ws-scrcpy-web:latest`."* (locked copy, verbatim).
 - **libfuse2 banner:** always hidden (Velopack-specific; no Docker relevance).
 
 **Note styling:** the Service + Updates informational copy above adopts the shared **indented bold-italic** Settings-note convention (todo item 47, surfaced in the beta.52 smoke) so it reads as a sub-note, set apart from the settings.
@@ -120,7 +120,7 @@ VOLUME /data
 - **Channel-aware tag computation** from the release tag, reusing the same rule as `package-linux.mjs:119` (`version.includes('-beta')`):
   - beta → `:X.Y.Z-beta.N` **and** `:beta`
   - stable → `:X.Y.Z` **and** `:stable` **and** `:latest`
-- Push to `bilbospocketses/ws-scrcpy-web`. Secrets: `DOCKER_USERNAME` + `DOCKER_PAT`.
+- Push to `jchapz30/ws-scrcpy-web`. Secrets: `DOCKER_USERNAME` + `DOCKER_PAT`.
 - The pre-existing disabled `docker-publish.yml.disabled` (placeholder: `my-image-name:latest`, push-on-every-main-push) is **replaced/removed**.
 
 ## 11. Networking (mostly → SP5 docs)

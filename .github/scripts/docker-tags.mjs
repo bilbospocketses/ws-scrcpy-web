@@ -15,7 +15,7 @@
 // exists to prevent. It is unit-tested rather than first exercised on a real
 // release.
 
-export const IMAGE = 'bilbospocketses/ws-scrcpy-web';
+export const IMAGE = 'jchapz30/ws-scrcpy-web';
 
 /**
  * @param {string} tagName a release tag, with or without a leading `v`

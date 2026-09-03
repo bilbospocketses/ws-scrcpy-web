@@ -458,11 +458,7 @@ export function buildDockerServiceNote(): HTMLElement {
 }
 
 export function buildDockerUpdatesNote(): HTMLElement {
-    return buildDockerNoteSection(
-        'Updates',
-        'updates',
-        'update via `docker pull bilbospocketses/ws-scrcpy-web:latest`.',
-    );
+    return buildDockerNoteSection('Updates', 'updates', 'update via `docker pull jchapz30/ws-scrcpy-web:latest`.');
 }
 
 export class SettingsModal extends Modal {
