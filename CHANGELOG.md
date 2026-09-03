@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.90] - 2026-09-03
+
 ### Changed
 
 - **The Docker image is `jchapz30/ws-scrcpy-web`.** Every tag since beta.86 failed to publish at Docker
