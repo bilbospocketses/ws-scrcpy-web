@@ -34,9 +34,17 @@ export async function cssVar(page: Page, name: string): Promise<string> {
  * Deliberately not `networkidle` (the device pollers keep the page busy) and
  * not an `expect.poll` on the attribute (a value read can be overwritten after
  * it was read).
+ *
+ * Scoped to the HEADER's toggle. Every modal header carries a second
+ * `button.theme-toggle` (also classed `modal-close`), and a spec that has just
+ * wiped the user settings — 16.6 does, to establish "no saved theme" — loads
+ * with the bookmark reminder open. An unscoped locator then resolves to two
+ * elements and strict mode throws; whether it does depends on which of the
+ * two mounts first, which is why this passed locally and failed on the slower
+ * CI runner.
  */
 export async function waitForThemeSettled(page: Page): Promise<void> {
-    await page.locator('button.theme-toggle').waitFor();
+    await page.locator('button.theme-toggle:not(.modal-close)').waitFor();
 }
 
 /**
