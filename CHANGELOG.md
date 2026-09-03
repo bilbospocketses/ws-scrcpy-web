@@ -17,6 +17,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The Docker image is `jchapz30/ws-scrcpy-web`.** Every tag since beta.86 failed to publish at Docker
+  Hub login, and once the credentials were right the reason moved: Docker Hub has no `bilbospocketses`
+  namespace (an organisation there is a paid plan) and the account that exists, `jchapz30`, already owns
+  a `ws-scrcpy-web` repository. The tag script, `qa-manifest.json`, the container's Settings copy
+  (`update via \`docker pull jchapz30/ws-scrcpy-web:latest\`.`) and the SP4 design record the new name;
+  `github.com/bilbospocketses/ws-scrcpy-web` is unchanged.
+
 ## [0.1.30-beta.89] - 2026-09-03
 
 ### Added
