@@ -33,7 +33,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.30-beta.85] - 2026-09-03
 
+### Added
+
+- **The end-to-end suite is now three tiers in one place, selected by tag.** Untagged specs stay the fast tier (`npm run test:e2e`, a bare `node dist/index.js`); `@docker` specs run against the built image via `npm run test:e2e:docker` and a new `playwright.docker.config.ts` that starts the compose stack with `--wait`; `@device` specs are reserved for the Android emulator under qa-harness (`npm run test:e2e:device`). Tags live in the test title, which is what `--grep` matches. Five `@docker` specs land with the tier: the server reports itself as containerised, neither first-run modal opens, Settings shows the locked container copy in place of Service and Updates, and the container flag is never written to the volume. The image is now built on every PR and the `@docker` suite run against it.
+
+### Fixed
+
+- **A container opened the Linux "install for all users" offer on first load, and it swallowed every click beneath it.** The offer keys off a per-data-root decline marker that a fresh volume never has, so every `docker run` against a new volume hit it, and because it is a `<dialog>` the page underneath was unusable. It is now gated on container mode as well. Linux-only and loaded lazily, it passed on a Windows dev box and failed only in CI.
+
 ## [0.1.30-beta.84] - 2026-09-03
+
+### Added
+
+- **ws-scrcpy-web ships as a container image.** A two-stage build on `node:24-trixie-slim` pinned by digest, `tini -g` as PID 1, a root shim that fixes `/data` ownership then steps down to uid 1000 with `setpriv`, `/data` as the single state volume (config, SQLite store and the hydrated `dependencies/`), port 8000 inside with the host mapping it, and a `HEALTHCHECK` against `GET /api/config` with a 180 s start period because first boot downloads adb before it listens. `docker-compose.yml` at the repo root is both the quickstart (`docker compose up`) and what the container suite drives. `linux/amd64` only for now: Google publishes no arm64 Linux platform-tools, so an arm64 image would build, report healthy, and fail on the first device connection.
+
+- **A Docker Hub publish workflow, wired to fire on published releases.** It pushes `bilbospocketses/ws-scrcpy-web` with an immutable `:<version>` tag plus `:beta` for pre-releases or `:latest` + `:stable` for stable builds — a beta is never `:latest` — with provenance and SBOM attestations. It had not yet produced a published image at this release: the trigger could not fire from a release created with the workflow token (fixed in beta.86).
+
+### Fixed
+
+- **Stopping the server could cut its shutdown short.** `start.sh` had no signal handling, so a SIGTERM aimed at the process group — `docker stop`, and equally systemd's `stop` on a Linux service install — killed the launcher shell where it stood, and the app's teardown (`adb kill-server`, service release) was abandoned mid-flight. The launcher now forwards TERM/INT to the app and waits for it, and a stop exits 0.
 
 ## [0.1.30-beta.83] - 2026-09-03
 
@@ -44,6 +62,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`CONTRIBUTING.md` documented a test workflow that no longer matches CI.** Its command block listed `npm test` and nothing else, while `build-and-test` — the check `main`'s ruleset requires — now runs the Playwright suite and its typecheck as well. A contributor following the documented workflow could pass everything locally and still fail the required check, with nothing in the docs explaining why. The block now lists `test:e2e` and `test:e2e:types`, and says plainly that `npm test` does not run the e2e suite.
 
 ### Added
+
+- **The app knows when it is running in a container.** With `WS_SCRCPY_DOCKER=1` the server presents as already-configured — no welcome wizard on every boot, since a container has no installer hook to seed that — and reports `docker: true` on the config envelope and the service-status response. The implication is applied when read and never written to `config.json`, so a `/data` volume later mounted elsewhere cannot carry it. Settings replaces the Service section with *"service install not applicable — this instance runs in a container."* and Updates with *"update via `docker pull bilbospocketses/ws-scrcpy-web:latest`."*, and issues neither section's network requests in a container.
 
 - **Playwright end-to-end suite (`npm run test:e2e`).** Fourteen specs covering the embed-consent protocol, the framing headers and Settings → Embedding, running against a real server process rather than mocks. This is the layer the existing vitest suite cannot reach: `frameGuard` and `embedRequests` are already covered as pure functions, but a header that never reaches the wire, or an approval that rewrites `config.json` and drops `webPort` out from under the running server, both look fine to a unit test. Every consent spec asserts the keys it must not have touched.
 
