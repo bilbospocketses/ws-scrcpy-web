@@ -5,7 +5,7 @@
     "artifact": {
         "type": "container-image",
         "registry": "docker.io",
-        "repository": "bilbospocketses/ws-scrcpy-web"
+        "repository": "jchapz30/ws-scrcpy-web"
     },
     "suites": [
         { "name": "fast", "command": "npm run test:e2e", "services": [] },

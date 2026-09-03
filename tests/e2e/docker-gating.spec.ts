@@ -64,7 +64,7 @@ test.describe('container mode', () => {
         await expect(service).toBeVisible();
         await expect(updates).toBeVisible();
         await expect(service).toContainText('service install not applicable — this instance runs in a container.');
-        await expect(updates).toContainText('update via `docker pull bilbospocketses/ws-scrcpy-web:latest`.');
+        await expect(updates).toContainText('update via `docker pull jchapz30/ws-scrcpy-web:latest`.');
 
         // ...and the real sections they replaced are not. Asserting the absence
         // matters as much as the presence: a note rendered ALONGSIDE a working

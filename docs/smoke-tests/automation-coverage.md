@@ -19,7 +19,7 @@ free number.
 | # | Affordance | Container behaviour | Status |
 |---|---|---|---|
 | 20.1 | Settings → Service | replaced by *"service install not applicable — this instance runs in a container."* | automated (`settingsModal.dockerGating.test.ts`; container smoke in task 11) |
-| 20.2 | Settings → Updates | replaced by *"update via `docker pull bilbospocketses/ws-scrcpy-web:latest`."* | automated (same) |
+| 20.2 | Settings → Updates | replaced by *"update via `docker pull jchapz30/ws-scrcpy-web:latest`."* | automated (same) |
 | 20.3 | libfuse2 banner | **nothing to hide — the gate no longer exists** | n/a, see below |
 
 **20.3 is satisfied by deletion, not by gating.** SP4 decision 4 requires the
