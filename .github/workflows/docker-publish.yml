@@ -1,11 +1,17 @@
 name: Docker publish
 
-# release:published, not tag push. The Velopack legs in release.yml own the tag;
-# this reuses the published release's tag name and stays decoupled from them, so
-# a Docker failure never blocks an installer release or vice versa.
+# Tag push, NOT release:published -- and this is a correction. release.yml
+# publishes the GitHub Release through softprops/action-gh-release with the
+# default GITHUB_TOKEN, and GitHub never triggers other workflows from events
+# that token creates, so a `release: published` trigger here could never fire.
+# It did not: no run exists for v0.1.30-beta.84 or beta.85, and Docker Hub has
+# no repository. The tag itself is pushed by auto-release with a GitHub App
+# token, whose events DO trigger workflows, so this listens to the same tag
+# push release.yml does. Still decoupled -- a separate workflow -- so a Docker
+# failure never blocks an installer release or vice versa.
 on:
-  release:
-    types: [published]
+  push:
+    tags: ['v*']
 
 permissions:
   contents: read
@@ -45,7 +51,7 @@ jobs:
         # The rule that matters is the negative one: a beta must never become
         # :latest. That is unit-tested rather than first exercised on a real
         # release, because it reaches every user who follows the default tag.
-        run: node .github/scripts/docker-tags.mjs "${{ github.event.release.tag_name }}" >> "$GITHUB_OUTPUT"
+        run: node .github/scripts/docker-tags.mjs "${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
 
       - uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:

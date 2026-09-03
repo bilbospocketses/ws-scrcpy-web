@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The Docker Hub publish could never run.** The workflow listened for `release: published`, but the release is created by `release.yml` through `action-gh-release` with the default `GITHUB_TOKEN`, whose events never trigger other workflows — so no image was published for beta.84 or beta.85, and the Docker Hub repository does not exist yet. It now fires on the same `v*` tag push as `release.yml`, which auto-release pushes with an App token.
+
 ## [0.1.30-beta.85] - 2026-09-03
 
 ## [0.1.30-beta.84] - 2026-09-03
