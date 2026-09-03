@@ -154,6 +154,16 @@ its own data root that is wiped and re-seeded per run. The log those rows read
 is `<dataRoot>/logs/ws-scrcpy-web.log`: the console echo is TTY-only, so a
 spawned child's captured stdout never carries it.
 
+**`@docker-host`.** Two of those rows — 1.9's offline stack and 9.5's no-node-pty image —
+drive a compose stack of their own through the docker CLI. They run in this repo's CI,
+where the daemon is the tier's execution environment, and carry `@docker-host` beside
+`@docker`. When qa-harness owns the stack (`QA_EXTERNAL_STACK=1`, inside its runner, which
+has no docker CLI by design) the container config filters that tag out. A partition by tag,
+the same mechanism that keeps `@docker` out of the fast tier — not a skip. Before this, every
+harness run reported the two as `spawnSync docker ENOENT`, a failure naming nothing near its
+cause.
+
+
 Two `@docker` rows need a container the main stack cannot be, and bring up
 their own compose stacks from `tests/docker/` beside it (`support/dockerStack.ts`):
 
@@ -190,6 +200,36 @@ passed. Running the other two tiers from the bundle is the harness's run-lifecyc
 Locally: `node scripts/build-suite-bundle.mjs --out Releases --verify` builds the archive,
 prints its sha256, extracts it into `.suite-check/` and typechecks the suite from inside the
 copy — the same round-trip CI runs on every PR.
+
+## The device tier
+
+`tests/e2e/device/*.spec.ts`, tagged `@device`, run only inside qa-harness's Linux runner:
+the subject container, P2's Android emulator on the run network, and a runner that refuses to
+start Playwright unless its own adb sees the emulator in `device` state. `npm run test:e2e:device`
+is what the bundle's manifest names, and the runner executes it from the bundle root with
+`PLAYWRIGHT_BASE_URL` set to the subject on **loopback** (the runner shares the subject's network
+namespace — WebCodecs is exposed only in a secure context, and `http://<ip>:8000` is not one; on
+that origin the app registers no player at all, register finding 8.10).
+
+`support/device.ts` is the shared ground: `deviceAddress()` (the emulator's adb address from
+`QA_DEVICE_ADDRESS`, failing loudly when unset — a device spec **never skips**), `qaAdb()` (the
+runner's vendored adb by the absolute path it bakes in `QA_ADB`, the out-of-band witness that
+locks the screen, reads the process table and counts shells; never the app's own adb, which is
+the thing under test), connect/disconnect through the app's routes, the device row locator,
+a decoded-frame counter installed before navigation, a canvas signature, and
+`expectFramesArriving()` — which stimulates the screen, because scrcpy encodes only on surface
+updates, and asserts a *picture*, never a connection.
+
+Every row is judged on the device: the shell modal by the device's process table, the file modal
+by `ls` and `cat` on the device, sleep/wake by the app's own screen-state route, the stream by
+frames decoded and a canvas that changes. Each spec leaves the device connected, awake and
+unlocked and the server in open mode, including on failure: the four files share one emulator and
+run serially in alphabetical order.
+
+What the tier cannot do, and says so: H.265 is undecodable by every browser in the Linux runner
+(the HEVC halves of 8.5 and 8.7 are residual here, coverable on a Windows host with Chrome);
+headless chromium cannot prove that audio plays; and rows 1.9 and 9.5 (`@docker-host`) need the
+docker CLI the runner lacks by design, so they run in this repo's CI only.
 
 ## Still manual
 
