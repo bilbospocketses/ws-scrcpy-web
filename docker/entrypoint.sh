@@ -22,6 +22,11 @@ if [ "$(id -u)" = '0' ]; then
         echo "[entrypoint] taking ownership of /data for uid $APP_UID"
         chown -R "$APP_UID:$APP_GID" /data
     fi
+    # Unconditionally, and not covered by the block above: a volume that
+    # predates /data/home is already owned by the app user, so the recursive
+    # chown is skipped and the directory just created above stays root's —
+    # and adb aborts on it exactly as it did on /root. One directory, no cost.
+    chown "$APP_UID:$APP_GID" /data/home
     # setpriv keeps this shell's environment, and this shell's HOME is /root.
     # adb creates $HOME/.android on EVERY invocation — `adb --version`
     # included — and aborts with a core dump when it cannot ("Cannot mkdir
