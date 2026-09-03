@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.87] - 2026-09-03
+
 ### Added
 
 - **The opt-in login subsystem is covered end to end (`npm run test:e2e`, 24 → 36 specs).** Smoke module 18, all twelve rows, as one serial state machine: the fresh-install open mode; securing the admin account (one request renames user 1, sets its password, creates the first user and turns login on, and the client reloads to the inline sign-in page); signing in; the brute-force lockout, with identical responses for an unknown user and a wrong password and the correct password refused while locked; the admin unlock; role, disable, password-reset and delete from the Users modal with the last-admin guard; a regular user's admin requests refused by the server and the admin sections absent from its Settings; changing one's own password; logout deleting the session server-side; live WebSockets closed with 4401 without a session and served with one; the return to open mode; and a session surviving a server restart, proven on a server the spec starts and restarts itself. The e2e database is now wiped before every run, because securing the admin account is a one-way door no API call reopens. Each row is marked *(automated: …)* in `docs/smoke-tests/smoke-test.md`, and `docs/smoke-tests/automation-coverage.md` records the three findings the rows surfaced without fixing them.
