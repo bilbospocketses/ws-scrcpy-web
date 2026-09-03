@@ -433,6 +433,12 @@ export class Config {
     private _appConfig: AppConfig;
     private _configFilePath: string;
     private _firstRunStatus: FirstRunStatus;
+    /**
+     * Whether firstRunComplete was stated explicitly (by the file at boot, or by a
+     * later updateAppConfig). Only meaningful in Docker mode, where an unstated
+     * value is implied true and a stated one is honoured as written.
+     */
+    private _firstRunExplicit: boolean;
 
     private static loadFile(configPath: string): FlatConfig {
         const isAbsolute = configPath.startsWith('/') || /^[A-Za-z]:[\\/]/.test(configPath);
@@ -545,6 +551,31 @@ export class Config {
             // Prompt-dismissal flags are no longer part of AppConfig — they live
             // in user_settings and are read by the frontend via GET /api/settings.
             const appConfig = composeAppConfig(fileConfig, globals, warn);
+
+            // SP4 E4: a container presents as already-configured. WS_SCRCPY_DOCKER=1
+            // implies firstRunComplete + installMode 'user', so the WelcomeModal and
+            // the Linux SystemWideInstallModal never open — on the host those are
+            // seeded by Velopack's hooks.rs::on_install, and no such hook exists in
+            // Docker.
+            //
+            // Compared against the literal '1'. Boolean(process.env.X) makes the
+            // STRING '0' true, so a compose file that disables the flag by setting
+            // it to 0 would silently leave it enabled.
+            //
+            // The implication is applied as a READ-TIME OVERLAY (effectiveAppConfig)
+            // and is never written into _appConfig. saveToDisk() persists
+            // installMode + firstRunComplete straight out of _appConfig, and is
+            // reached from setActualWebPort() on any port shift — so baking it in
+            // would write firstRunComplete:true into /data/config.json on first
+            // boot. It would then outlive WS_SCRCPY_DOCKER and suppress the welcome
+            // modal on any host that later mounted that volume.
+            const dockerMode = process.env['WS_SCRCPY_DOCKER'] === '1';
+
+            // Whether the FILE stated firstRunComplete. composeAppConfig turns an
+            // absent value into `false`, which is indistinguishable from an explicit
+            // false — and the overlay must defer to a user who wrote one.
+            const firstRunExplicit = fileConfig.firstRunComplete !== undefined;
+
             const servers = Config.buildServers(fileConfig, appConfig.webPort);
 
             // An app_settings override of dependenciesPath/adbPath is overlaid for
@@ -594,6 +625,8 @@ export class Config {
                 allowedHosts,
                 frameAncestors,
                 db,
+                dockerMode,
+                firstRunExplicit,
             );
         }
         return this.instance;
@@ -619,13 +652,41 @@ export class Config {
         private readonly _allowedHosts: string[],
         private readonly _frameAncestors: string[],
         private readonly _db: Db,
+        private readonly _dockerMode: boolean = false,
+        firstRunExplicit: boolean = false,
     ) {
         this._appConfig = appConfig;
         this._configFilePath = configFilePath;
+        this._firstRunExplicit = firstRunExplicit;
         this._firstRunStatus = {
-            firstRunComplete: appConfig.firstRunComplete,
+            firstRunComplete: this.effectiveAppConfig().firstRunComplete,
             portWasAutoShifted: false,
             webPort: appConfig.webPort,
+            ...(this._dockerMode ? { docker: true } : {}),
+        };
+    }
+
+    /** True when the server was started with WS_SCRCPY_DOCKER=1. */
+    public get dockerMode(): boolean {
+        return this._dockerMode;
+    }
+
+    /**
+     * The effective config as READ. The Docker implication lives here and only
+     * here: `_appConfig` stays exactly what the file and the store said, so
+     * `saveToDisk()` — which writes installMode + firstRunComplete straight out of
+     * `_appConfig`, and is reached from `setActualWebPort()` on any port shift —
+     * can never persist it. See the note in getInstance().
+     *
+     * `?? 'user'` rather than an unconditional override: the implication is a
+     * DEFAULT, so a user who wrote an installMode keeps it.
+     */
+    private effectiveAppConfig(): AppConfig {
+        if (!this._dockerMode) return this._appConfig;
+        return {
+            ...this._appConfig,
+            firstRunComplete: this._firstRunExplicit ? this._appConfig.firstRunComplete : true,
+            installMode: this._appConfig.installMode ?? 'user',
         };
     }
 
@@ -845,9 +906,12 @@ export class Config {
         return [];
     }
 
-    /** Returns the resolved AppConfig (with defaults filled in). */
+    /**
+     * Returns the resolved AppConfig (with defaults filled in, and the Docker
+     * implication overlaid when WS_SCRCPY_DOCKER=1 — see effectiveAppConfig).
+     */
     public getAppConfig(): AppConfig {
-        return { ...this._appConfig };
+        return { ...this.effectiveAppConfig() };
     }
 
     /** Path on disk where config.json lives (or will live on first save). */
@@ -892,12 +956,17 @@ export class Config {
         }
         const restartRequired = merged.webPort !== this._appConfig.webPort;
         this._appConfig = merged;
+        // A caller that writes firstRunComplete has stated it, so the Docker
+        // implication must stop supplying a value for it from here on.
+        if (partial.firstRunComplete !== undefined) {
+            this._firstRunExplicit = true;
+        }
         this._firstRunStatus = {
             ...this._firstRunStatus,
-            firstRunComplete: merged.firstRunComplete,
+            firstRunComplete: this.effectiveAppConfig().firstRunComplete,
         };
         this.saveToDisk();
-        return { config: { ...merged }, restartRequired };
+        return { config: { ...this.effectiveAppConfig() }, restartRequired };
     }
 
     /**
@@ -947,9 +1016,10 @@ export class Config {
             this.saveToDisk();
         }
         this._firstRunStatus = {
-            firstRunComplete: this._appConfig.firstRunComplete,
+            firstRunComplete: this.effectiveAppConfig().firstRunComplete,
             portWasAutoShifted: shifted,
             webPort: actualPort,
+            ...(this._dockerMode ? { docker: true } : {}),
         };
     }
 }
