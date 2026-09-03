@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **adb was unusable inside the container image.** The entrypoint's step-down to the app user kept the root shim's `HOME=/root`; adb creates `$HOME/.android` on every invocation, `adb --version` included, and aborted with a core dump when it could not. The server's version probe swallowed the abort into "not installed", so every boot of the image showed the first-run banner naming adb as failed to download, the Dependencies panel listed it as not installed, and no device could have connected — while the container reported healthy, because the health probe only touches loopback. The app's `HOME` is now `/data/home` on the volume, which also keeps the adb key pair (the device-authorization identity) across `docker rm`. Found by automating the first-run banner row; the container tier now asserts every dependency, adb's real version included, is installed on a fresh volume.
+
 - **The end-to-end suite's server no longer logs into the repository root.** The fast tier's server was started without `DEPS_PATH`, so its log file landed at `<repo>/ws-scrcpy-web.log` and, on Linux, its dependencies under `<repo>/dependencies`, outside the throwaway data root the suite exists to stay inside. Both configs now set it.
 
 ## [0.1.30-beta.87] - 2026-09-03
