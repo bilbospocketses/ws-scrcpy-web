@@ -17,6 +17,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The device tier: sixteen smoke rows automated against a real Android emulator** (`tests/e2e/device/`,
+  P3 task 15). Connect and scan (7.1, 7.2, 7.4), streaming (8.1–8.6 for H.264 and the codecs the
+  emulator encodes; 8.8 as a partial, since this emulator composes its keyguard instead of blanking
+  it), the shell, file and device-action modals (9.1–9.3), and per-user labels with the negative
+  (19.1–19.3). They run only under qa-harness, which brings the emulator onto the run network and
+  hands the runner its address; a device spec whose emulator is absent fails with a named reason and
+  never skips. Every row is judged on the device through the runner's own adb or the app's device
+  routes, never on the UI's claim alone. 7.2's public-range refusal joins the fast tier untagged
+  (44 → 45). The coverage register records the findings the rows surfaced without fixing them, three of
+  them defects: on an insecure origin the app registers no player and says nothing, which is the
+  Docker image's plain-HTTP LAN use (8.10); clearing "enable audio" stops the stream from starting
+  on the reverse tunnel (8.13, red by name until fixed); and a session can deliver megabytes of video
+  the browser never decodes while no watchdog reports it (8.14, intermittent, red by name when it
+  happens); a label
+  set on the device row never reaches that device's scan hits (19.4); the remembered model of 7.5
+  lives on a route the UI does not call (7.6); and four smaller ones (7.7, 7.8, 8.11, 8.12).
+
+### Changed
+
+- **Rows 1.9 and 9.5 carry `@docker-host`.** They drive compose stacks of their own through the docker
+  CLI, which the harness runner lacks by design; `playwright.docker.config.ts` filters the tag out when
+  the harness owns the stack (`QA_EXTERNAL_STACK=1`). A partition by tag, not a skip: every harness run
+  had reported the two as `spawnSync docker ENOENT`.
+
 ## [0.1.30-beta.90] - 2026-09-03
 
 ### Changed
