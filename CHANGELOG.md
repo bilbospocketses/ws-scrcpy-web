@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.91] - 2026-09-03
+
 ### Added
 
 - **The device tier: sixteen smoke rows automated against a real Android emulator** (`tests/e2e/device/`,
