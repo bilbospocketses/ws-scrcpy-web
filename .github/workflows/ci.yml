@@ -52,6 +52,30 @@ jobs:
           path: playwright-report/
           retention-days: 7
 
+      # Build the image on every PR, without pushing. A Dockerfile that only runs
+      # at release time is a Dockerfile that breaks at release time.
+      #
+      # Here rather than in a job of its own: main's ruleset requires a status
+      # check named exactly `build-and-test`, so a separate job would not be
+      # required and could rot unnoticed — the same reasoning #560 recorded for
+      # the Playwright steps above.
+      #
+      # This is a fast-tier step under spec §9: it runs on a GitHub-hosted runner
+      # and holds no secrets. The tier boundary is secrets and devices, not
+      # containers.
+      # No docker/setup-buildx-action step, deliberately. This repo restricts
+      # Actions to an allow-list (`allowed_actions: selected`), and that action
+      # is not on it — adding the step made the whole workflow fail to start,
+      # with no job and no annotation naming the cause. ubuntu-latest ships the
+      # buildx plugin already, and a single native-platform build with --load
+      # needs nothing more, so the step buys nothing here anyway.
+      - name: Build the container image
+        run: docker buildx build --platform linux/amd64 --load -t ws-scrcpy-web:ci .
+      # NOTE: the `@docker` Playwright project (npm run test:e2e:docker) lands
+      # with the suite partition and is added here then. A step invoking a script
+      # that does not exist yet would fail every PR for a reason unrelated to the
+      # change under review.
+
       - name: Bump/blob sync
         # The auto-release bump commit is assembled from an explicit blob list.
         # Fail here if it no longer matches what bump-version.mjs writes -- the

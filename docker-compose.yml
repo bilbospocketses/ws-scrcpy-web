@@ -1,0 +1,23 @@
+# The stack playwright.docker.config.ts starts. Also the copy-pasteable
+# quickstart for a user, which is why it is at the repo root and not under
+# tests/ — one file, one behaviour, no drift between what CI proves and what
+# the README tells someone to run.
+services:
+  ws-scrcpy-web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ws-scrcpy-web:local
+    ports:
+      # Host 8123 -> container 8000. 8123 is what tests/e2e/support/paths.ts
+      # already exports as E2E_PORT, so every existing spec's baseURL is
+      # unchanged and 8000 stays free for a developer's own instance.
+      #
+      # Bound to 127.0.0.1 deliberately. A bare "8123:8000" publishes the app on
+      # every interface the host has — docs/traps.md records the general form of
+      # that mistake.
+      - "127.0.0.1:8123:8000"
+    volumes:
+      - wsdata:/data
+volumes:
+  wsdata:

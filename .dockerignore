@@ -1,5 +1,30 @@
+# Written BEFORE the Dockerfile, deliberately. `COPY . .` with no .dockerignore
+# sends node_modules/, dist/, target/, Releases/, publish/, test-results/ and the
+# whole .git history to the daemon. docs/traps.md records a 9.59 GB context
+# transfer that "looks identical to a hang: no output, and low CPU because the
+# work is I/O-bound".
+.git
+.github
 node_modules
 dist
 build
-.git
-.github
+target
+publish
+Releases
+spike
+test-results
+playwright-report
+blob-report
+
+# seed/ is excluded DELIBERATELY: the build stage regenerates it for the target
+# arch. Shipping the host's seed/node/node.exe into a Linux image is the exact
+# class of mistake this line prevents.
+seed
+
+# dependencies/ is the mutable runtime state that lives on the /data volume, not
+# something the image carries.
+dependencies
+
+*.log
+docs
+.vs
