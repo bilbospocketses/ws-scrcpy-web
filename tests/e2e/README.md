@@ -107,10 +107,47 @@ module-level state in `security/embedRequests.ts`), and every consent spec also
 mutates the single shared config file. Run concurrently, specs would cancel each
 other's prompts and race each other's writes.
 
+## The auth spec is a state machine, and it runs first
+
+`auth.spec.ts` covers smoke module 18 (the opt-in login) as twelve rows in one
+serial group. 18.2 secures the admin account and turns login on, every row until
+18.11 runs against a locked server, and 18.11 returns it to open mode. Four facts
+follow from that, and the config relies on all of them:
+
+1. **The database is wiped before `webServer` starts.** `wipeE2EDatabase()` runs
+   in the same runner-only block that seeds `config.json`. Securing the admin
+   account renames user 1 and gives it a password hash, and nothing in the API
+   ever takes that back — so a database carried over from an earlier run makes
+   the next run's "secure the admin account" take the normal-create branch and
+   never enable login, and a run that died while locked makes `globalSetup`'s
+   `PATCH /api/settings` fail with 401 before a single spec runs. The wipe is
+   skipped under `QA_EXTERNAL_STACK` (that data root is not ours).
+2. **`retries: 0` on that group.** A serial-group retry would re-run 18.1 against
+   a database 18.2 already locked down, which can never pass.
+3. **Its `afterAll` returns to open mode even when a row failed.** The file sorts
+   before every other spec, and a locked server answers every later
+   `page.goto('/')` with the login page at HTTP 200 — so those files would fail
+   on missing buttons that point nowhere near auth. The one thing it cannot
+   recover from is the only admin being locked out (see the next point); the
+   next run is clean because of the wipe.
+4. **Never send a wrong admin password, never retry a login.** The lockout is per
+   user row: five failures in five minutes lock it for fifteen, every attempt
+   while locked re-arms the lock, and unlocking needs the admin session you no
+   longer have. `loginAs` sends exactly one request; the wrong-password rows
+   target the regular user only.
+
+Row 18.12 (sessions survive a restart) never touches the shared server: the fast
+tier's `webServer` is a bare `node dist/index.js` with no supervisor, and
+`POST /api/dependencies/restart` exits the process with code 75 for good. The row
+spawns its own server on port 8124 with its own data root under the OS temp
+directory (`support/privateServer.ts`), restarts it the product's way, and
+removes the root afterwards.
+
 ## Still manual
 
 - **A LAN client is refused.** Verified by hand (all three embed endpoints return
   their loopback refusals from a non-loopback address). Automating it needs a second
   host or a second interface, which CI does not have.
-- **Locked mode.** `/embed-request` and `/embed-request/` are allow-listed in
-  `AuthGate` so the flow survives `authEnabled`; untested either way.
+- **The embed flow in locked mode.** `/embed-request` and `/embed-request/` are
+  allow-listed in `AuthGate` so the consent flow survives `authEnabled`; the auth
+  spec proves the gate itself, not the consent flow under it.

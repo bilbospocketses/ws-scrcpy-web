@@ -39,7 +39,16 @@ export default async function globalSetup(): Promise<void> {
             data: { bookmarkDismissedGlobally: true, serviceFirstRunSeen: true },
         });
         if (!res.ok()) {
-            throw new Error(`could not pre-dismiss the bookmark reminder: ${res.status()} ${await res.text()}`);
+            // A 401 here has one known cause: the e2e database is in locked mode.
+            // playwright.config.ts wipes it before webServer starts, so this only
+            // fires when that wipe was bypassed (QA_EXTERNAL_STACK, or a hand-run
+            // server) — name the cause rather than let it look like a harness bug.
+            const hint =
+                res.status() === 401
+                    ? ' — the e2e database is in locked mode; playwright.config.ts should have wiped ' +
+                      'wsscrcpy.db under the e2e data root (delete it and its -wal/-shm sidecars and rerun)'
+                    : '';
+            throw new Error(`could not pre-dismiss the bookmark reminder: ${res.status()} ${await res.text()}${hint}`);
         }
     } finally {
         await ctx.dispose();

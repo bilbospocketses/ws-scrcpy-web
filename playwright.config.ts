@@ -8,6 +8,7 @@ import {
     E2E_PORT,
     E2E_PROGRAM_DATA,
     SEED_CONFIG,
+    wipeE2EDatabase,
 } from './tests/e2e/support/paths';
 
 /**
@@ -43,8 +44,17 @@ import {
  *
  * Guarded to the runner process because worker processes re-import this module, and
  * re-seeding mid-run would wipe the state the specs had just written.
+ *
+ * The database goes first, for the same reason and one more: every run must start
+ * in open mode with the seeded implicit admin, and no API call can get back there
+ * once the auth specs have secured the admin account (see wipeE2EDatabase). The
+ * server holds the WAL-mode file open once booted, so this is the only place the
+ * wipe can happen. globalSetup re-dismisses the bookmark reminder on the fresh
+ * database, so the wipe costs nothing. Skipped under QA_EXTERNAL_STACK: that
+ * stack's data root is not ours to touch.
  */
 if (process.env['TEST_WORKER_INDEX'] === undefined) {
+    if (!process.env['QA_EXTERNAL_STACK']) wipeE2EDatabase();
     mkdirSync(E2E_DATA_ROOT, { recursive: true });
     writeFileSync(E2E_CONFIG_PATH, JSON.stringify(SEED_CONFIG, null, 4), 'utf8');
 
