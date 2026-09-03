@@ -243,10 +243,20 @@ jobs:
         with:
           path: artifacts/
 
+      # The Playwright suite bundle qa-harness mounts into its Linux runner
+      # (P3 §8 artifacts 2 and 3): tests/, both Playwright configs, the manifest
+      # and the lockfile — no app source, no dist. No `npm ci` here: the script
+      # needs only node built-ins and the system tar (absolute path, never $PATH).
+      # The manifest's runner.playwrightVersion is checked against the lockfile
+      # before anything is archived, so a stale manifest fails this job rather
+      # than the harness.
+      - name: Build the QA suite bundle
+        run: node scripts/build-suite-bundle.mjs --out artifacts/suite
+
       - name: Generate SHA256SUMS
         run: |
           cd artifacts
-          find . -type f \( -name '*.msi' -o -name '*.AppImage' -o -name '*.AppImage.sig' -o -name '*-Portable.zip' -o -name '*.nupkg' \) -exec sha256sum {} \; > ../SHA256SUMS
+          find . -type f \( -name '*.msi' -o -name '*.AppImage' -o -name '*.AppImage.sig' -o -name '*-Portable.zip' -o -name '*.nupkg' -o -name '*.tar.gz' \) -exec sha256sum {} \; > ../SHA256SUMS
           cd ..
           cat SHA256SUMS
 
@@ -293,4 +303,6 @@ jobs:
             artifacts/linux-final/*.AppImage.sig
             artifacts/linux-final/*.nupkg
             artifacts/linux-final/releases.linux-${{ needs.prepare.outputs.channel }}.json
+            artifacts/suite/*.tar.gz
+            artifacts/suite/*.tar.gz.sha256
             SHA256SUMS

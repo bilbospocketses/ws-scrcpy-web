@@ -1,0 +1,22 @@
+{
+    "schemaVersion": 1,
+    "subject": "ws-scrcpy-web",
+    "kind": "container-linux",
+    "artifact": {
+        "type": "container-image",
+        "registry": "docker.io",
+        "repository": "bilbospocketses/ws-scrcpy-web"
+    },
+    "suites": [
+        { "name": "fast", "command": "npm run test:e2e", "services": [] },
+        { "name": "docker", "command": "npm run test:e2e:docker", "services": [] },
+        { "name": "device", "command": "npm run test:e2e:device", "services": ["android-emulator"] }
+    ],
+    "suiteMap": {
+        "fast": "tests/e2e"
+    },
+    "runner": {
+        "playwrightVersion": "1.62.1",
+        "browsers": ["chromium"]
+    }
+}

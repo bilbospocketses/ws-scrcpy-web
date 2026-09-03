@@ -166,6 +166,31 @@ Both resolve `docker` from the shell, as `playwright.docker.config.ts`'s
 `docker compose up --wait` already does: the daemon is the tier's execution
 environment, not an app dependency.
 
+## The suite as an artefact: the bundle and the manifest
+
+qa-harness does not check this repo out. It mounts `wssw-suite-<version>.tar.gz` — attached to
+every release next to the installers — into a Linux runner and runs the suite against the
+*published image*. `scripts/build-suite-bundle.mjs` builds it from `tests/`, both Playwright
+configs, `qa-manifest.json`, `tsconfig.json`, `package.json` and `package-lock.json`, and
+nothing else: no `src/`, no `dist/`, no `node_modules/`. `tsconfig.json` is there because
+`tests/e2e/tsconfig.json` extends it; the runner never builds the app.
+
+`qa-manifest.json` is what the runner reads. `runner.playwrightVersion` must equal the version
+the runner image was built with, or it refuses to start (a skew otherwise surfaces later as
+"browser was downloaded by a different version of Playwright", which names the browser and
+not the skew). The bundle script checks that field against `package-lock.json`, and
+`scripts/build-suite-bundle.test.mjs` fails on the same drift, so bumping `@playwright/test`
+names the manifest line to change. `suites` declares the three tiers with their `npm run`
+commands; `suiteMap` is what today's runner actually consults — a spec path it hands to
+`playwright test` — and it lists only `fast`, because the runner cannot select a config and a
+`docker` or `device` entry would run the fast config's filter and report the wrong specs as
+passed. Running the other two tiers from the bundle is the harness's run-lifecycle work
+(P3 task 14), which executes each suite's `command` from the bundle root.
+
+Locally: `node scripts/build-suite-bundle.mjs --out Releases --verify` builds the archive,
+prints its sha256, extracts it into `.suite-check/` and typechecks the suite from inside the
+copy — the same round-trip CI runs on every PR.
+
 ## Still manual
 
 - **A LAN client is refused.** Verified by hand (all three embed endpoints return

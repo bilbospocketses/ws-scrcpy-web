@@ -43,6 +43,13 @@ jobs:
         # tests/ sits outside the root tsconfig's rootDir, so `npx tsc --noEmit`
         # above does not see it. Without this the e2e sources are never typechecked.
         run: npm run test:e2e:types
+      - name: Suite bundle round-trip
+        # Build the bundle qa-harness consumes, extract it, and typecheck the
+        # suite from inside the extracted copy. A bundle missing a file fails
+        # here, not in the harness as a Playwright module-resolution error a
+        # long way from its cause. Also refuses a qa-manifest.json whose
+        # runner.playwrightVersion drifted from the lockfile.
+        run: node scripts/build-suite-bundle.mjs --out "${{ runner.temp }}/wssw-suite" --verify
       - run: npm run test:e2e
       - name: Upload Playwright report
         if: failure()
