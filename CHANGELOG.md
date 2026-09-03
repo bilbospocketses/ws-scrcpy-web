@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.86] - 2026-09-03
+
 ### Added
 
 - **Nine more smoke rows are automated (`npm run test:e2e`, 14 → 23 specs).** Accessibility and theming, rows 16.1–16.6: the theme toggle persists across a reload; the keyboard focus ring appears on Tab and not on a mouse click; reduced motion collapses transitions to near-instant; light mode resolves the danger/success tints to their light values rather than off-shade dark ones; `embed.html` declares a `lang` matching the app shell; and the first paint matches the OS colour scheme with no flash of the wrong theme. The settings prompts, rows 13.1–13.3: the global bookmark dismissal disables the per-port one and persists; "reset all my settings" wipes theme, icon size, scan subnets and per-device settings without re-suppressing the per-port bookmark; and the Server section keeps its row order, its inline port save and an empty status line at rest. Each row is marked *(automated: …)* in `docs/smoke-tests/smoke-test.md` and kept there as the specification of what its spec is for.
