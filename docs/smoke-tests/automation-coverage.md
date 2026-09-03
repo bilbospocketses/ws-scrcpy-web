@@ -41,7 +41,10 @@ decision 4's locked list.
 
 | # | Affordance | In a container | Assessment |
 |---|---|---|---|
-| 20.4 | **"install for all users"** (Linux-only) | POSTs `/api/service/install-system-wide`, which runs `pkexec`, relocates to `/opt` and re-execs | **Finding.** A container has no polkit and relocating inside the image is meaningless; the row is already Linux-gated but not container-gated. Needs a decision: hide it in Docker, or leave it and let it fail loudly. |
+| 20.4 | **"install for all users"** — the Settings → Server *row* | POSTs `/api/service/install-system-wide`, which runs `pkexec`, relocates to `/opt` and re-execs | **Finding, still open.** A container has no polkit and relocating inside the image is meaningless; the row is Linux-gated but not container-gated. Needs a decision: hide it in Docker, or leave it and let it fail loudly. |
+| 20.7 | **the same offer as a first-run modal** (`SystemWideInstallModal`) | opened on first load of every container and, being a `<dialog>`, swallowed the clicks meant for the page beneath it | **FIXED.** `offerMachineWide` now requires `status.docker !== true`. It could not be left to the decline marker, which is per-data-root: a fresh volume has none. Asserted by `docker-gating.spec.ts`. |
+
+**20.7 is why the container suite exists.** It is Linux-only, so it cannot appear on a Windows dev box; and because the modal is loaded by a dynamic `import()`, a fast machine can land the next click before it renders. It therefore **passed locally and failed only in CI** — the same trap `playwright.config.ts` already documents for this exact modal in the fast tier. The fix is a gate rather than a marker precisely so it stops being a race.
 | 20.5 | **"uninstall ws-scrcpy-web"** | tears down a service/install that does not exist here | **Finding.** The container equivalent is `docker rm`. Same decision as 20.4. |
 | 20.6 | **"stop server & exit"** | graceful shutdown — `adb kill-server`, service release, exit 0 | **Correct in a container, and load-bearing.** This is exactly what smoke row 12.1 asserts against `docker stop` (SIGTERM reaching node *through* `start.sh` via `tini -g`). Must NOT be gated. |
 

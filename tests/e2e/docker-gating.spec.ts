@@ -33,6 +33,25 @@ test.describe('container mode', () => {
         await expect(page.locator('dialog.welcome-modal')).toHaveCount(0);
     });
 
+    test('@docker the Linux system-wide install offer never opens', async ({ page }) => {
+        // Distinct from the welcome modal and gated differently: offerMachineWide
+        // keys off the per-data-root decline MARKER, which a fresh volume does not
+        // have — so before this was gated on container mode, the modal opened on
+        // first load of every container and, being a <dialog>, swallowed the
+        // clicks meant for the page beneath it.
+        //
+        // Linux-only, which is why it cannot be caught on a Windows dev box: it
+        // passed locally and failed only in CI, exactly as playwright.config.ts
+        // warns about the same modal in the fast tier.
+        await page.goto('/');
+        await expect(page.locator('dialog.system-wide-install-modal')).toHaveCount(0);
+
+        // And the page beneath it is actually reachable — the property that
+        // matters, and the one whose absence produced "intercepts pointer events"
+        // rather than anything naming the modal.
+        await expect(page.getByRole('button', { name: 'Open settings' })).toBeEnabled();
+    });
+
     test('@docker Settings replaces Service and Updates with the container copy', async ({ page }) => {
         await page.goto('/');
         await page.getByRole('button', { name: 'Open settings' }).click();

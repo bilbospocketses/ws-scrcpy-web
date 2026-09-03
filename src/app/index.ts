@@ -210,6 +210,19 @@ function maybeShowFirstRunModal(): void {
             const offerMachineWide =
                 status != null &&
                 status.platform === 'linux' &&
+                // Never in a container (SP4 E4). This offer POSTs
+                // /api/service/install-system-wide, which runs pkexec, relocates
+                // the app to /opt and re-execs — none of which means anything in
+                // an image, where the lifecycle belongs to `docker pull`.
+                //
+                // It is gated here rather than left to the decline marker because
+                // the marker is per-data-root: a fresh volume has none, so the
+                // modal opened on first load of every container and, being a
+                // <dialog>, swallowed the clicks meant for the page beneath it.
+                // Caught by the container suite in CI, which is also the only
+                // place it could be caught — the modal is Linux-only, so it never
+                // appears on a Windows dev box.
+                status.docker !== true &&
                 status.machineWideInstalled === false &&
                 status.systemInstallDeclined === false;
             if (!offerMachineWide) {
