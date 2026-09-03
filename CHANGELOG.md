@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.83] - 2026-09-03
+
 ### Fixed
 
 - **`npm run lint` did not lint the end-to-end suite it was configured to cover.** `biome.json` lists `tests/**` and `playwright.config.ts` in its `includes`, but the `lint` and `format` scripts pass an explicit `src/` path, which overrides the config — so the harness added alongside the e2e suite was configured for biome and then never checked, in CI or locally. Both scripts now name the paths they are meant to cover. (The same mismatch still applies to `webpack/**`, which `biome.json` includes and no script has ever checked; that gap predates this change and is tracked separately rather than fixed here.)
