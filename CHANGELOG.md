@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.89] - 2026-09-03
+
 ### Added
 
 - **The QA suite bundle.** Every release now attaches `wssw-suite-<version>.tar.gz` (and its
