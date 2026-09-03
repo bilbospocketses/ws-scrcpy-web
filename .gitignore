@@ -46,3 +46,6 @@ ws-scrcpy-web.log.1
 /test-results/
 /playwright-report/
 /blob-report/
+
+# Suite bundle round-trip scratch (scripts/build-suite-bundle.mjs --verify)
+/.suite-check/

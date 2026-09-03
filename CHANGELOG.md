@@ -17,6 +17,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The QA suite bundle.** Every release now attaches `wssw-suite-<version>.tar.gz` (and its
+  sha256): `tests/`, both Playwright configs, `qa-manifest.json`, `tsconfig.json`, `package.json`
+  and `package-lock.json` — the Playwright suite as an artefact the qa-harness Linux runner
+  mounts and runs against the published image, with no app source and no build output inside.
+  `qa-manifest.json` declares the subject, the image, the three suites and the exact Playwright
+  version the runner must carry; `scripts/build-suite-bundle.mjs` refuses to build if that
+  version drifts from the lockfile, and CI extracts every bundle and typechecks the suite from
+  inside the copy.
+
 ## [0.1.30-beta.88] - 2026-09-03
 
 ### Added
