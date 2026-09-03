@@ -1,0 +1,35 @@
+# The stack for smoke row 1.9 (the first-run dependency-bootstrap banner), used
+# only by that spec. Same image as docker-compose.yml on a fresh volume, with
+# NO WORKING RESOLVER: every first-boot download fails at name resolution, at
+# once, and the banner appears. The spec then writes a real resolver into the
+# container's /etc/resolv.conf (a root `docker exec`), clicks Retry, and
+# watches the banner clear.
+#
+# Why DNS and not a network: `network_mode: none` cannot be undone (such a
+# container cannot be connected to a network afterwards), and an `internal`
+# network also disables port publishing, so the host — where Playwright runs —
+# could not reach the container at all (measured 2026-09-03: `up --wait` went
+# healthy, every request from the host failed). Breaking resolution keeps the
+# published port and gives a failure that is fast and reversible.
+#
+# The HEALTHCHECK probes loopback only, which is why `up --wait` still reports
+# healthy with no egress — a probe against an external URL would make this
+# stack unstartable, so do not "simplify" it that way.
+#
+# Port 8124 on the host: 8123 belongs to the main docker-compose.yml stack that
+# playwright.docker.config.ts starts for every other `@docker` spec.
+name: wssw-offline
+services:
+  ws-scrcpy-web:
+    extends:
+      file: ../../docker-compose.yml
+      service: ws-scrcpy-web
+    container_name: wssw-offline
+    dns:
+      - 127.0.0.1
+    ports: !override
+      - "127.0.0.1:8124:8000"
+    volumes: !override
+      - wsdata-offline:/data
+volumes:
+  wsdata-offline:

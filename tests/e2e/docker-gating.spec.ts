@@ -73,6 +73,39 @@ test.describe('container mode', () => {
         await expect(updates.getByRole('button')).toHaveCount(0);
     });
 
+    test('@docker first boot hydrates every dependency onto the volume, adb included', async ({ request }) => {
+        // Smoke row 20.9. `up --wait` only proves the HEALTHCHECK (GET /api/config
+        // on loopback); nothing had asked whether the hydrate the 180 s start
+        // period exists for actually produced a usable adb. It had not: the
+        // step-down kept HOME=/root, adb aborted creating /root/.android on
+        // every invocation, and the server's version probe reported it as not
+        // installed on every boot (fixed in docker/entrypoint.sh, 2026-09-03).
+        test.setTimeout(240_000);
+        // A document GET mints the instance token that /api/dependencies needs.
+        expect((await request.get('/')).status()).toBe(200);
+        const deps = async () =>
+            (await (await request.get('/api/dependencies')).json()) as {
+                name: string;
+                installedVersion: string | null;
+                status: string;
+                errorMessage?: string;
+            }[];
+        await expect
+            .poll(async () => (await deps()).every((d) => d.installedVersion !== null), {
+                timeout: 180_000,
+                message: 'every dependency installed on the fresh volume',
+            })
+            .toBe(true);
+        const final = await deps();
+        expect(final.map((d) => d.name).sort()).toEqual(['adb', 'nodejs', 'scrcpy-server']);
+        for (const d of final) {
+            expect(d.status, d.name).not.toBe('error');
+            expect(d.errorMessage, d.name).toBeUndefined();
+        }
+        // adb specifically: a real version, which only a run that did not abort can produce.
+        expect(final.find((d) => d.name === 'adb')?.installedVersion).toMatch(/^\d+\.\d+\.\d+$/);
+    });
+
     test('@docker the implication is never written to the volume', async ({ page, request }) => {
         // The end-to-end form of the unit-level persistence guard. The flag is an
         // env implication; if it were baked into the saved config it would outlive

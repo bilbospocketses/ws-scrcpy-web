@@ -1,0 +1,15 @@
+# syntax=docker/dockerfile:1.19
+#
+# The image for smoke row 9.5 (shell unavailable shows a reason): the runtime
+# image with the node-pty prebuilt removed, so the host genuinely lacks it and
+# /api/capabilities has a reason to report. Layered on the already-built image
+# tag rather than appended to the main Dockerfile as a stage: a trailing stage
+# there would become the DEFAULT build target, and every plain `docker build`
+# (CI, the publish workflow, the compose quickstart) would ship this variant.
+#
+# Both copies go. The seed is what NodePtyResolver copies into the data root on
+# first launch (absent -> reason "no-seed-package"); node_modules/node-pty is
+# the dev-layout fallback. Built only by tests/docker/compose.no-node-pty.yml.
+ARG BASE=ws-scrcpy-web:local
+FROM ${BASE}
+RUN rm -rf /app/seed/node-pty-pkg /app/node_modules/node-pty

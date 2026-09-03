@@ -1,0 +1,24 @@
+# The stack for smoke row 9.5 (shell unavailable shows a reason), used only by
+# that spec. Built from tests/docker/Dockerfile.no-node-pty, which layers a
+# single `rm` of the node-pty prebuilt on the already-built image tag — so the
+# host genuinely lacks it and `/api/capabilities` has a reason to report, and
+# the main Dockerfile's default target is untouched. A runtime `rm` in an
+# entrypoint override would mutate the image under test instead.
+#
+# Port 8125 on the host: 8123 is the main stack, 8124 the offline one.
+name: wssw-no-node-pty
+services:
+  ws-scrcpy-web:
+    build:
+      context: ../..
+      dockerfile: tests/docker/Dockerfile.no-node-pty
+      args:
+        BASE: ${WSSW_IMAGE:-ws-scrcpy-web:local}
+    image: ws-scrcpy-web:no-node-pty
+    container_name: wssw-no-node-pty
+    ports:
+      - "127.0.0.1:8125:8000"
+    volumes:
+      - wsdata-no-node-pty:/data
+volumes:
+  wsdata-no-node-pty:
