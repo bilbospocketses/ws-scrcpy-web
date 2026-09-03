@@ -37,6 +37,20 @@ export interface ServiceStatusResponse {
      */
     servedByService?: boolean;
     /**
+     * True when the server was started with WS_SCRCPY_DOCKER=1.
+     *
+     * Mirrored here rather than only on the config envelope so the Settings
+     * modal can gate its Service section from the status call it already
+     * makes, instead of adding a second probe (SP4 E4).
+     *
+     * Optional so a pre-SP4 server and a post-SP4 frontend interoperate: an
+     * absent field reads as false everywhere, which is the desktop answer.
+     * Deliberately NOT part of AppConfig — AppConfig is what gets written to
+     * config.json, and this must never persist into a /data volume that could
+     * later be mounted elsewhere.
+     */
+    docker?: boolean;
+    /**
      * Snapshot of `AppConfig.installMode` at status time. Lets the frontend
      * tell which service scope is active (`user-service` vs `system-service`)
      * without poking a second endpoint. `null` when never installed. Present

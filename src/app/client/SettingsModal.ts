@@ -416,9 +416,67 @@ export function buildResetControl(opts: { reload: () => void }): {
  * with the inputs they affect, so the right column stays a clean
  * "value column" across all rows.
  */
+/**
+ * The container replacements for the Service and Updates sections (SP4 E4).
+ *
+ * Exported and free-standing so the gating is unit-testable without standing up
+ * the whole modal, and so the locked copy has exactly one definition.
+ *
+ * The copy is LOCKED — reproduced verbatim from the SP4 design §8 and
+ * `todo_ws_scrcpy_web` item 2 decision 4. Do not reword it casually; the
+ * container smoke asserts on it.
+ *
+ * `.settings-status` is the shared Settings-note convention (modal.css: indented
+ * 1.25rem, italic, weight 600), so these read as sub-notes rather than as
+ * settings — which is what the SP4 branch's 730e521 exists to specify.
+ */
+function buildDockerNoteSection(title: string, kind: 'service' | 'updates', text: string): HTMLElement {
+    const section = document.createElement('section');
+    section.className = 'settings-section';
+    section.dataset['dockerNote'] = kind; // stable hook for the container smoke
+    const heading = document.createElement('h3');
+    heading.className = 'settings-section-heading';
+    heading.textContent = title;
+    section.appendChild(heading);
+    const body = document.createElement('div');
+    body.className = 'settings-section-body';
+    const note = document.createElement('p');
+    note.className = 'settings-status';
+    note.style.gridColumn = '1 / -1';
+    note.textContent = text;
+    body.appendChild(note);
+    section.appendChild(body);
+    return section;
+}
+
+export function buildDockerServiceNote(): HTMLElement {
+    return buildDockerNoteSection(
+        'Service',
+        'service',
+        'service install not applicable — this instance runs in a container.',
+    );
+}
+
+export function buildDockerUpdatesNote(): HTMLElement {
+    return buildDockerNoteSection(
+        'Updates',
+        'updates',
+        'update via `docker pull bilbospocketses/ws-scrcpy-web:latest`.',
+    );
+}
+
 export class SettingsModal extends Modal {
     private role: Role | null = null;
     private authEnabled = false;
+    /**
+     * True when the server reported WS_SCRCPY_DOCKER=1 (SP4 E4). Read from the
+     * /api/config runtime envelope, never from AppConfig — the flag is an env
+     * implication and is deliberately never persisted to config.json.
+     */
+    private docker = false;
+    /** Set by fillBody so applyDockerGating() can swap them once docker mode lands. */
+    private updatesSectionEl: HTMLElement | null = null;
+    private serviceSectionEl: HTMLElement | null = null;
     private serviceSection!: HTMLElement;
     private embedOriginsBody: HTMLElement | null = null;
     private webPortInput: HTMLInputElement | null = null;
@@ -463,6 +521,13 @@ export class SettingsModal extends Modal {
             void (async () => {
                 let role: Role | null = 'admin';
                 let authEnabled = false;
+                // SP4 E4. Start the container-mode probe now, but deliberately do
+                // NOT await it before fillBody. Blocking the body on a second fetch
+                // means a hung /api/config renders a permanently EMPTY Settings
+                // dialog — this modal's own tests stub fetch as a never-resolving
+                // promise precisely to pin "the body still renders", and that is a
+                // real guarantee, not a test artifact.
+                const dockerProbe = this.probeDockerMode();
                 try {
                     const me = await authClient.me();
                     role = me.user?.role ?? null;
@@ -473,9 +538,26 @@ export class SettingsModal extends Modal {
                 this.role = role;
                 this.authEnabled = authEnabled;
                 this.fillBody(this.bodyEl);
-                if (canSeeSection(role, 'service')) void this.refreshService();
-                if (canSeeSection(role, 'updates')) void this.refreshUpdates();
                 void this.refreshServer(); // server section always present (has the user-level reset row)
+                // The Service and Updates refreshes are HELD until container mode is
+                // known. That is what the plan's build-site gating was really for:
+                // in a container neither endpoint describes anything actionable, and
+                // firing them anyway would draw "couldn't reach server" underneath
+                // the informational copy. Holding them costs nothing on the desktop
+                // (the sections already render a "loading…" placeholder) and means
+                // no inapplicable request is ever made in a container.
+                void (async () => {
+                    // Fail-open to "not a container": the desktop answer, and the one
+                    // that shows MORE, so a transient error cannot silently strip a
+                    // host user's Service and Updates sections.
+                    this.docker = await dockerProbe;
+                    if (this.docker) {
+                        this.applyDockerGating();
+                        return;
+                    }
+                    if (canSeeSection(this.role, 'service')) void this.refreshService();
+                    if (canSeeSection(this.role, 'updates')) void this.refreshUpdates();
+                })();
             })();
         });
     }
@@ -496,8 +578,18 @@ export class SettingsModal extends Modal {
         if (canSeeSection(this.role, 'users')) container.appendChild(this.buildUsersSection());
         // Next to Users: both answer "who is allowed to do what with this server".
         if (canSeeSection(this.role, 'embedOrigins')) container.appendChild(this.buildEmbedOriginsSection());
-        if (canSeeSection(this.role, 'updates')) container.appendChild(this.buildUpdatesSection());
-        if (canSeeSection(this.role, 'service')) container.appendChild(this.buildServiceSection());
+        // Built unconditionally; applyDockerGating() swaps them for the locked
+        // container copy if the probe comes back true. Their refresh calls are
+        // held until then, so a container never issues an inapplicable request
+        // and never renders an error under the copy. See the constructor.
+        if (canSeeSection(this.role, 'updates')) {
+            this.updatesSectionEl = this.buildUpdatesSection();
+            container.appendChild(this.updatesSectionEl);
+        }
+        if (canSeeSection(this.role, 'service')) {
+            this.serviceSectionEl = this.buildServiceSection();
+            container.appendChild(this.serviceSectionEl);
+        }
         container.appendChild(this.buildServerSection()); // always (contains the user-level reset row)
     }
 
@@ -975,6 +1067,49 @@ export class SettingsModal extends Modal {
         }
 
         return section;
+    }
+
+    /**
+     * Replace the Service and Updates sections with the locked container copy
+     * (SP4 E4). Called only once the probe has confirmed container mode, and
+     * before either section's refresh has been allowed to run — so nothing here
+     * is racing a half-rendered async result.
+     *
+     * The stale body references are dropped as well. `refreshService()` writes
+     * into `this.serviceSection` unconditionally; leaving it pointing at a
+     * detached node would let any later call render service UI into nothing,
+     * which is the kind of bug that only shows up as "the section is blank".
+     */
+    private applyDockerGating(): void {
+        this.updatesSectionEl?.replaceWith(buildDockerUpdatesNote());
+        this.serviceSectionEl?.replaceWith(buildDockerServiceNote());
+        this.updatesSectionEl = null;
+        this.serviceSectionEl = null;
+        this.updatesBody = null;
+        this.updatesStatusEl = null;
+        this.updatesCheckNowBtn = null;
+    }
+
+    /**
+     * Ask the server whether it is running in a container (SP4 E4).
+     *
+     * Reads `runtime.docker` off the /api/config envelope — the runtime side, not
+     * `config`, because the flag is an env implication the server deliberately
+     * never persists to config.json.
+     *
+     * Fails open to `false`. That is the desktop answer and the one that shows
+     * MORE, matching the role fail-open in the constructor: a transient fetch
+     * error should not silently strip a host user's Service and Updates sections.
+     */
+    private async probeDockerMode(): Promise<boolean> {
+        try {
+            const r = await fetch('/api/config');
+            if (!r.ok) return false;
+            const env = (await r.json()) as AppConfigEnvelope;
+            return env.runtime.docker === true;
+        } catch {
+            return false;
+        }
     }
 
     private async refreshServer(): Promise<void> {

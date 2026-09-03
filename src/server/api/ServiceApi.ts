@@ -243,6 +243,11 @@ export class ServiceApi {
                 supported: false,
                 platform: result.platform,
                 unsupportedReason: result.unsupportedReason,
+                // Reported on BOTH branches. The Settings modal gates its Service
+                // section on this, and a container on a platform that also reports
+                // unsupported must still gate — otherwise the section would be
+                // hidden for the right reason on Linux and the wrong one elsewhere.
+                ...(Config.getInstance().dockerMode ? { docker: true } : {}),
             };
             res.writeHead(200);
             res.end(JSON.stringify(body));
@@ -289,6 +294,11 @@ export class ServiceApi {
             // install never has it. The post-install poll keys hand-off completion
             // off this positive signal (no mtime-change / dead-window race).
             servedByService: process.env['WS_SCRCPY_SERVICE'] === '1',
+            // SP4 E4: lets the Settings modal hide the Service section from the
+            // status call it already makes, rather than adding a second probe.
+            // Read from Config, not process.env, so there is one place that
+            // decides what "docker mode" means (the literal '1' comparison).
+            ...(Config.getInstance().dockerMode ? { docker: true } : {}),
             ...(scope !== undefined ? { scope } : {}),
             ...(disk.diskWebPort != null ? { diskWebPort: disk.diskWebPort } : {}),
             ...(disk.configMtime != null ? { configMtime: disk.configMtime } : {}),

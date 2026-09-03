@@ -40,6 +40,16 @@ export interface FirstRunStatus {
     firstRunComplete: boolean;
     portWasAutoShifted: boolean;
     webPort: number;
+    /**
+     * True when the server was started with WS_SCRCPY_DOCKER=1.
+     *
+     * Optional so a pre-SP4 server and a post-SP4 frontend interoperate: an
+     * absent field reads as false everywhere, which is the desktop answer.
+     * Carried on the runtime envelope rather than in AppConfig deliberately —
+     * AppConfig is what gets written to config.json, and this must never
+     * persist into a /data volume that could later be mounted elsewhere.
+     */
+    docker?: boolean;
 }
 
 /** Envelope shape returned by GET /api/config. */
