@@ -60,7 +60,7 @@
         }
     },
     "files": {
-        "includes": ["src/**", "webpack/**", "tests/**", "playwright.config.ts"]
+        "includes": ["src/**", "webpack/**", "tests/**", "playwright.config.ts", "playwright.docker.config.ts"]
     },
     "overrides": [
         {

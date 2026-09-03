@@ -80,6 +80,19 @@ export default defineConfig({
     fullyParallel: false,
     workers: 1,
 
+    /**
+     * The default run is the FAST tier: a bare `node dist/index.js`, no
+     * container, no device, no credential. Two tags opt out of it.
+     *
+     * `@docker` needs the built image (playwright.docker.config.ts starts the
+     * compose stack); `@device` needs that image AND the Android emulator, so it
+     * only ever runs under qa-harness. Excluding them here rather than
+     * segregating them into a directory keeps a feature's specs together — the
+     * device streaming specs belong beside the settings specs that configure
+     * the codec they stream.
+     */
+    grepInvert: /@docker|@device/,
+
     forbidOnly: !!process.env['CI'],
     retries: process.env['CI'] ? 1 : 0,
     timeout: 30_000,

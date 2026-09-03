@@ -7,7 +7,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: ws-scrcpy-web:local
+    # Overridable so CI can point the suite at the tag its own build step already
+    # produced, instead of building the same image a second time under a
+    # different name. Defaults to the local tag for a plain `docker compose up`.
+    image: ${WSSW_IMAGE:-ws-scrcpy-web:local}
     ports:
       # Host 8123 -> container 8000. 8123 is what tests/e2e/support/paths.ts
       # already exports as E2E_PORT, so every existing spec's baseURL is

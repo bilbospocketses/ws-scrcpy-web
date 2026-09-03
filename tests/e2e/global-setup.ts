@@ -20,7 +20,18 @@ import { E2E_BASE_URL } from './support/paths';
  * playwright.config.ts) while this — which needs a live server — belongs here.
  */
 export default async function globalSetup(): Promise<void> {
-    const ctx = await request.newContext({ baseURL: E2E_BASE_URL });
+    /**
+     * Honour PLAYWRIGHT_BASE_URL, exactly as both configs' `use.baseURL` does.
+     *
+     * Hardcoding E2E_BASE_URL worked only while every run started its own server
+     * on 8123. The heavy tier does not: qa-harness owns the stack, sets
+     * QA_EXTERNAL_STACK=1 so the config starts nothing, and points
+     * PLAYWRIGHT_BASE_URL at its own address — where this would then fail with
+     * ECONNREFUSED against 8123 before a single spec ran, blaming a port nobody
+     * asked it to use.
+     */
+    const baseURL = process.env['PLAYWRIGHT_BASE_URL'] || E2E_BASE_URL;
+    const ctx = await request.newContext({ baseURL });
     try {
         // A document GET is what mints the per-instance token cookie that gates /api.
         await ctx.get('/');

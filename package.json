@@ -35,8 +35,8 @@
     "start": "npm run build && node scripts/dev-supervisor.mjs",
     "start:no-supervisor": "npm run build && node dist/index.js",
     "test": "vitest run",
-    "lint": "npx @biomejs/biome check src/ tests/ playwright.config.ts",
-    "format": "npx @biomejs/biome check --write src/ tests/ playwright.config.ts",
+    "lint": "npx @biomejs/biome check src/ tests/ playwright.config.ts playwright.docker.config.ts",
+    "format": "npx @biomejs/biome check --write src/ tests/ playwright.config.ts playwright.docker.config.ts",
     "fetch-prebuilts": "node scripts/fetch-prebuilts.mjs",
     "version:bump": "node scripts/bump-version.mjs",
     "version:check": "node scripts/assert-version-sync.mjs",
@@ -47,6 +47,8 @@
     "test:update-flow": "pwsh scripts/test-update-flow.ps1",
     "release-notes": "node scripts/extract-changelog.mjs $npm_package_version",
     "test:e2e": "playwright test",
+    "test:e2e:docker": "playwright test --config playwright.docker.config.ts",
+    "test:e2e:device": "QA_DEVICE=1 QA_EXTERNAL_STACK=1 playwright test --config playwright.docker.config.ts",
     "test:e2e:types": "tsc -p tests/e2e --noEmit"
   },
   "dependencies": {
