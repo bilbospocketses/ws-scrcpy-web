@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { request as httpRequest } from 'node:http';
 import path from 'node:path';
 import { type Browser, type BrowserContext, expect, request, test } from '@playwright/test';
@@ -90,8 +90,28 @@ test.describe('server surface (smoke §10)', () => {
         // every entry justifies itself in a comment. An allow-list that grows
         // without comments is how this assertion stops meaning anything.
         const ERROR_LINE = /\bERROR\b|Error:/;
+        // A tree that has never run `npm run stage-seed` (CI's `npm ci` + build:
+        // nothing there fires the `prestart` hook) has no node-pty seed. The
+        // resolver says so at ERROR level and the shell feature stays off, the
+        // same condition /api/capabilities reports as `no-seed-package` (row 9.5).
+        // The seed root is <repo>/seed/node-pty-pkg, anchored on dist/, not on
+        // the data root, so a spec-owned server sees whatever this checkout has.
+        const configFile = test.info().config.configFile;
+        const repoRoot = configFile ? path.dirname(configFile) : process.cwd();
+        const seedPresent = existsSync(path.join(repoRoot, 'seed', 'node-pty-pkg'));
         const ALLOWED: { pattern: RegExp; why: string }[] = [
-            // (empty on purpose: add an entry only with the line it matches and why it is cosmetic)
+            // Add an entry only with the line it matches and why it is cosmetic.
+            // This one is tolerated only while the seed really is absent: on a
+            // tree that has it, the line is a regression. Register finding 10.9
+            // (ERROR level for an optional feature's documented absence).
+            ...(seedPresent
+                ? []
+                : [
+                      {
+                          pattern: /\[NodePtyResolver\] ERROR no seed node-pty package found/,
+                          why: 'no node-pty seed in this checkout',
+                      },
+                  ]),
         ];
         const paths = privateServerPaths('ws-scrcpy-web-e2e-logs-clean', 8130);
         seedPrivateDataRoot(paths);
