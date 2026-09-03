@@ -17,6 +17,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A Docker Scout gate in front of the image publish.** `docker-publish.yml` now builds the image
+  into the runner's engine first and runs `docker scout cves` on it; a fixable critical or high CVE
+  fails the workflow and nothing is pushed. Only fixable advisories count, because an unfixed one
+  cannot be acted on and would hold every release hostage to upstream. The Docker Hub repository has
+  Scout analysis enabled as well, so images that already shipped are re-evaluated as advisories land.
+  Measured against beta.90's image before the gate was armed: 1 critical and 9 high fixable CVEs, so
+  the next image publish fails until they are bumped — that is the gate working, not a regression.
+
 ## [0.1.30-beta.90] - 2026-09-03
 
 ### Changed
