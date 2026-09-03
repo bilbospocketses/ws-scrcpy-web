@@ -143,6 +143,29 @@ spawns its own server on port 8124 with its own data root under the OS temp
 directory (`support/privateServer.ts`), restarts it the product's way, and
 removes the root afterwards.
 
+## Rows that need a host the tier cannot be
+
+The same pattern carries the server-surface, lifecycle and dependencies rows
+(smoke §10, §12, §9.4): anything that stops or restarts a server, reads a
+boot-time-only config key (`allowedHosts`), reads the server's own log file, or
+needs locked mode without touching the shared server's auth state runs on a
+spec-owned server from `support/privateServer.ts`, on ports 8126–8131, each with
+its own data root that is wiped and re-seeded per run. The log those rows read
+is `<dataRoot>/logs/ws-scrcpy-web.log`: the console echo is TTY-only, so a
+spawned child's captured stdout never carries it.
+
+Two `@docker` rows need a container the main stack cannot be, and bring up
+their own compose stacks from `tests/docker/` beside it (`support/dockerStack.ts`):
+
+| Row | Stack | Why its own |
+|---|---|---|
+| 1.9 first-run bootstrap banner | `compose.offline.yml`, port 8124 | boots with **no working resolver** (`dns: 127.0.0.1`) so every download fails at once; the spec then writes a real resolver into `/etc/resolv.conf` (root `docker exec`) and clicks Retry. Not `network_mode: none` — such a container can never be connected afterwards — and not an `internal` network, which also disables port publishing so the host could not reach it at all. |
+| 9.5 shell unavailable shows a reason | `compose.no-node-pty.yml`, port 8125 | built from `tests/docker/Dockerfile.no-node-pty`, one `rm` of the node-pty prebuilt layered on the already-built image tag. Not a stage in the main Dockerfile: a trailing stage there would become the default build target and every plain `docker build` would ship it. |
+
+Both resolve `docker` from the shell, as `playwright.docker.config.ts`'s
+`docker compose up --wait` already does: the daemon is the tier's execution
+environment, not an app dependency.
+
 ## Still manual
 
 - **A LAN client is refused.** Verified by hand (all three embed endpoints return

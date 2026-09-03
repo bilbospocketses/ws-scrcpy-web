@@ -4,7 +4,7 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { request, test } from '@playwright/test';
+import { expect, request, test } from '@playwright/test';
 import { SEED_CONFIG } from './paths';
 
 /**
@@ -62,10 +62,16 @@ export function privateServerPaths(name: string, port: number): PrivateServerPat
  * the override forces the EXACT port, and a shifted port would be persisted)
  * and the empty decline marker for the Linux system-wide-install offer.
  */
-export function seedPrivateDataRoot(paths: PrivateServerPaths): void {
+export function seedPrivateDataRoot(paths: PrivateServerPaths, extraConfig: Record<string, unknown> = {}): void {
     rmSync(paths.programData, { recursive: true, force: true });
     mkdirSync(path.join(paths.dataRoot, 'control'), { recursive: true });
-    writeFileSync(paths.configPath, JSON.stringify({ ...SEED_CONFIG, webPort: paths.port }, null, 4), 'utf8');
+    // `extraConfig` is for boot-time-only keys such as `allowedHosts`, which the
+    // server reads from the file once and never exposes through /api/config.
+    writeFileSync(
+        paths.configPath,
+        JSON.stringify({ ...SEED_CONFIG, webPort: paths.port, ...extraConfig }, null, 4),
+        'utf8',
+    );
     writeFileSync(path.join(paths.dataRoot, 'control', 'system-install-declined'), '', 'utf8');
 }
 
@@ -88,6 +94,11 @@ export function spawnServer(paths: PrivateServerPaths): ServerHandle {
             ...process.env,
             PROGRAMDATA: paths.programData,
             DATA_ROOT: paths.dataRoot,
+            // The log file and the dependencies folder are keyed on DEPS_PATH,
+            // not on DATA_ROOT (Logger.ts, Config.ts): without it a bare server
+            // logs to the repo root and, on Linux, hydrates into
+            // <repo>/dependencies. The launcher sets both; so does this.
+            DEPS_PATH: path.join(paths.dataRoot, 'dependencies'),
             WS_SCRCPY_CONFIG: paths.configPath,
             WS_SCRCPY_WEB_PORT: String(paths.port),
         },
@@ -142,6 +153,34 @@ export async function waitForServer(handle: ServerHandle, baseURL: string, timeo
             await new Promise((r) => setTimeout(r, 250));
         }
         throw new Error(`server on ${baseURL} not ready within ${timeoutMs} ms:\n${handle.output()}`);
+    } finally {
+        await ctx.dispose();
+    }
+}
+
+/**
+ * Wait until the server's first-run install has landed every dependency.
+ *
+ * A fresh data root downloads adb, scrcpy-server and node-pty at boot; a row
+ * that stops the server mid-download would find that abort in the log and
+ * blame it on the stop. Rows that read the log wait for this first.
+ */
+export async function waitForDependencies(baseURL: string, timeoutMs = 180_000): Promise<void> {
+    const ctx = await request.newContext({ baseURL });
+    try {
+        expect((await ctx.get('/')).status(), 'document GET (mints the token)').toBe(200);
+        const deadline = Date.now() + timeoutMs;
+        let last = '';
+        while (Date.now() < deadline) {
+            const res = await ctx.get('/api/dependencies');
+            if (res.status() === 200) {
+                const deps = (await res.json()) as { name: string; installedVersion: string | null; status: string }[];
+                if (deps.every((d) => d.installedVersion !== null)) return;
+                last = deps.map((d) => `${d.name}=${d.installedVersion ?? d.status}`).join(', ');
+            }
+            await new Promise((r) => setTimeout(r, 1_000));
+        }
+        throw new Error(`dependencies not installed within ${timeoutMs} ms: ${last}`);
     } finally {
         await ctx.dispose();
     }

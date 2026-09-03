@@ -86,3 +86,39 @@ return-to-open-mode `afterAll`, the never-retry-a-login rule).
 | 18.13 | **The client and the server disagree about when the first-user lockdown applies.** `UsersModal` shows the "Secure the admin account" block whenever `me().authEnabled` is false; the server takes the lockdown branch only while no enabled admin has a password. After 18.11 (login disabled, admin still passworded) the client offers "Secure & add user", the server answers the normal-create `201 {id}`, and the client announces "Login is now required. Reloading…" into an app that is still open. | **Finding, open.** The spec asserts neither behaviour. Fix direction: key the client on the same fact as the server (expose it on `/api/auth/me`, or have the server refuse the admin fields when it will ignore them). |
 | 18.14 | **Live WebSocket connections survive logout and disable.** Deleting the session row refuses NEW connections (4401, proven by 18.9/18.10) but nothing tears down sockets the SPA opened while the session was valid. | **Finding, open.** Decide: revoke live sockets when their session is deleted (logout, disable, delete), or document that a stream outlives its login. Not asserted either way. |
 | 18.15 | **`/login-assets/` is allow-listed in `AuthGate` but nothing serves it**, and there is no `/login` route (the login page is served inline). | **Code-quality finding.** A dead allow-list entry is a standing invitation to serve something unauthenticated by accident; remove it or give it a purpose. |
+
+---
+
+## Modules 9, 10, 12 and row 1.9 — server surface, dependencies, lifecycle
+
+Ten rows, automated by `tests/e2e/server-surface.spec.ts`, `lifecycle.spec.ts`
+and `dependencies-panel.spec.ts` (P3 task 11). Anything that stops or restarts
+a server, needs a boot-time config key, reads the server's log, or needs locked
+mode runs on a spec-owned server; the two rows that need a host the fast tier
+cannot be (`1.9`, `9.5`) are `@docker` and bring up their own compose stacks
+from `tests/docker/` (see `tests/e2e/README.md`).
+
+| # | Row | Status |
+|---|---|---|
+| 1.9 | first-run bootstrap banner + Retry | automated, container tier — the stack boots with no working resolver, so every download fails at once; Retry after the resolver is restored clears the banner |
+| 9.4 | Dependencies panel | automated: the table, check-for-updates and the admin gate. **Not** the per-dependency update and the restart after it: the `update` button renders only for `update-available`, which an up-to-date install cannot offer deterministically, and there is no standalone restart control (only `Restart Now` after a restart-requiring update) |
+| 9.5 | shell unavailable shows a reason | automated, container tier — the API half (`{"shell":false,"shellReason":"no-seed-package"}`), with the full image as the `{"shell":true}` contrast. The per-device shell link's tooltip needs a tracked device: device tier |
+| 10.1 | service status API | automated |
+| 10.3 | logs clean | automated for the server's own `ws-scrcpy-web.log`: the teardown line on stop, and zero `ERROR`/`Error:` lines outside an allow-list that starts empty and must justify every entry. `launcher.log` belongs to the Linux launcher and stays manual |
+| 10.4 | per-instance token / reload on restart | automated on a spec-owned server |
+| 10.5 | 404 + security headers | automated — see finding 10.7 for the row's wording |
+| 10.6 | `allowedHosts` | automated — the listed host served, an unlisted one refused, defaults intact, on a spec-owned server seeded with the key |
+| 12.1 | clean exit + adb teardown | automated for the bare server (the UI path: confirm, the stopped notice, exit 0, no `.restart` marker, the teardown lines in order). The container half is 20.6 / 20.12 |
+| 12.4 | `DATA_ROOT` honoured | automated for the Node side — and see finding 12.5 for what "same root" actually rests on |
+
+### Findings — surfaced by task 11, deliberately NOT fixed there
+
+| # | Finding | Assessment |
+|---|---|---|
+| 12.5 | **The log file and the dependencies folder are keyed on `DEPS_PATH`, not `DATA_ROOT`.** A bare `node dist/index.js` with only `DATA_ROOT` set puts `config.json` and the store under it but logs to the repo root and, on Linux, hydrates into `<repo>/dependencies`. Row 12.4's "Node side and launcher agree" holds only because the Rust launcher sets both variables; Windows ignores `DATA_ROOT` entirely. | **Finding, open.** Fix direction: derive the dependencies default from the resolved data root on every platform, so `DATA_ROOT` alone means what the row says. The e2e configs now set `DEPS_PATH` explicitly (this PR), which also stops the fast tier's server logging into the repo root. |
+| 20.14 | **In the container the Node log lands at `/app/logs/ws-scrcpy-web.log`, not on the volume.** `start.sh` exports `DEPS_PATH=/app/dependencies` (a symlink to `/data/dependencies`), and the log path is `dirname(DEPS_PATH)/logs`, so logs do not survive `docker rm` — which SP4 §13 ("config + logs survive") and smoke row 20.11 expect. | **Finding, open.** Same root cause as 12.5; the fix there resolves this too. Row 20.11 will fail its log half until then. |
+| 20.15 | **The restart marker is written where the Docker launcher never looks.** Node writes `<dataRoot>/.restart` (`/data/.restart`); `start.sh` checks `$DEPS_PATH/.restart`. Restart still works because it keys on exit code 75, so this is dead plumbing rather than a broken restart. | **Code-quality finding.** Pick one path. |
+| 10.7 | **An unknown `/api/*` path answers with the SPA shell when navigated to as a document.** The static fallback keys on `Accept: text/html` plus an extensionless path, and `/api/no-such-route` is extensionless; a JSON caller gets the 404 the row describes, a browser address bar gets 200 and the shell. | **Finding, open.** Exclude `/api/` from the SPA fallback. The spec asserts the JSON case only. |
+| 10.8 | **API JSON responses and the request gate's 403 carry no `X-Content-Type-Options` / `X-Frame-Options`.** Static responses, the login page and its 401 do. | **Finding, open.** Apply `securityHeaders()` in the gate's rejection and in the JSON handlers' common `writeHead`. |
+| 9.6 | **The Dependencies panel is not hidden from a user-role account.** It renders its heading and table for everyone and, on the 403, shows `Failed to load dependencies` — the row's "doesn't see it" is the panel failing, not being gated. | **Finding, open.** Gate the panel's mount on the same role the API uses, or accept the failure row as the design and reword the smoke row. |
+| 9.7 | **`retry-install` replies before the retried install has finished.** The response can be `{"success":false,"stillMissing":["adb"],"errors":{}}` for a retry that completes ten seconds later; the banner's own poll is what actually clears it. | **Finding, open.** Either await the install or document the reply as "started", and let the client key off the poll only. |

@@ -17,6 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The server surface, dependencies and lifecycle rows are covered end to end (`npm run test:e2e`, 36 → 44 specs; `npm run test:e2e:docker`, 5 → 7).** Smoke rows 10.1, 10.3–10.6, 12.1, 12.4 and 9.4: the service-status API's shape; a clean stop leaving the teardown lines and no error lines in the server's own log; a restart rotating the per-instance token so the open tab must reload and a cookie-less caller is refused; a missing asset and an unknown API route answering 404 while a deep route still falls back to the shell, every static response carrying the security headers; `allowedHosts` serving the listed host and refusing an unlisted one; "stop server & exit" through its confirmation to a clean exit 0 with no restart requested; the data-root override honoured; and the Dependencies panel's table, check-for-updates and admin gate. Anything that stops or restarts a server runs on one the spec owns. Two rows need a host the fast tier cannot be and run in the container tier on their own compose stacks under `tests/docker/`: the first-run bootstrap banner (1.9), booted with no working resolver and recovered by Retry, and the shell-unavailable reason (9.5) on an image built without the node-pty prebuilt. Smoke module 20, the Docker path, is written up in `docs/smoke-tests/smoke-test.md`, and the coverage register records eight findings the rows surfaced without fixing them — among them that the server's log and dependencies folder follow `DEPS_PATH` rather than `DATA_ROOT`, so in a container the log lives outside the volume.
+
+### Fixed
+
+- **The end-to-end suite's server no longer logs into the repository root.** The fast tier's server was started without `DEPS_PATH`, so its log file landed at `<repo>/ws-scrcpy-web.log` and, on Linux, its dependencies under `<repo>/dependencies`, outside the throwaway data root the suite exists to stay inside. Both configs now set it.
+
 ## [0.1.30-beta.87] - 2026-09-03
 
 ### Added

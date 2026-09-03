@@ -139,6 +139,13 @@ export default defineConfig({
              */
             PROGRAMDATA: E2E_PROGRAM_DATA,
             DATA_ROOT: E2E_DATA_ROOT,
+            /**
+             * The log file and the dependencies folder are keyed on DEPS_PATH,
+             * not on DATA_ROOT. Without it the suite's server logged into the
+             * repo root and, on Linux, hydrated dependencies into
+             * <repo>/dependencies — outside the isolation this config exists for.
+             */
+            DEPS_PATH: join(E2E_DATA_ROOT, 'dependencies'),
             WS_SCRCPY_CONFIG: E2E_CONFIG_PATH,
             WS_SCRCPY_WEB_PORT: String(E2E_PORT),
         },
