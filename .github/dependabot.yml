@@ -70,3 +70,20 @@ updates:
       actions:
         patterns:
           - "*"
+
+  # docker: tracks the digest-pinned base image in the Dockerfile
+  # (`ARG NODE_IMAGE=node:24-trixie-slim@sha256:…`). Without this entry the pin
+  # never moved: the Docker Scout gate in docker-publish.yml found the base's
+  # bundled npm carrying fixable high CVEs (tar, brace-expansion, ip-address)
+  # that a fresh base would have cleared once upstream rebuilt. Dependabot keys
+  # on the tag in the ARG and rewrites the digest beside it.
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: "chore(docker)"

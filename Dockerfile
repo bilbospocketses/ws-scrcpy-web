@@ -52,12 +52,19 @@ COPY . .
 # stage an x86-64 ELF at seed/node/node — which start.sh's `[ -x ]` probe would
 # happily select, producing "exec format error" at container start. The runtime
 # stage symlinks the image's own node instead (design amendment 16.2).
+#
+# No `npm prune --omit=dev` at the end: the runtime stage installs its own
+# production tree from the lockfile (below), so nothing from this stage's
+# node_modules is copied. The prune used to be here and did not work — the
+# published beta.91 image carried the whole dev tree (Playwright, vitest,
+# webpack, TypeScript 7's native compiler, swc, biome: 372 MB), which is how a
+# Go-stdlib CVE inside `@typescript/typescript-linux-x64/lib/tsc` reached the
+# Docker Scout gate.
 RUN node scripts/fetch-prebuilts.mjs \
  && node scripts/stage-seed-node-pty.mjs \
  && node scripts/stage-seed-scrcpy-server.mjs \
  && npm run build \
- && node scripts/fetch-tini.mjs /out/tini \
- && npm prune --omit=dev
+ && node scripts/fetch-tini.mjs /out/tini
 
 # -------------------------------------------------------------- runtime ------
 FROM ${NODE_IMAGE} AS runtime
@@ -71,10 +78,30 @@ RUN test -x /usr/bin/setpriv || (echo 'setpriv missing from base image; vendor g
 
 WORKDIR /app
 COPY --from=build /out/tini            /usr/local/bin/tini
+COPY --from=build /src/package.json /src/package-lock.json ./
+
+# The production tree is installed HERE, from the lockfile, rather than copied
+# from the build stage: `npm ci --omit=dev` cannot carry a devDependency or one
+# of its optional platform packages, where a prune of the build tree provably
+# did (see the build stage). --ignore-scripts for the same reason as above —
+# node-pty's install script would compile; the runtime never loads node-pty from
+# this tree anyway, NodePtyResolver copies it from seed/node-pty-pkg.
+#
+# Then the base image's package managers go. The app runs `node dist/index.js`
+# and nothing in start.sh, entrypoint.sh or src/ ever invokes npm, npx, corepack
+# or yarn — and the bundled npm is where Scout found tar, brace-expansion and
+# ip-address with fixable high CVEs that no base rebuild had cleared. One RUN,
+# so the tree and the removals land in one layer and the npm cache never ships.
+RUN npm ci --omit=dev --ignore-scripts \
+ && rm -rf /root/.npm \
+           /usr/local/lib/node_modules /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack \
+           /opt/yarn-v* /usr/local/bin/yarn /usr/local/bin/yarnpkg \
+ && test ! -e /app/node_modules/@typescript \
+ && test ! -e /app/node_modules/@playwright \
+ && test ! -e /usr/local/lib/node_modules/npm
+
 COPY --from=build /src/dist            ./dist
-COPY --from=build /src/node_modules    ./node_modules
 COPY --from=build /src/seed            ./seed
-COPY --from=build /src/package.json    ./package.json
 COPY start.sh                          ./start.sh
 COPY docker/entrypoint.sh              /usr/local/bin/entrypoint.sh
 
