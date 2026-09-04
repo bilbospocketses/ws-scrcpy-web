@@ -54,6 +54,41 @@ export class DeviceStore {
             : undefined;
     }
 
+    /**
+     * The device last observed at a probe address. This is the join that lets a
+     * scan hit — whose identity is the address it was probed at — reach the
+     * device identity everything else keys on (ro.serialno), so a label saved
+     * from the device row survives a disconnect and rescan (finding 19.4).
+     *
+     * Most recent sighting wins: an address can be reassigned by DHCP, and the
+     * device that answered there last is the one a fresh hit means.
+     */
+    findByAddress(address: string): DeviceRecord | undefined {
+        const r = this.db
+            .prepare(
+                `SELECT serial, manufacturer, model, address, last_seen_at FROM devices
+                 WHERE address = ? ORDER BY last_seen_at DESC LIMIT 1`,
+            )
+            .get(address) as
+            | {
+                  serial: string;
+                  manufacturer: string | null;
+                  model: string | null;
+                  address: string | null;
+                  last_seen_at: number | null;
+              }
+            | undefined;
+        return r
+            ? {
+                  serial: r.serial,
+                  manufacturer: r.manufacturer,
+                  model: r.model,
+                  address: r.address,
+                  lastSeenAt: r.last_seen_at,
+              }
+            : undefined;
+    }
+
     listDevices(): DeviceRecord[] {
         return (
             this.db

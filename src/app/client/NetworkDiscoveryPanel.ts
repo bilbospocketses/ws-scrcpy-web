@@ -18,6 +18,15 @@ function escapeHtml(s: string): string {
         .replace(/'/g, '&#039;');
 }
 
+/**
+ * What to show on a scan card's top line: the live name if the probe produced
+ * one, else the model remembered from a previous sighting, else nothing (an
+ * empty top line is hidden by CSS via .discovery-card-name:empty).
+ */
+export function scanHitDisplayName(hit: { name?: string | undefined; model?: string | undefined }): string {
+    return hit.name || hit.model || '';
+}
+
 export class NetworkDiscoveryPanel {
     private container: HTMLElement;
     private infoBox: HTMLElement;
@@ -208,13 +217,19 @@ export class NetworkDiscoveryPanel {
         }
     }
 
-    private renderHit(hit: { address: string; serial: string; name: string; label: string }, grid: HTMLElement): void {
+    private renderHit(
+        hit: { address: string; serial: string; name: string; label: string; model?: string },
+        grid: HTMLElement,
+    ): void {
         if (this.scanSessionHits.has(hit.address)) return;
         const card = document.createElement('div');
         card.className = 'discovery-card';
-        // Top line shows hit.name (adb-SERIAL for mDNS, model for TCP).
-        // Empty name hides the top line via CSS .discovery-card-name:empty.
-        const displayName = hit.name || '';
+        // Top line shows hit.name (adb-SERIAL for mDNS, the live handshake
+        // banner for TCP), falling back to the model remembered from a previous
+        // sighting. A device that answers the probe without a banner used to
+        // render a blank top line even when the app knew perfectly well what it
+        // was (finding 7.6).
+        const displayName = scanHitDisplayName(hit);
         card.innerHTML = `
             <div class="discovery-card-info">
                 <div class="discovery-card-name" title="${escapeHtml(displayName)}">${escapeHtml(displayName)}</div>
