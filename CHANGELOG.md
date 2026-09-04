@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.95] - 2026-09-04
+
 ### Fixed
 
 - **Clearing "enable audio" no longer stops the stream from starting.** On the reverse tunnel — the
