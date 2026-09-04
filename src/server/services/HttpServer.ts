@@ -8,12 +8,80 @@ import { sendInternalError } from '../api/utils';
 import { Config } from '../Config';
 import { EnvName } from '../EnvName';
 import { createStaticHandler } from '../StaticFileServer';
+import { securityHeaders } from '../security/frameGuard';
 import { evaluateHttpRequest } from '../security/requestGate';
 import { Utils } from '../Utils';
 import type { Service } from './Service';
 
 interface ApiHandler {
     handle(req: IncomingMessage, res: ServerResponse): Promise<boolean>;
+}
+
+/**
+ * Build the single HTTP request handler: baseline security headers, then the
+ * request gate, then the API handler chain, then the static fallback.
+ *
+ * Exported (rather than living only as a private method) so the gate's 403 and
+ * the API JSON responses can be driven directly in tests — those two paths are
+ * exactly the ones that used to escape securityHeaders().
+ */
+export function createHttpRequestHandler(
+    apiHandlers: readonly ApiHandler[],
+    fallback: ((req: IncomingMessage, res: ServerResponse) => void) | undefined,
+    secure: boolean,
+): (req: IncomingMessage, res: ServerResponse) => void {
+    return (req, res) => {
+        // Baseline security headers for EVERY response this server writes.
+        // Applying them here rather than per-handler is what makes the coverage
+        // total: the gate's 403 below and the ~78 bare `writeHead` calls across
+        // api/* all used to answer without them, because only the paths routed
+        // through the shared helper (static, the login page, the login 401) ever
+        // set them. `writeHead(status, headers)` merges over anything set here,
+        // so a handler that spreads securityHeaders() itself is unaffected.
+        for (const [name, value] of Object.entries(securityHeaders())) {
+            res.setHeader(name, value);
+        }
+
+        let pathname = '/';
+        try {
+            pathname = new URL(req.url || '/', 'http://localhost').pathname;
+        } catch {
+            pathname = '/';
+        }
+        // Defend the otherwise-unauthenticated API/WS surface: Origin + Host
+        // allowlist (CSRF / DNS-rebinding) plus a per-instance token, with
+        // the SPA's token cookie attached on document responses. See
+        // requestGate for the composed policy.
+        const decision = evaluateHttpRequest(
+            req.method,
+            pathname,
+            req.headers.origin,
+            req.headers.host,
+            req.headers.cookie,
+            secure,
+        );
+        if (!decision.allowed) {
+            res.writeHead(decision.status, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'forbidden', reason: decision.reason }));
+            return;
+        }
+        if (decision.setCookie) {
+            res.setHeader('Set-Cookie', decision.setCookie);
+        }
+        const tryHandlers = async () => {
+            for (const handler of apiHandlers) {
+                const handled = await handler.handle(req, res);
+                if (handled) return;
+            }
+            if (fallback) fallback(req, res);
+        };
+        tryHandlers().catch(() => {
+            // Last-resort guard for an unhandled rejection from a handler:
+            // emit a generic 500 (no internal detail) and skip re-`writeHead`
+            // if a handler already started streaming the response. (#74)
+            sendInternalError(res);
+        });
+    };
 }
 
 const DEFAULT_STATIC_DIR = path.join(__dirname, './public');
@@ -152,47 +220,7 @@ export class HttpServer extends TypedEmitter<HttpServerEvents> implements Servic
         fallback?: (req: IncomingMessage, res: ServerResponse) => void,
         secure = false,
     ): (req: IncomingMessage, res: ServerResponse) => void {
-        return (req, res) => {
-            let pathname = '/';
-            try {
-                pathname = new URL(req.url || '/', 'http://localhost').pathname;
-            } catch {
-                pathname = '/';
-            }
-            // Defend the otherwise-unauthenticated API/WS surface: Origin + Host
-            // allowlist (CSRF / DNS-rebinding) plus a per-instance token, with
-            // the SPA's token cookie attached on document responses. See
-            // requestGate for the composed policy.
-            const decision = evaluateHttpRequest(
-                req.method,
-                pathname,
-                req.headers.origin,
-                req.headers.host,
-                req.headers.cookie,
-                secure,
-            );
-            if (!decision.allowed) {
-                res.writeHead(decision.status, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ error: 'forbidden', reason: decision.reason }));
-                return;
-            }
-            if (decision.setCookie) {
-                res.setHeader('Set-Cookie', decision.setCookie);
-            }
-            const tryHandlers = async () => {
-                for (const handler of HttpServer.apiHandlers) {
-                    const handled = await handler.handle(req, res);
-                    if (handled) return;
-                }
-                if (fallback) fallback(req, res);
-            };
-            tryHandlers().catch(() => {
-                // Last-resort guard for an unhandled rejection from a handler:
-                // emit a generic 500 (no internal detail) and skip re-`writeHead`
-                // if a handler already started streaming the response. (#74)
-                sendInternalError(res);
-            });
-        };
+        return createHttpRequestHandler(HttpServer.apiHandlers, fallback, secure);
     }
 
     public release(): void {

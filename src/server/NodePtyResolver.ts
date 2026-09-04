@@ -357,7 +357,13 @@ export async function resolveNodePty(depsPath: string): Promise<NodePtyHandle> {
         const version = readSeedNodePtyVersion();
         if (!version) {
             cachedHandle = { available: false, reason: 'no-seed-package' };
-            log.error('no seed node-pty package found; cannot resolve');
+            // WARN, not ERROR: a checkout that has not run `npm run stage-seed`
+            // legitimately has no seed, and the app already reports that as a
+            // capability rather than a fault (/api/capabilities answers
+            // `shellReason: 'no-seed-package'`). Logging it as an ERROR forced
+            // smoke row 10.3's "zero ERROR lines" assertion to carry a
+            // permanent allow-list exception for a non-error.
+            log.warn('no seed node-pty package found; remote shell unavailable (shellReason: no-seed-package)');
             return cachedHandle;
         }
 
