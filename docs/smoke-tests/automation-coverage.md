@@ -1,11 +1,217 @@
 # Automation coverage register
 
-Per-row automation status for `smoke-test.md`. **Seeded by P3 task 5; the full
-127-row triage lands in task 16.** Until then this file holds only the container
-findings task 5 was required to record rather than fix silently.
-
-Companion to `smoke-test.md`, not a replacement: that document remains the
+Per-row automation status for `smoke-test.md`: one line for every row, carrying
+the bucket it falls in and either the spec that covers it or the reason nothing
+does. Companion to `smoke-test.md`, not a replacement — that document remains the
 canonical list of rows and their steps.
+
+Derived from `smoke-test.md` at `v0.1.30-beta.92`, which holds **140 rows**. Row
+ids are stable and gappy; so are the lines here.
+
+| | Rows | Where |
+|---|---|---|
+| Automated, fast tier | 29 | `build-and-test`, every PR |
+| Automated, container tier | 7 | `build-and-test`'s docker step, and qa-harness nightly |
+| Automated, device tier | 16 | qa-harness, nightly |
+| Windows guest | 25 | qa-harness, nightly, once P4 lands |
+| Windows guest **and** Linux residual | 2 | Windows half P4; Linux half nobody |
+| Automatable, no spec written yet | 6 | nobody yet — 1 fast, 4 container, 1 device |
+| **Residual — Linux installer and desktop** | **48** | nobody |
+| **Residual — un-automatable** | **7** | nobody, ever |
+| **Total** | **140** | |
+
+**Automated today: 52 of 140 = 37 %.** After P4: 77 of 140 = 55 %, plus the
+Windows halves of the two split rows.
+
+Three different row counts have been quoted for this document, and only one of them
+is wrong. The plan that commissioned this register worked from **127**, which was
+the correct count for `v0.1.30-beta.82` — the version it named. Module 20's
+thirteen container rows were added afterwards by P3 task 5, and nothing has been
+removed since, so 127 + 13 = 140. A count of **135** also circulated while this
+task was being scoped, and that one is a miscount: it matches row ids as
+`<module>.<number>`, which silently drops the five that carry a suffix —
+`4.2-user`, `4.2-system-cli`, `4.2-system-gui`, `5.3a` and `5.3b`. All five are
+`[Linux]` system-scope install and uninstall rows, so that undercount fell
+entirely on the Linux gap this register exists to measure.
+
+`todo_ws_scrcpy_web` item 13 estimated "~60 % of the current smoke checklist goes
+from manual minutes to automated seconds". That figure counted partial rows as
+covered and assumed the Linux installer rows were reachable. The measured number
+is **37 %**, and 55 % once P4 lands.
+
+**Seven automated rows carry a manual half.** Each states both halves on its own
+line below: 8.5, 8.8 and 9.5, whose remainder `smoke-test.md` itself calls
+residual, and 9.4, 10.3, 12.4 and 13.3, whose remainder it calls manual. They are
+counted once, in the tier that covers their automated half, so a reader adding the
+buckets up does not count them twice — but the residual set is larger than its 55
+rows by these seven halves.
+
+Two further rows are marked **Split** rather than **Partial**, which is a different
+thing: 7.2 runs its two halves in two different tiers, and 12.1’s container half is
+rows 20.6 and 20.12. Neither leaves anything manual.
+
+Buckets, once each, no row in two:
+
+- **fast** — an untagged spec in `tests/e2e/`, run by `build-and-test` on every PR.
+- **container** — a `@docker` spec. CI's docker step runs all of them; qa-harness's
+  nightly docker tier runs all but the two marked `@docker-host`, which drive
+  compose stacks of their own and need a docker CLI the runner does not have.
+- **device** — a `@device` spec under `tests/e2e/device/`. qa-harness only, nightly,
+  against the Android emulator P2 brings onto the run network.
+- **Windows guest** — P4's territory. Not automated today.
+- **no spec yet** — automatable with the tiers that already exist, and simply not
+  written. Broken out rather than buried in the residual set, because these are the
+  cheapest rows left on the board.
+- **residual: linux-desktop** — blocked on a Linux desktop that no phase builds.
+- **residual: un-automatable** — blocked on hardware, on an app defect, or on a
+  product decision nobody has taken.
+
+## Every row
+
+Sorted by module, then by row number, which is not the doc's execution order.
+
+| Row | Tag | What it checks | Bucket | Where it runs, or why it does not |
+|---|---|---|---|---|
+| 1.1 | `[Linux]` | First-run modal | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
+| 1.2 | `[Linux]` | Accept → install + delete original | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
+| 1.3 | `[Linux]` | Decline + remember | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
+| 1.4 | `[Linux]` | Headless first-run | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
+| 1.5 | `[Win]` | Fresh MSI install | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
+| 1.6 | `[Win]` | Reinstall reuses config | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
+| 1.7 | `[Linux]` | Cold-start opens one tab | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
+| 1.8 | `[Win]` | Cold-start opens one tab | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
+| 1.9 | `[Both]` | First-run dependency-bootstrap banner + Retry | container | `dependencies-panel.spec.ts` `@docker-host`. **CI only** - it drives a compose stack of its own, and the qa-harness runner has no docker CLI. |
+| 1.10 | `[Win]` | Install-dir ACL grant + one-time UAC | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
+| 2.1 | `[Fedora]` | Binary/deps labels | residual: linux-desktop | Residual. Needs a Fedora host with a policy store of its own, for `bin_t`/`var_lib_t` labelling and the `semanage` fcontext lifecycle. Containers share the host's. |
+| 2.2 | `[Fedora]` | State labels | residual: linux-desktop | Residual. Needs a Fedora host with a policy store of its own, for `bin_t`/`var_lib_t` labelling and the `semanage` fcontext lifecycle. Containers share the host's. |
+| 2.3 | `[Fedora]` | fcontext rules registered | residual: linux-desktop | Residual. Needs a Fedora host with a policy store of its own, for `bin_t`/`var_lib_t` labelling and the `semanage` fcontext lifecycle. Containers share the host's. |
+| 2.4 | `[Fedora]` | Zero AVC during install | residual: linux-desktop | Residual. Needs a Fedora host with a policy store of its own, for `bin_t`/`var_lib_t` labelling and the `semanage` fcontext lifecycle. Containers share the host's. |
+| 2b.1 | `[Ubuntu]` | Userns AppImage launch (potential 0.1.30 "Canonical" blocker) | residual: linux-desktop | Residual. Needs a stock Ubuntu desktop session: unprivileged-userns still restricted, AppArmor enforcing, no libfuse2 installed, a real file manager and a real menu. A container is none of those. |
+| 2b.2 | `[Ubuntu]` | libfuse2 absent by default | residual: linux-desktop | Residual. Needs a stock Ubuntu desktop session: unprivileged-userns still restricted, AppArmor enforcing, no libfuse2 installed, a real file manager and a real menu. A container is none of those. |
+| 2b.3 | `[Ubuntu]` | AppArmor zero-denials (service `/opt` exec) | residual: linux-desktop | Residual. Needs a stock Ubuntu desktop session: unprivileged-userns still restricted, AppArmor enforcing, no libfuse2 installed, a real file manager and a real menu. A container is none of those. |
+| 2b.4 | `[Ubuntu]` | Install/uninstall with no SELinux tooling | residual: linux-desktop | Residual. Needs a stock Ubuntu desktop session: unprivileged-userns still restricted, AppArmor enforcing, no libfuse2 installed, a real file manager and a real menu. A container is none of those. |
+| 2b.5 | `[Ubuntu]` | pkexec polkit dialog (GNOME) | residual: linux-desktop | Residual. Needs a stock Ubuntu desktop session: unprivileged-userns still restricted, AppArmor enforcing, no libfuse2 installed, a real file manager and a real menu. A container is none of those. |
+| 2b.6 | `[Ubuntu]` | `systemd-run --user` survival | residual: linux-desktop | Residual. Needs a stock Ubuntu desktop session: unprivileged-userns still restricted, AppArmor enforcing, no libfuse2 installed, a real file manager and a real menu. A container is none of those. |
+| 2b.7 | `[Ubuntu]` | Desktop menu entry + icon (GNOME) | residual: linux-desktop | Residual. Needs a stock Ubuntu desktop session: unprivileged-userns still restricted, AppArmor enforcing, no libfuse2 installed, a real file manager and a real menu. A container is none of those. |
+| 3.1 | `[Linux]` | Per-user launch | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
+| 3.2 | `[Linux]` | Single-instance ([flock](#g-flock)) | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
+| 3.3 | `[Linux]` | Service-defer | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
+| 3.4 | `[Win]` | Per-session tray | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
+| 3.5 | `[Win]` | 2nd tray.exe rejected | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
+| 3.6 | `[Win]` | Tray respawn after user-kill | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
+| 3.7 | `[Win]` | Single-instance integrity (User vs Admin) | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
+| 3.8 | `[Win]` | No startup Run-key (supervisor owns the tray) | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
+| 4.1 | `[Linux]` | System-scope gate | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
+| 4.2-system-cli | `[Linux]` | Install system scope — headless CLI | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
+| 4.2-system-gui | `[Linux]` | Install system scope — desktop pkexec takeover | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
+| 4.2-user | `[Linux]` | Install user scope | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
+| 4.3 | `[Win]` | Install confirm UX | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
+| 4.4 | `[Linux]` | Scope-radio legibility + detection | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
+| 4.5 | `[Both]` | Confirm-dialog button style | no spec yet - fast | Automatable in the fast tier: a class assertion on confirm modals the suite already opens. The cheapest unclaimed row in the doc. |
+| 4.6 | `[Linux]` | Service-unit hygiene | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
+| 5.1 | `[Linux]` | Same-user uninstall (served-by-service) | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
+| 5.2 | `[Linux]` | Different-admin uninstall | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
+| 5.3 | `[Linux]` | Headless uninstall | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
+| 5.3a | `[Linux]` | Headless uninstall `--keep-state` | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
+| 5.3b | `[Linux]` | Ubuntu install + boot + uninstall | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
+| 5.4 | `[Fedora]` | fcontext cleanup | residual: linux-desktop | Residual. Needs a Fedora host with a policy store of its own, for `bin_t`/`var_lib_t` labelling and the `semanage` fcontext lifecycle. Containers share the host's. |
+| 5.5 | `[Win]` | Uninstall + handoff affordance | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
+| 5.6 | `[Win]` | Uninstall handoff-failure guard | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
+| 5.7 | `[Win]` | Full uninstall | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
+| 5.8 | `[Linux]` | User-scope uninstall → relaunch local | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
+| 5.9 | `[Linux]` | System-scope uninstall message | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
+| 5.10 | `[Win]` | Non-admin uninstall, UAC declined | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
+| 6.1 | `[Both]` | Update check | Windows guest (P4) + residual: linux-desktop | **Windows half:** P4. **Linux half:** residual - the row needs a real install at an older version, and nothing builds a Linux desktop. |
+| 6.2 | `[Linux]` | Local-mode (home) update apply + relaunch | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
+| 6.3 | `[Linux]` | No-service `/opt` update | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
+| 6.4 | `[Linux]` | Newer home over `/opt` | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
+| 6.5 | `[Linux]` | User-scope service update apply | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
+| 6.6 | `[Linux]` | System-scope headless service update apply | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
+| 6.8 | `[Win]` | In-app update apply + tray persists | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
+| 7.1 | `[Both]` | Wireless connect | device | `device/connect.spec.ts` |
+| 7.2 | `[Both]` | Scan subnet | device | `device/connect.spec.ts`. **Split across two tiers:** the public-range refusal is untagged and runs in the fast tier on every PR; the scan and connect-from-the-card need the emulator. |
+| 7.3 | `[Win]` | USB device | residual: un-automatable | USB, barred by the wireless-only lock. Neither a container nor the emulator has a USB bus to offer. |
+| 7.4 | `[Both]` | Device list updates in place | device | `device/connect.spec.ts` |
+| 7.5 | `[Both]` | Remembered device model in scan hits | residual: un-automatable | The enrichment lives on `POST /api/devices/scan`, which the UI never calls (finding 7.6). Becomes a device row the moment that defect is fixed. |
+| 8.1 | `[Both]` | Video stream | device | `device/streaming.spec.ts` |
+| 8.2 | `[Both]` | Control | device | `device/streaming.spec.ts` |
+| 8.3 | `[Both]` | Audio | device | `device/streaming.spec.ts` |
+| 8.4 | `[Both]` | Codec/encoder settings | device | `device/streaming.spec.ts` |
+| 8.5 | `[Both]` | H.264 + H.265 decode | device | `device/streaming.spec.ts`. **Partial:** H.264 is covered; the H.265 half is residual - no browser in the Linux runner decodes it (finding 8.11). |
+| 8.6 | `[Both]` | AV1 / VP8 / VP9 decode | device | `device/streaming.spec.ts` |
+| 8.7 | `[Both]` | Browser codec refusal is honoured | residual: un-automatable | Needs a second browser engine *and* a device whose encoder list includes H.265. No browser in the Linux runner decodes H.265 (finding 8.11), so "offered in Chromium" cannot be observed here at all. |
+| 8.8 | `[Both]` | Locked device is reported, not shown as a black screen | device | `device/streaming.spec.ts`. **Partial:** the app reports the lock and never self-reconnects, which is covered; the banner half is residual because this emulator composes its keyguard instead of blanking it (finding 8.12). |
+| 8.9 | `[Both]` | Hardware encoder is offered | residual: un-automatable | Needs a vendor hardware encoder (`c2.exynos.*`, `c2.amlogic.*`). The emulator offers only the `c2.android.*` software one. |
+| 9.1 | `[Both]` | Shell modal | device | `device/modals.spec.ts` |
+| 9.2 | `[Both]` | File listing/transfer | device | `device/modals.spec.ts` |
+| 9.3 | `[Both]` | Device actions | device | `device/modals.spec.ts` |
+| 9.4 | `[Both]` | Dependencies panel | fast | `dependencies-panel.spec.ts`, untagged. **Partial:** the table, check-for-updates and the admin gate are covered; the per-dependency update and the restart after it need an available update and stay manual. |
+| 9.5 | `[Both]` | Shell-unavailable shows a reason | container | `dependencies-panel.spec.ts` `@docker-host`, **CI only**. **Partial:** the API half is covered; the per-device shell tooltip is residual - it needs a tracked device *and* an image without the node-pty prebuilt, and the device tier runs the full image. |
+| 10.1 | `[Both]` | Service status API | fast | `server-surface.spec.ts` |
+| 10.2 | `[Win]` | Logs clean | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
+| 10.3 | `[Linux]` | Logs clean | fast | `server-surface.spec.ts`. **Partial:** the server's own `ws-scrcpy-web.log` is covered; `launcher.log` belongs to the Linux launcher and stays manual. |
+| 10.4 | `[Both]` | Per-instance token / reload-on-restart | fast | `server-surface.spec.ts` |
+| 10.5 | `[Both]` | 404 + security headers | fast | `server-surface.spec.ts` |
+| 10.6 | `[Both]` | `allowedHosts` reverse-proxy opt-in | fast | `server-surface.spec.ts` |
+| 10.7 | `[Win]` | Atomic writes survive the hidden attribute | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
+| 11.1 | `[Linux]` | No-libfuse2 launch | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
+| 11.2 | `[Linux]` | No-libfuse2 in-app update | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
+| 11.3 | `[Linux]` | Locator fix watch (velopack#921) | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
+| 11.4 | `[Win]` | PerMachine intact | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
+| 12.1 | `[Linux]` | Local-mode clean exit + adb teardown | fast | `lifecycle.spec.ts`. **Split:** the bare server is covered; the container half is rows 20.6 and 20.12, both unwritten. No part of it is manual. |
+| 12.2 | `[Both]` | Stop-exit service-mode gating | Windows guest (P4) + residual: linux-desktop | **Windows half:** P4. **Linux half:** residual - the gate is only meaningful with a systemd unit actually installed. |
+| 12.3 | `[Win]` | Local-mode reaps everything | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
+| 12.4 | `[Linux]` | DATA_ROOT override honored | fast | `lifecycle.spec.ts`. **Partial:** the Node side is covered; the launcher half stays manual. |
+| 12.5 | `[Win]` | Abnormal-termination JobObject reap | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
+| 13.1 | `[Both]` | Bookmark global-dismiss | fast | `settings-prompts.spec.ts` |
+| 13.2 | `[Both]` | Reset welcome & bookmark prompts | fast | `settings-prompts.spec.ts` |
+| 13.3 | `[Both]` | Server-section layout + web-port inline save | fast | `settings-prompts.spec.ts`. **Partial:** layout, inline save and the at-rest status are covered; "change port, save, persists and restarts" stays manual. |
+| 14.1 | `[Linux]` | Install-for-all-users button | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
+| 14.2 | `[Linux]` | Start-menu icon | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
+| 14.3 | `[Linux]` | Complete uninstall — local | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
+| 14.4 | `[Linux]` | Uninstall — user-service cascade | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
+| 14.5 | `[Linux]` | Uninstall — system-service cascade | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
+| 14.6 | `[Linux]` | Uninstall — keep settings & logs | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
+| 14.7 | `[Fedora]` | Uninstall — SELinux clean | residual: linux-desktop | Residual. Needs a Fedora host with a policy store of its own, for `bin_t`/`var_lib_t` labelling and the `semanage` fcontext lifecycle. Containers share the host's. |
+| 15.1 | `[Win]` | In-app uninstall — keep | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
+| 15.2 | `[Win]` | In-app uninstall — wipe | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
+| 15.3 | `[Win]` | Uninstall modal UX | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
+| 15.4 | `[Win]` | Stop-exit reaps tray + adb | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
+| 15.5 | `[Win]` | Server-section order | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
+| 16.1 | `[Both]` | Light/dark theme switch | fast | `a11y-theming.spec.ts` |
+| 16.2 | `[Both]` | Keyboard focus ring | fast | `a11y-theming.spec.ts` |
+| 16.3 | `[Both]` | Reduced motion | fast | `a11y-theming.spec.ts` |
+| 16.4 | `[Both]` | Light-mode status tints | fast | `a11y-theming.spec.ts` |
+| 16.5 | `[Both]` | Embed page lang | fast | `a11y-theming.spec.ts` |
+| 16.6 | `[Both]` | Theme first-paint no-FOUC | fast | `a11y-theming.spec.ts` |
+| 18.1 | `[Both]` | Default open mode | fast | `auth.spec.ts` |
+| 18.2 | `[Both]` | 🔐 Secure the admin account | fast | `auth.spec.ts` |
+| 18.3 | `[Both]` | 🔐 Login | fast | `auth.spec.ts` |
+| 18.4 | `[Both]` | 🔐 Brute-force lockout + generic error | fast | `auth.spec.ts` |
+| 18.5 | `[Both]` | 🔐 Admin clears a lockout | fast | `auth.spec.ts` |
+| 18.6 | `[Both]` | 🔐 Manage users (role / disable / reset / delete + last-admin guard) | fast | `auth.spec.ts` |
+| 18.7 | `[Both]` | 🔐 Non-admin authz (UI + server) | fast | `auth.spec.ts` |
+| 18.8 | `[Both]` | 🔐 Change own password | fast | `auth.spec.ts` |
+| 18.9 | `[Both]` | 🔐 Logout | fast | `auth.spec.ts` |
+| 18.10 | `[Both]` | 🔐📱 WebSocket streams gated | fast | `auth.spec.ts` |
+| 18.11 | `[Both]` | 🔐 Return to open mode | fast | `auth.spec.ts` |
+| 18.12 | `[Both]` | 🔐 Sessions survive restart | fast | `auth.spec.ts` |
+| 19.1 | `[Both]` | 📱 Open-mode labels unchanged | device | `device/labels.spec.ts` |
+| 19.2 | `[Both]` | 🔐📱 Per-user label isolation | device | `device/labels.spec.ts` |
+| 19.3 | `[Both]` | 🔐📱 Labels in live scan hits | device | `device/labels.spec.ts` |
+| 20.1 | `[Both]` | Settings → Service in a container | container | `docker-gating.spec.ts` |
+| 20.2 | `[Both]` | Settings → Updates in a container | container | `docker-gating.spec.ts` |
+| 20.3 | `[Both]` | libfuse2 banner | residual: un-automatable | Nothing left to test - the libfuse2 gate this row checked no longer exists. A tombstone, kept so the number is not reused. |
+| 20.4 | `[Both]` | "install for all users" row in a container | residual: un-automatable | Blocked on an open product decision, not on automation: what the "install for all users" row should do in a container is undecided (register 20.4). |
+| 20.5 | `[Both]` | "uninstall ws-scrcpy-web" row in a container | residual: un-automatable | Blocked on an open product decision, not on automation: what "uninstall ws-scrcpy-web" should do in a container is undecided (register 20.5). |
+| 20.6 | `[Both]` | "stop server & exit" in a container | no spec yet - container | Automatable as a `@docker-host` spec that drives `docker stop` from outside the container. The bare-server half is already covered by 12.1. |
+| 20.7 | `[Both]` | Linux system-wide-install offer in a container | container | `docker-gating.spec.ts` |
+| 20.8 | `[Both]` | Pull `:beta` from Docker Hub | no spec yet - container | Automatable as a pull-and-compare check once a `:beta` tag exists. Blocked today only because the publish workflow's Docker Hub token is unset. |
+| 20.9 | `[Both]` | First-boot hydrate on a fresh `/data` volume | container | `docker-gating.spec.ts` |
+| 20.10 | `[Both]` | Wireless connect from a container | no spec yet - device | Automatable by pointing the device tier at the container subject instead of the bare server. Needs the emulator and the container on one network. |
+| 20.11 | `[Both]` | Persistence across `docker rm` + re-run | no spec yet - container | Automatable as a `@docker-host` spec. The log half cannot pass until finding 20.14 is fixed - the container writes no server log at all. |
+| 20.12 | `[Both]` | Graceful `docker stop` | no spec yet - container | Automatable as a `@docker-host` spec asserting exit 0 within the grace period. |
+| 20.13 | `[Both]` | `HEALTHCHECK` healthy | container | `tests/e2e/support/dockerStack.ts` — `composeUpFresh` brings the stack up with `--wait`, which refuses to proceed unless the image reports healthy. |
 
 ---
 
@@ -168,3 +374,57 @@ namespace — see finding 8.10 for why that is not a convenience.
 | 8.12 | **The emulator composes its keyguard; a real phone blanks it.** Row 8.8 rests on Android handing scrcpy a black surface while locked (issue #498). On this AVD (Android 36, google_apis, swiftshader), with the swipe keyguard enabled and the display kept awake, the stream delivered 50 decoded frames while `locked:true`, every one with a picture, so `checkForDegradation` correctly never fired and the banner correctly never showed. The app's lock detection itself is fine on SDK 36 (`{"awake":false,"locked":true}` with the keyguard up). | **Residual on the emulator, real-device behaviour (spec §11.1).** 8.8's banner assertion is conditional on a canvas sample going black and turns live by itself on a fixture that blanks the keyguard; the tier records the composed frames as an annotation. |
 | 8.13 | **Clearing "enable audio" stops the stream from starting on the reverse tunnel.** With `audio=false` the reverse-tunnel path still waits for three TCP connections — `acceptSockets(server, count, …)` at `src/server/ScrcpyConnection.ts:354` — and closes the WebSocket with `4005 Timeout waiting for 3 TCP connections (got 2)`; the forward-tunnel path (`:215-227`) correctly skips the audio connect for `audio=false`. Measured on the socket in four harness runs: the audio-disabled connect delivered `{"messages":0,"bytes":0}` and that close, while the three audio-enabled connects in the same test each delivered 12–13 messages, ~46–49 KB and a `First decoded frame`. The synthetic `AUDIO_DISABLED` sentinel socket (`:225-226`) was reproduced in isolation on the same Node and is not the fault. | **Finding, open — high.** Wait for two sockets when audio is off on the reverse path, as the forward path already does. Row 8.3's audio-disabled connect fails by name until then. |
 | 8.14 | **A session can deliver video the browser never decodes, and nothing reports it.** Intermittent and not path-specific: first seen on 8.1's connect-link session (runs 2f68, 5940, cccc, 3c57-adjacent), then in run bece it hit 8.1, 8.4 and 8.5 in one run — 8.4 and 8.5 stream from the config modal at native 1080×1920 with no `maxSize`, and both had passed eight runs running. Two harness runs shared the host during bece, which may raise the odds; the product must report the condition either way. The socket witness on a failing 8.1: `{"messages":5782,"bytes":20688483,"closed":null}` on the stream socket, `decoded frames 0 -> 0`, canvas still `300x150` (its untouched default). So `VideoDecoder.configure` never ran, and because `armDecodeWatchdog` arms only after configure, the 5 s watchdog never fired: a `Connected:` line, then silence, then a black rectangle with no explanation — issue #508's shape one layer earlier. | **Finding, open — high.** Arm a watchdog on session start, not on configure, so "video arrived, nothing configured" reports itself; then find why the config packet is not applied on these sessions. Rows 8.1, 8.4 and 8.5 fail by name with the socket numbers when it happens (8.4: 5947 messages / 17.8 MB; 8.5: 6029 messages / 21.1 MB; decoded frames 0). |
+
+---
+
+## Why 55, and what would move most of them
+
+48 of the 55 are Linux **installer** and **desktop-integration** rows, and two more
+contribute their Linux halves: AppImage launch under Ubuntu's unprivileged-userns
+restriction and with no `libfuse2` on the host, AppArmor denials, polkit dialogs
+under both GNOME and KDE, desktop menu entries and icon caches, systemd user- and
+system-scope units, SELinux `bin_t`/`var_lib_t` labelling and the `semanage`
+fcontext lifecycle, and Velopack in-place self-update. A container has no polkit, no
+desktop session, no per-container SELinux policy store and no AppImage mount.
+Testing the container does not test the AppImage — they are two distribution
+channels that share only a codebase.
+
+The design has an asymmetry it does not name: P1 builds a Windows desktop, which is
+what makes the 25 W rows reachable. It builds no Linux desktop, so the Linux
+installer half has no phase at all. Spec §3.5's "ships on Windows AND Linux, so it
+needs both a Linux container suite and a Windows guest suite" reads as though the
+container suite covers the Linux side. It covers a THIRD channel that did not exist
+when that sentence was written.
+
+RECOMMENDED, EXPLICITLY OUT OF P3: a Linux desktop guest phase. It is far cheaper
+than P1's — no licence, no 20-minute unattended install, no 8.4 GB ISO that dockur
+deletes afterwards; a Fedora and an Ubuntu cloud image boot under the same KVM this
+host already exposes, and the whole overlay mechanism P1 built transfers unchanged.
+Its scope is exactly these 48 rows plus the two Linux halves. Not all of them need a
+graphical session — the SELinux labelling, the headless install and uninstall paths
+and the no-`libfuse2` rows would boot on a plain cloud image — but the ones that do,
+the GUI first-run modal, the pkexec takeover, the GNOME and KDE menu entries, are
+precisely the ones no container will ever reach, which is what makes it a *desktop*
+phase rather than a container with systemd in it. Recorded as a recommendation, not
+scheduled: P0–P6 are not being widened here.
+
+The remaining 7 are un-automatable, though not all for the same kind of reason, and
+the distinction matters to anyone deciding what to fix:
+
+- **Hardware that does not exist here.** 7.3 (USB, barred by the wireless-only lock)
+  and 8.9 (a vendor hardware encoder the emulator does not have). No budget moves
+  these; see spec §11.1.
+- **A capability the Linux runner lacks.** 8.7 needs a browser that decodes H.265 in
+  order to observe one being *offered*, and no browser in this runner does (finding
+  8.11).
+- **An app defect, not a testing limit.** 7.5's enrichment lives on a route the UI
+  never calls (finding 7.6). It becomes an ordinary device row the day that is fixed.
+- **A decision nobody has taken.** 20.4 and 20.5 wait on what "install for all users"
+  and "uninstall" should even mean inside a container. 20.3 is a tombstone — the
+  libfuse2 gate it checked no longer exists.
+
+Six further rows are automatable with the tiers already built and simply have no
+spec yet: 4.5 in the fast tier, 20.6, 20.8, 20.11 and 20.12 in the container tier,
+and 20.10 in the device tier. They are the cheapest coverage left anywhere in this
+document and are listed as their own bucket so they cannot be mistaken for residual
+manual work.
