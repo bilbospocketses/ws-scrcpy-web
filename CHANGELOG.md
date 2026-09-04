@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.100] - 2026-09-04
+
 ### Fixed
 
 - **A non-admin no longer sees a Dependencies panel that cannot load.** The panel rendered for every role while
