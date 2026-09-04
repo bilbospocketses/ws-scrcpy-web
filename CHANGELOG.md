@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.101] - 2026-09-04
+
 ### Fixed
 
 - **Logging out now ends the streams that login opened.** Deleting a session refused the *next* connection, but
