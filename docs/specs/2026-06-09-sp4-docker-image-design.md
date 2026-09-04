@@ -121,6 +121,7 @@ VOLUME /data
   - beta → `:X.Y.Z-beta.N` **and** `:beta`
   - stable → `:X.Y.Z` **and** `:stable` **and** `:latest`
 - Push to `jchapz30/ws-scrcpy-web`. Secrets: `DOCKER_USERNAME` + `DOCKER_PAT`.
+- **Docker Scout gate** (added 2026-09-03): the image is first built into the runner's engine under a tag that is never pushed, and `docker/scout-action` runs `cves` on it with `only-severities: critical,high`, `only-fixed: true`, `exit-code: true`. A fixable critical or high CVE fails the workflow before anything is pushed; unfixed advisories are reported, not gated on. The Hub repository has Scout analysis enabled, so already-published images are re-evaluated as advisories land.
 - The pre-existing disabled `docker-publish.yml.disabled` (placeholder: `my-image-name:latest`, push-on-every-main-push) is **replaced/removed**.
 
 ## 11. Networking (mostly → SP5 docs)

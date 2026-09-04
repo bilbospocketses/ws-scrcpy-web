@@ -53,6 +53,44 @@ jobs:
         # release, because it reaches every user who follows the default tag.
         run: node .github/scripts/docker-tags.mjs "${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
 
+      # The Docker Scout gate, and why the image is built twice.
+      #
+      # Scout analyses an image that exists somewhere, so the gate needs one
+      # BEFORE anything reaches the registry: this first build `load`s the image
+      # into the runner's engine under a tag that is never pushed. `load` takes
+      # one platform and cannot carry BuildKit attestations, so this build has
+      # neither; the push below rebuilds from the same builder's cache (a no-op
+      # rebuild, every layer hits) and adds provenance + SBOM there.
+      #
+      # The gate itself: fixable critical and high CVEs fail the step, and the
+      # publish never happens. `only-fixed` is deliberate. An advisory with no
+      # fixed version cannot be acted on, and gating on it would hold every
+      # release hostage to upstream; a fixable one is a bump we have not made.
+      # Docker Hub also has Scout analysis enabled for jchapz30/ws-scrcpy-web,
+      # so images that already shipped are re-evaluated as new advisories land.
+      # This action is on the repo's Actions allow-list (added 2026-09-03).
+      - name: Build into the engine for the Scout gate
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: jchapz30/ws-scrcpy-web:scout-gate
+          provenance: false
+          sbom: false
+
+      - name: Docker Scout gate (fixable critical/high CVEs fail the publish)
+        uses: docker/scout-action@7c6b6c3f7844478ace1ffd4e7aef649053d1f87d # v1.24.0
+        with:
+          command: cves
+          image: local://jchapz30/ws-scrcpy-web:scout-gate
+          only-severities: critical,high
+          only-fixed: true
+          exit-code: true
+          summary: true
+          write-comment: false
+
       - uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
