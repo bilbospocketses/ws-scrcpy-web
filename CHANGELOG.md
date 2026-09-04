@@ -17,6 +17,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The Docker image no longer ships the dev toolchain or the base image's npm.** The runtime stage
+  now installs its production tree from the lockfile (`npm ci --omit=dev --ignore-scripts`) instead of
+  copying the build stage's pruned `node_modules`, because that prune had never taken effect: beta.91's
+  image carried Playwright, vitest, webpack, swc, biome and TypeScript 7's native compiler — 372 MB —
+  and the compiler's Go standard library is where the Docker Scout gate's one critical CVE lived. The
+  base image's bundled npm, npx, corepack and yarn are removed in the same layer; the app runs
+  `node dist/index.js` and never invokes any of them, and npm's own `tar`, `brace-expansion` and
+  `ip-address` were the gate's other four highs. Dependabot gains a `docker` ecosystem so the base
+  image's digest pin moves on its own.
+
 ## [0.1.30-beta.92] - 2026-09-04
 
 ### Added
