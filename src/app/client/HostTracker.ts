@@ -12,7 +12,6 @@ const TAG = '[HostTracker]';
 export interface HostTrackerEvents {
     // hosts: HostItem[];
     disconnected: CloseEvent;
-    error: string;
 }
 
 export class HostTracker extends ManagerClient<ParamsBase, HostTrackerEvents> {
@@ -56,8 +55,16 @@ export class HostTracker extends ManagerClient<ParamsBase, HostTrackerEvents> {
         switch (message.type) {
             case MessageType.ERROR: {
                 const msg = message as MessageError;
+                // Logged, not emitted. The server sends MessageType.ERROR from
+                // exactly one place -- `Unsupported message: "..."` when THIS
+                // client sends something the host tracker does not understand.
+                // That is a protocol fault with nothing a user could act on, so
+                // there is no UI to route it to. It used to `emit('error')`,
+                // which nothing listened for: before beta.81 that threw (Node's
+                // EventEmitter reserves 'error'), and after the guard it was a
+                // silent no-op. Either way the event map advertised a listener
+                // that never existed.
                 console.error(TAG, msg.data);
-                this.emit('error', msg.data);
                 break;
             }
             case MessageType.HOSTS: {

@@ -1016,7 +1016,11 @@ export class Config {
     }
 
     public getFirstRunStatus(): FirstRunStatus {
-        return { ...this._firstRunStatus };
+        // frameAncestors is composed HERE rather than stored in
+        // `_firstRunStatus`, because approving an embed request mutates the
+        // list on a running server: a value snapshotted at boot would go stale
+        // the first time someone said yes.
+        return { ...this._firstRunStatus, frameAncestors: [...this._frameAncestors] };
     }
 
     /**

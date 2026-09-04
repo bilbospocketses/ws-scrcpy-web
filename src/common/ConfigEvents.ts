@@ -50,6 +50,18 @@ export interface FirstRunStatus {
      * persist into a /data volume that could later be mounted elsewhere.
      */
     docker?: boolean;
+    /**
+     * Origins this deployment permits to frame the app, from config.json's
+     * `frameAncestors`. Empty means nobody, which is the default.
+     *
+     * Sent so the client can scope its theme-embed listener to the same set the
+     * CSP already advertises. It leaks nothing: `securityHeaders()` puts the
+     * identical list in a `frame-ancestors` header on every static response.
+     *
+     * Optional, like `docker`, so an older server and a newer frontend
+     * interoperate -- an absent field reads as "no origins", the safe answer.
+     */
+    frameAncestors?: string[];
 }
 
 /** Envelope shape returned by GET /api/config. */

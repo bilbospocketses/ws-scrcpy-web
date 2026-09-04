@@ -20,8 +20,14 @@ export interface ThemeEmbedOptions {
      * origin. WARNING: leave as '*' only when ws-scrcpy-web is intended to be
      * embeddable by arbitrary hosts. Pass an explicit allowlist
      * (e.g., ['https://my-host.example']) for locked-down deployments.
+     *
+     * May be a FUNCTION, evaluated per message. The app installs this listener
+     * at module scope, before `/api/config` has answered, so the deployment's
+     * real allowlist is not known yet at install time; a getter lets the
+     * listener start locked down and widen once the config arrives, instead of
+     * starting open and hoping to be narrowed.
      */
-    allowedOrigins?: '*' | string[];
+    allowedOrigins?: '*' | string[] | (() => '*' | string[]);
 }
 
 /** Returns the live DOM theme attribute — authoritative after DB apply. */
@@ -73,10 +79,12 @@ export function notifyThemeReady(target?: Window, opts: ThemeEmbedOptions = {}):
 
 export function installThemeEmbedListener(opts: ThemeEmbedOptions = {}): () => void {
     const messageType = opts.messageType ?? DEFAULT_MESSAGE_TYPE;
-    const allowedOrigins = opts.allowedOrigins ?? '*';
+    const allowedOriginsOpt = opts.allowedOrigins ?? '*';
     const requestType = `${messageType}-request`;
 
     const handler = (event: MessageEvent): void => {
+        // Resolved per message, not once at install: see ThemeEmbedOptions.
+        const allowedOrigins = typeof allowedOriginsOpt === 'function' ? allowedOriginsOpt() : allowedOriginsOpt;
         if (allowedOrigins !== '*' && !allowedOrigins.includes(event.origin)) {
             return;
         }

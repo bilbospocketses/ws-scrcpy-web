@@ -2,6 +2,7 @@ import { execFileSync } from 'child_process';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
+import { resolveSystemTool } from '../service/systemTools';
 
 /**
  * Build a tarball named {key}.tar.gz whose contents are everything under
@@ -21,7 +22,7 @@ export function buildFixtureTarball(srcDir: string, key: string, outDir: string)
     const tarPath = path.join(outDir, `${key}.tar.gz`);
     // GNU tar on Windows (Git Bash) interprets 'C:\\...' as 'host:path'. Use
     // cwd-relative paths: cd into stagingDir, write tarball into its parent.
-    execFileSync('tar', ['-czf', path.join('..', `${key}.tar.gz`), key], {
+    execFileSync(resolveSystemTool('tar'), ['-czf', path.join('..', `${key}.tar.gz`), key], {
         stdio: 'inherit',
         cwd: stagingDir,
     });

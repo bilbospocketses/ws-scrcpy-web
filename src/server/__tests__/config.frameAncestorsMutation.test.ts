@@ -118,3 +118,36 @@ describe('Config frame-ancestor grant and revoke', () => {
         expect(config.frameAncestors).toEqual(['http://localhost:5159']);
     });
 });
+
+describe('getFirstRunStatus carries frameAncestors (finding 83)', () => {
+    it('reports the configured origins, so the client can scope its theme listener', () => {
+        setup({ webPort: 8000, frameAncestors: ['http://localhost:5159'] });
+        expect(Config.getInstance().getFirstRunStatus().frameAncestors).toEqual(['http://localhost:5159']);
+    });
+
+    it('is empty by default, which is "nobody may frame this"', () => {
+        setup({ webPort: 8000 });
+        expect(Config.getInstance().getFirstRunStatus().frameAncestors).toEqual([]);
+    });
+
+    it('reflects an approval made after boot, not a snapshot taken at boot', () => {
+        // This is why the field is composed on read. Approving an embed request
+        // mutates the list on a running server; a value captured into
+        // _firstRunStatus at boot would still say "nobody" afterwards, and the
+        // client would keep refusing an origin the operator had just allowed.
+        setup({ webPort: 8000 });
+        const cfg = Config.getInstance();
+        expect(cfg.getFirstRunStatus().frameAncestors).toEqual([]);
+
+        expect(cfg.addFrameAncestor('https://tools.example.com')).toBe(true);
+
+        expect(cfg.getFirstRunStatus().frameAncestors).toEqual(['https://tools.example.com']);
+    });
+
+    it('hands back a copy, so a caller cannot widen the real allowlist', () => {
+        setup({ webPort: 8000, frameAncestors: ['http://localhost:5159'] });
+        const cfg = Config.getInstance();
+        cfg.getFirstRunStatus().frameAncestors?.push('https://evil.example');
+        expect(cfg.frameAncestors).toEqual(['http://localhost:5159']);
+    });
+});

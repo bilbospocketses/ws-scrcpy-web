@@ -1,5 +1,5 @@
-import { backend, frontend, libraryUmdConfig, libraryEsmConfig, embedEntryConfig } from './ws-scrcpy-web.common';
-import webpack from 'webpack';
+import type webpack from 'webpack';
+import { backend, embedEntryConfig, frontend, libraryEsmConfig, libraryUmdConfig } from './ws-scrcpy-web.common';
 
 const prodOpts: webpack.Configuration = {
     mode: 'production',

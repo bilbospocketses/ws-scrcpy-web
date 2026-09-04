@@ -100,6 +100,48 @@ describe('installThemeEmbedListener', () => {
         dispose();
     });
 
+    // Finding 83 — the app installs this listener at module scope, before
+    // /api/config has answered, so it cannot know the deployment's allowlist at
+    // install time. It used to install with the default '*', accepting a theme
+    // push from any site that framed it. A getter lets it start locked down and
+    // widen once the config lands, which is the shape index.ts now uses.
+    it('re-reads a getter allowlist on every message, so it can widen after install', () => {
+        let allowed: string[] = ['https://self.example'];
+        const dispose = installThemeEmbedListener({ allowedOrigins: () => allowed });
+
+        // Before the config lands, an embedder is not trusted.
+        postFromOrigin('https://embedder.example', { type: 'ws-scrcpy-web:theme', theme: 'light' });
+        expect(getTheme()).toBe('dark');
+
+        // The config arrives and widens the list; the SAME listener now honours it.
+        allowed = ['https://self.example', 'https://embedder.example'];
+        postFromOrigin('https://embedder.example', { type: 'ws-scrcpy-web:theme', theme: 'light' });
+        expect(getTheme()).toBe('light');
+
+        dispose();
+    });
+
+    it('narrows again if the getter narrows', () => {
+        // The list is re-read per message, so this is not a one-way ratchet.
+        let allowed: string[] = ['https://embedder.example'];
+        const dispose = installThemeEmbedListener({ allowedOrigins: () => allowed });
+        postFromOrigin('https://embedder.example', { type: 'ws-scrcpy-web:theme', theme: 'light' });
+        expect(getTheme()).toBe('light');
+
+        allowed = [];
+        postFromOrigin('https://embedder.example', { type: 'ws-scrcpy-web:theme', theme: 'dark' });
+        expect(getTheme()).toBe('light');
+
+        dispose();
+    });
+
+    it("a getter returning '*' still accepts anyone, for the embeddable-by-anyone case", () => {
+        const dispose = installThemeEmbedListener({ allowedOrigins: () => '*' });
+        postFromOrigin('https://anywhere.example', { type: 'ws-scrcpy-web:theme', theme: 'light' });
+        expect(getTheme()).toBe('light');
+        dispose();
+    });
+
     it('honors custom messageType', () => {
         const dispose = installThemeEmbedListener({ messageType: 'custom:theme' });
         postFromOrigin('https://example.com', { type: 'custom:theme', theme: 'light' });
