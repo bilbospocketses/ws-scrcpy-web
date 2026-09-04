@@ -73,10 +73,10 @@
     "mini-css-extract-plugin": "^2.6.1",
     "style-loader": "^4.0.0",
     "swc-loader": "^0.2.7",
-    "tsx": "^4.23.12",
+    "tsx": "^4.23.13",
     "typescript": "^7.0.2",
     "vitest": "^4.1.11",
-    "webpack": "^5.110.1",
+    "webpack": "^5.110.2",
     "webpack-cli": "^7.2.3"
   },
   "overrides": {
