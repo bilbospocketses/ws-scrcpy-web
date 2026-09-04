@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.94] - 2026-09-04
+
 ### Fixed
 
 - **The Docker image no longer ships the dev toolchain or the base image's npm.** The runtime stage
