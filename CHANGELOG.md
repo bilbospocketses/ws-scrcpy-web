@@ -21,6 +21,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The container writes a server log again — and `DATA_ROOT` now means one thing everywhere.** The
+  log file, the dependencies tree and the restart marker keyed on `DEPS_PATH` while `config.json` and
+  the SQLite store keyed on `DATA_ROOT`, and the two only agreed because the Rust launcher happens to
+  set both. In Docker they did not: `start.sh` exported `DEPS_PATH=/app/dependencies`, so the log path
+  resolved to `/app/logs` — root-owned, with the app running as uid 1000 — and every write silently
+  no-opped, leaving the shipped image with no server log at all. `DATA_ROOT` is now honoured on every
+  platform including Windows, the dependencies default derives from it, the log path prefers it (still
+  falling back to `dirname(DEPS_PATH)`, so an installed desktop app's log does not move), `start.sh`
+  respects an inherited `DEPS_PATH` instead of clobbering it, and the restart marker is keyed on the
+  same root at both ends — it used to be written where the launcher never looked, and restart worked
+  only because it also keys on exit code 75.
+
 - **Clearing "enable audio" no longer stops the stream from starting.** On the reverse tunnel — the
   path the app prefers — the server waited for three TCP connections from scrcpy-server regardless of
   the audio setting. With `audio=false` scrcpy-server skips the audio connect, so only two arrived and

@@ -14,8 +14,11 @@ if [ "$(id -u)" = '0' ]; then
     # symlink to it (see the Dockerfile), and start.sh's probe follows that link
     # before anything has created the target.
     # /data/home is the app's HOME (below). It has to exist before the chown so
-    # a fresh volume hands it over with everything else.
-    mkdir -p /data/dependencies /data/home
+    # a fresh volume hands it over with everything else. /data/logs is where the
+    # server log lands now that it follows DATA_ROOT rather than DEPS_PATH;
+    # creating it here means the first boot writes into a directory the app
+    # already owns, instead of relying on the logger's own mkdir.
+    mkdir -p /data/dependencies /data/home /data/logs
     # Only when it is actually wrong. `chown -R` on a populated /data with a
     # large dependencies tree costs real seconds on every boot for nothing.
     if [ "$(stat -c '%u' /data)" != "$APP_UID" ]; then

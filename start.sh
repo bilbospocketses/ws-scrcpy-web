@@ -3,12 +3,37 @@
 # Runs Node.js from dependencies folder, handles restart on update
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-NODE="$SCRIPT_DIR/dependencies/node/node"
 ENTRY="$SCRIPT_DIR/dist/index.js"
-export DEPS_PATH="$SCRIPT_DIR/dependencies"
-RESTART_MARKER="$DEPS_PATH/.restart"
 
-# Probe chain: dependencies first, then Velopack seed fallback
+# Respect an inherited DEPS_PATH instead of clobbering it. This used to be an
+# unconditional `export DEPS_PATH="$SCRIPT_DIR/dependencies"`, which overrode
+# the container's own ENV and made the in-image path the one the app saw --
+# that is what put the log at /app/logs (root-owned, app runs as uid 1000) and
+# left the shipped container with no server log at all.
+export DEPS_PATH="${DEPS_PATH:-$SCRIPT_DIR/dependencies}"
+
+# Mirror src/server/Config.ts resolveDataRoot() for Linux, so the marker below
+# is the same file Node writes. Node keys it on the data root; this script used
+# to key it on $DEPS_PATH, so the two never named the same path. Restart still
+# worked because it also keys on exit code 75 -- this was dead plumbing, and it
+# is now live.
+resolve_data_root() {
+    if [ -n "$DATA_ROOT" ]; then
+        echo "$DATA_ROOT"
+    elif [ -n "$XDG_DATA_HOME" ]; then
+        echo "$XDG_DATA_HOME/WsScrcpyWeb"
+    elif [ -n "$HOME" ]; then
+        echo "$HOME/.local/share/WsScrcpyWeb"
+    else
+        dirname "$DEPS_PATH"
+    fi
+}
+RESTART_MARKER="$(resolve_data_root)/.restart"
+
+# Probe chain: dependencies first, then Velopack seed fallback. The first probe
+# follows DEPS_PATH rather than SCRIPT_DIR, so it looks where the app will
+# actually hydrate.
+NODE="$DEPS_PATH/node/node"
 if [ ! -x "$NODE" ]; then
     NODE="$SCRIPT_DIR/seed/node/node"
 fi

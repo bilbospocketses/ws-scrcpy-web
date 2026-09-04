@@ -10,25 +10,36 @@ const MAX_LOG_SIZE = 10 * 1024 * 1024; // 10MB
  * wipe accumulated logs.
  *
  * Resolution order:
- *   1. <dataRoot>/logs/ws-scrcpy-web.log  — the production target.
- *      dataRoot is derived from DEPS_PATH (which the launcher always
- *      sets to <dataRoot>/dependencies/), so dataRoot =
- *      path.dirname(DEPS_PATH). v0.1.24-beta.7 moved the file under a
- *      `logs/` subdirectory to colocate with launcher.log + server.log
+ *   1. <DATA_ROOT>/logs/ws-scrcpy-web.log — the data root when it is stated
+ *      outright. This is first, not second, because DEPS_PATH can name a
+ *      different tree entirely: the container's start.sh exports
+ *      DEPS_PATH=/app/dependencies (a symlink onto the volume), so deriving
+ *      the log path from it landed on /app/logs — inside the root-owned image,
+ *      with the app running as uid 1000 — and every write silently no-opped.
+ *      The shipped container wrote no server log at all.
+ *   2. <dirname(DEPS_PATH)>/logs/ws-scrcpy-web.log — the desktop launcher sets
+ *      DEPS_PATH=<dataRoot>/dependencies, so this is the same answer it has
+ *      always given for an installed app. v0.1.24-beta.7 moved the file under
+ *      a `logs/` subdirectory to colocate with launcher.log + server.log
  *      (already moved in v0.1.24-beta.3) — single source of truth for
  *      "where do logs live."
- *   2. <__dirname>/../ws-scrcpy-web.log  — dev fallback when DEPS_PATH
- *      isn't set (npm start without launcher, vitest, etc.). Kept at
- *      project root for dev convenience; not worth a sibling logs/ dir
- *      in a working tree.
+ *   3. <__dirname>/../ws-scrcpy-web.log  — dev fallback when neither is set
+ *      (npm start without launcher, vitest, etc.). Kept at project root for
+ *      dev convenience; not worth a sibling logs/ dir in a working tree, and
+ *      deliberately not the implicit XDG data root, which would scatter logs
+ *      out of the checkout for anyone running from source.
  *
  * Pre-v0.1.23-beta.25 the log lived at the dev-fallback path
  * unconditionally — for production that resolved to
  * <installRoot>/current/ws-scrcpy-web.log, inside the swappable image,
  * so the log was lost on every in-app update. Fixed in beta.25.
  */
-function resolveLogFilePath(): string {
-    const depsPath = process.env['DEPS_PATH'];
+export function resolveLogFilePath(env: NodeJS.ProcessEnv = process.env): string {
+    const dataRoot = env['DATA_ROOT'];
+    if (dataRoot) {
+        return path.join(dataRoot, 'logs', 'ws-scrcpy-web.log');
+    }
+    const depsPath = env['DEPS_PATH'];
     if (depsPath) {
         return path.join(path.dirname(depsPath), 'logs', 'ws-scrcpy-web.log');
     }

@@ -88,6 +88,17 @@ export function resolveDependenciesPath(
     if (env['DEPS_PATH']) return env['DEPS_PATH'];
     if (fileConfig.dependenciesPath) return fileConfig.dependenciesPath;
 
+    // An explicit DATA_ROOT names the dependencies tree too, on every platform.
+    // Without this, a bare `node dist/index.js` with only DATA_ROOT set put
+    // config.json and the store under it and then hydrated dependencies into
+    // the checkout — the data root meant one thing for state and another for
+    // binaries. Row 12.4's "Node side and launcher agree" held only because
+    // the Rust launcher happens to set both variables.
+    if (env['DATA_ROOT'] && env['DATA_ROOT'].length > 0) {
+        const joinFor = platform === 'win32' ? path.win32.join : path.posix.join;
+        return joinFor(env['DATA_ROOT'], 'dependencies');
+    }
+
     if (platform === 'win32') {
         const dataRoot = resolveDataRoot(env, platform);
         if (dataRoot) return path.win32.join(dataRoot, 'dependencies');
@@ -161,15 +172,19 @@ export function resolveAdbPath(
  * than crashing.
  */
 export function resolveDataRoot(env: NodeJS.ProcessEnv, platform: NodeJS.Platform = process.platform): string | null {
+    // An explicit DATA_ROOT wins everywhere, Windows included. It used to be
+    // read only on non-Windows, so on Windows the variable was inert: setting
+    // it moved config.json and the store nowhere, and a caller who set only
+    // DATA_ROOT got a data root and a dependencies tree in different places.
+    if (env['DATA_ROOT'] && env['DATA_ROOT'].length > 0) {
+        return env['DATA_ROOT'];
+    }
     if (platform === 'win32') {
         const programData =
             env['PROGRAMDATA'] && env['PROGRAMDATA'].length > 0 ? env['PROGRAMDATA'] : 'C:\\ProgramData';
         return path.win32.join(programData, 'WsScrcpyWeb');
     }
-    // Non-Windows: DATA_ROOT (launcher bridge) > XDG_DATA_HOME > ~/.local/share
-    if (env['DATA_ROOT'] && env['DATA_ROOT'].length > 0) {
-        return env['DATA_ROOT'];
-    }
+    // Non-Windows fallbacks: XDG_DATA_HOME > ~/.local/share
     if (env['XDG_DATA_HOME'] && env['XDG_DATA_HOME'].length > 0) {
         return path.join(env['XDG_DATA_HOME'], 'WsScrcpyWeb');
     }

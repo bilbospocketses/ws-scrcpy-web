@@ -11,7 +11,8 @@ import path from 'node:path';
  * read a config the server never wrote.
  *
  * The server resolves its data root per platform — `PROGRAMDATA/WsScrcpyWeb` on
- * Windows, `DATA_ROOT` elsewhere (see `resolveDataRoot` in `src/server/Config.ts`) —
+ * Windows when `DATA_ROOT` is unset, and `DATA_ROOT` ahead of it on every
+ * platform (see `resolveDataRoot` in `src/server/Config.ts`) —
  * so the suite sets both and works either way.
  */
 export const E2E_PROGRAM_DATA = path.join(tmpdir(), 'ws-scrcpy-web-e2e');
