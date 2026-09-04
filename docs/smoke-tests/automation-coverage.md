@@ -5,7 +5,7 @@ the bucket it falls in and either the spec that covers it or the reason nothing
 does. Companion to `smoke-test.md`, not a replacement — that document remains the
 canonical list of rows and their steps.
 
-Derived from `smoke-test.md` at `v0.1.30-beta.91`, which holds **140 rows**. Row
+Derived from `smoke-test.md` at `v0.1.30-beta.92`, which holds **140 rows**. Row
 ids are stable and gappy; so are the lines here.
 
 | | Rows | Where |
@@ -46,6 +46,10 @@ counted once, in the tier that covers their automated half, so a reader adding t
 buckets up does not count them twice — but the residual set is larger than its 55
 rows by these seven halves.
 
+Two further rows are marked **Split** rather than **Partial**, which is a different
+thing: 7.2 runs its two halves in two different tiers, and 12.1’s container half is
+rows 20.6 and 20.12. Neither leaves anything manual.
+
 Buckets, once each, no row in two:
 
 - **fast** — an untagged spec in `tests/e2e/`, run by `build-and-test` on every PR.
@@ -82,7 +86,7 @@ Sorted by module, then by row number, which is not the doc's execution order.
 | 2.2 | `[Fedora]` | State labels | residual: linux-desktop | Residual. Needs a Fedora host with a policy store of its own, for `bin_t`/`var_lib_t` labelling and the `semanage` fcontext lifecycle. Containers share the host's. |
 | 2.3 | `[Fedora]` | fcontext rules registered | residual: linux-desktop | Residual. Needs a Fedora host with a policy store of its own, for `bin_t`/`var_lib_t` labelling and the `semanage` fcontext lifecycle. Containers share the host's. |
 | 2.4 | `[Fedora]` | Zero AVC during install | residual: linux-desktop | Residual. Needs a Fedora host with a policy store of its own, for `bin_t`/`var_lib_t` labelling and the `semanage` fcontext lifecycle. Containers share the host's. |
-| 2b.1 | `[Ubuntu]` | Userns AppImage launch ⚠️ ** | residual: linux-desktop | Residual. Needs a stock Ubuntu desktop session: unprivileged-userns still restricted, AppArmor enforcing, no libfuse2 installed, a real file manager and a real menu. A container is none of those. |
+| 2b.1 | `[Ubuntu]` | Userns AppImage launch (potential 0.1.30 "Canonical" blocker) | residual: linux-desktop | Residual. Needs a stock Ubuntu desktop session: unprivileged-userns still restricted, AppArmor enforcing, no libfuse2 installed, a real file manager and a real menu. A container is none of those. |
 | 2b.2 | `[Ubuntu]` | libfuse2 absent by default | residual: linux-desktop | Residual. Needs a stock Ubuntu desktop session: unprivileged-userns still restricted, AppArmor enforcing, no libfuse2 installed, a real file manager and a real menu. A container is none of those. |
 | 2b.3 | `[Ubuntu]` | AppArmor zero-denials (service `/opt` exec) | residual: linux-desktop | Residual. Needs a stock Ubuntu desktop session: unprivileged-userns still restricted, AppArmor enforcing, no libfuse2 installed, a real file manager and a real menu. A container is none of those. |
 | 2b.4 | `[Ubuntu]` | Install/uninstall with no SELinux tooling | residual: linux-desktop | Residual. Needs a stock Ubuntu desktop session: unprivileged-userns still restricted, AppArmor enforcing, no libfuse2 installed, a real file manager and a real menu. A container is none of those. |
@@ -154,10 +158,10 @@ Sorted by module, then by row number, which is not the doc's execution order.
 | 11.2 | `[Linux]` | No-libfuse2 in-app update | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
 | 11.3 | `[Linux]` | Locator fix watch (velopack#921) | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
 | 11.4 | `[Win]` | PerMachine intact | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
-| 12.1 | `[Linux]` | Local-mode clean exit + adb teardown | fast | `lifecycle.spec.ts`. **Partial:** the bare server is covered; the container half is rows 20.6 and 20.12, both unwritten. |
+| 12.1 | `[Linux]` | Local-mode clean exit + adb teardown | fast | `lifecycle.spec.ts`. **Split:** the bare server is covered; the container half is rows 20.6 and 20.12, both unwritten. No part of it is manual. |
 | 12.2 | `[Both]` | Stop-exit service-mode gating | Windows guest (P4) + residual: linux-desktop | **Windows half:** P4. **Linux half:** residual - the gate is only meaningful with a systemd unit actually installed. |
 | 12.3 | `[Win]` | Local-mode reaps everything | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
-| 12.4 | `[Linux]` | DATA_ROOT override honored *(automated: `lifecycle.spec.ts` — the Node side (DATA_ROOT on Linux in CI, PROGRAMDATA on Windows); the launcher half stays manual)* | fast | `lifecycle.spec.ts`. **Partial:** the Node side is covered; the launcher half stays manual. |
+| 12.4 | `[Linux]` | DATA_ROOT override honored | fast | `lifecycle.spec.ts`. **Partial:** the Node side is covered; the launcher half stays manual. |
 | 12.5 | `[Win]` | Abnormal-termination JobObject reap | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
 | 13.1 | `[Both]` | Bookmark global-dismiss | fast | `settings-prompts.spec.ts` |
 | 13.2 | `[Both]` | Reset welcome & bookmark prompts | fast | `settings-prompts.spec.ts` |
@@ -207,7 +211,7 @@ Sorted by module, then by row number, which is not the doc's execution order.
 | 20.10 | `[Both]` | Wireless connect from a container | no spec yet - device | Automatable by pointing the device tier at the container subject instead of the bare server. Needs the emulator and the container on one network. |
 | 20.11 | `[Both]` | Persistence across `docker rm` + re-run | no spec yet - container | Automatable as a `@docker-host` spec. The log half cannot pass until finding 20.14 is fixed - the container writes no server log at all. |
 | 20.12 | `[Both]` | Graceful `docker stop` | no spec yet - container | Automatable as a `@docker-host` spec asserting exit 0 within the grace period. |
-| 20.13 | `[Both]` | `HEALTHCHECK` healthy | container | the container tier's `--wait`, which refuses to proceed unless the image reports healthy. |
+| 20.13 | `[Both]` | `HEALTHCHECK` healthy | container | `tests/e2e/support/dockerStack.ts` — `composeUpFresh` brings the stack up with `--wait`, which refuses to proceed unless the image reports healthy. |
 
 ---
 

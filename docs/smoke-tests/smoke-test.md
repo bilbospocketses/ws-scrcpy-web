@@ -1,6 +1,6 @@
 # ws-scrcpy-web — Smoke Test
 
-> **Smoke target: `v0.1.30-beta.91`** — bump this one line each release; everything below is version-agnostic.
+> **Smoke target: `v0.1.30-beta.92`** — bump this one line each release; everything below is version-agnostic.
 >
 > **`v0.1.30-beta.74` is a tombstone** — the tag exists but no release was ever published. Its bump commit shipped a `package-lock.json` still pinned at beta.73, so the tag-time version-sync gate failed the build before publish (fixed in #521). Release tags are protected against deletion and non-fast-forward, so the number was retired rather than reused. Don't go looking for its assets.
 
