@@ -291,6 +291,20 @@ body.list #device_list_menu {
     border-bottom: 1px solid var(--device-border-color);
 }
 
+/* Insecure-origin notice — spans both columns beneath the modal-launch grid.
+   WebCodecs is secure-context-only, so at http://<lan-ip> no player registers
+   and the `connect` cell is absent entirely. Without this the card just looked
+   like it had one fewer button, with nothing to explain the missing stream. */
+#devices .device-list div.device .services > .insecure-origin-notice {
+    grid-column: 1 / -1;
+    padding: 8px;
+    border-top: 1px solid var(--device-border-color);
+    color: var(--warning-color);
+    font-size: 12px;
+    line-height: 1.4;
+    text-align: left;
+}
+
 #devices .device-list div.device .services:last-child {
     padding-bottom: 0;
 }

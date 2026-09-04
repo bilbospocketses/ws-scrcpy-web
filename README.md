@@ -156,6 +156,7 @@ Required for building from source. See [Self-Contained Deployment](#self-contain
 - **Node.js** 24 LTS or later
 - **ADB** — nothing to install. The dependency manager downloads ADB into the app's own `dependencies/` folder on first run and invokes it by absolute path; **`PATH` is deliberately never consulted**, so putting ADB on `PATH` will not make the app find it (see [CONTRIBUTING](CONTRIBUTING.md))
 - **Android device** with USB debugging or wireless debugging enabled
+- **A secure browsing context for streaming** — `https://`, or `http://localhost` / `http://127.0.0.1`. The video decoder the player uses (WebCodecs) is exposed only in a secure context, so reaching the app at `http://<lan-ip>:8000` lists devices but offers no connect link; the device card explains this and names the loopback URL to open instead. Browser flags do not work around it — Chromium's `--unsafely-treat-insecure-origin-as-secure` was measured not to restore `VideoDecoder`. Put the app behind a TLS reverse proxy to stream from another machine.
 
 ## Quick Start (Developer Mode)
 
@@ -363,7 +364,7 @@ docker run -d --name ws-scrcpy-web -p 127.0.0.1:8000:8000 -v wsdata:/data jchapz
 Two things to know before relying on it:
 
 - **Wireless ADB only.** The container connects to devices over the network (`adb connect <ip>:<port>`); there is no USB pass-through, by design.
-- **Streaming needs a secure context.** The browser's video decoder (WebCodecs) is only available on `https://` or `localhost`, so opening the container over plain `http://<lan-ip>:8000` shows the device list but no connect link — and, today, no explanation (tracked as a known issue). Open it on the serving machine, or put it behind a TLS reverse proxy.
+- **Streaming needs a secure context.** The browser's video decoder (WebCodecs) is only available on `https://` or `localhost`, so opening the container over plain `http://<lan-ip>:8000` shows the device list but no connect link. The device card says so, and names the loopback URL to use instead. Open it on the serving machine, or put it behind a TLS reverse proxy.
 
 Every published image passes a [Docker Scout](https://docs.docker.com/scout/) gate in the publish workflow — a fixable critical or high CVE fails the publish — and the Hub repository has Scout analysis enabled, so already-published images are re-evaluated as advisories land. For now, use the MSI, AppImage, or portable ZIP.
 
