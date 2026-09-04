@@ -38,7 +38,7 @@ export interface PrivateServerPaths {
 
 /**
  * `<tmpdir>/<name>` as PROGRAMDATA and `<that>/WsScrcpyWeb` as DATA_ROOT — the
- * server resolves its root from PROGRAMDATA on Windows and DATA_ROOT elsewhere,
+ * server resolves its root from DATA_ROOT when set, else PROGRAMDATA on Windows,
  * so both are set to name the same directory. The database and the restart
  * marker live beside config.json.
  */

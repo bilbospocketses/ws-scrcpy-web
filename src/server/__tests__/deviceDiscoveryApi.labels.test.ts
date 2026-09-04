@@ -8,7 +8,8 @@ import { IMPLICIT_ADMIN_ID } from '../db/constants';
 import { EnvName } from '../EnvName';
 import { makeReqRes } from './helpers/httpMock';
 
-// CONFIG_PATH + DEPS_PATH harness (DATA_ROOT is ignored on Windows): the DB
+// CONFIG_PATH + DEPS_PATH harness (both set explicitly, so no platform default
+// is in play): the DB
 // co-locates with config.json, so each test isolates in its own temp dir.
 const tmpDirs: string[] = [];
 const saved = { CONFIG: process.env[EnvName.CONFIG_PATH], DEPS: process.env['DEPS_PATH'] };

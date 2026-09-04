@@ -111,22 +111,24 @@ COPY docker/entrypoint.sh              /usr/local/bin/entrypoint.sh
 # execution environment, not an app dependency; adb, scrcpy-server and node-pty
 # remain strictly local.
 #
-# The dependencies SYMLINK is what actually puts mutable state on the volume,
-# and it is not decoration. start.sh does `export DEPS_PATH="$SCRIPT_DIR/dependencies"`
-# unconditionally, which OVERRIDES the ENV below — so without this link the
-# hydrate would write adb and scrcpy-server into /app/dependencies, inside the
-# image layer, and every `docker rm` would silently throw them away and
-# re-download ~9 MB on the next boot. The volume would still look correct
-# because config.json and the SQLite store follow DATA_ROOT and do land in /data.
+# The dependencies SYMLINK is belt-and-braces now, and worth keeping. start.sh
+# used to `export DEPS_PATH="$SCRIPT_DIR/dependencies"` unconditionally, which
+# OVERRODE the ENV below: without this link the hydrate wrote adb and
+# scrcpy-server into /app/dependencies, inside the image layer, and every
+# `docker rm` silently threw them away and re-downloaded ~9 MB on the next boot.
+# That override is also what put the server log at /app/logs and made the
+# container unloggable. start.sh honours an inherited DEPS_PATH now, so the ENV
+# below is authoritative — the link remains so that anything still reaching for
+# /app/dependencies by path lands on the volume anyway.
 RUN mkdir -p /app/seed/node /data/dependencies \
  && ln -sf /usr/local/bin/node /app/seed/node/node \
  && ln -sfn /data/dependencies /app/dependencies \
  && chmod +x /app/start.sh /usr/local/bin/entrypoint.sh
 
-# DEPS_PATH is declared for anything that reads the environment WITHOUT going
-# through start.sh, and as documentation of intent. start.sh overrides it for
-# the app itself; the symlink above is what makes both values name the same
-# directory, so the two can never disagree about where dependencies live.
+# DATA_ROOT is the one root: config.json, the SQLite store, the dependencies
+# tree, the server log and the restart marker all derive from it. DEPS_PATH
+# names the same directory the symlink above points at, so the two can never
+# disagree about where dependencies live.
 ENV DATA_ROOT=/data \
     DEPS_PATH=/data/dependencies \
     WS_SCRCPY_DOCKER=1 \
