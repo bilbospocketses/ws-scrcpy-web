@@ -17,6 +17,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The docs describe the security model the code actually has.** The README still said the app has no
+  login, listed three defences with no framing layer, never mentioned `frameAncestors`, and documented
+  the iframe protocol without saying cross-origin framing is refused by default — follow it as written
+  and you got "localhost refused to connect". `SECURITY.md` and the technical guide now also state
+  plainly what open mode is: the LAN is trusted, the per-instance token is handed to anything that can
+  fetch a page so it is not an authenticator, and enabling login is what makes a boundary. No behaviour
+  changed; the documentation was describing an older app.
+
 ## [0.1.30-beta.102] - 2026-09-04
 
 ### Fixed

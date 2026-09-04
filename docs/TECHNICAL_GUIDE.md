@@ -10,6 +10,14 @@ This document covers the internal architecture of ws-scrcpy-web -- a browser-bas
 
 ## Table of Contents
 
+> **On `§NN` in source comments.** This guide has sections **1-25**, and a comment citing one
+> in that range means this document. Comments citing **§26 and above** -- `§27`, `§30`, `§32`,
+> `§34`, `§36`, `§39`, `§40`, `§49` -- do **not**: they are historical references to numbered
+> items in the maintainer's internal planning file, which is not part of this repository, and
+> several of those numbers were reassigned or archived as that file evolved. They are left in
+> place because they still carry provenance for the maintainer, but do not go looking for a
+> section here that matches -- there has never been one.
+
 1. [Directory Structure](#1-directory-structure)
 2. [Communication Protocol](#2-communication-protocol)
 3. [Video Pipeline](#3-video-pipeline)
@@ -34,6 +42,7 @@ This document covers the internal architecture of ws-scrcpy-web -- a browser-bas
 22. [In-App Updater (Velopack)](#22-in-app-updater-velopack)
 23. [First-Run Modal Gating](#23-first-run-modal-gating)
 24. [Access Control & Request Gating](#24-access-control--request-gating)
+25. [Why the Screen Is Black](#25-why-the-screen-is-black)
 
 ---
 
@@ -1949,6 +1958,8 @@ Windows and the Windows-service apply path are unchanged (Velopack `waitExitThen
 
 `src/app/client/firstRunGate.ts` orchestrates the first-run experience, ensuring the user sees the right modal on the right instance.
 
+> **Not the only modal that can appear unbidden.** `startEmbedRequestWatch()` (raised from `src/app/index.ts`, home page only) polls `GET /embed-request` every 5 s, and shows the embed-consent prompt when another local app asks to frame this one. It is **non-dismissible** — the user must Approve or Deny — and it can appear over an idle home page with no action from them. It is not part of the first-run gate and is not sequenced against it. `stopEmbedRequestWatch()` tears the poller down on page teardown. See `SECURITY.md` §Framing.
+
 ### 23.1 Decision Flow
 
 On page load, `src/app/index.ts` reads `installMode` + `firstRunComplete` from `GET /api/config` and the per-user prompt flags from the settings store (`SettingsService.loadGlobal()`), then evaluates:
@@ -2013,11 +2024,17 @@ The **Settings** modal's reset control — **"reset all my settings"** — now c
 
 ## 24. Access Control & Request Gating
 
-ws-scrcpy-web serves an **unauthenticated** API + WebSocket surface (anyone who can reach the port can drive connected devices). It is designed for a trusted local/LAN network — there is no user login (an opt-in auth subsystem is a separate, future workstream). The server defends that surface against *cross-network* and *cross-site* attackers with three layers, evaluated in order in `src/server/security/requestGate.ts`:
+ws-scrcpy-web serves an API + WebSocket surface that is **unauthenticated by default**: anyone who can reach the port can drive connected devices. An **opt-in login subsystem has shipped** (smoke Module 18 — users, roles, sessions, `AuthGate`); while `authEnabled` is false the app runs in *open mode* and every request resolves to the implicit admin.
+
+**Open mode trusts the entire LAN, and `authEnabled` is the boundary.** The layers below stop a *cross-site* page and a *rebound DNS name* from reaching the API. They do not stop a direct client on the network: `server.listen(port)` binds all interfaces, `isHostAllowed` accepts any IP literal, the Origin match is skipped when the header is absent (which a non-browser client controls), and in open mode `requireAdmin` resolves to the implicit admin. A LAN client can therefore fetch `/`, collect the per-instance token from the response, and reach the admin API — `UsersApi`, `ConfigApi` PATCH, `ServerShutdownApi`. Turn login on to have a real boundary; the embed-consent endpoints are additionally loopback-gated for exactly this reason (§Framing in `SECURITY.md`).
+
+Against cross-network and cross-site attackers the server applies four layers, the first three evaluated in order in `src/server/security/requestGate.ts`:
 
 1. **Host allowlist (DNS-rebinding defense)** — `originGuard.isHostAllowed`. The `Host` header's hostname must be `localhost`, an IP literal (e.g. `192.168.1.5`, `[::1]`), or an operator-configured `allowedHosts` entry. A bare domain name is rejected, because DNS-rebinding attacks require a domain the attacker can re-point at a loopback/LAN address. This check is **universal** — it applies even to document / static-asset requests, so a rebound page never loads.
 2. **Origin match (CSRF defense)** — `originGuard.isRequestAllowed`. For the sensitive surface (`/api/*` and any state-changing method), a present `Origin` header must equal the request's own origin (`http(s)://<host>`). A *missing* Origin is allowed here (non-browser clients and top-level navigations omit it); the token layer closes that gap.
-3. **Per-instance token** — `instanceToken.ts`. A 256-bit random token is minted once per server launch and handed to the browser as an `HttpOnly; SameSite=Strict` cookie when it loads a document. Every `/api/*` call (except the launcher's `GET /api/config` discovery probe) and every WebSocket upgrade must present it, compared in constant time. A non-browser LAN client that never loaded the page has no token and is refused.
+3. **Per-instance token** — `instanceToken.ts`. A 256-bit random token is minted once per server launch and handed to the browser as an `HttpOnly; SameSite=Strict` cookie when it loads a document. Every `/api/*` call (except the launcher's `GET /api/config` discovery probe) and every WebSocket upgrade must present it, compared in constant time. Read that as the `/api` prefix, not as an inventory of the whole surface: `/embed-request` and `/embed-request/{id}/cancel` sit **outside** `/api` deliberately, so an app that wants to ask for embed permission can do so without first holding a token — and they are loopback-only precisely because they are ungated. A non-browser LAN client that never loaded the page has no token and is refused.
+   **It is not an authenticator.** `shouldSetTokenCookie` returns true for any GET/HEAD of an extensionless non-`/api` path, and the cookie is attached with no authentication at all, so anything that can fetch `/` can have one. It raises the cost of a *blind* cross-site or rebinding attack; it does not identify a caller. Only `authEnabled` does that.
+4. **Framing policy (clickjacking)** — `security/frameGuard.ts`. Every response carries `X-Frame-Options: SAMEORIGIN` and, when `frameAncestors` is configured, a matching CSP `frame-ancestors` header. Cross-origin framing is **refused by default**; an operator opts in per origin, either by editing `config.json` or by approving a consent prompt raised by the embedding app (`embedRequests.ts`, `EmbedRequestApi.ts`). See `SECURITY.md` §Framing.
 
 ### 24.1 `allowedHosts` — serving on a domain / behind a reverse proxy
 
@@ -2039,7 +2056,11 @@ By default only `localhost` + IP literals pass layer 1, so terminating TLS at a 
 | File | Purpose |
 |------|---------|
 | `src/server/security/originGuard.ts` | Host allowlist (`isHostAllowed`, `setAllowedHosts`) + Origin match (`isRequestAllowed`) |
-| `src/server/security/requestGate.ts` | Composes the three layers for HTTP (`evaluateHttpRequest`) and WS (`evaluateWsConnection`) |
+| `src/server/security/requestGate.ts` | Composes the Host/Origin/token layers for HTTP (`evaluateHttpRequest`) and WS (`evaluateWsConnection`) |
+| `src/server/security/frameGuard.ts` | `securityHeaders()` + the CSP `frame-ancestors` list (`setFrameAncestors`) — layer 4 |
+| `src/server/embedRequests.ts` | Pending embed-consent request store (one at a time, five-minute expiry) |
+| `src/server/api/EmbedRequestApi.ts` | `/embed-request` ask + `/api/embed-request/decision` grant; both loopback-gated |
+| `src/server/auth/authState.ts` | `authEnabled` — the actual authentication boundary — plus the gate's allow-list |
 | `src/server/security/instanceToken.ts` | Per-launch token mint, cookie build, constant-time validation |
 | `src/server/Config.ts` | Reads + sanitizes `allowedHosts` from config.json (`sanitizeAllowedHosts`, `Config.allowedHosts`) |
 | `src/server/index.ts` | Applies `allowedHosts` at boot via `setAllowedHosts(config.allowedHosts)` |
@@ -2173,10 +2194,13 @@ Two live consequences before this was guarded:
   with `Unhandled error. (undefined)` on every reconnect attempt. (`undefined`
   because the `events` polyfill formats `er.message`, and a plain `Event` has
   none — that detail is what identifies this rather than something else.)
-- **`emit`** — `HostTrackerEvents` types `'error'` as a plain `string` and
-  **nothing in the codebase listens for it**, so every `MessageType.ERROR` from
-  the server threw inside `onSocketMessage` and abandoned the rest of the
-  handler.
+- **`emit`** — `HostTrackerEvents` used to type `'error'` as a plain `string`
+  while **nothing in the codebase listened for it**, so every
+  `MessageType.ERROR` from the server threw inside `onSocketMessage` and
+  abandoned the rest of the handler. The guard below fixed the throw; the
+  event itself has since been **removed** (the server sends that message only
+  for "unsupported message", a protocol fault with nothing a user could act
+  on), so the condition is logged and no longer emitted.
 
 Both methods now return `false` instead of emitting when `'error'` has no
 listener. Attaching a listener restores ordinary delivery, which is how

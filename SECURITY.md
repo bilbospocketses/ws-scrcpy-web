@@ -46,6 +46,15 @@ ws-scrcpy-web is **open (no login) by default**, intended for a trusted local or
 - **Origin match** — for the API / WebSocket surface, a present `Origin` must be same-origin (CSRF defense).
 - **Per-instance token** — a random per-launch `HttpOnly; SameSite=Strict` cookie gates the API and the WebSocket upgrade, so a non-browser client that never loaded the page is refused.
 
+**What these layers do not do.** They defend against a *cross-site page* and a *rebound domain name*. They are not authentication, and in open mode the whole LAN is trusted:
+
+- the server binds all interfaces, and any IP literal passes the Host allowlist;
+- the Origin match is skipped when the header is absent, which a non-browser client decides;
+- the per-instance token is handed to **any** unauthenticated GET of an extensionless path, so anything that can fetch `/` can obtain one — it raises the cost of a blind attack, it does not identify a caller;
+- with login disabled, `requireAdmin` resolves to the implicit admin.
+
+Together that means a client already on your network can fetch `/`, take a token, and reach the admin API — users, config, shutdown. **`authEnabled` is the boundary**: enable login (Settings → Users) if the network is not one you trust. The embed-consent endpoints do not rely on this and are additionally restricted to loopback, which is why granting an embed permission cannot be done over the network.
+
 **Serving on a domain / behind a reverse proxy.** Because the default rejects domain `Host` headers, a TLS-terminating reverse proxy on a domain name must be opted in via the server-only `allowedHosts` array in `config.json`:
 
 ```json
