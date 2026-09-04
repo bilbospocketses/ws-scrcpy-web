@@ -187,14 +187,25 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
                 // Prefix stays a constant in the format position; the
                 // codec-bearing message goes in as a substitution arg (see
                 // TECHNICAL_GUIDE §8.3).
-                console.error(
-                    '[WebCodecsPlayer]',
-                    decodeWatchdogMessage({
-                        codec,
-                        timeoutMs: WebCodecsPlayer.DECODE_WATCHDOG_MS,
-                        ...detectBrowserFamily(),
-                    }),
-                );
+                if (this.decoder.state !== 'configured') {
+                    // Not the issue #498 shape. Here the decoder was never set
+                    // up at all, so the browser is blameless and a message about
+                    // codec support would send the reader the wrong way.
+                    console.error(
+                        '[WebCodecsPlayer]',
+                        `${codec}: video is arriving but the decoder was never configured — the config packet was ` +
+                            'missing or unusable. Requesting a fresh keyframe, which brings a new config packet with it.',
+                    );
+                } else {
+                    console.error(
+                        '[WebCodecsPlayer]',
+                        decodeWatchdogMessage({
+                            codec,
+                            timeoutMs: WebCodecsPlayer.DECODE_WATCHDOG_MS,
+                            ...detectBrowserFamily(),
+                        }),
+                    );
+                }
             }
             // Reporting the stall was never enough on its own. Ask the device
             // for a keyframe, then wait again — bounded, because a browser that
@@ -325,17 +336,18 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
                 if (spsOffset >= 0) {
                     return parseHevcSPS(data.subarray(spsOffset));
                 }
-            } else {
-                const h264Type = firstByte & 0x1f;
-                if (h264Type === 7) {
-                    this.detectedCodec = 'h264';
-                    const spsOffset = this.findNaluOffset(data, 7);
-                    if (spsOffset >= 0) {
-                        return WebCodecsPlayer.parseSPSCodecString(data.subarray(spsOffset));
-                    }
-                }
+                return this.rejectConfig(data, 'h265 config packet carries no SPS NAL');
             }
-            return null;
+            const h264Type = firstByte & 0x1f;
+            if (h264Type === 7) {
+                this.detectedCodec = 'h264';
+                const spsOffset = this.findNaluOffset(data, 7);
+                if (spsOffset >= 0) {
+                    return WebCodecsPlayer.parseSPSCodecString(data.subarray(spsOffset));
+                }
+                return this.rejectConfig(data, 'h264 config packet carries no SPS NAL');
+            }
+            return this.rejectConfig(data, `annex-b packet with NAL type ${h264Type} is not a parameter set`);
         }
 
         // No Annex B start code — try AV1
@@ -351,8 +363,28 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
                 this.detectedCodec = 'av1';
                 return parseAv1SequenceHeader(data);
             }
+            return this.rejectConfig(data, 'no annex-b start code and not a recognisable AV1 sequence header');
         }
 
+        return this.rejectConfig(data, 'config packet too short to identify');
+    }
+
+    /**
+     * A config packet we could not parse is the start of a silent failure: no
+     * `configure()`, so every later frame is dropped by the
+     * `state !== 'configured'` guard, forever, with nothing logged. Finding 8.14
+     * was exactly that shape — megabytes on the socket, zero decoded frames, an
+     * untouched 300x150 canvas and an empty console. Say what was rejected and
+     * why, so the next occurrence names its own cause.
+     */
+    private rejectConfig(data: Uint8Array, reason: string): null {
+        const head = Array.from(data.subarray(0, 8))
+            .map((b) => b.toString(16).padStart(2, '0'))
+            .join(' ');
+        console.error(
+            '[WebCodecsPlayer]',
+            `unusable config packet, decoder left unconfigured: ${reason} (${data.length} bytes, starts ${head})`,
+        );
         return null;
     }
 
@@ -385,7 +417,16 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
         const codec = videoCodec?.toLowerCase();
         if (isConfiglessCodec(codec)) {
             this.configureFromMetadata(codec as VideoCodecName);
+            return;
         }
+        // Every other codec waits for a config packet to configure its decoder,
+        // and the watchdog used to be armed only once that happened. So a
+        // session whose config packet never arrived — or arrived unparseable —
+        // had no watchdog at all: the one mechanism meant to report "video is
+        // arriving and nothing is decoding it" was gated behind the step that
+        // did not happen (finding 8.14). Arm it at session start instead; the
+        // configure path re-arms it, so a healthy session is unaffected.
+        this.armDecodeWatchdog(codec || 'unknown');
     }
 
     private configureFromMetadata(codec: VideoCodecName): void {

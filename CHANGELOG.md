@@ -17,6 +17,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A stream that arrives but never decodes now says so.** A session could carry megabytes of video that
+  the browser never decoded, and nothing reported it: `VideoDecoder.configure` never ran, and because the
+  decode watchdog was armed only *after* configure, the one mechanism meant to catch a mute stream never
+  started. The user saw a `Connected:` line, then silence, then a black rectangle. The watchdog is armed at
+  session start now, and distinguishes the two failures — a decoder that was configured and stays mute
+  (which points at codec support) from one that was never configured at all (which does not). Separately,
+  the config parser's four silent give-up paths now name what they rejected and why, including the packet
+  length and its first bytes. The underlying trigger — why the config packet is not applied on some
+  sessions — is still unknown; this is what makes the next occurrence diagnosable instead of invisible.
+
 ## [0.1.30-beta.97] - 2026-09-04
 
 ### Fixed
