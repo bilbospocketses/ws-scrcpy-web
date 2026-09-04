@@ -52,9 +52,13 @@ ws-scrcpy-web can run as a background **service** that starts at boot/login and 
 
 ## Embedding
 
+> **Cross-origin framing is refused by default.** A page that tries to iframe ws-scrcpy-web without being allow-listed gets a browser refusal ("localhost refused to connect") — the response carries
+> `X-Frame-Options: SAMEORIGIN` and no CSP `frame-ancestors` entry for it. Everything below assumes you have opted the host origin in first, either by adding it to `frameAncestors` in `config.json` or
+> by approving the consent prompt the embedding app raises. Settings → Embedding shows what is currently approved and can revoke it.
+
 ### Embedding: theme bridge
 
-When ws-scrcpy-web is embedded in a cross-origin iframe, the host page can sync
+When ws-scrcpy-web is embedded in a cross-origin iframe (once allow-listed, per the note above), the host page can sync
 its dark/light theme via `postMessage`. ws-scrcpy-web's listener and handshake
 fire automatically on load — no extra wiring needed inside ws-scrcpy-web.
 
@@ -310,6 +314,8 @@ Almost all configuration is managed through the in-app **Settings** panel (gear 
 | `updateCheckIntervalMinutes` | `60` | Settings → Updates → Check interval |
 | `channel` | `stable` | Settings → Updates → Channel |
 | `githubOwner` | `bilbospocketses` | Settings → Updates → GitHub owner (override for forks) |
+| `frameAncestors` | `[]` (nothing may frame the app) | Settings → Embedding, or edit `config.json` |
+| `allowedHosts` | `[]` (localhost + IP literals only) | `config.json` only — server-only, never exposed via the API |
 
 Not a stored field, but reached the same way: **Settings → Server → stop the server and close the app** cleanly stops the server and quits the app — the primary clean-exit path on Linux (no tray there), disabled in service mode.
 
@@ -325,12 +331,20 @@ A few advanced switches are only available via environment variables:
 
 ### Access control
 
-ws-scrcpy-web has **no login** — anyone who can reach the port can control connected devices, so run it only on a trusted local/LAN network. The server blocks cross-site (CSRF) and DNS-rebinding attacks with a Host allowlist, an Origin check, and a per-launch token cookie; by default it accepts only `localhost` and IP-literal hosts.
+ws-scrcpy-web is **open by default** — with login off, anyone who can reach the port can control connected devices, so run it only on a trusted local/LAN network. **Opt-in login is available** (Settings → Users): add a user with a password and the app requires a session from then on.
+
+With login off, the LAN is trusted. The server blocks cross-site (CSRF) and DNS-rebinding attacks with a Host allowlist, an Origin check, a per-launch token cookie, and a framing policy; by default it accepts only `localhost` and IP-literal hosts, and refuses cross-origin framing outright. Those defences stop a malicious *web page* and a rebound *domain name*. They are not a login: the token cookie is handed to anything that can fetch the page, so a client already on your network can use the API. **Turning login on is what makes that a boundary.**
 
 To serve it on a domain name behind a TLS-terminating reverse proxy, add the domain(s) to a server-only `allowedHosts` array in `config.json` (read at startup, never exposed via the in-app API), and make sure the proxy forwards the original `Host` header:
 
 ```json
 { "allowedHosts": ["devices.example.com"] }
+```
+
+To let another local app embed this one in an iframe, add its origin to `frameAncestors` in `config.json`, or approve the consent prompt the embedding app can raise (Settings → Embedding lists and revokes what you have approved). Cross-origin framing is refused until you do:
+
+```json
+{ "frameAncestors": ["http://localhost:5159"] }
 ```
 
 See [`SECURITY.md`](SECURITY.md) and `docs/TECHNICAL_GUIDE.md` §24 for the full access-control model.
