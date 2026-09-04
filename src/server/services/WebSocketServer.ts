@@ -2,6 +2,7 @@ import type WS from 'ws';
 import { WebSocketServer as WSServer } from 'ws';
 import { isAuthEnabled, parseCookie, SESSION_COOKIE } from '../auth/authState';
 import { SessionStore } from '../auth/session';
+import { SocketRegistry } from '../auth/socketRegistry';
 import { Config } from '../Config';
 import { IMPLICIT_ADMIN_ID } from '../db/constants';
 import type { Db } from '../db/Db';
@@ -16,6 +17,13 @@ import type { Service } from './Service';
  * session user when locked, or `undefined` when locked and the cookie is missing/invalid
  * (→ the caller closes the socket). Exported for unit testing without a live socket.
  */
+/**
+ * Live sockets, keyed by the session that authorised them. Module-level rather
+ * than an instance field: the auth API revokes through it without needing a
+ * handle on the server singleton, and there is exactly one WS surface.
+ */
+export const liveSockets = new SocketRegistry();
+
 export function wsSessionUserId(db: Db, cookieHeader: string | undefined): number | undefined {
     if (!isAuthEnabled(db)) return IMPLICIT_ADMIN_ID;
     const token = parseCookie(cookieHeader)[SESSION_COOKIE];
@@ -98,6 +106,14 @@ export class WebSocketServer implements Service {
                 ws.close(4401, 'unauthorized');
                 return;
             }
+
+            // Track the socket against the session that authorised it, so ending
+            // that session ends the socket too. Refusing the next handshake was
+            // never enough on its own: a stream opened while the session was
+            // valid outlived the logout that ended it (finding 18.14).
+            const sessionToken = parseCookie(request.headers.cookie)[SESSION_COOKIE];
+            liveSockets.add(ws, userId, sessionToken);
+            ws.on('close', () => liveSockets.remove(ws));
 
             // Path-based handlers take priority over action-based MW dispatch.
             const pathHandler = this.pathHandlers.get(url.pathname);

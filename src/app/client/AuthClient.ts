@@ -9,6 +9,11 @@ export type Role = 'user' | 'admin';
 export interface MeResponse {
     authEnabled: boolean;
     user: { username: string; role: Role } | null;
+    /** The server's own first-user test: true while no enabled admin has a
+     *  password, which is the only state in which POST /api/users takes the
+     *  lockdown branch. The client used to infer this from `authEnabled`, which
+     *  is a different question and gave a different answer (finding 18.13). */
+    needsLockdown?: boolean;
 }
 export interface UserRow {
     id: number;

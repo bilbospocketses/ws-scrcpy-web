@@ -64,8 +64,36 @@ describe('AuthApi', () => {
         setAuthEnabled(Config.getInstance().db, true);
         const r = makeReqRes('GET', '/api/auth/me');
         await new AuthApi().handle(r.req, r.res);
-        expect(r.getJson()).toEqual({ authEnabled: true, user: null });
+        expect(r.getJson()).toEqual({ authEnabled: true, needsLockdown: true, user: null });
     });
+    // Finding 18.13 — the client keyed its "Secure the admin account" block on
+    // `!authEnabled`, but the server takes the lockdown branch only while no
+    // enabled admin has a password. Those are different questions, and row
+    // 18.11's state (login disabled, admin still passworded) is where they
+    // disagree: the client offered "Secure & add user", the server answered the
+    // normal-create 201, and the client announced "Login is now required.
+    // Reloading…" into an app that was still wide open.
+    it('me reports needsLockdown:false when login is off but the admin still has a password', async () => {
+        setup();
+        const db = Config.getInstance().db;
+        db.users.setPasswordHash(IMPLICIT_ADMIN_ID, hashPassword('pw'));
+        setAuthEnabled(db, false);
+
+        const r = makeReqRes('GET', '/api/auth/me');
+        await new AuthApi().handle(r.req, r.res);
+
+        // This is the pair that used to disagree: auth is off, and yet the
+        // server would NOT take the lockdown branch.
+        expect(r.getJson()).toMatchObject({ authEnabled: false, needsLockdown: false });
+    });
+
+    it('me reports needsLockdown:true on a fresh install, where the two agree', async () => {
+        setup();
+        const r = makeReqRes('GET', '/api/auth/me');
+        await new AuthApi().handle(r.req, r.res);
+        expect(r.getJson()).toMatchObject({ authEnabled: false, needsLockdown: true });
+    });
+
     it('change-password rejects a wrong current password (400)', async () => {
         setup();
         Config.getInstance().db.users.setPasswordHash(IMPLICIT_ADMIN_ID, hashPassword('right'));
