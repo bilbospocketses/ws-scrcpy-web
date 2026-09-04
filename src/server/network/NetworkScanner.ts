@@ -3,6 +3,7 @@ import type { ScanProgressMessage, ScanServerMessage, ScanStartedMessage } from 
 import type { ParsedSubnet } from '../../common/SubnetParser';
 import { parseSerialFromMdnsName } from '../AdbClient';
 import type { AdbHandshakeResult } from './AdbHandshakeProbe';
+import { type DeviceByAddress, expandConnectedAddresses, resolveHitIdentity } from './scanIdentity';
 
 export interface NetworkScannerDeps {
     adbDevices: () => Promise<{ serial: string; state: string }[]>;
@@ -29,6 +30,16 @@ export interface NetworkScannerDeps {
     /** Look up a saved label by userId and device identifier (serial OR MAC).
      *  The userId ensures each user sees only their own labels. */
     labelFor?: (userId: number, key: string) => string | undefined;
+    /** Resolve a hostname to its IPv4. `adb devices` reports whatever string the
+     *  user connected with, so a device reached as `qa-android:5555` was never
+     *  matched against a hit at `<ip>:5555` and appeared as both connected and
+     *  freshly discovered (finding 7.7). */
+    lookupHost?: (hostname: string) => Promise<string | null>;
+    /** The observed-device row recorded at this probe address. Bridges scan-hit
+     *  identity (the address) to device identity (ro.serialno), which is what
+     *  labels are keyed on, and carries the remembered model
+     *  (findings 19.4 and 7.6). */
+    deviceByAddress?: DeviceByAddress;
     concurrency: number;
     progressInterval: number;
     /** TCP connect timeout for the probe (fast-fail on closed port). Default 300ms. */
@@ -215,7 +226,11 @@ export class NetworkScanner {
     }
 
     protected async runTracks(subnets: ParsedSubnet[], totalHosts: number, mdnsOnly = false): Promise<void> {
-        const connectedAddresses = new Set((await this.deps.adbDevices()).map((d) => d.serial));
+        const lookupHost = this.deps.lookupHost;
+        const connectedSerials = (await this.deps.adbDevices()).map((d) => d.serial);
+        const connectedAddresses = lookupHost
+            ? await expandConnectedAddresses(connectedSerials, lookupHost)
+            : new Set(connectedSerials);
 
         // Track A: mDNS — synchronous (adb returns all at once)
         const mdnsPromise = (async () => {
@@ -346,13 +361,25 @@ export class NetworkScanner {
             const { _hitMeta, label: explicitLabel, ...hitBase } = msg;
             for (const [ws, userId] of this.spectators) {
                 if (ws.readyState !== ws.OPEN) continue;
-                // Label precedence: explicit > MAC lookup > serial lookup > ''
-                let label = explicitLabel;
-                if (label === undefined && this.deps.labelFor) {
-                    if (_hitMeta.mac) label = this.deps.labelFor(userId, _hitMeta.mac);
-                    if (label === undefined) label = this.deps.labelFor(userId, _hitMeta.serial);
-                }
-                const wireMsg = { ...hitBase, label: label ?? '' };
+                // Label precedence: explicit > MAC alias > the hit's own serial >
+                // the real serial of the device observed at this address. That
+                // last step is what makes a label survive the round trip a user
+                // is most likely to take — name a device, disconnect it, scan
+                // again — because the device row keys labels on ro.serialno
+                // while a TCP hit's serial is the probe address (finding 19.4).
+                const labelFor = this.deps.labelFor;
+                const { label, model } = resolveHitIdentity({
+                    address: msg.address,
+                    hitSerial: _hitMeta.serial,
+                    mac: _hitMeta.mac,
+                    explicitLabel,
+                    labelFor: labelFor ? (key: string) => labelFor(userId, key) : () => undefined,
+                    deviceByAddress: this.deps.deviceByAddress,
+                });
+                // The remembered model was only ever added by the mDNS REST
+                // route, which no client calls; the scan UI takes /ws-scan and
+                // saw nothing (finding 7.6).
+                const wireMsg = { ...hitBase, label, ...(model !== null ? { model } : {}) };
                 try {
                     ws.send(JSON.stringify(wireMsg));
                 } catch {

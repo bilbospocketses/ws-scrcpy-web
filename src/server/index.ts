@@ -1,3 +1,5 @@
+import { lookup as dnsLookupCb } from 'dns';
+import { promisify } from 'util';
 import { VelopackApp } from 'velopack';
 import { SCAN_WS_PATH } from '../common/ScanMessage';
 import { AdbClient } from './AdbClient';
@@ -190,6 +192,8 @@ if (__ssArgs) {
         }
     })();
 
+    const dnsLookup = promisify(dnsLookupCb);
+
     const scanner = new NetworkScanner({
         adbDevices: () => scanAdb.devices(),
         adbMdnsServices: () => scanAdb.mdnsServices(),
@@ -204,6 +208,18 @@ if (__ssArgs) {
         adbStartServer: () => adbDaemon.ensureReady({ waitMs: 5_000 }),
         resolveMac,
         labelFor: (userId: number, key: string) => config.db.devices.getLabel(userId, key),
+        lookupHost: async (hostname: string) => {
+            try {
+                const { address } = await dnsLookup(hostname, { family: 4 });
+                return address;
+            } catch {
+                return null;
+            }
+        },
+        deviceByAddress: (address: string) => {
+            const found = config.db.devices.findByAddress(address);
+            return found ? { serial: found.serial, model: found.model } : undefined;
+        },
         concurrency: config.scanConcurrency,
         progressInterval: config.scanProgressInterval,
         tcpTimeoutMs: config.scanTcpTimeoutMs,

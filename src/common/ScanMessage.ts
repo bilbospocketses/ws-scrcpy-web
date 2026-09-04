@@ -41,6 +41,11 @@ export interface ScanHitMessage {
     serial: string;
     name: string;
     label: string;
+    /** Model remembered from a previous sighting, when the app has seen this
+     *  address before. Absent for a device it has never observed. The mDNS REST
+     *  route has always enriched hits this way; the /ws-scan path the scan UI
+     *  actually uses did not (finding 7.6). */
+    model?: string;
 }
 
 export interface ScanDrainingMessage {

@@ -31,6 +31,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   length and its first bytes. The underlying trigger — why the config packet is not applied on some
   sessions — is still unknown; this is what makes the next occurrence diagnosable instead of invisible.
 
+### Fixed
+
+- **Naming a device now survives disconnecting and scanning for it again.** The device row keys labels on the
+  device's own serial, while a network scan identifies a hit by the address it probed — and the only thing
+  joining the two was a MAC alias written solely when a label happened to be supplied at connect time. So the
+  round trip a user is most likely to take (name a device from the list, disconnect it, scan) came back
+  unnamed, because the label was filed under a key the scan never asked for. A hit's label is now resolved
+  through the real serial of the device last observed at that address, using a record the app already kept.
+- **A device connected by hostname is no longer offered as a fresh scan hit.** `adb devices` reports whatever
+  string it was connected with, so a device reached as `qa-android:5555` never matched a hit at `<ip>:5555`
+  and appeared as connected and undiscovered at the same time. Both forms are now compared.
+- **A scan card shows what the app remembers about a device.** The remembered model was added only by the mDNS
+  REST route, which no client calls; the scan UI takes the WebSocket path and saw nothing, so a device that
+  answered the probe without a banner rendered a blank top line even when the app knew exactly what it was.
+
+### Fixed
+
 ## [0.1.30-beta.97] - 2026-09-04
 
 ### Fixed
