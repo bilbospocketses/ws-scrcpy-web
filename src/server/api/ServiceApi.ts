@@ -198,12 +198,14 @@ export class ServiceApi {
                 return await this.handleUninstall(req, res);
             }
             if (req.method === 'POST' && url === '/api/service/install-system-wide') {
+                if (this.refuseInContainer(res, 'install for all users')) return true;
                 return await this.handleInstallSystemWide(res);
             }
             if (req.method === 'POST' && url === '/api/service/decline-system-wide') {
                 return await this.handleDeclineSystemWide(res);
             }
             if (req.method === 'POST' && url === '/api/service/uninstall-app') {
+                if (this.refuseInContainer(res, 'uninstall')) return true;
                 return await this.handleAppUninstall(req, res);
             }
 
@@ -1096,6 +1098,33 @@ export class ServiceApi {
             res.writeHead(500);
             res.end(JSON.stringify({ ok: false, error: (err as Error).message, reason: 'unknown' }));
         }
+        return true;
+    }
+
+    /**
+     * Refuse an install-lifecycle action inside a container, before it can do
+     * any of it.
+     *
+     * "Install for all users" runs pkexec, relocates the app to /opt and
+     * re-execs; a container has no polkit and relocating inside the image is
+     * meaningless. "Uninstall" tears down a service and an install that do not
+     * exist there — the container's equivalent is `docker rm`. Hiding the two
+     * rows in Settings is the cosmetic half; this is the half that holds when
+     * someone POSTs the route directly, which is the only reason the UI gating
+     * is not itself a security boundary.
+     *
+     * 409 rather than 403: the caller is permitted, the action simply does not
+     * apply to this deployment.
+     */
+    private refuseInContainer(res: ServerResponse, action: string): boolean {
+        if (!Config.getInstance().dockerMode) return false;
+        const body: ServiceActionFailure = {
+            ok: false,
+            error: `"${action}" does not apply in a container — this image's lifecycle belongs to docker. Use \`docker rm\` to remove it.`,
+            reason: 'unsupported',
+        };
+        res.writeHead(409);
+        res.end(JSON.stringify(body));
         return true;
     }
 

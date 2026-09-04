@@ -17,6 +17,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A non-admin no longer sees a Dependencies panel that cannot load.** The panel rendered for every role while
+  its API answered 403, so a user-role account got the panel with "Failed to load dependencies" in it — an
+  authorization boundary showing up as an error message. It is gated on the same role the server enforces now.
+  Installs with login disabled are unaffected.
+- **Install and uninstall are no longer offered, or accepted, inside a container.** "Install for all users" runs
+  pkexec, relocates the app to /opt and re-execs; "uninstall" tears down a service and an install that do not
+  exist there. Both rows are hidden in container mode, and — more to the point — both endpoints refuse with a
+  409 naming the container and pointing at `docker rm`, so posting the route directly no longer starts either.
+- **Retrying a dependency install says why nothing happened.** A dependency whose latest version could not be
+  determined is skipped rather than installed, deliberately, so an offline first run does not thrash. But the
+  reply reported that skip as a plain failure with an empty error map, for an install that was never attempted
+  and which the first-run banner's own poll completed moments later.
+- **Removed a dead unauthenticated exemption.** `/login-assets/` was allow-listed past the auth gate; nothing
+  ever served that prefix and there is no `/login` route, so it was a hole reserved for a directory that did not
+  exist.
+
 ## [0.1.30-beta.99] - 2026-09-04
 
 ## [0.1.30-beta.98] - 2026-09-04

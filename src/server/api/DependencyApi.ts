@@ -77,6 +77,21 @@ export class DependencyApi {
                         errors[info.name] = info.errorMessage;
                     }
                 }
+                // A dependency whose latest version is unknown is skipped by
+                // autoInstallMissing rather than installed — deliberately, so an
+                // offline first run does not thrash. But the skip left no trace:
+                // the reply came back {success:false, stillMissing:['adb'],
+                // errors:{}}, which reads as "the retry failed" with nothing to
+                // say why, for a dependency that was never attempted and which
+                // the banner's own poll then installed seconds later once the
+                // version check succeeded. Say what actually happened
+                // (finding 9.7).
+                for (const info of await this.manager.getAll()) {
+                    if (info.installedVersion === null && info.latestVersion === null && !errors[info.name]) {
+                        errors[info.name] =
+                            'latest version unknown, so no install was attempted — check network access and retry';
+                    }
+                }
                 const success = stillMissing.length === 0 && Object.keys(errors).length === 0;
                 res.writeHead(200);
                 res.end(JSON.stringify({ success, installed, stillMissing, errors }));

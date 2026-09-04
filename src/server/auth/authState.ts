@@ -13,7 +13,11 @@ export const SESSION_COOKIE = 'wsscrcpy_sid';
 // approve that in the (gated) UI. Without the exemption, locked mode answers it with 200 + the
 // login HTML, which a JSON client reads as a malformed success rather than "you must sign in".
 const ALLOWLIST_EXACT = new Set(['/api/auth/login', '/api/auth/me', '/api/whoami', '/embed-request']);
-const ALLOWLIST_PREFIX = ['/login-assets/', '/embed-request/']; // login page assets; embed-request status polls
+// '/login-assets/' used to sit here too. Nothing ever served that prefix and
+// there is no /login route at all — the login page is served inline — so it was
+// an unauthenticated hole reserved for a directory that did not exist, waiting
+// for someone to mount something under it by accident (finding 18.15).
+const ALLOWLIST_PREFIX = ['/embed-request/']; // embed-request status polls
 
 export function isAuthEnabled(db: Db): boolean {
     return db.appSettings.get(AUTH_ENABLED_KEY) === true;

@@ -4,6 +4,8 @@ import '../style/first-run-banner.css';
 import '../style/home.css';
 import type { AppConfigEnvelope } from '../common/ConfigEvents';
 import type { ServiceStatusResponse } from '../common/ServiceEvents';
+import { authClient, type Role } from './client/AuthClient';
+import { canSeeSection } from './client/adminGate';
 import { shouldShowBookmark } from './client/bookmarkGate';
 import { DependencyPanel } from './client/DependencyPanel';
 import { startEmbedRequestWatch, stopEmbedRequestWatch } from './client/EmbedRequestPrompt';
@@ -349,10 +351,24 @@ window.onload = async (): Promise<void> => {
     const discoveryPanel = new NetworkDiscoveryPanel();
     pageContainer.appendChild(discoveryPanel.getElement());
 
-    DependencyPanel.create().then((depPanel) => {
+    // The dependency API answers 403 for a non-admin, so mounting this
+    // unconditionally did not show a user less — it showed them the panel with
+    // "Failed to load dependencies" in it. An authorization boundary that
+    // manifests as an error message reads as a bug to the user and as coverage
+    // to the checklist (finding 9.6). Fail-open to admin on a me() error,
+    // matching SettingsModal: the server enforces the 403 regardless.
+    void (async () => {
+        let role: Role | null = 'admin';
+        try {
+            role = (await authClient.me()).user?.role ?? null;
+        } catch {
+            role = 'admin';
+        }
+        if (!canSeeSection(role, 'dependencies')) return;
+        const depPanel = await DependencyPanel.create();
         dependencyPanel = depPanel;
         pageContainer.appendChild(depPanel.getElement());
-    });
+    })();
 
     // §36: DependencyPanel + FirstRunBanner poll on intervals for the page
     // lifetime; release them on teardown so the intervals don't keep firing into

@@ -134,6 +134,54 @@ describe('DependencyApi retry-install endpoint', () => {
         expect(body.errors.adb).toBe('network timeout');
     });
 
+    // Finding 9.7 — the witnessed reply was {success:false, stillMissing:['adb'],
+    // errors:{}}: a dependency autoInstallMissing skipped because its latest
+    // version was unknown, reported as a failure with nothing to explain it,
+    // for an install that was never attempted and which the banner's own poll
+    // completed seconds later. The skip is deliberate (an offline first run
+    // should not thrash); leaving it unexplained was not.
+    it('explains a dependency that was skipped because its latest version is unknown', async () => {
+        const mgr = new DependencyManager('/tmp/test');
+        const adb = mgr.getByName('adb')!;
+        adb.installedVersion = null;
+        adb.latestVersion = null;
+        // Not Error: checkLatest returned nothing rather than throwing, which is
+        // exactly why the errors map came back empty.
+        adb.status = DependencyStatus.Unknown;
+        adb.errorMessage = undefined;
+
+        vi.spyOn(mgr, 'checkAll').mockResolvedValue();
+        vi.spyOn(mgr, 'autoInstallMissing').mockResolvedValue();
+
+        const api = new DependencyApi(mgr);
+        const req = makeReq('POST', '/api/dependencies/retry-install');
+        const res = makeMockRes();
+        await api.handle(req, res);
+
+        const body = JSON.parse(res.body!);
+        expect(body.success).toBe(false);
+        expect(body.stillMissing).toContain('adb');
+        expect(body.errors.adb).toMatch(/latest version unknown/i);
+    });
+
+    it('does not invent an error for a dependency that is simply installed', async () => {
+        const mgr = new DependencyManager('/tmp/test');
+        const adb = mgr.getByName('adb')!;
+        adb.installedVersion = '35.0.2';
+        adb.latestVersion = '35.0.2';
+        adb.status = DependencyStatus.UpToDate;
+
+        vi.spyOn(mgr, 'checkAll').mockResolvedValue();
+        vi.spyOn(mgr, 'autoInstallMissing').mockResolvedValue();
+
+        const api = new DependencyApi(mgr);
+        const req = makeReq('POST', '/api/dependencies/retry-install');
+        const res = makeMockRes();
+        await api.handle(req, res);
+
+        expect(JSON.parse(res.body!).errors.adb).toBeUndefined();
+    });
+
     it('returns 200 even when success is false', async () => {
         const mgr = new DependencyManager('/tmp/test');
         const adb = mgr.getByName('adb')!;

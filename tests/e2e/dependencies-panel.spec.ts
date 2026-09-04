@@ -158,11 +158,13 @@ test.describe('dependencies (smoke §9.4, §9.5, §1.9)', () => {
             const direct = await fetchFromPage(user.page, '/api/dependencies/adb/update', { method: 'POST' });
             expect(direct.status).toBe(403);
             expect(direct.body).toEqual({ error: 'forbidden' });
-            // The UI half: the panel renders its failure state and no rows —
-            // the account "doesn't see it", in the app's own words.
-            const userPanel = user.page.locator('#dependency-panel');
-            await expect(userPanel.locator('td.dep-error-msg')).toHaveText('Failed to load dependencies');
-            await expect(userPanel.locator('tbody tr.dep-row')).toHaveCount(0);
+            // The UI half: the panel is not mounted at all. It used to render
+            // its failure state instead — "Failed to load dependencies" — so the
+            // row's "doesn't see it" was the panel FAILING rather than the panel
+            // being GATED. An authorization boundary that manifests as an error
+            // message reads as a bug to the user and as coverage to the
+            // checklist, which is register finding 9.6.
+            await expect(user.page.locator('#dependency-panel')).toHaveCount(0);
 
             // Contrast: the admin on the same server gets the rows.
             const admin = await newVisitorContext(sharedBrowser, { baseURL: paths.baseURL });
