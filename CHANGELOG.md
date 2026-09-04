@@ -17,9 +17,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.1.30-beta.96] - 2026-09-04
+### Fixed
 
-## [0.1.30-beta.95] - 2026-09-04
+- **On an insecure origin the app now says why it cannot stream.** The browser exposes WebCodecs only
+  in a secure context, so at `http://<lan-ip>:8000` — the documented way to reach the Docker image —
+  no player registers, and the device card rendered no connect link, the config modal's connect button
+  did nothing, and its video inputs were never filled. Nothing anywhere said why. The card now carries
+  a notice naming the cause and both remedies (open the loopback URL on the serving machine, or serve
+  the app over HTTPS), the config modal reports the same in its status line, and the README states the
+  secure context as a requirement rather than a Docker footnote. The underlying chain is unchanged —
+  the browser genuinely withholds the decoder, and Chromium's
+  `--unsafely-treat-insecure-origin-as-secure` was measured not to restore it.
+
+## [0.1.30-beta.96] - 2026-09-04
 
 ### Fixed
 
@@ -34,6 +44,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   respects an inherited `DEPS_PATH` instead of clobbering it, and the restart marker is keyed on the
   same root at both ends — it used to be written where the launcher never looked, and restart worked
   only because it also keys on exit code 75.
+
+## [0.1.30-beta.95] - 2026-09-04
+
+### Fixed
 
 - **Clearing "enable audio" no longer stops the stream from starting.** On the reverse tunnel — the
   path the app prefers — the server waited for three TCP connections from scrcpy-server regardless of

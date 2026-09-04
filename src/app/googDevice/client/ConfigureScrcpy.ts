@@ -16,6 +16,7 @@ import { DisplayInfo } from '../../DisplayInfo';
 import type { PlayerClass } from '../../player/BasePlayer';
 import { CODEC_PROBE_STRINGS, probeDecodeSupport } from '../../player/webCodecsConfig';
 import Size from '../../Size';
+import { insecureOriginNotice } from '../../secureContext';
 import Util from '../../Util';
 import { Modal } from '../../ui/Modal';
 import VideoSettings from '../../VideoSettings';
@@ -54,6 +55,7 @@ export class ConfigureScrcpy extends Modal {
     private statusElement?: HTMLElement;
     private advancedChevron?: HTMLElement;
     private statusText = '';
+    private statusKind?: 'error' | undefined;
 
     // advancedSection is queried from DOM in populateUI, used by toggleAdvanced
     private advancedSection?: HTMLElement;
@@ -309,8 +311,9 @@ export class ConfigureScrcpy extends Modal {
         return codecs;
     }
 
-    private setStatus(text: string): void {
+    private setStatus(text: string, kind?: 'error'): void {
         this.statusText = text.toLowerCase();
+        this.statusKind = kind;
         this.updateStatus();
     }
 
@@ -324,7 +327,7 @@ export class ConfigureScrcpy extends Modal {
             this.statusElement.classList.add('status-probing');
         } else if (this.statusText === 'ready') {
             this.statusElement.classList.add('status-ready');
-        } else if (this.statusText.startsWith('probe failed')) {
+        } else if (this.statusKind === 'error' || this.statusText.startsWith('probe failed')) {
             this.statusElement.classList.add('status-error');
         }
     }
@@ -345,6 +348,14 @@ export class ConfigureScrcpy extends Modal {
             const storedOrPreferred = player.loadVideoSettings(this.udid, this.displayInfo);
             const fitToScreen = player.getFitToScreenStatus(this.udid, this.displayInfo);
             this.fillInputsFromVideoSettings(storedOrPreferred, fitToScreen);
+            return;
+        }
+        // No player registered. On an insecure origin that is not a transient
+        // state — the browser withheld the decoder — and the modal used to sit
+        // there with empty video inputs and a connect button that did nothing.
+        const notice = insecureOriginNotice(window);
+        if (notice) {
+            this.setStatus(notice, 'error');
         }
     }
 
@@ -804,6 +815,13 @@ export class ConfigureScrcpy extends Modal {
         // CRITICAL: Read all form values BEFORE close() removes the dialog from DOM
         const videoSettings = this.buildVideoSettings();
         if (!videoSettings || !this.playerName) {
+            // A missing player name here is almost always the insecure-origin
+            // case; returning silently is what made the connect button look
+            // broken rather than blocked.
+            const notice = insecureOriginNotice(window);
+            if (!this.playerName && notice) {
+                this.setStatus(notice, 'error');
+            }
             return;
         }
         const fitToScreen = this.getFitToScreenValue();
