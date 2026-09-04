@@ -7,7 +7,11 @@ import { requireAdmin } from '../auth/requireAdmin';
 import { SessionStore } from '../auth/session';
 import { Config } from '../Config';
 import { IMPLICIT_ADMIN_ID } from '../db/constants';
+import { Logger } from '../Logger';
+import { liveSockets } from '../services/WebSocketServer';
 import { readJsonBody } from './utils';
+
+const log = Logger.for('AuthApi');
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
     res.writeHead(status, { 'content-type': 'application/json' });
@@ -41,7 +45,14 @@ export class AuthApi {
 
         if (req.method === 'POST' && pathname === '/api/auth/logout') {
             const token = parseCookie(req.headers.cookie)[SESSION_COOKIE];
-            if (token) new SessionStore(db.sqlite).delete(token);
+            if (token) {
+                new SessionStore(db.sqlite).delete(token);
+                // Deleting the row refuses the NEXT handshake; it did nothing to
+                // the sockets this session already had open, so a stream begun
+                // before logout carried on after it (finding 18.14).
+                const closed = liveSockets.revokeSession(token);
+                if (closed > 0) log.info(`logout revoked ${closed} live socket(s)`);
+            }
             res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`);
             sendJson(res, 200, { ok: true });
             return true;
@@ -49,10 +60,20 @@ export class AuthApi {
 
         if (req.method === 'GET' && pathname === '/api/auth/me') {
             // ALLOW-LISTED route → self-validate the cookie (AuthGate did not attach req.user here).
+            // `needsLockdown` is the SERVER's own first-user test, exposed so the
+            // client stops guessing at it. UsersModal keyed its "Secure the admin
+            // account" block on `!authEnabled`, while POST /api/users takes the
+            // lockdown branch only while no enabled admin has a password. After
+            // row 18.11 (login disabled, admin still passworded) the client
+            // offered "Secure & add user", the server answered the normal-create
+            // 201, and the client announced "Login is now required. Reloading…"
+            // into an app that was still wide open (finding 18.13).
+            const needsLockdown = db.users.countEnabledAdminsWithPassword() === 0;
             if (!isAuthEnabled(db)) {
                 const admin = db.users.getById(IMPLICIT_ADMIN_ID);
                 sendJson(res, 200, {
                     authEnabled: false,
+                    needsLockdown,
                     user: admin ? { username: admin.username, role: admin.role } : null,
                 });
                 return true;
@@ -60,7 +81,11 @@ export class AuthApi {
             const token = parseCookie(req.headers.cookie)[SESSION_COOKIE];
             const session = token ? new SessionStore(db.sqlite).findValid(token, Date.now()) : undefined;
             const user = session ? db.users.getById(session.userId) : undefined;
-            sendJson(res, 200, { authEnabled: true, user: user ? { username: user.username, role: user.role } : null });
+            sendJson(res, 200, {
+                authEnabled: true,
+                needsLockdown,
+                user: user ? { username: user.username, role: user.role } : null,
+            });
             return true;
         }
 

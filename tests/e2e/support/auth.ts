@@ -87,6 +87,9 @@ export const LOGIN_PAGE = {
 export interface MeResponse {
     authEnabled: boolean;
     user: { username: string; role: 'user' | 'admin' } | null;
+    /** The server's own first-user test. Stripped by me() so identity
+     *  assertions stay identity assertions; read it via meNeedsLockdown(). */
+    needsLockdown?: boolean;
 }
 
 export interface UserRow {
@@ -171,7 +174,27 @@ export function expectLoginHtml(html: string): void {
 export async function me(ctx: APIRequestContext): Promise<MeResponse> {
     const res = await ctx.get('/api/auth/me');
     expect(res.status(), 'GET /api/auth/me').toBe(200);
-    return (await res.json()) as MeResponse;
+    // `needsLockdown` is deliberately stripped. Fifteen callers assert the whole
+    // body with toEqual, and every one of them is asking "who am I, and is login
+    // on" — not "would a create take the lockdown branch". Leaving the field in
+    // would have made all fifteen restate an answer they do not care about, and
+    // the first one to drift would fail for a reason unrelated to its subject.
+    // Use meNeedsLockdown() to assert the field itself.
+    const { needsLockdown: _needsLockdown, ...identity } = (await res.json()) as MeResponse;
+    return identity as MeResponse;
+}
+
+/**
+ * The server's own first-user test, as reported by /api/auth/me.
+ *
+ * Kept separate from me() because it answers a different question: the client
+ * used to infer it from `authEnabled`, and the two disagree precisely when
+ * login is off and the admin still has a password (finding 18.13).
+ */
+export async function meNeedsLockdown(ctx: APIRequestContext): Promise<boolean | undefined> {
+    const res = await ctx.get('/api/auth/me');
+    expect(res.status(), 'GET /api/auth/me').toBe(200);
+    return ((await res.json()) as MeResponse).needsLockdown;
 }
 
 /** Exactly ONE login attempt. Never asserts, never retries: every failure counts against the row. */

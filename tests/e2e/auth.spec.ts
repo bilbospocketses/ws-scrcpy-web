@@ -32,6 +32,7 @@ import {
     logoutViaApi,
     MAX_FAILS,
     me,
+    meNeedsLockdown,
     mintToken,
     newVisitorContext,
     openSettings,
@@ -165,6 +166,12 @@ test.describe('auth / opt-in login (smoke §18)', () => {
             expect(home.headers()['set-cookie']).toMatch(TOKEN_SET_COOKIE_RE);
             expectSpaHtml(await home.text());
             expect(await me(bare)).toEqual({ authEnabled: false, user: { username: 'admin', role: 'admin' } });
+            // The server's own first-user test, asserted separately from
+            // identity: true here because no enabled admin has a password yet,
+            // which is the only state in which POST /api/users locks down. The
+            // client used to infer this from authEnabled, and the two disagree
+            // once login is disabled with the admin still passworded (18.13).
+            expect(await meNeedsLockdown(bare)).toBe(true);
             await expectPristineAuthState(bare);
 
             // Open mode is not an open API: without the token, everything but
@@ -190,7 +197,14 @@ test.describe('auth / opt-in login (smoke §18)', () => {
             const settings = await openSettings(adminPage);
             const meRes = await meSeen;
             expect(meRes.status()).toBe(200);
-            expect(await meRes.json()).toEqual({ authEnabled: false, user: { username: 'admin', role: 'admin' } });
+            // Reads the wire response rather than the helper, so it sees the
+            // whole body including needsLockdown — true here, on an install
+            // whose admin has no password yet.
+            expect(await meRes.json()).toEqual({
+                authEnabled: false,
+                needsLockdown: true,
+                user: { username: 'admin', role: 'admin' },
+            });
 
             const users = settingsSection(settings, 'Users');
             await expect(users).toBeVisible();

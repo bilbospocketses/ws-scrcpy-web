@@ -204,7 +204,15 @@ export class UsersModal extends Modal {
         addBtn.type = 'button';
         addBtn.className = 'modal-button modal-button-primary';
         addBtn.textContent = 'Add user';
-        addBtn.addEventListener('click', () => void this.openAddUser(me.authEnabled));
+        // The server takes the lockdown branch only while no enabled admin has a
+        // password. Keying on `!authEnabled` asked a different question and got
+        // a different answer: after login is disabled with the admin still
+        // passworded, the client offered "Secure & add user" and then announced
+        // "Login is now required" into an app that stayed open (finding 18.13).
+        // `needsLockdown ?? !authEnabled` keeps the old inference as the
+        // fallback for a server that does not report the field.
+        const needsLockdown = me.needsLockdown ?? !me.authEnabled;
+        addBtn.addEventListener('click', () => void this.openAddUser(needsLockdown));
         container.appendChild(addBtn);
     }
 
@@ -262,7 +270,7 @@ export class UsersModal extends Modal {
     // Add user / lockdown flow
     // -----------------------------------------------------------------------
 
-    async openAddUser(authEnabled: boolean): Promise<void> {
+    async openAddUser(needsLockdown: boolean): Promise<void> {
         const container = this.bodyEl;
         container.replaceChildren();
 
@@ -274,12 +282,12 @@ export class UsersModal extends Modal {
         container.appendChild(statusDiv);
 
         // -----------------------------------------------------------------------
-        // LOCKDOWN SECTION — only when authEnabled === false
+        // LOCKDOWN SECTION — only when the server says it will take that branch
         // -----------------------------------------------------------------------
         let adminUsernameInput: HTMLInputElement | null = null;
         let adminPasswordInput: HTMLInputElement | null = null;
 
-        if (!authEnabled) {
+        if (needsLockdown) {
             const lockSection = document.createElement('div');
             lockSection.className = 'lockdown-section';
             lockSection.style.cssText =
@@ -426,7 +434,7 @@ export class UsersModal extends Modal {
         cancelBtn.addEventListener('click', () => void this.refresh());
         btnRow.appendChild(cancelBtn);
 
-        const submitLabel = authEnabled ? 'Add user' : 'Secure & add user';
+        const submitLabel = needsLockdown ? 'Secure & add user' : 'Add user';
         const submitBtn = document.createElement('button');
         submitBtn.type = 'button';
         submitBtn.className = 'modal-button modal-button-primary';
@@ -444,7 +452,7 @@ export class UsersModal extends Modal {
                     return;
                 }
 
-                if (!authEnabled) {
+                if (needsLockdown) {
                     // Lockdown flow
                     const adminUsername = adminUsernameInput?.value.trim() ?? 'admin';
                     const adminPassword = adminPasswordInput?.value ?? '';

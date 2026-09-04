@@ -17,6 +17,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Logging out now ends the streams that login opened.** Deleting a session refused the *next* connection, but
+  did nothing to the WebSockets the page already had open — so a stream begun before logout carried on after it,
+  and the security boundary behaved differently from the way the UI describes it. Sockets are tracked against
+  the session that authorised them and closed when it ends. Another browser's session is unaffected, and a
+  session-less install has nothing to revoke.
+- **The "secure the admin account" prompt now agrees with the server about when it applies.** The client showed
+  it whenever login was disabled; the server takes that branch only while no enabled admin has a password. With
+  login off and the admin still passworded the two disagreed, so the app offered "Secure & add user", the server
+  performed an ordinary create, and the app announced "Login is now required" into an install that was still
+  wide open. The server now reports the fact and the client reads it.
+
 ## [0.1.30-beta.100] - 2026-09-04
 
 ### Fixed
@@ -39,20 +52,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.30-beta.99] - 2026-09-04
 
-## [0.1.30-beta.98] - 2026-09-04
-
-### Fixed
-
-- **A stream that arrives but never decodes now says so.** A session could carry megabytes of video that
-  the browser never decoded, and nothing reported it: `VideoDecoder.configure` never ran, and because the
-  decode watchdog was armed only *after* configure, the one mechanism meant to catch a mute stream never
-  started. The user saw a `Connected:` line, then silence, then a black rectangle. The watchdog is armed at
-  session start now, and distinguishes the two failures — a decoder that was configured and stays mute
-  (which points at codec support) from one that was never configured at all (which does not). Separately,
-  the config parser's four silent give-up paths now name what they rejected and why, including the packet
-  length and its first bytes. The underlying trigger — why the config packet is not applied on some
-  sessions — is still unknown; this is what makes the next occurrence diagnosable instead of invisible.
-
 ### Fixed
 
 - **Naming a device now survives disconnecting and scanning for it again.** The device row keys labels on the
@@ -68,7 +67,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   REST route, which no client calls; the scan UI takes the WebSocket path and saw nothing, so a device that
   answered the probe without a banner rendered a blank top line even when the app knew exactly what it was.
 
+## [0.1.30-beta.98] - 2026-09-04
+
 ### Fixed
+
+- **A stream that arrives but never decodes now says so.** A session could carry megabytes of video that
+  the browser never decoded, and nothing reported it: `VideoDecoder.configure` never ran, and because the
+  decode watchdog was armed only *after* configure, the one mechanism meant to catch a mute stream never
+  started. The user saw a `Connected:` line, then silence, then a black rectangle. The watchdog is armed at
+  session start now, and distinguishes the two failures — a decoder that was configured and stays mute
+  (which points at codec support) from one that was never configured at all (which does not). Separately,
+  the config parser's four silent give-up paths now name what they rejected and why, including the packet
+  length and its first bytes. The underlying trigger — why the config packet is not applied on some
+  sessions — is still unknown; this is what makes the next occurrence diagnosable instead of invisible.
 
 ## [0.1.30-beta.97] - 2026-09-04
 
