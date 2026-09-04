@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { request as httpRequest } from 'node:http';
 import path from 'node:path';
 import { type Browser, type BrowserContext, expect, request, test } from '@playwright/test';
@@ -90,28 +90,14 @@ test.describe('server surface (smoke §10)', () => {
         // every entry justifies itself in a comment. An allow-list that grows
         // without comments is how this assertion stops meaning anything.
         const ERROR_LINE = /\bERROR\b|Error:/;
-        // A tree that has never run `npm run stage-seed` (CI's `npm ci` + build:
-        // nothing there fires the `prestart` hook) has no node-pty seed. The
-        // resolver says so at ERROR level and the shell feature stays off, the
-        // same condition /api/capabilities reports as `no-seed-package` (row 9.5).
-        // The seed root is <repo>/seed/node-pty-pkg, anchored on dist/, not on
-        // the data root, so a spec-owned server sees whatever this checkout has.
-        const configFile = test.info().config.configFile;
-        const repoRoot = configFile ? path.dirname(configFile) : process.cwd();
-        const seedPresent = existsSync(path.join(repoRoot, 'seed', 'node-pty-pkg'));
+        // Empty, and it should stay that way. Its one entry was the node-pty
+        // resolver announcing a missing seed at ERROR level — a condition the
+        // app itself reports as a capability (`shellReason: 'no-seed-package'`,
+        // row 9.5), so a tree that has never run `npm run stage-seed` failed
+        // this row for a non-error. That line is a WARN now (register finding
+        // 10.9), which is what let the exception go.
         const ALLOWED: { pattern: RegExp; why: string }[] = [
             // Add an entry only with the line it matches and why it is cosmetic.
-            // This one is tolerated only while the seed really is absent: on a
-            // tree that has it, the line is a regression. Register finding 10.9
-            // (ERROR level for an optional feature's documented absence).
-            ...(seedPresent
-                ? []
-                : [
-                      {
-                          pattern: /\[NodePtyResolver\] ERROR no seed node-pty package found/,
-                          why: 'no node-pty seed in this checkout',
-                      },
-                  ]),
         ];
         const paths = privateServerPaths('ws-scrcpy-web-e2e-logs-clean', 8130);
         seedPrivateDataRoot(paths);
@@ -253,6 +239,33 @@ test.describe('server surface (smoke §10)', () => {
             const api = await ctx.get('/api/no-such-route', { headers: { accept: 'application/json' } });
             expect(api.status()).toBe(404);
             expect(await api.text()).not.toContain(APP_TITLE);
+
+            // ...and asked for as a document too. An unknown API path is
+            // extensionless, so while the fallback keyed on Accept alone the
+            // API's error contract depended on who was asking: an XHR got this
+            // 404, a browser address bar got 200 and the application shell,
+            // which made a mistyped route look like a working page (finding 10.7).
+            const apiAsDoc = await ctx.get('/api/no-such-route', { headers: { accept: 'text/html' } });
+            expect(apiAsDoc.status()).toBe(404);
+            expect(await apiAsDoc.text()).not.toContain(APP_TITLE);
+
+            // The security headers are server-wide, not static-only: an API JSON
+            // response carries them, and so does the request gate's own 403 —
+            // both used to answer without them, because only the paths routed
+            // through the shared helper ever set them (finding 10.8).
+            const apiJson = await ctx.get('/api/config');
+            expect(apiJson.status()).toBe(200);
+            expectSecurityHeaders(apiJson.headers(), 'GET /api/config');
+
+            const untokened = await request.newContext({ baseURL: e2eBaseUrl() });
+            try {
+                const refused = await untokened.get('/api/settings');
+                expect(refused.status()).toBe(403);
+                expect(await refused.json()).toMatchObject({ error: 'forbidden' });
+                expectSecurityHeaders(refused.headers(), 'gate 403');
+            } finally {
+                await untokened.dispose();
+            }
 
             // A deep in-app route, navigated to as a document, still falls back to the shell.
             const deep = await ctx.get('/devices/some/deep/route', { headers: { accept: 'text/html' } });

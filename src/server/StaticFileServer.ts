@@ -33,7 +33,13 @@ const MIME_TYPES: Record<string, string> = {
 // (those with a file extension) and non-HTML requests (e.g. an `/api/*` XHR)
 // get a 404 instead of a 200 + index.html, so a missing asset is no longer
 // served as the HTML shell. (#24)
+//
+// The `/api/` prefix is excluded outright: an unknown API path is extensionless
+// too, so without this the Accept header decided the error contract — an XHR to
+// /api/no-such-route got its 404 while the same URL in the address bar got 200
+// and the application shell, making a mistyped route look like a working page.
 export function isSpaNavigation(urlPath: string, accept: string | undefined): boolean {
+    if (urlPath === '/api' || urlPath.startsWith('/api/')) return false;
     return (accept ?? '').includes('text/html') && path.extname(urlPath) === '';
 }
 

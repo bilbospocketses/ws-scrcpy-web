@@ -19,4 +19,13 @@ describe('isSpaNavigation', () => {
         expect(isSpaNavigation('/api/devices', '*/*')).toBe(false);
         expect(isSpaNavigation('/api/devices', undefined)).toBe(false);
     });
+
+    // The API's error contract must not depend on who is asking. An unknown
+    // /api/* path is extensionless, so the Accept header alone used to decide
+    // between a 404 (XHR) and a 200 + application shell (address bar).
+    it('never treats an /api/* path as a navigation, whatever the Accept header', () => {
+        expect(isSpaNavigation('/api/no-such-route', 'text/html,application/xhtml+xml,*/*')).toBe(false);
+        expect(isSpaNavigation('/api/devices/list', 'text/html')).toBe(false);
+        expect(isSpaNavigation('/api', 'text/html')).toBe(false);
+    });
 });

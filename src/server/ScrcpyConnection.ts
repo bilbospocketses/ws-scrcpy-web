@@ -16,6 +16,11 @@ import { Mw, type RequestParameters } from './mw/Mw';
 import { type ScrcpyOptions, serializeOptions } from './ScrcpyOptions';
 import { scrcpyOptionsFromQuery } from './scrcpyOptionsFromQuery';
 import { getInstalledScrcpyServerVersion } from './scrcpyServerVersion';
+import {
+    assembleReverseTunnelSockets,
+    createAudioDisabledSocket,
+    expectedTunnelSocketCount,
+} from './scrcpyTunnelSockets';
 
 const log = Logger.for('ScrcpyConnection');
 
@@ -184,7 +189,14 @@ export class ScrcpyConnection extends Mw {
 
         this.launchServer(options);
 
-        return this.acceptSockets(server, 3, 10000);
+        // scrcpy-server skips the audio connect when audio is off, so only video
+        // and control come back. Waiting for three regardless closed the socket
+        // with `4005 Timeout waiting for 3 TCP connections (got 2)` and the
+        // stream never started — on the tunnel the app prefers. The forward path
+        // below has always derived this correctly.
+        const audioEnabled = options.audio !== false;
+        const accepted = await this.acceptSockets(server, expectedTunnelSocketCount(audioEnabled), 10000);
+        return assembleReverseTunnelSockets(accepted, audioEnabled);
     }
 
     private async startWithForwardTunnel(options: ScrcpyOptions): Promise<net.Socket[]> {
@@ -222,8 +234,7 @@ export class ScrcpyConnection extends Mw {
             // audio=false means scrcpy-server skips the audio accept. Feed
             // parseMetadata a synthetic AUDIO_DISABLED 4-byte status so the rest
             // of the pipeline keeps the same shape without needing a special case.
-            audioSocket = new net.Socket();
-            audioSocket.unshift(Buffer.from([0x00, 0x00, 0x00, 0x00])); // AUDIO_DISABLED (0x00000000) sentinel
+            audioSocket = createAudioDisabledSocket();
         }
         const controlSocket = await this.connectLocal(localPort, 15000);
 

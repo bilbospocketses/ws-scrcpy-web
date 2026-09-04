@@ -17,6 +17,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Clearing "enable audio" no longer stops the stream from starting.** On the reverse tunnel — the
+  path the app prefers — the server waited for three TCP connections from scrcpy-server regardless of
+  the audio setting. With `audio=false` scrcpy-server skips the audio connect, so only two arrived and
+  the WebSocket closed with `4005 Timeout waiting for 3 TCP connections (got 2)`: a documented setting
+  made the stream fail to start. The socket count is derived from the audio option now, and the
+  synthetic `AUDIO_DISABLED` status socket is spliced into slot 1 so the positional
+  `[video, audio, control]` triple holds either way. Both tunnel paths share one sentinel factory.
+- **`POST /api/devices/disconnect` is idempotent.** Disconnecting an address that was not connected
+  asks for a state that is already true, but adb prints "no such device" and the route mapped that to
+  500 — callers could not tell a real failure from a cleanup step running twice. It answers
+  `200 {success: true, message: 'not connected'}` now, mirroring how connect treats "already
+  connected"; a genuine adb failure still answers 500.
+- **An unknown `/api/*` path 404s whatever the `Accept` header says.** The SPA fallback keyed on
+  `Accept: text/html` plus an extensionless path, and an unknown API path is extensionless — so a
+  JSON caller got its 404 while a browser address bar got 200 and the application shell, making a
+  mistyped route look like a working page.
+- **Every response carries the security headers, not just the static ones.** `X-Content-Type-Options`
+  and `X-Frame-Options` were absent from API JSON responses and from the request gate's own 403,
+  because only the paths routed through the shared helper ever set them. They are applied once at the
+  request-handler choke point now.
+
+### Changed
+
+- **A missing node-pty seed is logged at WARN, not ERROR.** A checkout that has not run
+  `npm run stage-seed` legitimately has no seed, and the app already reports that as a capability
+  (`/api/capabilities` answers `shellReason: 'no-seed-package'`) rather than a fault. Logging it as an
+  error forced the "logs clean" smoke row to carry a permanent allow-list exception for a non-error;
+  that allow-list is empty again.
+
 ## [0.1.30-beta.94] - 2026-09-04
 
 ### Fixed

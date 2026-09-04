@@ -12,6 +12,24 @@ import { BodyTooLargeError, InvalidJsonError, readJsonBodyStrict, sendInternalEr
 
 const log = Logger.for('DeviceDiscoveryApi');
 
+export type DisconnectOutcome = { status: number; success: boolean; message: string };
+
+/**
+ * adb prints `disconnected <addr>` when it tore a connection down, and
+ * `error: no such device '<addr>'` when the address was not connected in the
+ * first place. Only the first used to count as success, so a disconnect whose
+ * outcome was already true answered 500 — a caller could not tell a real
+ * failure from a cleanup or arrange step running against an already-clean
+ * state. Treat "not connected" as the no-op it is and answer 200, mirroring
+ * how connect already treats "already connected" as success.
+ */
+export function classifyDisconnectResult(result: string): DisconnectOutcome {
+    const message = result.trim();
+    if (message.includes('disconnected')) return { status: 200, success: true, message };
+    if (/no such device/i.test(message)) return { status: 200, success: true, message: 'not connected' };
+    return { status: 500, success: false, message };
+}
+
 export class DeviceDiscoveryApi {
     private adbClient: AdbClient;
 
@@ -131,9 +149,9 @@ export class DeviceDiscoveryApi {
                     return true;
                 }
                 const result = await this.adbClient.disconnect(address);
-                const success = result.includes('disconnected');
-                res.writeHead(success ? 200 : 500);
-                res.end(JSON.stringify({ success, message: result.trim() }));
+                const outcome = classifyDisconnectResult(result);
+                res.writeHead(outcome.status);
+                res.end(JSON.stringify({ success: outcome.success, message: outcome.message }));
                 return true;
             }
 
