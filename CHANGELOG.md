@@ -36,7 +36,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exist.
 
 ## [0.1.30-beta.99] - 2026-09-04
-### Fixed
 
 ## [0.1.30-beta.98] - 2026-09-04
 
@@ -51,7 +50,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the config parser's four silent give-up paths now name what they rejected and why, including the packet
   length and its first bytes. The underlying trigger — why the config packet is not applied on some
   sessions — is still unknown; this is what makes the next occurrence diagnosable instead of invisible.
-### Fixed
 
 ### Fixed
 
