@@ -19,6 +19,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The automation coverage register is complete: every smoke row, one line each.**
+  `docs/smoke-tests/automation-coverage.md` now carries all **140** rows of `smoke-test.md` with the
+  bucket each falls in and either the spec that covers it or the reason nothing does. The count is 140,
+  not the 127 this work was planned against — that figure was correct for beta.82, and module 20's
+  thirteen container rows landed after it. **52 rows are automated today: 29 fast, 7 container, 16
+  device — 37 %**, not the "~60 %" the E2E harness item estimated by counting partial rows as covered
+  and assuming the Linux installer rows were reachable. 25 more belong to P4's Windows guest, and two
+  rows split, their Windows half P4's and their Linux half nobody's. **Six rows are automatable with
+  the tiers already built and have no spec yet** (4.5 fast; 20.6, 20.8, 20.11, 20.12 container; 20.10
+  device); they get their own bucket so the cheapest coverage left is not filed away as manual work.
+  That leaves **55 residual**: 48 Linux installer and desktop-integration rows, and 7 nothing reaches —
+  USB, a vendor encoder the emulator has not got, an H.265 decode no browser in the Linux runner
+  performs, a route the UI never calls, two container rows waiting on a product decision, and one whose
+  subject no longer exists. Seven
+  automated rows also carry a manual half, each stating both halves on its line. The register names the
+  structural gap rather than rounding past it: the container is a *third* distribution channel, so
+  testing it does not test the AppImage, and nothing builds a Linux desktop the way P1 builds a Windows
+  one. It recommends a Linux desktop guest phase, explicitly out of scope here, as the thing that would
+  take those 48.
+
 - **A Docker Scout gate in front of the image publish.** `docker-publish.yml` now builds the image
   into the runner's engine first and runs `docker scout cves` on it; a fixable critical or high CVE
   fails the workflow and nothing is pushed. Only fixable advisories count, because an unfixed one
@@ -26,6 +46,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Scout analysis enabled as well, so images that already shipped are re-evaluated as advisories land.
   Measured against beta.90's image before the gate was armed: 1 critical and 9 high fixable CVEs, so
   the next image publish fails until they are bumped — that is the gate working, not a regression.
+
+### Changed
+
+- **Smoke target bumped to `v0.1.30-beta.91`.** One line in `smoke-test.md`, per that document's own
+  rule; nothing else in it changed.
 
 ## [0.1.30-beta.91] - 2026-09-03
 
