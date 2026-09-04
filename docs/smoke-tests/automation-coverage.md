@@ -206,7 +206,7 @@ Sorted by module, then by row number, which is not the doc's execution order.
 | 20.5 | `[Both]` | "uninstall ws-scrcpy-web" row in a container | residual: un-automatable | Blocked on an open product decision, not on automation: what "uninstall ws-scrcpy-web" should do in a container is undecided (register 20.5). |
 | 20.6 | `[Both]` | "stop server & exit" in a container | no spec yet - container | Automatable as a `@docker-host` spec that drives `docker stop` from outside the container. The bare-server half is already covered by 12.1. |
 | 20.7 | `[Both]` | Linux system-wide-install offer in a container | container | `docker-gating.spec.ts` |
-| 20.8 | `[Both]` | Pull `:beta` from Docker Hub | no spec yet - container | Automatable as a pull-and-compare check once a `:beta` tag exists. Blocked today only because the publish workflow's Docker Hub token is unset. |
+| 20.8 | `[Both]` | Pull `:beta` from Docker Hub | no spec yet - container | Automatable as a pull-and-compare check against `jchapz30/ws-scrcpy-web:beta`, which publishes on every beta since beta.90 (2026-09-03) and passes the Scout gate since beta.94; nothing blocks the spec now. |
 | 20.9 | `[Both]` | First-boot hydrate on a fresh `/data` volume | container | `docker-gating.spec.ts` |
 | 20.10 | `[Both]` | Wireless connect from a container | no spec yet - device | Automatable by pointing the device tier at the container subject instead of the bare server. Needs the emulator and the container on one network. |
 | 20.11 | `[Both]` | Persistence across `docker rm` + re-run | no spec yet - container | Automatable as a `@docker-host` spec. The log half cannot pass until finding 20.14 is fixed - the container writes no server log at all. |

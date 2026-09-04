@@ -352,7 +352,20 @@ See `docs/TECHNICAL_GUIDE.md` section 15 for details on the Logger utility and a
 
 ## Docker
 
-A legacy `Dockerfile` exists in the repo but is not actively maintained and targets an older Node version. Docker-based deployment is planned but has not shipped yet. For now, use the MSI, AppImage, or portable ZIP.
+The image is published to Docker Hub as [`jchapz30/ws-scrcpy-web`](https://hub.docker.com/r/jchapz30/ws-scrcpy-web) on every release: `:beta` follows the beta channel (every `0.1.30-beta.N` also gets its own immutable tag), and `:latest` / `:stable` will follow the first stable release. `linux/amd64` only for now — Google publishes no arm64 Linux `platform-tools`, so an arm64 image would start and then fail on the first device.
+
+```bash
+docker run -d --name ws-scrcpy-web -p 127.0.0.1:8000:8000 -v wsdata:/data jchapz30/ws-scrcpy-web:beta
+```
+
+(Bound to loopback on purpose; see the second note below before publishing it on a LAN interface.) The repo's `docker-compose.yml` is the developer and CI quickstart instead — it builds the image from source and publishes it on `127.0.0.1:8123`. Everything mutable lives on `/data` — `config.json`, the SQLite store, and the dependencies the container downloads on first boot (adb, ~9 MB; the health check allows 180 s for that). Update with `docker pull` and re-create the container; the volume carries your state across.
+
+Two things to know before relying on it:
+
+- **Wireless ADB only.** The container connects to devices over the network (`adb connect <ip>:<port>`); there is no USB pass-through, by design.
+- **Streaming needs a secure context.** The browser's video decoder (WebCodecs) is only available on `https://` or `localhost`, so opening the container over plain `http://<lan-ip>:8000` shows the device list but no connect link — and, today, no explanation (tracked as a known issue). Open it on the serving machine, or put it behind a TLS reverse proxy.
+
+Every published image passes a [Docker Scout](https://docs.docker.com/scout/) gate in the publish workflow — a fixable critical or high CVE fails the publish — and the Hub repository has Scout analysis enabled, so already-published images are re-evaluated as advisories land. For now, use the MSI, AppImage, or portable ZIP.
 
 ## Acknowledgments
 
