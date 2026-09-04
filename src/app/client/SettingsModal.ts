@@ -189,6 +189,15 @@ export function stopServerButtonState(resp: ScopeRadioInputs): {
 export function appSectionButtonsState(resp: {
     platform?: string | null | undefined;
     machineWideInstalled?: boolean | undefined;
+    /** True when the server reports container mode. Both install-lifecycle rows
+     *  are hidden then: "install for all users" POSTs a route that runs pkexec,
+     *  relocates the app to /opt and re-execs — a container has no polkit and
+     *  relocating inside the image is meaningless — and "uninstall" tears down a
+     *  service and an install that do not exist there. The container's
+     *  equivalent is `docker rm`, and its lifecycle belongs to docker, not to
+     *  the app (findings 20.4 and 20.5). Task 5 gated Settings → Service and
+     *  Settings → Updates the same way; the Server section was missed. */
+    docker?: boolean | undefined;
 }): {
     showInstallAllUsers: boolean;
     installAllUsersDisabled: boolean;
@@ -197,11 +206,12 @@ export function appSectionButtonsState(resp: {
 } {
     const linux = resp.platform === 'linux';
     const machineWide = resp.machineWideInstalled === true;
+    const container = resp.docker === true;
     return {
-        showInstallAllUsers: linux,
+        showInstallAllUsers: linux && !container,
         installAllUsersDisabled: linux && machineWide,
         installAllUsersNote: linux && machineWide ? 'already installed for all users (/opt)' : null,
-        showUninstall: linux || resp.platform === 'win32',
+        showUninstall: (linux || resp.platform === 'win32') && !container,
     };
 }
 
@@ -2121,6 +2131,12 @@ export class SettingsModal extends Modal {
      * /opt install exists, and keeps the uninstall row always enabled on Linux.
      */
     private applyAppSectionButtonsState(resp: ServiceStatusResponse): void {
+        // /api/service/status already reports container mode, so the Server
+        // section reads the same fact the Service and Updates sections gate on
+        // (findings 20.4, 20.5). Today these rows also happen to stay hidden in
+        // a container because the reveal path runs only after refreshService(),
+        // which container mode skips — but that is an accident of ordering, not
+        // a decision, and it would break the moment anything else called this.
         const state = appSectionButtonsState(resp);
         if (this.installAllUsersRow) {
             this.installAllUsersRow.style.display = state.showInstallAllUsers ? '' : 'none';

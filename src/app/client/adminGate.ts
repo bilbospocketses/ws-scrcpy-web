@@ -12,6 +12,11 @@ export const ADMIN_ONLY_SECTIONS = new Set<string>([
     // Who may frame this app is a security decision; the server enforces the same
     // via requireLocalAdmin on /api/embed-origins.
     'embedOrigins',
+    // The dependency API answers 403 for a non-admin, so an ungated panel did
+    // not show less — it showed "Failed to load dependencies". An authorization
+    // boundary that manifests as an error message reads as a bug to the user
+    // and as coverage to the checklist (finding 9.6).
+    'dependencies',
 ]);
 
 /** True if `role` may see `section`. User-level sections are always visible; admin-only ones require role==='admin'. */
