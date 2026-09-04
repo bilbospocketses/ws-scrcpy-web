@@ -126,7 +126,11 @@ ESM consumers can `import` the same names from the package entry.
 
 **Security: `allowedOrigins`.** The default listener accepts theme messages
 from any origin (`allowedOrigins: '*'`). This is permissive by design so the
-helper is drop-in for any embedder. Locked-down deployments should call
+helper is drop-in for any embedder — note that the ws-scrcpy-web app itself
+does **not** use that default: it scopes its own listener to same-origin plus
+whatever `frameAncestors` permits. `allowedOrigins` also accepts a function,
+evaluated per message, for callers that do not know their allowlist at install
+time. Locked-down deployments should call
 
 ```javascript
 WsScrcpy.installThemeEmbedListener({

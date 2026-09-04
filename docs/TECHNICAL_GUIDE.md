@@ -2194,10 +2194,13 @@ Two live consequences before this was guarded:
   with `Unhandled error. (undefined)` on every reconnect attempt. (`undefined`
   because the `events` polyfill formats `er.message`, and a plain `Event` has
   none — that detail is what identifies this rather than something else.)
-- **`emit`** — `HostTrackerEvents` types `'error'` as a plain `string` and
-  **nothing in the codebase listens for it**, so every `MessageType.ERROR` from
-  the server threw inside `onSocketMessage` and abandoned the rest of the
-  handler.
+- **`emit`** — `HostTrackerEvents` used to type `'error'` as a plain `string`
+  while **nothing in the codebase listened for it**, so every
+  `MessageType.ERROR` from the server threw inside `onSocketMessage` and
+  abandoned the rest of the handler. The guard below fixed the throw; the
+  event itself has since been **removed** (the server sends that message only
+  for "unsupported message", a protocol fault with nothing a user could act
+  on), so the condition is logged and no longer emitted.
 
 Both methods now return `false` instead of emitting when `'error'` has no
 listener. Attaching a listener restores ordinary delivery, which is how
