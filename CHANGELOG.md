@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.92] - 2026-09-04
+
 ### Added
 
 - **A Docker Scout gate in front of the image publish.** `docker-publish.yml` now builds the image
