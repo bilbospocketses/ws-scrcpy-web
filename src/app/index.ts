@@ -102,6 +102,15 @@ function maybeShowWelcomeModal(): void {
         .then(async ([data, prefs]) => {
             const runtime = data?.runtime;
             const config = data?.config;
+            // Widen the theme-embed allowlist now the deployment's answer is
+            // known, then re-announce: an allow-listed parent that sent its
+            // handshake before this point was ignored, and would otherwise wait
+            // forever for a ready it already missed.
+            const ancestors = runtime?.frameAncestors;
+            if (ancestors && ancestors.length > 0) {
+                themeEmbedOrigins = [location.origin, ...ancestors];
+                notifyThemeReady();
+            }
             if (!runtime || !config) return;
 
             const isServiceInstance = config.installMode === 'user-service' || config.installMode === 'system-service';
@@ -271,7 +280,22 @@ function maybeShowPortChangeModal(globallyDismissed: boolean, dismissedFor: numb
 
 // Initialize theme immediately to prevent flash of wrong colors
 initTheme();
-installThemeEmbedListener();
+
+/**
+ * Origins allowed to drive the theme over postMessage.
+ *
+ * The listener installs here, at module scope, to beat the first paint — long
+ * before `/api/config` answers. So it starts at same-origin only and widens to
+ * the deployment's `frameAncestors` when the config lands. It used to install
+ * with the default `'*'`, accepting a theme push from any site that framed us;
+ * the embed allowlist that landed in #557 is exactly the list it should have
+ * been using (finding 83).
+ *
+ * Read through a getter rather than captured, because installThemeEmbedListener
+ * evaluates it per message — see ThemeEmbedOptions.
+ */
+let themeEmbedOrigins: string[] = [location.origin];
+installThemeEmbedListener({ allowedOrigins: () => themeEmbedOrigins });
 notifyThemeReady();
 
 window.onload = async (): Promise<void> => {

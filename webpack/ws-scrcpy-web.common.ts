@@ -1,21 +1,21 @@
-import path from 'path';
-import webpack from 'webpack';
 import { readFileSync } from 'fs';
 import MiniCssExtractPlugin from 'mini-css-extract-plugin';
+import path from 'path';
+import webpack from 'webpack';
 
 export const PROJECT_ROOT = path.resolve(__dirname, '..');
 export const SERVER_DIST_PATH = path.join(PROJECT_ROOT, 'dist');
 export const CLIENT_DIST_PATH = path.join(PROJECT_ROOT, 'dist/public');
 
 const buildConfigDefinePlugin = new webpack.DefinePlugin({
-    '__PATHNAME__': JSON.stringify('/'),
+    __PATHNAME__: JSON.stringify('/'),
 });
 
 const rootPkg = JSON.parse(readFileSync(path.join(PROJECT_ROOT, 'package.json'), 'utf-8'));
 const pkgVersion: string = rootPkg.version;
 
 const versionDefinePlugin = new webpack.DefinePlugin({
-    '__WSSCRCPY_VERSION__': JSON.stringify(pkgVersion),
+    __WSSCRCPY_VERSION__: JSON.stringify(pkgVersion),
 });
 
 // Inline plugin: generates a minimal package.json in dist/
@@ -33,15 +33,13 @@ class GenerateDistPackageJsonPlugin {
                         version: pkgVersion,
                         scripts: { start: 'node index.js' },
                         dependencies: {
-                            'node-pty': rootPkg.optionalDependencies?.['node-pty'] ?? rootPkg.dependencies?.['node-pty'],
-                            'ws': rootPkg.dependencies?.ws,
+                            'node-pty':
+                                rootPkg.optionalDependencies?.['node-pty'] ?? rootPkg.dependencies?.['node-pty'],
+                            ws: rootPkg.dependencies?.ws,
                         },
                     };
                     const content = JSON.stringify(pkg, null, 2);
-                    compilation.emitAsset(
-                        'package.json',
-                        new webpack.sources.RawSource(content),
-                    );
+                    compilation.emitAsset('package.json', new webpack.sources.RawSource(content));
                 },
             );
         });
@@ -50,15 +48,21 @@ class GenerateDistPackageJsonPlugin {
 
 // Inline plugin: copies a single file into dist/public/ (index.html, favicon, ...)
 class CopyFilePlugin {
-    constructor(private src: string, private dest: string) {}
+    constructor(
+        private src: string,
+        private dest: string,
+    ) {}
     apply(compiler: webpack.Compiler) {
-        compiler.hooks.afterEmit.tapAsync(`CopyFilePlugin:${this.dest}`, (_: webpack.Compilation, callback: () => void) => {
-            const fs = require('fs') as typeof import('fs');
-            const destDir = path.dirname(this.dest);
-            fs.mkdirSync(destDir, { recursive: true });
-            fs.copyFileSync(this.src, this.dest);
-            callback();
-        });
+        compiler.hooks.afterEmit.tapAsync(
+            `CopyFilePlugin:${this.dest}`,
+            (_: webpack.Compilation, callback: () => void) => {
+                const fs = require('fs') as typeof import('fs');
+                const destDir = path.dirname(this.dest);
+                fs.mkdirSync(destDir, { recursive: true });
+                fs.copyFileSync(this.src, this.dest);
+                callback();
+            },
+        );
     }
 }
 
@@ -170,10 +174,7 @@ const back: webpack.Configuration = {
     entry: path.join(PROJECT_ROOT, './src/server/index.ts'),
     externals: [/^[a-z@]/],
     externalsType: 'commonjs',
-    plugins: [
-        new GenerateDistPackageJsonPlugin(),
-        buildConfigDefinePlugin,
-    ],
+    plugins: [new GenerateDistPackageJsonPlugin(), buildConfigDefinePlugin],
     node: {
         global: false,
         __filename: false,
@@ -210,10 +211,7 @@ function esmModuleRules(): webpack.RuleSetRule[] {
 const libraryCommon = {
     entry: path.join(PROJECT_ROOT, './src/app/public/index.ts'),
     externals: ['fs'],
-    plugins: [
-        new MiniCssExtractPlugin({ filename: 'ws-scrcpy.css' }),
-        versionDefinePlugin,
-    ],
+    plugins: [new MiniCssExtractPlugin({ filename: 'ws-scrcpy.css' }), versionDefinePlugin],
     resolve: {
         extensions: ['.tsx', '.ts', '.js'],
     },
@@ -271,10 +269,7 @@ class CopyEmbedHtmlPlugin {
 const embedConfig: webpack.Configuration = {
     entry: path.join(PROJECT_ROOT, './src/app/public/embed-entry.ts'),
     externals: ['fs'],
-    plugins: [
-        versionDefinePlugin,
-        new CopyEmbedHtmlPlugin(),
-    ],
+    plugins: [versionDefinePlugin, new CopyEmbedHtmlPlugin()],
     resolve: {
         extensions: ['.tsx', '.ts', '.js'],
     },

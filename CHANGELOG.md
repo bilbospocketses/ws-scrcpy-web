@@ -17,6 +17,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A build no longer leaves last build's chunks behind.** `dist/` was never cleared, so webpack chunks
+  from earlier builds survived whenever a chunk id changed — a stale `767.bundle.js` sitting beside the
+  live `181.bundle.js`, carrying the *old* code. That makes "did my change land?" answerable
+  incorrectly in both directions: grepping `dist/` for a new string can miss, and grepping for an old
+  one can hit. A build now clears `dist/` first; on this tree that removed 28 orphaned files.
+- **`npm start` stages the node-pty seed again.** The repo sets `ignore-scripts=true` in `.npmrc`,
+  deliberately, so that installing never triggers node-gyp — but that also disables npm's `pre`/`post`
+  lifecycle hooks for *every* script. A `prestart` hook meant to run `stage-seed` therefore never ran,
+  which is why a fresh checkout could start with no seed and report node-pty missing on every boot. The
+  step is chained explicitly now, and the consequence is written down next to the setting that causes it.
+- **The theme-embed listener no longer accepts messages from any origin.** It installs before
+  `/api/config` answers, so it defaulted to `'*'` and any site framing the app could push it a theme.
+  It now starts at same-origin and widens to the deployment's configured `frameAncestors` — the same
+  list the CSP header already advertises — once the config arrives.
+
+### Changed
+
+- **`webpack/` is actually linted.** `biome.json` has listed it for a long time, but the lint and format
+  scripts passed explicit paths, and an explicit path overrides the config — so the directory was
+  configured for linting and never checked, locally or in CI. The scripts now honour the config, and the
+  findings that surfaced in those three files are fixed.
+
+### Removed
+
+- **`HostTracker`'s `error` event.** Nothing ever listened for it. The server sends that message from
+  exactly one place — "unsupported message", when the client sends something the host tracker does not
+  understand — which is a protocol fault with nothing a user could act on. Before beta.81 emitting it
+  threw, and after the guard it was a silent no-op; either way the event map advertised a listener that
+  did not exist. The condition is still logged.
+
 ## [0.1.30-beta.101] - 2026-09-04
 
 ### Fixed
