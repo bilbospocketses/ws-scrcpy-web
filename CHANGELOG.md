@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.103] - 2026-09-05
+
 ### Fixed
 
 - **The MSI installs to `C:\Program Files\WsScrcpyWeb` again — it had silently regressed to the drive
