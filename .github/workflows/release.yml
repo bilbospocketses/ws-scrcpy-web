@@ -99,13 +99,15 @@ jobs:
       - name: vpk pack (PerMachine MSI)
         shell: pwsh
         run: |
-          # Phase 4 of the Program Files migration: PerMachine MSI is
-          # the only Windows install artifact. The MSI installs to
-          # C:\Program Files\WsScrcpyWeb\ and runs elevated; the
-          # launcher's veloapp-install hook grants the ProgramData
-          # ACL (Authenticated Users:Modify (OI)(CI)) at install
-          # time. v0.1.22 dropped Setup.exe (vpk still emits one as a
-          # side effect of `--msi`; we just don't publish it).
+          # PerMachine MSI is the only Windows install artifact (v0.1.22 dropped
+          # Setup.exe; vpk still emits one as a side effect of `--msi`, we just
+          # don't publish it). `--instLocation PerMachine` sets the install SCOPE
+          # (all-users, elevated) -- it does NOT set the directory. vpk's raw MSI
+          # defaults INSTALLFOLDER to the DRIVE ROOT (C:\ws-scrcpy-web); the
+          # Program-Files install this project shipped for weeks came from the
+          # dropped Setup.exe, not the MSI. The next step reparents INSTALLFOLDER
+          # to C:\Program Files\WsScrcpyWeb; the launcher's veloapp-install hook
+          # grants the ProgramData ACL at install time.
           vpk pack `
             --packId WsScrcpyWeb `
             --packVersion ${{ needs.prepare.outputs.version }} `
@@ -118,6 +120,19 @@ jobs:
             --msi `
             --instLocation PerMachine `
             -o Releases
+
+      - name: Default MSI install dir to Program Files
+        shell: pwsh
+        run: |
+          # vpk's MSI defaults INSTALLFOLDER to the drive root; this reparents it
+          # under ProgramFiles64Folder so the shipped MSI installs to
+          # C:\Program Files\WsScrcpyWeb by default in every mode (double-click and
+          # /qn). Runs BEFORE signing so the signature covers the patched MSI. The
+          # script self-verifies and throws if the reparent did not take, so a
+          # silent regression to the drive root fails the release loudly.
+          Get-ChildItem Releases/*.msi | ForEach-Object {
+            ./scripts/msi-default-programfiles.ps1 -Msi $_.FullName
+          }
 
       - name: Upload unsigned MSI
         if: needs.prepare.outputs.signing_mode == 'signed'

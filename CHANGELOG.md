@@ -17,6 +17,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The MSI installs to `C:\Program Files\WsScrcpyWeb` again — it had silently regressed to the drive
+  root `C:\ws-scrcpy-web`.** `vpk`'s `--msi` artifact defaults `INSTALLFOLDER` to `[TARGETDIR]\<packTitle>`,
+  i.e. the **drive root**, in every vpk version (verified against 0.0.1589, 1.0.1, 1.1.1, 1.2.0);
+  `--instLocation PerMachine` only sets the install **scope** (all-users, elevated), never the directory.
+  The Program-Files install this project shipped for weeks came from the Velopack **Setup.exe**
+  bootstrapper (it resolves `ProgramFilesX64` at runtime), and dropping Setup.exe for an MSI-only Windows
+  artifact (v0.1.22) silently left the raw MSI's drive-root default as the shipped behaviour. Nothing
+  tested the *actual* install location, so it went unnoticed until a from-scratch install was measured.
+  A new release step (`scripts/msi-default-programfiles.ps1`) reparents `INSTALLFOLDER` under
+  `ProgramFiles64Folder` after `vpk pack` (before signing), so the shipped MSI installs to
+  `C:\Program Files\WsScrcpyWeb` by default in **every** mode — double-click and silent (`/qn`) alike —
+  and the script self-verifies and fails the release if the reparent does not take. Velopack's
+  `VELOPACK_INSTALLDIR` property still overrides the location for anyone who needs a custom directory.
+  This also restores the install-root ACL / one-time-UAC grant behaviour that the two-root design
+  (`C:\Program Files\WsScrcpyWeb` binaries + `C:\ProgramData\WsScrcpyWeb` writable state) was built
+  around. **Existing drive-root installs must be uninstalled and reinstalled** — Velopack cannot migrate
+  an install across locations. Verified 2026-09-05: a patched MSI installs `/qn` to
+  `C:\Program Files\WsScrcpyWeb` (ARP `InstallLocation` correct) where the unpatched MSI lands at
+  `C:\ws-scrcpy-web`.
+
 ### Changed
 
 - **The docs describe the security model the code actually has.** The README still said the app has no
