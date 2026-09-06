@@ -10,8 +10,8 @@ This document covers the internal architecture of ws-scrcpy-web -- a browser-bas
 
 ## Table of Contents
 
-> **On `§NN` in source comments.** This guide has sections **1-25**, and a comment citing one
-> in that range means this document. Comments citing **§26 and above** -- `§27`, `§30`, `§32`,
+> **On `§NN` in source comments.** This guide has sections **1-26**, and a comment citing one
+> in that range means this document. Comments citing **§27 and above** -- `§27`, `§30`, `§32`,
 > `§34`, `§36`, `§39`, `§40`, `§49` -- do **not**: they are historical references to numbered
 > items in the maintainer's internal planning file, which is not part of this repository, and
 > several of those numbers were reassigned or archived as that file evolved. They are left in
@@ -43,6 +43,7 @@ This document covers the internal architecture of ws-scrcpy-web -- a browser-bas
 23. [First-Run Modal Gating](#23-first-run-modal-gating)
 24. [Access Control & Request Gating](#24-access-control--request-gating)
 25. [Why the Screen Is Black](#25-why-the-screen-is-black)
+26. [Container Image (Docker)](#26-container-image-docker)
 
 ---
 
@@ -2227,3 +2228,192 @@ listener. Attaching a listener restores ordinary delivery, which is how
 | `src/app/player/WebCodecsPlayer.ts` | Keyframe gate, decode watchdog, `recoverDecoder` |
 | `src/app/player/webCodecsConfig.ts` | `CONFIGLESS_CODECS`, decode-support probe |
 | `src/common/StreamUrlParams.ts` | `buildVideoCodecOptions` and why the interval is not a lever |
+
+---
+
+## 26. Container Image (Docker)
+
+The third deployment path beside the Windows MSI and the Linux AppImage (SP4,
+shipped 2026-09-03 in #566; design and its amendments in
+`docs/specs/2026-06-09-sp4-docker-image-design.md`). The container runs the same
+server the desktop builds run, with **no Rust launcher, no tray, no service, no
+Velopack** — the things a container's own lifecycle already provides — and
+connects to devices over **wireless ADB only**.
+
+### 26.1 What ships, and when
+
+- **Registry:** Docker Hub, `jchapz30/ws-scrcpy-web` (the account that exists; there
+  is no `bilbospocketses` namespace there — design amendment §16).
+- **Tags, from `docker-publish.yml`:** every release pushes an immutable
+  `:X.Y.Z[-beta.N]`. A beta release also moves **`:beta`**; a stable release also
+  moves **`:stable`** and **`:latest`**. The rule is `version.includes('-beta')`, the
+  same test `package-linux.mjs` uses for the AppImage channel, and it is unit-tested
+  in the negative direction: a beta must never become `:latest`. Smoke row 20.8
+  asserts the channel rule against the live Hub (`container-publish.spec.ts`).
+- **Trigger:** the `v*` **tag push** — not `release: published`. `release.yml` publishes
+  the GitHub Release with the default `GITHUB_TOKEN`, and GitHub never triggers other
+  workflows from events that token creates; the tag itself is pushed by the
+  auto-release bot's App token, whose events do. A separate workflow, deliberately: a
+  Docker failure never blocks an installer release or vice versa.
+- **Scout gate:** the image is first built into the runner's engine under a tag that
+  is never pushed, and `docker/scout-action` runs `cves` on it with
+  `only-severities: critical,high`, `only-fixed: true`, `exit-code: true`. A fixable
+  critical or high CVE fails the publish before anything is pushed; unfixed
+  advisories are reported, not gated on. The Hub repository has Scout analysis on,
+  so already-published images are re-evaluated as advisories land.
+- **Platform:** `linux/amd64` only today. `arm64` was narrowed out by ruling
+  (amendment §16.1) — adb is fetched at runtime from a URL that is not
+  arch-resolved, so an arm64 image would boot and then fail its first-run hydrate.
+
+### 26.2 Image architecture
+
+Two stages on **one pinned base**, `node:24-trixie-slim` **by digest** (a tag moves,
+and a base that moves under a digest-pinned qa-harness run makes a failure
+ambiguous between an app regression and a base change).
+
+- **Trixie, not bookworm** — a correction to the design's locked decision. Debian 12's
+  glibc 2.36 cannot load `velopack`'s native addon (`GLIBC_2.39' not found`), and
+  `src/server/index.ts` imports `VelopackApp` unconditionally, so a bookworm image
+  builds, starts, and exits 1 instantly. Debian 13 has glibc 2.41. glibc rather than
+  musl for the same reason as the AppImage: the node-pty prebuilt matrix is
+  glibc-only (§18).
+- **Stage `build`:** `npm ci` → `npm run build` → the seed staging scripts
+  (`stage-seed-node-pty.mjs`, `stage-seed-scrcpy-server.mjs`) → `fetch-tini.mjs`, which
+  downloads the pinned static `tini` and verifies its SHA256. Dev dependencies stay
+  in this stage.
+- **Stage `runtime`:** `dist/`, production `node_modules`, the seed tree, `start.sh`,
+  `docker/entrypoint.sh` and the vendored `tini`. `setpriv` (util-linux) is
+  **asserted at build time** — `RUN test -x /usr/bin/setpriv || exit 1` — so a base
+  that ever drops it fails the build rather than silently running the app as root.
+- **Node is the image's own interpreter.** `/app/seed/node/node` is a symlink to
+  `/usr/local/bin/node`: arch- and ABI-correct by construction, no ~50 MB download
+  per build. Local-Dependencies-Only treats the interpreter as the execution
+  environment; adb, scrcpy-server and node-pty remain strictly local (§26.4).
+- **`/app/dependencies` → `/data/dependencies`** is a symlink, belt-and-braces: `start.sh`
+  used to export `DEPS_PATH=$SCRIPT_DIR/dependencies` unconditionally, which put the
+  hydrate (and the log) inside the image layer where `docker rm` threw it away. It
+  honours an inherited `DEPS_PATH` now; the link stays so anything still reaching for
+  the old path lands on the volume anyway.
+
+### 26.3 Process model
+
+```
+PID 1  tini -g
+         └─ /usr/local/bin/entrypoint.sh   (root: chown /data, then setpriv → uid 1000)
+              └─ /app/start.sh             (bash restart loop: exit 75 / .restart marker)
+                   └─ node dist/index.js
+```
+
+- **`tini -g`, not `tini`.** `-g` forwards `SIGTERM` to the whole process **group**, so
+  it reaches node *through* the bash loop. Without it bash defers its trap until the
+  foreground child exits, node never runs `gracefulShutdown()` (adb kill-server +
+  service release), and `docker stop` SIGKILLs it after the grace period. Measured
+  2026-09-03: exit 143 with the teardown unfinished. Rows 20.12 and 20.6 assert the
+  fixed behaviour: `docker stop` → exit 0 inside the 10 s grace, and the app's own
+  "stop server & exit" → the *container* exits 0 and stays exited.
+- **The entrypoint is root only long enough to `chown`.** A fresh named volume mounts
+  root-owned; the shim creates `/data/dependencies`, `/data/home`, `/data/logs`, takes
+  ownership only when it is actually wrong (a recursive chown on a populated tree
+  costs seconds), exports `HOME=/data/home`, and `exec`s `setpriv --reuid=1000
+  --regid=1000 --init-groups --inh-caps=-all`. `--inh-caps=-all` is not decoration:
+  without it the stepped-down process inherits the ambient capability set.
+  `HOME` lives on the volume because adb creates `$HOME/.android` on **every**
+  invocation and aborts when it cannot — and because the key pair in it is the
+  device-authorization identity, which should survive `docker rm`.
+- **`start.sh` is reused unchanged**, restart loop included: exit code 75 or the
+  `.restart` marker (a dependency-driven Node update) respawns node inside the
+  container; a clean exit 0 ends the loop, the shell exits, and so does the
+  container. There is no restart policy in `docker-compose.yml`, deliberately —
+  rows 20.6 and 20.12 would be unfalsifiable with one.
+
+### 26.4 The `/data` volume contract
+
+One mount. `DATA_ROOT=/data` and `DEPS_PATH=/data/dependencies` are set in the image;
+everything the app persists derives from them, and the layout mirrors the on-host
+data root exactly:
+
+```
+/data/
+  config.json        webPort, installMode, allowedHosts, frameAncestors …
+  wsscrcpy.db        the SQLite store (users, sessions, per-user settings)
+  dependencies/      adb, scrcpy-server, node-pty — hydrated on first boot
+  logs/ws-scrcpy-web.log
+  home/.android/     adb's key pair (HOME)
+  control/           markers
+```
+
+- **First boot on an empty volume** hydrates `dependencies/` through the ordinary
+  `DependencyManager.autoInstallMissing()` path (§13) — adb is downloaded, node-pty
+  and scrcpy-server are copied in from the seed. It needs outbound network once. The
+  `HEALTHCHECK` (`GET /api/config`, token-exempt) has a 180 s `start-period` for
+  exactly that window. Row 1.9 covers the offline first boot and the Retry banner.
+- **Subsequent boots** run from the volume: rows 20.11 and 20.9 assert that
+  `docker rm` + a second `up` on the same volume re-downloads nothing, keeps the
+  store's rows, appends to the log, and shows no first-run prompt.
+- **The log is on the volume, not in `docker logs`.** The console echo is TTY-only;
+  a container has no TTY. Read `/data/logs/ws-scrcpy-web.log` (`docker exec … cat`, or
+  off the volume with a throwaway `--entrypoint cat` run of the image — the pattern
+  `tests/e2e/support/dockerStack.ts` uses). Finding 20.14: until 2026-09-04 the path
+  resolved under root-owned `/app` and the container wrote no log at all.
+- **A bind mount works too**; the shim chowns whatever arrives. `docker run --user`
+  bypasses the shim entirely (it `exec`s the app as whoever it already is), in which
+  case ownership is yours to get right.
+
+### 26.5 Docker awareness
+
+`WS_SCRCPY_DOCKER=1` in the image (compared against the literal `'1'`, so a compose
+file that sets it to `0` disables it — `Boolean('0')` would not) does two things, both
+in `Config` (§23 has the modal side):
+
+1. **Presents as already configured** — a read-time overlay of `firstRunComplete:
+   true` + `installMode: 'user'`, never written to `config.json`. Written, it would
+   outlive the flag and suppress the welcome modal on any host that later mounted
+   that volume.
+2. **Exposes `docker: true`** on the `/api/config` runtime envelope and on
+   `/api/service/status`, so the UI gates without a second probe: Settings → Service
+   and → Updates are replaced by a one-line note each (*"update via `docker pull
+   …:latest`"*), the Linux "install for all users" and "uninstall" rows are hidden,
+   and the system-wide-install first-run modal never opens. **"stop server & exit" is
+   NOT gated** — it is the same teardown `docker stop` relies on (row 20.6).
+
+### 26.6 Networking
+
+- **Wireless ADB only.** No `--device`, no usbip. `adb connect <ip>:<port>` after the
+  device's wireless debugging is on; the Android 11+ pairing hole (todo item 73)
+  applies here exactly as on the desktop.
+- **Reachability is the host's problem.** The image is network-agnostic; the default
+  bridge frequently cannot reach the device's LAN, and `--network host` is the usual
+  answer. The compose file publishes on `127.0.0.1` only, deliberately.
+- **Streaming needs a secure context.** WebCodecs exists only on `https://` or
+  `localhost`, so `http://<lan-ip>:8000` lists devices and refuses to stream (finding
+  8.10; the device card says so). The README's *Serving the container over HTTPS*
+  section gives the reverse-proxy recipe; the three rules it states — `allowedHosts`
+  lists the name, `Host` is forwarded unchanged, WebSocket upgrades pass — are §24's
+  layers seen from the proxy's side.
+
+### 26.7 Verification
+
+- **`build-and-test` builds the image on every PR** (`docker buildx build --load`,
+  no push) and runs the `@docker` tier against it (`npm run test:e2e:docker`, the
+  same specs as the fast tier plus the container rows). The six `@docker-host` rows
+  drive the docker CLI on the host — compose stacks of their own, a `docker stop`, a
+  `docker pull` — and run in CI only; qa-harness's runner has no docker CLI by design
+  (`tests/e2e/README.md`).
+- **Smoke module 20** is the container path's manual checklist; the coverage register
+  carries each row's status.
+- **qa-harness** runs the container tier and the device tier nightly against the
+  digest-pinned image in its `subjects/wssw-linux.lock`.
+
+### 26.8 Key Files
+
+| File | Purpose |
+|------|---------|
+| `Dockerfile` | Two stages, digest-pinned trixie base, seed symlinks, `HEALTHCHECK`, `tini -g` entrypoint |
+| `docker/entrypoint.sh` | Root shim: `/data` ownership, `HOME=/data/home`, `setpriv` step-down |
+| `start.sh` | The reused restart loop (exit 75 / `.restart` marker) |
+| `scripts/fetch-tini.mjs` | Downloads the pinned static `tini` and verifies its SHA256 |
+| `docker-compose.yml` | The developer / CI quickstart; the stack `playwright.docker.config.ts` starts |
+| `.github/workflows/docker-publish.yml` | Tag-push trigger, Scout gate, channel-tag rule, push |
+| `src/server/Config.ts` | `dockerMode` — the `WS_SCRCPY_DOCKER` overlay and the `docker: true` envelope field |
+| `tests/docker/*.yml`, `tests/e2e/support/dockerStack.ts` | Spec-owned stacks and the docker helpers for the `@docker-host` rows |
+| `docs/specs/2026-06-09-sp4-docker-image-design.md` | The design, with §16's amendments (trixie, registry, arm64, adb's URL) |

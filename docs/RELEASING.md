@@ -53,7 +53,15 @@ This is the operational runbook for cutting a release. Every step is a concrete 
    ```bash
    gh run watch
    ```
+   The same tag push also triggers `.github/workflows/docker-publish.yml` — a separate workflow, so a Docker failure never blocks the installer release or vice versa. It builds the image, runs the Docker Scout gate (a fixable critical/high CVE fails the publish), and pushes to Docker Hub: the immutable `:X.Y.Z[-beta.N]` tag plus `:beta` for a beta, or `:stable` + `:latest` for a stable. Watch it with `gh run list --workflow docker-publish.yml`.
 8. **Verify the release** on the GitHub Releases page. Smoke-test downloads on a clean machine if possible.
+9. **Verify the image.** The channel tag must point at the tag you just cut:
+   ```bash
+   docker manifest inspect jchapz30/ws-scrcpy-web:X.Y.Z-beta.N | head -5   # exists
+   docker pull jchapz30/ws-scrcpy-web:beta                                  # or :latest for a stable
+   docker image inspect jchapz30/ws-scrcpy-web:beta --format '{{json .RepoDigests}}'
+   ```
+   The pulled `:beta` digest must equal the immutable tag's. Smoke row 20.8 (`container-publish.spec.ts`, CI only) asserts exactly this on every PR against the live Hub; a mismatch after a release means the publish workflow pushed one tag and not the other.
 
 ## Cutting a beta release
 
@@ -95,6 +103,8 @@ Beta users opt in by setting `channel=beta` in Settings (writes to `config.json`
 
 Reasoning: Velopack feed entries are append-only; deleting an entry breaks any client that already saw it.
 
+**The container image follows the same rule.** Never delete a published tag: the immutable `:X.Y.Z` stays where it is, and the fix-forward release moves the channel tag (`:beta`, or `:stable` + `:latest`) to the new version — that is the whole rollback for Docker users, since they pull the channel. If the bad image must not be pulled by name either, retag rather than delete: push the fix-forward image under the bad version's tag as well (`docker buildx imagetools create -t jchapz30/ws-scrcpy-web:X.Y.Z jchapz30/ws-scrcpy-web:X.Y.(Z+1)`), which keeps every existing reference resolvable.
+
 ## Future signer setup (placeholder)
 
 Release artifacts are currently unsigned. SignPath Foundation declined the OSS application on 2026-05-07. Code-signing is under evaluation; when a signer is selected, this section will document:
@@ -119,6 +129,8 @@ This is intentionally NOT a CI gate -- it requires a real install, a real browse
 
 ## See also
 
+- `docs/TECHNICAL_GUIDE.md` §26 -- the container image: what ships, the volume contract, the process model, verification.
+- `docs/specs/2026-06-09-sp4-docker-image-design.md` -- the Docker image design and its amendments (§16).
 - `docs/specs/2026-04-26-sp3-velopack-installer.md` -- design rationale for the packaging stack.
 - `docs/plans/2026-04-26-sp3-velopack-installer.md` -- the SP3 phasing plan.
 - `docs/plans/sp3-p6-contracts.md` -- the agent contracts that produced this runbook.

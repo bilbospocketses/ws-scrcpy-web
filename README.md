@@ -152,6 +152,7 @@ Get the latest release from the [Releases page](https://github.com/bilbospockets
 - **Windows MSI** (recommended) — installs per-machine to `C:\Program Files\WsScrcpyWeb\` with writable runtime state at `C:\ProgramData\WsScrcpyWeb\`. Requires admin (UAC) to install and to apply each subsequent update. Multi-user friendly; service mode and local mode share configuration.
 - **Windows portable ZIP** — unzip and run; no install required, no auto-updates. Useful for air-gapped setups.
 - **Linux AppImage** — download `WsScrcpyWeb-linux-stable.AppImage` (or `WsScrcpyWeb-linux-beta.AppImage` for the beta channel), `chmod +x` it, and run. See [Linux install](#linux-install-appimage) below.
+- **Docker image** — `docker pull jchapz30/ws-scrcpy-web:beta` (the beta channel; `:latest` / `:stable` follow the first stable release). Every release also gets its own immutable `:X.Y.Z[-beta.N]` tag. See [Docker](#docker) below.
 
 Release artifacts are currently **unsigned** (no Authenticode / codesign) — code-signing is under evaluation. Each release ships a `SHA256SUMS` file and [Sigstore SLSA Provenance](https://slsa.dev/) attestations for supply-chain verification.
 
@@ -189,10 +190,11 @@ on first run via the resolver and vitest globalSetup respectively.
 
 ws-scrcpy-web ships as a fully self-contained app with no system-wide installations required. There are three deployment paths, all of which keep all dependencies inside the install folder — no PATH changes, no global installs, no admin/root needed.
 
-### Three deployment paths
+### Deployment paths
 
 | Path | Best for | Notes |
 |------|----------|-------|
+| **Docker image** (`jchapz30/ws-scrcpy-web`) | Home servers, NAS boxes, anything already running containers | One `docker run` with a `/data` volume. Wireless ADB only; put it behind HTTPS to stream from another machine. See [Docker](#docker). |
 | **Windows MSI** (`*.msi`, recommended) | Most Windows users; multi-user / service-mode setups | Per-machine install to `C:\Program Files\WsScrcpyWeb\`. Writable state at `C:\ProgramData\WsScrcpyWeb\` (Authenticated Users:Modify). Velopack auto-updates apply with one UAC prompt each. |
 | **Linux AppImage** | Most Linux users | Single executable. Velopack-managed auto-updates. Optional systemd service mode. |
 | **Portable ZIP** (Windows) / source build | Air-gapped or no-install setups | Extract and run; layout shown below. |
@@ -383,6 +385,44 @@ Two things to know before relying on it:
 
 - **Wireless ADB only.** The container connects to devices over the network (`adb connect <ip>:<port>`); there is no USB pass-through, by design.
 - **Streaming needs a secure context.** The browser's video decoder (WebCodecs) is only available on `https://` or `localhost`, so opening the container over plain `http://<lan-ip>:8000` shows the device list but no connect link. The device card says so, and names the loopback URL to use instead. Open it on the serving machine, or put it behind a TLS reverse proxy.
+
+### Serving the container over HTTPS (reverse proxy)
+
+The two notes above meet in the common case: you run the container on one machine and want to stream from another. A plain `http://<lan-ip>:8000` will list devices but not stream, because the browser only exposes its video decoder in a secure context. The answer is a TLS-terminating reverse proxy on a name you control, in front of the loopback-bound container. Three things have to be true, and each one is a specific failure if it is not:
+
+1. **Tell the app its name.** `allowedHosts` in `config.json` (on the `/data` volume, e.g. `docker exec ws-scrcpy-web sh -c 'cat /data/config.json'`) must list the domain, or every request arriving with that `Host` is refused as a possible DNS-rebinding attack. It is read at startup only, so restart the container after editing it. Details in [SECURITY.md](SECURITY.md#access-control).
+2. **Forward `Host` unchanged.** The Origin check compares the browser's `Origin` against the request's own `Host`; a proxy that rewrites `Host` to `localhost` makes every API call look cross-origin and it is rejected.
+3. **Pass WebSockets through.** Device streams, the shell and the scan all ride on WebSocket upgrades; a proxy that does not forward the `Upgrade` / `Connection` headers serves the page and then nothing moves.
+
+**Caddy** does all three by default, so the whole configuration is:
+
+```caddyfile
+devices.example.com {
+    reverse_proxy 127.0.0.1:8000
+}
+```
+
+**nginx** needs the headers spelled out:
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name devices.example.com;
+    # ssl_certificate / ssl_certificate_key as usual
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;                # (2) not "localhost"
+        proxy_set_header Upgrade $http_upgrade;     # (3)
+        proxy_set_header Connection "upgrade";      # (3)
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_read_timeout 1h;                      # streams are long-lived
+    }
+}
+```
+
+and, in either case, `{ "allowedHosts": ["devices.example.com"] }` in the container's `config.json` (1). Keep the container itself on `127.0.0.1:8000` as in the `docker run` above — the proxy is the only thing that should reach it. Traefik, HAProxy and the rest work the same way; the three rules are the whole contract.
 
 Every published image passes a [Docker Scout](https://docs.docker.com/scout/) gate in the publish workflow — a fixable critical or high CVE fails the publish — and the Hub repository has Scout analysis enabled, so already-published images are re-evaluated as advisories land. For now, use the MSI, AppImage, or portable ZIP.
 
