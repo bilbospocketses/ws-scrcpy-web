@@ -14,8 +14,8 @@
 //
 // Current state (verified 2026-09-06 on the beta.103 MSI, three clean guests,
 // UAC on): the MSI-only artifact has NO LockPermissions/MsiLockPermissionsEx
-// table and the hook runs after InstallFiles, so the hook's grant SURVIVES the
-// install. `icacls` shows an explicit `Authenticated Users:(OI)(CI)(M)` straight
+// table and its InstallExecuteSequence runs InstallFiles (4000) before
+// InstallHookDeferred (4002), so the hook's grant SURVIVES the install. `icacls` shows an explicit `Authenticated Users:(OI)(CI)(M)` straight
 // after msiexec, `is_writable` is true on the first launch, and `ensure_writable`
 // early-returns — no UAC fires (smoke row 1.10 describes exactly that).
 //

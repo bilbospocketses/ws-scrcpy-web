@@ -63,8 +63,8 @@ export function openBrowser(url: string): void {
  * Decide whether the server should auto-open a browser tab at startup. Pure, so
  * it is unit-testable.
  *
- * UNDER THE NATIVE LAUNCHER (`launcherManaged` — the supervisor hands every
- * Node spawn a DEPS_PATH, so its presence is the launcher's signature) the
+ * UNDER THE NATIVE LAUNCHER (`launcherManaged` ← WS_SCRCPY_LAUNCHER=1, which
+ * launcher/src/spawn.rs sets on every Node spawn and nothing else does) the
  * supervisor is the only authority: it sets WS_SCRCPY_OPEN_BROWSER=1 on its
  * FIRST Node spawn of a user launch (`launcherFreshLaunch`, D1) and on nothing
  * else. A supervisor RESTART (webPort change, crash) is not a fresh launch and
@@ -75,9 +75,11 @@ export function openBrowser(url: string): void {
  * redirects. Measured by qa-harness Arc 1a: 2 tabs after 8000→8010 with
  * firstRunComplete=false, exactly 1 with it true (smoke row 1.8).
  *
- * WITHOUT A LAUNCHER (dev, a hand-run dist) nobody can signal anything, so the
- * very first run (`firstRunComplete === false`) opens the welcome modal for the
- * user — the original v0.1.9 open, kept only for that case.
+ * WITHOUT A LAUNCHER (`npm start`, the start.sh / start.cmd scripts, a hand-run
+ * dist) nobody can signal anything, so the very first run (`firstRunComplete
+ * === false`) opens the welcome modal for the user — the original v0.1.9 open,
+ * kept only for that case. DEPS_PATH is deliberately NOT the launcher's
+ * signature: Docker, the e2e harness and those start scripts set it too.
  *
  * NEVER opens in service mode (session-0 service instances are reached via the
  * install-handoff redirect) or when a relaunch asked for suppression

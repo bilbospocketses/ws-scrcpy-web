@@ -320,8 +320,8 @@ fn main() {
     // Update.exe (which silently dies during the swap on Windows).
     //
     // On a fresh install this is a NO-OP: the `--veloapp-install` hook grants
-    // the ACL at install time and, since the MSI-only artifact (verified on
-    // beta.103: no permission table in the MSI), that grant survives — so
+    // the ACL at install time, and because the MSI-only artifact has no
+    // permission table (verified on beta.103) that grant survives — so
     // `ensure_writable` finds the root writable and returns without any UAC
     // (smoke row 1.10). It remains the FALLBACK for installs that predate the
     // hook and for any future MSI that resets DACLs: there, ShellExecuteEx with

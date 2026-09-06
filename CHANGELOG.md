@@ -24,15 +24,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   RESTART (port change, crash) opens none, whatever `firstRunComplete` says. Before, a port change made
   while the WelcomeModal's "don't show again" box had never been ticked — the state every fresh install
   is in — popped a second tab next to the one the page redirects. Measured by qa-harness Arc 1a
-  (2026-09-06): 2 tabs after 8000→8010 with the flag false, exactly 1 with it true. Dev runs without a
-  launcher keep the first-run open. (smoke row 1.8)
+  (2026-09-06): 2 tabs after 8000→8010 with the flag false, exactly 1 with it true. The launcher now
+  marks its spawns with `WS_SCRCPY_LAUNCHER=1`; `npm start`, the `start.sh` / `start.cmd` scripts and a
+  hand-run dist carry no such mark and keep the first-run open. (smoke row 1.8)
 - **An auto-shifted port is no longer persisted when a sibling instance of the app holds the configured
-  one.** An elevated second instance ("Run as administrator", smoke row 3.7b) found 8000 busy, shifted to
-  8001 and wrote that into the shared `config.json` while the user-level server kept serving 8000 — so
-  the next launch read a port nothing served. The resolver now asks the busy port `GET /api/config` (the
-  launcher's own token-exempt probe); when a ws-scrcpy-web answers, this instance binds the shifted port
-  for its own lifetime and leaves the file and its in-memory `webPort` alone. Another program holding
-  the port still persists the shift, as before.
+  one.** An elevated second instance ("Run as administrator", smoke row 3.7 case b) found 8000 busy,
+  shifted to 8001 and wrote that into the shared `config.json` while the user-level server kept serving
+  8000 — so the next launch read a port nothing served. The resolver now asks the busy port
+  `GET /api/config` (the launcher's own token-exempt probe); when a ws-scrcpy-web answers, this instance
+  binds the shifted port for its own lifetime and leaves the file and its in-memory `webPort` alone.
+  Another program holding the port still persists the shift, as before, and so does the **service**
+  instance (`WS_SCRCPY_SERVICE=1`): on the Windows service-install handoff the port it finds busy is the
+  local node it is replacing, and the tray and the install poll read the service's port from
+  `config.json`. Known limit: with users configured, the probe is answered 401 and the guard is inert.
 
 ### Changed
 

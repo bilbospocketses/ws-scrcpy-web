@@ -1,14 +1,26 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
-import { isSiblingInstance } from '../siblingInstance';
+import { isServiceInstance, isSiblingInstance } from '../siblingInstance';
 
 /**
  * The resolver must not persist an auto-shift when the configured port is held
- * by another instance of this app (smoke row 3.7b: an elevated second instance
- * wrote its shifted port into the shared config.json). These run against real
- * loopback servers, because the whole question is what a socket answers.
+ * by another instance of this app (smoke row 3.7, case b: an elevated second
+ * instance wrote its shifted port into the shared config.json). These run
+ * against real loopback servers, because the whole question is what a socket
+ * answers.
  */
+describe('isServiceInstance', () => {
+    it('is true only for the service units, which start Node with WS_SCRCPY_SERVICE=1', () => {
+        // The service instance keeps persisting its shift: on the Windows
+        // handoff the port it finds busy is held by the local node it replaces,
+        // and the tray reads the service's port from config.json.
+        expect(isServiceInstance({ WS_SCRCPY_SERVICE: '1' })).toBe(true);
+        expect(isServiceInstance({ WS_SCRCPY_SERVICE: 'true' })).toBe(false);
+        expect(isServiceInstance({})).toBe(false);
+    });
+});
+
 type Reply = { status: number; body: string; type?: string };
 
 function serve(handler: (path: string) => Reply | 'hang'): Promise<{ server: Server; port: number }> {

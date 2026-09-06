@@ -1036,9 +1036,9 @@ export class Config {
      * file and the in-memory `webPort` alone — otherwise the shared config.json
      * would name a port the surviving instance does not serve, and every later
      * save from this instance would carry it too. Measured 2026-09-06 (smoke
-     * row 3.7b): an elevated second instance wrote 8001 while the user-level
-     * server kept serving 8000. The bound port is still reported through
-     * firstRunStatus, and HttpServer binds it via `servers[0].port`.
+     * row 3.7, case b): an elevated second instance wrote 8001 while the
+     * user-level server kept serving 8000. The bound port is still reported
+     * through firstRunStatus, and HttpServer binds it via `servers[0].port`.
      */
     public setActualWebPort(actualPort: number, opts: { persist?: boolean } = {}): void {
         const shifted = actualPort !== this._appConfig.webPort;

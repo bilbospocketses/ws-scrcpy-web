@@ -138,7 +138,7 @@ describe('Config — AppConfig extension', () => {
 
     it('setActualWebPort with persist:false reports the shift but leaves the file and in-memory webPort alone', () => {
         // The sibling case: another instance of this app holds the configured
-        // port, so it is right and must stay in config.json (smoke row 3.7b).
+        // port, so it is right and must stay in config.json (smoke row 3.7, case b).
         const configPath = setup({ webPort: 8000 });
         const cfg = Config.getInstance();
         const before = fs.readFileSync(configPath, 'utf-8');
