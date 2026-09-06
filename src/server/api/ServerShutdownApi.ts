@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { requireAdmin } from '../auth/requireAdmin';
 import { Logger } from '../Logger';
+import { isLoopback } from '../security/loopback';
 
 const log = Logger.for('ServerShutdownApi');
 
@@ -26,7 +27,28 @@ const log = Logger.for('ServerShutdownApi');
  *     daemon. process.exit(0) is a clean exit; the launcher's supervisor sees
  *     `decide_restart(0, false) == None` and does NOT restart (exit 75 is the
  *     restart sentinel — deliberately NOT used here).
- *   - No auth: localhost-only intent. Future hardening if exposed remotely.
+ *
+ * Who may call it (item 114, 2026-09-06 — this used to read "No auth:
+ * localhost-only intent", which stopped being true the moment the per-instance
+ * token shipped):
+ *
+ *   - **Loopback only.** Anything else gets 403 and nothing runs. `listen()`
+ *     binds every interface and `isHostAllowed` accepts any IP literal, so the
+ *     remote address is what keeps this off the LAN — the same reasoning as
+ *     `WhoamiApi` and the embed-consent endpoints.
+ *   - **Token-exempt** (security/instanceToken.ts), because the tray helper is
+ *     a process and has no cookie. It POSTed here cookielessly since v0.1.8 and
+ *     the token gate answered 403 from the day it landed, so the tray's Exit —
+ *     the ONLY stop affordance in service mode — silently did nothing.
+ *   - **Still behind AuthGate.** In locked mode an unauthenticated caller is
+ *     401'd before reaching this handler, so the tray's Exit does not work
+ *     there. Exempting it would mean `requireAdmin` falling back to the
+ *     implicit admin for a cookieless caller, which is exactly what
+ *     `AuthGate`'s fail-closed comment forbids; whether a loopback process may
+ *     stop a locked-mode server is a policy question for the operator, not a
+ *     bug fix. See todo item 114.
+ *   - **`requireAdmin` still runs**, so a signed-in non-admin browser cannot
+ *     stop the server.
  */
 const SHUTDOWN_DELAY_MS = 100;
 
@@ -62,10 +84,21 @@ export class ServerShutdownApi {
     public async handle(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
         if (req.url !== '/api/server/shutdown' || req.method !== 'POST') return false;
 
+        res.setHeader('Content-Type', 'application/json');
+
+        // Loopback is the authorization for the cookieless caller this endpoint
+        // exists for (the tray helper). Checked BEFORE requireAdmin so an
+        // off-box caller learns nothing about whether auth is on.
+        if (!isLoopback(req.socket?.remoteAddress ?? '')) {
+            log.warn(`refusing shutdown from non-loopback ${req.socket?.remoteAddress ?? '<unknown>'}`);
+            res.writeHead(403);
+            res.end(JSON.stringify({ error: 'this endpoint answers this machine only' }));
+            return true;
+        }
+
         if (!requireAdmin(req, res)) return true;
 
         log.info('shutdown requested via /api/server/shutdown');
-        res.setHeader('Content-Type', 'application/json');
         res.writeHead(200);
         res.end(JSON.stringify({ ok: true }));
 

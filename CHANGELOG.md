@@ -17,6 +17,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The Windows tray's "Exit" works again.** The tray helper POSTs `/api/server/shutdown` cookielessly —
+  it is a process, not a browser — and the per-instance token gate has answered it `403 {"reason":"missing
+  or invalid token"}` since that gate shipped, so clicking Exit → Yes killed only the tray icon (the
+  launcher's supervisor put it back within ten seconds) and left the server running. Measured against a
+  real server, both before and after. That POST is now exempt from the token, and `ServerShutdownApi`
+  refuses any caller that is not on loopback (403, with nothing scheduled and nothing exited), the same
+  shape `WhoamiApi` uses. A unit test had encoded the broken behaviour as correct; it now pins the fix.
+  **Locked mode is unchanged and still 401s the tray** — exempting AuthGate would let `requireAdmin` fall
+  back to the implicit admin for a cookieless caller, which that gate's fail-closed rule forbids; whether
+  a loopback process may stop a locked-mode server is an operator policy question, tracked separately.
+
 ## [0.1.30-beta.111] - 2026-09-06
 
 ### Added

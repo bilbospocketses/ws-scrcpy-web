@@ -11,11 +11,18 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
  * surface and on every WebSocket handshake. A non-browser caller that never
  * loaded the page has no cookie and is rejected.
  *
- * Two probes are deliberately exempt, both sent by a process rather than a
+ * Three requests are deliberately exempt, all sent by a process rather than a
  * browser and so cookieless: the launcher's `GET /api/config` upgrade probe,
- * which only reads non-sensitive config to detect the live server, and the
- * sibling guard's `GET /api/whoami` identity probe (siblingInstance.ts), whose
- * handler is loopback-only so the exemption reaches nothing off-box.
+ * which only reads non-sensitive config to detect the live server; the sibling
+ * guard's `GET /api/whoami` identity probe (siblingInstance.ts); and the tray
+ * helper's `POST /api/server/shutdown` quit (tray/src/main.rs). Each of those
+ * handlers is loopback-only, so no exemption reaches anything off-box.
+ *
+ * The shutdown exemption is a fix, not a widening (item 114, 2026-09-06): the
+ * tray has POSTed that path cookieless since v0.1.8, and once this token landed
+ * the gate answered it 403 — measured, with the handler's own log line absent —
+ * so the tray's Exit silently stopped working. It is the ONLY stop affordance
+ * in service mode, where Settings' "stop server & exit" is disabled by design.
  */
 
 const COOKIE_NAME = 'ws_scrcpy_token';
@@ -87,6 +94,12 @@ export function requiresToken(method: string | undefined, pathname: string): boo
         return false;
     }
     if (m === 'GET' && pathname === '/api/whoami') {
+        return false;
+    }
+    // The tray helper's quit. Cookieless by nature (a process, not a browser);
+    // `ServerShutdownApi` refuses any caller that is not on loopback, and the
+    // Origin check above still rejects a cross-origin browser POST.
+    if (m === 'POST' && pathname === '/api/server/shutdown') {
         return false;
     }
     return true;
