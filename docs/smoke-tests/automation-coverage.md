@@ -10,18 +10,20 @@ ids are stable and gappy; so are the lines here.
 
 | | Rows | Where |
 |---|---|---|
-| Automated, fast tier | 29 | `build-and-test`, every PR |
-| Automated, container tier | 7 | `build-and-test`'s docker step, and qa-harness nightly |
-| Automated, device tier | 16 | qa-harness, nightly |
+| Automated, fast tier | 30 | `build-and-test`, every PR |
+| Automated, container tier | 11 | `build-and-test`'s docker step, and qa-harness nightly |
+| Automated, device tier | 17 | qa-harness, nightly |
 | Windows guest | 25 | qa-harness, nightly, once P4 lands |
 | Windows guest **and** Linux residual | 2 | Windows half P4; Linux half nobody |
-| Automatable, no spec written yet | 6 | nobody yet — 1 fast, 4 container, 1 device |
+| Automatable, no spec written yet | 0 | — (the six of 2026-09-04 were written 2026-09-06, item 104) |
 | **Residual — Linux installer and desktop** | **48** | nobody |
 | **Residual — un-automatable** | **7** | nobody, ever |
 | **Total** | **140** | |
 
-**Automated today: 52 of 140 = 37 %.** After P4: 77 of 140 = 55 %, plus the
-Windows halves of the two split rows.
+**Automated today: 58 of 140 = 41 %.** After P4: 83 of 140 = 59 %, plus the
+Windows halves of the two split rows. (52 / 37 % and 77 / 55 % until 2026-09-06,
+when item 104 wrote the six specs this table used to list as "automatable, no
+spec".)
 
 Three different row counts have been quoted for this document, and only one of them
 is wrong. The plan that commissioned this register worked from **127**, which was
@@ -37,7 +39,10 @@ entirely on the Linux gap this register exists to measure.
 `todo_ws_scrcpy_web` item 13 estimated "~60 % of the current smoke checklist goes
 from manual minutes to automated seconds". That figure counted partial rows as
 covered and assumed the Linux installer rows were reachable. The measured number
-is **37 %**, and 55 % once P4 lands.
+was **37 %** when this register was written, **41 %** since item 104, and 59 %
+once P4 lands. Item 13 was closed into this register on 2026-09-06: the register
+is the source of truth for coverage, and the only ws-scrcpy-web-side action it
+had left was item 104.
 
 **Seven automated rows carry a manual half.** Each states both halves on its own
 line below: 8.5, 8.8 and 9.5, whose remainder `smoke-test.md` itself calls
@@ -54,8 +59,9 @@ Buckets, once each, no row in two:
 
 - **fast** — an untagged spec in `tests/e2e/`, run by `build-and-test` on every PR.
 - **container** — a `@docker` spec. CI's docker step runs all of them; qa-harness's
-  nightly docker tier runs all but the two marked `@docker-host`, which drive
-  compose stacks of their own and need a docker CLI the runner does not have.
+  nightly docker tier runs all but the six marked `@docker-host` (1.9, 9.5, 20.6,
+  20.8, 20.11, 20.12), which drive the docker CLI on the host — compose stacks of
+  their own, a `docker stop`, a `docker pull` — and need a CLI the runner does not have.
 - **device** — a `@device` spec under `tests/e2e/device/`. qa-harness only, nightly,
   against the Android emulator P2 brings onto the run network.
 - **Windows guest** — P4's territory. Not automated today.
@@ -107,7 +113,7 @@ Sorted by module, then by row number, which is not the doc's execution order.
 | 4.2-user | `[Linux]` | Install user scope | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
 | 4.3 | `[Win]` | Install confirm UX | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
 | 4.4 | `[Linux]` | Scope-radio legibility + detection | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
-| 4.5 | `[Both]` | Confirm-dialog button style | no spec yet - fast | Automatable in the fast tier: a class assertion on confirm modals the suite already opens. The cheapest unclaimed row in the doc. |
+| 4.5 | `[Both]` | Confirm-dialog button style | fast | `confirm-dialogs.spec.ts`. The dialogs the tier can open — the revoke `ConfirmModal` and the service install's `AdminConfirmModal` pre-flight — carry `modal-button` on both buttons and resolve to one computed style (outline = text colour, transparent ground). The shell-close confirm's class is pinned by its unit test; a live shell needs a device. **Observation, not a failure:** `ResetConfirmModal` uses `settings-btn`, not the shared class — logged as a todo item. |
 | 4.6 | `[Linux]` | Service-unit hygiene | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
 | 5.1 | `[Linux]` | Same-user uninstall (served-by-service) | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
 | 5.2 | `[Linux]` | Different-admin uninstall | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
@@ -158,7 +164,7 @@ Sorted by module, then by row number, which is not the doc's execution order.
 | 11.2 | `[Linux]` | No-libfuse2 in-app update | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
 | 11.3 | `[Linux]` | Locator fix watch (velopack#921) | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
 | 11.4 | `[Win]` | PerMachine intact | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
-| 12.1 | `[Linux]` | Local-mode clean exit + adb teardown | fast | `lifecycle.spec.ts`. **Split:** the bare server is covered; the container half is rows 20.6 and 20.12, both unwritten. No part of it is manual. |
+| 12.1 | `[Linux]` | Local-mode clean exit + adb teardown | fast | `lifecycle.spec.ts`. **Split:** the bare server is covered here; the container half is rows 20.6 and 20.12 (`container-lifecycle.spec.ts`). No part of it is manual. |
 | 12.2 | `[Both]` | Stop-exit service-mode gating | Windows guest (P4) + residual: linux-desktop | **Windows half:** P4. **Linux half:** residual - the gate is only meaningful with a systemd unit actually installed. |
 | 12.3 | `[Win]` | Local-mode reaps everything | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
 | 12.4 | `[Linux]` | DATA_ROOT override honored | fast | `lifecycle.spec.ts`. **Partial:** the Node side is covered; the launcher half stays manual. |
@@ -204,13 +210,13 @@ Sorted by module, then by row number, which is not the doc's execution order.
 | 20.3 | `[Both]` | libfuse2 banner | residual: un-automatable | Nothing left to test - the libfuse2 gate this row checked no longer exists. A tombstone, kept so the number is not reused. |
 | 20.4 | `[Both]` | "install for all users" row in a container | automatable — container | Unblocked 2026-09-04: the decision was taken (hide in Docker, and refuse server-side). The row is now an ordinary container assertion. |
 | 20.5 | `[Both]` | "uninstall ws-scrcpy-web" row in a container | automatable — container | Unblocked 2026-09-04 with 20.4, same decision. |
-| 20.6 | `[Both]` | "stop server & exit" in a container | no spec yet - container | Automatable as a `@docker-host` spec that drives `docker stop` from outside the container. The bare-server half is already covered by 12.1. |
+| 20.6 | `[Both]` | "stop server & exit" in a container | container | `container-lifecycle.spec.ts` `@docker-host`, **CI only**. The confirm, the 200, then `docker inspect` = exited 0, still exited 5 s later, and the adb-teardown line in the log on the volume. |
 | 20.7 | `[Both]` | Linux system-wide-install offer in a container | container | `docker-gating.spec.ts` |
-| 20.8 | `[Both]` | Pull `:beta` from Docker Hub | no spec yet - container | Automatable as a pull-and-compare check against `jchapz30/ws-scrcpy-web:beta`, which publishes on every beta since beta.90 (2026-09-03) and passes the Scout gate since beta.94; nothing blocks the spec now. |
+| 20.8 | `[Both]` | Pull `:beta` from Docker Hub | container | `container-publish.spec.ts` `@docker-host`, **CI only** — needs Docker Hub. `:beta`'s digest equals the highest `0.1.30-beta.N` tag's (the D3 channel rule), the pull succeeds, and the pulled image's RepoDigests contain that digest. An anonymous-pull 429 is a retry, not a finding. |
 | 20.9 | `[Both]` | First-boot hydrate on a fresh `/data` volume | container | `docker-gating.spec.ts` |
-| 20.10 | `[Both]` | Wireless connect from a container | no spec yet - device | Automatable by pointing the device tier at the container subject instead of the bare server. Needs the emulator and the container on one network. |
-| 20.11 | `[Both]` | Persistence across `docker rm` + re-run | no spec yet - container | Automatable as a `@docker-host` spec. Unblocked 2026-09-04: finding 20.14 is fixed, so the container writes its log to `/data/logs` on the volume and the log half can pass. |
-| 20.12 | `[Both]` | Graceful `docker stop` | no spec yet - container | Automatable as a `@docker-host` spec asserting exit 0 within the grace period. |
+| 20.10 | `[Both]` | Wireless connect from a container | device | `device/container-connect.spec.ts`. Asserts the subject is the container (`runtime.docker === true`) and a wireless connect lists the device through its adb. **Authored 2026-09-06 without a run** — the emulator is qa-harness-only; its first run there is the verification. |
+| 20.11 | `[Both]` | Persistence across `docker rm` + re-run | container | `container-lifecycle.spec.ts` `@docker-host`, **CI only**. `compose rm --stop` then `up --wait` on the same volume: dependencies present at once (no second hydrate in the log), the store's rows identical, the log appended rather than replaced, `config.json` byte-identical when present, no prompt over the second boot's home page. |
+| 20.12 | `[Both]` | Graceful `docker stop` | container | `container-lifecycle.spec.ts` `@docker-host`, **CI only**. `docker stop` returns inside docker's 10 s grace with exit 0 (143/137 are the failures), and the log on the volume carries `Stopping adb daemon (kill-server)`. |
 | 20.13 | `[Both]` | `HEALTHCHECK` healthy | container | `tests/e2e/support/dockerStack.ts` — `composeUpFresh` brings the stack up with `--wait`, which refuses to proceed unless the image reports healthy. |
 
 ---
@@ -314,7 +320,7 @@ from `tests/docker/` (see `tests/e2e/README.md`).
 | 10.4 | per-instance token / reload on restart | automated on a spec-owned server |
 | 10.5 | 404 + security headers | automated — the 404 now holds for a document request too, and the headers are server-wide (findings 10.7, 10.8) |
 | 10.6 | `allowedHosts` | automated — the listed host served, an unlisted one refused, defaults intact, on a spec-owned server seeded with the key |
-| 12.1 | clean exit + adb teardown | automated for the bare server (the UI path: confirm, the stopped notice, exit 0, no `.restart` marker, the teardown lines in order). The container half is 20.6 / 20.12 |
+| 12.1 | clean exit + adb teardown | automated for the bare server (the UI path: confirm, the stopped notice, exit 0, no `.restart` marker, the teardown lines in order). The container half is 20.6 / 20.12, automated 2026-09-06 |
 | 12.4 | `DATA_ROOT` honoured | automated for the Node side — and see finding 12.5 for what "same root" actually rests on |
 
 ### Findings — surfaced by task 11, deliberately NOT fixed there

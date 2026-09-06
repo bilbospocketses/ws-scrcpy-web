@@ -1,0 +1,25 @@
+# The stack for smoke rows 20.6, 20.11 and 20.12 (container-lifecycle.spec.ts):
+# the same image as docker-compose.yml on its own volume and port, so the spec
+# can stop it, remove it and bring it back on the same volume without touching
+# the main stack playwright.docker.config.ts starts on 8123 for every other
+# `@docker` spec.
+#
+# No restart policy, deliberately: rows 20.6 and 20.12 assert that the container
+# EXITS (0) and stays exited. A `restart:` here would turn a clean exit into a
+# respawn and make both rows unfalsifiable.
+#
+# Port 8132 on the host: 8123–8131 are taken by the main stack, the other
+# spec-owned stacks and the private servers (tests/e2e/README.md).
+name: wssw-lifecycle
+services:
+  ws-scrcpy-web:
+    extends:
+      file: ../../docker-compose.yml
+      service: ws-scrcpy-web
+    container_name: wssw-lifecycle
+    ports: !override
+      - "127.0.0.1:8132:8000"
+    volumes: !override
+      - wsdata-lifecycle:/data
+volumes:
+  wsdata-lifecycle:

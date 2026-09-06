@@ -17,6 +17,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Six more smoke rows are automated — the register's "automatable, no spec yet" set is empty.**
+  4.5 (`confirm-dialogs.spec.ts`, fast: the revoke and service-install confirms carry the shared
+  `modal-button` class and resolve to one computed style — outline in the text colour, transparent
+  ground — identical across dialogs); 20.6, 20.11 and 20.12 (`container-lifecycle.spec.ts`,
+  `@docker-host`: "stop server & exit" from inside a container exits 0 and stays exited, `docker stop`
+  returns inside the 10 s grace with exit 0 and the adb-teardown line on the volume's log, and `docker
+  rm` + a second `compose up` on the same volume keeps the store, the hydrated dependencies and the
+  log without a second hydrate or a prompt); 20.8 (`container-publish.spec.ts`, `@docker-host`:
+  `:beta` on Docker Hub carries the newest `0.1.30-beta.N` tag's digest, pulls, and the pulled image's
+  RepoDigests agree); 20.10 (`device/container-connect.spec.ts`, device tier: the subject is the
+  container and a wireless connect lists the device — authored without a run, the emulator being
+  qa-harness-only). New spec-owned stack `tests/docker/compose.lifecycle.yml` on port 8132 with no
+  restart policy, and `support/dockerStack.ts` gains stop / inspect / recreate-keeping-volume /
+  read-off-the-volume / pull helpers. The coverage register moves to **58 of 140 = 41 %** (59 % after
+  P4); `smoke-test.md` rows 4.5, 12.1, 20.6, 20.8, 20.10, 20.11 and 20.12 carry the automated markers.
+  Found on the way: `ResetConfirmModal`'s buttons use `settings-btn`, not the shared `modal-button` —
+  recorded as a finding, not fixed here.
+
 ### Changed
 
 - **Docs: the container is now a documented deployment path, end to end.** README's deployment-paths
