@@ -154,23 +154,28 @@ its own data root that is wiped and re-seeded per run. The log those rows read
 is `<dataRoot>/logs/ws-scrcpy-web.log`: the console echo is TTY-only, so a
 spawned child's captured stdout never carries it.
 
-**`@docker-host`.** Two of those rows — 1.9's offline stack and 9.5's no-node-pty image —
-drive a compose stack of their own through the docker CLI. They run in this repo's CI,
-where the daemon is the tier's execution environment, and carry `@docker-host` beside
-`@docker`. When qa-harness owns the stack (`QA_EXTERNAL_STACK=1`, inside its runner, which
-has no docker CLI by design) the container config filters that tag out. A partition by tag,
-the same mechanism that keeps `@docker` out of the fast tier — not a skip. Before this, every
-harness run reported the two as `spawnSync docker ENOENT`, a failure naming nothing near its
-cause.
+**`@docker-host`.** Six rows — 1.9's offline stack, 9.5's no-node-pty image, the three
+container-lifecycle rows (20.6, 20.11, 20.12) and the published-image row (20.8) —
+drive the docker CLI on the host: a compose stack of their own, a `docker stop`, a
+`docker pull`. They run in this repo's CI, where the daemon is the tier's execution
+environment, and carry `@docker-host` beside `@docker`. When qa-harness owns the stack
+(`QA_EXTERNAL_STACK=1`, inside its runner, which has no docker CLI by design) the container
+config filters that tag out. A partition by tag, the same mechanism that keeps `@docker` out
+of the fast tier — not a skip. Before this, every harness run reported the first two as
+`spawnSync docker ENOENT`, a failure naming nothing near its cause.
 
 
-Two `@docker` rows need a container the main stack cannot be, and bring up
-their own compose stacks from `tests/docker/` beside it (`support/dockerStack.ts`):
+Three `@docker` stacks exist beside the main one, from `tests/docker/`
+(`support/dockerStack.ts`):
 
-| Row | Stack | Why its own |
+| Row(s) | Stack | Why its own |
 |---|---|---|
 | 1.9 first-run bootstrap banner | `compose.offline.yml`, port 8124 | boots with **no working resolver** (`dns: 127.0.0.1`) so every download fails at once; the spec then writes a real resolver into `/etc/resolv.conf` (root `docker exec`) and clicks Retry. Not `network_mode: none` — such a container can never be connected afterwards — and not an `internal` network, which also disables port publishing so the host could not reach it at all. |
 | 9.5 shell unavailable shows a reason | `compose.no-node-pty.yml`, port 8125 | built from `tests/docker/Dockerfile.no-node-pty`, one `rm` of the node-pty prebuilt layered on the already-built image tag. Not a stage in the main Dockerfile: a trailing stage there would become the default build target and every plain `docker build` would ship it. |
+| 20.6, 20.11, 20.12 container lifecycle | `compose.lifecycle.yml`, port 8132 | the same image on its own volume, with **no restart policy**, so the specs can stop it, `rm` it and bring it back on the same volume — and assert that a clean exit *stays* exited. The main stack cannot be stopped under the other `@docker` specs. The server log is read off the volume with a throwaway `--entrypoint cat` run of the app image (`readVolumeFile`), because the console echo is TTY-only and `docker logs` never carries it. |
+
+Row 20.8 (`container-publish.spec.ts`) brings up nothing: it reads Docker Hub's tags
+API, pulls `:beta`, and compares digests.
 
 Both resolve `docker` from the shell, as `playwright.docker.config.ts`'s
 `docker compose up --wait` already does: the daemon is the tier's execution

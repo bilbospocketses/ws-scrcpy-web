@@ -60,3 +60,49 @@ export function dockerLogs(container: string): string {
         return `(docker logs failed: ${String(err)})`;
     }
 }
+
+/** Docker's own word for the container's state ('running', 'exited', …) and its exit code. */
+export function dockerInspectState(container: string): { status: string; exitCode: number } {
+    const out = docker(['inspect', '--format', '{{.State.Status}} {{.State.ExitCode}}', container], 30_000).trim();
+    const [status = '', code = 'NaN'] = out.split(' ');
+    return { status, exitCode: Number(code) };
+}
+
+/** `docker stop` with docker's default grace (10 s), timed: rows 20.6/20.12 assert it finishes inside it. */
+export function dockerStop(container: string): { elapsedMs: number } {
+    const started = Date.now();
+    docker(['stop', container], 60_000);
+    return { elapsedMs: Date.now() - started };
+}
+
+/**
+ * `docker rm` the stack's container and bring it back on the SAME volume — row
+ * 20.11's "docker rm the container, keep the volume, compose up again". Not
+ * composeUpFresh, which is `down -v` and would take the volume with it.
+ */
+export function composeRecreateKeepingVolume(file: string, opts?: { timeoutMs?: number }): void {
+    const f = composeFile(file);
+    docker(['compose', '-f', f, 'rm', '--stop', '--force'], 120_000);
+    docker(['compose', '-f', f, 'up', '--wait'], opts?.timeoutMs ?? 300_000);
+}
+
+/**
+ * Read a file off a named volume without a running container: a throwaway run
+ * of the app image itself with `cat` as the entrypoint. The app image rather
+ * than a `busybox`/`alpine` pull because it is already present wherever this
+ * tier runs, and the tier must not depend on Docker Hub being reachable.
+ */
+export function readVolumeFile(volume: string, filePath: string): string {
+    const image = process.env['WSSW_IMAGE'] ?? 'ws-scrcpy-web:local';
+    return docker(['run', '--rm', '--entrypoint', 'cat', '-v', `${volume}:/data:ro`, image, filePath], 60_000);
+}
+
+/** `docker pull`, generously timed: a first pull of the ~200 MB image on a cold runner. */
+export function dockerPull(ref: string): void {
+    docker(['pull', ref], 600_000);
+}
+
+/** `docker image inspect --format <fmt>` for one image ref. */
+export function dockerImageInspect(ref: string, format: string): string {
+    return docker(['image', 'inspect', '--format', format, ref], 30_000).trim();
+}
