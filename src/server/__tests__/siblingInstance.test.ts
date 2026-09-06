@@ -45,7 +45,7 @@ function envelope(webPort: number): string {
 }
 
 function identity(): string {
-    return JSON.stringify({ app: 'ws-scrcpy-web', pid: 4242, installMode: null, version: '0.1.30-beta.105' });
+    return JSON.stringify({ app: 'ws-scrcpy-web', pid: 4242, installMode: null, version: '0.1.30-beta.106' });
 }
 
 const LOCKED_401: Reply = { status: 401, body: JSON.stringify({ error: 'unauthorized' }) };
@@ -79,7 +79,7 @@ describe('isSiblingInstance', () => {
         expect(await isSiblingInstance(port)).toBe(true);
     });
 
-    it('still recognises a pre-beta.105 sibling by its GET /api/config envelope', async () => {
+    it('still recognises a pre-beta.106 sibling by its GET /api/config envelope', async () => {
         // An older build has a token-gated whoami (403 to a cookieless caller)
         // and no `app` field. Its config envelope is the identification it can
         // give, so it stays accepted: during an update the process holding the
