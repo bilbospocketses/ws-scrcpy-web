@@ -12,10 +12,15 @@ import { Modal } from '../ui/Modal';
  * - cancel button → resolves false
  * - Esc / backdrop / close-X → resolves false
  *
- * Reset is non-destructive (it clears the first-run / bookmark flags and
- * reloads the page), so the confirm button uses the primary/accent colour
- * (settings-btn-primary, #5b9aff) — NOT the danger-outline red the uninstall
- * modal uses for its genuinely destructive action.
+ * Buttons carry the shared confirm-dialog style, `modal-button` (smoke row
+ * 4.5 / item 35): the text colour as a hairline outline on a transparent
+ * ground, the same as ConfirmModal, AdminConfirmModal and
+ * ShellCloseConfirmModal. Until 2026-09-06 the confirm was an accent-blue
+ * `settings-btn-primary` outline, chosen to say "non-destructive" by contrast
+ * with the uninstall modal's danger red; the user ruled for uniformity across
+ * every confirm dialog instead (todo item 111), and `confirm-dialogs.spec.ts`
+ * now asserts this dialog beside the others. The danger red stays reserved for
+ * the uninstall modal.
  */
 export class ResetConfirmModal extends Modal {
     private resolveFn: ((value: boolean) => void) | null = null;
@@ -49,14 +54,14 @@ export class ResetConfirmModal extends Modal {
 
         const cancelBtn = document.createElement('button');
         cancelBtn.type = 'button';
-        cancelBtn.className = 'settings-btn reset-cancel';
+        cancelBtn.className = 'modal-button reset-cancel';
         cancelBtn.textContent = 'cancel';
         cancelBtn.addEventListener('click', () => this.resolveAndClose(false));
         footer.appendChild(cancelBtn);
 
         const confirmBtn = document.createElement('button');
         confirmBtn.type = 'button';
-        confirmBtn.className = 'settings-btn settings-btn-primary reset-confirm';
+        confirmBtn.className = 'modal-button modal-button-primary reset-confirm';
         confirmBtn.textContent = 'confirm reset';
         confirmBtn.addEventListener('click', () => this.resolveAndClose(true));
         footer.appendChild(confirmBtn);
