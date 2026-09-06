@@ -1618,7 +1618,12 @@ shell-disabled UI; everything else keeps working.
 - **`darwin x64` (Intel Macs)** — GitHub's macOS runners are Apple silicon.
   Producing an Intel tarball would mean cross-compiling with
   `npm_config_arch=x64` and publishing a binary no runner can load, let
-  alone test, which is a worse trade than the shell-disabled UI.
+  alone test, which is a worse trade than the shell-disabled UI. **Closed as
+  won't-fix on 2026-09-06** (user decision, todo item 70): Apple stopped
+  selling Intel Macs in 2023, so this population only shrinks. An Intel Mac
+  runs everything except the shell modal, which reports
+  `{ available: false, reason: 'no-prebuilt-for-abi-…' }`; not a gap awaiting
+  hardware.
 
 **The Alpine legs pull a MAJOR Docker tag (`node:24-alpine`), never an exact
 patch.** nodejs.org publishes a release the moment it is cut; the official

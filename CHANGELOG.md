@@ -17,6 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Intel-Mac (`darwin x64`) node-pty prebuilts are closed as won't-fix**, by decision rather than by
+  omission. TECHNICAL_GUIDE §18.2 now says so beside the existing explanation (Apple-silicon-only
+  runners; Intel Macs no longer sold since 2023). Nothing changes for users: an Intel Mac runs the app
+  with the shell modal reporting `no-prebuilt-for-abi-…`, exactly as before.
+
 ## [0.1.30-beta.107] - 2026-09-06
 
 ### Fixed
