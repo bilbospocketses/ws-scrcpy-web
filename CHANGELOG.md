@@ -39,6 +39,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The "reset prompts" confirm dialog uses the shared confirm-dialog button style.** Its buttons were
+  the Settings-row family (`settings-btn`, with an accent-blue outline on "confirm reset" chosen to read
+  as non-destructive); every other confirm dialog — revoke, service install/uninstall, shell close —
+  uses `modal-button`, the text-colour outline on a transparent ground that smoke row 4.5 describes.
+  Uniformity won (todo item 111, user decision): both buttons are `modal-button` now, the dialog is
+  asserted by `confirm-dialogs.spec.ts` beside the others, and the danger red stays reserved for the
+  uninstall modal.
 - **Docs: the container is now a documented deployment path, end to end.** README's deployment-paths
   table and Downloads list gain the Docker image beside the MSI and the AppImage, and the Docker
   section gains *Serving the container over HTTPS* — the reverse-proxy recipe (Caddy in two lines,

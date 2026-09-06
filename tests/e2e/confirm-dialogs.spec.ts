@@ -19,7 +19,9 @@ import { askToEmbed, gotoHome, readServerConfig, revokeAllOrigins, waitForPrompt
  *
  * Two assertions per dialog: the shared class on both buttons, and the
  * computed style it resolves to. Then the "matching" claim itself: the
- * computed values are identical across the dialogs opened here.
+ * computed values are identical across the dialogs opened here — the revoke
+ * ConfirmModal, the reset-prompts ResetConfirmModal (item 111 brought it into
+ * the shared style), and the service pre-flight where the host offers it.
  */
 
 const ORIGIN = 'http://localhost:5161';
@@ -107,6 +109,22 @@ test.describe('confirm dialogs (smoke §4.5)', () => {
         await revoke.getByRole('button', { name: 'cancel', exact: true }).click();
         await expect(revoke).toBeHidden();
         expect(readServerConfig().frameAncestors, 'cancel touched nothing').toContain(ORIGIN);
+
+        // 1b. The reset-prompts ResetConfirmModal, via Settings → Server → reset.
+        //     Until item 111 (2026-09-06) this one wore the Settings-row family
+        //     (`settings-btn`, an accent-blue outline on "confirm reset"); the
+        //     user ruled for uniformity, so it is asserted beside the others.
+        await settingsSection(settings, 'Server').getByRole('button', { name: 'reset', exact: true }).click();
+        const reset = page.locator('dialog.reset-confirm-modal');
+        const resetStyles = await expectSharedStyle(
+            reset,
+            reset.getByRole('button', { name: 'cancel', exact: true }),
+            reset.getByRole('button', { name: 'confirm reset', exact: true }),
+        );
+        await reset.getByRole('button', { name: 'cancel', exact: true }).click();
+        await expect(reset).toBeHidden();
+        expect(resetStyles[0]).toEqual(revokeStyles[0]);
+        expect(resetStyles[1]).toEqual(revokeStyles[1]);
 
         // 2. The service install's "privileges required" pre-flight, the row's
         //    named case. System scope on Linux, any scope on Windows, raises it

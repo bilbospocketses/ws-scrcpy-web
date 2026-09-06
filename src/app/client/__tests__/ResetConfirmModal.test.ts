@@ -73,23 +73,31 @@ describe('ResetConfirmModal.confirm', () => {
         await promise;
     });
 
-    it('confirm button is primary blue (settings-btn-primary, NOT danger)', async () => {
+    it('confirm button carries the shared confirm-dialog style (modal-button), not the settings-row family and not danger', async () => {
+        // Smoke row 4.5 / item 35: every confirm dialog's buttons share one
+        // outline style. Until 2026-09-06 this one wore settings-btn-primary
+        // (an accent-blue outline meant to read as non-destructive); the user
+        // ruled for uniformity (todo item 111). Danger red stays the uninstall
+        // modal's alone.
         const promise = ResetConfirmModal.confirm();
         await Promise.resolve();
         const btn = getButton('confirm reset');
-        expect(btn.classList.contains('settings-btn')).toBe(true);
-        expect(btn.classList.contains('settings-btn-primary')).toBe(true);
+        expect(btn.classList.contains('modal-button')).toBe(true);
+        expect(btn.classList.contains('modal-button-primary')).toBe(true);
+        expect(btn.classList.contains('settings-btn')).toBe(false);
+        expect(btn.classList.contains('settings-btn-primary')).toBe(false);
         expect(btn.classList.contains('settings-btn-danger-outline')).toBe(false);
         getButton('cancel').click();
         await promise;
     });
 
-    it('cancel button is neutral (settings-btn, no primary/danger)', async () => {
+    it('cancel button is the plain shared style (modal-button, no primary/danger)', async () => {
         const promise = ResetConfirmModal.confirm();
         await Promise.resolve();
         const btn = getButton('cancel');
-        expect(btn.classList.contains('settings-btn')).toBe(true);
-        expect(btn.classList.contains('settings-btn-primary')).toBe(false);
+        expect(btn.classList.contains('modal-button')).toBe(true);
+        expect(btn.classList.contains('modal-button-primary')).toBe(false);
+        expect(btn.classList.contains('settings-btn')).toBe(false);
         expect(btn.classList.contains('settings-btn-danger-outline')).toBe(false);
         btn.click();
         await promise;
