@@ -17,6 +17,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **CI never ran the linter.** `build-and-test` ran `tsc`, the unit tests, the Rust gates, the build and
+  both Playwright tiers, but never `npm run lint` — so biome was enforced only by whoever remembered to
+  run it locally, and the recent fix that brought `webpack/**` into the linted set held by that same
+  convention. `build-and-test` now runs `npm run lint` immediately after `npm ci`, ahead of the slower
+  gates, so a style-only failure costs seconds rather than a full build. `npm run lint` is `biome check`,
+  which covers formatting as well, and biome is a lockfile-pinned devDependency, so a biome release
+  cannot turn the step red on its own. The step is not repeated in `macos-node-checks`: lint findings do
+  not vary by platform.
+- **`biome.json` pointed at the schema for a biome it no longer runs.** The `$schema` URL still named
+  2.4.12 while the pinned CLI is 2.5.11, so biome reported a version mismatch on every run and editors
+  validated the config against the wrong schema. Now 2.5.11.
+
 ## [0.1.30-beta.104] - 2026-09-06
 
 ### Fixed

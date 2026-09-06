@@ -22,6 +22,20 @@ jobs:
         with:
           components: clippy
       - run: npm ci
+      # Biome. Runs first because it is the cheapest gate here (~2s over 545
+      # files) and the one most likely to trip on a hand-edited file, so a
+      # style-only failure does not cost a tsc + build + Playwright run to
+      # discover.
+      #
+      # `npm run lint` is `biome check` -- formatter, linter and assist
+      # together -- so this pins formatting too; `npm run format` is the fix.
+      # Biome is a pinned devDependency, not a floating npx download, so a
+      # biome release cannot turn this step red on its own.
+      #
+      # build-and-test only, deliberately: macos-node-checks exists to exercise
+      # the darwin code paths, and lint findings are platform-independent, so a
+      # second run of the same check buys nothing.
+      - run: npm run lint
       - run: npx tsc --noEmit
       - run: npm test
       - run: cargo test --workspace
