@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.109] - 2026-09-06
+
 ### Fixed
 
 - **Port hand-offs no longer send off-box browsers to their own `localhost`.** A service install
