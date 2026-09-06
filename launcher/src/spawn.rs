@@ -386,7 +386,7 @@ mod tests {
             None => NOFILE_LIMIT,
         };
         assert!(
-            after.current.map_or(true, |soft| soft >= expected),
+            after.current.is_none_or(|soft| soft >= expected),
             "soft limit {:?} below {expected}",
             after.current
         );
