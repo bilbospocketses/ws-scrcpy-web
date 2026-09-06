@@ -19,6 +19,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Docs: the container is now a documented deployment path, end to end.** README's deployment-paths
+  table and Downloads list gain the Docker image beside the MSI and the AppImage, and the Docker
+  section gains *Serving the container over HTTPS* — the reverse-proxy recipe (Caddy in two lines,
+  nginx with the headers spelled out) and the three rules behind it: `allowedHosts` lists the name,
+  `Host` is forwarded unchanged, WebSocket upgrades pass. TECHNICAL_GUIDE gains **§26 Container Image
+  (Docker)**: what ships and when (tag-push trigger, Scout gate, channel-tag rule), the two-stage
+  digest-pinned image and why it is trixie, the `tini -g` → entrypoint → `start.sh` → node process
+  model, the `/data` volume contract, docker awareness, networking, verification, key files — the
+  design's §16 amendments included. RELEASING.md's runbook now names `docker-publish.yml` in the
+  watch step, adds an image-verification step (the channel tag's digest must equal the immutable
+  tag's), and extends the rollback rule to tags: never delete, move the channel or retag. Closes the
+  SP5 documentation item (todo 3); no App-vs-Server placement decision remained — the stop button has
+  lived in Settings → Server since the June redesign.
 - **Intel-Mac (`darwin x64`) node-pty prebuilts are closed as won't-fix**, by decision rather than by
   omission. TECHNICAL_GUIDE §18.2 now says so beside the existing explanation (Apple-silicon-only
   runners; Intel Macs no longer sold since 2023). Nothing changes for users: an Intel Mac runs the app
