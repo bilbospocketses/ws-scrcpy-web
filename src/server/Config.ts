@@ -1025,12 +1025,24 @@ export class Config {
 
     /**
      * Called by server startup once the actual bound port is known. If the
-     * resolver had to shift away from `webPort`, this flips the flag and
-     * persists the new port to disk.
+     * resolver had to shift away from `webPort`, this flips the flag and — by
+     * default — persists the new port to disk so the next launch starts where
+     * this one ended up.
+     *
+     * `persist: false` is the SIBLING case (index.ts reconcileWebPort): the
+     * configured port is busy because another instance of THIS app owns it.
+     * Then the configured port is right and the sibling is serving it, so this
+     * instance binds the shifted port for its own lifetime and leaves both the
+     * file and the in-memory `webPort` alone — otherwise the shared config.json
+     * would name a port the surviving instance does not serve, and every later
+     * save from this instance would carry it too. Measured 2026-09-06 (smoke
+     * row 3.7, case b): an elevated second instance wrote 8001 while the
+     * user-level server kept serving 8000. The bound port is still reported
+     * through firstRunStatus, and HttpServer binds it via `servers[0].port`.
      */
-    public setActualWebPort(actualPort: number): void {
+    public setActualWebPort(actualPort: number, opts: { persist?: boolean } = {}): void {
         const shifted = actualPort !== this._appConfig.webPort;
-        if (shifted) {
+        if (shifted && (opts.persist ?? true)) {
             this._appConfig = { ...this._appConfig, webPort: actualPort };
             this.saveToDisk();
         }

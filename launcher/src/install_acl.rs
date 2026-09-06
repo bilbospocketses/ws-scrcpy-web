@@ -6,21 +6,23 @@
 // falls back to LocalAppData for state, and the elevated Update.exe
 // re-launch silently dies during the swap step.
 //
-// Granting the ACL during the `--veloapp-install` hook (added in
-// v0.1.23-beta.5) doesn't survive the MSI's component-permission step
-// (which runs AFTER our hook and resets the explicit DACL on
-// Program Files\WsScrcpyWeb to inherited-only). Manual icacls grant
-// after the install completes persists across reboot, and tested
-// successfully end-to-end with the in-app updater (v0.1.23-beta.5 →
-// beta.6 swapped on 2026-04-29 02:26).
+// History: in v0.1.23-beta.5/6 the grant made during the `--veloapp-install`
+// hook did not survive — the Setup.exe-era MSI's component-permission step ran
+// AFTER the hook and reset the explicit DACL on Program Files\WsScrcpyWeb to
+// inherited-only — so beta.7 added THIS module: defer the grant to the first
+// non-hook launcher start and ShellExecuteEx an elevated icacls (one-time UAC).
 //
-// Solution: defer the grant to first non-hook launcher start. If the
-// install root isn't user-writable, ShellExecuteEx an elevated icacls
-// invocation (one-time UAC prompt). Once granted, all subsequent
-// launches find the install root writable and skip the elevation
-// entirely. Same approach handles migrations from v0.1.21 / v0.1.22 /
-// v0.1.23-beta.{1..6} → beta.7+ (those installs didn't have the
-// grant either; first launch under beta.7 catches them).
+// Current state (verified 2026-09-06 on the beta.103 MSI, three clean guests,
+// UAC on): the MSI-only artifact has NO LockPermissions/MsiLockPermissionsEx
+// table and its InstallExecuteSequence runs InstallFiles (4000) before
+// InstallHookDeferred (4002), so the hook's grant SURVIVES the install. `icacls` shows an explicit `Authenticated Users:(OI)(CI)(M)` straight
+// after msiexec, `is_writable` is true on the first launch, and `ensure_writable`
+// early-returns — no UAC fires (smoke row 1.10 describes exactly that).
+//
+// This module stays as a FALLBACK, not the primary path: installs that predate
+// the hook (v0.1.21 / v0.1.22 / v0.1.23-beta.{1..6}) and any future MSI that
+// does reset DACLs get the one-time elevated icacls here on their first launch;
+// every later launch finds the root writable and skips it.
 
 use anyhow::{Context, Result, bail};
 use crate::win_util::to_wide;

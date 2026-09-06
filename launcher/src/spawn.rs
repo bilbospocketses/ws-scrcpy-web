@@ -125,6 +125,11 @@ pub fn spawn_server(deps_path: &Path, data_root: &Path, open_browser: bool) -> R
         .current_dir(&work_dir)
         .env("DEPS_PATH", deps_path)
         .env("DATA_ROOT", data_root)
+        // The launcher's signature, and nothing else's: Node uses it to know that
+        // a supervisor exists and is the only authority on browser tabs
+        // (openBrowser.ts). DEPS_PATH cannot serve as that signal -- Docker, the
+        // e2e harness and the hand-run start scripts set it too.
+        .env("WS_SCRCPY_LAUNCHER", "1")
         .creation_flags(CREATE_NO_WINDOW);
 
     // D4: like the non-Windows path, the launcher's FIRST Node spawn of a fresh
@@ -177,7 +182,10 @@ pub fn spawn_server(deps_path: &Path, data_root: &Path, open_browser: bool) -> R
         .arg(&entry)
         .current_dir(&work_dir)
         .env("DEPS_PATH", deps_path)
-        .env("DATA_ROOT", data_root);
+        .env("DATA_ROOT", data_root)
+        // The launcher's signature (see the Windows body above): under it, only
+        // WS_SCRCPY_OPEN_BROWSER decides whether Node opens a tab.
+        .env("WS_SCRCPY_LAUNCHER", "1");
 
     // D1: on the launcher's FIRST spawn of a fresh user launch, tell the Node
     // server to open a browser tab once it is listening (the launcher can't open

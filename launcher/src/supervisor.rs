@@ -203,7 +203,7 @@ pub fn run() -> Result<(i32, Option<Arc<AtomicBool>>)> {
     log::info(&format!("supervisor: deps_path resolved to {:?} (passed to Node child)", paths.deps_path));
 
     // D1: only the FIRST Node spawn of this fresh launch should tell Node to open
-    // a browser tab (WS_SCRCPY_OPEN_BROWSER, non-Windows). Subsequent loop
+    // a browser tab (WS_SCRCPY_OPEN_BROWSER, both platforms). Subsequent loop
     // iterations are restarts (webPort change, crash) — the user already has a
     // tab, so they must NOT re-pop one.
     let mut first_spawn = true;

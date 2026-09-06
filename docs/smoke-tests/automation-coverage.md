@@ -79,9 +79,9 @@ Sorted by module, then by row number, which is not the doc's execution order.
 | 1.5 | `[Win]` | Fresh MSI install | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
 | 1.6 | `[Win]` | Reinstall reuses config | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
 | 1.7 | `[Linux]` | Cold-start opens one tab | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
-| 1.8 | `[Win]` | Cold-start opens one tab | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
+| 1.8 | `[Win]` | Cold-start opens one tab | Windows guest (P4) | qa-harness Arc 1a (`suites/wssw-win/arcs/01a-install.ps1`, 2026-09-06): cold start, and the port-change restart in both first-run states. The update-relaunch half is pending Arc 3. |
 | 1.9 | `[Both]` | First-run dependency-bootstrap banner + Retry | container | `dependencies-panel.spec.ts` `@docker-host`. **CI only** - it drives a compose stack of its own, and the qa-harness runner has no docker CLI. |
-| 1.10 | `[Win]` | Install-dir ACL grant + one-time UAC | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
+| 1.10 | `[Win]` | Install-dir ACL grant (install hook; no UAC on a fresh install) | Windows guest (P4) | qa-harness Arc 1a (`suites/wssw-win/arcs/01a-install.ps1`, 2026-09-06), in Prompt mode with the consent observer polling through both launches. |
 | 2.1 | `[Fedora]` | Binary/deps labels | residual: linux-desktop | Residual. Needs a Fedora host with a policy store of its own, for `bin_t`/`var_lib_t` labelling and the `semanage` fcontext lifecycle. Containers share the host's. |
 | 2.2 | `[Fedora]` | State labels | residual: linux-desktop | Residual. Needs a Fedora host with a policy store of its own, for `bin_t`/`var_lib_t` labelling and the `semanage` fcontext lifecycle. Containers share the host's. |
 | 2.3 | `[Fedora]` | fcontext rules registered | residual: linux-desktop | Residual. Needs a Fedora host with a policy store of its own, for `bin_t`/`var_lib_t` labelling and the `semanage` fcontext lifecycle. Containers share the host's. |

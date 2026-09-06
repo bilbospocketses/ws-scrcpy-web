@@ -136,6 +136,20 @@ describe('Config — AppConfig extension', () => {
         expect(onDisk.webPort).toBe(8001);
     });
 
+    it('setActualWebPort with persist:false reports the shift but leaves the file and in-memory webPort alone', () => {
+        // The sibling case: another instance of this app holds the configured
+        // port, so it is right and must stay in config.json (smoke row 3.7, case b).
+        const configPath = setup({ webPort: 8000 });
+        const cfg = Config.getInstance();
+        const before = fs.readFileSync(configPath, 'utf-8');
+        cfg.setActualWebPort(8001, { persist: false });
+        const status = cfg.getFirstRunStatus();
+        expect(status.portWasAutoShifted).toBe(true);
+        expect(status.webPort).toBe(8001);
+        expect(cfg.getAppConfig().webPort).toBe(8000);
+        expect(fs.readFileSync(configPath, 'utf-8')).toBe(before);
+    });
+
     it('setActualWebPort with same port leaves portWasAutoShifted=false and does not rewrite file', () => {
         const configPath = setup({ webPort: 8000 });
         const cfg = Config.getInstance();

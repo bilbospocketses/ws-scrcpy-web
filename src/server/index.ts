@@ -39,6 +39,7 @@ import { HttpServer } from './services/HttpServer';
 import type { Service, ServiceClass } from './services/Service';
 import { WebSocketServer } from './services/WebSocketServer';
 import { reapStrayAdbOnWindows } from './shutdownHelpers';
+import { isServiceInstance, isSiblingInstance } from './siblingInstance';
 import { UpdateService } from './UpdateService';
 import { forceBlockingStdio } from './util/forceBlockingStdio';
 
@@ -112,13 +113,35 @@ if (__ssArgs) {
             Logger.for('Server').error(`No free port available in range ${desired}..${desired + 99}`);
             return;
         }
-        config.setActualWebPort(found);
-        if (found !== desired) {
-            Logger.for('Server').info(`webPort ${desired} busy; auto-shifted to ${found}`);
-            // Mutate the first server entry so HttpServer binds to the new port.
-            if (config.servers.length > 0) {
-                config.servers[0]!.port = found;
-            }
+        if (found === desired) {
+            config.setActualWebPort(found);
+            return;
+        }
+        // The configured port is busy, and WHO holds it decides whether the shift
+        // is persisted. Another program: yes, the user's config should follow the
+        // port that works. A SIBLING instance of this app (an elevated second
+        // instance): no — the configured port is right and the sibling is serving
+        // it; persisting rewrote the shared config.json to a port the surviving
+        // instance did not serve (measured 2026-09-06, smoke row 3.7 case b). See
+        // siblingInstance.ts.
+        //
+        // EXCEPT when THIS process is the service instance. On the Windows
+        // service-install handoff the sibling on the configured port is the
+        // OUTGOING local node (ServiceApi keeps it alive ~15 s after the service
+        // reports running; supervisor.rs waits only 5 s for the port), and the
+        // documented handoff depends on the service PERSISTING the port it will
+        // actually serve: the tray and the install poll read it from config.json.
+        // So a service instance persists its shift exactly as before.
+        const sibling = !isServiceInstance() && (await isSiblingInstance(desired));
+        config.setActualWebPort(found, { persist: !sibling });
+        Logger.for('Server').info(
+            sibling
+                ? `webPort ${desired} is held by another ws-scrcpy-web instance; using ${found} for this instance without persisting it`
+                : `webPort ${desired} busy; auto-shifted to ${found}`,
+        );
+        // Mutate the first server entry so HttpServer binds to the new port.
+        if (config.servers.length > 0) {
+            config.servers[0]!.port = found;
         }
     }
 
@@ -298,12 +321,20 @@ if (__ssArgs) {
                 // restarts (webPort change, crash) don't set it, so they don't re-pop
                 // a tab; dev (no launcher) falls back to the first-run-only open.
                 const launcherFreshLaunch = process.env['WS_SCRCPY_OPEN_BROWSER'] === '1';
+                // Under the native launcher the supervisor is the ONLY authority on
+                // browser tabs (openBrowser.ts). Its signature is WS_SCRCPY_LAUNCHER=1,
+                // which launcher/src/spawn.rs sets on every Node spawn and nothing
+                // else does -- NOT DEPS_PATH, which Docker, the e2e harness and the
+                // hand-run start.sh / start.cmd also set. npm start, the start
+                // scripts and a hand-run dist therefore keep the first-run open.
+                const launcherManaged = process.env['WS_SCRCPY_LAUNCHER'] === '1';
                 if (
                     shouldAutoOpenBrowser({
                         firstRunComplete: appCfg.firstRunComplete,
                         isServiceMode,
                         suppressBrowser,
                         launcherFreshLaunch,
+                        launcherManaged,
                     })
                 ) {
                     const port = config.servers[0]?.port ?? appCfg.webPort;

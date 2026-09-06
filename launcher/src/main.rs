@@ -317,11 +317,15 @@ fn main() {
     // v0.1.23-beta.7: ensure the install root has Authenticated Users:Modify
     // so Velopack's writability self-test passes and the in-app updater can
     // swap `current\` without falling back to LocalAppData + elevated
-    // Update.exe (which silently dies during the swap on Windows). The
-    // grant attempted during the `--veloapp-install` hook gets stripped by
-    // MSI's component-permission step, so we apply it from the running
-    // launcher's first non-hook startup. ShellExecuteEx with verb=runas
-    // fires a one-time UAC prompt; subsequent launches find the install
+    // Update.exe (which silently dies during the swap on Windows).
+    //
+    // On a fresh install this is a NO-OP: the `--veloapp-install` hook grants
+    // the ACL at install time, and because the MSI-only artifact has no
+    // permission table (verified on beta.103) that grant survives — so
+    // `ensure_writable` finds the root writable and returns without any UAC
+    // (smoke row 1.10). It remains the FALLBACK for installs that predate the
+    // hook and for any future MSI that resets DACLs: there, ShellExecuteEx with
+    // verb=runas fires a one-time UAC prompt, and subsequent launches find the
     // root writable and skip the elevation entirely.
     //
     // Failure (UAC dismissed, no admin available, etc.) is logged and
