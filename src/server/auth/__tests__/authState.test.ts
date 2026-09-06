@@ -27,7 +27,7 @@ describe('authState', () => {
     });
     it('allow-lists the login page + login endpoint only', () => {
         expect(isAllowlisted('/api/auth/login')).toBe(true);
-        expect(isAllowlisted('/api/whoami')).toBe(true); // install port-discovery handshake stays reachable under lockdown
+        expect(isAllowlisted('/api/whoami')).toBe(true); // sibling identity probe: a second instance has no session (loopback-only handler)
         expect(isAllowlisted('/api/auth/me')).toBe(true); // login page reads authEnabled pre-login
         expect(isAllowlisted('/api/devices')).toBe(false);
         expect(isAllowlisted('/')).toBe(false); // app shell is gated → AuthGate serves the login page inline

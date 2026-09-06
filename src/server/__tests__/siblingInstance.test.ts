@@ -44,6 +44,12 @@ function envelope(webPort: number): string {
     });
 }
 
+function identity(): string {
+    return JSON.stringify({ app: 'ws-scrcpy-web', pid: 4242, installMode: null, version: '0.1.30-beta.105' });
+}
+
+const LOCKED_401: Reply = { status: 401, body: JSON.stringify({ error: 'unauthorized' }) };
+
 describe('isSiblingInstance', () => {
     const servers: Server[] = [];
     afterEach(async () => {
@@ -53,12 +59,51 @@ describe('isSiblingInstance', () => {
         }
     });
 
-    it('recognises another ws-scrcpy-web by its GET /api/config envelope', async () => {
+    it('recognises another ws-scrcpy-web by its GET /api/whoami identity', async () => {
         const { server, port } = await serve((p) =>
-            p === '/api/config' ? { status: 200, body: envelope(8000) } : { status: 404, body: '{}' },
+            p === '/api/whoami' ? { status: 200, body: identity() } : { status: 404, body: '{}' },
         );
         servers.push(server);
         expect(await isSiblingInstance(port)).toBe(true);
+    });
+
+    it('recognises a sibling with users configured (locked mode), where GET /api/config answers 401', async () => {
+        // The case beta.104 could not handle: AuthGate answers the config probe
+        // 401, so the guard read "not a sibling" and the elevated instance wrote
+        // its shifted port into the shared config.json. /api/whoami is exempt
+        // from AuthGate, so the identity still comes through.
+        const { server, port } = await serve((p) =>
+            p === '/api/whoami' ? { status: 200, body: identity() } : LOCKED_401,
+        );
+        servers.push(server);
+        expect(await isSiblingInstance(port)).toBe(true);
+    });
+
+    it('still recognises a pre-beta.105 sibling by its GET /api/config envelope', async () => {
+        // An older build has a token-gated whoami (403 to a cookieless caller)
+        // and no `app` field. Its config envelope is the identification it can
+        // give, so it stays accepted: during an update the process holding the
+        // port is exactly such an older build.
+        const { server, port } = await serve((p) => {
+            if (p === '/api/config') return { status: 200, body: envelope(8000) };
+            if (p === '/api/whoami')
+                return { status: 403, body: JSON.stringify({ error: 'missing or invalid token' }) };
+            return { status: 404, body: '{}' };
+        });
+        servers.push(server);
+        expect(await isSiblingInstance(port)).toBe(true);
+    });
+
+    it("does not mistake another program's JSON 200 on /api/whoami for a sibling", async () => {
+        // The old whoami shape without `app` is deliberately NOT enough: it is
+        // three generic fields any service could emit.
+        const { server, port } = await serve((p) =>
+            p === '/api/whoami'
+                ? { status: 200, body: JSON.stringify({ pid: 1, installMode: null, version: '1.0' }) }
+                : { status: 404, body: '{}' },
+        );
+        servers.push(server);
+        expect(await isSiblingInstance(port)).toBe(false);
     });
 
     it("does not mistake another program's 200 for a sibling", async () => {
@@ -73,8 +118,8 @@ describe('isSiblingInstance', () => {
         expect(await isSiblingInstance(port)).toBe(false);
     });
 
-    it('treats a non-2xx (an auth-enabled sibling saying 401) as "not a sibling" -- the safe default', async () => {
-        const { server, port } = await serve(() => ({ status: 401, body: JSON.stringify({ error: 'login' }) }));
+    it('treats a non-2xx on every probe as "not a sibling" -- the safe default', async () => {
+        const { server, port } = await serve(() => LOCKED_401);
         servers.push(server);
         expect(await isSiblingInstance(port)).toBe(false);
     });

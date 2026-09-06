@@ -80,6 +80,15 @@ describe('instanceToken', () => {
             expect(requiresToken('HEAD', '/api/config')).toBe(false);
         });
 
+        it('exempts the sibling GET /api/whoami identity probe, and only that shape', () => {
+            // A second instance probing its configured port has no cookie. The
+            // handler is loopback-only, so the exemption reaches nothing off-box.
+            expect(requiresToken('GET', '/api/whoami')).toBe(false);
+            expect(requiresToken('POST', '/api/whoami')).toBe(true);
+            expect(requiresToken('GET', '/api/whoami/')).toBe(true);
+            expect(requiresToken('GET', '/api/whoamix')).toBe(true);
+        });
+
         it('does not require a token for static (non-API) requests', () => {
             expect(requiresToken('GET', '/')).toBe(false);
             expect(requiresToken('GET', '/bundle.js')).toBe(false);
