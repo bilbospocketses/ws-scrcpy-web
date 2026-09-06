@@ -94,25 +94,27 @@ test.describe('confirm dialogs (smoke §4.5)', () => {
 
         // 2. The service install's "privileges required" pre-flight, the row's
         //    named case. System scope on Linux, any scope on Windows, raises it
-        //    before anything runs; cancelling it is the whole interaction. Only
-        //    a host with a service manager offers the install at all — CI's
-        //    ubuntu runner does; a dev box without Servy or systemd does not,
-        //    and says so rather than pretending the dialog was checked.
+        //    before anything runs; cancelling it is the whole interaction. It is
+        //    reachable only where the host OFFERS the install: a packaged
+        //    install, or a dev box with a service manager and a launcher. CI's
+        //    fast tier is a bare `node dist/index.js` — the Service section
+        //    renders there, with the install disabled — so the tier records the
+        //    half it could not open rather than pretending it did. The dialog's
+        //    class is pinned by its unit test on every run.
         const status = (await (await page.request.get('/api/service/status')).json()) as {
             supported: boolean;
             unsupportedReason?: string;
         };
+        const service = settingsSection(settings, 'Service');
+        await expect(service.getByText('loading…')).toHaveCount(0);
+        const install = service.getByRole('button', { name: /install/i }).first();
+        const offersInstall = status.supported && (await install.count()) > 0 && (await install.isEnabled());
         let adminStyles: [ButtonStyle, ButtonStyle] | null = null;
-        if (status.supported) {
-            const service = settingsSection(settings, 'Service');
+        if (offersInstall) {
             const systemScope = service.getByRole('radio', { name: /system/i });
             if ((await systemScope.count()) > 0) {
                 await systemScope.check();
             }
-            // "not installed — install?" on Windows; "install" beside the scope
-            // radios on Linux. The Service section holds no other button.
-            const install = service.getByRole('button', { name: /install/i }).first();
-            await expect(install, 'a service-capable host offers the install').toBeEnabled();
             await install.click();
             const admin = page.locator('dialog.admin-confirm-modal');
             adminStyles = await expectSharedStyle(
@@ -125,9 +127,12 @@ test.describe('confirm dialogs (smoke §4.5)', () => {
             // Nothing was installed: the section is still offering to.
             await expect(install).toBeEnabled();
         } else {
+            const why = status.supported
+                ? `install offered disabled: ${(await service.locator('.settings-status').allTextContents()).join(' | ').trim() || 'no note rendered'}`
+                : `service mode unsupported on this host (${status.unsupportedReason ?? 'no reason given'})`;
             test.info().annotations.push({
                 type: 'partial',
-                description: `service mode unsupported on this host (${status.unsupportedReason ?? 'no reason given'}): the AdminConfirmModal pre-flight was not opened here; its class is pinned by src/app/client/__tests__/AdminConfirmModal.test.ts and the dialog itself by the Linux CI run`,
+                description: `${why}: the AdminConfirmModal pre-flight was not opened here; its class is pinned by src/app/client/__tests__/AdminConfirmModal.test.ts`,
             });
         }
 
