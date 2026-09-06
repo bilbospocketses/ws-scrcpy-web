@@ -138,3 +138,26 @@ export function copyFileAtomicSync(src: string, dest: string): void {
         throw err;
     }
 }
+
+/**
+ * `copyFileAtomicSync` for a caller that must not hold the event loop: the
+ * first-run dependency install copies the extracted Node tree — ~2,500 files,
+ * ~110 MB — while the server is answering requests, and done synchronously
+ * that parked every one of them behind it (a 4-second `/api/config` measured
+ * on a fast NVMe box; past 10 s on a CI runner). Same temp-then-rename
+ * contract, same source-mode semantics, every step through `fs.promises` so
+ * the loop turns between them.
+ */
+export async function copyFileAtomic(src: string, dest: string): Promise<void> {
+    await fs.promises.mkdir(path.dirname(dest), { recursive: true });
+    const tmp = tempSibling(dest);
+    try {
+        await fs.promises.copyFile(src, tmp);
+        await fs.promises.rename(tmp, dest);
+    } catch (err) {
+        await fs.promises.rm(tmp, { force: true }).catch(() => {
+            // Best-effort: the original failure is what the caller needs to see.
+        });
+        throw err;
+    }
+}

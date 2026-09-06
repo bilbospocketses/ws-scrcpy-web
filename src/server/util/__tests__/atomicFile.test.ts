@@ -4,7 +4,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { resolveSystemTool } from '../../service/systemTools';
-import { copyFileAtomicSync, writeFileAtomicSync } from '../atomicFile';
+import { copyFileAtomic, copyFileAtomicSync, writeFileAtomicSync } from '../atomicFile';
 
 /**
  * Resolved through the repo's own `resolveSystemTool` rather than a hardcoded
@@ -102,6 +102,59 @@ describe('copyFileAtomicSync', () => {
         fs.writeFileSync(src, 'payload');
         copyFileAtomicSync(src, dest);
         expect(fs.readdirSync(dir).sort()).toEqual(['dest.bin', 'src.bin']);
+    });
+});
+
+/**
+ * The async twin, for the one caller that copies thousands of files while the
+ * server is answering requests (DependencyManager.copyDirContents). Same
+ * temp-then-rename contract; the difference is that every step goes through
+ * fs.promises, so the event loop turns between them.
+ */
+describe('copyFileAtomic', () => {
+    it('copies to a new path, creating missing parents', async () => {
+        const src = path.join(dir, 'src.bin');
+        const dest = path.join(dir, 'a', 'b', 'dest.bin');
+        fs.writeFileSync(src, 'payload');
+        await copyFileAtomic(src, dest);
+        expect(fs.readFileSync(dest, 'utf8')).toBe('payload');
+    });
+
+    it('overwrites an existing file', async () => {
+        const src = path.join(dir, 'src.bin');
+        const dest = path.join(dir, 'dest.bin');
+        fs.writeFileSync(src, 'new');
+        fs.writeFileSync(dest, 'old');
+        await copyFileAtomic(src, dest);
+        expect(fs.readFileSync(dest, 'utf8')).toBe('new');
+    });
+
+    it('leaves no temp files behind, on success and on failure', async () => {
+        const src = path.join(dir, 'src.bin');
+        const dest = path.join(dir, 'dest.bin');
+        fs.writeFileSync(src, 'payload');
+        await copyFileAtomic(src, dest);
+        expect(fs.readdirSync(dir).sort()).toEqual(['dest.bin', 'src.bin']);
+
+        await expect(copyFileAtomic(path.join(dir, 'missing.bin'), path.join(dir, 'other.bin'))).rejects.toThrow(
+            /ENOENT/,
+        );
+        expect(fs.readdirSync(dir).sort()).toEqual(['dest.bin', 'src.bin']);
+    });
+
+    it('does not block the event loop while it runs', async () => {
+        const src = path.join(dir, 'src.bin');
+        const dest = path.join(dir, 'dest.bin');
+        fs.writeFileSync(src, 'payload');
+        let finished = false;
+        let macrotaskRanBeforeFinish = false;
+        setImmediate(() => {
+            macrotaskRanBeforeFinish = !finished;
+        });
+        await copyFileAtomic(src, dest);
+        finished = true;
+        await new Promise<void>((r) => setImmediate(r));
+        expect(macrotaskRanBeforeFinish).toBe(true);
     });
 });
 
