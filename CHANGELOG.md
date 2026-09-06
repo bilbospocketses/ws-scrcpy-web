@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.108] - 2026-09-06
+
 ### Added
 
 - **Six more smoke rows are automated — the register's "automatable, no spec yet" set is empty.**
