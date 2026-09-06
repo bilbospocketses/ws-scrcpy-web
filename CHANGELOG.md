@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.110] - 2026-09-06
+
 ### Changed
 
 - **The bookmark reminder is a card, not a dialog.** "bookmark this URL" (on a port the browser has
