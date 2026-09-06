@@ -1,4 +1,5 @@
 import '../style/app.css';
+import '../style/bookmark-reminder.css';
 import '../style/dependencies.css';
 import '../style/first-run-banner.css';
 import '../style/home.css';
@@ -127,13 +128,15 @@ function maybeShowWelcomeModal(): void {
                     : null;
 
             if (isServiceInstance) {
-                if (!serviceFirstRunSeen) {
-                    void import('./client/ServiceFirstRunModal').then(({ ServiceFirstRunModal }) => {
-                        new ServiceFirstRunModal({ webPort: runtime.webPort });
-                    });
+                // First load of a service instance: the reminder card in its
+                // service wording — unless the user has already said "never
+                // again". Until item 113 this was a separate, blocking
+                // ServiceFirstRunModal that ignored the global dismissal.
+                if (!serviceFirstRunSeen && !bookmarkDismissedGlobally) {
+                    showBookmarkReminder('service', runtime.webPort);
                     return;
                 }
-                maybeShowPortChangeModal(bookmarkDismissedGlobally, bookmarkDismissedForPort, runtime.webPort);
+                maybeShowBookmarkReminder(bookmarkDismissedGlobally, bookmarkDismissedForPort, runtime.webPort);
                 return;
             }
 
@@ -148,7 +151,7 @@ function maybeShowWelcomeModal(): void {
                 return;
             }
 
-            maybeShowPortChangeModal(bookmarkDismissedGlobally, bookmarkDismissedForPort, runtime.webPort);
+            maybeShowBookmarkReminder(bookmarkDismissedGlobally, bookmarkDismissedForPort, runtime.webPort);
         })
         .catch(() => {
             // /api/config or /api/settings absent (e.g., dev server without P2/P3
@@ -271,11 +274,22 @@ function maybeShowFirstRunModal(): void {
         });
 }
 
-function maybeShowPortChangeModal(globallyDismissed: boolean, dismissedFor: number | null, currentPort: number): void {
-    if (!shouldShowBookmark({ globallyDismissed, dismissedForPort: dismissedFor, currentPort })) return;
-    void import('./client/PortChangeModal').then(({ PortChangeModal }) => {
-        new PortChangeModal({ webPort: currentPort });
+/**
+ * The bookmark reminder card (item 113): in-flow at the top of the page
+ * container, so it never covers the app or captures its clicks. It replaced the
+ * PortChangeModal / ServiceFirstRunModal dialogs, which did both and came back
+ * on every load until a checkbox was ticked.
+ */
+function showBookmarkReminder(kind: 'bookmark' | 'service', currentPort: number): void {
+    void import('./client/BookmarkReminder').then(({ BookmarkReminder }) => {
+        const host = document.querySelector<HTMLElement>('.page-container') ?? document.body;
+        new BookmarkReminder({ webPort: currentPort, kind }).mount(host);
     });
+}
+
+function maybeShowBookmarkReminder(globallyDismissed: boolean, dismissedFor: number | null, currentPort: number): void {
+    if (!shouldShowBookmark({ globallyDismissed, dismissedForPort: dismissedFor, currentPort })) return;
+    showBookmarkReminder('bookmark', currentPort);
 }
 
 // Initialize theme immediately to prevent flash of wrong colors

@@ -32,7 +32,7 @@ describe('buildServiceUnitEnv (#36 system-scope /opt paths)', () => {
 describe('buildSystemSeedConfig (#36 seed)', () => {
     it('seeds system-service mode, first-run-complete, and the caller web port', () => {
         // installMode + firstRunComplete => the service reads a correct config
-        // (ServiceFirstRunModal, not WelcomeModal); webPort = the user's current
+        // (the service first-run reminder, not WelcomeModal); webPort = the user's current
         // port => the post-install browser hand-off lands on the same URL.
         expect(buildSystemSeedConfig(8002)).toEqual({
             installMode: 'system-service',

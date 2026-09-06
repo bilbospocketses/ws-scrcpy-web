@@ -7,11 +7,11 @@ import { readUserSettings, resetUserSettings, restoreFirstRun, restoreHarnessPro
  * Smoke module 13 — the settings prompts (rows 13.1–13.3).
  *
  * These specs UNDO the global setup first, deliberately. `global-setup.ts`
- * pre-dismisses the bookmark reminder for the whole run (it is a <dialog> that
- * otherwise swallows other specs' clicks), and rows 13.1 and 13.2 are about
- * that exact flag — so inheriting the harness's pre-arranged state would make
- * them assert something they did not establish, which is a test that cannot
- * fail.
+ * pre-dismisses the bookmark reminder for the whole run (it would otherwise
+ * open on every load against the virgin data root), and rows 13.1 and 13.2 are
+ * about that exact flag — so inheriting the harness's pre-arranged state would
+ * make them assert something they did not establish, which is a test that
+ * cannot fail.
  */
 test.describe('settings prompts', () => {
     test.beforeEach(async ({ page }) => {
@@ -29,27 +29,41 @@ test.describe('settings prompts', () => {
         await restoreFirstRun(page);
     });
 
-    test('13.1 the global dismissal supersedes and disables the per-port one, and persists', async ({ page }) => {
+    test('13.1 the bookmark reminder is a card, not a dialog; got it stamps the port, never again asks first and persists', async ({
+        page,
+    }) => {
         await page.reload();
 
-        const modal = page.locator('dialog.port-change-modal');
-        await expect(modal).toBeVisible();
+        // The reminder is a card, not a dialog: the page beneath it stays
+        // usable. Prove it in the failing direction the old <dialog> had — a
+        // click on the app while the reminder is up must land.
+        const card = page.locator('.bookmark-reminder[data-kind="bookmark"]');
+        await expect(card).toBeVisible();
+        await expect(page.locator('dialog.port-change-modal')).toHaveCount(0);
+        await page.getByRole('button', { name: 'Open settings' }).click();
+        await expect(page.locator('dialog.settings-modal')).toBeVisible();
+        await page.keyboard.press('Escape');
+        await expect(page.locator('dialog.settings-modal')).toBeHidden();
+        await expect(card).toBeVisible();
 
-        const perPort = modal.locator('input[type="checkbox"]').first();
-        const global = modal.locator('input[type="checkbox"]').nth(1);
-        await expect(perPort).toBeEnabled();
+        // The address it shows is the one THIS browser is on (item 112).
+        await expect(card.locator('a')).toHaveAttribute('href', new URL(page.url()).origin);
 
-        // Tick the per-port box first, then the global one. "Supersedes" has two
-        // halves: the weaker box is DISABLED, and the commit that follows must
-        // write the global flag and NOT the per-port one it superseded.
-        await perPort.check();
-        await global.check();
-        await expect(perPort).toBeDisabled();
+        // "got it" persists the current port only, in one click.
+        await card.getByRole('button', { name: 'got it', exact: true }).click();
+        await expect(card).toHaveCount(0);
+        await expect.poll(async () => (await readUserSettings(page))['bookmarkDismissedForPort']).toBe(E2E_PORT);
+        expect((await readUserSettings(page))['bookmarkDismissedGlobally']).toBeUndefined();
 
-        // Committing goes through a confirmation, so it cannot be set by an
-        // accidental tick. Prove the gate in its failing direction first: cancel
-        // leaves the modal open, the box still checked, and nothing written.
-        await modal.getByRole('button', { name: 'got it' }).click();
+        // Back to a clean slate for the global half.
+        await resetUserSettings(page);
+        await page.reload();
+        await expect(card).toBeVisible();
+
+        // "never again" goes through a confirmation, so it cannot be committed by
+        // a stray click. Prove the gate in its failing direction first: cancel
+        // leaves the card up and writes nothing.
+        await card.getByRole('button', { name: 'never again', exact: true }).click();
         const confirm = page.locator('dialog.modal').filter({ hasText: "you won't see this bookmark helper again" });
         await expect(confirm).toBeVisible();
         // The row's "white-outline buttons" clause: both are modal-button styled.
@@ -57,23 +71,23 @@ test.describe('settings prompts', () => {
         await expect(confirm.getByRole('button', { name: /yes|confirm|ok/i })).toHaveClass(/\bmodal-button\b/);
         await confirm.getByRole('button', { name: /cancel/i }).click();
         await expect(confirm).toBeHidden();
-        await expect(modal).toBeVisible();
-        await expect(perPort).toBeDisabled();
+        await expect(card).toBeVisible();
         expect((await readUserSettings(page))['bookmarkDismissedGlobally']).toBeUndefined();
 
         // Now the affirmative path.
-        await modal.getByRole('button', { name: 'got it' }).click();
+        await card.getByRole('button', { name: 'never again', exact: true }).click();
         await expect(confirm).toBeVisible();
         await confirm.getByRole('button', { name: /yes|confirm|ok/i }).click();
+        await expect(card).toHaveCount(0);
         await expect.poll(async () => (await readUserSettings(page))['bookmarkDismissedGlobally']).toBe(true);
-        // The superseded per-port flag was not written by the global commit.
+        // The global commit does not also stamp the per-port flag.
         expect((await readUserSettings(page))['bookmarkDismissedForPort']).toBeUndefined();
 
-        // And it actually suppresses the modal on the next load — the point of
+        // And it actually suppresses the card on the next load — the point of
         // the flag rather than the flag itself. This cannot be a bare
         // toHaveCount(0) after reload(): reload resolves at the load event, and
-        // the modal is mounted only at the end of an async chain (settings
-        // fetch, four dynamic imports, service status, config) that starts in
+        // the card is mounted only at the end of an async chain (settings
+        // fetch, dynamic import, service status, config) that starts in
         // window.onload. An immediate count of zero is satisfied before the app
         // could possibly have shown it, on a build whose gate ignores the flag.
         // Anchor to the chain's last network step, then let the page settle.
@@ -83,7 +97,7 @@ test.describe('settings prompts', () => {
         await page.reload();
         await gated;
         await page.waitForLoadState('networkidle');
-        await expect(modal).toHaveCount(0);
+        await expect(card).toHaveCount(0);
     });
 
     test('13.2 reset wipes the other per-user settings without re-suppressing the per-port bookmark', async ({

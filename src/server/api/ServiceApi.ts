@@ -462,7 +462,7 @@ export class ServiceApi {
         // has already started the service, there's a race where the
         // service-Node loads the OLD installMode, and the redirect-target
         // page sees `installMode: 'user'` and renders WelcomeModal instead
-        // of ServiceFirstRunModal. Writing first closes that race.
+        // of the service first-run reminder. Writing first closes that race.
         //
         // Hard-fail: if we can't persist the mode, abort before installing
         // — we'd otherwise have a real service running while the UI thinks

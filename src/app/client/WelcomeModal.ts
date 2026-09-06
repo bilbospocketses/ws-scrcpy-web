@@ -36,7 +36,7 @@ export class WelcomeModal extends Modal {
         this.dialog.classList.add('welcome-modal');
         // No eager bookmarkDismissedForPort stamp here (removed — bug #35).
         // It was redundant: index.ts already gates modal priority on the same
-        // load (WelcomeModal shows; PortChangeModal early-returns), and the
+        // load (WelcomeModal shows; the bookmark reminder early-returns), and the
         // decision-completion path below stamps the port legitimately. The
         // eager stamp also clobbered "reset welcome and bookmark prompts" —
         // the reset re-shows this modal (firstRunComplete=false), which

@@ -122,11 +122,12 @@ export async function resetUserSettings(page: Page): Promise<void> {
  *
  * Anything that calls resetUserSettings() MUST call this afterwards, before
  * the spec can throw. The reset clears the dismissal, and without the restore
- * every later spec in the serial run inherits the port-change <dialog> over its
- * clicks and fails with "intercepts pointer events" — nine specs across three
- * unrelated files, the first time it was missed. That failure names the wrong
- * file, which is why the restore is a named helper rather than an inline PATCH.
- * Idempotent, so calling it again from a `finally` is safe.
+ * every later spec in the serial run inherits a live reminder card — and, before
+ * item 113 made it a card, the port-change <dialog> over its clicks, which failed
+ * nine specs across three unrelated files with "intercepts pointer events" the
+ * first time it was missed. That failure names the wrong file, which is why the
+ * restore is a named helper rather than an inline PATCH. Idempotent, so calling
+ * it again from a `finally` is safe.
  */
 export async function restoreHarnessPrompts(page: Page): Promise<void> {
     const res = await page.request.patch('/api/settings', {

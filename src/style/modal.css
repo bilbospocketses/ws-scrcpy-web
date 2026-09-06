@@ -383,10 +383,12 @@ dialog.modal .modal-settings button:hover {
     background: var(--device-list-hover-color, hsl(218, 17%, 18%));
 }
 
-/* Shared "got it" / confirm button for the bookmark (PortChangeModal) +
-   service-first-run (ServiceFirstRunModal) modals. Matches the welcome modal's
-   outline buttons — white outline + white text, transparent, mono font —
-   replacing the browser-default look (the class previously had no CSS). */
+/* Shared confirm-dialog button (ConfirmModal, AdminConfirmModal,
+   ShellCloseConfirmModal, ResetConfirmModal; smoke row 4.5). Matches the welcome
+   modal's outline buttons — white outline + white text, transparent, mono font —
+   replacing the browser-default look (the class previously had no CSS). The
+   bookmark / service-first-run reminders that also used it are a non-modal card
+   since item 113 (bookmark-reminder.css). */
 .modal-button {
     border: 0.5px solid var(--text-color, #ddd);
     border-radius: 6px;

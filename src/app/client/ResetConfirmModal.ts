@@ -41,9 +41,9 @@ export class ResetConfirmModal extends Modal {
     protected buildBody(container: HTMLElement): void {
         const description = document.createElement('p');
         description.textContent =
-            'this resets the welcome modal, service-mode modal, the per-port bookmark ' +
+            'this resets the welcome modal, the service-mode reminder, the per-port bookmark ' +
             'reminder, and the global bookmark dismissal. the page will reload so the ' +
-            'appropriate modal can re-fire. it does not affect install mode, audio ' +
+            'appropriate prompt can re-fire. it does not affect install mode, audio ' +
             'preferences, or scan history.';
         container.appendChild(description);
     }

@@ -17,6 +17,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The bookmark reminder is a card, not a dialog.** "bookmark this URL" (on a port the browser has
+  not acknowledged) and the service instance's first-load notice ("running as a service…") were two
+  `<dialog>`s opened with `showModal()`: every click on the page went to them until they were
+  dismissed, and both came back on every page load until a checkbox had been ticked — the service
+  one ignored the global dismissal entirely and carried no class anything could target. Both are now
+  one in-flow card at the top of the page (`BookmarkReminder`): the app stays usable beneath it,
+  **got it** acknowledges the current port in one click, **never again** keeps its confirmation and
+  persists the global dismissal, **×** hides it for this page view. The service wording also records
+  `serviceFirstRunSeen`, and a user who has already said "never again" never sees it. Smoke rows 13.1
+  and 4.5 reworded; found by qa-harness Arc 1b (finding 2, smoke row 12.2). `PortChangeModal` and
+  `ServiceFirstRunModal` are gone.
+
 ## [0.1.30-beta.109] - 2026-09-06
 
 ### Fixed

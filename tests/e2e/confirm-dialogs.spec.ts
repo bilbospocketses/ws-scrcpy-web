@@ -6,8 +6,9 @@ import { askToEmbed, gotoHome, readServerConfig, revokeAllOrigins, waitForPrompt
  * Smoke row 4.5 — confirm-dialog button style (item 35): the cancel/confirm
  * buttons of a confirm dialog use the shared outline style — the text colour
  * as a hairline border on a transparent ground, "white-outline + white-text"
- * in the dark theme — matching the welcome / bookmark / service-first-run
- * modals rather than each dialog styling its own.
+ * in the dark theme — matching the welcome modal rather than each dialog
+ * styling its own. (The bookmark / service-first-run reminders that shared the
+ * class are a non-modal card since item 113.)
  *
  * The row names the service install/uninstall "privileges required" confirm
  * and the "end shell session" confirm. This tier can open the first
