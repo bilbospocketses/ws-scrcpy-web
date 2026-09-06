@@ -130,13 +130,18 @@ test.describe('confirm dialogs (smoke §4.5)', () => {
         // A single isEnabled() sample races that; wait for two consecutive
         // readings to agree before deciding which half of the row this host
         // can run.
-        const offersInstall = status.supported && (await install.count()) > 0 && (await settledEnabled(install));
+        let offersInstall = status.supported && (await install.count()) > 0 && (await settledEnabled(install));
+        // On Linux the pre-flight fires for SYSTEM scope only (user scope needs
+        // no elevation), so pick it — and re-settle, because choosing it can
+        // disable the install on a host with nothing to stage into /opt (CI's
+        // bare server: user scope enabled, system scope disabled).
+        const systemScope = service.getByRole('radio', { name: /system/i });
+        if (offersInstall && (await systemScope.count()) > 0) {
+            await systemScope.check();
+            offersInstall = await settledEnabled(install);
+        }
         let adminStyles: [ButtonStyle, ButtonStyle] | null = null;
         if (offersInstall) {
-            const systemScope = service.getByRole('radio', { name: /system/i });
-            if ((await systemScope.count()) > 0) {
-                await systemScope.check();
-            }
             await install.click({ timeout: 5_000 });
             const admin = page.locator('dialog.admin-confirm-modal');
             adminStyles = await expectSharedStyle(
@@ -150,7 +155,7 @@ test.describe('confirm dialogs (smoke §4.5)', () => {
             await expect(install).toBeEnabled();
         } else {
             const why = status.supported
-                ? `install offered disabled: ${(await service.locator('.settings-status').allTextContents()).join(' | ').trim() || 'no note rendered'}`
+                ? `install offered disabled (system scope where the host has scopes): ${(await service.locator('.settings-status').allTextContents()).join(' | ').trim() || 'no note rendered'}`
                 : `service mode unsupported on this host (${status.unsupportedReason ?? 'no reason given'})`;
             test.info().annotations.push({
                 type: 'partial',
