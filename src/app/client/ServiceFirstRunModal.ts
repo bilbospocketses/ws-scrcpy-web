@@ -1,3 +1,4 @@
+import { sameOriginBase } from '../sameOriginUrl';
 import { Modal } from '../ui/Modal';
 import { settingsService } from './SettingsService';
 
@@ -75,7 +76,9 @@ export class ServiceFirstRunModal extends Modal {
         );
         container.appendChild(intro);
 
-        const url = `http://localhost:${this.opts.webPort}`;
+        // The address THIS browser reached the app on, not the serving machine's
+        // loopback — a LAN user bookmarks their own URL.
+        const url = sameOriginBase(this.opts.webPort);
         const urlPara = document.createElement('p');
         urlPara.style.cssText = 'margin: 0 0 12px;';
         urlPara.appendChild(document.createTextNode('this page lives at: '));

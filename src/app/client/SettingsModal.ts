@@ -5,6 +5,7 @@ import type {
     ServiceUninstallResponse,
 } from '../../common/ServiceEvents';
 import type { UpdatesConfigPatchRequest, UpdatesStatusResponse } from '../../common/UpdateEvents';
+import { sameOriginUrl } from '../sameOriginUrl';
 import { Modal } from '../ui/Modal';
 import { AdminConfirmModal, type AdminConfirmOptions } from './AdminConfirmModal';
 import { authClient, type Role } from './AuthClient';
@@ -1178,9 +1179,14 @@ export class SettingsModal extends Modal {
             this.currentWebPort = data.config.webPort;
             if (data.restartRequired) {
                 this.setServerStatus('restarting → redirecting…', false);
-                if (data.redirectTo) {
+                // The server names only the PORT; the host is whatever this
+                // browser is already on. It used to send a full
+                // http://localhost:<port> URL, which took off-box clients to
+                // their own machine.
+                const redirectPort = data.redirectPort;
+                if (typeof redirectPort === 'number') {
                     setTimeout(() => {
-                        window.location.href = data.redirectTo!;
+                        window.location.href = sameOriginUrl(redirectPort);
                     }, 4000);
                 }
             } else {
@@ -1924,7 +1930,10 @@ export class SettingsModal extends Modal {
                 switch (outcome.kind) {
                     case 'navigate':
                         clearInterval(poll);
-                        window.location.href = `http://localhost:${outcome.port}/`;
+                        // Same host the browser is on, new port. A literal
+                        // localhost here sent every off-box client to its
+                        // own machine (qa-harness Arc 1b, rows 4.3 / 12.2).
+                        window.location.href = sameOriginUrl(outcome.port);
                         return;
                     case 'reconnect':
                         // Same-port handoff: reload the current URL after a short
@@ -2053,7 +2062,7 @@ export class SettingsModal extends Modal {
                             discoverData.webPort != null
                         ) {
                             clearInterval(poll);
-                            window.location.href = `http://localhost:${discoverData.webPort}/`;
+                            window.location.href = sameOriginUrl(discoverData.webPort);
                         }
                     } catch {
                         if (!serverDied) {

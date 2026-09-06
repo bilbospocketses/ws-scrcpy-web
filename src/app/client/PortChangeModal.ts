@@ -1,3 +1,4 @@
+import { sameOriginBase } from '../sameOriginUrl';
 import { Modal } from '../ui/Modal';
 import { ConfirmModal } from './ConfirmModal';
 import { settingsService } from './SettingsService';
@@ -67,7 +68,9 @@ export class PortChangeModal extends Modal {
     }
 
     private fillBody(container: HTMLElement): void {
-        const url = `http://localhost:${this.opts.webPort}`;
+        // The address THIS browser reached the app on, not the serving machine's
+        // loopback — a LAN user bookmarks their own URL.
+        const url = sameOriginBase(this.opts.webPort);
 
         const lead = document.createElement('p');
         lead.style.cssText = 'margin: 0 0 12px;';
