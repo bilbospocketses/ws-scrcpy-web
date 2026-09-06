@@ -169,6 +169,49 @@ pub fn spawn_server(deps_path: &Path, data_root: &Path, open_browser: bool) -> R
     Ok(child)
 }
 
+/// Soft `RLIMIT_NOFILE` a desktop launch grants the Node server. The same
+/// number the systemd unit writes as `LimitNOFILE=` (SystemdClient.ts), and
+/// derived in src/server/fdBudget.ts — read that before changing this. The
+/// TypeScript side pins this constant by reading this file
+/// (src/server/__tests__/fdBudget.test.ts), so the two cannot drift silently.
+#[cfg(target_os = "linux")]
+pub const NOFILE_LIMIT: u64 = 4096;
+
+/// Raise this process's soft `RLIMIT_NOFILE` to `NOFILE_LIMIT`, or to the hard
+/// limit if that is lower, so the Node child inherits it. A desktop launch
+/// starts from the shell's `ulimit -n` — 1024 on every mainstream distro — and
+/// that budget is shared by every WebSocket, adb socket, the store, the log
+/// and the subnet scan. rlimits are inherited across `exec`, and `Command` has
+/// no per-child rlimit API, so the launcher raises its own; it holds a handful
+/// of descriptors itself, so the change costs it nothing. Never lowers a limit
+/// that is already higher, and never touches the hard limit (that would need
+/// privilege). Errors are returned for the caller to log; a failure here is a
+/// degraded launch, not a failed one.
+#[cfg(target_os = "linux")]
+pub fn raise_nofile_soft_limit() -> Result<()> {
+    use rustix::process::{Resource, Rlimit, getrlimit, setrlimit};
+    let current = getrlimit(Resource::Nofile);
+    // `None` is RLIM_INFINITY: nothing to raise.
+    let target = match current.maximum {
+        Some(hard) => NOFILE_LIMIT.min(hard),
+        None => NOFILE_LIMIT,
+    };
+    match current.current {
+        None => return Ok(()),
+        Some(soft) if soft >= target => return Ok(()),
+        Some(_) => {}
+    }
+    setrlimit(
+        Resource::Nofile,
+        Rlimit {
+            current: Some(target),
+            maximum: current.maximum,
+        },
+    )
+    .with_context(|| format!("setrlimit(RLIMIT_NOFILE, soft={target})"))?;
+    Ok(())
+}
+
 #[cfg(not(windows))]
 pub fn spawn_server(deps_path: &Path, data_root: &Path, open_browser: bool) -> Result<Child> {
     let exe = std::env::current_exe()?;
@@ -176,6 +219,14 @@ pub fn spawn_server(deps_path: &Path, data_root: &Path, open_browser: bool) -> R
     let deps_str = deps_path.to_str().context("deps_path is not valid UTF-8")?;
     let node = resolve_node_with(Some(deps_str), &work_dir)?;
     let entry = resolve_server_entry_with(&work_dir)?;
+
+    // Before the spawn, so the child inherits it (see raise_nofile_soft_limit).
+    // Best-effort: the server runs on the inherited limit if this fails, which
+    // is exactly what it did before, so say so and carry on.
+    #[cfg(target_os = "linux")]
+    if let Err(e) = raise_nofile_soft_limit() {
+        eprintln!("[launcher] could not raise the open-files limit for the server (continuing on the inherited one): {e:#}");
+    }
 
     let mut cmd = Command::new(&node);
     cmd.arg("--disable-warning=ExperimentalWarning")
@@ -320,6 +371,27 @@ mod tests {
 
         let err = resolve_server_entry_with(&exe_dir).unwrap_err();
         assert!(err.to_string().contains("Server entry not found"));
+    }
+
+    /// After the raise, the soft limit is NOFILE_LIMIT or the hard cap,
+    /// whichever is lower — and a second call is a no-op, not a lowering.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn raise_nofile_soft_limit_reaches_the_budget_and_never_lowers() {
+        use rustix::process::{Resource, getrlimit};
+        raise_nofile_soft_limit().unwrap();
+        let after = getrlimit(Resource::Nofile);
+        let expected = match after.maximum {
+            Some(hard) => NOFILE_LIMIT.min(hard),
+            None => NOFILE_LIMIT,
+        };
+        assert!(
+            after.current.is_none_or(|soft| soft >= expected),
+            "soft limit {:?} below {expected}",
+            after.current
+        );
+        raise_nofile_soft_limit().unwrap();
+        assert_eq!(getrlimit(Resource::Nofile).current, after.current, "second call must not move the limit");
     }
 
     #[test]
