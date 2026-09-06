@@ -40,6 +40,16 @@ describe('requestGate.evaluateHttpRequest', () => {
         expect(d.allowed).toBe(true);
     });
 
+    it('allows the sibling GET /api/whoami probe with no Origin and no token, as the resolver sends it', () => {
+        // siblingInstance.ts fetches http://127.0.0.1:<port>/api/whoami with no
+        // cookie and no Origin; the Host is an IP literal.
+        const d = evaluateHttpRequest('GET', '/api/whoami', undefined, '127.0.0.1:8000', undefined, false);
+        expect(d.allowed).toBe(true);
+        if (d.allowed) {
+            expect(d.setCookie).toBeUndefined(); // an API response never hands out the token
+        }
+    });
+
     it('rejects a DNS-rebinding Host even on a document request', () => {
         const d = evaluateHttpRequest('GET', '/', 'http://evil.com', 'evil.com', undefined, false);
         expect(d.allowed).toBe(false);

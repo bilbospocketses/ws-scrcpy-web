@@ -5,9 +5,12 @@ export const SESSION_COOKIE = 'wsscrcpy_sid';
 
 // `/login` is NOT here: AuthGate serves the login page body itself (see Task 8) so it never
 // falls through to the SPA catch-all (`createStaticHandler` serves index.html for any non-file
-// path — Auditor finding: app-shell leak). whoami + me are exempt from the AUTH gate only;
-// /api/whoami is still gated upstream by the per-instance token check (requestGate #367), so
-// allow-listing it here does not make it reachable cross-instance without the instance token.
+// path — Auditor finding: app-shell leak). `/api/auth/me` is exempt so the login page can read
+// authEnabled pre-login. `/api/whoami` is the sibling identity probe (siblingInstance.ts): a
+// second instance of this app asking whether the process on its configured port is one of us,
+// with no session and no cookie — so it is exempt here AND from the instance token
+// (requestGate), and its handler refuses any caller that is not on loopback. Nothing it says
+// reaches the LAN.
 // `/embed-request` is exempt because it is unauthenticated BY DESIGN and grants nothing — it only
 // records that another local app would like to be allowed to frame us, and a human still has to
 // approve that in the (gated) UI. Without the exemption, locked mode answers it with 200 + the

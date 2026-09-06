@@ -17,6 +17,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The sibling port-shift guard now works with users configured.** beta.104 stopped an elevated second
+  instance (smoke row 3.7, case b) from writing its auto-shifted port into the shared `config.json` by
+  asking the busy port `GET /api/config` and recognising a ws-scrcpy-web answer — but in locked mode
+  `AuthGate` answers that probe 401, the guard read "not a sibling", and the shift was persisted exactly
+  as before; the entry said so. The guard now also asks `GET /api/whoami`, which is exempt from both the
+  instance token and `AuthGate` and answers `app: "ws-scrcpy-web"` to a caller on this machine, so the
+  identification comes through with no session. The two probes are sent together and either one is
+  enough; the config probe stays so a sibling running an older build — during an update, the process
+  holding the port is exactly that — is still recognised. Nothing else changes: another program holding
+  the port persists the shift, and so does the service instance.
+- **`/api/whoami` is loopback-only and names the product.** It had no consumer since the service-install
+  port sweep was replaced by mtime discovery, and answered `pid` / `installMode` / `version` to any
+  browser holding the token. It now adds `app: "ws-scrcpy-web"` — the positive identification the
+  guard keys on, which three generic fields could not provide — and refuses any caller that is not on
+  loopback with a 403 that carries nothing. Being ungated is why it is loopback-only; the LAN learns
+  nothing from it, not even the version. The `isLoopback` check moved out of `EmbedRequestApi` into
+  `security/loopback.ts` so both surfaces use the same one.
+
 ## [0.1.30-beta.105] - 2026-09-06
 
 ### Fixed

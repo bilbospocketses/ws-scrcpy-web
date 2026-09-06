@@ -11,8 +11,11 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
  * surface and on every WebSocket handshake. A non-browser caller that never
  * loaded the page has no cookie and is rejected.
  *
- * The launcher's `GET /api/config` upgrade probe is deliberately exempt — it
- * has no cookie and only reads non-sensitive config to detect the live server.
+ * Two probes are deliberately exempt, both sent by a process rather than a
+ * browser and so cookieless: the launcher's `GET /api/config` upgrade probe,
+ * which only reads non-sensitive config to detect the live server, and the
+ * sibling guard's `GET /api/whoami` identity probe (siblingInstance.ts), whose
+ * handler is loopback-only so the exemption reaches nothing off-box.
  */
 
 const COOKIE_NAME = 'ws_scrcpy_token';
@@ -72,7 +75,8 @@ export function isValidToken(provided: string | null | undefined): boolean {
 
 /**
  * Whether a request to the given API path must carry a valid token. The whole
- * API surface is protected except the launcher's `GET /api/config` probe.
+ * API surface is protected except the two process-to-process probes above.
+ * Exact path and method only: `/api/whoami/` or a POST are gated as usual.
  */
 export function requiresToken(method: string | undefined, pathname: string): boolean {
     if (pathname !== '/api' && !pathname.startsWith('/api/')) {
@@ -80,6 +84,9 @@ export function requiresToken(method: string | undefined, pathname: string): boo
     }
     const m = (method ?? 'GET').toUpperCase();
     if ((m === 'GET' || m === 'HEAD') && pathname === '/api/config') {
+        return false;
+    }
+    if (m === 'GET' && pathname === '/api/whoami') {
         return false;
     }
     return true;

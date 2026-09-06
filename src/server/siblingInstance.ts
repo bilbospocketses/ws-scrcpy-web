@@ -1,3 +1,5 @@
+import { APP_IDENTITY } from './api/WhoamiApi';
+
 /**
  * Is the process listening on loopback `port` ANOTHER INSTANCE OF THIS APP?
  *
@@ -15,17 +17,23 @@
  *     elevated instance wrote webPort=8001 into config.json while the
  *     user-level server kept serving 8000.
  *
- * The probe is the launcher's own upgrade probe: GET /api/config, which is
- * exempt from the instance token and needs no Origin (security/instanceToken.ts,
- * security/originGuard.ts — Host is an IP literal). A sibling answers 200 with
- * the AppConfigEnvelope shape: `config.webPort` a number and a `runtime` object.
- * Anything else — refused, timeout, non-JSON, another program's 200 — is "not a
- * sibling", and the caller falls back to the pre-existing behaviour: persist.
+ * Two probes, sent together, and either one is enough:
  *
- * KNOWN LIMIT: with users configured (locked mode), AuthGate answers this probe
- * with 401, so the guard reads "not a sibling" and an elevated second instance
- * persists its shift exactly as before. The safe default, but an inert one
- * there.
+ *   1. GET /api/whoami — the identity probe (api/WhoamiApi.ts). Exempt from the
+ *      instance token AND from AuthGate, loopback-only, and it answers 200 with
+ *      `app: "ws-scrcpy-web"`. This is the one that works with users configured:
+ *      the sibling has no session to offer and needs none.
+ *   2. GET /api/config — the launcher's upgrade probe, token-exempt but NOT
+ *      AuthGate-exempt. A sibling answers 200 with the AppConfigEnvelope shape
+ *      (`config.webPort` a number, a `runtime` object) in open mode and 401 in
+ *      locked mode. Kept because a sibling may be an OLDER BUILD — during an
+ *      update the process holding the port is exactly that — whose whoami is
+ *      still token-gated and carries no `app` field.
+ *
+ * Anything else — refused, timeout, non-JSON, another program's 200, a whoami
+ * body without `app` — is "not a sibling", and the caller falls back to the
+ * pre-existing behaviour: persist. Only a POSITIVE identification suppresses
+ * the write.
  *
  * NOT FOR THE SERVICE INSTANCE (see isServiceInstance): on the Windows
  * service-install handoff the process holding the configured port is the
@@ -33,26 +41,42 @@
  * PERSISTING the port it will actually serve — the tray and the install poll
  * read it from config.json.
  *
- * Pure apart from the network call; `fetchImpl` exists for tests.
+ * Pure apart from the network calls; `fetchImpl` exists for tests.
  */
 export async function isSiblingInstance(
     port: number,
     opts: { timeoutMs?: number; fetchImpl?: typeof fetch } = {},
 ): Promise<boolean> {
     const doFetch = opts.fetchImpl ?? fetch;
-    try {
-        const res = await doFetch(`http://127.0.0.1:${port}/api/config`, {
+    const timeoutMs = opts.timeoutMs ?? 1000;
+
+    async function getJson(path: string): Promise<unknown> {
+        const res = await doFetch(`http://127.0.0.1:${port}${path}`, {
             headers: { accept: 'application/json' },
-            signal: AbortSignal.timeout(opts.timeoutMs ?? 1000),
+            signal: AbortSignal.timeout(timeoutMs),
         });
         if (!res.ok) {
-            return false;
+            return null;
         }
-        const body = (await res.json()) as { config?: { webPort?: unknown }; runtime?: unknown } | null;
-        return typeof body?.config?.webPort === 'number' && body.runtime !== undefined && body.runtime !== null;
-    } catch {
-        return false;
+        return res.json();
     }
+
+    // In parallel: one timeout bounds the whole decision, and the cost of the
+    // second request is one loopback GET at startup.
+    const [identity, envelope] = await Promise.all([
+        getJson('/api/whoami').catch(() => null),
+        getJson('/api/config').catch(() => null),
+    ]);
+    return isIdentity(identity) || isEnvelope(envelope);
+}
+
+function isIdentity(body: unknown): boolean {
+    return typeof body === 'object' && body !== null && (body as { app?: unknown }).app === APP_IDENTITY;
+}
+
+function isEnvelope(body: unknown): boolean {
+    const b = body as { config?: { webPort?: unknown }; runtime?: unknown } | null;
+    return typeof b?.config?.webPort === 'number' && b.runtime !== undefined && b.runtime !== null;
 }
 
 /**

@@ -3,6 +3,7 @@ import { requireAdmin } from '../auth/requireAdmin';
 import { Config } from '../Config';
 import { Logger } from '../Logger';
 import { cancelRequest, createRequest, getPendingRequest, getStatus, resolveRequest } from '../security/embedRequests';
+import { isLoopback } from '../security/loopback';
 import { readJsonBody } from './utils';
 
 const log = Logger.for('EmbedRequestApi');
@@ -233,10 +234,4 @@ export class EmbedRequestApi {
         res.end(JSON.stringify({ status: 'approved', origin: request.origin }));
         return true;
     }
-}
-
-function isLoopback(remoteAddress: string): boolean {
-    // Node reports IPv4-mapped IPv6 for dual-stack listeners (::ffff:127.0.0.1).
-    const addr = remoteAddress.startsWith('::ffff:') ? remoteAddress.slice('::ffff:'.length) : remoteAddress;
-    return addr === '127.0.0.1' || addr === '::1' || addr.startsWith('127.');
 }
