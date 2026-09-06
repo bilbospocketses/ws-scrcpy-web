@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.106] - 2026-09-06
+
 ### Fixed
 
 - **The sibling port-shift guard now works with users configured.** beta.104 stopped an elevated second
