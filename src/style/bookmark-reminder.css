@@ -1,0 +1,73 @@
+/* The "bookmark this URL" reminder (BookmarkReminder). In-flow at the top of
+   the page: it never covers the app or captures its clicks — the reason it
+   replaced the PortChangeModal / ServiceFirstRunModal dialogs (item 113).
+   Colours come from the theme tokens only (design-tokens.test.ts). */
+.bookmark-reminder {
+    margin: 1rem auto;
+    max-width: 960px;
+    padding: 0.75rem 1rem;
+    border-radius: 6px;
+    background-color: rgba(var(--accent-rgb), 0.08);
+    border: 1px solid var(--border-muted);
+    border-left: 3px solid var(--accent-color);
+    color: var(--text-color);
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+.bookmark-reminder-inner {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+
+.bookmark-reminder-text {
+    flex: 1 1 320px;
+}
+
+.bookmark-reminder-text a {
+    color: var(--accent-color);
+}
+
+.bookmark-reminder-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-shrink: 0;
+}
+
+.bookmark-reminder-got-it,
+.bookmark-reminder-never {
+    padding: 0.35rem 0.85rem;
+    border-radius: 4px;
+    border: 1px solid var(--text-color);
+    background: transparent;
+    color: var(--text-color);
+    font-size: 14px;
+    cursor: pointer;
+}
+
+.bookmark-reminder-never {
+    border-color: var(--border-muted);
+    color: var(--text-color-light);
+}
+
+.bookmark-reminder-got-it:hover,
+.bookmark-reminder-never:hover {
+    background-color: rgba(var(--accent-rgb), 0.12);
+}
+
+.bookmark-reminder-close {
+    border: 0;
+    background: transparent;
+    color: var(--text-color-light);
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 0.25rem;
+}
+
+.bookmark-reminder-close:hover {
+    color: var(--text-color);
+}

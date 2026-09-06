@@ -85,19 +85,21 @@ Because of that isolation you can run the suite while your normal instance is up
    `WS_SCRCPY_CONFIG` names a missing file, so the seed config is written at
    *config-load* time in `playwright.config.ts`, guarded to the runner process
    (workers re-import that module and would otherwise re-seed mid-run).
-2. **Four first-run dialogs must be suppressed, by three different mechanisms.**
-   `ServiceFirstRunModal` (gated by `installMode`) and `WelcomeModal` (by
-   `firstRunComplete`) are handled by the seed config. `SystemWideInstallModal` is
-   **Linux-only** and gated by a marker *file*, `<dataRoot>/control/system-install-declined`,
-   so it passes locally on Windows and fails only in CI — it is written at seed time.
-   `PortChangeModal` is gated by per-user settings, covered below.
+2. **Three first-run prompts must be suppressed, by three different mechanisms.**
+   `WelcomeModal` (gated by `firstRunComplete`) is handled by the seed config.
+   `SystemWideInstallModal` is **Linux-only** and gated by a marker *file*,
+   `<dataRoot>/control/system-install-declined`, so it passes locally on Windows and
+   fails only in CI — it is written at seed time. The bookmark reminder card
+   (`BookmarkReminder`, in both its port and its service wording) is gated by
+   per-user settings, covered below.
 3. **`globalSetup` therefore has a live server to talk to**, which is where the
-   bookmark reminder gets switched off. `PortChangeModal` opens on every page load
-   for an unacknowledged port — every load, against a virgin data root — and being a
-   plain `<dialog>` it stacks over the consent prompt and swallows its clicks.
-   Symptom is `subtree intercepts pointer events`, which points nowhere near the
-   cause. Dismissing it per-spec raced the async fetch that opens it, so it is
-   disabled once via the same `PATCH /api/settings` its own checkbox uses.
+   bookmark reminder gets switched off. The card opens on every page load for an
+   unacknowledged port — every load, against a virgin data root. Since item 113 it
+   is a non-modal card that captures no clicks (its `<dialog>` predecessor stacked
+   over the consent prompt and swallowed its clicks — `subtree intercepts pointer
+   events`, which points nowhere near the cause), but it would still sit on every
+   page and rows 13.1 / 13.2 must establish the flag themselves, so it is disabled
+   once via the same `PATCH /api/settings` its own buttons use.
 
 ## Why it runs serially
 

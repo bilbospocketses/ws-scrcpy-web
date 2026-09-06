@@ -4,16 +4,15 @@ import { E2E_BASE_URL } from './support/paths';
 /**
  * Switch off the bookmark reminder before any spec runs.
  *
- * `PortChangeModal` ("this app lives at: ...") opens on every page load for a port
- * the user has not acknowledged, and the suite deliberately runs against a virgin
- * data root — so that is every load. It is a plain <dialog> stacked above the
- * consent prompt, and it silently swallows the clicks aimed at the prompt beneath
- * it. Specs then fail with "subtree intercepts pointer events", which points
- * nowhere near the actual cause.
- *
- * Dismissing it inside each spec raced the async config+settings fetch that opens
- * it, so it is switched off exactly once, here, through the same endpoint the
- * modal's own "don't show again" checkbox writes to.
+ * The reminder card (`BookmarkReminder`, "this app lives at …") opens on every
+ * page load for a port the user has not acknowledged, and the suite deliberately
+ * runs against a virgin data root — so that is every load. Since item 113 it is a
+ * non-modal card that captures no clicks (it used to be a <dialog> stacked above
+ * the consent prompt, swallowing the clicks aimed at it — "subtree intercepts
+ * pointer events", which points nowhere near the cause), but it would still sit on
+ * every page, and rows 13.1 / 13.2 must establish the flag themselves. So it is
+ * switched off exactly once, here, through the same endpoint the card's own
+ * buttons write to.
  *
  * Note the ordering this relies on: Playwright starts `webServer` BEFORE globalSetup,
  * which is why the seed config is written at config-load time instead (see

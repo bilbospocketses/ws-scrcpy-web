@@ -36,7 +36,7 @@ export class SystemWideInstallModal extends Modal {
         this.opts = options;
         this.dialog.classList.add('system-wide-install-modal');
         // Defer body fill past class-field init phase (ES2022 useDefineForClassFields).
-        // Same pattern as WelcomeModal / ServiceFirstRunModal.
+        // Same pattern as WelcomeModal.
         queueMicrotask(() => {
             this.fillBody(this.bodyEl);
         });

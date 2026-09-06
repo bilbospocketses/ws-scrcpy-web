@@ -2,19 +2,19 @@
 
 /**
  * Bug #35: "reset welcome and bookmark prompts" left bookmarkDismissedForPort
- * stale. Root cause: WelcomeModal + ServiceFirstRunModal eagerly PATCH
- * bookmarkDismissedForPort=<webPort> in their constructors. The reset sets
- * firstRunComplete=false -> the reload re-shows the modal -> the constructor
- * re-stamps the current port, clobbering the reset's null.
+ * stale. Root cause: WelcomeModal (and, until item 113, ServiceFirstRunModal)
+ * eagerly PATCHed bookmarkDismissedForPort=<webPort> in their constructors. The
+ * reset sets firstRunComplete=false -> the reload re-shows the modal -> the
+ * constructor re-stamps the current port, clobbering the reset's null.
  *
- * The eager stamp is redundant: index.ts already gates modal priority on the
- * same load (welcome/service-first-run shows, port-change early-returns), and
- * the modal's COMPLETION path stamps the port legitimately. So neither modal
- * should issue the bookmark PATCH at construction time.
+ * The eager stamp is redundant: index.ts already gates prompt priority on the
+ * same load (welcome shows, the reminder card early-returns), and the modal's
+ * COMPLETION path stamps the port legitimately. So no prompt may issue the
+ * bookmark PATCH at construction time. The service wording of the reminder
+ * card carries the same regression test in BookmarkReminder.test.ts.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ServiceFirstRunModal } from '../ServiceFirstRunModal';
 import { WelcomeModal } from '../WelcomeModal';
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
@@ -52,15 +52,9 @@ function bookmarkPortWasStamped(): boolean {
     });
 }
 
-describe('first-run modals do not eagerly stamp bookmarkDismissedForPort (#35)', () => {
+describe('first-run prompts do not eagerly stamp bookmarkDismissedForPort (#35)', () => {
     it('WelcomeModal construction issues no bookmarkDismissedForPort PATCH', async () => {
         new WelcomeModal({ webPort: 8000, portWasAutoShifted: false, onDecision: () => {} });
-        await flush();
-        expect(bookmarkPortWasStamped()).toBe(false);
-    });
-
-    it('ServiceFirstRunModal construction issues no bookmarkDismissedForPort PATCH', async () => {
-        new ServiceFirstRunModal({ webPort: 8000 });
         await flush();
         expect(bookmarkPortWasStamped()).toBe(false);
     });

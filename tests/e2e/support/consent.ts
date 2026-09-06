@@ -11,25 +11,18 @@ export interface ServerConfig {
 }
 
 /**
- * Navigate to the app and clear the bookmark reminder out of the way.
+ * Navigate to the app.
  *
- * `PortChangeModal` ("this app lives at: ...") fires on every page load for a port
- * the user has not acknowledged, and the suite runs against a virgin data root, so
- * that is every load. It is a plain <dialog> stacked above the consent prompt, and
- * it silently swallows clicks aimed at the prompt underneath — the specs then fail
- * with "subtree intercepts pointer events", which points nowhere near the cause.
- *
- * Dismissed with "got it" and no checkbox, which closes it WITHOUT persisting the
- * flag, so this stays a UI step rather than hidden state the next run inherits.
- * Tolerant of absence: a developer who has dismissed it globally never sees it.
+ * Until item 113 this also had to clear the bookmark reminder out of the way:
+ * `PortChangeModal` ("this app lives at: ...") was a <dialog> stacked above the
+ * consent prompt that silently swallowed the clicks aimed at it — the specs then
+ * failed with "subtree intercepts pointer events", which points nowhere near the
+ * cause. The reminder is a non-modal card now (`BookmarkReminder`) and
+ * global-setup pre-dismisses it for the run; a developer who sees it anyway loses
+ * nothing, because it captures no clicks.
  */
 export async function gotoHome(page: Page): Promise<void> {
     await page.goto('/');
-    const reminder = page.locator('dialog.port-change-modal');
-    if (await reminder.isVisible().catch(() => false)) {
-        await reminder.getByRole('button', { name: 'got it', exact: true }).click();
-        await expect(reminder).toBeHidden();
-    }
 }
 
 /** Read the config file the running e2e server is actually bound to. */

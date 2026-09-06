@@ -937,7 +937,7 @@ test.describe('auth / opt-in login (smoke §18)', () => {
 
             await user.page.goto('/');
             await expect(user.page.getByRole('button', { name: 'Open settings' })).toBeVisible();
-            await expect(user.page.locator('dialog.port-change-modal')).toHaveCount(0);
+            await expect(user.page.locator('.bookmark-reminder')).toHaveCount(0);
             const settings = await openSettings(user.page);
             const server = settingsSection(settings, 'Server');
             const cpRow = server

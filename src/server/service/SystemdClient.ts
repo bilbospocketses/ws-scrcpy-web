@@ -130,7 +130,7 @@ export function buildServiceUnitEnv(
 /**
  * The config.json seeded into the system service's /opt data dir at install so
  * it reads a correct, persistent config on first boot (#36): it knows it is a
- * service (ServiceFirstRunModal, not WelcomeModal), is already first-run-
+ * service (the service first-run reminder, not WelcomeModal), is already first-run-
  * complete, and binds the same web port the installing user is on (so the
  * post-install browser hand-off lands on the same URL). Other fields fall to
  * Config defaults when the service loads this file.

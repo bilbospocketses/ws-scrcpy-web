@@ -1966,7 +1966,7 @@ Windows and the Windows-service apply path are unchanged (Velopack `waitExitThen
 
 ## 23. First-Run Modal Gating
 
-`src/app/client/firstRunGate.ts` orchestrates the first-run experience, ensuring the user sees the right modal on the right instance.
+`maybeShowWelcomeModal()` in `src/app/index.ts` orchestrates the first-run experience, with the pure port gate in `src/app/client/bookmarkGate.ts`, ensuring the user sees the right prompt on the right instance.
 
 > **Not the only modal that can appear unbidden.** `startEmbedRequestWatch()` (raised from `src/app/index.ts`, home page only) polls `GET /embed-request` every 5 s, and shows the embed-consent prompt when another local app asks to frame this one. It is **non-dismissible** — the user must Approve or Deny — and it can appear over an idle home page with no action from them. It is not part of the first-run gate and is not sequenced against it. `stopEmbedRequestWatch()` tears the poller down on page teardown. See `SECURITY.md` §Framing.
 
@@ -1975,13 +1975,17 @@ Windows and the Windows-service apply path are unchanged (Velopack `waitExitThen
 On page load, `src/app/index.ts` reads `installMode` + `firstRunComplete` from `GET /api/config` and the per-user prompt flags from the settings store (`SettingsService.loadGlobal()`), then evaluates:
 
 ```
-installMode is service AND serviceFirstRunSeen (from settings) is false?
-    → show ServiceFirstRunModal (section 23.3)
-config.firstRunComplete is false?
+installMode is service AND serviceFirstRunSeen is false AND bookmarkDismissedGlobally is false?
+    → show the bookmark reminder card in its SERVICE wording (section 23.3)
+config.firstRunComplete is false (local instance)?
     → show WelcomeModal (section 23.2)
+bookmarkGate.shouldShowBookmark: not globally dismissed AND this port not yet acknowledged?
+    → show the bookmark reminder card (section 23.5)
 else
-    → no modal, proceed to home page
+    → nothing, proceed to home page
 ```
+
+Only the WelcomeModal is a modal. The reminder card is in-flow at the top of the page container and never blocks the app (item 113, 2026-09-06).
 
 ### 23.2 WelcomeModal
 
@@ -1992,14 +1996,13 @@ Shown on the first page load of a local-mode (non-service) instance. Lets the us
 
 On dismissal, `firstRunComplete = true` is persisted to `config.json` server-side. This survives port shifts and browser clears because it is stored on the server, not in localStorage.
 
-### 23.3 ServiceFirstRunModal
+### 23.3 Service first-run reminder
 
-Shown on the first page load of a service-mode instance (after the service has been installed). Informs the user:
+Shown on the first page load of a service-mode instance (after the service has been installed). It is the same `BookmarkReminder` card as §23.5 in its service wording — "ws-scrcpy-web is running as a service and starts with your computer. this page lives at <url> — bookmark it." — so the user learns two things: the service runs at boot, so this URL stays valid across reboots, and the current port is the one to bookmark.
 
-- The service runs at boot — this URL stays valid across reboots
-- The current port is the one to bookmark
+**got it** persists `serviceFirstRunSeen = true` and `bookmarkDismissedForPort = <port>`; **never again** persists `bookmarkDismissedGlobally = true` as well; **×** persists nothing. All go to the per-user settings store (via `SettingsService.patchGlobal` → `SettingsApi`), not `config.json` — see §23.4. A user who has already said "never again" does not see the service wording either.
 
-On dismissal, `serviceFirstRunSeen = true` is persisted to the per-user settings store (via `SettingsService.patchGlobal` → `SettingsApi`), not `config.json` — see §23.4.
+Until 2026-09-06 (item 113) this was a separate, blocking `ServiceFirstRunModal` gated on `serviceFirstRunSeen` alone: it ignored the global dismissal and returned on every load until its checkbox was ticked, which is how qa-harness Arc 1b found the service instance wedged behind a bare `dialog.modal`.
 
 ### 23.4 Persistence: config.json vs the per-user settings store
 
@@ -2008,26 +2011,30 @@ None of these flags live in browser `localStorage` (unreliable on the Linux AppI
 | Field | Default | Home | Set by |
 |-------|---------|------|--------|
 | `firstRunComplete` | `false` | `config.json` (boot field) | WelcomeModal dismissal |
-| `serviceFirstRunSeen` | `false` | per-user settings store | ServiceFirstRunModal dismissal |
-| `bookmarkDismissedForPort` | `null` | per-user settings store | PortChangeModal "got it" (stamps the current port) |
-| `bookmarkDismissedGlobally` | `false` | per-user settings store | PortChangeModal "don't show again — ever" |
+| `serviceFirstRunSeen` | `false` | per-user settings store | reminder card (service wording) "got it" / "never again" |
+| `bookmarkDismissedForPort` | `null` | per-user settings store | reminder card "got it" (stamps the current port) |
+| `bookmarkDismissedGlobally` | `false` | per-user settings store | reminder card "never again" (after a confirmation) |
 
 `firstRunComplete` stays in `config.json` because the launcher reads it at boot, before the Node server (and the database) is up. The three prompt-dismissal flags are per-user UI state, so they moved onto the per-user SQLite settings store via `SettingsApi` — read with `SettingsService.loadGlobal()`, written with `patchGlobal`, served off `/api/settings` rather than the `/api/config` envelope. All other browser UI preferences (theme, file-browser icon size, network-scan subnets, per-device video/stream + audio) live in that same per-user store (`wsscrcpy.db`, served via `SettingsApi`) as of the Phase 3 frontend migration — `localStorage` is no longer used for any of them.
 
 The **Settings** modal's reset control — **"reset all my settings"** — now calls `SettingsService.reset()` (clearing the caller's entire `user_settings` + device labels + per-device settings, i.e. all of the prompt flags above plus theme/icon/subnets/audio/video) and also PATCHes `firstRunComplete = false` on `/api/config`, then reloads to re-trigger the first-run flow.
 
-### 23.5 Port Change Modal
+### 23.5 Bookmark reminder card
 
-`PortChangeModal` fires when the server's port has changed since the user last dismissed the welcome flow. It prompts the user to update their bookmarks. The `firstRunGate` module tracks a `bookmarkDismissedPort` to suppress the port-change modal during the initial welcome flow (where the port is already visible).
+`BookmarkReminder` (`src/app/client/BookmarkReminder.ts`, styles in `src/style/bookmark-reminder.css`) is shown when the port the browser is on has not been acknowledged — `bookmarkGate.shouldShowBookmark`: a global dismissal wins outright, otherwise a per-port dismissal suppresses only the matching port, so a port change (service install, auto-shift, a manual change in Settings) brings it back. It is a `div.bookmark-reminder[role=status][data-kind=bookmark|service]` inserted at the top of `.page-container`: in-flow, no backdrop, no click capture. The URL it shows is the address this browser reached the app on (`sameOriginBase`, item 112), never the serving machine's loopback.
+
+Three ways out, each one click: **got it** → `bookmarkDismissedForPort = <port>`; **never again** → the shared `ConfirmModal` ("you won't see this bookmark helper again, even when the port changes"), then `bookmarkDismissedGlobally = true`; **×** → gone for this page view only. Construction issues no PATCH (bug #35: an eager per-port stamp used to clobber "reset welcome and bookmark prompts").
+
+History: v0.1.10's `PortChangeModal` was a `<dialog>` opened with `showModal()` that returned on every page load until its "don't show again" box was ticked. qa-harness Arc 1b (2026-09-06) found it — and its service-instance sibling — wedging the UI; the card replaced both (item 113). The WelcomeModal is now the only first-run prompt that blocks.
 
 ### 23.6 Key Files
 
 | File | Purpose |
 |------|---------|
-| `src/app/client/firstRunGate.ts` | Gate logic, bookmark-dismissed-port tracking |
+| `src/app/index.ts` (`maybeShowWelcomeModal`) | Decision flow: which prompt on which instance |
+| `src/app/client/bookmarkGate.ts` | Pure gate: global dismissal beats per-port dismissal beats show |
 | `src/app/client/WelcomeModal.ts` | First-run mode selection modal |
-| `src/app/client/ServiceFirstRunModal.ts` | Service-instance first-run info modal |
-| `src/app/client/PortChangeModal.ts` | Port-changed notification modal |
+| `src/app/client/BookmarkReminder.ts` | The reminder card (port and service wordings) |
 | `src/app/client/SettingsModal.ts` | "Reset welcome prompts" button |
 
 ---
