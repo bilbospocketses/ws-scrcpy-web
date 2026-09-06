@@ -81,25 +81,17 @@ export interface ServiceActionSuccess {
     status: ServiceStatus;
     installMode: 'user' | 'system' | 'user-service' | 'system-service';
     /**
-     * v0.1.8 install-flow auto-redirect: when the install succeeds and
-     * the new service-instance has been verified reachable on a port
-     * different from this (local) instance's port, this field carries
-     * the URL the frontend should navigate to. The local instance
-     * schedules its own shutdown shortly after responding so the user
-     * doesn't end up with two app instances fighting for the tray.
-     *
-     * Absent when no redirect is needed (e.g., service install
-     * succeeded but the new instance is unreachable for some reason —
-     * frontend should fall back to refreshing the home page).
-     */
-    redirectTo?: string;
-    /**
      * v0.1.8 uninstall-flow Path A handoff: present when the request
      * came from a service-context API and the server has spawned a
      * fresh user-session local launcher to take over. Frontend
-     * navigates to `redirectTo` with this token in the URL params; the
-     * new local instance reads `?resume=uninstall-service&token=...`,
+     * navigates to the fresh instance with this token in the URL params;
+     * the new local instance reads `?resume=uninstall-service&token=...`,
      * validates it, and auto-fires the uninstall click.
+     *
+     * (The v0.1.8 `redirectTo` URL that used to sit beside this field was
+     * retired by the §39 mtime-poll discovery — the server stopped
+     * producing it in May 2026 — and the type followed on 2026-09-06 when
+     * every remaining server-built `http://localhost` URL was removed.)
      */
     resumeToken?: string;
     /** config.json mtime snapshot at response time (epoch ms). Frontend uses as baseline for polling. */

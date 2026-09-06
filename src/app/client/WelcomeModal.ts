@@ -1,4 +1,5 @@
 import type { ServiceInstallResponse, ServiceStatusResponse } from '../../common/ServiceEvents';
+import { sameOriginBase, sameOriginUrl } from '../sameOriginUrl';
 import { Modal } from '../ui/Modal';
 import { ServiceOperationModal } from './ServiceOperationModal';
 import { settingsService } from './SettingsService';
@@ -61,7 +62,9 @@ export class WelcomeModal extends Modal {
         intro.style.cssText = 'margin: 0 0 8px;';
         intro.appendChild(document.createTextNode('server is running on '));
         const link = document.createElement('a');
-        const url = `http://localhost:${this.opts.webPort}`;
+        // The address THIS browser reached the app on, not the serving
+        // machine's loopback — a LAN user bookmarks their own URL.
+        const url = sameOriginBase(this.opts.webPort);
         link.href = url;
         link.target = '_blank';
         link.rel = 'noopener';
@@ -358,8 +361,10 @@ export class WelcomeModal extends Modal {
                         clearInterval(poll);
                         modal.close();
                         this.setStatus('service mode active. switching you over…');
+                        const servicePort = statusData.diskWebPort;
                         setTimeout(() => {
-                            window.location.href = `http://localhost:${statusData.diskWebPort}/`;
+                            // Same host, new port — never a literal localhost.
+                            window.location.href = sameOriginUrl(servicePort);
                         }, 500);
                     }
                 } catch {

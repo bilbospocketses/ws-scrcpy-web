@@ -75,12 +75,18 @@ export interface AppConfigPatchResponse {
     config: AppConfig;
     restartRequired: boolean;
     /**
-     * v0.1.8: when `restartRequired` is true, the server will request a
-     * supervisor-driven restart shortly after responding. This URL is
-     * where the frontend should redirect the user once the new server
-     * is up. Absent when no restart is needed.
+     * When `restartRequired` is true, the server requests a supervisor-driven
+     * restart shortly after responding and the new server binds THIS port.
+     * The frontend navigates to it on the origin the browser already uses
+     * (`sameOriginUrl`). Absent when no restart is needed.
+     *
+     * Until 2026-09-06 this was `redirectTo`, a full `http://localhost:<port>`
+     * URL built server-side — right only for a browser on the serving machine;
+     * every off-box client was sent to its own localhost (qa-harness Arc 1b).
+     * The server cannot know the client's host reliably, so it names the port
+     * and nothing else.
      */
-    redirectTo?: string;
+    redirectPort?: number;
 }
 
 /**

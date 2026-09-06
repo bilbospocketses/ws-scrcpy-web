@@ -17,6 +17,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Port hand-offs no longer send off-box browsers to their own `localhost`.** A service install
+  (shifting to the service's port), a service uninstall (discovering the fresh local instance), a
+  web-port save and the first-run "install as a service" path all navigated to a literal
+  `http://localhost:<port>/`, which is only right for a browser on the serving machine — a LAN
+  client, a hostname, a reverse proxy or a container runner lost the app. They now keep the origin
+  the browser is already on and change only the port (`sameOriginUrl`); `PATCH /api/config` returns
+  `redirectPort` instead of a server-built `redirectTo` URL, since the server cannot know the
+  client's host. The "this app lives at:" links in the welcome, bookmark and service-first-run
+  reminders show the browser's own address for the same reason. Found by qa-harness Arc 1b
+  (smoke rows 4.3 / 12.2).
+
 ## [0.1.30-beta.108] - 2026-09-06
 
 ### Added

@@ -62,16 +62,17 @@ export class ConfigApi {
                     };
 
                     // v0.1.8: when a port change requires a restart,
-                    // build the redirect URL pointing at the new port
-                    // and schedule the actual restart via the existing
-                    // .restart marker + exit-75 mechanism. The
-                    // launcher's supervisor will pick up the marker,
-                    // restart Node, and the new server binds the new
-                    // port. The browser redirects 3s after the
-                    // response, by which time the new server should
-                    // be listening.
+                    // name the new port and schedule the actual restart
+                    // via the existing .restart marker + exit-75
+                    // mechanism. The launcher's supervisor will pick up
+                    // the marker, restart Node, and the new server binds
+                    // the new port. The browser navigates to that port on
+                    // its OWN origin a few seconds after the response, by
+                    // which time the new server should be listening.
+                    // (Only the port: a server-built http://localhost URL
+                    // sent every off-box client to its own machine.)
                     if (result.restartRequired) {
-                        response.redirectTo = `http://localhost:${result.config.webPort}`;
+                        response.redirectPort = result.config.webPort;
                         const markerPath = cfg.restartMarkerPath;
                         try {
                             writeFileAtomicSync(markerPath, `restart-requested-${Date.now()}`);
