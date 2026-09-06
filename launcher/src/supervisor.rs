@@ -210,6 +210,13 @@ pub fn run() -> Result<(i32, Option<Arc<AtomicBool>>)> {
         log::error(&format!("could not install Ctrl+C handler: {e}"));
     }
 
+    // Item 63 — the Linux tray is a thread in THIS process (Windows spawns a
+    // helper above, in the cfg(windows) block). It shares `stop` with the
+    // Ctrl+C handler: a confirmed exit from the tray menu is a stop request,
+    // and wait_with_signal turns that into SIGTERM → graceful teardown.
+    #[cfg(target_os = "linux")]
+    crate::linux_tray::spawn_if_eligible(&paths.data_root, stop.clone());
+
     // spawn_server now passes deps_path directly to resolve_node_with, which
     // tries <deps_path>/node/<node-binary> first and falls back to seed/node/<node-binary>
     // when deps node is absent (first-run bootstrap). DEPS_PATH is also set on

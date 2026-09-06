@@ -27,6 +27,8 @@ mod linux_service;
 mod linux_app_uninstall;
 #[cfg(target_os = "linux")]
 mod system_service_cli;
+#[cfg(target_os = "linux")]
+mod linux_tray;
 #[cfg(windows)]
 mod user_session_spawn;
 #[cfg(windows)]
