@@ -70,6 +70,27 @@ impl TrayLabels {
     }
 }
 
+/// Tray pixmap side, in pixels. 22 is the panel size KDE and the AppIndicator
+/// extension render at natively; a host scales as needed.
+pub const ICON_SIDE: i32 = 22;
+/// Byte length of a 22×22 ARGB32 pixmap.
+pub const ICON_ARGB_LEN: usize = (ICON_SIDE * ICON_SIDE * 4) as usize;
+/// The committed pixmap (`assets/TRAY-ICON-ARGB.md` says how it is made).
+const TRAY_ICON_ARGB_22: &[u8] = include_bytes!("../../assets/tray-icon-22.argb");
+
+/// The embedded icon, after the one check that can fail at build time: a
+/// regenerated asset of the wrong size would otherwise be rejected by the host
+/// with no useful message.
+pub fn icon_argb_22() -> Result<&'static [u8], String> {
+    if TRAY_ICON_ARGB_22.len() != ICON_ARGB_LEN {
+        return Err(format!(
+            "assets/tray-icon-22.argb: expected {ICON_ARGB_LEN} bytes for a {ICON_SIDE}x{ICON_SIDE} ARGB32 pixmap, got {}",
+            TRAY_ICON_ARGB_22.len()
+        ));
+    }
+    Ok(TRAY_ICON_ARGB_22)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -121,5 +142,24 @@ mod tests {
         // The balloon body is identical in both modes on purpose (see tray/src/main.rs).
         assert_eq!(local.balloon_body, service.balloon_body);
         assert!(local.balloon_body.contains("exit option from the tray menu"));
+    }
+
+    #[test]
+    fn the_embedded_icon_is_a_22x22_argb32_pixmap_in_network_byte_order() {
+        let px = icon_argb_22().expect("embedded icon passes the length check");
+        assert_eq!(px.len(), ICON_ARGB_LEN);
+        assert_eq!(ICON_ARGB_LEN, 22 * 22 * 4);
+        // ARGB32, network order: byte 0 of a pixel is its alpha. The source PNG
+        // has fully transparent corners and an opaque green centre, so a byte
+        // order that is NOT A,R,G,B shows up here as a tinted or opaque corner.
+        let corner = &px[0..4];
+        assert_eq!(corner, &[0, 0, 0, 0], "top-left pixel must be fully transparent");
+        let c = (11 * 22 + 11) * 4;
+        let centre = &px[c..c + 4];
+        assert_eq!(centre[0], 255, "centre pixel must be opaque (alpha first)");
+        assert_eq!(&centre[1..4], &[166, 221, 59], "centre pixel must be the icon's green (R,G,B)");
+        let opaque = px.chunks(4).filter(|p| p[0] == 255).count();
+        let transparent = px.chunks(4).filter(|p| p[0] == 0).count();
+        assert_eq!((opaque, transparent), (118, 158), "22x22 downscale of assets/tray-icon.png");
     }
 }
