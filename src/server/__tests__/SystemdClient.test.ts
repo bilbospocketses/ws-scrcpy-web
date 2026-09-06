@@ -140,6 +140,9 @@ describe('SystemdClient', () => {
             expect(out).toContain('Environment=DEPS_PATH=/opt/ws-scrcpy-web/dependencies');
             expect(out).toContain('StartLimitBurst=3');
             expect(out).toContain('StartLimitIntervalSec=300');
+            // The fd budget (src/server/fdBudget.ts): without this the service
+            // ran on systemd's 1024 default, shared with an uncapped scan.
+            expect(out).toContain('LimitNOFILE=4096');
             expect(out).toContain('StandardOutput=append:/opt/ws-scrcpy-web/dependencies/service.log');
             expect(out).toContain('StandardError=append:/opt/ws-scrcpy-web/dependencies/service.log');
             expect(out).toContain('WantedBy=default.target');
@@ -148,6 +151,7 @@ describe('SystemdClient', () => {
 
         it('renders system-scope unit with multi-user.target', () => {
             const out = renderUnitFile(baseOpts, 'system');
+            expect(out).toContain('LimitNOFILE=4096');
             expect(out).toContain('WantedBy=multi-user.target');
             expect(out).not.toContain('default.target');
         });

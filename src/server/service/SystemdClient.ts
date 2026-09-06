@@ -38,6 +38,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { promisify } from 'node:util';
+import { SERVICE_NOFILE_LIMIT } from '../fdBudget';
 import { Logger } from '../Logger';
 import { fileExists } from '../util/fsExists';
 import type { ServiceClient, ServiceInstallOptions, ServiceStatus } from './ServiceClient';
@@ -214,6 +215,12 @@ export function renderUnitFile(opts: ServiceInstallOptions, scope: SystemdScope)
         `WorkingDirectory=${workingDir}`,
         'Restart=on-failure',
         scope === 'system' ? 'RestartSec=2' : 'RestartSec=5',
+        // The fd budget. Without this the service ran on systemd's
+        // DefaultLimitNOFILE (1024 soft), shared by every WebSocket, adb
+        // socket, the store, the log and an uncapped subnet scan. The number and
+        // its derivation live in src/server/fdBudget.ts; the Linux launcher
+        // grants the same one to a desktop run.
+        `LimitNOFILE=${SERVICE_NOFILE_LIMIT}`,
         ...(envLines ? [envLines] : []),
         `StandardOutput=append:${opts.logPath}`,
         `StandardError=append:${opts.logPath}`,

@@ -13,11 +13,12 @@ import type { ServerItem } from '../types/Configuration';
 import { GLOBAL_KEYS } from './db/constants';
 import { Db, dbDir } from './db/Db';
 import { EnvName } from './EnvName';
+import { clampScanConcurrency, DEFAULT_SCAN_CONCURRENCY } from './fdBudget';
 import { Logger } from './Logger';
 import { parseFrameAncestorOrigin, setFrameAncestors } from './security/frameGuard';
 import { writeFileAtomicSync } from './util/atomicFile';
 
-const DEFAULT_SCAN_CONCURRENCY = 64;
+// DEFAULT_SCAN_CONCURRENCY lives in fdBudget.ts, beside the cap it is tuned against.
 const DEFAULT_SCAN_TCP_TIMEOUT_MS = 300;
 const DEFAULT_SCAN_ADB_CONNECT_TIMEOUT_MS = 5000;
 const DEFAULT_SCAN_PROGRESS_INTERVAL = 10;
@@ -606,22 +607,54 @@ export class Config {
             const adbPath = adbResolution.path;
             log.info(`adbPath=${adbPath} (source=${adbResolution.source})`);
 
-            const scanConcurrency =
-                Number.parseInt(process.env['SCAN_CONCURRENCY'] ?? '', 10) ||
-                (globals['scanConcurrency'] as number | undefined) ||
-                DEFAULT_SCAN_CONCURRENCY;
-            const scanTcpTimeoutMs =
-                Number.parseInt(process.env['SCAN_TCP_TIMEOUT_MS'] ?? '', 10) ||
-                (globals['scanTcpTimeoutMs'] as number | undefined) ||
-                DEFAULT_SCAN_TCP_TIMEOUT_MS;
-            const scanAdbConnectTimeoutMs =
-                Number.parseInt(process.env['SCAN_ADB_CONNECT_TIMEOUT_MS'] ?? '', 10) ||
-                (globals['scanAdbConnectTimeoutMs'] as number | undefined) ||
-                DEFAULT_SCAN_ADB_CONNECT_TIMEOUT_MS;
-            const scanProgressInterval =
-                Number.parseInt(process.env['SCAN_PROGRESS_INTERVAL'] ?? '', 10) ||
-                (globals['scanProgressInterval'] as number | undefined) ||
-                DEFAULT_SCAN_PROGRESS_INTERVAL;
+            // env → store → config.json → default: the precedence adbPath uses
+            // just above. The config.json column of these four was documented
+            // (TECHNICAL_GUIDE §14.2.5) and parsed (parseFlatConfig) but never
+            // consulted here, so a scan key in the file silently did nothing.
+            const scanNumber = (
+                envName: string,
+                storeKey: string,
+                fileValue: number | undefined,
+                fallback: number,
+            ): number =>
+                Number.parseInt(process.env[envName] ?? '', 10) ||
+                (globals[storeKey] as number | undefined) ||
+                fileValue ||
+                fallback;
+            // The one scan knob that spends file descriptors is capped by the
+            // budget in fdBudget.ts — a config.json or env var cannot exceed the
+            // limit the service unit and the Linux launcher grant the process.
+            const scanRequested = scanNumber(
+                'SCAN_CONCURRENCY',
+                'scanConcurrency',
+                fileConfig.scanConcurrency,
+                DEFAULT_SCAN_CONCURRENCY,
+            );
+            const scanClamp = clampScanConcurrency(scanRequested);
+            const scanConcurrency = scanClamp.value;
+            if (scanClamp.clamped) {
+                log.warn(
+                    `scanConcurrency ${scanRequested} exceeds the file-descriptor budget; using ${scanConcurrency} (src/server/fdBudget.ts)`,
+                );
+            }
+            const scanTcpTimeoutMs = scanNumber(
+                'SCAN_TCP_TIMEOUT_MS',
+                'scanTcpTimeoutMs',
+                fileConfig.scanTcpTimeoutMs,
+                DEFAULT_SCAN_TCP_TIMEOUT_MS,
+            );
+            const scanAdbConnectTimeoutMs = scanNumber(
+                'SCAN_ADB_CONNECT_TIMEOUT_MS',
+                'scanAdbConnectTimeoutMs',
+                fileConfig.scanAdbConnectTimeoutMs,
+                DEFAULT_SCAN_ADB_CONNECT_TIMEOUT_MS,
+            );
+            const scanProgressInterval = scanNumber(
+                'SCAN_PROGRESS_INTERVAL',
+                'scanProgressInterval',
+                fileConfig.scanProgressInterval,
+                DEFAULT_SCAN_PROGRESS_INTERVAL,
+            );
 
             const allowedHosts = sanitizeAllowedHosts(fileConfig.allowedHosts, warn);
             const frameAncestors = sanitizeFrameAncestors(fileConfig.frameAncestors, warn);

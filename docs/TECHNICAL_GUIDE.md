@@ -1280,10 +1280,14 @@ Defaults in `src/server/Config.ts`, overridable via env var or `config.json` key
 
 | Key (config.json) | Env var | Default | Purpose |
 |---|---|---|---|
-| `scanConcurrency` | `SCAN_CONCURRENCY` | 64 | Max in-flight TCP connects in the probe pool. |
+| `scanConcurrency` | `SCAN_CONCURRENCY` | 64 | Max in-flight TCP connects in the probe pool. **Capped at 512** by the file-descriptor budget below; a higher value is brought down and logged. |
 | `scanTcpTimeoutMs` | `SCAN_TCP_TIMEOUT_MS` | 300 | Per-host TCP connect timeout. |
 | `scanAdbConnectTimeoutMs` | `SCAN_ADB_CONNECT_TIMEOUT_MS` | 5000 | CNXN handshake reply timeout — needs headroom for slow embedded adbd stacks. |
 | `scanProgressInterval` | `SCAN_PROGRESS_INTERVAL` | 10 | Hosts checked per `scan.progress` emission. Lower = more frequent UI updates, higher = less WS chatter. |
+
+Precedence for all four is env var → per-user store (`app_settings`) → `config.json` → default. (The `config.json` column was parsed but never read until beta.105; a scan key in the file did nothing.)
+
+**File-descriptor budget.** The server is one process, and on Linux its open-file limit is whatever it inherits — systemd's `DefaultLimitNOFILE` (1024 soft) for a service, the shell's `ulimit -n` (1024) for a desktop launch — shared by the HTTP listener, every WebSocket, adb's sockets, the SQLite store, the log, and the subnet scan, which holds `scanConcurrency` connects open at once. `src/server/fdBudget.ts` makes that explicit: the worst case it derives (16 tabs, 16 streamed devices, a scan at the cap) is 768 descriptors; `SERVICE_NOFILE_LIMIT` is 4096, and `MAX_SCAN_CONCURRENCY` is 512. The service unit writes `LimitNOFILE=4096` (`SystemdClient.ts`), the Linux launcher raises its own soft limit to the same number before spawning Node so a desktop run inherits it (`launcher/src/spawn.rs`, pinned to the TypeScript constant by `fdBudget.test.ts`), and `Config` clamps `scanConcurrency` to the cap wherever it came from. Windows has no per-process fd rlimit and needs none; Docker's default `nofile` ulimit is 1048576.
 
 #### 14.2.6 Diagnostic Scripts
 

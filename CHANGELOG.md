@@ -17,6 +17,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+### Fixed
+
+- **The server now has an explicit open-files budget, and the scan can no longer spend it.** On Linux
+  the process ran on whatever `RLIMIT_NOFILE` it inherited — systemd's 1024-soft default as a service,
+  the shell's `ulimit -n` (also 1024) on a desktop launch — and that budget was shared by the HTTP
+  listener, every browser WebSocket, adb's sockets, the SQLite store, the log and a subnet scan whose
+  `scanConcurrency` accepted any number at all. The budget is now written down in one place
+  (`src/server/fdBudget.ts`, with the arithmetic: a worst case of 768 descriptors against a limit of
+  4096): the systemd unit carries `LimitNOFILE=4096` in both scopes, the Linux launcher raises its own
+  soft limit to the same number before spawning Node so a desktop run inherits it, and
+  `scanConcurrency` is capped at 512 wherever it is set, with a log line when it is brought down. The
+  Rust constant is pinned to the TypeScript one by a test that reads the source, so the two cannot
+  drift. Windows has no per-process descriptor limit and is unchanged; so is the container, whose
+  engine default is 1048576.
+- **`config.json`'s four `scan*` keys did nothing.** `scanConcurrency`, `scanTcpTimeoutMs`,
+  `scanAdbConnectTimeoutMs` and `scanProgressInterval` were documented as `config.json` keys, parsed
+  from the file, and then never consulted — only the env var and the per-user store were. They are now
+  read in the documented order: env var, then the store, then the file, then the default.
+
 ## [0.1.30-beta.106] - 2026-09-06
 
 ### Fixed
