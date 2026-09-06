@@ -1804,6 +1804,8 @@ The supervisor also watches for the `.restart` marker at `<depsPath>/.restart`, 
 - Automatically recovers after user kills, upgrades, or mode changes
 - Passes the current mode (local vs. service) and web port as arguments
 
+On Linux there is no tray supervisor: the tray is a thread inside the launcher (`launcher/src/linux_tray.rs`, section 21.4), spawned from `supervisor::run` right after the Ctrl+C handler and sharing its `stop` flag. A confirmed exit from the tray menu is a stop request, and `wait_with_signal` sends Node **SIGTERM** first (Node's handler runs the same graceful teardown as the Settings button), killing only after `GRACEFUL_STOP_TIMEOUT` (10 s).
+
 ### 20.3 Elevated Runner (UAC)
 
 `launcher/src/elevated_runner.rs` handles operations requiring administrator privileges:
@@ -1848,7 +1850,9 @@ The Linux data root is resolved by `common/src/config.rs` (`DATA_ROOT` → `XDG_
 |------|---------|
 | `launcher/src/main.rs` | Entry point, argument parsing, single-instance mutex |
 | `launcher/src/spawn.rs` | Node supervisor loop, exit-code handling, `.restart` marker |
-| `launcher/src/tray_supervisor.rs` | Tray helper spawn + 10s poll respawn |
+| `launcher/src/tray_supervisor.rs` | Tray helper spawn + 10s poll respawn (Windows) |
+| `launcher/src/linux_tray.rs` | Linux tray thread: eligibility, session-bus fix-up, hand-off to the stop flag |
+| `common/src/tray_policy.rs` | Pure tray decisions shared by both trays: eligibility, session bus, labels, the ARGB icon |
 | `launcher/src/elevated_runner.rs` | UAC elevation, `post-stop.bat` generation, user-session spawn |
 | `launcher/src/job_object.rs` | Kill-on-close job object for child process cleanup |
 | `launcher/src/operation_server.rs` | Transition-page HTTP server for service install/uninstall |
@@ -1891,6 +1895,21 @@ The tray provides:
 | File | Purpose |
 |------|---------|
 | `tray/src/main.rs` | Tray entry point, per-session mutex, menu, balloon notifications |
+| `common/src/tray.rs` | Tray event loops: Win32 (Windows) and ksni (Linux) |
+| `common/src/tray_policy.rs` | Shared labels, eligibility, session-bus detection, the ARGB icon |
+
+### 21.4 Linux tray (in-process)
+
+Linux has no `ws-scrcpy-web-tray` binary. `common::tray::run`'s Linux implementation is a StatusNotifierItem over D-Bus built on `ksni` (pure Rust, `blocking` + `async-io`, no tokio and no C libraries — the `tray-icon`/libappindicator route P4a tried pulled GTK and broke `cross check`), run on a thread the launcher spawns for local and user-scope-service runs.
+
+| Aspect | Behaviour |
+|--------|-----------|
+| Eligibility | `tray_policy::should_spawn_tray(installMode, session bus)` — never for `system-service`; needs `DBUS_SESSION_BUS_ADDRESS` or `$XDG_RUNTIME_DIR/bus` (the launcher exports the address from the socket when a user unit's environment lacks it). |
+| No host | `spawn()` fails when no `org.kde.StatusNotifierWatcher` is on the bus (stock GNOME, Fedora Workstation): one info line in `launcher.log`, `TrayAction::Cancelled`, nothing else. Settings → Server is the exit path there. |
+| Icon | `assets/tray-icon-22.argb`, a committed 22×22 ARGB32 pixmap (`assets/TRAY-ICON-ARGB.md`), pinned by a unit test. |
+| Menu | **Open ws-scrcpy-web** · separator · **Exit…** → **stop the server and quit** / **cancel**. The submenu is the confirmation (ksni has no dialog; `zenity` would be an external binary). Left-click = Open. |
+| Open | `/usr/bin/xdg-open http://localhost:<port>` — absolute path (Local-Dependencies-Only); the port is re-read from `config.json` on every click. |
+| Exit | Flips the supervisor's `stop` flag → SIGTERM to Node → graceful teardown → exit 0 → launcher exits → the thread's ksni handle drops and the icon disappears. Not the `/api/server/shutdown` POST: that is behind the per-instance token (see todo item 114). |
 
 ---
 
