@@ -63,29 +63,40 @@ export function openBrowser(url: string): void {
  * Decide whether the server should auto-open a browser tab at startup. Pure, so
  * it is unit-testable.
  *
- * Opens when EITHER the native launcher signalled a fresh user launch
- * (`launcherFreshLaunch` ← WS_SCRCPY_OPEN_BROWSER=1, set by the supervisor on
- * its FIRST Node spawn — so a cold start PAST first-run still gets a tab; D1)
- * OR this is the very first run (`firstRunComplete === false` — the original
- * v0.1.9 welcome-modal open, and the dev/no-launcher fallback).
+ * UNDER THE NATIVE LAUNCHER (`launcherManaged` — the supervisor hands every
+ * Node spawn a DEPS_PATH, so its presence is the launcher's signature) the
+ * supervisor is the only authority: it sets WS_SCRCPY_OPEN_BROWSER=1 on its
+ * FIRST Node spawn of a user launch (`launcherFreshLaunch`, D1) and on nothing
+ * else. A supervisor RESTART (webPort change, crash) is not a fresh launch and
+ * opens no tab — whatever `firstRunComplete` says. Until 2026-09-06 the
+ * first-run clause below also applied under the launcher, so a port change made
+ * while the WelcomeModal's "don't show again" box had never been ticked (the
+ * state every fresh install is in) popped a SECOND tab next to the one the page
+ * redirects. Measured by qa-harness Arc 1a: 2 tabs after 8000→8010 with
+ * firstRunComplete=false, exactly 1 with it true (smoke row 1.8).
+ *
+ * WITHOUT A LAUNCHER (dev, a hand-run dist) nobody can signal anything, so the
+ * very first run (`firstRunComplete === false`) opens the welcome modal for the
+ * user — the original v0.1.9 open, kept only for that case.
  *
  * NEVER opens in service mode (session-0 service instances are reached via the
  * install-handoff redirect) or when a relaunch asked for suppression
  * (`suppressBrowser` ← WS_SCRCPY_NO_BROWSER=1 — the user already has a
- * reconnecting tab). Suppression overrides BOTH open signals, so a relaunch
+ * reconnecting tab). Suppression overrides every open signal, so a relaunch
  * that happens to also carry the fresh-launch flag still won't double-pop.
- *
- * Supervisor restarts (webPort change, crash) are NOT first spawns, so they
- * carry neither signal and (past first-run) do not re-open a tab.
  */
 export function shouldAutoOpenBrowser(opts: {
     firstRunComplete: boolean | undefined;
     isServiceMode: boolean;
     suppressBrowser: boolean;
     launcherFreshLaunch: boolean;
+    launcherManaged: boolean;
 }): boolean {
     if (opts.isServiceMode || opts.suppressBrowser) {
         return false;
+    }
+    if (opts.launcherManaged) {
+        return opts.launcherFreshLaunch;
     }
     const isFirstRun = opts.firstRunComplete === false;
     return opts.launcherFreshLaunch || isFirstRun;

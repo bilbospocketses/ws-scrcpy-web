@@ -39,6 +39,7 @@ import { HttpServer } from './services/HttpServer';
 import type { Service, ServiceClass } from './services/Service';
 import { WebSocketServer } from './services/WebSocketServer';
 import { reapStrayAdbOnWindows } from './shutdownHelpers';
+import { isSiblingInstance } from './siblingInstance';
 import { UpdateService } from './UpdateService';
 import { forceBlockingStdio } from './util/forceBlockingStdio';
 
@@ -112,13 +113,27 @@ if (__ssArgs) {
             Logger.for('Server').error(`No free port available in range ${desired}..${desired + 99}`);
             return;
         }
-        config.setActualWebPort(found);
-        if (found !== desired) {
-            Logger.for('Server').info(`webPort ${desired} busy; auto-shifted to ${found}`);
-            // Mutate the first server entry so HttpServer binds to the new port.
-            if (config.servers.length > 0) {
-                config.servers[0]!.port = found;
-            }
+        if (found === desired) {
+            config.setActualWebPort(found);
+            return;
+        }
+        // The configured port is busy, and WHO holds it decides whether the shift
+        // is persisted. Another program: yes, the user's config should follow the
+        // port that works. A SIBLING instance of this app (an elevated second
+        // instance, a service still winding down): no — the configured port is
+        // right and the sibling is serving it; persisting rewrote the shared
+        // config.json to a port the surviving instance did not serve (measured
+        // 2026-09-06, smoke row 3.7b). See siblingInstance.ts.
+        const sibling = await isSiblingInstance(desired);
+        config.setActualWebPort(found, { persist: !sibling });
+        Logger.for('Server').info(
+            sibling
+                ? `webPort ${desired} is held by another ws-scrcpy-web instance; using ${found} for this instance without persisting it`
+                : `webPort ${desired} busy; auto-shifted to ${found}`,
+        );
+        // Mutate the first server entry so HttpServer binds to the new port.
+        if (config.servers.length > 0) {
+            config.servers[0]!.port = found;
         }
     }
 
@@ -298,12 +313,18 @@ if (__ssArgs) {
                 // restarts (webPort change, crash) don't set it, so they don't re-pop
                 // a tab; dev (no launcher) falls back to the first-run-only open.
                 const launcherFreshLaunch = process.env['WS_SCRCPY_OPEN_BROWSER'] === '1';
+                // Under the native launcher the supervisor is the ONLY authority on
+                // browser tabs (openBrowser.ts): its signature is the DEPS_PATH it
+                // hands every Node spawn (launcher/src/spawn.rs). Dev runs and
+                // hand-run dists have none and keep the first-run open.
+                const launcherManaged = process.env['DEPS_PATH'] !== undefined;
                 if (
                     shouldAutoOpenBrowser({
                         firstRunComplete: appCfg.firstRunComplete,
                         isServiceMode,
                         suppressBrowser,
                         launcherFreshLaunch,
+                        launcherManaged,
                     })
                 ) {
                     const port = config.servers[0]?.port ?? appCfg.webPort;

@@ -17,6 +17,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A web-port change no longer opens a second browser tab while first run is incomplete.** Under the
+  native launcher, the supervisor's first spawn is now the only thing that opens a tab; a supervisor
+  RESTART (port change, crash) opens none, whatever `firstRunComplete` says. Before, a port change made
+  while the WelcomeModal's "don't show again" box had never been ticked — the state every fresh install
+  is in — popped a second tab next to the one the page redirects. Measured by qa-harness Arc 1a
+  (2026-09-06): 2 tabs after 8000→8010 with the flag false, exactly 1 with it true. Dev runs without a
+  launcher keep the first-run open. (smoke row 1.8)
+- **An auto-shifted port is no longer persisted when a sibling instance of the app holds the configured
+  one.** An elevated second instance ("Run as administrator", smoke row 3.7b) found 8000 busy, shifted to
+  8001 and wrote that into the shared `config.json` while the user-level server kept serving 8000 — so
+  the next launch read a port nothing served. The resolver now asks the busy port `GET /api/config` (the
+  launcher's own token-exempt probe); when a ws-scrcpy-web answers, this instance binds the shifted port
+  for its own lifetime and leaves the file and its in-memory `webPort` alone. Another program holding
+  the port still persists the shift, as before.
+
+### Changed
+
+- **Smoke row 1.10 now describes what a fresh install does: no one-time UAC.** The row, and the
+  comments in `install_acl.rs` and `main.rs`, said the MSI strips the install hook's ACL grant so the
+  first launch has to elevate `icacls` once. It does not: the shipped MSI has no permission table, the
+  hook's `Authenticated Users:(OI)(CI)(M)` grant survives, `ensure_writable` early-returns, and zero
+  prompts fire on first launch or relaunch (measured on three clean guests with UAC on). The launch-time
+  grant stays as a fallback for installs that predate the hook or a future MSI that resets DACLs.
+
 ## [0.1.30-beta.103] - 2026-09-05
 
 ### Fixed

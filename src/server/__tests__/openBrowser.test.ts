@@ -8,7 +8,11 @@ import { consumeSuppressBrowserMarker, shouldAutoOpenBrowser } from '../openBrow
  * D1: a cold start PAST first-run must still open a browser tab. The native
  * launcher's supervisor sets WS_SCRCPY_OPEN_BROWSER=1 on its FIRST Node spawn
  * (launcherFreshLaunch); supervisor restarts and dev (no launcher) do not.
- * Service mode and a relaunch's WS_SCRCPY_NO_BROWSER suppression always win.
+ * Under the launcher (launcherManaged) that signal is the ONLY one that opens a
+ * tab — the first-run clause is the dev fallback and must not fire on a
+ * supervisor restart (smoke row 1.8, measured 2026-09-06 as a second tab after a
+ * port change on a fresh install). Service mode and a relaunch's
+ * WS_SCRCPY_NO_BROWSER suppression always win.
  */
 describe('shouldAutoOpenBrowser', () => {
     const base = {
@@ -16,10 +20,11 @@ describe('shouldAutoOpenBrowser', () => {
         isServiceMode: false,
         suppressBrowser: false,
         launcherFreshLaunch: false,
+        launcherManaged: false,
     };
 
     it('opens on a fresh launcher launch even past first-run (the D1 fix)', () => {
-        expect(shouldAutoOpenBrowser({ ...base, launcherFreshLaunch: true })).toBe(true);
+        expect(shouldAutoOpenBrowser({ ...base, launcherManaged: true, launcherFreshLaunch: true })).toBe(true);
     });
 
     it('opens on first run when there is no launcher signal (dev / fallback)', () => {
@@ -28,7 +33,39 @@ describe('shouldAutoOpenBrowser', () => {
 
     it('does NOT open on a supervisor restart past first-run (no launcher signal)', () => {
         // The first spawn set the flag; restarts (webPort change, crash) do not.
-        expect(shouldAutoOpenBrowser({ ...base })).toBe(false);
+        expect(shouldAutoOpenBrowser({ ...base, launcherManaged: true })).toBe(false);
+    });
+
+    it('under the launcher, a supervisor restart opens NOTHING even while first run is incomplete', () => {
+        // The 2026-09-06 double tab: a port change before the WelcomeModal's box
+        // was ever ticked restarted node with firstRunComplete=false, and the
+        // first-run clause opened a second tab next to the one the page redirects.
+        expect(shouldAutoOpenBrowser({ ...base, launcherManaged: true, firstRunComplete: false })).toBe(false);
+    });
+
+    it('under the launcher, the fresh-launch signal opens a tab whatever first run says', () => {
+        expect(
+            shouldAutoOpenBrowser({
+                ...base,
+                launcherManaged: true,
+                firstRunComplete: false,
+                launcherFreshLaunch: true,
+            }),
+        ).toBe(true);
+        expect(
+            shouldAutoOpenBrowser({
+                ...base,
+                launcherManaged: true,
+                firstRunComplete: true,
+                launcherFreshLaunch: true,
+            }),
+        ).toBe(true);
+    });
+
+    it('does NOT open in service mode under the launcher, even on a fresh launch', () => {
+        expect(
+            shouldAutoOpenBrowser({ ...base, launcherManaged: true, isServiceMode: true, launcherFreshLaunch: true }),
+        ).toBe(false);
     });
 
     it('does NOT open in service mode, even on a fresh launch', () => {
