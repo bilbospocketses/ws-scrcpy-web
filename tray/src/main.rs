@@ -166,24 +166,16 @@ fn run_tray() -> Result<()> {
     // Settings has no server-lifecycle affordances at all. The balloon
     // body is identical for both modes for this reason; the title carries
     // the service suffix to mirror the tooltip.
-    let (tooltip, exit_title, exit_msg, balloon_title, balloon_text): (&str, &str, &str, &str, &str) =
-        if is_service_mode_at_start {
-            (
-                "ws-scrcpy-web (service)",
-                "Exit ws-scrcpy-web?",
-                "Stop the service and quit?",
-                "ws-scrcpy-web (service) tray",
-                "tray started by launcher. to clear the tray, use the exit option from the tray menu.",
-            )
-        } else {
-            (
-                "ws-scrcpy-web",
-                "Exit ws-scrcpy-web?",
-                "Stop the server and quit?",
-                "ws-scrcpy-web tray",
-                "tray started by launcher. to clear the tray, use the exit option from the tray menu.",
-            )
-        };
+    // The label set is shared with the Linux tray (common::tray_policy) so the
+    // two cannot drift; the wording is unchanged from the pre-item-63 tuple.
+    let labels = common::tray_policy::TrayLabels::for_mode(is_service_mode_at_start);
+    let (tooltip, exit_title, exit_msg, balloon_title, balloon_text) = (
+        labels.tooltip,
+        labels.exit_title,
+        labels.exit_body,
+        labels.balloon_title,
+        labels.balloon_body,
+    );
 
     let balloon: Option<(&str, &str)> = if show_launcher_balloon {
         Some((balloon_title, balloon_text))

@@ -40,7 +40,7 @@ Input flows back as mouse, UHID keyboard, i16-fixed-point scroll, and a D-pad/To
 - **Dark/light theme** -- toggle between dark (default) and light modes; first paint follows your OS preference, then your saved choice applies (persisted per-user in the app's SQLite store)
 - **Responsive layout** -- centered page container scales from mobile to 4K (up to 5 device cards)
 - **In-app dependency updater** -- check and update Node.js, ADB, and scrcpy-server from the home page
-- **System tray helper** *(Windows only)* -- shows connection status, quick-open browser, mode-aware text (local vs. service); auto-spawns and auto-recovers via the launcher's supervisor. Linux has no tray yet — stop the app from Settings → Server instead.
+- **System tray icon** -- quick-open browser, a mode-aware tooltip (local vs. service) and a clean exit. Windows: a standalone helper the launcher's supervisor auto-spawns and auto-recovers. Linux: a StatusNotifierItem icon inside the launcher — KDE Plasma and any desktop with a StatusNotifier host; stock GNOME (Fedora Workstation) has no host, so no icon appears there and Settings → Server → **stop the server and close the app** remains the exit path.
 - **Server logging** -- all server output logged to `ws-scrcpy-web.log` with timestamps, tag prefixes, and 5MB rotation
 
 ## Service Mode
@@ -259,7 +259,7 @@ These dependencies are compiled into the `dist/` output during the build process
 Production installs (MSI/AppImage) use a compiled Rust launcher (`ws-scrcpy-web-launcher.exe` on Windows; the AppImage's bundled launcher on Linux) that supervises Node.js and manages the full application lifecycle. Items marked *(Windows)* below are Windows-specific; the Linux launcher uses the platform equivalents (e.g. `pkexec`/polkit for privileged prompts):
 
 1. **Supervisor loop** -- spawns Node as a child process, monitors its exit code. Exit code 75 or a `.restart` marker triggers a respawn (used by the dependency updater after Node.js updates). Normal exit shuts down cleanly.
-2. **Tray supervisor** *(Windows only)* -- spawns the standalone tray helper and polls every 10 seconds; respawns it automatically if it crashes or is killed by the user. Linux has no tray yet.
+2. **Tray** -- Windows: the tray supervisor spawns the standalone tray helper and polls every 10 seconds, respawning it if it crashes or is killed. Linux: the tray is a thread inside the launcher (`ksni`, StatusNotifierItem over D-Bus) for local and user-scope-service runs; it lives and dies with the instance, so there is nothing to respawn, and it stands down silently when the desktop has no StatusNotifier host.
 3. **Privileged elevation** -- Windows uses `ShellExecuteExW` with the `runas` verb (UAC) for service install / update apply, with no PowerShell intermediary; Linux uses `pkexec`/polkit for the equivalent graphical prompt.
 4. **Operation-server** -- during service uninstall or app update, spawns a minimal Rust HTTP server on the same port to serve a "please wait" transition page. The operation-server detects when the new instance is ready and winds down.
 5. **Job object** *(Windows)* -- all child processes (Node, tray, operation-server) are assigned to a Windows Job Object with `KILL_ON_JOB_CLOSE`, so nothing orphans if the launcher is killed.
@@ -305,7 +305,7 @@ The AppImage needs no host `libfuse2`. Packaging swaps in the static [type-2 App
 
 #### Tray icon
 
-ws-scrcpy-web does not currently expose a tray icon on Linux. On Windows the launcher provides a tray for quick stop/restart, but the Linux launcher has no tray surface yet — when one is added it will mirror the Windows behavior. For now use Settings → Server → stop the server and close the app in the web UI to stop the app cleanly.
+On Linux the launcher shows a StatusNotifierItem tray icon wherever a StatusNotifier host is running (KDE Plasma out of the box; GNOME only with the AppIndicator extension). Hover for the mode (`ws-scrcpy-web` or `ws-scrcpy-web (service)`), left-click or **Open ws-scrcpy-web** to open the app, **Exit… → stop the server and quit** to stop it cleanly (the launcher sends Node SIGTERM, so the adb teardown runs). Where there is no host — stock GNOME, Fedora Workstation — the icon simply does not appear and `launcher.log` says so once; use Settings → Server → **stop the server and close the app** there. System-scope services have no desktop session and never show a tray.
 
 ## Configuration
 
@@ -323,7 +323,7 @@ Almost all configuration is managed through the in-app **Settings** panel (gear 
 | `frameAncestors` | `[]` (nothing may frame the app) | Settings → Embedding, or edit `config.json` |
 | `allowedHosts` | `[]` (localhost + IP literals only) | `config.json` only — server-only, never exposed via the API |
 
-Not a stored field, but reached the same way: **Settings → Server → stop the server and close the app** cleanly stops the server and quits the app — the primary clean-exit path on Linux (no tray there), disabled in service mode.
+Not a stored field, but reached the same way: **Settings → Server → stop the server and close the app** cleanly stops the server and quits the app — the clean-exit path on desktops without a tray host (stock GNOME), disabled in service mode; where a StatusNotifier host exists (KDE Plasma) the tray's **Exit… → stop the server and quit** does the same.
 
 **Update channels are baked into the installation.** Velopack tracks the channel (stable or beta) at the package level — it's part of the installed identity, not just a config preference. Changing the `channel` setting changes which feed the updater *queries*, but the in-app updater cannot cross from one channel to another. A beta installation will not successfully apply a stable update (or vice versa), even if the updater detects and downloads it. **To switch channels, uninstall the current version and fresh-install the desired channel's MSI/AppImage.** This is a Velopack platform constraint, not a ws-scrcpy-web limitation.
 

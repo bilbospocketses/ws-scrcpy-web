@@ -299,7 +299,7 @@ writeSync(1, argb);
 cd "C:/Users/jscha/source/repos/ws-scrcpy-web" && magick assets/tray-icon.png -resize 22x22 -depth 8 RGBA:- | node scripts/rgba-to-argb.mjs > assets/tray-icon-22.argb && wc -c < assets/tray-icon-22.argb
 ```
 
-Expected: `1936`. Then `od -An -tu1 -N4 assets/tray-icon-22.argb` → `0 0 0 0`, and `od -An -tu1 -j 968 -N4 assets/tray-icon-22.argb` → `255 166 221 59`.
+Expected: `1936`. Then `od -An -tu1 -N4 assets/tray-icon-22.argb` → `0 0 0 0`, and `od -An -tu1 -j 1012 -N4 assets/tray-icon-22.argb` (pixel 11,11 = byte offset (11·22+11)·4) → `255 166 221 59`.
 
 Create `assets/TRAY-ICON-ARGB.md`:
 

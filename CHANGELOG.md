@@ -17,6 +17,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Linux system tray.** The launcher shows a StatusNotifierItem icon on desktops with a StatusNotifier
+  host (KDE Plasma; GNOME with the AppIndicator extension): mode-aware tooltip, left-click / **Open
+  ws-scrcpy-web**, and **Exit… → stop the server and quit**, which stops the server cleanly. Pure Rust
+  (`ksni`), a thread inside the launcher for local and user-scope-service runs — nothing to supervise,
+  no second binary in the AppImage. Where there is no host (stock GNOME, Fedora Workstation) it stands
+  down silently with one line in `launcher.log`, and Settings → Server remains the exit path. System-scope
+  services never show one. README's "Windows only" qualifiers are gone.
+
+### Changed
+
+- **A stop request on Linux sends Node SIGTERM before killing it.** Ctrl+C and the tray exit now run the
+  same graceful teardown as the Settings button (adb kill-server, service release, SQLite backup);
+  the supervisor kills only after 10 s.
+- The dead Linux tray-autostart writer in `SystemdClient` is gone (no Linux tray binary will ever exist);
+  uninstall still removes the `.desktop` file older installs wrote.
+
 ## [0.1.30-beta.110] - 2026-09-06
 
 ### Changed

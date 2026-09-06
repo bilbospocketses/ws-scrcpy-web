@@ -30,5 +30,14 @@ serde_json.workspace = true
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
 
+# Linux-only: the tray is a StatusNotifierItem over D-Bus, pure Rust (item 63).
+# `blocking` gives the launcher a synchronous API; `async-io` is the runtime
+# ksni drives it with (one of `tokio` / `async-io` is mandatory, and the
+# launcher has no tokio). No C library anywhere in this tree — `cross check`
+# and the musl release build stay green, unlike the tray-icon/libappindicator
+# path P4a tried and P4b removed.
+[target.'cfg(target_os = "linux")'.dependencies]
+ksni = { version = "0.3", default-features = false, features = ["blocking", "async-io"] }
+
 [dev-dependencies]
 tempfile = "3.10"

@@ -12,12 +12,15 @@
 //!     (post-§33 Bug B fix — replaces the historically-broken
 //!     `WTSGetActiveConsoleSessionId` usage)
 //!   - [`tray`] — tray-icon event loop with exit-confirm dialog. Windows
-//!     has a full implementation; Linux ships a best-effort stub that
-//!     returns [`tray::TrayAction::Cancelled`] — see the module docs for
-//!     the SP3 P4b decision rationale.
+//!     has a full Win32 implementation; Linux has a StatusNotifierItem
+//!     implementation on `ksni` (item 63) that stands down with
+//!     [`tray::TrayAction::Cancelled`] when the desktop has no tray host.
+//!   - [`tray_policy`] — pure tray decisions (eligibility, session-bus
+//!     detection, labels, the 22×22 ARGB icon) shared by both trays
 
 pub mod config;
 pub mod control_marker;
 pub mod log;
 pub mod session;
 pub mod tray;
+pub mod tray_policy;

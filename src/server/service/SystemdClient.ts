@@ -10,9 +10,11 @@
  *   - **user**   — unit at `~/.config/systemd/user/<name>.service`. Installed
  *                  without sudo. Started via `systemctl --user`. `loginctl
  *                  enable-linger` is invoked best-effort so the service
- *                  survives a full logout. A `~/.config/autostart/
- *                  ws-scrcpy-web-tray.desktop` file is written to autostart
- *                  the tray helper at desktop login (best-effort).
+ *                  survives a full logout. No autostart entry is written since
+ *                  item 63 — the Linux tray is a thread inside the launcher —
+ *                  but `uninstall()` still removes the
+ *                  `~/.config/autostart/ws-scrcpy-web-tray.desktop` older
+ *                  installs left behind.
  *
  *   - **system** — unit at `/etc/systemd/system/<name>.service`. System-scope
  *                  installs are no longer handled by this `install()` method;
@@ -60,9 +62,12 @@ export function systemctlArgv(
     return { bin: resolve('systemctl'), args };
 }
 
-/** Filename of the tray helper binary on Linux (no extension). */
-const TRAY_HELPER_BIN = 'ws-scrcpy-web-tray';
-/** Autostart .desktop filename written under `~/.config/autostart/`. */
+/**
+ * Autostart .desktop filename under `~/.config/autostart/`. Pre-beta.45 installs
+ * wrote it for a tray helper that never shipped on Linux; nothing writes it any
+ * more (item 63: the Linux tray is a thread inside the launcher), but uninstall
+ * still removes it.
+ */
 const TRAY_AUTOSTART_FILE = 'ws-scrcpy-web-tray.desktop';
 
 /** Root-owned staging dir for the system-scope AppImage (SELinux bin_t — init_t can exec). */
@@ -372,30 +377,6 @@ export function buildSystemUninstallScript(name: string, unitPath: string, syste
 }
 
 /**
- * Resolve the absolute path of the tray helper binary.
- *
- * Mirrors `ServyClient.resolveTrayHelperPath` shape:
- *   1. Installed (Velopack AppImage layout): sibling of the launcher in
- *      `process.cwd()`.
- *   2. Dev / from-source: `<cwd>/publish/ws-scrcpy-web-tray`.
- *
- * Returns `null` if neither candidate exists. Callers fall back to a bare-name
- * `Exec=ws-scrcpy-web-tray` in the .desktop file (PATH lookup) and log a
- * warning — best-effort so a missing tray binary doesn't fail the service
- * install.
- */
-async function resolveTrayHelperPath(
-    cwd: string = process.cwd(),
-    exists: (p: string) => Promise<boolean> = fileExists,
-): Promise<string | null> {
-    const installedCandidate = path.join(cwd, TRAY_HELPER_BIN);
-    if (await exists(installedCandidate)) return installedCandidate;
-    const devCandidate = path.join(cwd, 'publish', TRAY_HELPER_BIN);
-    if (await exists(devCandidate)) return devCandidate;
-    return null;
-}
-
-/**
  * #31: whether a binary at a stable path is safe to reuse as a user-service
  * ExecStart without re-staging — it must be a regular file (lstat, so a symlink
  * an attacker could repoint is rejected), root-owned, and not group/other-
@@ -553,14 +534,8 @@ export class SystemdClient implements ServiceClient {
         } catch (err) {
             log.warn(`loginctl enable-linger failed (service still installed): ${(err as Error).message}`);
         }
-
-        // Best-effort tray autostart. System scope skips this — headless
-        // server case dominant, no desktop session to autostart into.
-        try {
-            await this.writeTrayAutostart();
-        } catch (err) {
-            log.warn(`tray autostart .desktop write failed (service install succeeded): ${(err as Error).message}`);
-        }
+        // No tray autostart entry: since item 63 the Linux tray is a thread inside
+        // the launcher the unit starts, so there is nothing to autostart.
     }
 
     /**
@@ -665,40 +640,7 @@ export class SystemdClient implements ServiceClient {
         }
     }
 
-    /**
-     * Write the tray helper autostart .desktop file under
-     * `~/.config/autostart/`. The Linux equivalent of Windows's HKCU Run-key.
-     *
-     * F2: only written when a tray helper binary resolves to an ABSOLUTE path on
-     * disk. If none is found, the autostart is SKIPPED entirely — we never write
-     * a bare-name `Exec=ws-scrcpy-web-tray` (a PATH lookup that violates
-     * Local-Dependencies-Only, and — since Linux has no tray binary, item 27 —
-     * only leaves an orphaned autostart entry that never resolves).
-     */
-    private async writeTrayAutostart(): Promise<void> {
-        const trayPath = await resolveTrayHelperPath();
-        if (!trayPath) {
-            log.info('tray helper binary not found; skipping tray autostart (no PATH-reliant Exec written)');
-            return;
-        }
-
-        const desktopPath = this.trayAutostartPath();
-        const content = [
-            '[Desktop Entry]',
-            'Type=Application',
-            'Name=ws-scrcpy-web tray',
-            `Exec=${trayPath}`,
-            'Hidden=false',
-            'NoDisplay=false',
-            'X-GNOME-Autostart-enabled=true',
-            '',
-        ].join('\n');
-
-        await fs.promises.mkdir(path.dirname(desktopPath), { recursive: true });
-        await fs.promises.writeFile(desktopPath, content, { mode: 0o644 });
-    }
-
-    /** Remove the tray autostart .desktop file. Idempotent. */
+    /** Remove the legacy tray autostart .desktop file (written by pre-beta.45 installs). Idempotent. */
     private async removeTrayAutostart(): Promise<void> {
         const desktopPath = this.trayAutostartPath();
         try {

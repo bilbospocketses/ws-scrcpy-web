@@ -88,7 +88,6 @@ vi.mock('../service/systemTools', async () => {
     return { ...actual, resolveSystemTool: (t: string) => t };
 });
 
-import * as path from 'node:path';
 import type { ServiceInstallOptions } from '../service/ServiceClient';
 import { renderUnitFile, STAGED_SYSTEM_APPIMAGE, STAGED_SYSTEM_DIR, SystemdClient } from '../service/SystemdClient';
 
@@ -208,8 +207,9 @@ describe('SystemdClient', () => {
             expect(loginctlCalls).toHaveLength(1);
             expect(loginctlCalls[0]![1]).toEqual(['enable-linger', 'jamie']);
 
-            // F2: NO tray autostart written when no tray binary is found (Linux
-            // has no tray — never emit a PATH-reliant bare-name Exec).
+            // Item 63: the Linux tray is a thread inside the launcher, so there is no
+            // tray binary and NO autostart .desktop is ever written (the remover in
+            // uninstall() stays, for pre-beta.45 installs that have one).
             const desktopWrites = writeFileMock.mock.calls.filter((c) =>
                 String(c[0]).endsWith('ws-scrcpy-web-tray.desktop'),
             );
@@ -235,25 +235,6 @@ describe('SystemdClient', () => {
             expect(String(unitWrites[0]![1])).toContain(`ExecStart=${optBin}`);
             // never the volatile launch path
             expect(String(unitWrites[0]![1])).not.toContain(`ExecStart=${baseOpts.binPath}`);
-        });
-
-        it('user scope: writes an ABSOLUTE-path tray autostart when a tray binary exists (never a bare PATH name)', async () => {
-            // F2 positive branch: a tray binary next to the launcher (cwd) →
-            // Exec is its absolute path; the /opt binary is absent so install
-            // still completes via the F1 copy branch.
-            const trayCandidate = path.join(process.cwd(), 'ws-scrcpy-web-tray');
-            fileExistsMock.mockImplementation((p: unknown) => Promise.resolve(p === trayCandidate));
-            const client = new SystemdClient();
-            await client.install({ ...baseOpts, scope: 'user' });
-
-            const desktopWrites = writeFileMock.mock.calls.filter((c) =>
-                String(c[0]).endsWith('ws-scrcpy-web-tray.desktop'),
-            );
-            expect(desktopWrites).toHaveLength(1);
-            const content = String(desktopWrites[0]![1]);
-            expect(content).toContain(`Exec=${trayCandidate}`);
-            // not the bare-name PATH fallback
-            expect(content).not.toMatch(/^Exec=ws-scrcpy-web-tray$/m);
         });
 
         it('user scope: still succeeds when loginctl throws', async () => {

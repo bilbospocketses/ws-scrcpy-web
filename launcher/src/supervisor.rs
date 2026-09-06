@@ -22,6 +22,21 @@ use crate::log;
 use crate::paths::Paths;
 use crate::spawn;
 
+/// How long a stop request waits for Node to exit on its own after SIGTERM
+/// before the supervisor kills it. Node's SIGTERM handler runs
+/// `gracefulShutdown` (adb kill-server, service release, SQLite backup) and
+/// exits 0 well inside this. (Item 63: the Linux tray's exit and Ctrl+C both
+/// arrive as a stop request.)
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) const GRACEFUL_STOP_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Pure: has the graceful window closed? Kept separate so the timing rule is
+/// unit-tested without a child process.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) fn graceful_wait_exhausted(elapsed: Duration) -> bool {
+    elapsed >= GRACEFUL_STOP_TIMEOUT
+}
+
 const EXIT_RESTART: i32 = 75;
 const RESTART_DELAY: Duration = Duration::from_secs(2);
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
@@ -194,6 +209,13 @@ pub fn run() -> Result<(i32, Option<Arc<AtomicBool>>)> {
     }) {
         log::error(&format!("could not install Ctrl+C handler: {e}"));
     }
+
+    // Item 63 — the Linux tray is a thread in THIS process (Windows spawns a
+    // helper above, in the cfg(windows) block). It shares `stop` with the
+    // Ctrl+C handler: a confirmed exit from the tray menu is a stop request,
+    // and wait_with_signal turns that into SIGTERM → graceful teardown.
+    #[cfg(target_os = "linux")]
+    crate::linux_tray::spawn_if_eligible(&paths.data_root, stop.clone());
 
     // spawn_server now passes deps_path directly to resolve_node_with, which
     // tries <deps_path>/node/<node-binary> first and falls back to seed/node/<node-binary>
@@ -400,14 +422,46 @@ fn cleanup_old_node(old: &Path) {
     }
 }
 
-/// Wait for child to exit, polling for shutdown signal at POLL_INTERVAL.
-/// On signal, kills the child and waits for actual exit.
+/// Wait for child to exit, polling for the stop flag at POLL_INTERVAL.
+///
+/// On stop: Linux sends SIGTERM first — Node's `process.on('SIGTERM')` runs the
+/// same graceful teardown the Settings "stop server & exit" button does — and
+/// only kills after `GRACEFUL_STOP_TIMEOUT`. Windows has no SIGTERM
+/// (`kill()` is TerminateProcess either way), so it keeps the immediate kill.
+/// The Linux tray's exit and Ctrl+C both arrive here through `stop`.
 fn wait_with_signal(
     child: &mut std::process::Child,
     stop: &Arc<AtomicBool>,
 ) -> Result<std::process::ExitStatus> {
     loop {
         if stop.load(Ordering::SeqCst) {
+            #[cfg(target_os = "linux")]
+            {
+                log::info(&format!(
+                    "supervisor: stop requested; sending SIGTERM to child pid {} for a graceful exit",
+                    child.id()
+                ));
+                let pid = rustix::process::Pid::from_child(child);
+                if let Err(e) = rustix::process::kill_process(pid, rustix::process::Signal::TERM) {
+                    log::error(&format!("supervisor: SIGTERM to child failed ({e}); killing instead"));
+                } else {
+                    let started = std::time::Instant::now();
+                    loop {
+                        if let Some(status) = child.try_wait()? {
+                            log::info("supervisor: child exited on SIGTERM");
+                            return Ok(status);
+                        }
+                        if graceful_wait_exhausted(started.elapsed()) {
+                            log::error(&format!(
+                                "supervisor: child ignored SIGTERM for {}s; killing",
+                                GRACEFUL_STOP_TIMEOUT.as_secs()
+                            ));
+                            break;
+                        }
+                        thread::sleep(POLL_INTERVAL);
+                    }
+                }
+            }
             log::info(&format!("supervisor: terminating child pid {}", child.id()));
             let _ = child.kill();
             return Ok(child.wait()?);
@@ -443,6 +497,21 @@ mod tests {
     fn decide_restart_recognizes_marker() {
         assert_eq!(decide_restart(0, true), Some(RestartReason::RestartMarker));
         assert_eq!(decide_restart(1, true), Some(RestartReason::RestartMarker));
+    }
+
+    #[test]
+    fn graceful_wait_is_exhausted_exactly_at_the_timeout() {
+        assert!(!graceful_wait_exhausted(Duration::from_secs(0)));
+        assert!(!graceful_wait_exhausted(GRACEFUL_STOP_TIMEOUT - Duration::from_millis(1)));
+        assert!(graceful_wait_exhausted(GRACEFUL_STOP_TIMEOUT));
+        assert!(graceful_wait_exhausted(GRACEFUL_STOP_TIMEOUT + Duration::from_secs(1)));
+    }
+
+    #[test]
+    fn graceful_timeout_is_ten_seconds() {
+        // Long enough for adb kill-server + the SQLite backup on a slow disk,
+        // short enough that a wedged Node does not hold a Ctrl+C for long.
+        assert_eq!(GRACEFUL_STOP_TIMEOUT, Duration::from_secs(10));
     }
 
     #[test]

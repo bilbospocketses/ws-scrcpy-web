@@ -5,7 +5,8 @@ the bucket it falls in and either the spec that covers it or the reason nothing
 does. Companion to `smoke-test.md`, not a replacement — that document remains the
 canonical list of rows and their steps.
 
-Derived from `smoke-test.md` at `v0.1.30-beta.92`, which holds **140 rows**. Row
+Derived from `smoke-test.md` at `v0.1.30-beta.92`, which held **140 rows**; item 63
+(the Linux tray, 2026-09-06) added rows 14.8 and 14.9, so the doc holds **142**. Row
 ids are stable and gappy; so are the lines here.
 
 | | Rows | Where |
@@ -16,20 +17,21 @@ ids are stable and gappy; so are the lines here.
 | Windows guest | 25 | qa-harness, nightly, once P4 lands |
 | Windows guest **and** Linux residual | 2 | Windows half P4; Linux half nobody |
 | Automatable, no spec written yet | 0 | — (the six of 2026-09-04 were written 2026-09-06, item 104) |
-| **Residual — Linux installer and desktop** | **48** | nobody |
+| **Residual — Linux installer and desktop** | **50** | nobody (14.8 / 14.9 are assertable by qa-harness item 14's Linux guests) |
 | **Residual — un-automatable** | **7** | nobody, ever |
-| **Total** | **140** | |
+| **Total** | **142** | |
 
-**Automated today: 58 of 140 = 41 %.** After P4: 83 of 140 = 59 %, plus the
+**Automated today: 58 of 142 = 41 %.** After P4: 83 of 142 = 58 %, plus the
 Windows halves of the two split rows. (52 / 37 % and 77 / 55 % until 2026-09-06,
 when item 104 wrote the six specs this table used to list as "automatable, no
-spec".)
+spec"; the denominator was 140 until item 63 added the two tray rows.)
 
 Three different row counts have been quoted for this document, and only one of them
 is wrong. The plan that commissioned this register worked from **127**, which was
 the correct count for `v0.1.30-beta.82` — the version it named. Module 20's
 thirteen container rows were added afterwards by P3 task 5, and nothing has been
-removed since, so 127 + 13 = 140. A count of **135** also circulated while this
+removed since, so 127 + 13 = 140 (item 63's two tray rows make it 142 as of
+2026-09-06). A count of **135** also circulated while this
 task was being scoped, and that one is a miscount: it matches row ids as
 `<module>.<number>`, which silently drops the five that carry a suffix —
 `4.2-user`, `4.2-system-cli`, `4.2-system-gui`, `5.3a` and `5.3b`. All five are
@@ -179,6 +181,8 @@ Sorted by module, then by row number, which is not the doc's execution order.
 | 14.5 | `[Linux]` | Uninstall — system-service cascade | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
 | 14.6 | `[Linux]` | Uninstall — keep settings & logs | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
 | 14.7 | `[Fedora]` | Uninstall — SELinux clean | residual: linux-desktop | Residual. Needs a Fedora host with a policy store of its own, for `bin_t`/`var_lib_t` labelling and the `semanage` fcontext lifecycle. Containers share the host's. |
+| 14.8 | `[Linux]` | Tray icon — StatusNotifier host (KDE) | residual: linux-desktop | Residual. Needs a Plasma session. qa-harness item 14's Linux guests can assert the `busctl --user list` name and the exit's `Received signal SIGTERM` log line under KDE. |
+| 14.9 | `[Fedora]` | Tray stands down — no host (GNOME) | residual: linux-desktop | Residual. qa-harness item 14's Fedora guest can assert the single stand-down line in `launcher.log` and the absence of the D-Bus name. |
 | 15.1 | `[Win]` | In-app uninstall — keep | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
 | 15.2 | `[Win]` | In-app uninstall — wipe | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
 | 15.3 | `[Win]` | Uninstall modal UX | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
