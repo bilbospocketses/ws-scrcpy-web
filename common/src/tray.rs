@@ -35,25 +35,19 @@
 //! No async runtime, no third-party tray crate, no GTK/glib transitive
 //! deps on Linux builds.
 //!
-//! ## Linux (best-effort stub — SP3 P4b decision: path (b))
+//! ## Linux (ksni — todo item 63, 2026-09-06)
 //!
-//! On Linux, [`run`] is a no-op that immediately returns
-//! [`TrayAction::Cancelled`]. Background:
-//!
-//! - A real Linux tray would need `libappindicator` + GTK at runtime and the
-//!   matching `-dev` packages at compile time. Pulling those in would fail
-//!   `cross check` against the default `cross-rs` Docker image and grow the
-//!   dependency tree (gtk, glib, atk, gdk, gio, cairo, pango, …).
-//! - P4b is best-effort either way: the web UI Settings → Stop Server button
-//!   already covers the "no tray" case (shipped in P3).
-//! - Returning [`TrayAction::Cancelled`] means callers (`launcher/src/tray.rs`,
-//!   `tray/src/main.rs`) log a benign info message and exit/continue without
-//!   shutting down anything they shouldn't. No process termination, no
-//!   spurious shutdown POST. This is exactly the existing
-//!   `TrayAction::Cancelled` semantics on Windows.
-//!
-//! A future Linux tray (libappindicator + GTK main loop, or a modern
-//! StatusNotifierItem implementation) is deferred to P5+.
+//! A StatusNotifierItem over D-Bus, pure Rust (`ksni`, `blocking` + `async-io`,
+//! no tokio, no C libraries), run on the calling thread — the launcher spawns
+//! one (`launcher/src/linux_tray.rs`). Menu callbacks post events on a channel
+//! and the `run` loop acts on them: **Open** → `/usr/bin/xdg-open`, **Exit… →
+//! stop the server and quit** → [`TrayAction::ConfirmedExit`] (the launcher then
+//! flips its stop flag and SIGTERMs Node). With no StatusNotifier host (stock
+//! GNOME / Fedora Workstation) or no session bus, `run` logs one line and
+//! returns [`TrayAction::Cancelled`]: stand down silently, Settings → Server
+//! remains the stop path. `icon_bytes` is the 22×22 ARGB32 pixmap from
+//! `tray_policy::icon_argb_22`, not an ICO. The P4b history (tray-icon +
+//! libappindicator pulled GTK and broke `cross check`) is why it is ksni.
 
 /// Result of the user's interaction with the tray.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -713,22 +707,205 @@ mod tests {
 }
 
 // =====================================================================
-// Linux (and other non-Windows) stub — SP3 P4b decision: path (b).
+// Linux — StatusNotifierItem over D-Bus via ksni (todo item 63).
 //
-// Returns `TrayAction::Cancelled` immediately. Callers
-// (`launcher/src/tray.rs`, `tray/src/main.rs`) treat this as
-// "tray-not-shown; do nothing." A real Linux tray (libappindicator + GTK
-// main loop) is deferred to a later milestone. See module-level docs for
-// the full rationale.
+// Design (docs/superpowers/specs/2026-09-06-linux-tray-design.md):
+//   - the tray runs on the caller's thread (the launcher spawns one),
+//   - menu callbacks only post events on a channel — ksni warns that a
+//     blocking callback freezes the menu — and this loop does the work,
+//   - no StatusNotifier host / no session bus → log once, return Cancelled
+//     (stand down silently; Settings → Server is the stop path there),
+//   - Exit… is a submenu (stop and quit / cancel): the menu item IS the
+//     confirmation, since ksni has no dialog and zenity/kdialog are
+//     external binaries.
 // =====================================================================
 
-/// Linux / non-Windows stub for [`run`]. Always returns
-/// [`Ok(TrayAction::Cancelled)`] without showing any UI.
+#[cfg(target_os = "linux")]
+mod linux {
+    use std::process::{Command, Stdio};
+    use std::sync::mpsc::Sender;
+
+    use ksni::menu::{MenuItem, StandardItem, SubMenu};
+    use ksni::{Category, Icon, Status, ToolTip};
+
+    /// What the tray asks the `run` loop to do. Callbacks never do it themselves.
+    pub(super) enum TrayEvent {
+        Open,
+        ConfirmedExit,
+    }
+
+    pub(super) struct LinuxTray {
+        pub(super) tooltip: String,
+        pub(super) exit_action: String,
+        pub(super) icon_argb: Vec<u8>,
+        pub(super) events: Sender<TrayEvent>,
+    }
+
+    impl LinuxTray {
+        fn emit(&self, event: TrayEvent) {
+            // The receiver is the run loop; if it is gone the tray is going too.
+            let _ = self.events.send(event);
+        }
+    }
+
+    impl ksni::Tray for LinuxTray {
+        fn id(&self) -> String {
+            "ws-scrcpy-web".into()
+        }
+
+        fn title(&self) -> String {
+            self.tooltip.clone()
+        }
+
+        fn category(&self) -> Category {
+            Category::ApplicationStatus
+        }
+
+        fn status(&self) -> Status {
+            Status::Active
+        }
+
+        fn icon_pixmap(&self) -> Vec<Icon> {
+            vec![Icon {
+                width: crate::tray_policy::ICON_SIDE,
+                height: crate::tray_policy::ICON_SIDE,
+                data: self.icon_argb.clone(),
+            }]
+        }
+
+        fn tool_tip(&self) -> ToolTip {
+            ToolTip {
+                title: self.tooltip.clone(),
+                ..Default::default()
+            }
+        }
+
+        /// Left click: open the app, the same as the Windows tray.
+        fn activate(&mut self, _x: i32, _y: i32) {
+            self.emit(TrayEvent::Open);
+        }
+
+        fn menu(&self) -> Vec<MenuItem<Self>> {
+            vec![
+                MenuItem::Standard(StandardItem {
+                    label: "Open ws-scrcpy-web".into(),
+                    activate: Box::new(|t: &mut Self| t.emit(TrayEvent::Open)),
+                    ..Default::default()
+                }),
+                MenuItem::Separator,
+                MenuItem::SubMenu(SubMenu {
+                    label: "Exit\u{2026}".into(),
+                    submenu: vec![
+                        MenuItem::Standard(StandardItem {
+                            label: self.exit_action.clone(),
+                            activate: Box::new(|t: &mut Self| t.emit(TrayEvent::ConfirmedExit)),
+                            ..Default::default()
+                        }),
+                        MenuItem::Standard(StandardItem {
+                            label: "cancel".into(),
+                            activate: Box::new(|_t: &mut Self| {}),
+                            ..Default::default()
+                        }),
+                    ],
+                    ..Default::default()
+                }),
+            ]
+        }
+    }
+
+    /// Open `url` in the user's default browser. Absolute path on purpose
+    /// (Local-Dependencies-Only): the Linux launcher never resolves a tool
+    /// from PATH. Fire-and-forget, like the Windows `ShellExecuteW` path.
+    pub(super) fn open_url(url: &str) {
+        match Command::new("/usr/bin/xdg-open")
+            .arg(url)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+        {
+            Ok(_) => crate::log::info(&format!("tray: opened {url} via /usr/bin/xdg-open")),
+            Err(e) => crate::log::error(&format!("tray: /usr/bin/xdg-open {url} failed: {e}")),
+        }
+    }
+}
+
+/// Linux implementation of [`run`]. Same signature as Windows; here
+/// `icon_bytes` is the 22×22 ARGB32 pixmap from
+/// [`crate::tray_policy::icon_argb_22`], `confirm_body` is the label of the
+/// confirming `Exit…` submenu item, and `confirm_title` / `startup_balloon` are
+/// unused (no dialog, no balloon in the SNI model).
 ///
-/// The signature matches the Windows implementation so callers can invoke
-/// `common::tray::run(...)` unchanged across platforms. All four arguments
-/// are unused on this platform.
-#[cfg(not(windows))]
+/// Returns `Ok(TrayAction::Cancelled)` — after ONE info line — when the icon
+/// cannot be shown: no session bus, no StatusNotifier host (stock GNOME,
+/// Fedora Workstation), or the host went away. That is the spec's "stand down
+/// silently" (decision 1). Startup is never blocked: callers run this on its
+/// own thread.
+#[cfg(target_os = "linux")]
+pub fn run(
+    icon_bytes: &[u8],
+    tooltip: &str,
+    _confirm_title: &str,
+    confirm_body: &str,
+    open_url_provider: Box<dyn Fn() -> String>,
+    _startup_balloon: Option<(&str, &str)>,
+) -> anyhow::Result<TrayAction> {
+    use ksni::blocking::TrayMethods;
+    use linux::{LinuxTray, TrayEvent};
+
+    if icon_bytes.len() != crate::tray_policy::ICON_ARGB_LEN {
+        return Err(anyhow::anyhow!(
+            "tray: icon must be a {}x{} ARGB32 pixmap ({} bytes), got {}",
+            crate::tray_policy::ICON_SIDE,
+            crate::tray_policy::ICON_SIDE,
+            crate::tray_policy::ICON_ARGB_LEN,
+            icon_bytes.len()
+        ));
+    }
+
+    let (tx, rx) = std::sync::mpsc::channel::<TrayEvent>();
+    let tray = LinuxTray {
+        tooltip: tooltip.to_string(),
+        exit_action: confirm_body.to_string(),
+        icon_argb: icon_bytes.to_vec(),
+        events: tx,
+    };
+
+    // spawn() fails immediately when there is no StatusNotifierWatcher on the
+    // bus (ksni::Error::Watcher) or no bus at all (ksni::Error::Dbus). Both are
+    // the stand-down case, not an error: the app is fine, it just has no
+    // tray on this desktop.
+    let handle = match tray.spawn() {
+        Ok(handle) => handle,
+        Err(e) => {
+            crate::log::info(&format!(
+                "linux-tray: no StatusNotifier host on this desktop ({e}); standing down — Settings → Server stops the app"
+            ));
+            return Ok(TrayAction::Cancelled);
+        }
+    };
+    crate::log::info(&format!("linux-tray: icon registered (tooltip {tooltip:?})"));
+
+    loop {
+        match rx.recv() {
+            Ok(TrayEvent::Open) => linux::open_url(&open_url_provider()),
+            Ok(TrayEvent::ConfirmedExit) => {
+                crate::log::info("linux-tray: exit confirmed from the tray menu");
+                let _ = handle.shutdown();
+                return Ok(TrayAction::ConfirmedExit);
+            }
+            // Every sender is gone: ksni dropped the tray (watcher went away).
+            Err(_) => {
+                crate::log::info("linux-tray: tray service ended (host gone); standing down");
+                return Ok(TrayAction::Cancelled);
+            }
+        }
+    }
+}
+
+/// Other non-Windows targets (macOS builds of the workspace) keep the P4b
+/// stub: no tray, [`TrayAction::Cancelled`] immediately.
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn run(
     _icon_bytes: &[u8],
     _tooltip: &str,
@@ -740,25 +917,26 @@ pub fn run(
     Ok(TrayAction::Cancelled)
 }
 
-#[cfg(all(test, not(windows)))]
-mod linux_stub_tests {
+#[cfg(all(test, not(any(windows, target_os = "linux"))))]
+mod stub_tests {
     use super::*;
 
     #[test]
-    fn run_returns_cancelled_on_non_windows() {
-        // Smoke test: the stub is a no-op that never errors and never
-        // claims a confirmed exit. Caller code (launcher tray spawn,
-        // tray-helper main) is allowed to depend on this being a fast
-        // synchronous return.
-        let action = run(
-            b"",
-            "tooltip",
-            "title",
-            "body",
-            Box::new(|| "http://localhost:8000".to_string()),
-            None,
-        )
-        .expect("stub must not error");
+    fn run_returns_cancelled_on_other_platforms() {
+        let action = run(b"", "tooltip", "title", "body", Box::new(|| "http://localhost:8000".to_string()), None)
+            .expect("stub must not error");
         assert_eq!(action, TrayAction::Cancelled);
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod linux_tests {
+    use super::*;
+
+    #[test]
+    fn a_wrong_sized_icon_is_an_error_before_any_dbus_work() {
+        let err = run(b"not a pixmap", "t", "title", "body", Box::new(String::new), None)
+            .expect_err("wrong length must be rejected");
+        assert!(err.to_string().contains("ARGB32"));
     }
 }
