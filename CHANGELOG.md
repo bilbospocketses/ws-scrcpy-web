@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.105] - 2026-09-06
+
 ### Fixed
 
 - **The first-run dependency install no longer freezes the server.** While it installed Node.js and adb
