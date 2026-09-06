@@ -29,6 +29,7 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { promisify } from 'node:util';
 import * as zlib from 'node:zlib';
 
 const EOCD_SIG = 0x06054b50;
@@ -156,7 +157,9 @@ export function resolveEntryPath(destDir: string, entryName: string): string {
     return target;
 }
 
-function readEntryData(buf: Buffer, entry: ZipEntry): Buffer {
+const inflateRaw = promisify(zlib.inflateRaw);
+
+async function readEntryData(buf: Buffer, entry: ZipEntry): Promise<Buffer> {
     if (buf.readUInt32LE(entry.localHeaderOffset) !== LOCAL_SIG) {
         throw new Error(`corrupt ZIP: bad local header for ${entry.name}`);
     }
@@ -171,7 +174,12 @@ function readEntryData(buf: Buffer, entry: ZipEntry): Buffer {
     if (entry.method === METHOD_STORE) {
         data = Buffer.from(raw);
     } else if (entry.method === METHOD_DEFLATE) {
-        data = zlib.inflateRawSync(raw);
+        // The async API, deliberately: it inflates on the libuv threadpool.
+        // `inflateRawSync` did the same work on the event loop, and this
+        // extractor runs during the first-run install while the server is
+        // answering requests — node.exe alone is ~90 MB uncompressed, and every
+        // in-flight request waited behind it (see zipExtract.offThread.test.ts).
+        data = await inflateRaw(raw);
     } else {
         throw new Error(`unsupported ZIP compression method ${entry.method} for ${entry.name}`);
     }
@@ -213,7 +221,7 @@ export async function extractZipTo(zipPath: string, destDir: string): Promise<vo
         if (entry.isDirectory) continue;
         const target = resolveEntryPath(destDir, entry.name);
         await fs.promises.mkdir(path.dirname(target), { recursive: true });
-        const data = readEntryData(buf, entry);
+        const data = await readEntryData(buf, entry);
         await fs.promises.writeFile(target, data);
         if (process.platform !== 'win32') {
             const mode = entry.unixMode !== null ? entry.unixMode & 0o7777 : DEFAULT_FILE_MODE;

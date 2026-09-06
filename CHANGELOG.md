@@ -19,6 +19,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The first-run dependency install no longer freezes the server.** While it installed Node.js and adb
+  the server extracted and copied them on its only thread — `inflateRawSync` for every ZIP entry
+  (node.exe alone is ~90 MB uncompressed) and a synchronous file-by-file copy of the ~2,500-file Node
+  tree into place — so every request in flight waited behind it: a page load, a settings read, a live
+  device stream. Measured at a 4-second `GET /api/config` on a fast NVMe box, and past 10 seconds on a
+  loaded CI runner, where it was the whole of the auth suite's "flaky" row 18.11: the page reloaded
+  into open mode, asked for `/api/settings`, and the answer arrived after the assertion's 10-second
+  budget. Both runs the item blamed were re-read from their traces — the other failure (18.1) was a
+  test that had not yet learnt the new `needsLockdown` field, and 18.11's failure was reproduced only
+  by re-running at the same commit, never by a code change. The inflate now goes through zlib's async
+  API (the libuv threadpool) and the copy through `fs.promises` step by step, so the event loop turns
+  between files; two tests pin each. Nothing about what gets installed, where, or the rollback on a
+  failed copy changes. `tests/e2e/auth.spec.ts` is untouched: its wait was right, the server was wrong.
 - **CI never ran the linter.** `build-and-test` ran `tsc`, the unit tests, the Rust gates, the build and
   both Playwright tiers, but never `npm run lint` — so biome was enforced only by whoever remembered to
   run it locally, and the recent fix that brought `webpack/**` into the linted set held by that same

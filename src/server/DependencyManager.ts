@@ -12,7 +12,7 @@ import { getDependencyDefinitions, getPlatform } from './DependencyDefinitions';
 import { Logger } from './Logger';
 import { writeInstalledScrcpyServerVersion } from './scrcpyServerVersion';
 import { resolveSystemTool } from './service/systemTools';
-import { copyFileAtomicSync, writeFileAtomicSync } from './util/atomicFile';
+import { copyFileAtomic, copyFileAtomicSync, writeFileAtomicSync } from './util/atomicFile';
 import { extractZipTo } from './zipExtract';
 
 const log = Logger.for('DependencyManager');
@@ -368,7 +368,7 @@ export class DependencyManager {
                 }
             }
             try {
-                this.copyDirContents(extractedPath, destDir);
+                await this.copyDirContents(extractedPath, destDir);
             } catch (err) {
                 if (renamed && !fs.existsSync(runningExe)) {
                     try {
@@ -387,7 +387,7 @@ export class DependencyManager {
                 }
             }
         } else {
-            this.copyDirContents(extractedPath, destDir);
+            await this.copyDirContents(extractedPath, destDir);
         }
     }
 
@@ -427,7 +427,7 @@ export class DependencyManager {
                 }
             }
             try {
-                this.copyDirContents(platformToolsDir, destDir);
+                await this.copyDirContents(platformToolsDir, destDir);
             } catch (err) {
                 if (renamed && !fs.existsSync(adbExe)) {
                     try {
@@ -446,7 +446,7 @@ export class DependencyManager {
                 }
             }
         } else {
-            this.copyDirContents(platformToolsDir, destDir);
+            await this.copyDirContents(platformToolsDir, destDir);
         }
     }
 
@@ -479,21 +479,31 @@ export class DependencyManager {
         await extractZipTo(zipPath, destDir);
     }
 
-    private copyDirContents(src: string, dest: string): void {
-        const entries = fs.readdirSync(src, { withFileTypes: true });
+    /**
+     * Async on purpose, and it must stay that way. This runs during the
+     * first-run install while the server is serving requests, and the Node
+     * tree it copies is ~2,500 files / ~110 MB. The synchronous version parked
+     * every in-flight request behind it — a 4-second `/api/config` measured on
+     * a fast NVMe box, past 10 s on a CI runner (the auth suite's "flaky" 18.11
+     * was a reloaded page whose `/api/settings` never got an answer). Each step
+     * goes through `fs.promises`, so the loop turns between files
+     * (dependencyManager.eventLoop.test.ts pins that).
+     */
+    private async copyDirContents(src: string, dest: string): Promise<void> {
+        const entries = await fs.promises.readdir(src, { withFileTypes: true });
         for (const entry of entries) {
             const srcPath = path.join(src, entry.name);
             const destPath = path.join(dest, entry.name);
             if (entry.isDirectory()) {
-                fs.mkdirSync(destPath, { recursive: true });
-                this.copyDirContents(srcPath, destPath);
+                await fs.promises.mkdir(destPath, { recursive: true });
+                await this.copyDirContents(srcPath, destPath);
             } else {
-                copyFileAtomicSync(srcPath, destPath);
+                await copyFileAtomic(srcPath, destPath);
                 // Preserve executable permissions on Linux
                 if (getPlatform() !== 'win32') {
                     try {
-                        const stat = fs.statSync(srcPath);
-                        fs.chmodSync(destPath, stat.mode);
+                        const stat = await fs.promises.stat(srcPath);
+                        await fs.promises.chmod(destPath, stat.mode);
                     } catch {
                         // Best effort
                     }
