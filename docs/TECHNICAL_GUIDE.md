@@ -2094,7 +2094,7 @@ By default only `localhost` + IP literals pass layer 1, so terminating TLS at a 
 | `src/server/security/originGuard.ts` | Host allowlist (`isHostAllowed`, `setAllowedHosts`) + Origin match (`isRequestAllowed`) |
 | `src/server/security/requestGate.ts` | Composes the Host/Origin/token layers for HTTP (`evaluateHttpRequest`) and WS (`evaluateWsConnection`) |
 | `src/server/security/frameGuard.ts` | `securityHeaders()` + the CSP `frame-ancestors` list (`setFrameAncestors`) — layer 4 |
-| `src/server/embedRequests.ts` | Pending embed-consent request store (one at a time, five-minute expiry) |
+| `src/server/security/embedRequests.ts` | Pending embed-consent request store (one at a time, five-minute expiry) |
 | `src/server/api/EmbedRequestApi.ts` | `/embed-request` ask + `/api/embed-request/decision` grant; both loopback-gated |
 | `src/server/auth/authState.ts` | `authEnabled` — the actual authentication boundary — plus the gate's allow-list |
 | `src/server/security/instanceToken.ts` | Per-launch token mint, cookie build, constant-time validation; the two probe exemptions (`requiresToken`) |
