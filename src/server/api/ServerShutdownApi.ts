@@ -1,6 +1,15 @@
 import type { IncomingMessage, ServerResponse } from 'http';
+import { isAuthEnabled } from '../auth/authState';
 import { requireAdmin } from '../auth/requireAdmin';
+import { Config } from '../Config';
 import { Logger } from '../Logger';
+import { isValidToken, parseTokenFromCookie } from '../security/instanceToken';
+import { isLoopback } from '../security/loopback';
+
+/** Whether AuthGate attached a validated session user to this request. */
+function hasAuthenticatedUser(req: IncomingMessage): boolean {
+    return (req as IncomingMessage & { user?: unknown }).user !== undefined;
+}
 
 const log = Logger.for('ServerShutdownApi');
 
@@ -26,7 +35,30 @@ const log = Logger.for('ServerShutdownApi');
  *     daemon. process.exit(0) is a clean exit; the launcher's supervisor sees
  *     `decide_restart(0, false) == None` and does NOT restart (exit 75 is the
  *     restart sentinel — deliberately NOT used here).
- *   - No auth: localhost-only intent. Future hardening if exposed remotely.
+ *
+ * Who may call it (item 114, 2026-09-06 — this used to read "No auth:
+ * localhost-only intent", which stopped being true the moment the per-instance
+ * token shipped and quietly killed the tray's Exit):
+ *
+ * The endpoint is exempt from BOTH gates — the per-instance token
+ * (security/instanceToken.ts) and AuthGate (auth/authState.ts) — because the
+ * tray helper is a process, not a browser: it has no cookie and no session, and
+ * in service mode its Exit is the only stop affordance the product has. This
+ * handler therefore does the authorizing itself:
+ *
+ *   - **On loopback: allowed.** Stopping the app from the machine it runs on is
+ *     the operator's call (user decision, 2026-09-06). The trade is explicit:
+ *     any local process can stop the server, including a system-scope service a
+ *     non-admin user could not otherwise stop. Loopback is the same trust
+ *     boundary `WhoamiApi` and the embed-consent endpoints already draw.
+ *   - **Off-box: unchanged from before the exemptions.** The caller must
+ *     present the instance token (403 without it — a LAN client that never
+ *     loaded the page has none), and in locked mode must be signed in (401).
+ *     Note this is NOT "loopback only": a browser reaching a containerised
+ *     server comes through the Docker gateway, and row 20.6 exists to catch
+ *     exactly that regression.
+ *   - **`requireAdmin` runs last**, so a signed-in non-admin cannot stop the
+ *     server from anywhere.
  */
 const SHUTDOWN_DELAY_MS = 100;
 
@@ -62,10 +94,41 @@ export class ServerShutdownApi {
     public async handle(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
         if (req.url !== '/api/server/shutdown' || req.method !== 'POST') return false;
 
+        res.setHeader('Content-Type', 'application/json');
+
+        // Loopback is what authorizes the COOKIELESS caller this endpoint's
+        // exemptions exist for (the tray helper). An off-box caller gets the
+        // treatment it had before those exemptions: it must present the
+        // instance token it was handed with the page, and in locked mode it
+        // must be signed in.
+        //
+        // This is not "loopback only". Requiring loopback outright broke the
+        // Settings button inside a container, where the browser reaches the
+        // server through the Docker gateway and so is never on loopback —
+        // caught by row 20.6 in CI, which is exactly what that row is for.
+        if (!isLoopback(req.socket?.remoteAddress ?? '')) {
+            if (!isValidToken(parseTokenFromCookie(req.headers.cookie))) {
+                log.warn(`refusing shutdown from ${req.socket?.remoteAddress ?? '<unknown>'}: no instance token`);
+                res.writeHead(403);
+                res.end(JSON.stringify({ error: 'this endpoint answers this machine only' }));
+                return true;
+            }
+            if (isAuthEnabled(Config.getInstance().db) && !hasAuthenticatedUser(req)) {
+                // AuthGate lets this path through unauthenticated so the tray
+                // can reach it; off-box, that exemption is re-imposed here.
+                log.warn(`refusing shutdown from ${req.socket?.remoteAddress ?? '<unknown>'}: not signed in`);
+                res.writeHead(401);
+                res.end(JSON.stringify({ error: 'unauthorized' }));
+                return true;
+            }
+        }
+
+        // A signed-in non-admin cannot stop the server, from anywhere. In open
+        // mode, and for the cookieless local caller in locked mode, this
+        // resolves to the implicit admin and passes — deliberate, see above.
         if (!requireAdmin(req, res)) return true;
 
         log.info('shutdown requested via /api/server/shutdown');
-        res.setHeader('Content-Type', 'application/json');
         res.writeHead(200);
         res.end(JSON.stringify({ ok: true }));
 

@@ -15,7 +15,21 @@ export const SESSION_COOKIE = 'wsscrcpy_sid';
 // records that another local app would like to be allowed to frame us, and a human still has to
 // approve that in the (gated) UI. Without the exemption, locked mode answers it with 200 + the
 // login HTML, which a JSON client reads as a malformed success rather than "you must sign in".
-const ALLOWLIST_EXACT = new Set(['/api/auth/login', '/api/auth/me', '/api/whoami', '/embed-request']);
+// `/api/server/shutdown` is the tray helper's quit (item 114, user decision
+// 2026-09-06). The tray is a process: no cookie, no session, and in service
+// mode its Exit is the only stop affordance the product has, so a locked-mode
+// 401 left it dead. `ServerShutdownApi` does the authorizing instead — a
+// loopback caller may stop the app (the operator's own machine), while an
+// off-box caller still needs the instance token AND, in locked mode, a signed-in
+// admin, which is what this allowlist entry would otherwise have given away.
+// The trade is deliberate and recorded: any local process can stop the server.
+const ALLOWLIST_EXACT = new Set([
+    '/api/auth/login',
+    '/api/auth/me',
+    '/api/whoami',
+    '/api/server/shutdown',
+    '/embed-request',
+]);
 // '/login-assets/' used to sit here too. Nothing ever served that prefix and
 // there is no /login route at all — the login page is served inline — so it was
 // an unauthenticated hole reserved for a directory that did not exist, waiting

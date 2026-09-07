@@ -17,6 +17,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The Windows tray's "Exit" works again.** The tray helper POSTs `/api/server/shutdown` cookielessly —
+  it is a process, not a browser — and the per-instance token gate has answered it `403 {"reason":"missing
+  or invalid token"}` since that gate shipped, so clicking Exit → Yes killed only the tray icon (the
+  launcher's supervisor put it back within ten seconds) and left the server running. In service mode that
+  Exit is the only stop affordance the product has. The endpoint is now exempt from the token gate and
+  from AuthGate, and `ServerShutdownApi` authorizes callers itself: **on loopback it is allowed** — the
+  operator's own machine, an explicit decision whose trade is that any local process can stop the server,
+  including a system-scope service — while an **off-box caller is treated exactly as before**, needing the
+  instance token (403 without it) and, in locked mode, a signed-in session (401). `requireAdmin` still runs
+  last, so a signed-in non-admin cannot stop the server from anywhere. A unit test had encoded the broken
+  behaviour as correct (`requiresToken('POST', '/api/server/shutdown') === true`); it now pins the fix.
+  New smoke row **15.6**. All five paths measured against a real server, open and locked.
+
 ## [0.1.30-beta.111] - 2026-09-06
 
 ### Added

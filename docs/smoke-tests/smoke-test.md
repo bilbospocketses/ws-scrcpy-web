@@ -115,7 +115,7 @@ By-feature lookup into the run rows below (numeric order; the body itself is exe
 - **Module 12 — Stop server & exit:** [12.1](#t-12-1) · [12.2](#t-12-2) · [12.3](#t-12-3) · [12.4](#t-12-4) · [12.5](#t-12-5)
 - **Module 13 — Settings: bookmark & reset prompts:** [13.1](#t-13-1) · [13.2](#t-13-2) · [13.3](#t-13-3)
 - **Module 14 — Linux Server-section UX:** [14.1](#t-14-1) · [14.2](#t-14-2) · [14.3](#t-14-3) · [14.4](#t-14-4) · [14.5](#t-14-5) · [14.6](#t-14-6) · [14.7](#t-14-7) · [14.8](#t-14-8) · [14.9](#t-14-9)
-- **Module 15 — Windows Server-section uninstall + stop-exit:** [15.1](#t-15-1) · [15.2](#t-15-2) · [15.3](#t-15-3) · [15.4](#t-15-4) · [15.5](#t-15-5)
+- **Module 15 — Windows Server-section uninstall + stop-exit:** [15.1](#t-15-1) · [15.2](#t-15-2) · [15.3](#t-15-3) · [15.4](#t-15-4) · [15.5](#t-15-5) · [15.6](#t-15-6)
 - **Module 16 — Accessibility & theming:** [16.1](#t-16-1) · [16.2](#t-16-2) · [16.3](#t-16-3) · [16.4](#t-16-4) · [16.5](#t-16-5) · [16.6](#t-16-6)
 - **Module 18 — Auth subsystem (opt-in login):** [18.1](#t-18-1) · [18.2](#t-18-2) · [18.3](#t-18-3) · [18.4](#t-18-4) · [18.5](#t-18-5) · [18.6](#t-18-6) · [18.7](#t-18-7) · [18.8](#t-18-8) · [18.9](#t-18-9) · [18.10](#t-18-10) · [18.11](#t-18-11) · [18.12](#t-18-12)
 - **Module 19 — Per-user device labels:** [19.1](#t-19-1) · [19.2](#t-19-2) · [19.3](#t-19-3)
@@ -315,6 +315,7 @@ Mark each `☐`: `x` pass · `F` fail · `-` skip. Boxes start empty — this is
 | ☐ <a id="t-15-3"></a> **15.3** `[Win]` Uninstall modal UX | Open the uninstall modal | Top-layer overlay above Settings; **cancel** white-outline, **uninstall** red text + red border; keep checkbox **checked by default**; cancel/Esc/backdrop = no action. |
 | ☐ <a id="t-15-4"></a> **15.4** `[Win]` Stop-exit reaps tray + adb *(item 4)* | Local mode, device + stream live → Settings → **Server** → **stop server & exit** | Tab closes / "app stopped"; Task Manager shows **no** lingering launcher/node/tray/`adb.exe` — the tray is reaped (poll thread stopped first) **and** stray adb is `taskkill`'d. |
 | ☐ <a id="t-15-5"></a> **15.5** `[Win]` Server-section order | Settings → Server | Order top→bottom: **reset prompts → web port → stop server & exit → uninstall ws-scrcpy-web** (no "install for all users" on Windows). |
+| ☐ <a id="t-15-6"></a> **15.6** `[Win]` Tray Exit actually stops the server *(item 114)* | Right-click the tray icon → **Exit** → **Yes**, in local mode and again with the service installed | tray → Exit → Yes stops the server: `ws-scrcpy-web.log` shows `shutdown requested via /api/server/shutdown` then the adb teardown, the process exits 0, the tray icon does not come back, and the app is gone from the port. |
 
 ### #18 — Auth subsystem (opt-in login) 🔐 *(new in beta.67 — run top-to-bottom; finish with 18.11)*
 

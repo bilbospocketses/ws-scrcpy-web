@@ -72,7 +72,7 @@ describe('instanceToken', () => {
             expect(requiresToken('POST', '/api/service/install')).toBe(true);
             expect(requiresToken('GET', '/api/devices')).toBe(true);
             expect(requiresToken('PATCH', '/api/config')).toBe(true);
-            expect(requiresToken('POST', '/api/server/shutdown')).toBe(true);
+            expect(requiresToken('POST', '/api/settings')).toBe(true);
         });
 
         it('exempts the launcher GET /api/config upgrade probe', () => {
@@ -87,6 +87,20 @@ describe('instanceToken', () => {
             expect(requiresToken('POST', '/api/whoami')).toBe(true);
             expect(requiresToken('GET', '/api/whoami/')).toBe(true);
             expect(requiresToken('GET', '/api/whoamix')).toBe(true);
+        });
+
+        // Item 114. This line used to read `expect(requiresToken('POST',
+        // '/api/server/shutdown')).toBe(true)` in the test above — the tray's
+        // breakage asserted as correct, written when the token landed by
+        // someone who did not know the tray posts exactly that. Measured
+        // 2026-09-06 against a real server: 403 {"reason":"missing or invalid
+        // token"}, the handler's log line absent, the server still up. The
+        // handler is loopback-only, so the exemption reaches nothing off-box.
+        it('exempts the tray helper POST /api/server/shutdown, that method and path only', () => {
+            expect(requiresToken('POST', '/api/server/shutdown')).toBe(false);
+            expect(requiresToken('GET', '/api/server/shutdown')).toBe(true);
+            expect(requiresToken('POST', '/api/server/shutdown/')).toBe(true);
+            expect(requiresToken('POST', '/api/server/restart')).toBe(true);
         });
 
         it('does not require a token for static (non-API) requests', () => {

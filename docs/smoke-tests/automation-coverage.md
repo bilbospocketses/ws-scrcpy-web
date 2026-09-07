@@ -6,32 +6,34 @@ does. Companion to `smoke-test.md`, not a replacement — that document remains 
 canonical list of rows and their steps.
 
 Derived from `smoke-test.md` at `v0.1.30-beta.92`, which held **140 rows**; item 63
-(the Linux tray, 2026-09-06) added rows 14.8 and 14.9, so the doc holds **142**. Row
-ids are stable and gappy; so are the lines here.
+(the Linux tray, 2026-09-06) added 14.8 and 14.9 and item 114 (the tray's Exit, same
+day) added 15.6, so the doc holds **143**. Row ids are stable and gappy; so are the
+lines here.
 
 | | Rows | Where |
 |---|---|---|
 | Automated, fast tier | 30 | `build-and-test`, every PR |
 | Automated, container tier | 11 | `build-and-test`'s docker step, and qa-harness nightly |
 | Automated, device tier | 17 | qa-harness, nightly |
-| Windows guest | 25 | qa-harness, nightly, once P4 lands |
+| Windows guest | 26 | qa-harness, nightly, once P4 lands |
 | Windows guest **and** Linux residual | 2 | Windows half P4; Linux half nobody |
 | Automatable, no spec written yet | 0 | — (the six of 2026-09-04 were written 2026-09-06, item 104) |
 | **Residual — Linux installer and desktop** | **50** | nobody (14.8 / 14.9 are assertable by qa-harness item 14's Linux guests) |
 | **Residual — un-automatable** | **7** | nobody, ever |
-| **Total** | **142** | |
+| **Total** | **143** | |
 
-**Automated today: 58 of 142 = 41 %.** After P4: 83 of 142 = 58 %, plus the
+**Automated today: 58 of 143 = 41 %.** After P4: 84 of 143 = 59 %, plus the
 Windows halves of the two split rows. (52 / 37 % and 77 / 55 % until 2026-09-06,
 when item 104 wrote the six specs this table used to list as "automatable, no
-spec"; the denominator was 140 until item 63 added the two tray rows.)
+spec"; the denominator was 140 until item 63 added the two tray rows and item 114
+added 15.6.)
 
 Three different row counts have been quoted for this document, and only one of them
 is wrong. The plan that commissioned this register worked from **127**, which was
 the correct count for `v0.1.30-beta.82` — the version it named. Module 20's
 thirteen container rows were added afterwards by P3 task 5, and nothing has been
-removed since, so 127 + 13 = 140 (item 63's two tray rows make it 142 as of
-2026-09-06). A count of **135** also circulated while this
+removed since, so 127 + 13 = 140 (item 63's two tray rows and item 114's 15.6 make
+it 143 as of 2026-09-06). A count of **135** also circulated while this
 task was being scoped, and that one is a miscount: it matches row ids as
 `<module>.<number>`, which silently drops the five that carry a suffix —
 `4.2-user`, `4.2-system-cli`, `4.2-system-gui`, `5.3a` and `5.3b`. All five are
@@ -188,6 +190,7 @@ Sorted by module, then by row number, which is not the doc's execution order.
 | 15.3 | `[Win]` | Uninstall modal UX | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
 | 15.4 | `[Win]` | Stop-exit reaps tray + adb | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
 | 15.5 | `[Win]` | Server-section order | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
+| 15.6 | `[Win]` | Tray Exit actually stops the server | Windows guest (P4) | P4, the qa-harness Windows guest suite — it needs a real tray icon to right-click (its item 21 covers the Win11 overflow + right-click delivery). The gate half is unit-tested (`ServerShutdownApi.test.ts`, `instanceToken.test.ts`); this row is the end-to-end one. |
 | 16.1 | `[Both]` | Light/dark theme switch | fast | `a11y-theming.spec.ts` |
 | 16.2 | `[Both]` | Keyboard focus ring | fast | `a11y-theming.spec.ts` |
 | 16.3 | `[Both]` | Reduced motion | fast | `a11y-theming.spec.ts` |

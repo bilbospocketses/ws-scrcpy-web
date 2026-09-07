@@ -4,8 +4,10 @@ import * as os from 'os';
 import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ServerShutdownApi } from '../api/ServerShutdownApi';
+import { setAuthEnabled } from '../auth/authState';
 import { Config } from '../Config';
 import { EnvName } from '../EnvName';
+import { getInstanceToken } from '../security/instanceToken';
 
 const tmpDirs: string[] = [];
 const saved = { CONFIG: process.env[EnvName.CONFIG_PATH], DEPS: process.env['DEPS_PATH'] };
@@ -26,8 +28,14 @@ afterEach(() => {
     while (tmpDirs.length) fs.rmSync(tmpDirs.pop()!, { recursive: true, force: true });
 });
 
-function makeReqRes(url: string, method = 'GET') {
-    const req = { url, method } as IncomingMessage;
+/**
+ * `remoteAddress` matters since item 114: the handler is loopback-only, because
+ * it is exempt from the per-instance token (the tray helper has no cookie).
+ * Every request here therefore carries a socket, and the default is loopback —
+ * the tray's own case.
+ */
+function makeReqRes(url: string, method = 'GET', remoteAddress = '127.0.0.1', headers: Record<string, string> = {}) {
+    const req = { url, method, socket: { remoteAddress }, headers } as unknown as IncomingMessage;
     let statusCode = 0;
     const chunks: string[] = [];
     const res = {
@@ -64,6 +72,117 @@ describe('ServerShutdownApi', () => {
         const api = new ServerShutdownApi();
         const { req, res } = makeReqRes('/api/server/shutdown', 'PUT');
         expect(await api.handle(req, res)).toBe(false);
+    });
+
+    // Item 114. The tray helper POSTs this path with no cookie and no Origin
+    // (tray/src/main.rs: ureq .post(url).send_string("")). Measured on
+    // 2026-09-06 against a real server: the per-instance token gate answered
+    // 403 {"reason":"missing or invalid token"} and the handler's own log line
+    // never appeared — the tray's Exit had been a no-op since the token landed.
+    // The gate exemption lives in security/instanceToken.ts; loopback is what
+    // replaces it here.
+    it('refuses a cookieless caller that is not on this machine', async () => {
+        const schedule = vi.fn();
+        const exit = vi.fn();
+        const api = new ServerShutdownApi({ schedule, exit });
+        const { req, res } = makeReqRes('/api/server/shutdown', 'POST', '192.168.1.20');
+
+        expect(await api.handle(req, res)).toBe(true);
+        expect((res as any).getStatus()).toBe(403);
+        expect(JSON.parse((res as any).getBody())).toEqual({ error: 'this endpoint answers this machine only' });
+        // Nothing was scheduled and nothing exited.
+        expect(schedule).not.toHaveBeenCalled();
+        expect(exit).not.toHaveBeenCalled();
+    });
+
+    it('refuses a cookieless request whose peer address is unknown (fail closed)', async () => {
+        const schedule = vi.fn();
+        const api = new ServerShutdownApi({ schedule, exit: vi.fn() });
+        const { req, res } = makeReqRes('/api/server/shutdown', 'POST', '');
+
+        expect(await api.handle(req, res)).toBe(true);
+        expect((res as any).getStatus()).toBe(403);
+        expect(schedule).not.toHaveBeenCalled();
+    });
+
+    // The regression CI caught on the first cut of this fix: requiring loopback
+    // outright killed the Settings "stop server & exit" button inside a
+    // container, where the browser arrives through the Docker gateway and is
+    // never on loopback (row 20.6). A caller holding the instance token is a
+    // browser that loaded the page and is authorized regardless of where it sits.
+    it('allows an off-box caller that carries the instance token (the container / LAN browser)', async () => {
+        const schedule = vi.fn();
+        const api = new ServerShutdownApi({ schedule, exit: vi.fn() });
+        const { req, res } = makeReqRes('/api/server/shutdown', 'POST', '172.17.0.1', {
+            cookie: `ws_scrcpy_token=${getInstanceToken()}`,
+        });
+
+        expect(await api.handle(req, res)).toBe(true);
+        expect((res as any).getStatus()).toBe(200);
+        expect(schedule).toHaveBeenCalledTimes(1);
+    });
+
+    it('refuses an off-box caller whose token is wrong', async () => {
+        const schedule = vi.fn();
+        const api = new ServerShutdownApi({ schedule, exit: vi.fn() });
+        const { req, res } = makeReqRes('/api/server/shutdown', 'POST', '172.17.0.1', {
+            cookie: `ws_scrcpy_token=${'a'.repeat(64)}`,
+        });
+
+        expect(await api.handle(req, res)).toBe(true);
+        expect((res as any).getStatus()).toBe(403);
+        expect(schedule).not.toHaveBeenCalled();
+    });
+
+    it('refuses an off-box token-holder that is not signed in when auth is on', async () => {
+        setAuthEnabled(Config.getInstance().db, true);
+        const schedule = vi.fn();
+        const api = new ServerShutdownApi({ schedule, exit: vi.fn() });
+        const { req, res } = makeReqRes('/api/server/shutdown', 'POST', '192.168.1.20', {
+            cookie: `ws_scrcpy_token=${getInstanceToken()}`,
+        });
+
+        expect(await api.handle(req, res)).toBe(true);
+        expect((res as any).getStatus()).toBe(401);
+        expect(schedule).not.toHaveBeenCalled();
+    });
+
+    // The user's decision, 2026-09-06: on the machine itself, stopping the app
+    // is the operator's call — so the tray's cookieless, session-less POST works
+    // in locked mode too, which is where its Exit is the only stop affordance.
+    it('allows the tray on loopback even when auth is on (no cookie, no session)', async () => {
+        setAuthEnabled(Config.getInstance().db, true);
+        const schedule = vi.fn();
+        const api = new ServerShutdownApi({ schedule, exit: vi.fn() });
+        const { req, res } = makeReqRes('/api/server/shutdown', 'POST');
+
+        expect(await api.handle(req, res)).toBe(true);
+        expect((res as any).getStatus()).toBe(200);
+        expect(schedule).toHaveBeenCalledTimes(1);
+    });
+
+    it('refuses a signed-in non-admin, even on loopback', async () => {
+        const db = Config.getInstance().db;
+        setAuthEnabled(db, true);
+        const viewer = db.users.create({ username: 'viewer', role: 'user', passwordHash: null });
+        const schedule = vi.fn();
+        const api = new ServerShutdownApi({ schedule, exit: vi.fn() });
+        const { req, res } = makeReqRes('/api/server/shutdown', 'POST');
+        (req as IncomingMessage & { user?: unknown }).user = viewer;
+
+        expect(await api.handle(req, res)).toBe(true);
+        expect((res as any).getStatus()).toBe(403);
+        expect(schedule).not.toHaveBeenCalled();
+    });
+
+    it('accepts the IPv4-mapped loopback a dual-stack listener reports', async () => {
+        const schedule = vi.fn();
+        const api = new ServerShutdownApi({ schedule, exit: vi.fn() });
+        const { req, res } = makeReqRes('/api/server/shutdown', 'POST', '::ffff:127.0.0.1');
+
+        expect(await api.handle(req, res)).toBe(true);
+        expect((res as any).getStatus()).toBe(200);
+        expect(schedule).toHaveBeenCalledTimes(1);
     });
 
     it('POST /api/server/shutdown writes 200 with { ok: true } envelope', async () => {
