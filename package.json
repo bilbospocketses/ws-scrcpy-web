@@ -58,7 +58,7 @@
     "node-pty": "^1.1.0"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.11",
+    "@biomejs/biome": "^2.5.12",
     "@playwright/test": "^1.62.1",
     "@swc/core": "^1.16.1",
     "@types/node": "^24.13.3",
@@ -75,7 +75,7 @@
     "tsx": "^4.23.13",
     "typescript": "^7.0.2",
     "vitest": "^4.1.11",
-    "webpack": "^5.110.2",
+    "webpack": "^5.110.3",
     "webpack-cli": "^7.2.3"
   },
   "overrides": {
