@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.112] - 2026-09-07
+
 ### Fixed
 
 - **The Windows tray's "Exit" works again.** The tray helper POSTs `/api/server/shutdown` cookielessly —
