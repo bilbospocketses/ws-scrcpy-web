@@ -17,6 +17,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **In service mode the launcher spawned a new tray process every 10 seconds, forever.** The
+  tray-supervisor runs as LocalSystem in session 0 and asks `is_tray_running_in_session()` whether the
+  user session already has a tray before spawning one. That check used
+  `WTSEnumerateProcessesExW(WTS_CURRENT_SERVER_HANDLE, level 0, WTS_ANY_SESSION, …)`, which — **measured
+  on a Windows 11 guest from a session-0 context, 2026-09-07** — returns `ok=true` with 102 entries,
+  **every one of them session 0**, not a single session-1 process. So the check answered "no tray in
+  session 1" for as long as the service ran: `ensure_tray_in_active_session` never returned
+  `AlreadyRunning`, and the supervisor spawned a fresh tray on every `TRAY_POLL_INTERVAL_SECS` tick. The
+  tray's per-session single-instance mutex meant each new process exited immediately, so nothing
+  duplicated on screen and the loop stayed invisible — it was found only because qa-harness row 3.4 could
+  not get a stable tray icon out of the shell (`launcher.log` showed `tray-supervisor: spawned tray in
+  session 1` at 10-second intervals with one tray alive and unchanged for 20 minutes).
+
+  The check now takes a Toolhelp32 snapshot and maps each pid through `ProcessIdToSessionId`. Verified on
+  the same guest from session 0: 152 processes, **99 in session 0 and 53 in session 1**, finding
+  `ws-scrcpy-web-tray.exe` (pid 9800, session 1) — the exact process the WTS call could not see. The
+  session-scoped matching rule is split into a pure `tray_present_in()` with unit tests (a tray in
+  *another* session must still count as absent, or a user session would be left trayless).
+
 ## [0.1.30-beta.112] - 2026-09-07
 
 ### Fixed
