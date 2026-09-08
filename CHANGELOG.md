@@ -17,6 +17,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Installing the service on a shifted port stranded the browser on the dying local instance.** MEASURED
+  2026-09-07 (qa-harness Arc 1b row 4.3): the service could not bind 8000 because the exiting local
+  instance still held it, so it took 8001. The install poll in `SettingsModal` is **same-origin** — it
+  keeps asking the port the browser is already on — and its success gate required `servedByService`, which
+  is `process.env['WS_SCRCPY_SERVICE'] === '1'` and therefore only ever true *inside the service process*.
+  When the service moves to a different port the browser never talks to it, so the signal that would say
+  "follow me" can never arrive: the `navigate` branch, written precisely for "a different bound port", was
+  unreachable in exactly the case it exists for. The poll ran to its cap and timed out, leaving the user on
+  an instance that then exited, showing a Service section that still read "not installed — install?" beside
+  a card saying the app is running as a service.
+
+  The exiting local instance can answer both halves of the question, so it is now asked: `readDiskConfig`
+  reports `diskWebPort` from config.json, and `status` comes from an `sc.exe`/`systemctl` query about the
+  **service**, not about the answering process. `classifyInstallPoll` now navigates when a port shift is
+  known and the service has been seen running, whoever is answering — and still navigates once the origin
+  dies, because the last-known disk port is remembered across ticks (the tick after the local instance
+  exits carries no body). Guards kept: no navigation before the service has ever been seen running, and
+  none when the disk port equals the port the browser is already on.
+
+  Worth recording why this survived its own tests: the existing unit test asserted `servedByService: true`
+  together with a *different* `diskWebPort` — a state the system cannot produce, since a service answering
+  the browser means the browser is already on the service's port. The test encoded an impossible world, so
+  it passed while the real path never ran.
+
 ## [0.1.30-beta.113] - 2026-09-08
 
 ### Fixed
