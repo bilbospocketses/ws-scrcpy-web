@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.114] - 2026-09-08
+
 ### Fixed
 
 - **Installing the service on a shifted port stranded the browser on the dying local instance.** MEASURED
