@@ -60,6 +60,8 @@ describe('classifyInstallPoll', () => {
         configMtime: 100,
         baselineMtime: 100,
         diskWebPort: 8000,
+        currentPort: 8000,
+        serviceSeenRunning: true,
         iterations: 1,
         maxIterations: 30,
     };
@@ -68,6 +70,76 @@ describe('classifyInstallPoll', () => {
             kind: 'navigate',
             port: 8002,
         });
+    });
+
+    // ---------------------------------------------------------------------------
+    // The port-shift hand-off. MEASURED 2026-09-07 (qa-harness Arc 1b row 4.3):
+    // the service could not bind 8000 because the local instance still held it, so
+    // it took 8001. The browser stayed on 8000, the poll is SAME-ORIGIN, and
+    // servedByService is only ever true inside the service process -- so the very
+    // branch written for "a different bound port" was unreachable in exactly the
+    // case it exists for. The user was left on a dying instance until the timeout.
+    //
+    // Note what the pre-existing test above actually encodes: servedByService=true
+    // WITH a different diskWebPort. That state cannot occur -- if the service is
+    // answering the browser, the browser is already on the service's port. The bug
+    // survived because its test asserted an impossible world.
+    // ---------------------------------------------------------------------------
+    it('navigates when the LOCAL instance reports the service running on another port', () => {
+        // The exiting local instance still answers on 8000 (servedByService=false),
+        // and readDiskConfig lets it report where the service actually went.
+        expect(
+            classifyInstallPoll({
+                ...served,
+                servedByService: false,
+                diskWebPort: 8001,
+                currentPort: 8000,
+                serviceSeenRunning: true,
+            }),
+        ).toEqual({ kind: 'navigate', port: 8001 });
+    });
+
+    it('navigates after the origin dies, once the service was seen running elsewhere', () => {
+        // The local instance exits ~15s after the service comes up, killing the
+        // origin. Timing out here strands the user on a dead port when we already
+        // know where the service is.
+        expect(
+            classifyInstallPoll({
+                ...served,
+                reachable: false,
+                servedByService: false,
+                diskWebPort: 8001,
+                currentPort: 8000,
+                serviceSeenRunning: true,
+            }),
+        ).toEqual({ kind: 'navigate', port: 8001 });
+    });
+
+    it('does NOT navigate on a dead origin before the service was ever seen running', () => {
+        // Guard: the hand-off dead window must still be waited out, not guessed at.
+        expect(
+            classifyInstallPoll({
+                ...served,
+                reachable: false,
+                servedByService: false,
+                diskWebPort: 8001,
+                currentPort: 8000,
+                serviceSeenRunning: false,
+                iterations: 2,
+            }),
+        ).toEqual({ kind: 'keep-polling' });
+    });
+
+    it('does NOT navigate when the disk port equals the port the browser is already on', () => {
+        expect(
+            classifyInstallPoll({
+                ...served,
+                servedByService: false,
+                diskWebPort: 8000,
+                currentPort: 8000,
+                serviceSeenRunning: true,
+            }),
+        ).toEqual({ kind: 'keep-polling' });
     });
     it('reconnects when the service answers on the SAME port, no mtime change (the race fix)', () => {
         expect(classifyInstallPoll(served)).toEqual({ kind: 'reconnect' });

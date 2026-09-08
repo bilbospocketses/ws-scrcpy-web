@@ -60,9 +60,31 @@ export function classifyInstallPoll(args: {
     configMtime: number | null;
     baselineMtime: number;
     diskWebPort: number | null;
+    /** The port the browser is actually on, so a shift can be detected. */
+    currentPort: number | null;
+    /** Sticky: any answering instance has reported the SERVICE as running. */
+    serviceSeenRunning: boolean;
     iterations: number;
     maxIterations: number;
 }): PollOutcome {
+    // A PORT SHIFT is its own positive signal, and it is the one case
+    // servedByService can never deliver. MEASURED 2026-09-07 (qa-harness Arc 1b row
+    // 4.3): the service could not bind 8000 because the exiting local instance still
+    // held it, so it took 8001. This poll is SAME-ORIGIN, so it kept asking 8000 —
+    // where servedByService is false by construction, since that flag is only ever
+    // true inside the service process. The branch below written for "a different
+    // bound port" was therefore unreachable in exactly the situation it exists for,
+    // and the user sat on a dying instance until the timeout.
+    //
+    // The exiting local instance can answer both halves of the question: its
+    // readDiskConfig reports diskWebPort from config.json, and its `status` comes
+    // from an sc.exe/systemctl query about the SERVICE, not about itself. So once
+    // the service is known to be running and the disk port differs from ours, we
+    // know where to go — whoever is answering.
+    const portMoved = args.diskWebPort != null && args.currentPort != null && args.diskWebPort !== args.currentPort;
+    if (portMoved && (args.servedByService || args.serviceSeenRunning)) {
+        return { kind: 'navigate', port: args.diskWebPort as number };
+    }
     // Success requires a POSITIVE signal: the instance answering /api/service/status
     // is the service itself (WS_SCRCPY_SERVICE on its unit), not the exiting local
     // instance and not a transient dead port.
@@ -1893,6 +1915,11 @@ export class SettingsModal extends Modal {
             if (isSystemScope) {
                 btn.textContent = 'switching to the system service…';
             }
+            // Sticky across ticks: the origin dies mid-hand-off, so what we learned
+            // while the local instance was still answering has to outlive it.
+            let sawServiceRunning = false;
+            let lastDiskWebPort: number | null = null;
+            const browserPort = Number(window.location.port) || null;
             const poll = setInterval(async () => {
                 iterations++;
                 // A thrown/aborted fetch means whoever was answering has dropped —
@@ -1910,10 +1937,20 @@ export class SettingsModal extends Modal {
                             configMtime?: number;
                             diskWebPort?: number;
                             servedByService?: boolean;
+                            status?: string;
                         };
                         configMtime = statusData.configMtime ?? null;
                         diskWebPort = statusData.diskWebPort ?? null;
                         servedByService = statusData.servedByService === true;
+                        // `status` is the SERVICE's state (sc.exe / systemctl), not the
+                        // answering process's, so the local instance can tell us the
+                        // service came up even though it is not the service.
+                        if (statusData.status === 'running') {
+                            sawServiceRunning = true;
+                        }
+                        if (diskWebPort != null) {
+                            lastDiskWebPort = diskWebPort;
+                        }
                     }
                 } catch {
                     reachable = false;
@@ -1923,7 +1960,12 @@ export class SettingsModal extends Modal {
                     servedByService,
                     configMtime,
                     baselineMtime,
-                    diskWebPort,
+                    // The last port we saw on disk, not just this tick's: an
+                    // unreachable tick carries no body, and that is precisely the
+                    // tick after the local instance exits.
+                    diskWebPort: diskWebPort ?? lastDiskWebPort,
+                    currentPort: browserPort,
+                    serviceSeenRunning: sawServiceRunning,
                     iterations,
                     maxIterations,
                 });
