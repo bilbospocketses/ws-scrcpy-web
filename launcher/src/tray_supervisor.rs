@@ -346,75 +346,94 @@ fn current_session_id() -> u32 {
     }
 }
 
-/// Check if `ws-scrcpy-web-tray.exe` is running in the given WTS session.
-///
-/// Uses `WTSEnumerateProcessesExW` (level WTS_PROCESS_INFO_LEVEL_0)
-/// to walk all processes; filters on image name + session ID. Returns
-/// false on any enumeration error (caller will then attempt spawn,
-/// which mutex-dedups safely).
 fn is_tray_running_in_session(session_id: u32) -> bool {
-    use std::ffi::OsString;
-    use std::os::windows::ffi::OsStringExt;
-    use windows::Win32::Foundation::HANDLE;
-    use windows::Win32::System::RemoteDesktop::{
-        WTSEnumerateProcessesExW, WTSFreeMemoryExW, WTSTypeProcessInfoLevel0,
-        WTS_PROCESS_INFOW,
+    tray_present_in(&enumerate_processes_with_sessions(), session_id)
+}
+
+/// Every process on the box as `(session_id, image_name)`.
+///
+/// Toolhelp32 + `ProcessIdToSessionId`, NOT `WTSEnumerateProcessesExW`.
+///
+/// MEASURED 2026-09-07 on a Windows 11 guest, from a session-0 context:
+/// `WTSEnumerateProcessesExW(WTS_CURRENT_SERVER_HANDLE, level 0, WTS_ANY_SESSION, ..)`
+/// returned `ok=true` with 102 entries, **every one of them session 0** — not a
+/// single session-1 process, while `Get-Process` from the very same context
+/// listed the session-1 tray. In service mode the launcher IS session 0, so the
+/// old check answered "no tray in session 1" forever: `ensure_tray_in_active_session`
+/// never returned `AlreadyRunning`, and the supervisor spawned a fresh tray every
+/// `TRAY_POLL_INTERVAL_SECS` for as long as the service ran. The per-session
+/// single-instance mutex meant each new tray exited immediately, so the only
+/// outward sign was a process appearing and vanishing every 10 seconds — the
+/// harness caught it because row 3.4 could not find a stable tray icon.
+///
+/// Toolhelp32 snapshots every process regardless of the caller's session.
+/// VERIFIED on that same guest, from session 0: Toolhelp32 + `ProcessIdToSessionId`
+/// returned 152 processes — 99 in session 0 and 53 in session 1 — and found
+/// `ws-scrcpy-web-tray.exe` (pid 9800, session 1), the exact process the WTS call
+/// it replaces could not see.
+fn enumerate_processes_with_sessions() -> Vec<ProcEntry> {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
     };
+    use windows::Win32::System::RemoteDesktop::ProcessIdToSessionId;
 
+    let mut out: Vec<ProcEntry> = Vec::new();
     unsafe {
-        let mut buffer: *mut u8 = std::ptr::null_mut();
-        let mut count: u32 = 0;
-        let mut level: u32 = 0; // WTS_PROCESS_INFO_LEVEL_0
-        let ok = WTSEnumerateProcessesExW(
-            HANDLE(std::ptr::null_mut()),
-            &mut level,
-            0xFFFFFFFF, // WTS_ANY_SESSION; we filter on session_id below
-            &mut buffer as *mut *mut u8 as *mut windows::core::PWSTR,
-            &mut count,
-        )
-        .is_ok();
-
-        if !ok || buffer.is_null() {
-            return false;
-        }
-
-        let processes = std::slice::from_raw_parts(
-            buffer as *const WTS_PROCESS_INFOW,
-            count as usize,
-        );
-
-        let mut found = false;
-        for p in processes {
-            if p.SessionId != session_id {
-                continue;
+        let snapshot = match CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) {
+            Ok(h) => h,
+            Err(e) => {
+                log::error(&format!(
+                    "tray-supervisor: CreateToolhelp32Snapshot failed: {e:?}"
+                ));
+                return out;
             }
-            if p.pProcessName.is_null() {
-                continue;
-            }
-            // Walk the wide string to find the length.
-            let mut len = 0usize;
-            while *p.pProcessName.0.add(len) != 0 {
-                len += 1;
-                if len > 1024 {
+        };
+
+        let mut entry = PROCESSENTRY32W {
+            dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+            ..Default::default()
+        };
+
+        if Process32FirstW(snapshot, &mut entry).is_ok() {
+            loop {
+                let mut session: u32 = 0;
+                // A process can exit between the snapshot and this call; skip it
+                // rather than treat the failure as "no tray anywhere".
+                if ProcessIdToSessionId(entry.th32ProcessID, &mut session).is_ok() {
+                    let len = entry
+                        .szExeFile
+                        .iter()
+                        .position(|&c| c == 0)
+                        .unwrap_or(entry.szExeFile.len());
+                    out.push((session, String::from_utf16_lossy(&entry.szExeFile[..len])));
+                }
+                if Process32NextW(snapshot, &mut entry).is_err() {
                     break;
                 }
             }
-            let slice = std::slice::from_raw_parts(p.pProcessName.0, len);
-            let name = OsString::from_wide(slice);
-            if name.eq_ignore_ascii_case(TRAY_PROCESS_NAME) {
-                found = true;
-                break;
-            }
         }
 
-        let _ = WTSFreeMemoryExW(
-            WTSTypeProcessInfoLevel0,
-            buffer as *mut _,
-            count,
-        );
-
-        found
+        let _ = CloseHandle(snapshot);
     }
+    out
+}
+
+/// A process as seen by the enumerator: `(session_id, image_name)`.
+pub(crate) type ProcEntry = (u32, String);
+
+/// Is a tray process present in `session_id`?
+///
+/// Pure and session-SCOPED: a tray in a different session must not count, or
+/// the supervisor would leave a user session trayless. Split out from the
+/// Win32 enumeration so the matching rule is unit-testable — the enumeration
+/// itself is verified on a guest, which is how the session-blindness this
+/// replaces was found in the first place.
+pub(crate) fn tray_present_in(procs: &[ProcEntry], session_id: u32) -> bool {
+    procs.iter().any(|(session, name)| {
+        *session == session_id && name.eq_ignore_ascii_case(TRAY_PROCESS_NAME)
+    })
 }
 
 #[cfg(test)]
@@ -439,5 +458,46 @@ mod tests {
     #[test]
     fn skips_reap_when_both_markers_present() {
         assert!(!should_reap_tray_on_exit(true, true));
+    }
+
+    fn p(session: u32, name: &str) -> ProcEntry {
+        (session, name.to_string())
+    }
+
+    #[test]
+    fn finds_the_tray_in_the_requested_session() {
+        let procs = vec![p(0, "services.exe"), p(1, "ws-scrcpy-web-tray.exe")];
+        assert!(tray_present_in(&procs, 1));
+    }
+
+    #[test]
+    fn matches_the_image_name_case_insensitively() {
+        // Win32 enumerators are not consistent about case.
+        let procs = vec![p(1, "WS-SCRCPY-WEB-TRAY.EXE")];
+        assert!(tray_present_in(&procs, 1));
+    }
+
+    #[test]
+    fn a_tray_in_another_session_does_not_count() {
+        // The whole point: session 1 having no tray must stay visible even
+        // though some other session has one.
+        let procs = vec![p(2, "ws-scrcpy-web-tray.exe")];
+        assert!(!tray_present_in(&procs, 1));
+    }
+
+    #[test]
+    fn no_tray_at_all_is_absent() {
+        let procs = vec![p(1, "explorer.exe"), p(1, "ws-scrcpy-web.exe")];
+        assert!(!tray_present_in(&procs, 1));
+    }
+
+    #[test]
+    fn an_empty_enumeration_is_absent_not_present() {
+        // MEASURED 2026-09-07: WTSEnumerateProcessesExW from session 0 returned
+        // 102 processes, ALL session 0, so the old check answered "absent"
+        // forever and the supervisor respawned a tray every 10 s for as long as
+        // the service ran. An empty list must still read as absent here -- the
+        // bug was never in this rule, it was in what the enumerator handed it.
+        assert!(!tray_present_in(&[], 1));
     }
 }
