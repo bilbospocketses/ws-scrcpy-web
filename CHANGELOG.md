@@ -45,6 +45,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - One `build_tray_nid` builder now feeds both the initial add and the re-add, so the icon that comes
     back is the icon that went away — same uID and callback message, or the shell routes clicks nowhere
     and the recovered icon is inert. 2 tests.
+  - **`TaskbarCreated` alone is not enough, and the sibling `minimize-to-tray` project already knew it.**
+    Two more mechanisms ported from there rather than rediscovered:
+    - **The broadcast never arrives at an elevated process.** UIPI drops messages sent from a lower
+      integrity level to a higher one, and explorer runs at medium IL — so in an elevated tray the
+      handler above is dead code. `minimize-to-tray` names this "the prime suspect" for an icon that
+      vanishes on a rebuild and never returns. `ChangeWindowMessageFilterEx(…, MSGFLT_ALLOW)` now lets
+      that one message through, unconditionally (it is harmless unelevated, and gating it on an
+      integrity check we would have to keep correct is the worse trade).
+    - **Several events drop the icon without broadcasting anything at all** — a display or resolution
+      change, a session lock/unlock, an RDP reconnect, a resume from sleep. The window now takes
+      `WM_DISPLAYCHANGE`, `WM_POWERBROADCAST` and `WM_WTSSESSION_CHANGE` (via
+      `WTSRegisterSessionNotification`), plus a 30-second `WM_TIMER` heartbeat as the backstop for
+      whatever those miss. Every one is **probe-gated**: `Shell_NotifyIconW(NIM_MODIFY)` with
+      `uFlags = 0` is a read-only "is this icon registered?" question, so a healthy icon costs one API
+      call and never flickers. Only an absent icon is re-added, and the log line names the trigger that
+      caught it. These messages reach us only because the window became top-level — a message-only
+      window receives none of them, for the same reason it never received `TaskbarCreated`.
 - **An unanswered UAC prompt hung the service install forever.** #646, measured on a Windows guest three
   separate ways (150 s, 342 s and 600 s windows). `runElevated` awaited the `--request-uac` helper with no
   timeout, and that helper blocks until the consent dialog is answered — so when it never was, the await

@@ -38,6 +38,16 @@
 //!    app to do this; without it the shell's recreation of `Shell_TrayWnd`
 //!    leaves this process alive and iconless for good, which in service mode
 //!    removes the only way the user has to stop the server.
+//!    Two things make that handler actually fire, both learned by the sibling
+//!    `minimize-to-tray` project rather than rediscovered here:
+//!      - `ChangeWindowMessageFilterEx(MSGFLT_ALLOW)`, because UIPI drops a
+//!        medium-IL explorer's broadcast to an elevated process, which would
+//!        make the handler dead code exactly when it is needed.
+//!      - A probe-and-recover path for the events that drop the icon and
+//!        announce NOTHING: display change, session lock/unlock, RDP
+//!        reconnect, resume, plus a 30s heartbeat behind them. The probe is
+//!        `NIM_MODIFY` with `uFlags = 0`, a read-only "still registered?"
+//!        question, so a healthy icon never flickers.
 //! 8. Cleanup runs via a `Drop` guard so it survives panics: removes the
 //!    tray icon, destroys the window, destroys the HICON.
 //!
@@ -93,11 +103,17 @@ use windows::Win32::UI::Shell::{
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreateIconFromResourceEx, CreatePopupMenu, CreateWindowExW, DefWindowProcW,
     DestroyIcon, DestroyMenu, DestroyWindow, DispatchMessageW, GetCursorPos, GetMessageW,
-    GetWindowLongPtrW, MessageBoxW, PostQuitMessage, RegisterClassW, RegisterWindowMessageW,
-    SetForegroundWindow, SetWindowLongPtrW, TrackPopupMenu, TranslateMessage, UnregisterClassW,
-    GWLP_USERDATA, HICON, HMENU, IDYES, LR_DEFAULTCOLOR, MB_ICONQUESTION, MB_YESNO, MF_SEPARATOR,
-    MF_STRING, MSG, TPM_LEFTALIGN, TPM_RIGHTBUTTON, WINDOW_STYLE, WM_COMMAND, WM_LBUTTONUP,
-    WM_QUIT, WM_RBUTTONUP, WM_USER, WNDCLASSW, WS_EX_TOOLWINDOW,
+    ChangeWindowMessageFilterEx, GetWindowLongPtrW, KillTimer, MessageBoxW, PostQuitMessage,
+    RegisterClassW, RegisterWindowMessageW, SetForegroundWindow, SetTimer, SetWindowLongPtrW,
+    TrackPopupMenu, TranslateMessage, UnregisterClassW, GWLP_USERDATA, HICON, HMENU, IDYES,
+    LR_DEFAULTCOLOR, MB_ICONQUESTION, MB_YESNO, MF_SEPARATOR, MF_STRING, MSGFLT_ALLOW, MSG,
+    TPM_LEFTALIGN, TPM_RIGHTBUTTON, WINDOW_STYLE, WM_COMMAND, WM_DISPLAYCHANGE, WM_LBUTTONUP,
+    WM_POWERBROADCAST, WM_QUIT, WM_RBUTTONUP, WM_TIMER, WM_USER, WM_WTSSESSION_CHANGE, WNDCLASSW,
+    WS_EX_TOOLWINDOW,
+};
+#[cfg(windows)]
+use windows::Win32::System::RemoteDesktop::{
+    WTSRegisterSessionNotification, WTSUnRegisterSessionNotification, NOTIFY_FOR_THIS_SESSION,
 };
 #[cfg(windows)]
 use windows::Win32::UI::Shell::ShellExecuteW;
@@ -174,6 +190,58 @@ struct TrayState {
     /// `TaskbarCreated`. Owned by `TrayCleanup`, which outlives every message.
     hicon: HICON,
     tooltip_w: Vec<u16>,
+}
+
+/// Timer id for the icon-presence heartbeat. Arbitrary but stable per window.
+#[cfg(windows)]
+const TRAY_HEARTBEAT_TIMER: usize = 1;
+
+/// How often to check that our icon is still registered.
+///
+/// The shell drops tray icons on events that raise NO `TaskbarCreated` at all —
+/// a display/resolution change, a session unlock, an RDP reconnect, a resume
+/// from sleep. `minimize-to-tray` found this the hard way and settled on a 30s
+/// heartbeat plus event-driven probes; this is the same number for the same
+/// reason. The probe is read-only, so a healthy icon costs one API call.
+#[cfg(windows)]
+const TRAY_HEARTBEAT_MS: u32 = 30_000;
+
+/// Is our icon currently registered with the shell?
+///
+/// `NIM_MODIFY` with `uFlags = 0` is a read-only existence probe: it returns
+/// non-zero iff that `(hWnd, uID)` pair is registered, and changes nothing
+/// visible. That is what makes the heartbeat safe to run unconditionally —
+/// re-adding blind would flicker the icon every 30 seconds.
+#[cfg(windows)]
+fn tray_icon_present(hwnd: HWND) -> bool {
+    let mut nid: NOTIFYICONDATAW = unsafe { std::mem::zeroed() };
+    nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
+    nid.hWnd = hwnd;
+    nid.uID = TRAY_ICON_UID;
+    // uFlags deliberately left 0: nothing is modified, we only want the verdict.
+    // SAFETY: nid is fully initialized; Shell_NotifyIconW reads cbSize bytes.
+    unsafe { Shell_NotifyIconW(NIM_MODIFY, &nid).as_bool() }
+}
+
+/// Re-add the icon if, and only if, it has gone missing. `reason` names the
+/// event that prompted the check so `tray.log` says which trigger recovered it.
+#[cfg(windows)]
+fn recover_icon_if_absent(hwnd: HWND, state: &TrayState, reason: &str) {
+    if tray_icon_present(hwnd) {
+        return; // healthy — no work, and no flicker
+    }
+    let nid = build_tray_nid(hwnd, state.hicon, &state.tooltip_w);
+    // SAFETY: nid is fully initialized by build_tray_nid.
+    let re_added = unsafe { Shell_NotifyIconW(NIM_ADD, &nid) };
+    if re_added.as_bool() {
+        crate::log::info(&format!("tray: icon was absent ({reason}); re-added"));
+    } else {
+        // SAFETY: reads this thread's last-error slot, set by the call above.
+        crate::log::error(&format!(
+            "tray: icon absent ({reason}) and NIM_ADD failed (GetLastError={})",
+            unsafe { GetLastError().0 }
+        ));
+    }
 }
 
 /// Build the `NOTIFYICONDATAW` that registers our icon.
@@ -338,6 +406,42 @@ pub fn run(
         anyhow!("CreateWindowExW: {e}")
     })?;
 
+    // 4b. Let `TaskbarCreated` through the UIPI message filter.
+    //
+    //     User Interface Privilege Isolation drops messages sent from a LOWER
+    //     integrity level to a higher one. Explorer runs at medium IL; if this
+    //     tray is running elevated — an admin-launched app, or any future
+    //     elevated host — the shell's broadcast is discarded by the OS before
+    //     our WndProc is ever called, and the handler below becomes dead code.
+    //     `minimize-to-tray` identified exactly this as the prime suspect for
+    //     "the icon vanished on a notification-area rebuild and never came
+    //     back", so we do not repeat the diagnosis here.
+    //
+    //     Harmless when not elevated (the filter is already permissive), so it
+    //     is unconditional rather than gated on an IL check we would then have
+    //     to keep correct.
+    if taskbar_created != 0 {
+        // SAFETY: hwnd is valid, and MSGFLT_ALLOW with a null change-info
+        // pointer is the documented single-message allow form.
+        let allowed = unsafe {
+            ChangeWindowMessageFilterEx(hwnd, taskbar_created, MSGFLT_ALLOW, None).is_ok()
+        };
+        crate::log::info(&format!(
+            "tray: TaskbarCreated UIPI filter allow={allowed}"
+        ));
+    }
+
+    // 4c. Ask for session-change notifications (lock/unlock, RDP connect and
+    //     disconnect). These rebuild the notification area WITHOUT broadcasting
+    //     TaskbarCreated, so they are invisible to the handler above.
+    //     Best-effort: without it the 30s heartbeat still recovers the icon,
+    //     just later.
+    // SAFETY: hwnd is valid; NOTIFY_FOR_THIS_SESSION is the documented flag.
+    let session_notify = unsafe { WTSRegisterSessionNotification(hwnd, NOTIFY_FOR_THIS_SESSION) }.is_ok();
+    if !session_notify {
+        crate::log::info("tray: WTSRegisterSessionNotification failed; heartbeat still covers it");
+    }
+
     // 5. Stash the state pointer in GWLP_USERDATA so the WndProc can find it.
     // SAFETY: hwnd is valid (just created); GWLP_USERDATA is a documented
     // per-window pointer-sized slot. We are the sole writer.
@@ -383,6 +487,19 @@ pub fn run(
     }
     _guard.nid_added.set(true);
     crate::log::info("tray: icon added");
+
+    // 7c. Start the presence heartbeat. TaskbarCreated covers explorer
+    //     restarting; this covers everything that drops the icon WITHOUT
+    //     announcing it. Probe-gated, so a healthy icon costs one call per tick
+    //     and never flickers.
+    // SAFETY: hwnd is valid; a null TIMERPROC routes WM_TIMER to the WndProc.
+    if unsafe { SetTimer(hwnd, TRAY_HEARTBEAT_TIMER, TRAY_HEARTBEAT_MS, None) } == 0 {
+        crate::log::error(&format!(
+            "tray: SetTimer failed (GetLastError={}); the icon will only recover \
+             from TaskbarCreated, not from a display or session change",
+            unsafe { GetLastError().0 }
+        ));
+    }
 
     // 7b. Optional startup balloon notification. Uses NIM_MODIFY with the
     // NIF_INFO flag on the same icon — the balloon hangs off the existing
@@ -446,6 +563,14 @@ impl Drop for TrayCleanup {
         // Order: remove tray icon → destroy window → free state → destroy
         // icon → unregister class. The class can survive across runs (it's
         // process-scoped); unregistering is best-effort cleanup.
+        // Stop the heartbeat and the session feed before the window goes, so
+        // neither can fire against a destroyed HWND.
+        // SAFETY: both take the hwnd we created; each is a no-op if it was
+        // never successfully registered, and failures here are not actionable.
+        unsafe {
+            let _ = KillTimer(self.hwnd, TRAY_HEARTBEAT_TIMER);
+            let _ = WTSUnRegisterSessionNotification(self.hwnd);
+        }
         if self.nid_added.get() {
             let mut nid: NOTIFYICONDATAW = unsafe { std::mem::zeroed() };
             nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
@@ -533,6 +658,33 @@ unsafe extern "system" fn tray_wnd_proc(
             );
         }
         return LRESULT(0);
+    }
+
+    // Events that rebuild or disturb the notification area WITHOUT broadcasting
+    // TaskbarCreated. Each one is probe-gated inside recover_icon_if_absent, so
+    // the common case (icon is fine) does nothing at all.
+    //
+    // WM_TIMER is the backstop that catches whatever these miss; the specific
+    // events exist so recovery is immediate rather than up to 30 seconds later.
+    // Both only reach us because the window is now top-level — a message-only
+    // window receives none of them, which is the same reason TaskbarCreated
+    // could not arrive before.
+    if msg == WM_TIMER || msg == WM_DISPLAYCHANGE || msg == WM_POWERBROADCAST || msg == WM_WTSSESSION_CHANGE {
+        if let Some(s) = state {
+            let reason = match msg {
+                WM_TIMER => "heartbeat",
+                WM_DISPLAYCHANGE => "display change",
+                WM_POWERBROADCAST => "power/resume",
+                _ => "session change",
+            };
+            recover_icon_if_absent(hwnd, s, reason);
+        }
+        // WM_POWERBROADCAST wants TRUE to grant the request; the rest want 0.
+        // Fall through to DefWindowProcW for the power case rather than
+        // guessing, and answer the others ourselves.
+        if msg != WM_POWERBROADCAST {
+            return LRESULT(0);
+        }
     }
 
     if msg == WM_TRAY_CALLBACK {
