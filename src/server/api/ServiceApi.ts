@@ -1298,10 +1298,15 @@ export class ServiceApi {
      *
      * Not bulletproof — a user could theoretically be logged in as
      * `SYSTEM` (extremely unusual), and `os.userInfo()` can fail in
-     * some edge cases. The downside of a false positive is we attempt
-     * the WTS handoff and it fails, then we fall through to direct
-     * uninstall. The downside of a false negative is the user's tab
-     * disconnects on uninstall (the v0.1.7 behavior). Acceptable.
+     * some edge cases. The downside of a false positive is we take the
+     * uninstall-pending marker + operation-server path when a plain
+     * `client.uninstall()` would have done. The downside of a false
+     * negative is the user's tab disconnects on uninstall (the v0.1.7
+     * behavior). Acceptable.
+     *
+     * (This paragraph described a WTS handoff and a fall-through to direct
+     * uninstall until #647. Phase 4 removed both in 2026-05; the stale text
+     * is part of what made `handoff-timeout` look like a live variant.)
      */
     private isLikelyLocalSystem(): boolean {
         try {

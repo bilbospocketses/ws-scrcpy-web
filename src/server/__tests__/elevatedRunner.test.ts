@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { parseResult, pollForResultFile, toSnakeCase } from '../service/elevatedRunner';
+import { isElevationTimeout, parseResult, pollForResultFile, toSnakeCase } from '../service/elevatedRunner';
 
 describe('toSnakeCase', () => {
     it('converts camelCase keys to snake_case at the top level', () => {
@@ -88,6 +88,39 @@ describe('parseResult', () => {
 // via the existing service install/uninstall flows; pure-unit coverage
 // would require mocking the launcher subprocess, which would test the mock
 // rather than the integration.
+
+// #646. `--request-uac` blocks until the consent dialog is answered, and the
+// await had no timeout — so an unanswered prompt (including Windows' own ~2
+// minute auto-dismiss) never returned, leaving installMode at 'system-service'
+// with no service until the app restarted. The wait is now bounded; these
+// tests pin the part that decides what the user is told when it expires,
+// because the wrong answer here is "you declined", which they did not.
+describe('isElevationTimeout', () => {
+    it('treats a child killed by our own timeout as a timeout', () => {
+        // The shape Node rejects with when the `timeout` option fires.
+        const err = Object.assign(new Error('Command failed: ...'), { killed: true, signal: 'SIGTERM' });
+        expect(isElevationTimeout(err)).toBe(true);
+    });
+
+    it('does NOT treat a UAC decline as a timeout', () => {
+        // ERROR_CANCELLED — the user clicked No. The helper exited on its own,
+        // so `killed` is false and they get the decline message, not this one.
+        const err = Object.assign(new Error('Command failed: ...'), { killed: false, code: 1223 });
+        expect(isElevationTimeout(err)).toBe(false);
+    });
+
+    it('does NOT treat an unexpected non-zero exit as a timeout', () => {
+        const err = Object.assign(new Error('Command failed: ...'), { code: 1 });
+        expect(isElevationTimeout(err)).toBe(false);
+    });
+
+    it('is safe on a thrown value that carries nothing', () => {
+        expect(isElevationTimeout(new Error('boom'))).toBe(false);
+        expect(isElevationTimeout(undefined)).toBe(false);
+        expect(isElevationTimeout(null)).toBe(false);
+        expect(isElevationTimeout('a string')).toBe(false);
+    });
+});
 
 describe('pollForResultFile', () => {
     let tmpDir: string;
