@@ -19,6 +19,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The Windows in-app uninstall never removed the app, and deleted your data anyway.** MEASURED
+  2026-09-09 by qa-harness Arc 4 on two fresh Windows 11 guests (smoke rows 15.1 and 15.2, both red).
+  Velopack 1.2.0 **refuses** `Update.exe --uninstall` on an MSI install — *"Uninstall error: MSI
+  installation detected. Uninstall should be performed via msiexec, not Update.exe"* — and every Windows
+  install of this app is the MSI, so that step has never removed anything. The cleaner treated it as
+  best-effort and deleted the data root regardless, on the premise that the app was being removed either
+  way. That premise was false on every Windows install since the MSI-only artifact landed. The user saw
+  *"uninstalled — you can close this tab"*, lost the tray, and kept an installed app whose dependencies
+  (keep) or entire configuration (wipe) were gone, with both Add/Remove Programs entries and a working
+  desktop shortcut still in place.
+  - **Uninstall now goes through msiexec** when the app is an MSI product:
+    `msiexec.exe /x {ProductCode} /qn /norestart`, by absolute path. The ProductCode is **discovered, not
+    hardcoded** — the Add/Remove Programs entries are searched across all three views (HKLM 64-bit, HKLM
+    32-bit, HKCU) for one whose DisplayName is ours and which is a Windows Installer product, and the GUID
+    is read out of its `UninstallString`. It is not read from the key name: Velopack names the key
+    `MSI:WsScrcpyWeb`, and assuming a shape the artifact is free to change is the same mistake that let the
+    MSI silently move to the drive root in #610. A non-MSI install finds no entry and still uses
+    `Update.exe --uninstall`, which is correct for that case.
+  - **A failed uninstall now deletes nothing.** `run_update_exe` reports its result, msiexec's is judged by
+    Windows Installer's own success codes (**0, 3010 and 1641** — the last two are "success, reboot
+    required/initiated", and calling them failure would strand the data root on a machine where the app is
+    already gone), and the cleaner returns without touching the data root when the app is still installed.
+    Logging is re-enabled on that path — it is disabled only so a `--wipe` cannot be undone by the logger
+    re-creating `<dataRoot>\logs`, and when nothing is being wiped there is nothing to protect and every
+    reason to record why it stopped. That silence is what let a refused uninstall look like a successful one.
+  - **A `--wipe` no longer leaves the data root resurrected.** The cleaner waits on the Phase-1 helper's
+    pid, but the launcher is a different process whose exit line lands about a second later and re-created
+    the root as a 74-byte `launcher.log`. A settle pass two seconds after the wipe sweeps it, and catches
+    any late writer rather than only the one we knew about.
+  - 6 tests on the product-code parsing, the success-code classification, the msiexec argv and the
+    DisplayName match. **Not verifiable off-guest:** the msiexec run and the registry discovery need a real
+    MSI install, so Arc 4 re-run is the proof. Smoke row 15.1's "one UAC raised by `Update.exe` itself"
+    needs re-wording — msiexec raises the prompt itself, so the requester becomes `msiexec.exe` — but
+    `docs/smoke-tests/` is owned by the qa-harness session right now and is deliberately untouched here.
 - **An unanswered UAC prompt hung the service install forever.** #646, measured on a Windows guest three
   separate ways (150 s, 342 s and 600 s windows). `runElevated` awaited the `--request-uac` helper with no
   timeout, and that helper blocks until the consent dialog is answered — so when it never was, the await

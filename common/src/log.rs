@@ -53,9 +53,19 @@ const MAX_LOG_SIZE: u64 = 10 * 1024 * 1024; // 10MB
 /// Windows in-app uninstall cleaner: every `append()` calls
 /// `create_dir_all(<dataRoot>/logs)`, which would resurrect the data root
 /// after a `--wipe`. The cleaner calls this once at startup so deletion is
-/// final. Idempotent; intentionally no re-enable.
+/// final. Idempotent.
 pub fn disable() {
     LOG_DISABLED.store(true, Ordering::Relaxed);
+}
+
+/// Turn logging back on. The counterpart to [`disable`], and the reason it now
+/// has one: the uninstall cleaner disables logging so a `--wipe` cannot be
+/// undone by `create_dir_all(<dataRoot>/logs)` — but when the uninstall step
+/// FAILS the cleaner deletes nothing (#120), so there is no wipe to protect and
+/// every reason to say why it stopped. Silence there is what let a failing
+/// uninstall look like a successful one.
+pub fn enable() {
+    LOG_DISABLED.store(false, Ordering::Relaxed);
 }
 
 /// True once `disable()` has been called in this process.
