@@ -183,6 +183,8 @@ export async function runElevated(
     // children.
     log.info(`runElevated(${command}) launching ${launcherPath} (direct=${useDirect}, file-poll)`);
 
+    const startedAt = Date.now();
+
     if (useDirect) {
         // Direct spawn — caller is already privileged (Local
         // System service-instance invoking spawn-user-launcher).
@@ -220,18 +222,38 @@ export async function runElevated(
         //   1223 = UAC declined by the user (Windows ERROR_CANCELLED).
         //   other = unexpected ShellExecuteExW failure.
         let uacFailed = false;
+        let uacTimedOut = false;
         let uacErrorMessage = '';
         try {
             await execFileAsync(launcherPath, ['--request-uac', command, argsPath, resultPath], {
                 windowsHide: true,
                 maxBuffer: 1024 * 1024,
+                // `--request-uac` blocks until the consent dialog is answered,
+                // so without this the wait is unbounded when it never is — and
+                // "never" includes Windows auto-dismissing the prompt after
+                // ~2 minutes, which leaves this await pending forever and the
+                // caller stuck in a half-installed state (#646). The bound is
+                // the same 300s the result-file poll uses; expiry kills the
+                // helper, which also stops the process leaking.
+                //
+                // Residual, accepted: killing `--request-uac` does not retract
+                // a consent dialog Windows has already shown, so a user who
+                // answers Yes after the 5 minutes are up can still complete an
+                // install we have already reported as failed and reverted. The
+                // window is bounded and self-correcting on the next status
+                // read; an unbounded hang was not.
+                timeout: ELEVATION_TIMEOUT_MS,
             });
         } catch (err) {
+            uacTimedOut = isElevationTimeout(err);
             uacFailed = true;
             uacErrorMessage = (err as Error).message ?? '(no message)';
-            log.warn(`runElevated request-uac failed: ${uacErrorMessage}`);
+            log.warn(`runElevated request-uac ${uacTimedOut ? 'timed out' : 'failed'}: ${uacErrorMessage}`);
         }
 
+        if (uacTimedOut) {
+            return elevationTimedOut(uacErrorMessage);
+        }
         if (uacFailed) {
             return {
                 ok: false,
@@ -245,17 +267,13 @@ export async function runElevated(
         }
     }
 
-    const result = await pollForResultFile(resultPath, ELEVATION_TIMEOUT_MS, undefined, undefined, nonce);
+    // One deadline across both phases, not one each: the consent wait and the
+    // helper's own work share the 300s this function advertises, so the caller
+    // cannot be held for twice that.
+    const remainingMs = Math.max(0, ELEVATION_TIMEOUT_MS - (Date.now() - startedAt));
+    const result = await pollForResultFile(resultPath, remainingMs, undefined, undefined, nonce);
     if (result === null) {
-        return {
-            ok: false,
-            exitCode: -1,
-            stdout: '',
-            stderr: '',
-            errorMessage:
-                `elevated helper did not complete within ${ELEVATION_TIMEOUT_MS / 1000}s. ` +
-                'The UAC prompt may have been dismissed without action, or the helper may have crashed.',
-        };
+        return elevationTimedOut('');
     }
     // `using td = tempDir(...)` above disposes the temp dir on scope exit
     // (return or throw) — replaces the prior try/finally + fs.rmSync pair.
@@ -264,6 +282,41 @@ export async function runElevated(
 
 /** 5 minutes — UAC dialog can legitimately stay up this long. */
 const ELEVATION_TIMEOUT_MS = 5 * 60 * 1000;
+
+/**
+ * Did our own timeout end the `--request-uac` child, rather than the helper
+ * exiting on its own?
+ *
+ * This is the distinction #646 turned on. A user clicking **No** makes the
+ * helper exit 1223, and that is the user's decision — "you declined" is the
+ * right thing to tell them. Nobody answering at all is not a decision, and
+ * telling them they declined would be wrong; it is also the case that used to
+ * hang forever, because there was no timeout to end the child and so no error
+ * of any kind. Node sets `killed` only when it was the `timeout` option that
+ * terminated the child, so it is the marker that separates the two.
+ */
+export function isElevationTimeout(err: unknown): boolean {
+    return (err as { killed?: boolean } | null | undefined)?.killed === true;
+}
+
+/**
+ * The one "we gave up waiting" result, shared by the two ways it can happen:
+ * the consent dialog was never answered, or the elevated helper never wrote a
+ * result file. The message was written for both from the start; until #646 the
+ * first path could not reach it, because the wait it needed to bound had no
+ * timeout and so never returned to produce a result at all.
+ */
+function elevationTimedOut(stderr: string): ElevatedResult {
+    return {
+        ok: false,
+        exitCode: -1,
+        stdout: '',
+        stderr,
+        errorMessage:
+            `elevated helper did not complete within ${ELEVATION_TIMEOUT_MS / 1000}s. ` +
+            'The UAC prompt may have been dismissed without action, or the helper may have crashed.',
+    };
+}
 /** Polling cadence for the result file. 200ms is fast enough that the
  *  user-perceived latency between the elevated helper finishing and our
  *  resolve is < 200ms, while not hammering the filesystem. */

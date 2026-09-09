@@ -111,10 +111,15 @@ export interface ServiceActionSuccess {
  * - `unsupported`: service mode not supported on this platform.
  * - `uac-declined`: user clicked No on the Windows UAC prompt
  *   (PowerShell Start-Process -Verb RunAs exited with ERROR_CANCELLED 1223).
- * - `handoff-timeout`: the service-context handoff couldn't reach a
- *   user-session launcher within the discover() timeout, OR (post-v0.1.25)
- *   the LocalSystem direct-uninstall path was deliberately not attempted
- *   because UAC can't fire from session 0.
+ * - (removed) `handoff-timeout`: emitted by the LocalSystem uninstall path
+ *   between 1507c36 (2026-04-30) and Phase 4 (#108, 2026-05-25), when that
+ *   path relayed the uninstall to a user-session launcher and could fail to
+ *   reach one. Phase 4 replaced the relay with the uninstall-pending marker +
+ *   operation-server sequence, which needs no user session and cannot time out
+ *   waiting for one, so the producer went with it — but the variant, its doc
+ *   and its `SettingsModal` message stayed, promising an error the server had
+ *   no way to send (#647). Removed rather than reserved: there is no handoff
+ *   left to time out. Do not re-add it from a pre-Phase-4 spec.
  * - `handoff-no-target`: active session resolution failed AND no fallback
  *   path is available. Reserved; not currently emitted but type-stable for
  *   future granularity.
@@ -130,7 +135,6 @@ export interface ServiceActionSuccess {
 export type ServiceFailureReason =
     | 'unsupported'
     | 'uac-declined'
-    | 'handoff-timeout'
     | 'handoff-no-target'
     | 'invalid-token'
     | 'servy-failure'
