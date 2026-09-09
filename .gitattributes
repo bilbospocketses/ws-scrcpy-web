@@ -4,6 +4,32 @@
 
 * text=auto eol=lf
 
+# Append-only file: take BOTH sides on merge instead of conflicting.
+#
+# Every PR adds its entry under `## [Unreleased]`, at the same anchor, so two
+# PRs open at once conflict by construction — on text neither of them disagrees
+# about, where the answer is always "keep both". On 2026-09-09 six PRs were open
+# together and this cost four hand-resolutions, each followed by a full CI
+# re-run, none of them a real disagreement.
+#
+# `union` is a git built-in, not a custom driver: no config, works on a fresh
+# clone. Verified against the exact shape before adopting — two branches each
+# inserting under `## [Unreleased]` merge to both bullets under one heading,
+# with no markers.
+#
+# Two limits, both accepted:
+#   - Different sub-headings (### Fixed vs ### Changed) merge correctly but can
+#     drop the blank line before the second. Cosmetic; it still renders as a
+#     heading, and biome's `includes` covers src/webpack/tests only, so
+#     CHANGELOG.md is never linted.
+#   - GitHub's server-side detection may still flag the PR. Union governs the
+#     LOCAL merge, which is where the cost was: `git merge origin/main` now
+#     resolves with no manual edit, so the fix is merge-and-push.
+#
+# Scoped to CHANGELOG.md deliberately — union is wrong for any file where
+# "keep both" can be wrong.
+CHANGELOG.md merge=union
+
 # Windows-specific text files keep CRLF
 *.bat   text eol=crlf
 *.cmd   text eol=crlf
