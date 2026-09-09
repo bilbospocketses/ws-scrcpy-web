@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.118] - 2026-09-09
+
 ### Changed
 
 - **One `resolveSystemTool`, and it no longer reads `%SystemRoot%`** (todo item 123). #653 added a second
