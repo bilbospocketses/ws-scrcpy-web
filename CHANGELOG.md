@@ -17,6 +17,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A service install put a tray in the first logged-on user's session only** (todo item 119). The
+  supervisor resolved one session via `active_interactive_session()` and spawned there, which the module's
+  own header recorded as an accepted trade-off — *"SINGLE active session only … multi-session support can
+  be added later if needed."* Under Fast User Switching or RDP, Windows can have several sessions `Active`
+  with a user in each, so the second and third users got **no tray at all**. That is not cosmetic in
+  service mode: since beta.112 the tray's Exit is the only stop affordance the product has there
+  (Settings' "stop server & exit" is disabled by design), so those users had no way to stop the server
+  from the UI whatsoever.
+  - `common::session` gains `active_interactive_sessions()` — the plural of the existing resolver, same
+    filter (`WTSActive` **and** a non-empty username), same `WTSGetActiveConsoleSessionId` fallback when
+    the enumeration finds nothing. `active_interactive_session()` is now defined as its first element, so
+    the two cannot drift and a single-user box behaves exactly as before.
+  - `spawn_in_session(session_id, args)` splits the session choice out of `spawn_in_active_user_session`,
+    which keeps its name and its callers (the uninstall handoff and the local-takeover relaunch each
+    target the one user driving the operation). Everything else — the privilege enable,
+    `WTSQueryUserToken`, the environment block, `CreateProcessAsUserW` — is unchanged and shared.
+  - The supervisor now walks every active session. **Only the enumeration needed widening:** the tray's
+    per-session single-instance mutex already made a duplicate spawn a no-op, and `tray_present_in` was
+    already session-scoped, so a tray in session 1 never satisfied session 2.
+  - A success anywhere beats a failure anywhere: one user's session failing to spawn (locked mid-attempt,
+    a token that could not be queried) must not be reported as "no tray" when another user's tray did
+    appear. 5 tests on that rule; the enumeration and the cross-session spawn need a second logged-on
+    user and are not unit-testable.
+  - **Local mode is untouched** — the launcher is already inside the user's session there, and each user
+    running the app has their own launcher and their own tray. This was only ever a service-mode gap.
+
 ## [0.1.30-beta.116] - 2026-09-09
 
 ### Fixed
