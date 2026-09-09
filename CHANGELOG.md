@@ -49,6 +49,83 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     it (SameSite is registrable domain **plus scheme**, ignoring port); the reverse-proxy recipe gains the
     `X-Forwarded-Proto` rule; Access control, SECURITY.md and TECHNICAL_GUIDE §24 describe the relaxation
     and why it is not a widening. 22 tests, three of them pinning the default cookie strings byte-for-byte.
+- **The Windows tray icon never came back after explorer restarted, and nothing said so.** Two findings
+  from the qa-harness row-3.4 investigation (items 117 and 118), fixed together because the second is why
+  the first took a day to find.
+  - Win32 requires every tray app to register `TaskbarCreated` and re-issue `NIM_ADD` when the shell
+    recreates `Shell_TrayWnd` — which it does on any explorer restart, from a crash, an update, or a user
+    restarting it deliberately. `grep -rn "TaskbarCreated" --include=*.rs .` returned nothing across the
+    whole tree. The icon was added once and never again, so an explorer restart left a perfectly alive,
+    still-polling tray process with **no icon, permanently**, and the launcher could not rescue it either:
+    `tray_present_in` checks that the tray PROCESS exists, which it does. In service mode the tray is the
+    only stop affordance the product has, so this is not a cosmetic loss.
+  - **The window had to change first.** The host window was created with `HWND_MESSAGE` as parent, and
+    message-only windows are excluded from `HWND_BROADCAST` delivery — which is how the shell sends
+    `TaskbarCreated`. A handler alone would never have fired. It is now a hidden top-level window
+    (`WS_EX_TOOLWINDOW`, never shown, so still invisible and still absent from the taskbar and Alt-Tab).
+  - **The whole Windows tray path logged nothing** — every `log::` call in `tray.rs` sat inside
+    `#[cfg(target_os = "linux")]`. An `NIM_ADD` failure was therefore invisible: `tray.log` showed
+    `tray: starting`, then nothing, whatever happened next, so "icon added", "add failed",
+    "added-then-lost" and "added under a different name" produced byte-identical logs and the real cause
+    was only found by enumerating the shell from outside. The Windows path now logs the `NIM_ADD` result
+    with `GetLastError()` on failure, the re-add after a restart, and **the resolved tooltip** — the
+    highest-value line, since the tooltip is the icon's shell-visible identity and changes with the
+    install mode, which is exactly what the row-3.4 mismatch turned on. (`is_service_mode_at_start` was
+    already logged by the tray binary.)
+  - One `build_tray_nid` builder now feeds both the initial add and the re-add, so the icon that comes
+    back is the icon that went away — same uID and callback message, or the shell routes clicks nowhere
+    and the recovered icon is inert. 2 tests.
+  - **`TaskbarCreated` alone is not enough, and the sibling `minimize-to-tray` project already knew it.**
+    Two more mechanisms ported from there rather than rediscovered:
+    - **The broadcast never arrives at an elevated process.** UIPI drops messages sent from a lower
+      integrity level to a higher one, and explorer runs at medium IL — so in an elevated tray the
+      handler above is dead code. `minimize-to-tray` names this "the prime suspect" for an icon that
+      vanishes on a rebuild and never returns. `ChangeWindowMessageFilterEx(…, MSGFLT_ALLOW)` now lets
+      that one message through, unconditionally (it is harmless unelevated, and gating it on an
+      integrity check we would have to keep correct is the worse trade).
+    - **Several events drop the icon without broadcasting anything at all** — a display or resolution
+      change, a session lock/unlock, an RDP reconnect, a resume from sleep. The window now takes
+      `WM_DISPLAYCHANGE`, `WM_POWERBROADCAST` and `WM_WTSSESSION_CHANGE` (via
+      `WTSRegisterSessionNotification`), plus a 30-second `WM_TIMER` heartbeat as the backstop for
+      whatever those miss. Every one is **probe-gated**: `Shell_NotifyIconW(NIM_MODIFY)` with
+      `uFlags = 0` is a read-only "is this icon registered?" question, so a healthy icon costs one API
+      call and never flickers. Only an absent icon is re-added, and the log line names the trigger that
+      caught it. These messages reach us only because the window became top-level — a message-only
+      window receives none of them, for the same reason it never received `TaskbarCreated`.
+- **The Windows in-app uninstall never removed the app, and deleted your data anyway.** MEASURED
+  2026-09-09 by qa-harness Arc 4 on two fresh Windows 11 guests (smoke rows 15.1 and 15.2, both red).
+  Velopack 1.2.0 **refuses** `Update.exe --uninstall` on an MSI install — *"Uninstall error: MSI
+  installation detected. Uninstall should be performed via msiexec, not Update.exe"* — and every Windows
+  install of this app is the MSI, so that step has never removed anything. The cleaner treated it as
+  best-effort and deleted the data root regardless, on the premise that the app was being removed either
+  way. That premise was false on every Windows install since the MSI-only artifact landed. The user saw
+  *"uninstalled — you can close this tab"*, lost the tray, and kept an installed app whose dependencies
+  (keep) or entire configuration (wipe) were gone, with both Add/Remove Programs entries and a working
+  desktop shortcut still in place.
+  - **Uninstall now goes through msiexec** when the app is an MSI product:
+    `msiexec.exe /x {ProductCode} /qn /norestart`, by absolute path. The ProductCode is **discovered, not
+    hardcoded** — the Add/Remove Programs entries are searched across all three views (HKLM 64-bit, HKLM
+    32-bit, HKCU) for one whose DisplayName is ours and which is a Windows Installer product, and the GUID
+    is read out of its `UninstallString`. It is not read from the key name: Velopack names the key
+    `MSI:WsScrcpyWeb`, and assuming a shape the artifact is free to change is the same mistake that let the
+    MSI silently move to the drive root in #610. A non-MSI install finds no entry and still uses
+    `Update.exe --uninstall`, which is correct for that case.
+  - **A failed uninstall now deletes nothing.** `run_update_exe` reports its result, msiexec's is judged by
+    Windows Installer's own success codes (**0, 3010 and 1641** — the last two are "success, reboot
+    required/initiated", and calling them failure would strand the data root on a machine where the app is
+    already gone), and the cleaner returns without touching the data root when the app is still installed.
+    Logging is re-enabled on that path — it is disabled only so a `--wipe` cannot be undone by the logger
+    re-creating `<dataRoot>\logs`, and when nothing is being wiped there is nothing to protect and every
+    reason to record why it stopped. That silence is what let a refused uninstall look like a successful one.
+  - **A `--wipe` no longer leaves the data root resurrected.** The cleaner waits on the Phase-1 helper's
+    pid, but the launcher is a different process whose exit line lands about a second later and re-created
+    the root as a 74-byte `launcher.log`. A settle pass two seconds after the wipe sweeps it, and catches
+    any late writer rather than only the one we knew about.
+  - 6 tests on the product-code parsing, the success-code classification, the msiexec argv and the
+    DisplayName match. **Not verifiable off-guest:** the msiexec run and the registry discovery need a real
+    MSI install, so Arc 4 re-run is the proof. Smoke row 15.1's "one UAC raised by `Update.exe` itself"
+    needs re-wording — msiexec raises the prompt itself, so the requester becomes `msiexec.exe` — but
+    `docs/smoke-tests/` is owned by the qa-harness session right now and is deliberately untouched here.
 - **An unanswered UAC prompt hung the service install forever.** #646, measured on a Windows guest three
   separate ways (150 s, 342 s and 600 s windows). `runElevated` awaited the `--request-uac` helper with no
   timeout, and that helper blocks until the consent dialog is answered — so when it never was, the await
@@ -76,6 +153,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   there is no handoff left to time out. `handoff-no-target` is untouched — its doc already says it is
   reserved, which is accurate. The stale paragraph in `isLikelyLocalSystem`, which still described the
   removed WTS handoff and its fall-through, is corrected too; it was part of what made the variant look live.
+- **`openBrowser.ts` names every binary by absolute path** (todo item 115). All three platform branches
+  spawned a bare name — `cmd.exe`, `xdg-open`, `open` — so each resolved off the process `PATH`, which
+  Local-Dependencies-Only forbids. This was the last URL-opener in the repo doing so: the Rust half of the
+  same application had already decided the other way and says why in its own comments
+  (`common/src/tray.rs` opens through `/usr/bin/xdg-open`, "absolute path on purpose"), so the two halves
+  disagreed about the same binary. Windows now uses the literal `C:\Windows\System32\cmd.exe` — the string
+  `launcher/src/elevated_runner.rs` already uses, and deliberately not `%SystemRoot%`, since an env var is
+  a forbidden resolution path under the same rule. Linux and macOS go through `resolveSystemTool`, the
+  TypeScript twin of the launcher's `linux_service::tool_dir`: probe `/usr/bin`, then `/bin`, fall back to
+  `/usr/bin` — so a missing tool fails with ENOENT on a known path instead of quietly finding something
+  else on `PATH`. The resolved path is now logged rather than a generic "via xdg-open". 4 tests.
 
 ## [0.1.30-beta.115] - 2026-09-09
 

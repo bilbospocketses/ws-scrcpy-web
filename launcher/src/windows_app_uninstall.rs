@@ -70,6 +70,306 @@ pub fn windows_app_uninstall_commands(
     UninstallPlan { update_exe_step, data_root_targets }
 }
 
+// ─── MSI uninstall (#120) ──────────────────────────────────────────────────
+//
+// Every Windows install of this app is the MSI, and Velopack 1.2.0 REFUSES to
+// uninstall one: `Update.exe --uninstall` writes "Uninstall error: MSI
+// installation detected. Uninstall should be performed via msiexec, not
+// Update.exe." to its own log and exits, having removed nothing. Measured
+// 2026-09-09 by qa-harness Arc 4 on two fresh Windows 11 guests. Because the
+// old code treated that step as best-effort and deleted the dataRoot anyway,
+// the user was left with the app still installed and its dependencies (keep)
+// or its whole configuration (wipe) gone.
+//
+// So on an MSI install we uninstall the way Windows itself would: msiexec with
+// the ProductCode. Local-Dependencies-Only: absolute path, never PATH.
+
+/// `msiexec.exe` by absolute path. Same reasoning, and same literal shape, as
+/// the `C:\Windows\System32\cmd.exe` this repo already pins in
+/// `elevated_runner.rs` — OS-stable, and an env var would be a forbidden
+/// resolution path under the same rule.
+pub const MSIEXEC_PATH: &str = r"C:\Windows\System32\msiexec.exe";
+
+/// Does this ARP entry look like the product we are uninstalling?
+///
+/// Matched on DisplayName, case-insensitively, allowing the optional hyphens
+/// the name is written with in different places (`ws-scrcpy-web`,
+/// `WsScrcpyWeb`) — the same `^ws-?scrcpy-?web` shape the QA suite matches on.
+/// Deliberately NOT matched on the key name: see
+/// `product_code_from_uninstall_string`.
+pub fn arp_display_name_matches(display_name: &str) -> bool {
+    let squashed: String = display_name
+        .chars()
+        .filter(|c| *c != '-' && *c != '_' && *c != ' ')
+        .flat_map(char::to_lowercase)
+        .collect();
+    squashed.starts_with("wsscrcpyweb")
+}
+
+/// Pull the MSI ProductCode out of an ARP `UninstallString`.
+///
+/// **The GUID comes from the UninstallString, not from the key name.** Measured
+/// 2026-09-08: this app's ARP key is literally `MSI:WsScrcpyWeb` (Velopack names
+/// it that), while the product code lives inside
+/// `msiexec.exe /x {EF20C75C-…}`. Reading the key leaf is the same class of
+/// mistake as hardcoding an install path — it assumes a shape the artifact is
+/// free to change. The UninstallString is what Windows itself runs, so it is the
+/// authoritative source; `product_code_from_key_leaf` is the fallback for
+/// installers that DO name the key after the product code.
+pub fn product_code_from_uninstall_string(s: &str) -> Option<String> {
+    let bytes = s.as_bytes();
+    let open = bytes.iter().position(|b| *b == b'{')?;
+    let close = open + 1 + bytes[open + 1..].iter().position(|b| *b == b'}')?;
+    let candidate = &s[open..=close];
+    if is_product_code(candidate) {
+        Some(candidate.to_string())
+    } else {
+        None
+    }
+}
+
+/// Fallback: the ARP key's own leaf, when the installer named it after the
+/// product code. Returns None for a leaf like `MSI:WsScrcpyWeb`.
+pub fn product_code_from_key_leaf(leaf: &str) -> Option<String> {
+    if is_product_code(leaf) {
+        Some(leaf.to_string())
+    } else {
+        None
+    }
+}
+
+/// `{8-4-4-4-12}` hex with braces — the Windows Installer ProductCode shape.
+fn is_product_code(s: &str) -> bool {
+    let b = s.as_bytes();
+    if b.len() != 38 || b[0] != b'{' || b[37] != b'}' {
+        return false;
+    }
+    for (i, ch) in s[1..37].bytes().enumerate() {
+        let expect_dash = matches!(i, 8 | 13 | 18 | 23);
+        if expect_dash {
+            if ch != b'-' {
+                return false;
+            }
+        } else if !ch.is_ascii_hexdigit() {
+            return false;
+        }
+    }
+    true
+}
+
+/// The msiexec argv that removes `product_code` without UI.
+///
+/// `/qn` because the user already confirmed in the app's own modal, and this
+/// runs after the server has answered and exited — there is no window left to
+/// host an installer UI. `/norestart` because an uninstall must never reboot
+/// the machine out from under the user.
+pub fn msi_uninstall_step(product_code: &str) -> Vec<String> {
+    vec![
+        MSIEXEC_PATH.to_string(),
+        "/x".to_string(),
+        product_code.to_string(),
+        "/qn".to_string(),
+        "/norestart".to_string(),
+    ]
+}
+
+/// Which msiexec exit codes mean the product was removed.
+///
+/// Not just 0. `3010` is "success, a reboot is required" and `1641` is
+/// "success, a reboot was initiated" — both mean the uninstall itself
+/// succeeded, and treating them as failure would leave the dataRoot behind on a
+/// machine where the app is already gone.
+pub fn msiexec_exit_is_success(code: i32) -> bool {
+    matches!(code, 0 | 3010 | 1641)
+}
+
+/// Find this app's MSI ProductCode by walking the Add/Remove Programs entries.
+///
+/// DISCOVERED, NOT HARDCODED — the same rule the QA suite records for the same
+/// reason: a lookup that hardcodes what the artifact should be cannot notice the
+/// artifact moving. (#610 is the local precedent: the MSI silently moved to the
+/// drive root and the path table was "fixed" to match the wrong location.) So we
+/// search all three ARP views for an entry whose DisplayName is ours AND which
+/// is a Windows Installer product, then take the GUID out of its
+/// `UninstallString`.
+///
+/// Returns None when there is no MSI entry — a from-source or non-MSI install —
+/// and the caller then falls back to `Update.exe --uninstall`, which is correct
+/// for exactly that case.
+#[cfg(windows)]
+pub fn find_msi_product_code() -> Option<String> {
+    use windows::Win32::System::Registry::{
+        HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_WOW64_32KEY, KEY_WOW64_64KEY,
+    };
+
+    const ARP_SUBKEY: &str = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall";
+    // Both machine views matter: which one carries the entry depends on the
+    // package's bitness, not ours. HKCU last — a per-user install is the least
+    // likely shape for this app, which installs per-machine.
+    let roots = [
+        (HKEY_LOCAL_MACHINE, KEY_WOW64_64KEY.0),
+        (HKEY_LOCAL_MACHINE, KEY_WOW64_32KEY.0),
+        (HKEY_CURRENT_USER, 0u32),
+    ];
+
+    for (root, view) in roots {
+        let Some(arp) = reg_open(root, ARP_SUBKEY, view) else {
+            continue;
+        };
+        for leaf in reg_enum_subkeys(&arp) {
+            // Relative to the ARP key we already hold, not the full path again.
+            let Some(entry) = reg_open(arp.0, &leaf, view) else {
+                continue;
+            };
+            let display = reg_read_string(&entry, "DisplayName").unwrap_or_default();
+            if !arp_display_name_matches(&display) {
+                continue;
+            }
+            let uninstall_string = reg_read_string(&entry, "UninstallString").unwrap_or_default();
+            // "Is this an MSI product?" — either the string invokes msiexec, or
+            // the entry carries the WindowsInstaller flag. Velopack writes BOTH
+            // an MSI entry and its own; only the MSI one can be msiexec'd.
+            let is_msi = uninstall_string.to_ascii_lowercase().contains("msiexec")
+                || reg_read_string(&entry, "WindowsInstaller").as_deref() == Some("1");
+            if !is_msi {
+                continue;
+            }
+            if let Some(code) = product_code_from_uninstall_string(&uninstall_string)
+                .or_else(|| product_code_from_key_leaf(&leaf))
+            {
+                log::info(&format!(
+                    "windows-app-uninstall: MSI product {code} from ARP entry {leaf:?} ({display:?})"
+                ));
+                return Some(code);
+            }
+        }
+    }
+    None
+}
+
+/// An owned registry handle that closes itself.
+#[cfg(windows)]
+struct RegKey(windows::Win32::System::Registry::HKEY);
+
+#[cfg(windows)]
+impl Drop for RegKey {
+    fn drop(&mut self) {
+        // SAFETY: self.0 came from a successful RegOpenKeyExW and is closed once.
+        unsafe {
+            let _ = windows::Win32::System::Registry::RegCloseKey(self.0);
+        }
+    }
+}
+
+#[cfg(windows)]
+fn reg_open(root: windows::Win32::System::Registry::HKEY, subkey: &str, view: u32) -> Option<RegKey> {
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::ERROR_SUCCESS;
+    use windows::Win32::System::Registry::{RegOpenKeyExW, HKEY, KEY_READ, REG_SAM_FLAGS};
+
+    let wide: Vec<u16> = subkey.encode_utf16().chain(std::iter::once(0)).collect();
+    let mut out = HKEY::default();
+    // SAFETY: `wide` is NUL-terminated and outlives the call; `out` is a valid
+    // out-param. Read-only access, so nothing is mutated in the registry.
+    let rc = unsafe {
+        RegOpenKeyExW(
+            root,
+            PCWSTR(wide.as_ptr()),
+            0,
+            REG_SAM_FLAGS(KEY_READ.0 | view),
+            &mut out,
+        )
+    };
+    (rc == ERROR_SUCCESS).then_some(RegKey(out))
+}
+
+/// Names of the immediate subkeys of `key`.
+#[cfg(windows)]
+fn reg_enum_subkeys(key: &RegKey) -> Vec<String> {
+    use windows::core::PWSTR;
+    use windows::Win32::Foundation::ERROR_SUCCESS;
+    use windows::Win32::System::Registry::RegEnumKeyExW;
+
+    let mut names = Vec::new();
+    // 256 is the documented maximum registry key-name length; +1 for the NUL.
+    let mut buf = [0u16; 257];
+    for index in 0.. {
+        let mut len = buf.len() as u32;
+        // SAFETY: buf/len describe the same buffer, and len is reset every
+        // iteration because RegEnumKeyExW overwrites it with the name length.
+        let rc = unsafe {
+            RegEnumKeyExW(
+                key.0,
+                index,
+                PWSTR(buf.as_mut_ptr()),
+                &mut len,
+                None,
+                PWSTR::null(),
+                None,
+                None,
+            )
+        };
+        if rc != ERROR_SUCCESS {
+            break; // ERROR_NO_MORE_ITEMS, or anything else — stop either way.
+        }
+        names.push(String::from_utf16_lossy(&buf[..len as usize]));
+    }
+    names
+}
+
+/// Read a value as a string. `REG_DWORD` is rendered as its decimal digits so
+/// callers can compare `WindowsInstaller` against "1" without a second reader.
+#[cfg(windows)]
+fn reg_read_string(key: &RegKey, value: &str) -> Option<String> {
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::ERROR_SUCCESS;
+    use windows::Win32::System::Registry::{RegQueryValueExW, REG_DWORD, REG_VALUE_TYPE};
+
+    let wide: Vec<u16> = value.encode_utf16().chain(std::iter::once(0)).collect();
+    let mut kind = REG_VALUE_TYPE::default();
+    let mut size: u32 = 0;
+    // First call sizes the buffer.
+    // SAFETY: passing None for the data pointer with a live size out-param is
+    // the documented way to ask RegQueryValueExW how many bytes it needs.
+    let rc = unsafe {
+        RegQueryValueExW(key.0, PCWSTR(wide.as_ptr()), None, Some(&mut kind), None, Some(&mut size))
+    };
+    if rc != ERROR_SUCCESS || size == 0 {
+        return None;
+    }
+    let mut data = vec![0u8; size as usize];
+    // SAFETY: `data` is exactly `size` bytes, which is what the sizing call asked for.
+    let rc = unsafe {
+        RegQueryValueExW(
+            key.0,
+            PCWSTR(wide.as_ptr()),
+            None,
+            Some(&mut kind),
+            Some(data.as_mut_ptr()),
+            Some(&mut size),
+        )
+    };
+    if rc != ERROR_SUCCESS {
+        return None;
+    }
+    if kind == REG_DWORD {
+        if data.len() < 4 {
+            return None;
+        }
+        let n = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
+        return Some(n.to_string());
+    }
+    // REG_SZ / REG_EXPAND_SZ: UTF-16, possibly NUL-terminated.
+    let units: Vec<u16> = data
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|c| u16::from_le_bytes(*c))
+        .take_while(|u| *u != 0)
+        .collect();
+    Some(String::from_utf16_lossy(&units))
+}
+
 // ─── Dispatch + execution ──────────────────────────────────────────────────
 
 /// Parsed `--windows-app-uninstall` invocation.
@@ -188,25 +488,90 @@ pub fn handle(args: &[String]) -> Option<i32> {
 /// builder produced (`[update_exe, "--uninstall"]`). Best-effort: logs (if
 /// logging is enabled) and returns regardless — the app is being removed
 /// either way. Local-Dependencies-Only: absolute path, no PATH resolution.
-fn run_update_exe(update_exe_step: &[String]) {
+fn run_update_exe(update_exe_step: &[String]) -> bool {
     let (cmd, rest) = update_exe_step
         .split_first()
         .expect("update_exe_step is always non-empty");
     match std::process::Command::new(cmd).args(rest).status() {
-        Ok(s) if s.success() => log::info(&format!(
-            "windows-app-uninstall: Update.exe ok ({})",
-            update_exe_step.join(" ")
-        )),
-        Ok(s) => log::error(&format!(
-            "windows-app-uninstall: Update.exe non-zero ({:?}): {}",
-            s.code(),
-            update_exe_step.join(" ")
-        )),
-        Err(e) => log::error(&format!(
-            "windows-app-uninstall: Update.exe spawn failed: {} ({e})",
-            update_exe_step.join(" ")
-        )),
+        Ok(s) if s.success() => {
+            log::info(&format!(
+                "windows-app-uninstall: Update.exe ok ({})",
+                update_exe_step.join(" ")
+            ));
+            true
+        }
+        Ok(s) => {
+            log::error(&format!(
+                "windows-app-uninstall: Update.exe non-zero ({:?}): {}",
+                s.code(),
+                update_exe_step.join(" ")
+            ));
+            false
+        }
+        Err(e) => {
+            log::error(&format!(
+                "windows-app-uninstall: Update.exe spawn failed: {} ({e})",
+                update_exe_step.join(" ")
+            ));
+            false
+        }
     }
+}
+
+/// Run msiexec and judge the result by Windows Installer's own success codes.
+fn run_msiexec(step: &[String]) -> bool {
+    let (cmd, rest) = step.split_first().expect("msi step is always non-empty");
+    match std::process::Command::new(cmd).args(rest).status() {
+        Ok(s) => {
+            let code = s.code().unwrap_or(-1);
+            if msiexec_exit_is_success(code) {
+                log::info(&format!(
+                    "windows-app-uninstall: msiexec ok (exit {code}): {}",
+                    step.join(" ")
+                ));
+                true
+            } else {
+                log::error(&format!(
+                    "windows-app-uninstall: msiexec FAILED (exit {code}): {}",
+                    step.join(" ")
+                ));
+                false
+            }
+        }
+        Err(e) => {
+            log::error(&format!(
+                "windows-app-uninstall: msiexec spawn failed: {} ({e})",
+                step.join(" ")
+            ));
+            false
+        }
+    }
+}
+
+/// Remove the installed application, and report whether it actually went.
+///
+/// MSI first, because every Windows install of this app is one and Velopack
+/// refuses to uninstall those (#120). `Update.exe --uninstall` remains the path
+/// for a non-MSI install, which is what an absent ARP entry means.
+///
+/// The return value is the whole point: the caller must not delete anything
+/// when this is false. Before #120 this was best-effort on the premise that
+/// "the app is being removed regardless" — a premise that had been false on
+/// every Windows install since the MSI-only artifact landed.
+#[cfg(windows)]
+fn perform_uninstall(update_exe_step: &[String]) -> bool {
+    match find_msi_product_code() {
+        Some(code) => run_msiexec(&msi_uninstall_step(&code)),
+        None => {
+            log::info("windows-app-uninstall: no MSI ARP entry; falling back to Update.exe");
+            run_update_exe(update_exe_step)
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn perform_uninstall(update_exe_step: &[String]) -> bool {
+    run_update_exe(update_exe_step)
 }
 
 /// Remove each dataRoot target via std::fs (compiled-in; no PATH tools),
@@ -265,7 +630,13 @@ fn run_uninstall_in_place(a: &UninstallArgs) -> i32 {
         a.update_exe, a.data_root, a.keep
     ));
     let plan = windows_app_uninstall_commands(&a.update_exe, &a.data_root, a.keep);
-    run_update_exe(&plan.update_exe_step);
+    if !perform_uninstall(&plan.update_exe_step) {
+        log::error(
+            "windows-app-uninstall(in-place fallback): the app was NOT uninstalled; \
+             leaving the data root untouched",
+        );
+        return 1;
+    }
     remove_targets(&plan.data_root_targets, 1);
     0
 }
@@ -404,9 +775,32 @@ fn run_cleaner(a: &RunArgs) -> i32 {
     wait_for_pid(a.wait_pid, 30_000);
 
     let plan = windows_app_uninstall_commands(&a.update_exe, &a.data_root, a.keep);
-    run_update_exe(&plan.update_exe_step);
+    if !perform_uninstall(&plan.update_exe_step) {
+        // Nothing is being wiped, so there is no data root to protect from
+        // `create_dir_all(<dataRoot>/logs)` — turn logging back on and say why
+        // we stopped. Silence here is what let a refused uninstall look like a
+        // successful one for every Windows install of this app (#120).
+        log::enable();
+        log::error(
+            "windows-app-uninstall: the app was NOT uninstalled; leaving the install and \
+             data root untouched. The app is still installed and can be removed from \
+             Add/Remove Programs.",
+        );
+        return 1;
+    }
     // ~5s of retry (10 × 500ms) to absorb residual handle-release lag.
     remove_targets(&plan.data_root_targets, 10);
+
+    // Settle pass. We wait on the Phase-1 helper's pid, but the LAUNCHER is a
+    // different process with its own logging, and its exit line lands about a
+    // second after the wipe — `create_dir_all(<dataRoot>\logs)` re-creating the
+    // data root we just deleted, as a 74-byte launcher.log (#120). Rather than
+    // plumb a second pid through every layer for one late writer, sweep once
+    // more after the dust settles: it costs two seconds on a path that is
+    // already tearing the app down, and it catches any late writer, not only
+    // the one we happen to know about.
+    std::thread::sleep(std::time::Duration::from_millis(2_000));
+    remove_targets(&plan.data_root_targets, 2);
     0
 }
 
@@ -796,5 +1190,97 @@ mod tests {
             .map(|s| s.to_string())
             .collect();
         assert_eq!(handle_run(&args), Some(2));
+    }
+
+    // ─── #120: the MSI uninstall path ──────────────────────────────────────
+    //
+    // Velopack 1.2.0 refuses `Update.exe --uninstall` on an MSI install, and
+    // every Windows install of this app is one — so that step removed nothing
+    // while the cleaner deleted the data root anyway. These pin the pieces the
+    // msiexec replacement is built from.
+
+    /// The exact string Velopack writes for this app, measured 2026-09-08.
+    /// The key is named `MSI:WsScrcpyWeb`; the GUID is only in here.
+    const REAL_UNINSTALL_STRING: &str = "msiexec.exe /x {EF20C75C-1234-4ABC-9DEF-0123456789AB}";
+
+    #[test]
+    fn product_code_comes_from_the_uninstall_string() {
+        assert_eq!(
+            product_code_from_uninstall_string(REAL_UNINSTALL_STRING).as_deref(),
+            Some("{EF20C75C-1234-4ABC-9DEF-0123456789AB}")
+        );
+        // Uppercase /X and no space, as some writers emit it.
+        assert_eq!(
+            product_code_from_uninstall_string("MsiExec.exe /X{EF20C75C-1234-4ABC-9DEF-0123456789AB}")
+                .as_deref(),
+            Some("{EF20C75C-1234-4ABC-9DEF-0123456789AB}")
+        );
+    }
+
+    #[test]
+    fn product_code_rejects_anything_that_is_not_a_guid() {
+        assert_eq!(product_code_from_uninstall_string("Update.exe --uninstall"), None);
+        assert_eq!(product_code_from_uninstall_string("msiexec.exe /x {not-a-guid}"), None);
+        assert_eq!(product_code_from_uninstall_string(""), None);
+        // Right length, wrong contents — a non-hex character must not pass.
+        assert_eq!(
+            product_code_from_uninstall_string("/x {ZZ20C75C-1234-4ABC-9DEF-0123456789AB}"),
+            None
+        );
+    }
+
+    #[test]
+    fn key_leaf_is_only_a_fallback_and_rejects_velopacks_name() {
+        // This is the real key name, and reading it as a product code is the
+        // mistake the UninstallString exists to avoid.
+        assert_eq!(product_code_from_key_leaf("MSI:WsScrcpyWeb"), None);
+        assert_eq!(
+            product_code_from_key_leaf("{EF20C75C-1234-4ABC-9DEF-0123456789AB}").as_deref(),
+            Some("{EF20C75C-1234-4ABC-9DEF-0123456789AB}")
+        );
+    }
+
+    #[test]
+    fn msiexec_success_is_not_just_zero() {
+        // 3010 = success, reboot required. 1641 = success, reboot initiated.
+        // Calling either a failure would leave the data root behind on a
+        // machine where the app is already gone.
+        assert!(msiexec_exit_is_success(0));
+        assert!(msiexec_exit_is_success(3010));
+        assert!(msiexec_exit_is_success(1641));
+
+        assert!(!msiexec_exit_is_success(1603)); // fatal error during install
+        assert!(!msiexec_exit_is_success(1605)); // product not installed
+        assert!(!msiexec_exit_is_success(1)); // generic failure
+        assert!(!msiexec_exit_is_success(-1)); // no exit code (killed)
+    }
+
+    #[test]
+    fn msi_step_is_silent_no_reboot_and_absolutely_pathed() {
+        let step = msi_uninstall_step("{EF20C75C-1234-4ABC-9DEF-0123456789AB}");
+        assert_eq!(
+            step,
+            vec![
+                r"C:\Windows\System32\msiexec.exe".to_string(),
+                "/x".to_string(),
+                "{EF20C75C-1234-4ABC-9DEF-0123456789AB}".to_string(),
+                "/qn".to_string(),
+                "/norestart".to_string(),
+            ]
+        );
+        // Local-Dependencies-Only: never a bare `msiexec`.
+        assert!(step[0].starts_with(r"C:\"));
+    }
+
+    #[test]
+    fn arp_display_name_matches_the_names_this_app_is_written_under() {
+        assert!(arp_display_name_matches("ws-scrcpy-web"));
+        assert!(arp_display_name_matches("WsScrcpyWeb"));
+        assert!(arp_display_name_matches("wsscrcpyweb"));
+        assert!(arp_display_name_matches("WsScrcpyWeb 0.1.30-beta.115"));
+
+        assert!(!arp_display_name_matches("scrcpy"));
+        assert!(!arp_display_name_matches("Microsoft Edge"));
+        assert!(!arp_display_name_matches(""));
     }
 }
