@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.117] - 2026-09-09
+
 ### Fixed
 
 - **A service install put a tray in the first logged-on user's session only** (todo item 119). The
