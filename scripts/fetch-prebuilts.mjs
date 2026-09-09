@@ -22,8 +22,83 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DOWNLOAD_TIMEOUT_MS = 30_000;
 
+/** Attempts per download, INCLUDING the first. 3 => first + 2 retries. */
+const DOWNLOAD_ATTEMPTS = 3;
+/** Backoff base; attempt 1 waits 2s, attempt 2 waits 4s (see retryDelayMs). */
+const RETRY_BASE_DELAY_MS = 2_000;
+
 export const DEFAULT_RELEASE_URL_BASE =
     'https://github.com/bilbospocketses/ws-scrcpy-web/releases/download';
+
+/**
+ * Which HTTP statuses earn another attempt.
+ *
+ * Deliberately NARROW: 429 (rate limit) and 5xx (server-side). A 404 is a real
+ * answer — the asset does not exist — and retrying it only turns a fast, clear
+ * failure into a slow, identical one. Same for 401/403: no amount of waiting
+ * grows a permission.
+ */
+export function isRetryableStatus(status) {
+    return status === 429 || (status >= 500 && status <= 599);
+}
+
+/** Backoff for the wait AFTER attempt N: 2s, then 4s. */
+export function retryDelayMs(attempt, baseMs = RETRY_BASE_DELAY_MS) {
+    return baseMs * 2 ** (attempt - 1);
+}
+
+const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * `fetch` with bounded retry for the transient half of the failure space.
+ *
+ * Why this exists: every download here used to be one shot, and a single
+ * non-OK status called `process.exit(1)`. GitHub's own release CDN answered 500
+ * on 2026-09-09 and reddened `main` — this script runs inside the REQUIRED
+ * `build-and-test` check (via vitest.globalSetup), so an upstream blip that
+ * clears in seconds cost a full re-run to discover.
+ *
+ * Retries cover network/abort errors (DNS, reset, the 30s AbortSignal timeout)
+ * and `isRetryableStatus`. Everything else — 404, 403, a bad checksum — returns
+ * or throws on the first attempt, unchanged. The response of the LAST attempt is
+ * returned as-is so the caller keeps reporting the real status.
+ *
+ * `fetchImpl`/`sleep` are injectable so the unit tests never touch the network
+ * and never actually wait.
+ */
+export async function fetchWithRetry(url, opts = {}) {
+    const {
+        attempts = DOWNLOAD_ATTEMPTS,
+        fetchImpl = fetch,
+        sleep = defaultSleep,
+        timeoutMs = DOWNLOAD_TIMEOUT_MS,
+        onRetry = () => {},
+    } = opts;
+
+    for (let attempt = 1; ; attempt++) {
+        const last = attempt >= attempts;
+        try {
+            const res = await fetchImpl(url, { signal: AbortSignal.timeout(timeoutMs) });
+            if (res.ok || last || !isRetryableStatus(res.status)) {
+                return res;
+            }
+            onRetry({ url, attempt, attempts, reason: `HTTP ${res.status}` });
+        } catch (err) {
+            if (last) {
+                throw err;
+            }
+            onRetry({ url, attempt, attempts, reason: err?.message ?? String(err) });
+        }
+        await sleep(retryDelayMs(attempt));
+    }
+}
+
+/** Retry notice on stderr so a CI log shows the blip that a green run rode over. */
+function warnRetry({ url, attempt, attempts, reason }) {
+    console.warn(
+        `[fetch-prebuilts] attempt ${attempt}/${attempts} for ${url} failed (${reason}); retrying in ${retryDelayMs(attempt) / 1000}s`,
+    );
+}
 
 /**
  * Resolve the release URL base for prebuilt downloads. WSSCRCPY_RELEASE_URL_BASE
@@ -128,7 +203,7 @@ async function main() {
     }
 
     const manifestUrl = `${RELEASE_URL_BASE}/node-pty-prebuilds-latest/manifest.json`;
-    const manifestRes = await fetch(manifestUrl, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
+    const manifestRes = await fetchWithRetry(manifestUrl, { onRetry: warnRetry });
     if (!manifestRes.ok) {
         console.error(`[fetch-prebuilts] manifest fetch failed: ${manifestRes.status}`);
         process.exit(1);
@@ -154,7 +229,8 @@ async function main() {
     const cacheDir = path.join(depsPath, 'node-pty', `v${version}`, `${host.platform}-${host.arch}${libcSegment}`);
 
     if (!fs.existsSync(path.join(cacheDir, 'pty.node'))) {
-        const sumsRes = await fetch(`${RELEASE_URL_BASE}/node-pty-prebuilds-v${version}/SHA256SUMS`, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
+        const sumsUrl = `${RELEASE_URL_BASE}/node-pty-prebuilds-v${version}/SHA256SUMS`;
+        const sumsRes = await fetchWithRetry(sumsUrl, { onRetry: warnRetry });
         if (!sumsRes.ok) { console.error(`[fetch-prebuilts] SHA256SUMS fetch failed: ${sumsRes.status}`); process.exit(1); }
         const sumsText = await sumsRes.text();
         const sumLine = sumsText.split('\n').find((l) => l.includes(`${key}.tar.gz`));
@@ -162,7 +238,7 @@ async function main() {
         const expectedSha = sumLine.split(/\s+/)[0].toLowerCase();
 
         const tarUrl = `${RELEASE_URL_BASE}/node-pty-prebuilds-v${version}/${key}.tar.gz`;
-        const tarRes = await fetch(tarUrl, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
+        const tarRes = await fetchWithRetry(tarUrl, { onRetry: warnRetry });
         if (!tarRes.ok) { console.error(`[fetch-prebuilts] tarball fetch failed: ${tarRes.status}`); process.exit(1); }
 
         fs.mkdirSync(cacheDir, { recursive: true });
