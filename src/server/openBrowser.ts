@@ -1,8 +1,36 @@
 import { spawn } from 'child_process';
-import { rmSync, statSync } from 'fs';
+import { existsSync, rmSync, statSync } from 'fs';
 import { Logger } from './Logger';
 
 const log = Logger.for('OpenBrowser');
+
+/**
+ * `cmd.exe` by absolute path. Local-Dependencies-Only: nothing here is
+ * resolved from `PATH`, and an env var (`%SystemRoot%`) is a forbidden
+ * resolution path under the same rule. This exact string is already the
+ * repo's precedent at `launcher/src/elevated_runner.rs`, whose comment calls
+ * it OS-stable and never moving.
+ */
+const WINDOWS_CMD = 'C:\\Windows\\System32\\cmd.exe';
+
+/**
+ * Absolute path of an OS-provided tool on Linux/macOS, probing `/usr/bin` then
+ * `/bin` and falling back to `/usr/bin`.
+ *
+ * The TypeScript twin of `linux_service::tool_dir` in the launcher, which
+ * carries the same comment for the same reason: never invoke a tool by bare
+ * name. `exists` is injected so the probe is testable without touching the
+ * filesystem of whatever machine the suite runs on.
+ */
+export function resolveSystemTool(tool: string, exists: (p: string) => boolean = existsSync): string {
+    for (const dir of ['/usr/bin', '/bin']) {
+        const candidate = `${dir}/${tool}`;
+        if (exists(candidate)) {
+            return candidate;
+        }
+    }
+    return `/usr/bin/${tool}`;
+}
 
 /**
  * Best-effort cross-platform "open this URL in the user's default browser."
@@ -16,41 +44,48 @@ const log = Logger.for('OpenBrowser');
  * browser process. Any failure is logged at info level — opening a
  * browser is a UX nicety, not a hard requirement.
  *
- * Implementation per-platform:
- *   - Windows: `start "" "<url>"` via cmd.exe /c. The empty quoted
- *     title is required because cmd's `start` interprets the first
- *     quoted token as a window title; without it, the URL would be
+ * Implementation per-platform. Every binary is named by ABSOLUTE PATH
+ * (Local-Dependencies-Only) — see `WINDOWS_CMD` and `resolveSystemTool`.
+ * These three spawns were the last URL-openers in the repo taking whatever
+ * `PATH` offered, while the Rust half of the same application had already
+ * decided the other way and says so in its own comments:
+ *   - Windows: `start "" "<url>"` via `C:\Windows\System32\cmd.exe /c`. The
+ *     empty quoted title is required because cmd's `start` interprets the
+ *     first quoted token as a window title; without it, the URL would be
  *     misparsed.
- *   - Linux:   `xdg-open <url>`. Standard freedesktop.org launcher.
- *   - macOS:   `open <url>`. (Reserved; we don't ship macOS today.)
+ *   - Linux:   `xdg-open <url>`, probed to `/usr/bin` then `/bin`. Standard
+ *     freedesktop.org launcher.
+ *   - macOS:   `/usr/bin/open <url>`. (Reserved; we don't ship macOS today.)
  */
 export function openBrowser(url: string): void {
     try {
         if (process.platform === 'win32') {
             // We pass arguments via array form (no shell interpolation),
             // so a malicious URL can't inject extra cmd.exe commands.
-            const child = spawn('cmd.exe', ['/c', 'start', '""', url], {
+            const child = spawn(WINDOWS_CMD, ['/c', 'start', '""', url], {
                 detached: true,
                 stdio: 'ignore',
                 windowsHide: true,
             });
             child.unref();
-            log.info(`opened ${url} via cmd start`);
+            log.info(`opened ${url} via ${WINDOWS_CMD} start`);
             return;
         }
         if (process.platform === 'linux') {
-            const child = spawn('xdg-open', [url], {
+            const xdgOpen = resolveSystemTool('xdg-open');
+            const child = spawn(xdgOpen, [url], {
                 detached: true,
                 stdio: 'ignore',
             });
             child.unref();
-            log.info(`opened ${url} via xdg-open`);
+            log.info(`opened ${url} via ${xdgOpen}`);
             return;
         }
         if (process.platform === 'darwin') {
-            const child = spawn('open', [url], { detached: true, stdio: 'ignore' });
+            const macOpen = resolveSystemTool('open');
+            const child = spawn(macOpen, [url], { detached: true, stdio: 'ignore' });
             child.unref();
-            log.info(`opened ${url} via open`);
+            log.info(`opened ${url} via ${macOpen}`);
             return;
         }
         log.info(`no browser-open handler for platform=${process.platform}; skipping`);

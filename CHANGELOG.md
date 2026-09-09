@@ -17,6 +17,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`openBrowser.ts` names every binary by absolute path** (todo item 115). All three platform branches
+  spawned a bare name — `cmd.exe`, `xdg-open`, `open` — so each resolved off the process `PATH`, which
+  Local-Dependencies-Only forbids. This was the last URL-opener in the repo doing so: the Rust half of the
+  same application had already decided the other way and says why in its own comments
+  (`common/src/tray.rs` opens through `/usr/bin/xdg-open`, "absolute path on purpose"), so the two halves
+  disagreed about the same binary. Windows now uses the literal `C:\Windows\System32\cmd.exe` — the string
+  `launcher/src/elevated_runner.rs` already uses, and deliberately not `%SystemRoot%`, since an env var is
+  a forbidden resolution path under the same rule. Linux and macOS go through `resolveSystemTool`, the
+  TypeScript twin of the launcher's `linux_service::tool_dir`: probe `/usr/bin`, then `/bin`, fall back to
+  `/usr/bin` — so a missing tool fails with ENOENT on a known path instead of quietly finding something
+  else on `PATH`. The resolved path is now logged rather than a generic "via xdg-open". 4 tests.
+
 ## [0.1.30-beta.115] - 2026-09-09
 
 ### Fixed
