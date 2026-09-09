@@ -17,6 +17,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Smoke row 10.3 could only ever fail uninformatively.** `test.setTimeout(180_000)` and the
+  `waitForDependencies` default were both `180_000`, so the inner wait was allowed to consume the whole
+  outer budget: Playwright killed the test first and reported a bare `Test timeout of 180000ms exceeded`,
+  while the helper's own message — the one that names which dependency stalled (`node=…, adb=…`) — was
+  unreachable by construction. A slow-but-successful first-run install and a genuine hang produced
+  identical output. It went red twice on `main` on 2026-09-09; the same commit passed as a PR run, and
+  another run of the same code passed in 1m48s in a window that overlapped one of the failures, so it was
+  runner speed rather than anything in the app. The test budget is now 360 s, the call passes an explicit
+  240 s, and the helper's default drops to 120 s with the invariant written down where the next caller
+  will read it. The download itself stays: `seedPrivateDataRoot` wipes ProgramData and seeds config only,
+  on purpose, because 10.3 is asserting on a representative first run.
+
 ## [0.1.30-beta.117] - 2026-09-09
 
 ### Fixed

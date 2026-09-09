@@ -165,7 +165,21 @@ export async function waitForServer(handle: ServerHandle, baseURL: string, timeo
  * that stops the server mid-download would find that abort in the log and
  * blame it on the stop. Rows that read the log wait for this first.
  */
-export async function waitForDependencies(baseURL: string, timeoutMs = 180_000): Promise<void> {
+/**
+ * Wait until every dependency reports an installed version.
+ *
+ * **Budget it against the caller's `test.setTimeout`, not against nothing.**
+ * This waits on a real first-run download (Node + ADB), so on a slow runner it
+ * can legitimately take minutes. If the caller's test budget is not comfortably
+ * larger than `timeoutMs`, Playwright kills the test before this function can
+ * throw, and the failure reads `Test timeout of Nms exceeded` with no clue which
+ * dependency stalled — the message below never prints. That is exactly what
+ * happened on 2026-09-09, when this default and row 10.3's `test.setTimeout`
+ * were both 180_000.
+ *
+ * The default is deliberately lower than any current caller's test budget.
+ */
+export async function waitForDependencies(baseURL: string, timeoutMs = 120_000): Promise<void> {
     const ctx = await request.newContext({ baseURL });
     try {
         expect((await ctx.get('/')).status(), 'document GET (mints the token)').toBe(200);
