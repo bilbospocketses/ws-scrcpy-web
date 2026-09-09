@@ -9,6 +9,7 @@ import { SessionStore } from '../auth/session';
 import { Config } from '../Config';
 import { IMPLICIT_ADMIN_ID } from '../db/constants';
 import { EnvName } from '../EnvName';
+import { setFrameAncestors } from '../security/frameGuard';
 import { makeReqRes } from './helpers/httpMock';
 
 const tmpDirs: string[] = [];
@@ -121,5 +122,92 @@ describe('AuthApi', () => {
         await new AuthApi().handle(r.req, r.res);
         expect(r.getStatus()).toBe(200);
         expect((db.sqlite.prepare('SELECT COUNT(*) AS c FROM sessions').get() as { c: number }).c).toBe(0);
+    });
+
+    // #641, locked-mode half. The instance-token cookie is not the only one a
+    // framed page needs: the session cookie was SameSite=Lax, which a browser
+    // also withholds from an iframe's WebSocket handshake, so a locked-mode
+    // embed authenticated the document and then closed the socket with 4401.
+    describe('session cookie under an embedder allow-list', () => {
+        const LOOPBACK_PROXY = { remoteAddress: '127.0.0.1' };
+        const PROXIED_HTTPS = { 'x-forwarded-proto': 'https' };
+
+        afterEach(() => {
+            setFrameAncestors([]);
+        });
+
+        async function loginCookie(
+            headers: Record<string, string>,
+            socket?: { encrypted?: boolean; remoteAddress?: string },
+        ): Promise<string> {
+            const db = Config.getInstance().db;
+            db.users.setPasswordHash(IMPLICIT_ADMIN_ID, hashPassword('pw'));
+            setAuthEnabled(db, true);
+            const r = makeReqRes('POST', '/api/auth/login', { username: 'admin', password: 'pw' }, headers, socket);
+            await new AuthApi().handle(r.req, r.res);
+            expect(r.getStatus()).toBe(200);
+            return r.getHeader('set-cookie') ?? '';
+        }
+
+        it('stays SameSite=Lax with no embedder configured', async () => {
+            setup();
+            const cookie = await loginCookie(PROXIED_HTTPS, LOOPBACK_PROXY);
+
+            expect(cookie).toContain('SameSite=Lax');
+            expect(cookie).not.toContain('Partitioned');
+        });
+
+        // Byte-exact, and matching the regex tests/e2e/auth.spec.ts asserts.
+        // The first cut of the shared cookie policy reordered these attributes
+        // and CI caught it there; this pins it one layer down.
+        it('emits exactly the pre-opt-in string when no embedder is allow-listed', async () => {
+            setup();
+            const cookie = await loginCookie({}, undefined);
+
+            expect(cookie).toMatch(/^wsscrcpy_sid=[A-Za-z0-9_-]{43}; HttpOnly; SameSite=Lax; Path=\/$/);
+        });
+
+        it('relaxes behind a TLS-terminating proxy on loopback', async () => {
+            setup();
+            setFrameAncestors(['https://dashboard.example.net']);
+            const cookie = await loginCookie(PROXIED_HTTPS, LOOPBACK_PROXY);
+
+            expect(cookie).toContain('SameSite=None');
+            expect(cookie).toContain('Secure');
+            expect(cookie).toContain('Partitioned');
+            expect(cookie).toContain('HttpOnly');
+        });
+
+        it('ignores X-Forwarded-Proto from a peer that is not on loopback', async () => {
+            setup();
+            setFrameAncestors(['https://dashboard.example.net']);
+            const cookie = await loginCookie(PROXIED_HTTPS, { remoteAddress: '192.168.1.50' });
+
+            expect(cookie).toContain('SameSite=Lax');
+            expect(cookie).not.toContain('SameSite=None');
+            expect(cookie).not.toContain('Secure');
+        });
+
+        it('clears with the same attributes, so a Partitioned cookie can be deleted', async () => {
+            setup();
+            setFrameAncestors(['https://dashboard.example.net']);
+            const db = Config.getInstance().db;
+            const token = new SessionStore(db.sqlite).create(IMPLICIT_ADMIN_ID, Date.now());
+            const r = makeReqRes(
+                'POST',
+                '/api/auth/logout',
+                {},
+                { ...PROXIED_HTTPS, cookie: `${SESSION_COOKIE}=${token}` },
+                LOOPBACK_PROXY,
+            );
+            await new AuthApi().handle(r.req, r.res);
+
+            // A partitioned cookie is keyed by partition too: clearing it with
+            // the unpartitioned attributes leaves the frame's copy in place.
+            const cookie = r.getHeader('set-cookie') ?? '';
+            expect(cookie).toContain('Max-Age=0');
+            expect(cookie).toContain('SameSite=None');
+            expect(cookie).toContain('Partitioned');
+        });
     });
 });

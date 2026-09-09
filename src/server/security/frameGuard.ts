@@ -64,6 +64,16 @@ export function setFrameAncestors(origins: readonly string[]): void {
 }
 
 /**
+ * Has an operator opted any embedder in? Read by `cookiePolicy` — the framing
+ * opt-in is also the consent that relaxes the cookies' SameSite policy, since
+ * an embedder that may frame the app is useless if the app cannot authenticate
+ * inside that frame (#641).
+ */
+export function hasFrameAncestors(): boolean {
+    return configuredFrameAncestors.length > 0;
+}
+
+/**
  * Security headers for every static response. Returns a fresh object each call
  * so callers can spread it alongside their own headers.
  */

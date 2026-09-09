@@ -8,6 +8,7 @@ import { sendInternalError } from '../api/utils';
 import { Config } from '../Config';
 import { EnvName } from '../EnvName';
 import { createStaticHandler } from '../StaticFileServer';
+import { isRequestSecure } from '../security/forwardedProto';
 import { securityHeaders } from '../security/frameGuard';
 import { evaluateHttpRequest } from '../security/requestGate';
 import { Utils } from '../Utils';
@@ -28,7 +29,7 @@ interface ApiHandler {
 export function createHttpRequestHandler(
     apiHandlers: readonly ApiHandler[],
     fallback: ((req: IncomingMessage, res: ServerResponse) => void) | undefined,
-    secure: boolean,
+    serverIsTls: boolean,
 ): (req: IncomingMessage, res: ServerResponse) => void {
     return (req, res) => {
         // Baseline security headers for EVERY response this server writes.
@@ -58,7 +59,11 @@ export function createHttpRequestHandler(
             req.headers.origin,
             req.headers.host,
             req.headers.cookie,
-            secure,
+            // The BROWSER's scheme, not this socket's: behind the reverse proxy
+            // we document, the app is plain http on loopback while the browser
+            // is on https, and the cookie's attributes have to follow the
+            // browser. See forwardedProto for the trust rule. (#641)
+            isRequestSecure(serverIsTls, req.socket?.remoteAddress, req.headers['x-forwarded-proto']),
         );
         if (!decision.allowed) {
             res.writeHead(decision.status, { 'Content-Type': 'application/json' });
@@ -218,9 +223,9 @@ export class HttpServer extends TypedEmitter<HttpServerEvents> implements Servic
 
     private createRequestHandler(
         fallback?: (req: IncomingMessage, res: ServerResponse) => void,
-        secure = false,
+        serverIsTls = false,
     ): (req: IncomingMessage, res: ServerResponse) => void {
-        return createHttpRequestHandler(HttpServer.apiHandlers, fallback, secure);
+        return createHttpRequestHandler(HttpServer.apiHandlers, fallback, serverIsTls);
     }
 
     public release(): void {

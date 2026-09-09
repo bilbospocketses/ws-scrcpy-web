@@ -1,4 +1,5 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { cookieSecurity } from './cookiePolicy';
 
 /**
  * Per-instance bearer token, layered on top of the Origin/Host allowlist.
@@ -6,10 +7,16 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
  * The Origin check blocks cross-site *browser* attacks, but a non-browser
  * client on the LAN can spoof Origin/Host and reach the (otherwise
  * unauthenticated) API/WS surface. The token closes that gap: it is minted
- * fresh each launch, handed to the browser as a SameSite=Strict, HttpOnly
- * cookie when the SPA document is served, and required on the sensitive API
- * surface and on every WebSocket handshake. A non-browser caller that never
- * loaded the page has no cookie and is rejected.
+ * fresh each launch, handed to the browser as a site-scoped, HttpOnly cookie
+ * when the SPA document is served, and required on the sensitive API surface
+ * and on every WebSocket handshake. A non-browser caller that never loaded the
+ * page has no cookie and is rejected.
+ *
+ * `SameSite` is `Strict` by default and relaxes only where an operator has
+ * allow-listed an embedder, because `Strict` is never sent from a cross-site
+ * iframe and so left `/embed.html` unable to authenticate (#641). `cookiePolicy`
+ * owns that decision, and states why the Origin check — not SameSite — is what
+ * holds the CSRF line here.
  *
  * Three requests are deliberately exempt, all sent by a process rather than a
  * browser and so cookieless: the launcher's `GET /api/config` upgrade probe,
@@ -37,11 +44,21 @@ export function getInstanceToken(): string {
     return cachedToken;
 }
 
-/** Build the hardened Set-Cookie value that hands the token to the browser. */
+/**
+ * Build the hardened Set-Cookie value that hands the token to the browser.
+ *
+ * `SameSite` is `Strict` unless an operator has allow-listed an embedder, in
+ * which case it relaxes so the app can authenticate inside that frame — see
+ * `cookiePolicy` for the whole rule and why it is not a CSRF widening.
+ */
 export function buildTokenCookie(secure: boolean): string {
-    const attrs = [`${COOKIE_NAME}=${getInstanceToken()}`, 'Path=/', 'SameSite=Strict', 'HttpOnly'];
-    if (secure) {
+    const policy = cookieSecurity('Strict', secure);
+    const attrs = [`${COOKIE_NAME}=${getInstanceToken()}`, 'Path=/', `SameSite=${policy.sameSite}`, 'HttpOnly'];
+    if (policy.secure) {
         attrs.push('Secure');
+    }
+    if (policy.partitioned) {
+        attrs.push('Partitioned');
     }
     return attrs.join('; ');
 }
