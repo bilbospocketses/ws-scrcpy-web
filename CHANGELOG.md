@@ -17,6 +17,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The Windows tray icon never came back after explorer restarted, and nothing said so.** Two findings
+  from the qa-harness row-3.4 investigation (items 117 and 118), fixed together because the second is why
+  the first took a day to find.
+  - Win32 requires every tray app to register `TaskbarCreated` and re-issue `NIM_ADD` when the shell
+    recreates `Shell_TrayWnd` — which it does on any explorer restart, from a crash, an update, or a user
+    restarting it deliberately. `grep -rn "TaskbarCreated" --include=*.rs .` returned nothing across the
+    whole tree. The icon was added once and never again, so an explorer restart left a perfectly alive,
+    still-polling tray process with **no icon, permanently**, and the launcher could not rescue it either:
+    `tray_present_in` checks that the tray PROCESS exists, which it does. In service mode the tray is the
+    only stop affordance the product has, so this is not a cosmetic loss.
+  - **The window had to change first.** The host window was created with `HWND_MESSAGE` as parent, and
+    message-only windows are excluded from `HWND_BROADCAST` delivery — which is how the shell sends
+    `TaskbarCreated`. A handler alone would never have fired. It is now a hidden top-level window
+    (`WS_EX_TOOLWINDOW`, never shown, so still invisible and still absent from the taskbar and Alt-Tab).
+  - **The whole Windows tray path logged nothing** — every `log::` call in `tray.rs` sat inside
+    `#[cfg(target_os = "linux")]`. An `NIM_ADD` failure was therefore invisible: `tray.log` showed
+    `tray: starting`, then nothing, whatever happened next, so "icon added", "add failed",
+    "added-then-lost" and "added under a different name" produced byte-identical logs and the real cause
+    was only found by enumerating the shell from outside. The Windows path now logs the `NIM_ADD` result
+    with `GetLastError()` on failure, the re-add after a restart, and **the resolved tooltip** — the
+    highest-value line, since the tooltip is the icon's shell-visible identity and changes with the
+    install mode, which is exactly what the row-3.4 mismatch turned on. (`is_service_mode_at_start` was
+    already logged by the tray binary.)
+  - One `build_tray_nid` builder now feeds both the initial add and the re-add, so the icon that comes
+    back is the icon that went away — same uID and callback message, or the shell routes clicks nowhere
+    and the recovered icon is inert. 2 tests.
+
 ## [0.1.30-beta.115] - 2026-09-09
 
 ### Fixed

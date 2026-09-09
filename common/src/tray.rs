@@ -20,16 +20,25 @@
 //!    handles both encodings natively, so we don't need an in-tree PNG
 //!    decoder.
 //! 2. Register a window class with a custom `WindowProc`.
-//! 3. Create a hidden message-only window (`HWND_MESSAGE` parent), the
-//!    canonical Win32 host for tray-icon callbacks.
+//! 3. Register the shell's `TaskbarCreated` broadcast, then create a hidden
+//!    TOP-LEVEL window (`WS_EX_TOOLWINDOW`, never shown). Not a message-only
+//!    window: `HWND_MESSAGE` children are excluded from `HWND_BROADCAST`, and
+//!    that is how the shell announces it has recreated the tray — so a
+//!    message-only window can never learn its icon was dropped (see step 6b).
 //! 4. `SetWindowLongPtrW(hWnd, GWLP_USERDATA, ptr)` to give the WndProc
 //!    access to a `Box<TrayState>` containing the confirm-dialog wide
-//!    strings and the "user confirmed exit" flag.
+//!    strings, the icon + tooltip needed to re-add, and the "user confirmed
+//!    exit" flag.
 //! 5. `Shell_NotifyIconW(NIM_ADD, &nid)` registers the tray icon with
 //!    `uCallbackMessage = WM_USER + 1`.
 //! 6. Pump messages with `GetMessageW` until `WM_QUIT` (posted by the
 //!    WndProc when the user clicks Yes on the dialog).
-//! 7. Cleanup runs via a `Drop` guard so it survives panics: removes the
+//! 7. On `TaskbarCreated` — explorer restarting, from a crash, an update or
+//!    a user restarting it — re-issue `NIM_ADD`. Win32 requires every tray
+//!    app to do this; without it the shell's recreation of `Shell_TrayWnd`
+//!    leaves this process alive and iconless for good, which in service mode
+//!    removes the only way the user has to stop the server.
+//! 8. Cleanup runs via a `Drop` guard so it survives panics: removes the
 //!    tray icon, destroys the window, destroys the HICON.
 //!
 //! No async runtime, no third-party tray crate, no GTK/glib transitive
@@ -66,11 +75,13 @@ pub enum TrayAction {
 use anyhow::{anyhow, Context, Result};
 #[cfg(windows)]
 use std::cell::Cell;
+#[cfg(windows)]
+use std::sync::atomic::{AtomicU32, Ordering};
 
 #[cfg(windows)]
 use windows::core::PCWSTR;
 #[cfg(windows)]
-use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::Foundation::{GetLastError, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
 #[cfg(windows)]
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 #[cfg(windows)]
@@ -82,11 +93,11 @@ use windows::Win32::UI::Shell::{
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreateIconFromResourceEx, CreatePopupMenu, CreateWindowExW, DefWindowProcW,
     DestroyIcon, DestroyMenu, DestroyWindow, DispatchMessageW, GetCursorPos, GetMessageW,
-    GetWindowLongPtrW, MessageBoxW, PostQuitMessage, RegisterClassW, SetForegroundWindow,
-    SetWindowLongPtrW, TrackPopupMenu, TranslateMessage, UnregisterClassW, GWLP_USERDATA, HICON,
-    HMENU, HWND_MESSAGE, IDYES, LR_DEFAULTCOLOR, MB_ICONQUESTION, MB_YESNO, MF_SEPARATOR, MF_STRING,
-    MSG, TPM_LEFTALIGN, TPM_RIGHTBUTTON, WINDOW_EX_STYLE, WINDOW_STYLE, WM_COMMAND, WM_LBUTTONUP,
-    WM_QUIT, WM_RBUTTONUP, WM_USER, WNDCLASSW,
+    GetWindowLongPtrW, MessageBoxW, PostQuitMessage, RegisterClassW, RegisterWindowMessageW,
+    SetForegroundWindow, SetWindowLongPtrW, TrackPopupMenu, TranslateMessage, UnregisterClassW,
+    GWLP_USERDATA, HICON, HMENU, IDYES, LR_DEFAULTCOLOR, MB_ICONQUESTION, MB_YESNO, MF_SEPARATOR,
+    MF_STRING, MSG, TPM_LEFTALIGN, TPM_RIGHTBUTTON, WINDOW_STYLE, WM_COMMAND, WM_LBUTTONUP,
+    WM_QUIT, WM_RBUTTONUP, WM_USER, WNDCLASSW, WS_EX_TOOLWINDOW,
 };
 #[cfg(windows)]
 use windows::Win32::UI::Shell::ShellExecuteW;
@@ -115,6 +126,25 @@ const MENU_ID_OPEN: u32 = 100;
 #[cfg(windows)]
 const MENU_ID_EXIT: u32 = 101;
 
+/// The `TaskbarCreated` message id, resolved once at startup by
+/// `RegisterWindowMessageW` and read by the WndProc.
+///
+/// The shell broadcasts this to every top-level window when it recreates
+/// `Shell_TrayWnd` — which it does whenever explorer restarts, after a crash,
+/// an update, or a user restarting it deliberately. Every icon in the tray is
+/// dropped at that moment, and an app that does not re-add its own never gets
+/// it back: the process stays perfectly alive, still polling, with no icon and
+/// no way for the user to reach it. In service mode the tray is the only stop
+/// affordance the product has, so that is not a cosmetic loss.
+///
+/// The id is allocated at runtime (it is not a constant), and the WndProc is a
+/// plain `extern "system"` fn with nowhere to hang state, so it goes in a
+/// static. Zero means "not registered yet"; the WndProc compares against it
+/// only when non-zero, since message 0 is `WM_NULL` and would otherwise match
+/// every time.
+#[cfg(windows)]
+static TASKBAR_CREATED_MSG: AtomicU32 = AtomicU32::new(0);
+
 /// Per-tray runtime state, stashed in the window's `GWLP_USERDATA` slot.
 ///
 /// Lifetime: allocated as a `Box`, leaked into `GWLP_USERDATA` on
@@ -139,6 +169,34 @@ struct TrayState {
     menu_label_open_w: Vec<u16>,
     /// "Exit" wide label for the popup menu.
     menu_label_exit_w: Vec<u16>,
+    /// The icon handle and tooltip, kept so the WndProc can rebuild the
+    /// `NOTIFYICONDATAW` and re-issue `NIM_ADD` when the shell broadcasts
+    /// `TaskbarCreated`. Owned by `TrayCleanup`, which outlives every message.
+    hicon: HICON,
+    tooltip_w: Vec<u16>,
+}
+
+/// Build the `NOTIFYICONDATAW` that registers our icon.
+///
+/// Shared by the initial `NIM_ADD` and the re-add after an explorer restart,
+/// so the icon that comes back is the icon that went away — identical uID,
+/// callback message, icon and tooltip. Two hand-rolled copies would drift.
+#[cfg(windows)]
+fn build_tray_nid(hwnd: HWND, hicon: HICON, tooltip_w: &[u16]) -> NOTIFYICONDATAW {
+    // SAFETY: NOTIFYICONDATAW is a plain C struct; zeroing is the documented
+    // way to initialize it before setting the fields uFlags names.
+    let mut nid: NOTIFYICONDATAW = unsafe { std::mem::zeroed() };
+    nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
+    nid.hWnd = hwnd;
+    nid.uID = TRAY_ICON_UID;
+    nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+    nid.uCallbackMessage = WM_TRAY_CALLBACK;
+    nid.hIcon = hicon;
+    // szTip: [u16; 128]; copy up to 127 chars. Already zeroed, so the copy
+    // leaves it NUL-terminated.
+    let copy_len = tooltip_w.len().min(nid.szTip.len() - 1);
+    nid.szTip[..copy_len].copy_from_slice(&tooltip_w[..copy_len]);
+    nid
 }
 
 /// Run a tray icon event loop. BLOCKS the calling thread until the user
@@ -219,18 +277,45 @@ pub fn run(
         open_url_provider,
         menu_label_open_w: to_wide("Open ws-scrcpy-web"),
         menu_label_exit_w: to_wide("Exit"),
+        hicon,
+        tooltip_w: to_wide(tooltip),
     });
     let state_ptr: *mut TrayState = Box::into_raw(state);
 
-    // 4. Create the hidden message-only window. Parent = HWND_MESSAGE means
-    //    the window is invisible and only receives messages.
+    // 3b. Resolve the shell's icon-recreation broadcast before the window
+    //     exists, so no restart can slip between creation and registration.
+    //     SAFETY: RegisterWindowMessageW takes a NUL-terminated wide string;
+    //     to_wide supplies one. It returns 0 only on failure, which we log
+    //     and carry on from — the tray still works, it just cannot recover
+    //     its icon from an explorer restart.
+    let taskbar_created_w = to_wide("TaskbarCreated");
+    let taskbar_created = unsafe { RegisterWindowMessageW(PCWSTR(taskbar_created_w.as_ptr())) };
+    if taskbar_created == 0 {
+        crate::log::error(&format!(
+            "tray: RegisterWindowMessageW(TaskbarCreated) failed (GetLastError={}); \
+             the icon will NOT come back if explorer restarts",
+            unsafe { GetLastError().0 }
+        ));
+    }
+    TASKBAR_CREATED_MSG.store(taskbar_created, Ordering::SeqCst);
+
+    // 4. Create the hidden window.
+    //
+    //    NOT a message-only window, deliberately. `HWND_MESSAGE` as parent is
+    //    the obvious choice for something that only wants messages, and it is
+    //    what this used to be — but message-only windows are excluded from
+    //    `HWND_BROADCAST` delivery, and `HWND_BROADCAST` is exactly how the
+    //    shell sends `TaskbarCreated`. A message-only window can therefore
+    //    never learn that its icon was dropped, which made the re-add above
+    //    unreachable. So: a real top-level window that is simply never shown.
+    //    `WS_EX_TOOLWINDOW` keeps it out of the taskbar and Alt-Tab, and with
+    //    no `ShowWindow` call it is never painted.
     let window_name_w = to_wide("");
     // SAFETY: All pointers derived from owned `Vec<u16>` buffers that
-    // outlive this call. HWND_MESSAGE is the documented sentinel for a
-    // message-only window. hInstance is valid from GetModuleHandleW above.
+    // outlive this call. hInstance is valid from GetModuleHandleW above.
     let hwnd: HWND = unsafe {
         CreateWindowExW(
-            WINDOW_EX_STYLE(0),
+            WS_EX_TOOLWINDOW,
             PCWSTR(class_name_w.as_ptr()),
             PCWSTR(window_name_w.as_ptr()),
             WINDOW_STYLE(0),
@@ -238,7 +323,7 @@ pub fn run(
             0,
             0,
             0,
-            HWND_MESSAGE,
+            HWND::default(),
             HMENU::default(),
             hinstance,
             None,
@@ -271,25 +356,33 @@ pub fn run(
     };
 
     // 7. Populate NOTIFYICONDATAW and add the tray icon.
-    let mut nid: NOTIFYICONDATAW = unsafe { std::mem::zeroed() };
-    nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
-    nid.hWnd = hwnd;
-    nid.uID = TRAY_ICON_UID;
-    nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
-    nid.uCallbackMessage = WM_TRAY_CALLBACK;
-    nid.hIcon = hicon;
-    // szTip: [u16; 128]; copy up to 127 chars + NUL.
-    let tooltip_w = to_wide(tooltip);
-    let copy_len = tooltip_w.len().min(nid.szTip.len() - 1);
-    nid.szTip[..copy_len].copy_from_slice(&tooltip_w[..copy_len]);
-    // (Already zero-initialized, so szTip is NUL-terminated.)
+    let nid = build_tray_nid(hwnd, hicon, &to_wide(tooltip));
+
+    // The tooltip is the icon's shell-visible identity and it changes with the
+    // install mode, so it is the single most useful line here: knowing which
+    // string we registered is what tells a later reader whether the icon they
+    // are looking for is the icon we added. Before this the whole Windows
+    // path logged nothing at all, and an NIM_ADD failure was indistinguishable
+    // from a success followed by a loss (#118).
+    crate::log::info(&format!(
+        "tray: registering icon (tooltip {tooltip:?}, uID {TRAY_ICON_UID}, TaskbarCreated msg {taskbar_created})"
+    ));
 
     // SAFETY: nid is fully initialized; Shell_NotifyIconW reads cbSize bytes.
     let added = unsafe { Shell_NotifyIconW(NIM_ADD, &nid) };
     if !added.as_bool() {
-        return Err(anyhow!("Shell_NotifyIconW(NIM_ADD) returned FALSE"));
+        // SAFETY: GetLastError reads this thread's last-error slot, set by the
+        // failing call above. Read it BEFORE anything else can overwrite it.
+        let err = unsafe { GetLastError().0 };
+        crate::log::error(&format!(
+            "tray: Shell_NotifyIconW(NIM_ADD) returned FALSE (GetLastError={err})"
+        ));
+        return Err(anyhow!(
+            "Shell_NotifyIconW(NIM_ADD) returned FALSE (GetLastError={err})"
+        ));
     }
     _guard.nid_added.set(true);
+    crate::log::info("tray: icon added");
 
     // 7b. Optional startup balloon notification. Uses NIM_MODIFY with the
     // NIF_INFO flag on the same icon — the balloon hangs off the existing
@@ -413,6 +506,34 @@ unsafe extern "system" fn tray_wnd_proc(
     // is sound; null check guards the (unreachable in practice) racey case.
     let state_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut TrayState;
     let state = if state_ptr.is_null() { None } else { Some(&*state_ptr) };
+
+    // Explorer restarted and recreated Shell_TrayWnd, dropping every tray
+    // icon including ours. Re-add it, or the process stays alive with no icon
+    // for the rest of its life. Guarded on non-zero because an unregistered
+    // (0) id would otherwise match WM_NULL and re-add on every stray message.
+    let taskbar_created = TASKBAR_CREATED_MSG.load(Ordering::SeqCst);
+    if taskbar_created != 0 && msg == taskbar_created {
+        if let Some(s) = state {
+            let nid = build_tray_nid(hwnd, s.hicon, &s.tooltip_w);
+            // SAFETY: nid is fully initialized by build_tray_nid.
+            let re_added = Shell_NotifyIconW(NIM_ADD, &nid);
+            if re_added.as_bool() {
+                crate::log::info("tray: explorer restarted (TaskbarCreated); icon re-added");
+            } else {
+                // SAFETY: reads this thread's last-error slot, set by the call above.
+                crate::log::error(&format!(
+                    "tray: explorer restarted (TaskbarCreated) but Shell_NotifyIconW(NIM_ADD) \
+                     returned FALSE (GetLastError={}); the icon is gone until restart",
+                    GetLastError().0
+                ));
+            }
+        } else {
+            crate::log::error(
+                "tray: TaskbarCreated arrived with no window state; icon NOT re-added",
+            );
+        }
+        return LRESULT(0);
+    }
 
     if msg == WM_TRAY_CALLBACK {
         // lParam low-word holds the mouse event. Per Win32 docs, high-word
@@ -651,6 +772,36 @@ mod tests {
     fn to_wide_handles_empty_string() {
         let v = to_wide("");
         assert_eq!(v, vec![0]);
+    }
+
+    // The icon that comes back after an explorer restart has to be the icon
+    // that went away — same uID and callback message, or the shell routes
+    // clicks nowhere and the "recovered" icon is inert. One builder is what
+    // guarantees that, so pin what it builds.
+    #[test]
+    fn build_tray_nid_sets_the_fields_uflags_promises() {
+        let nid = build_tray_nid(HWND::default(), HICON::default(), &to_wide("ws-scrcpy-web"));
+
+        assert_eq!(nid.cbSize, std::mem::size_of::<NOTIFYICONDATAW>() as u32);
+        assert_eq!(nid.uID, TRAY_ICON_UID);
+        assert_eq!(nid.uFlags, NIF_ICON | NIF_MESSAGE | NIF_TIP);
+        assert_eq!(nid.uCallbackMessage, WM_TRAY_CALLBACK);
+
+        let tip: String = char::decode_utf16(nid.szTip.iter().copied().take_while(|c| *c != 0))
+            .map(|c| c.unwrap_or('?'))
+            .collect();
+        assert_eq!(tip, "ws-scrcpy-web");
+    }
+
+    #[test]
+    fn build_tray_nid_truncates_an_over_long_tooltip_and_keeps_it_nul_terminated() {
+        // szTip is [u16; 128], so 127 chars plus the terminator is the ceiling.
+        let long = "x".repeat(400);
+        let nid = build_tray_nid(HWND::default(), HICON::default(), &to_wide(&long));
+
+        let len = nid.szTip.iter().take_while(|c| **c != 0).count();
+        assert_eq!(len, 127);
+        assert_eq!(nid.szTip[127], 0, "must stay NUL-terminated");
     }
 
     #[test]
