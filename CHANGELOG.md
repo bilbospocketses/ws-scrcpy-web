@@ -17,6 +17,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **An in-app update left `control\apply-update-pending` behind in local mode, and the NEXT graceful
+  stop-exit then left the tray running.** MEASURED 2026-09-09 by qa-harness Arc 3 (beta.103 → beta.114 on a
+  fresh Windows guest): `UpdateService.applyUpdate` writes the marker so the *old* launcher's exit-time reap
+  leaves the tray alone during the hand-off; in service mode the post-stop bat deletes it afterwards, but in
+  local mode nothing did. It survived the swap, and a plain **stop server & exit** on the updated app then
+  exited launcher and node and left the tray — `launcher.log`: *terminal exit with update/uninstall handoff
+  pending; leaving tray for relaunch*, on an exit that was no hand-off at all. That is the §27 orphan the reap
+  exists to prevent, one update later and on every graceful exit after it. The launcher that comes up after
+  the swap now **consumes the marker at startup** (`supervisor::run`, beside the `.restart` cleanup — by then
+  every reader has had it: the old launcher's reap ran at its exit, the operation server chose its page when
+  spawned, the bat has fired), the marker's path has one definition on the launcher side
+  (`supervisor::apply_update_pending_marker`, used by the reap too), and `UpdateService` removes both hand-off
+  markers (`apply-update-pending`, `suppress-browser-open`) when the operation-server cannot be spawned, so an
+  aborted apply leaves nothing armed. Two launcher unit tests.
+
+### Changed
+
+- **A beta build defaults its update channel to `beta`; a release build to `stable`.** MEASURED 2026-09-09
+  (qa-harness Arc 3): the MSI install hook's skeleton `config.json` and the backend's `APP_CONFIG_DEFAULTS`
+  both said `stable` for every build, so a fresh beta.103 install asked the feed for `releases.stable.json`
+  and sat at `status: 'error' — Network error: Http error: http status: 404` until the Updates radio was
+  flipped — a beta user saw no beta updates by default. `defaultChannelForVersion` (src/common) and its Rust
+  twin `default_channel_for_version` (launcher hooks) derive the channel from the build's own version (`-beta`
+  prereleases → `beta`; `-rc`/`-alpha` and releases → `stable`); the install hook now reads the version Velopack
+  hands `--veloapp-install` and writes the matching skeleton, and `Config` substitutes the build's channel for
+  a `config.json` that does not name one. **New installs only** (user decision): a written `stable` cannot be
+  told apart from a user's choice, so existing configs are not migrated — flip the radio. README's config
+  table says so; `APP_CONFIG_DEFAULTS.channel` stays `stable` as the schema default. 8 + 5 tests.
+- **Smoke doc:** the update-from build is **beta.103** (the first Program Files MSI — every earlier vpk MSI
+  installed to the drive root, #610); row 6.8 says what actually happens across the swap (the old launcher's
+  reap is gated off by the marker, Velopack ends the old tray with everything under `current\`, the new
+  launcher re-spawns one — "exactly one after settling" is the claim, not pid persistence) and records that
+  Add/Remove Programs keeps the MSI's original version beside Velopack's entry after an in-app update, which is
+  expected; rows 6.1/6.8 carry their `(automated: qa-harness Arc 3)` markers.
+
 ## [0.1.30-beta.114] - 2026-09-08
 
 ### Fixed

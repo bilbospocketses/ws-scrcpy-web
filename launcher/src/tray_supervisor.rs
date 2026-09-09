@@ -69,7 +69,10 @@ pub(crate) fn should_reap_tray_on_exit(apply_pending: bool, uninstall_pending: b
 /// dies with this process, so there is no respawn after the kill.
 pub(crate) fn reap_tray_on_terminal_exit(data_root: &Path) {
     let control = data_root.join("control");
-    let apply_pending = control.join("apply-update-pending").exists();
+    // One definition of the path (supervisor.rs), because the launcher that
+    // comes up after the swap now CONSUMES this marker at startup -- the two
+    // must agree on where it is.
+    let apply_pending = crate::supervisor::apply_update_pending_marker(data_root).exists();
     let uninstall_pending = control.join("uninstall-pending").exists();
     if !should_reap_tray_on_exit(apply_pending, uninstall_pending) {
         log::info(

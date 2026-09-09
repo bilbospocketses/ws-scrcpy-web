@@ -2,9 +2,16 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { APP_CONFIG_DEFAULTS } from '../../common/ConfigEvents';
+import { APP_CONFIG_DEFAULTS, defaultChannelForVersion } from '../../common/ConfigEvents';
+import { getAppVersion } from '../appVersion';
 import { Config, ConfigValidationError } from '../Config';
 import { EnvName } from '../EnvName';
+
+// The channel a config that says nothing defaults to is the BUILD's, derived from
+// package.json's version (a beta build -> 'beta'), not the schema's static 'stable'.
+// Derived here rather than written literally so the suite holds across the
+// beta -> stable transition; defaultChannelForVersion has its own branch tests.
+const BUILD_CHANNEL = defaultChannelForVersion(getAppVersion());
 
 describe('Config — AppConfig extension', () => {
     const tmpDirs: string[] = [];
@@ -52,7 +59,24 @@ describe('Config — AppConfig extension', () => {
     it('returns full defaults when config.json contains an empty object', () => {
         setup({});
         const c = Config.getInstance().getAppConfig();
-        expect(c).toEqual(APP_CONFIG_DEFAULTS);
+        expect(c).toEqual({ ...APP_CONFIG_DEFAULTS, channel: BUILD_CHANNEL });
+    });
+
+    it('a config that does not name a channel gets the channel this build is on', () => {
+        // Measured 2026-09-09 (qa-harness Arc 3): a fresh beta.103 install carried
+        // channel 'stable', queried the feed for releases.stable.json and sat at
+        // `status: error … 404` until the Updates radio was flipped.
+        setup({ webPort: 8000 });
+        const c = Config.getInstance().getAppConfig();
+        expect(c.channel).toBe(BUILD_CHANNEL);
+    });
+
+    it('an explicit channel in config.json is respected whatever the build is', () => {
+        // A written value cannot be told apart from a user's choice, so it wins.
+        setup({ channel: 'stable' });
+        expect(Config.getInstance().getAppConfig().channel).toBe('stable');
+        setup({ channel: 'beta' });
+        expect(Config.getInstance().getAppConfig().channel).toBe('beta');
     });
 
     it('falls back to default for an out-of-range webPort', () => {
@@ -61,10 +85,10 @@ describe('Config — AppConfig extension', () => {
         expect(c.webPort).toBe(APP_CONFIG_DEFAULTS.webPort);
     });
 
-    it('rejects invalid channel and falls back to stable', () => {
+    it("rejects invalid channel and falls back to the build's default channel", () => {
         setup({ channel: 'nightly' });
         const c = Config.getInstance().getAppConfig();
-        expect(c.channel).toBe('stable');
+        expect(c.channel).toBe(BUILD_CHANNEL);
     });
 
     it('updateAppConfig writes pretty JSON with trailing newline', () => {

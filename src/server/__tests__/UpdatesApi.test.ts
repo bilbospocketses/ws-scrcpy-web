@@ -3,10 +3,18 @@ import type { IncomingMessage, ServerResponse } from 'http';
 import * as os from 'os';
 import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { defaultChannelForVersion } from '../../common/ConfigEvents';
 import { UpdatesApi } from '../api/UpdatesApi';
+import { getAppVersion } from '../appVersion';
 import { Config } from '../Config';
 import { EnvName } from '../EnvName';
 import type { UpdateService, UpdateServiceState } from '../UpdateService';
+
+// An empty config.json starts on the channel THIS BUILD defaults to (a beta build
+// -> 'beta'), so a "channel change" must go to the other one -- otherwise the
+// PATCH is a no-op and reconfigure is rightly not called.
+const BUILD_CHANNEL = defaultChannelForVersion(getAppVersion());
+const OTHER_CHANNEL = BUILD_CHANNEL === 'beta' ? 'stable' : 'beta';
 
 // ──────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -356,7 +364,8 @@ describe('UpdatesApi', () => {
         await api.handle(req, res);
         expect((res as any).getStatus()).toBe(200);
         expect(Config.getInstance().getAppConfig().githubOwner).toBe('definitely-not-a-real-user');
-        expect(svc.reconfigure).toHaveBeenCalledWith('stable', 'definitely-not-a-real-user');
+        // The channel was not patched, so reconfigure sees the build's default.
+        expect(svc.reconfigure).toHaveBeenCalledWith(BUILD_CHANNEL, 'definitely-not-a-real-user');
     });
 
     it('PATCH /config: bad autoUpdate (non-boolean) → 400', async () => {
@@ -373,14 +382,23 @@ describe('UpdatesApi', () => {
     it('PATCH /config: channel change triggers svc.reconfigure', async () => {
         const svc = fakeService({ isInstalled: true });
         const api = new UpdatesApi(svc);
-        const { req, res } = makeReqRes('/api/updates/config', 'PATCH', JSON.stringify({ channel: 'beta' }));
+        const { req, res } = makeReqRes('/api/updates/config', 'PATCH', JSON.stringify({ channel: OTHER_CHANNEL }));
         await api.handle(req, res);
         expect((res as any).getStatus()).toBe(200);
         expect(svc.reconfigure).toHaveBeenCalledTimes(1);
         // Should pass current values from after the persist.
         const args = svc.reconfigure.mock.calls[0]!;
-        expect(args[0]).toBe('beta');
+        expect(args[0]).toBe(OTHER_CHANNEL);
         expect(svc.restartTimer).not.toHaveBeenCalled();
+    });
+
+    it('PATCH /config: re-stating the channel the build already defaults to is a no-op', async () => {
+        const svc = fakeService({ isInstalled: true });
+        const api = new UpdatesApi(svc);
+        const { req, res } = makeReqRes('/api/updates/config', 'PATCH', JSON.stringify({ channel: BUILD_CHANNEL }));
+        await api.handle(req, res);
+        expect((res as any).getStatus()).toBe(200);
+        expect(svc.reconfigure).not.toHaveBeenCalled();
     });
 
     it('PATCH /config: interval change triggers svc.restartTimer', async () => {
@@ -421,7 +439,7 @@ describe('UpdatesApi', () => {
         const { req, res } = makeReqRes(
             '/api/updates/config',
             'PATCH',
-            JSON.stringify({ channel: 'beta', updateCheckIntervalMinutes: 90 }),
+            JSON.stringify({ channel: OTHER_CHANNEL, updateCheckIntervalMinutes: 90 }),
         );
         await api.handle(req, res);
         expect((res as any).getStatus()).toBe(200);

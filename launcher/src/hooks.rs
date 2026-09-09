@@ -70,6 +70,33 @@ pub fn parse_hook_flag(args: &[String]) -> Option<HookKind> {
     unknown.map(HookKind::Unknown)
 }
 
+/// Pure: the value Velopack passes after a hook flag
+/// (`--veloapp-install 0.1.30-beta.115`). None when the flag is absent, is the
+/// last token, or is followed by another flag.
+pub fn hook_version_arg(args: &[String], flag: &str) -> Option<String> {
+    let i = args.iter().position(|a| a == flag)?;
+    args.get(i + 1).filter(|v| !v.starts_with("--")).cloned()
+}
+
+/// Pure: the update channel a fresh install of `version` should default to.
+///
+/// Mirrors `defaultChannelForVersion` in src/common/ConfigEvents.ts -- the
+/// backend applies the same rule to a config.json that lacks the key, so the
+/// skeleton written by the install hook and the runtime agree. Before
+/// 2026-09-09 every build defaulted to "stable", so a fresh beta install asked
+/// the feed for releases.stable.json and found nothing until the user noticed
+/// the Updates radio (measured by qa-harness Arc 3 as `status: error … 404`
+/// against a beta-only feed). Only `-beta` prereleases have a feed of their
+/// own, so `-rc` / `-alpha` stay on stable.
+pub fn default_channel_for_version(version: &str) -> &'static str {
+    let v = version.to_ascii_lowercase();
+    let is_beta = match v.split_once("-beta") {
+        Some((_, rest)) => rest.is_empty() || rest.starts_with('.') || rest.starts_with('-') || rest.starts_with('+'),
+        None => false,
+    };
+    if is_beta { "beta" } else { "stable" }
+}
+
 /// Public entry: if argv contains a Velopack hook flag, handle it and return
 /// `Some(exit_code)`. Otherwise return None (caller proceeds to normal launch).
 pub fn handle_velopack_hook(args: &[String]) -> Option<i32> {
@@ -89,7 +116,10 @@ pub fn handle_velopack_hook(args: &[String]) -> Option<i32> {
     let data_root = common::config::data_root_from_env().unwrap_or_else(|| install_root.clone());
 
     let code = match kind {
-        HookKind::Install => on_install(&install_root, &data_root),
+        HookKind::Install => {
+            let version = hook_version_arg(args, FLAG_INSTALL);
+            on_install(&install_root, &data_root, version.as_deref())
+        }
         HookKind::Updated => on_updated(&install_root, &data_root),
         HookKind::Uninstall => on_uninstall(&install_root, &data_root),
         HookKind::Obsolete => on_obsolete(),
@@ -108,17 +138,21 @@ fn resolve_install_root() -> anyhow::Result<PathBuf> {
     Ok(install_root.to_path_buf())
 }
 
-/// Default skeleton config matching SP3 P2 Contract 1 defaults.
-fn default_config_json() -> String {
+/// Default skeleton config matching SP3 P2 Contract 1 defaults. `version` is
+/// what Velopack passed to `--veloapp-install`; it decides the channel (a beta
+/// build defaults to the beta feed). None -- the hook could not see a version
+/// -- falls back to stable, as before.
+fn default_config_json(version: Option<&str>) -> String {
     // Mirrors the TS defaults; the backend is the schema source of truth and
     // will fill in any keys we omit on first read. We keep this minimal so a
     // backend-side schema bump doesn't strand us with a stale skeleton.
+    let channel = version.map(default_channel_for_version).unwrap_or("stable");
     let v = serde_json::json!({
         "installMode": null,
         "firstRunComplete": false,
         "autoUpdate": true,
         "updateCheckIntervalMinutes": 60,
-        "channel": "stable",
+        "channel": channel,
         "githubOwner": "bilbospocketses",
         "webPort": 8000
     });
@@ -152,7 +186,7 @@ fn on_unknown(flag: &str) -> i32 {
     0
 }
 
-fn on_install(install_root: &Path, data_root: &Path) -> i32 {
+fn on_install(install_root: &Path, data_root: &Path, version: Option<&str>) -> i32 {
     // Phase 4 of Program Files migration: at MSI install time we run
     // elevated (PerMachine MSI), so this hook is the right place to:
     //   1. Create <dataRoot> if missing
@@ -199,9 +233,12 @@ fn on_install(install_root: &Path, data_root: &Path) -> i32 {
         log::info(&format!("hook(install): {cfg_path:?} already present; leaving as-is"));
         return 0;
     }
-    match std::fs::write(&cfg_path, default_config_json()) {
+    match std::fs::write(&cfg_path, default_config_json(version)) {
         Ok(()) => {
-            log::info(&format!("hook(install): wrote skeleton {cfg_path:?}"));
+            log::info(&format!(
+                "hook(install): wrote skeleton {cfg_path:?} (channel {} for version {version:?})",
+                version.map(default_channel_for_version).unwrap_or("stable")
+            ));
             0
         }
         Err(e) => {
@@ -566,18 +603,63 @@ mod tests {
         // install_root and data_root collapse to the same dir in this test —
         // the icacls grants are best-effort and tolerated to fail under
         // tempdir paths, which is fine for unit testing the file-write path.
-        let code = on_install(dir.path(), dir.path());
+        let code = on_install(dir.path(), dir.path(), Some("0.1.30"));
         assert_eq!(code, 0);
         let cfg = dir.path().join("config.json");
         assert!(cfg.exists());
         let body = fs::read_to_string(&cfg).unwrap();
         assert!(body.contains("\"firstRunComplete\""));
         assert!(body.contains("\"webPort\""));
-        assert!(body.contains("\"channel\""));
+        assert!(body.contains("\"channel\": \"stable\""), "a release build's skeleton is on stable: {body}");
         // Round-trip: AppConfig reader should parse it without error.
         let parsed = AppConfig::load(dir.path());
         assert!(!parsed.first_run_complete);
         assert_eq!(parsed.web_port, Some(8000));
+    }
+
+    #[test]
+    fn install_skeleton_of_a_beta_build_is_on_the_beta_channel() {
+        // MEASURED 2026-09-09 (qa-harness Arc 3): the skeleton said "stable" for a
+        // beta.103 MSI, so the app asked a beta-only feed for releases.stable.json
+        // and sat at `status: error … 404` until the Updates radio was flipped.
+        let dir = tempdir().unwrap();
+        assert_eq!(on_install(dir.path(), dir.path(), Some("0.1.30-beta.115")), 0);
+        let body = fs::read_to_string(dir.path().join("config.json")).unwrap();
+        assert!(body.contains("\"channel\": \"beta\""), "a beta build's skeleton is on beta: {body}");
+        // And the Rust reader takes it.
+        let parsed = AppConfig::load(dir.path());
+        assert_eq!(parsed.web_port, Some(8000));
+    }
+
+    #[test]
+    fn install_with_no_version_in_argv_stays_on_stable() {
+        let dir = tempdir().unwrap();
+        assert_eq!(on_install(dir.path(), dir.path(), None), 0);
+        let body = fs::read_to_string(dir.path().join("config.json")).unwrap();
+        assert!(body.contains("\"channel\": \"stable\""), "{body}");
+    }
+
+    #[test]
+    fn default_channel_follows_the_beta_prerelease_tag_only() {
+        assert_eq!(default_channel_for_version("0.1.30-beta.115"), "beta");
+        assert_eq!(default_channel_for_version("0.1.30-beta"), "beta");
+        assert_eq!(default_channel_for_version("0.1.30-BETA.2"), "beta");
+        assert_eq!(default_channel_for_version("0.1.30-beta+build.7"), "beta");
+        assert_eq!(default_channel_for_version("0.1.30"), "stable");
+        assert_eq!(default_channel_for_version("1.0.0"), "stable");
+        assert_eq!(default_channel_for_version("0.1.30-rc.1"), "stable");
+        assert_eq!(default_channel_for_version("0.1.30-betamax.1"), "stable");
+        assert_eq!(default_channel_for_version(""), "stable");
+    }
+
+    #[test]
+    fn hook_version_arg_reads_the_token_after_the_flag() {
+        let args = vec![s("ws-scrcpy-web-launcher.exe"), s("--veloapp-install"), s("0.1.30-beta.115")];
+        assert_eq!(hook_version_arg(&args, FLAG_INSTALL), Some(s("0.1.30-beta.115")));
+        // Absent flag, flag as the last token, or a flag where the version should be: None.
+        assert_eq!(hook_version_arg(&[s("--veloapp-updated"), s("1.2.3")], FLAG_INSTALL), None);
+        assert_eq!(hook_version_arg(&[s("--veloapp-install")], FLAG_INSTALL), None);
+        assert_eq!(hook_version_arg(&[s("--veloapp-install"), s("--veloapp-firstrun")], FLAG_INSTALL), None);
     }
 
     #[test]
@@ -587,7 +669,7 @@ mod tests {
         let original = r#"{"installMode":"user-service","firstRunComplete":true,"webPort":8042}"#;
         fs::write(&cfg, original).unwrap();
 
-        let code = on_install(dir.path(), dir.path());
+        let code = on_install(dir.path(), dir.path(), Some("0.1.30-beta.115"));
         assert_eq!(code, 0);
         let after = fs::read_to_string(&cfg).unwrap();
         assert_eq!(after, original);
@@ -664,11 +746,12 @@ mod tests {
 
     #[test]
     fn default_config_json_is_valid_and_parses_to_expected_defaults() {
-        let body = default_config_json();
+        let body = default_config_json(None);
         let parsed: AppConfig = serde_json::from_str(&body).unwrap();
         assert_eq!(parsed.install_mode, None);
         assert!(!parsed.first_run_complete);
         assert_eq!(parsed.web_port, Some(8000));
+        assert!(body.contains("\"channel\": \"stable\""), "no version known -> stable: {body}");
         // Pretty-printed and trailing-newline (Contract 1 persistence semantics).
         assert!(body.ends_with('\n'));
         assert!(body.contains("\n  "));

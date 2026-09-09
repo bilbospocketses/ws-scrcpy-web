@@ -101,6 +101,26 @@ pub fn run() -> Result<(i32, Option<Arc<AtomicBool>>)> {
     // previous crash from triggering an immediate respawn loop.
     cleanup_stale_marker(&paths.restart_marker);
 
+    // CONSUME the update hand-off marker. UpdateService writes
+    // control/apply-update-pending before the app exits to apply an update, so
+    // that the OLD launcher's exit-time tray reap leaves the tray alone
+    // (tray_supervisor::reap_tray_on_terminal_exit). In service mode the
+    // post-stop bat deletes it afterwards; in LOCAL mode nothing did. MEASURED
+    // 2026-09-09 (qa-harness Arc 3, beta.103 -> beta.114): the marker survived
+    // the swap, and the updated app's next plain stop-exit left the tray
+    // running while launcher and node exited -- "terminal exit with
+    // update/uninstall handoff pending; leaving tray for relaunch" on an exit
+    // that was no hand-off at all. That is the orphan the reap exists to
+    // prevent, one update later, and on every graceful exit after it.
+    //
+    // By the time THIS launcher starts, every reader that needed the marker
+    // has had it: the old launcher's reap ran at its exit, the operation
+    // server chose its page when it was spawned, the bat (service mode) has
+    // fired. So the launcher that comes up after the swap consumes it here,
+    // beside the .restart cleanup. Harmless where another path already
+    // removed it, and correct when an apply was aborted before the exit.
+    cleanup_stale_marker(&apply_update_pending_marker(&paths.data_root));
+
     // §32 Part 5 — launcher-owned tray lifecycle in service mode. Drops
     // HKLM\Run (no longer registered at install_service) + the Part 4
     // respawn-tray-after-upgrade flag mechanism. Replaced by a background
@@ -407,6 +427,17 @@ fn cleanup_stale_marker(marker: &Path) {
     }
 }
 
+/// `<data_root>/control/apply-update-pending` -- the update hand-off marker.
+/// ONE definition on the launcher side: the exit-time tray reap reads it
+/// (tray_supervisor.rs), the operation server reads it to pick its page
+/// (operation_server.rs), the service-mode post-stop bat deletes it
+/// (elevated_runner.rs), and the launcher that comes up after the swap
+/// consumes it at startup (`run`, above). Node's twin is
+/// `Config.applyUpdatePendingMarkerPath`.
+pub(crate) fn apply_update_pending_marker(data_root: &Path) -> std::path::PathBuf {
+    data_root.join("control").join("apply-update-pending")
+}
+
 // §32 Part 4 follow-up — `try_respawn_tray_after_upgrade` removed.
 // Replaced by `tray_supervisor::start_background` which polls every 10s
 // and ensures a tray exists regardless of why it went missing (post-
@@ -512,6 +543,31 @@ mod tests {
         // Long enough for adb kill-server + the SQLite backup on a slow disk,
         // short enough that a wedged Node does not hold a Ctrl+C for long.
         assert_eq!(GRACEFUL_STOP_TIMEOUT, Duration::from_secs(10));
+    }
+
+    #[test]
+    fn apply_update_pending_marker_is_under_control() {
+        assert_eq!(
+            apply_update_pending_marker(Path::new("D")),
+            std::path::PathBuf::from("D").join("control").join("apply-update-pending")
+        );
+    }
+
+    #[test]
+    fn startup_consumes_a_left_over_apply_update_marker() {
+        // The launcher that comes up after a swap must not leave the hand-off
+        // marker for its own exit-time reap to misread (qa-harness Arc 3,
+        // 2026-09-09: the updated app's next stop-exit orphaned the tray).
+        let dir = tempfile::tempdir().unwrap();
+        let marker = apply_update_pending_marker(dir.path());
+        std::fs::create_dir_all(marker.parent().unwrap()).unwrap();
+        std::fs::write(&marker, b"").unwrap();
+        assert!(marker.exists());
+        cleanup_stale_marker(&marker);
+        assert!(!marker.exists(), "the marker must not outlive the launcher that comes up after the swap");
+        // Idempotent: a second call on an absent marker is a no-op, not an error.
+        cleanup_stale_marker(&marker);
+        assert!(!marker.exists());
     }
 
     #[test]

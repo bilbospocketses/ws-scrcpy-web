@@ -115,3 +115,21 @@ export const APP_CONFIG_DEFAULTS: AppConfig = {
 export const VALID_INSTALL_MODES: ReadonlyArray<InstallMode> = ['user', 'user-service', 'system', 'system-service'];
 
 export const VALID_CHANNELS: ReadonlyArray<UpdateChannel> = ['stable', 'beta'];
+
+/**
+ * The update channel a build defaults to when config.json does not name one.
+ *
+ * A prerelease build (`0.1.30-beta.114`) defaults to `beta`; anything else to
+ * `stable`. Before 2026-09-09 the default was `stable` for every build, so a
+ * fresh beta install asked the feed for `releases.stable.json` and found
+ * nothing until the user noticed the Updates radio -- measured by qa-harness
+ * Arc 3 as `status: error … 404` against a beta-only feed. The MSI install hook
+ * (`launcher/src/hooks.rs::default_channel_for_version`) derives the same answer
+ * from the version Velopack hands it, so the skeleton config and the runtime
+ * agree. Existing configs are NOT migrated: a written `stable` cannot be told
+ * apart from a user's choice. `APP_CONFIG_DEFAULTS.channel` stays `stable` as
+ * the schema default; `Config` substitutes this at load time.
+ */
+export function defaultChannelForVersion(version: string): UpdateChannel {
+    return /-beta(?:[.\-+]|$)/i.test(version) ? 'beta' : 'stable';
+}
