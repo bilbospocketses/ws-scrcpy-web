@@ -67,6 +67,18 @@ describe('instanceToken', () => {
             expect(buildTokenCookie(true)).toContain('Secure');
         });
 
+        // Byte-exact on purpose. The framing opt-in (#641) routes both cookies
+        // through a shared policy, and the first cut of that reordered the
+        // attributes — harmless to a browser, but it broke an e2e assertion on
+        // the session cookie and quietly falsified "the default deployment is
+        // unchanged". Pin the default string here so the next such change
+        // fails in the unit suite instead of in CI.
+        it('emits exactly the pre-opt-in string when no embedder is allow-listed', () => {
+            const t = getInstanceToken();
+            expect(buildTokenCookie(false)).toBe(`ws_scrcpy_token=${t}; Path=/; SameSite=Strict; HttpOnly`);
+            expect(buildTokenCookie(true)).toBe(`ws_scrcpy_token=${t}; Path=/; SameSite=Strict; HttpOnly; Secure`);
+        });
+
         // #641: the cookie the WebSocket handshake depends on was never sent
         // from a cross-site iframe, so /embed.html could not authenticate in
         // any deployment where the embedder is a different site.

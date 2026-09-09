@@ -8,7 +8,7 @@ import { SessionStore } from '../auth/session';
 import { Config } from '../Config';
 import { IMPLICIT_ADMIN_ID } from '../db/constants';
 import { Logger } from '../Logger';
-import { cookieSameSiteAttrs } from '../security/cookiePolicy';
+import { cookieSecurity } from '../security/cookiePolicy';
 import { isRequestSecure } from '../security/forwardedProto';
 import { liveSockets } from '../services/WebSocketServer';
 import { readJsonBody } from './utils';
@@ -21,16 +21,25 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
 }
 
 /**
- * The session cookie's SameSite/Secure attributes for this request. `Lax` by
- * default, relaxed where an operator has allow-listed an embedder — a framed
- * page gets no Lax cookie on its WebSocket handshake either, so locked mode
- * would otherwise close every embedded stream with 4401 (#641). Set and clear
- * must agree, so both call this.
+ * Build the session cookie for this request — `expire: true` for the clearing
+ * form. `SameSite` is `Lax` by default and relaxes where an operator has
+ * allow-listed an embedder: a framed page gets no Lax cookie on its WebSocket
+ * handshake either, so locked mode would otherwise close every embedded stream
+ * with 4401 (#641). Set and clear share this builder because a `Partitioned`
+ * cookie is keyed by partition — clearing it with different attributes leaves
+ * the framed copy alive.
  */
-function sessionAttrs(req: IncomingMessage): string {
+function sessionCookie(req: IncomingMessage, value: string, expire = false): string {
     const socket = req.socket as { encrypted?: boolean; remoteAddress?: string } | undefined;
     const secure = isRequestSecure(Boolean(socket?.encrypted), socket?.remoteAddress, req.headers['x-forwarded-proto']);
-    return cookieSameSiteAttrs('Lax', secure).join('; ');
+    const policy = cookieSecurity('Lax', secure);
+    // Attribute order is deliberate: unchanged from before the framing opt-in
+    // existed, so the default deployment emits the same bytes it always has.
+    let out = `${SESSION_COOKIE}=${value}; HttpOnly; SameSite=${policy.sameSite}; Path=/`;
+    if (expire) out += '; Max-Age=0';
+    if (policy.secure) out += '; Secure';
+    if (policy.partitioned) out += '; Partitioned';
+    return out;
 }
 
 export class AuthApi {
@@ -46,10 +55,7 @@ export class AuthApi {
             const password = typeof body['password'] === 'string' ? body['password'] : '';
             const result = login(db, username, password, Date.now());
             if (result.ok) {
-                res.setHeader(
-                    'Set-Cookie',
-                    `${SESSION_COOKIE}=${result.token}; HttpOnly; Path=/; ${sessionAttrs(req)}`,
-                );
+                res.setHeader('Set-Cookie', sessionCookie(req, result.token));
                 sendJson(res, 200, { ok: true });
             } else {
                 sendJson(res, 401, { ok: false, reason: result.reason });
@@ -70,7 +76,7 @@ export class AuthApi {
             // Clear with the SAME attributes it was set with: a Partitioned
             // cookie is keyed by partition, so an unpartitioned delete would
             // leave the framed copy alive.
-            res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; HttpOnly; Path=/; Max-Age=0; ${sessionAttrs(req)}`);
+            res.setHeader('Set-Cookie', sessionCookie(req, '', true));
             sendJson(res, 200, { ok: true });
             return true;
         }

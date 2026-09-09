@@ -41,15 +41,29 @@ const log = Logger.for('cookiePolicy');
  */
 export type DefaultSameSite = 'Strict' | 'Lax';
 
+/**
+ * The decision, not a formatted string. The two cookies order their attributes
+ * differently and have done since they were written; `auth.spec.ts` asserts one
+ * of those orders byte-for-byte. Handing each caller the values and letting it
+ * lay them out its own way keeps the default output identical to what shipped,
+ * which is the claim worth being able to make.
+ */
+export interface CookieSecurity {
+    sameSite: 'Strict' | 'Lax' | 'None';
+    secure: boolean;
+    /** Only ever true alongside `SameSite=None` + `Secure`, as CHIPS requires. */
+    partitioned: boolean;
+}
+
 // The mismatch below is an operator misconfiguration that produces no error
 // anywhere: the page frames, the cookie is issued, and only the socket fails.
 // Say it once per process rather than per response.
 let warnedAboutInsecureFraming = false;
 
-export function cookieSameSiteAttrs(fallback: DefaultSameSite, secure: boolean): string[] {
+export function cookieSecurity(fallback: DefaultSameSite, secure: boolean): CookieSecurity {
     if (hasFrameAncestors()) {
         if (secure) {
-            return ['SameSite=None', 'Secure', 'Partitioned'];
+            return { sameSite: 'None', secure: true, partitioned: true };
         }
         if (!warnedAboutInsecureFraming) {
             warnedAboutInsecureFraming = true;
@@ -60,11 +74,7 @@ export function cookieSameSiteAttrs(fallback: DefaultSameSite, secure: boolean):
             );
         }
     }
-    const attrs = [`SameSite=${fallback}`];
-    if (secure) {
-        attrs.push('Secure');
-    }
-    return attrs;
+    return { sameSite: fallback, secure, partitioned: false };
 }
 
 /** Test seam: forget that the misconfiguration warning has been emitted. */

@@ -157,6 +157,16 @@ describe('AuthApi', () => {
             expect(cookie).not.toContain('Partitioned');
         });
 
+        // Byte-exact, and matching the regex tests/e2e/auth.spec.ts asserts.
+        // The first cut of the shared cookie policy reordered these attributes
+        // and CI caught it there; this pins it one layer down.
+        it('emits exactly the pre-opt-in string when no embedder is allow-listed', async () => {
+            setup();
+            const cookie = await loginCookie({}, undefined);
+
+            expect(cookie).toMatch(/^wsscrcpy_sid=[A-Za-z0-9_-]{43}; HttpOnly; SameSite=Lax; Path=\/$/);
+        });
+
         it('relaxes behind a TLS-terminating proxy on loopback', async () => {
             setup();
             setFrameAncestors(['https://dashboard.example.net']);

@@ -48,7 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Docs: README's Embedding section states the https requirement and that same-site framing never needed
     it (SameSite is registrable domain **plus scheme**, ignoring port); the reverse-proxy recipe gains the
     `X-Forwarded-Proto` rule; Access control, SECURITY.md and TECHNICAL_GUIDE §24 describe the relaxation
-    and why it is not a widening. 19 tests.
+    and why it is not a widening. 22 tests, three of them pinning the default cookie strings byte-for-byte.
 
 ## [0.1.30-beta.115] - 2026-09-09
 

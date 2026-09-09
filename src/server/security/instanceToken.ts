@@ -1,5 +1,5 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { cookieSameSiteAttrs } from './cookiePolicy';
+import { cookieSecurity } from './cookiePolicy';
 
 /**
  * Per-instance bearer token, layered on top of the Origin/Host allowlist.
@@ -52,12 +52,15 @@ export function getInstanceToken(): string {
  * `cookiePolicy` for the whole rule and why it is not a CSRF widening.
  */
 export function buildTokenCookie(secure: boolean): string {
-    return [
-        `${COOKIE_NAME}=${getInstanceToken()}`,
-        'Path=/',
-        ...cookieSameSiteAttrs('Strict', secure),
-        'HttpOnly',
-    ].join('; ');
+    const policy = cookieSecurity('Strict', secure);
+    const attrs = [`${COOKIE_NAME}=${getInstanceToken()}`, 'Path=/', `SameSite=${policy.sameSite}`, 'HttpOnly'];
+    if (policy.secure) {
+        attrs.push('Secure');
+    }
+    if (policy.partitioned) {
+        attrs.push('Partitioned');
+    }
+    return attrs.join('; ');
 }
 
 /** Pull the token value out of a Cookie request header. */
