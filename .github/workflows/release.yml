@@ -192,7 +192,21 @@ jobs:
         with:
           targets: x86_64-unknown-linux-musl
       - name: Install musl-tools (linker for musl target)
-        run: sudo apt-get update && sudo apt-get install -y musl-tools
+        # The `rm` is the same guard ci.yml carries, and it matters MORE here.
+        # `apt-get update` refreshes every apt source on the runner, including
+        # the Google Chrome repo the GitHub image ships preinstalled — a repo
+        # nothing in this job wants. On 2026-09-09 Google's index served a
+        # `Packages.gz` that did not match the SHA256 in its own `Release`
+        # file, apt aborted on the mismatch, and four unrelated PRs went red
+        # for the better part of an hour. Re-running reproduced it, so it was
+        # an outage rather than a flake.
+        #
+        # In CI that costs a re-run. Here it would fail a RELEASE: this job
+        # publishes the MSI, AppImage and portable ZIP, so a third party's bad
+        # index would block shipping over a package we never install.
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list
+          sudo apt-get update && sudo apt-get install -y musl-tools
       # vpk 1.2.0 (stable) has --msi / --instLocation and produces
       # true Windows Installer MSIs. Match the npm `velopack` package
       # version to keep client/server serialization in sync.
