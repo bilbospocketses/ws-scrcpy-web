@@ -625,6 +625,12 @@ export class UpdateService {
             log.info(`applyUpdate: spawned operation-server (pid ${child.pid})`);
         } catch (err) {
             log.error(`applyUpdate: failed to prepare or spawn operation-server: ${(err as Error).message}`);
+            // The hand-off is not happening, so the markers written for it must
+            // not outlive this attempt: a lingering apply-update-pending makes the
+            // launcher's NEXT graceful exit skip the tray reap (qa-harness Arc 3,
+            // 2026-09-09), and a lingering suppress-browser-open swallows the next
+            // launch's tab.
+            await this.removeApplyHandoffMarkers();
             return { redirectPort: null };
         }
 
@@ -636,6 +642,27 @@ export class UpdateService {
         }
 
         return { redirectPort: port };
+    }
+
+    /**
+     * Best-effort removal of the two hand-off markers when an apply does not
+     * go ahead after they were written. Who consumes them when it DOES go
+     * ahead: the server itself takes suppress-browser-open at startup; the
+     * service-mode post-stop bat deletes apply-update-pending; and since
+     * 2026-09-09 the launcher that comes up after the swap consumes
+     * apply-update-pending at startup (launcher/src/supervisor.rs) -- in local
+     * mode nothing had, and the updated app's next plain stop-exit left the tray
+     * running (measured by qa-harness Arc 3).
+     */
+    private async removeApplyHandoffMarkers(): Promise<void> {
+        const cfg = Config.getInstance();
+        for (const p of [cfg.applyUpdatePendingMarkerPath, cfg.suppressBrowserOpenMarkerPath]) {
+            try {
+                await fs.promises.rm(p, { force: true });
+            } catch (err) {
+                log.warn(`applyUpdate: could not remove hand-off marker ${p}: ${(err as Error).message}`);
+            }
+        }
     }
 
     /**

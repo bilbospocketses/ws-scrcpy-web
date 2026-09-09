@@ -318,7 +318,7 @@ Almost all configuration is managed through the in-app **Settings** panel (gear 
 | `firstRunComplete` | `false` | Set automatically after first-run modal |
 | `autoUpdate` | `true` | Settings → Updates → Automatically download updates |
 | `updateCheckIntervalMinutes` | `60` | Settings → Updates → Check interval |
-| `channel` | `stable` | Settings → Updates → Channel |
+| `channel` | `beta` on a beta build, `stable` on a release build (derived from the build's own version when `config.json` does not say) | Settings → Updates → Channel |
 | `githubOwner` | `bilbospocketses` | Settings → Updates → GitHub owner (override for forks) |
 | `frameAncestors` | `[]` (nothing may frame the app) | Settings → Embedding, or edit `config.json` |
 | `allowedHosts` | `[]` (localhost + IP literals only) | `config.json` only — server-only, never exposed via the API |

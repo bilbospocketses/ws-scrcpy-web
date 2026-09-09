@@ -4,12 +4,15 @@ import * as process from 'process';
 import {
     APP_CONFIG_DEFAULTS,
     type AppConfig,
+    defaultChannelForVersion,
     type FirstRunStatus,
     type InstallMode,
+    type UpdateChannel,
     VALID_CHANNELS,
     VALID_INSTALL_MODES,
 } from '../common/ConfigEvents';
 import type { ServerItem } from '../types/Configuration';
+import { getAppVersion } from './appVersion';
 import { GLOBAL_KEYS } from './db/constants';
 import { Db, dbDir } from './db/Db';
 import { EnvName } from './EnvName';
@@ -288,8 +291,15 @@ function validateField<K extends keyof AppConfig>(key: K, value: unknown): Valid
  * Validation failures on specific fields fall back to defaults with a warning;
  * this matches Contract 1's "do not throw on load" semantics.
  */
-function sanitizeAppConfig(raw: FlatConfig, warn: (msg: string) => void): AppConfig {
-    const out: AppConfig = { ...APP_CONFIG_DEFAULTS };
+function sanitizeAppConfig(
+    raw: FlatConfig,
+    warn: (msg: string) => void,
+    // The channel this BUILD defaults to, not the schema's static 'stable': a
+    // beta build whose config.json says nothing about the channel must query
+    // the beta feed (see defaultChannelForVersion). Injectable for tests.
+    defaultChannel: UpdateChannel = defaultChannelForVersion(getAppVersion()),
+): AppConfig {
+    const out: AppConfig = { ...APP_CONFIG_DEFAULTS, channel: defaultChannel };
 
     const candidateWebPort = raw.webPort;
     if (candidateWebPort !== undefined) {
@@ -321,7 +331,7 @@ function sanitizeAppConfig(raw: FlatConfig, warn: (msg: string) => void): AppCon
     if (raw.channel !== undefined) {
         const r = validateField('channel', raw.channel);
         if (r.ok) out.channel = r.value;
-        else warn(`config.json: ${r.error}; using default stable`);
+        else warn(`config.json: ${r.error}; using default ${defaultChannel}`);
     }
     if (raw.githubOwner !== undefined) {
         const r = validateField('githubOwner', raw.githubOwner);
