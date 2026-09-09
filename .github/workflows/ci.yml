@@ -52,7 +52,23 @@ jobs:
       # rendering differences, so a second browser would buy coverage the specs
       # do not actually exercise.
       - name: Install Playwright browser
-        run: npx playwright install --with-deps chromium
+        # `--with-deps` runs `apt-get update`, which refreshes EVERY apt source
+        # configured on the runner — including the Google Chrome repo the
+        # GitHub image ships preinstalled. We never want anything from that
+        # repo: the browser under test is Playwright's own bundled Chromium,
+        # and the deps this installs come from Ubuntu's archives. So when
+        # Google's index is unhealthy, `apt-get update` fails the whole job
+        # over a repo this project does not use. That happened on 2026-09-09:
+        # `E: Failed to fetch .../chrome-stable/.../Packages.gz Hash Sum
+        # mismatch` blocked four unrelated PRs for the better part of an hour,
+        # and re-running hit it again because it was not a flake.
+        #
+        # Dropping the source list first takes that third party off the
+        # critical path for good. The runner is ephemeral, so this affects
+        # nothing beyond this job.
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list
+          npx playwright install --with-deps chromium
       - name: E2E typecheck
         # tests/ sits outside the root tsconfig's rootDir, so `npx tsc --noEmit`
         # above does not see it. Without this the e2e sources are never typechecked.
