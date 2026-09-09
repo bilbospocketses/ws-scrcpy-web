@@ -17,8 +17,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **An unanswered UAC prompt hung the service install forever.** #646, measured on a Windows guest three
+  separate ways (150 s, 342 s and 600 s windows). `runElevated` awaited the `--request-uac` helper with no
+  timeout, and that helper blocks until the consent dialog is answered — so when it never was, the await
+  never returned. `ELEVATION_TIMEOUT_MS` bounded only `pollForResultFile`, which is reached *after* that
+  await, so the 300 s deadline never started and the function had no upper bound at all. The user was left
+  at `installMode: 'system-service'` with no service until the app restarted, and two `--request-uac`
+  processes still alive fifteen minutes later. **The prompt does not need to be dismissed for this**:
+  Windows auto-dismisses it after about two minutes and the await still never returned, so any user who
+  ignores the prompt long enough gets there. The wait is now bounded by the same 300 s, and the two phases
+  share one deadline rather than one each. Expiry reports the "did not complete within 300s" message that
+  was already written for this case and could not previously be reached — not "you declined", which the
+  user did not do — and reverts `installMode` the way a decline already did. Declines are unchanged: they
+  exit 1223, which is not a timeout. 4 tests.
+
 ### Changed
 
+- **Removed `handoff-timeout` from `ServiceFailureReason`.** #647, reported by a QA suite that wrote a test
+  row from the type's doc comment and found the row could never pass. The variant was emitted by the
+  LocalSystem uninstall path from `1507c36` (2026-04-30), which relayed the uninstall to a user-session
+  launcher and answered 503 when it could not reach one. Phase 4 (#108, 2026-05-25) replaced that relay with
+  the `uninstall-pending` marker + operation-server sequence, which needs no user session and cannot time out
+  waiting for one — so the producer was removed with it, while the variant, its doc and its `SettingsModal`
+  message stayed behind, promising an error the server had no way to send. **The doc was stale, not the
+  code**, and the git history says so rather than us inferring it. Removed rather than marked reserved:
+  there is no handoff left to time out. `handoff-no-target` is untouched — its doc already says it is
+  reserved, which is accurate. The stale paragraph in `isLikelyLocalSystem`, which still described the
+  removed WTS handoff and its fall-through, is corrected too; it was part of what made the variant look live.
 - **`openBrowser.ts` names every binary by absolute path** (todo item 115). All three platform branches
   spawned a bare name — `cmd.exe`, `xdg-open`, `open` — so each resolved off the process `PATH`, which
   Local-Dependencies-Only forbids. This was the last URL-opener in the repo doing so: the Rust half of the
