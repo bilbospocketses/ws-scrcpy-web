@@ -2136,8 +2136,6 @@ export class SettingsModal extends Modal {
                 return 'Service mode is not supported on this platform.';
             case 'uac-declined':
                 return 'Administrative privileges were declined. Try again and approve the prompt.';
-            case 'handoff-timeout':
-                return "Couldn't reach the user session. Make sure ws-scrcpy-web is running for your user, then try again.";
             case 'handoff-no-target':
                 return "Couldn't identify a user session to relay the action to.";
             case 'invalid-token':
