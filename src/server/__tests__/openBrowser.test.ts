@@ -2,35 +2,13 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { consumeSuppressBrowserMarker, resolveSystemTool, shouldAutoOpenBrowser } from '../openBrowser';
+import { consumeSuppressBrowserMarker, shouldAutoOpenBrowser } from '../openBrowser';
 
-// Item 115. openBrowser was the last place in the repo that resolved a URL
-// opener off PATH, while the Rust half of the same application already used
-// absolute paths on purpose and said so in its comments. This is the
-// TypeScript twin of `linux_service::tool_dir`, so it owes the same
-// guarantees: absolute always, /usr/bin preferred, /bin honoured, and never a
-// bare name whatever the filesystem looks like.
-describe('resolveSystemTool', () => {
-    it('prefers /usr/bin when the tool is there', () => {
-        expect(resolveSystemTool('xdg-open', (p) => p === '/usr/bin/xdg-open')).toBe('/usr/bin/xdg-open');
-    });
-
-    it('falls back to /bin when /usr/bin does not have it', () => {
-        expect(resolveSystemTool('xdg-open', (p) => p === '/bin/xdg-open')).toBe('/bin/xdg-open');
-    });
-
-    it('prefers /usr/bin when BOTH exist, matching the launcher probe order', () => {
-        expect(resolveSystemTool('xdg-open', () => true)).toBe('/usr/bin/xdg-open');
-    });
-
-    it('still returns an absolute path when the tool is nowhere — never a bare name', () => {
-        // The point of the fallback: spawn must fail with ENOENT on a known
-        // path rather than silently succeed against something on PATH.
-        const resolved = resolveSystemTool('xdg-open', () => false);
-        expect(resolved).toBe('/usr/bin/xdg-open');
-        expect(resolved.startsWith('/')).toBe(true);
-    });
-});
+// Item 123. This file used to test a LOCAL `resolveSystemTool` that #653 added
+// here while `service/systemTools.ts` already exported one for exactly this
+// purpose. The twin is gone and openBrowser imports the shared resolver, so the
+// resolution behaviour is covered once, in `service/systemTools.test.ts`, rather
+// than asserted twice against two implementations that could drift apart.
 
 /**
  * D1: a cold start PAST first-run must still open a browser tab. The native

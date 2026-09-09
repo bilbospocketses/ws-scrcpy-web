@@ -1,6 +1,7 @@
 import { spawn } from 'child_process';
-import { existsSync, rmSync, statSync } from 'fs';
+import { rmSync, statSync } from 'fs';
 import { Logger } from './Logger';
+import { resolveSystemTool } from './service/systemTools';
 
 const log = Logger.for('OpenBrowser');
 
@@ -13,24 +14,18 @@ const log = Logger.for('OpenBrowser');
  */
 const WINDOWS_CMD = 'C:\\Windows\\System32\\cmd.exe';
 
-/**
- * Absolute path of an OS-provided tool on Linux/macOS, probing `/usr/bin` then
- * `/bin` and falling back to `/usr/bin`.
- *
- * The TypeScript twin of `linux_service::tool_dir` in the launcher, which
- * carries the same comment for the same reason: never invoke a tool by bare
- * name. `exists` is injected so the probe is testable without touching the
- * filesystem of whatever machine the suite runs on.
- */
-export function resolveSystemTool(tool: string, exists: (p: string) => boolean = existsSync): string {
-    for (const dir of ['/usr/bin', '/bin']) {
-        const candidate = `${dir}/${tool}`;
-        if (exists(candidate)) {
-            return candidate;
-        }
-    }
-    return `/usr/bin/${tool}`;
-}
+// The URL opener is resolved by the repo's ONE system-tool resolver
+// (`service/systemTools`), not by a local copy. #653 added a second
+// `resolveSystemTool` here while that one already existed for exactly this
+// purpose — its own doc comment says it is "required by the
+// Local-Dependencies-Only rule" — so the two halves of the codebase disagreed
+// about the same problem. Consolidated 2026-09-09 (item 123).
+//
+// The shared resolver is also the better behaviour here: it probes /usr/bin,
+// /bin, /usr/sbin and /sbin, and only then falls back to the bare name, which
+// is what still finds xdg-open on a non-FHS distribution (NixOS, Guix) where
+// none of those directories hold it. The local copy returned /usr/bin/<tool>
+// unconditionally and would simply have failed there.
 
 /**
  * Best-effort cross-platform "open this URL in the user's default browser."
