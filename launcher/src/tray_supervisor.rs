@@ -16,10 +16,14 @@
 // silently before showing the balloon).
 //
 // Trade-offs accepted in this iteration:
-//   - SINGLE active session only. WTSEnumerateSessionsW could return multiple
-//     active sessions in RDP / fast-user-switching scenarios; we currently
-//     only spawn into the FIRST active interactive session. Multi-session
-//     support can be added later if needed.
+//   - (RESOLVED, item 119) Multi-session. This used to spawn into the FIRST
+//     active interactive session only, so under RDP or fast user switching
+//     the second and third logged-on users got no tray at all — and in
+//     service mode the tray is the only stop affordance the product has, so
+//     they had no way to stop the server either. It now spawns one tray per
+//     active interactive session. Only the enumeration needed widening: the
+//     per-session single-instance mutex already made a duplicate spawn a
+//     no-op, and `tray_present_in` was already session-scoped.
 //   - HKLM\Run removed at install time + cleanup on (re)install. Existing
 //     beta.9-era installs still have the Run entry; the launcher's startup
 //     spawn covers the post-upgrade case for them too, and the Run entry
@@ -45,7 +49,7 @@ use std::thread;
 use std::time::Duration;
 
 use crate::log;
-use crate::user_session_spawn::{spawn_in_active_user_session, SpawnUserLauncherArgs};
+use crate::user_session_spawn::{spawn_in_session, SpawnUserLauncherArgs};
 
 const TRAY_POLL_INTERVAL_SECS: u64 = 10;
 pub(crate) const TRAY_PROCESS_NAME: &str = "ws-scrcpy-web-tray.exe";
@@ -95,7 +99,9 @@ pub(crate) fn reap_tray_on_terminal_exit(data_root: &Path) {
 /// Mode-aware spawn:
 ///   - **Service mode** (`is_service_mode=true`): launcher is running as
 ///     LocalSystem in session 0. Cross-session WTS spawn into the active
-///     interactive user session via `spawn_in_active_user_session`. Requires
+///     interactive user sessions via `spawn_in_session`, one per session
+///     (item 119: Fast User Switching and RDP can have several at once).
+///     Requires
 ///     SeTcbPrivilege + SeAssignPrimaryTokenPrivilege + SeIncreaseQuotaPrivilege
 ///     which LocalSystem has by default.
 ///   - **Local mode** (`is_service_mode=false`): launcher is already in
@@ -259,14 +265,17 @@ fn ensure_tray_in_active_session(tray_exe: &Path) -> EnsureOutcome {
     // is gone now — see todo §33 Bug B for why consolidation matters
     // (Node-side and tray-side must use the SAME resolver for the
     // uninstall handoff marker session-ID check to align).
-    let session_id = match common::session::active_interactive_session() {
-        Some(id) => id,
-        None => return EnsureOutcome::NoActiveSession,
-    };
-
-    // Check if tray is already running in that session.
-    if is_tray_running_in_session(session_id) {
-        return EnsureOutcome::AlreadyRunning;
+    // EVERY active interactive session, not just the first (item 119). A
+    // service install serves every logged-on user, but this used to spawn a
+    // tray into one of them — so under Fast User Switching or RDP the second
+    // and third users got no icon, and in service mode the tray is the only
+    // stop affordance the product has, leaving them no way to stop the server
+    // at all. The per-session single-instance mutex already makes a duplicate
+    // spawn a no-op, and `tray_present_in` was already session-scoped, so only
+    // the enumeration needed widening.
+    let sessions = common::session::active_interactive_sessions();
+    if sessions.is_empty() {
+        return EnsureOutcome::NoActiveSession;
     }
 
     let tray_path_str = match tray_exe.to_str() {
@@ -274,21 +283,74 @@ fn ensure_tray_in_active_session(tray_exe: &Path) -> EnsureOutcome {
         None => return EnsureOutcome::SpawnFailed("tray path not valid UTF-8".to_string()),
     };
 
-    // Spawn with --launcher-spawn arg so the tray knows to show the
-    // explanatory balloon. The arg is consumed by tray/src/main.rs at
-    // startup.
-    let result = spawn_in_active_user_session(&SpawnUserLauncherArgs {
-        launcher_path: tray_path_str,
-        launcher_args: vec!["--launcher-spawn".to_string()],
-    });
+    // Report the FIRST spawn we perform, so a single-session box logs exactly
+    // what it always did. A failure is only reported when nothing spawned
+    // anywhere: one user's session failing (locking mid-spawn, say) must not
+    // mask a tray that did appear for another.
+    let mut spawned: Option<EnsureOutcome> = None;
+    let mut last_error: Option<String> = None;
+    let mut already = 0usize;
 
-    if result.ok {
-        EnsureOutcome::Spawned {
-            pid: result.pid,
-            session: result.session_id,
+    for session_id in sessions {
+        // Session-scoped, so a tray in session 1 does not satisfy session 2.
+        if is_tray_running_in_session(session_id) {
+            already += 1;
+            continue;
         }
-    } else {
-        EnsureOutcome::SpawnFailed(result.error_message.unwrap_or_default())
+
+        // Spawn with --launcher-spawn arg so the tray knows to show the
+        // explanatory balloon. The arg is consumed by tray/src/main.rs at
+        // startup.
+        let result = spawn_in_session(
+            session_id,
+            &SpawnUserLauncherArgs {
+                launcher_path: tray_path_str.clone(),
+                launcher_args: vec!["--launcher-spawn".to_string()],
+            },
+        );
+
+        if result.ok {
+            log::info(&format!(
+                "tray-supervisor: spawned tray pid {} in session {}",
+                result.pid, result.session_id
+            ));
+            if spawned.is_none() {
+                spawned = Some(EnsureOutcome::Spawned {
+                    pid: result.pid,
+                    session: result.session_id,
+                });
+            }
+        } else {
+            let msg = result.error_message.unwrap_or_default();
+            log::error(&format!(
+                "tray-supervisor: tray spawn failed for session {session_id}: {msg}"
+            ));
+            last_error = Some(msg);
+        }
+    }
+
+    combine_session_outcomes(spawned, last_error, already)
+}
+
+/// Reduce per-session results to the one outcome the supervisor reports.
+///
+/// Pure, so the rule that matters can be tested without a second logged-on
+/// user: **a success anywhere wins over a failure anywhere.** With more than
+/// one session in play, one user's session failing (locked mid-spawn, a token
+/// that could not be queried) must not be reported as "no tray", when another
+/// user's tray did appear — the supervisor would log an error for a state that
+/// is partly fine, and the next poll would try again anyway.
+fn combine_session_outcomes(
+    spawned: Option<EnsureOutcome>,
+    last_error: Option<String>,
+    already: usize,
+) -> EnsureOutcome {
+    match (spawned, last_error) {
+        (Some(outcome), _) => outcome,
+        (None, Some(err)) => EnsureOutcome::SpawnFailed(err),
+        // Nothing spawned and nothing failed: every session already had one.
+        (None, None) if already > 0 => EnsureOutcome::AlreadyRunning,
+        (None, None) => EnsureOutcome::NoActiveSession,
     }
 }
 
@@ -502,5 +564,60 @@ mod tests {
         // the service ran. An empty list must still read as absent here -- the
         // bug was never in this rule, it was in what the enumerator handed it.
         assert!(!tray_present_in(&[], 1));
+    }
+
+    // Item 119. The supervisor now visits EVERY active interactive session, so
+    // it can succeed in one and fail in another within a single pass. What it
+    // reports for that pass is the part worth pinning; the enumeration and the
+    // spawn themselves need a second logged-on user and cannot be unit-tested.
+    mod combine_session_outcomes {
+        use super::super::{combine_session_outcomes, EnsureOutcome};
+
+        #[test]
+        fn a_success_anywhere_beats_a_failure_anywhere() {
+            // Two users logged on, one tray spawned, the other session failed.
+            // Reporting SpawnFailed here would call a partly-working state
+            // broken, and the next poll retries the failed session regardless.
+            let out = combine_session_outcomes(
+                Some(EnsureOutcome::Spawned { pid: 42, session: 1 }),
+                Some("WTSQueryUserToken failed (session 2)".to_string()),
+                0,
+            );
+            assert!(matches!(out, EnsureOutcome::Spawned { pid: 42, session: 1 }));
+        }
+
+        #[test]
+        fn a_failure_with_no_success_is_reported() {
+            let out = combine_session_outcomes(None, Some("boom".to_string()), 0);
+            assert!(matches!(out, EnsureOutcome::SpawnFailed(ref m) if m == "boom"));
+        }
+
+        #[test]
+        fn every_session_already_had_one() {
+            let out = combine_session_outcomes(None, None, 2);
+            assert!(matches!(out, EnsureOutcome::AlreadyRunning));
+        }
+
+        #[test]
+        fn nothing_spawned_nothing_failed_nothing_present_means_no_session() {
+            // The enumerator handed us sessions but none were usable.
+            let out = combine_session_outcomes(None, None, 0);
+            assert!(matches!(out, EnsureOutcome::NoActiveSession));
+        }
+
+        #[test]
+        fn a_single_session_box_reports_exactly_what_it_always_did() {
+            // The common case must be unchanged by the multi-session widening.
+            let spawned = combine_session_outcomes(
+                Some(EnsureOutcome::Spawned { pid: 7, session: 1 }),
+                None,
+                0,
+            );
+            assert!(matches!(spawned, EnsureOutcome::Spawned { pid: 7, session: 1 }));
+            assert!(matches!(
+                combine_session_outcomes(None, None, 1),
+                EnsureOutcome::AlreadyRunning
+            ));
+        }
     }
 }

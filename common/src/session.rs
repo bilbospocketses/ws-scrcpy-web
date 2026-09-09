@@ -33,6 +33,28 @@
 /// On non-Windows: always returns `None`.
 #[cfg(windows)]
 pub fn active_interactive_session() -> Option<u32> {
+    // Identical behaviour to before: the first session the enumeration finds,
+    // or the console fallback when it finds none. The plural resolver below is
+    // where both of those now live, so the two cannot drift.
+    active_interactive_sessions().into_iter().next()
+}
+
+/// Every active interactive user session, in enumeration order.
+///
+/// The plural of [`active_interactive_session`], and the same filter:
+/// `WTSActive` state AND a non-empty username. Fast User Switching and RDP
+/// can both put more than one user in that state at once, and the tray
+/// supervisor needs all of them — a service install serves every logged-on
+/// user, but spawned a tray into only the first, leaving the others with no
+/// icon and, in service mode, no way to stop the server at all (item 119).
+///
+/// Falls back to `WTSGetActiveConsoleSessionId` only when the enumeration
+/// finds nothing, exactly as the single-session resolver always did, so a
+/// bare-metal single-user box behaves as it did before.
+///
+/// Returns an empty vec on non-Windows and when both strategies fail.
+#[cfg(windows)]
+pub fn active_interactive_sessions() -> Vec<u32> {
     use windows::Win32::Foundation::HANDLE;
     use windows::Win32::System::RemoteDesktop::{
         WTSActive, WTSEnumerateSessionsW, WTSFreeMemory, WTSGetActiveConsoleSessionId,
@@ -57,7 +79,7 @@ pub fn active_interactive_session() -> Option<u32> {
         )
         .is_ok();
 
-        let mut found: Option<u32> = None;
+        let mut found: Vec<u32> = Vec::new();
         if enum_ok && !sessions_ptr.is_null() {
             let sessions = std::slice::from_raw_parts(sessions_ptr, count as usize);
             for s in sessions {
@@ -84,16 +106,16 @@ pub fn active_interactive_session() -> Option<u32> {
                 // char count.
                 let username_len = (bytes as usize / 2).saturating_sub(1);
                 if username_len > 0 {
-                    found = Some(s.SessionId);
-                    WTSFreeMemory(buf_ptr.as_ptr() as *mut _);
-                    break;
+                    // Collect rather than break: Fast User Switching and RDP
+                    // can leave several sessions Active with a user in each.
+                    found.push(s.SessionId);
                 }
                 WTSFreeMemory(buf_ptr.as_ptr() as *mut _);
             }
             WTSFreeMemory(sessions_ptr as *mut _);
         }
 
-        if found.is_some() {
+        if !found.is_empty() {
             return found;
         }
 
@@ -104,11 +126,16 @@ pub fn active_interactive_session() -> Option<u32> {
         // diverges from the actual user session.
         let console = WTSGetActiveConsoleSessionId();
         if console == 0xFFFF_FFFF {
-            None
+            Vec::new()
         } else {
-            Some(console)
+            vec![console]
         }
     }
+}
+
+#[cfg(not(windows))]
+pub fn active_interactive_sessions() -> Vec<u32> {
+    Vec::new()
 }
 
 #[cfg(not(windows))]

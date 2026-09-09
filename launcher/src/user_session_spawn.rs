@@ -172,7 +172,41 @@ fn enable_cross_session_spawn_privileges() {
     }
 }
 
+/// Spawn into whichever session the resolver calls "the" active one.
+///
+/// Thin wrapper over [`spawn_in_session`], kept because most callers genuinely
+/// want one session: the uninstall handoff and the local-takeover relaunch each
+/// target the user who is driving the operation. The tray supervisor is the
+/// exception and calls `spawn_in_session` per session (item 119).
 pub fn spawn_in_active_user_session(args: &SpawnUserLauncherArgs) -> SpawnResult {
+    let session_id = match common::session::active_interactive_session() {
+        Some(id) => id,
+        None => {
+            return SpawnResult {
+                ok: false,
+                pid: 0,
+                session_id: 0,
+                error_message: Some(
+                    "no active interactive user session found (WTSEnumerateSessions returned no Active session with a logged-on user, and WTSGetActiveConsoleSessionId fallback also failed)"
+                        .to_string(),
+                ),
+            };
+        }
+    };
+    log::info(&format!(
+        "spawn-user-launcher: resolved active interactive session id={session_id}"
+    ));
+    spawn_in_session(session_id, args)
+}
+
+/// Spawn `args.launcher_path` in a NAMED session, as that session's user.
+///
+/// Split out from `spawn_in_active_user_session` for item 119: the tray
+/// supervisor needs to place one tray in each active session, and the caller
+/// therefore has to choose the session rather than have it chosen here.
+/// Everything else — the privilege enable, `WTSQueryUserToken`, the
+/// environment block, `CreateProcessAsUserW` — is unchanged and shared.
+pub fn spawn_in_session(session_id: u32, args: &SpawnUserLauncherArgs) -> SpawnResult {
     use std::ffi::OsStr;
     use std::os::windows::ffi::OsStrExt;
     use windows::Win32::Foundation::{CloseHandle, HANDLE};
@@ -209,23 +243,7 @@ pub fn spawn_in_active_user_session(args: &SpawnUserLauncherArgs) -> SpawnResult
     // remaining two privileges were the cause. See module-level docs.
     enable_cross_session_spawn_privileges();
 
-    let session_id = match common::session::active_interactive_session() {
-        Some(id) => id,
-        None => {
-            return SpawnResult {
-                ok: false,
-                pid: 0,
-                session_id: 0,
-                error_message: Some(
-                    "no active interactive user session found (WTSEnumerateSessions returned no Active session with a logged-on user, and WTSGetActiveConsoleSessionId fallback also failed)"
-                        .to_string(),
-                ),
-            };
-        }
-    };
-    log::info(&format!(
-        "spawn-user-launcher: resolved active interactive session id={session_id}"
-    ));
+    log::info(&format!("spawn-user-launcher: targeting session id={session_id}"));
 
     unsafe {
         let mut user_token: HANDLE = HANDLE::default();
