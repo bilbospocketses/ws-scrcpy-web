@@ -47,6 +47,35 @@ describe('resolveSystemTool — Windows', () => {
     it('falls back to the bare tool name when absent', () => {
         expect(resolveSystemTool('arp', () => false, 'win32')).toBe('arp');
     });
+
+    // Item 123. This used to read `%SystemRoot%` / `%windir%`, which is a
+    // forbidden resolution path under the very Local-Dependencies-Only rule the
+    // function exists to serve — an env var is caller-controlled in the same way
+    // $PATH is. The repo pins the literal elsewhere for the same reason
+    // (elevated_runner.rs, and openBrowser.ts since #653).
+    it('probes the literal C:\\Windows, never an environment variable', () => {
+        const saved = { SystemRoot: process.env['SystemRoot'], windir: process.env['windir'] };
+        try {
+            process.env['SystemRoot'] = 'D:\\Hijacked';
+            process.env['windir'] = 'D:\\AlsoHijacked';
+            const seen: string[] = [];
+            resolveSystemTool(
+                'taskkill',
+                (p) => {
+                    seen.push(p);
+                    return false;
+                },
+                'win32',
+            );
+            expect(seen.every((p) => !p.includes('Hijacked'))).toBe(true);
+            expect(seen.some((p) => p.startsWith('C:\\Windows\\System32\\'))).toBe(true);
+        } finally {
+            for (const [k, v] of Object.entries(saved)) {
+                if (v === undefined) delete process.env[k];
+                else process.env[k] = v;
+            }
+        }
+    });
 });
 
 describe('buildDetachedSpawn', () => {

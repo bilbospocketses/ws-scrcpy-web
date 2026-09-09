@@ -4,19 +4,44 @@
  * %SystemRoot%\System32). Closes the PATH-hijack surface flagged by review #20
  * and required by the Local-Dependencies-Only rule: OS tools
  * (systemctl/pkexec/taskkill/icacls/ip/arp/route/…) are never invoked by bare
- * name, which would resolve via $PATH / %PATH%. Falls back to the bare name only
- * when no absolute candidate exists, so the failure surfaces as a clear ENOENT
- * rather than a silent miss.
+ * name, which would resolve via $PATH / %PATH%.
+ *
+ * The last-resort fallback IS the bare name, and that is deliberate — but not
+ * for the reason this comment used to give. It claimed the bare name "surfaces
+ * a clear ENOENT rather than a silent miss", which is simply false: a bare name
+ * is resolved through PATH and may well succeed. The real reason is
+ * NON-FHS DISTRIBUTIONS. On NixOS and Guix the system tools are not in
+ * /usr/bin, /bin, /usr/sbin or /sbin at all — they live under
+ * /run/current-system/sw/bin — so after the four absolute probes miss, PATH is
+ * the only thing that can still find them. Removing the fallback would resolve
+ * a hardening argument by breaking those systems outright.
+ *
+ * That is materially different from calling `spawn('systemctl')` directly: PATH
+ * is reached only after four absolute candidates have been checked and missed,
+ * so the hijack surface is the narrow tail rather than the default. Corrected
+ * 2026-09-09 (item 123).
  */
 import * as fs from 'node:fs';
 
 /** POSIX search order: user bins first (/usr/bin, /bin), then admin bins (/usr/sbin, /sbin). */
 const POSIX_SEARCH_DIRS = ['/usr/bin', '/bin', '/usr/sbin', '/sbin'] as const;
 
-/** Windows OS tools (taskkill, icacls, arp, route, …) live under %SystemRoot%\System32. */
+/**
+ * Windows OS tools (taskkill, icacls, arp, route, …) live under System32.
+ *
+ * The path is a LITERAL, not `%SystemRoot%`. Reading the env var was the older
+ * shape here, and it is a forbidden resolution path under the same
+ * Local-Dependencies-Only rule this function exists to serve: an env var is
+ * attacker- and caller-controlled in exactly the way `$PATH` is. The repo
+ * already standardises on the literal elsewhere for the same reason —
+ * `launcher/src/elevated_runner.rs` pins `C:\Windows\System32\cmd.exe` with the
+ * comment "OS-stable, never moves", and `openBrowser.ts` did the same in #653.
+ * Fixed 2026-09-09 (item 123), which found the two halves disagreeing.
+ */
+const WINDOWS_ROOT = 'C:\\Windows';
+
 function windowsSystemDirs(): string[] {
-    const root = process.env['SystemRoot'] || process.env['windir'] || 'C:\\Windows';
-    return [`${root}\\System32`, root];
+    return [`${WINDOWS_ROOT}\\System32`, WINDOWS_ROOT];
 }
 
 export function resolveSystemTool(

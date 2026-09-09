@@ -17,6 +17,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **One `resolveSystemTool`, and it no longer reads `%SystemRoot%`** (todo item 123). #653 added a second
+  exported `resolveSystemTool` to `src/server/openBrowser.ts` while `src/server/service/systemTools.ts`
+  already exported one for exactly that purpose — its own doc comment says it exists because it is
+  *"required by the Local-Dependencies-Only rule"*, the very rule #653 was fixing. Nothing caught the
+  duplicate: it compiles, TypeScript is happy because they are different modules, and no test noticed. The
+  twin is deleted and `openBrowser` imports the shared resolver.
+  - **The shared resolver is also the better behaviour here.** It probes `/usr/bin`, `/bin`, `/usr/sbin`
+    and `/sbin`, then falls back to the bare name — which is what still finds `xdg-open` on a **non-FHS
+    distribution** (NixOS, Guix), where none of those directories hold it and the tools live under
+    `/run/current-system/sw/bin`. The deleted copy returned `/usr/bin/<tool>` unconditionally and would
+    simply have failed there.
+  - **`%SystemRoot%` is gone**, replaced by the literal `C:\Windows`. An env var is a forbidden resolution
+    path under the same Local-Dependencies-Only rule, being caller-controlled in the way `$PATH` is, and
+    the repo already pins the literal elsewhere for that reason (`launcher/src/elevated_runner.rs`, and
+    `openBrowser.ts` since #653). A new test hijacks `SystemRoot` and `windir` and asserts neither is
+    consulted.
+  - **The bare-name fallback stays, and its comment is corrected.** It claimed to surface "a clear ENOENT
+    rather than a silent miss", which is false — a bare name resolves through `PATH` and may well succeed.
+    The real justification is the non-FHS case above, which is now what the comment says. Removing the
+    fallback would settle a hardening argument by breaking those distributions outright, so it was not
+    removed.
+
+
+
 ### Fixed
 
 - **Smoke row 10.3 could only ever fail uninformatively.** `test.setTimeout(180_000)` and the
