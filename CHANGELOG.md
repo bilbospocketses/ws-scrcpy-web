@@ -17,6 +17,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`/embed.html` could never authenticate from another site, so the one feature that exists to be
+  embedded was the one that could not be.** Reported in #641 against `0.1.30-beta.112` behind an HTTPS
+  reverse proxy: the iframe painted, the chrome rendered, and the video area showed
+  `WebSocket closed with code 1006` while the server logged `rejected WS connection … missing or invalid
+  token`. The per-instance token cookie was `SameSite=Strict`, and a browser sends no site-scoped cookie
+  on a request a cross-site iframe makes — the WebSocket handshake included — so the transport the embed
+  page depends on was the one transport that could never carry the token. Both cookies now relax to
+  `SameSite=None; Secure; Partitioned` **when, and only when, an operator has allow-listed an embedder**
+  in `frameAncestors` (`security/cookiePolicy.ts`, shared by the token and the login session). `Partitioned`
+  (CHIPS) keys each cookie to the embedding top-level site, so this survives the third-party-cookie
+  phase-out and an embedded session stays separate from the one in your own tab. **Not a CSRF widening:**
+  `SameSite` was never the layer holding that line here — `originGuard`'s Origin/Host match is, on the whole
+  sensitive surface and on every handshake, and it is untouched.
+  - **The login session cookie was broken the same way, independently**, and nothing had reported it yet
+    because it only bites in locked mode: `SameSite=Lax` is not sent from an iframe either, so a
+    locked-mode embed authenticated the document and then closed the socket with `4401`. Fixing only the
+    token would have moved the failure, not removed it. Set and clear now share one code path, because a
+    `Partitioned` cookie is keyed by partition and an unpartitioned delete would leave the framed copy alive.
+  - **`SameSite=None` requires `Secure`, and the app could not previously tell whether it was on https.**
+    `secure` came from whether *Node* terminated TLS, but the deployment we document — and the reporter's —
+    puts Node on plain http at `127.0.0.1:8000` behind a TLS-terminating proxy. Emitting `None` without
+    `Secure` makes browsers drop the cookie outright, which would have broken the ordinary tab as well.
+    `security/forwardedProto.ts` now derives the browser's scheme, honouring `X-Forwarded-Proto` **only from
+    a peer on loopback** — precisely the documented topology, and forgeable by nobody else, with no
+    configuration to get wrong. Where framing is configured but the request is not https, the cookies stay
+    site-scoped and the server says so once in the log rather than failing silently.
+  - Docs: README's Embedding section states the https requirement and that same-site framing never needed
+    it (SameSite is registrable domain **plus scheme**, ignoring port); the reverse-proxy recipe gains the
+    `X-Forwarded-Proto` rule; Access control, SECURITY.md and TECHNICAL_GUIDE §24 describe the relaxation
+    and why it is not a widening. 19 tests.
+
 ## [0.1.30-beta.115] - 2026-09-09
 
 ### Fixed

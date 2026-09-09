@@ -56,6 +56,14 @@ ws-scrcpy-web can run as a background **service** that starts at boot/login and 
 > `X-Frame-Options: SAMEORIGIN` and no CSP `frame-ancestors` entry for it. Everything below assumes you have opted the host origin in first, either by adding it to `frameAncestors` in `config.json` or
 > by approving the consent prompt the embedding app raises. Settings → Embedding shows what is currently approved and can revoke it.
 
+> **Embedding from another *site* requires HTTPS.** Browsers withhold a site-scoped cookie from anything a cross-site iframe requests, including the WebSocket handshake the stream rides on — so the app relaxes its cookies to
+> `SameSite=None; Secure; Partitioned` as soon as `frameAncestors` is non-empty. `Secure` is not optional there, so **the browser's connection to the app must be https**, or the cookies stay site-scoped and the embedded stream
+> closes with `1006` while the page itself renders fine. Terminating TLS at a reverse proxy is enough — forward `X-Forwarded-Proto: https` (see the recipe below) and the app will honour it, but only from a proxy on loopback,
+> which is why the proxy should be the only thing that reaches the app. If the app is not reachable over https, `ws-scrcpy-web.log` says so once at the first cookie it issues.
+>
+> Same-*site* embedding needs none of this. `SameSite` is judged on registrable domain **plus scheme**, ignoring port, so `http://localhost:5159` framing `http://localhost:8000` is same-site and has always worked —
+> but `http://` framing `https://` is not, and neither is `localhost` framing `127.0.0.1`.
+
 ### Embedding: theme bridge
 
 When ws-scrcpy-web is embedded in a cross-origin iframe (once allow-listed, per the note above), the host page can sync
@@ -341,6 +349,8 @@ ws-scrcpy-web is **open by default** — with login off, anyone who can reach th
 
 With login off, the LAN is trusted. The server blocks cross-site (CSRF) and DNS-rebinding attacks with a Host allowlist, an Origin check, a per-launch token cookie, and a framing policy; by default it accepts only `localhost` and IP-literal hosts, and refuses cross-origin framing outright. Those defences stop a malicious *web page* and a rebound *domain name*. They are not a login: the token cookie is handed to anything that can fetch the page, so a client already on your network can use the API. **Turning login on is what makes that a boundary.**
 
+Both cookies the app issues — the per-launch token and the login session — are `HttpOnly` and site-scoped (`SameSite=Strict` and `Lax` respectively). Allow-listing an embedder in `frameAncestors` relaxes both to `SameSite=None; Secure; Partitioned`, because a site-scoped cookie is never sent from a cross-site frame. **This does not weaken the CSRF defence**, which is the Origin/Host match, not `SameSite`: a cross-origin page still fails the Origin check on every `/api` call and every handshake. `Partitioned` (CHIPS) keys each cookie to the embedding top-level site, so an embedded session is its own session and does not ride on the one in your own tab.
+
 To serve it on a domain name behind a TLS-terminating reverse proxy, add the domain(s) to a server-only `allowedHosts` array in `config.json` (read at startup, never exposed via the in-app API), and make sure the proxy forwards the original `Host` header:
 
 ```json
@@ -393,6 +403,8 @@ The two notes above meet in the common case: you run the container on one machin
 1. **Tell the app its name.** `allowedHosts` in `config.json` (on the `/data` volume, e.g. `docker exec ws-scrcpy-web sh -c 'cat /data/config.json'`) must list the domain, or every request arriving with that `Host` is refused as a possible DNS-rebinding attack. It is read at startup only, so restart the container after editing it. Details in [SECURITY.md](SECURITY.md#access-control).
 2. **Forward `Host` unchanged.** The Origin check compares the browser's `Origin` against the request's own `Host`; a proxy that rewrites `Host` to `localhost` makes every API call look cross-origin and it is rejected.
 3. **Pass WebSockets through.** Device streams, the shell and the scan all ride on WebSocket upgrades; a proxy that does not forward the `Upgrade` / `Connection` headers serves the page and then nothing moves.
+
+A fourth rule applies only if you also embed the app in a cross-site iframe: **forward `X-Forwarded-Proto: https`**, or the cookies stay site-scoped and the embedded stream cannot authenticate (see [Embedding](#embedding)). Caddy sets it by default; the nginx block below sets it explicitly. The app honours the header only when the request arrives over loopback, so keep the container bound to `127.0.0.1` as below and nothing on the LAN can claim to be your proxy.
 
 **Caddy** does all three by default, so the whole configuration is:
 

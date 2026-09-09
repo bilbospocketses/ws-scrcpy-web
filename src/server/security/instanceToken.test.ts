@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
+import { setFrameAncestors } from './frameGuard';
 import {
     buildTokenCookie,
     getInstanceToken,
@@ -64,6 +65,37 @@ describe('instanceToken', () => {
 
         it('adds the Secure attribute on secure connections', () => {
             expect(buildTokenCookie(true)).toContain('Secure');
+        });
+
+        // #641: the cookie the WebSocket handshake depends on was never sent
+        // from a cross-site iframe, so /embed.html could not authenticate in
+        // any deployment where the embedder is a different site.
+        describe('with an embedder allow-listed', () => {
+            afterEach(() => {
+                setFrameAncestors([]);
+            });
+
+            it('relaxes to None; Secure; Partitioned over https', () => {
+                setFrameAncestors(['https://dashboard.example.net']);
+                const cookie = buildTokenCookie(true);
+
+                expect(cookie).toContain(`ws_scrcpy_token=${getInstanceToken()}`);
+                expect(cookie).toContain('SameSite=None');
+                expect(cookie).toContain('Secure');
+                expect(cookie).toContain('Partitioned');
+                expect(cookie).toContain('HttpOnly');
+                expect(cookie).not.toContain('SameSite=Strict');
+            });
+
+            it('stays Strict over plain http, where None would be dropped by the browser', () => {
+                setFrameAncestors(['https://dashboard.example.net']);
+                const cookie = buildTokenCookie(false);
+
+                expect(cookie).toContain('SameSite=Strict');
+                expect(cookie).not.toContain('SameSite=None');
+                expect(cookie).not.toContain('Partitioned');
+                expect(cookie).not.toContain('Secure');
+            });
         });
     });
 

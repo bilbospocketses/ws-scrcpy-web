@@ -7,12 +7,19 @@ import { Readable } from 'stream';
  * (`readJsonBody`) work — the minimal `{ url, method }` stub used elsewhere
  * hangs them. Shared across Phase 2/3/4 handler tests. Pass a `Cookie` header
  * via `headers` for auth tests.
+ *
+ * `socket` fills in the fields handlers read off the connection itself:
+ * `encrypted` (did THIS process terminate TLS) and `remoteAddress` (which is
+ * what makes an `X-Forwarded-Proto` header trustworthy — see forwardedProto).
+ * Omit it and there is no socket at all, which is the pre-existing behaviour
+ * every other test relies on.
  */
 export function makeReqRes(
     method: string,
     url: string,
     body?: unknown,
     headers: Record<string, string> = {},
+    socket?: { encrypted?: boolean; remoteAddress?: string },
 ): {
     req: IncomingMessage;
     res: ServerResponse;
@@ -28,6 +35,9 @@ export function makeReqRes(
     req.method = method;
     req.url = url;
     req.headers = { 'content-type': 'application/json', ...headers };
+    if (socket) {
+        (req as { socket?: unknown }).socket = socket;
+    }
     let status = 0;
     const chunks: string[] = [];
     const setHeaders: Record<string, string> = {};

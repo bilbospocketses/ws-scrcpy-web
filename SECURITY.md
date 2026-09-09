@@ -44,7 +44,7 @@ ws-scrcpy-web is **open (no login) by default**, intended for a trusted local or
 
 - **Host allowlist** — the `Host` header must be `localhost`, an IP literal, or a configured `allowedHosts` entry. Bare domains are rejected (DNS-rebinding defense).
 - **Origin match** — for the API / WebSocket surface, a present `Origin` must be same-origin (CSRF defense).
-- **Per-instance token** — a random per-launch `HttpOnly; SameSite=Strict` cookie gates the API and the WebSocket upgrade, so a non-browser client that never loaded the page is refused.
+- **Per-instance token** — a random per-launch `HttpOnly; SameSite=Strict` cookie gates the API and the WebSocket upgrade, so a non-browser client that never loaded the page is refused. Allow-listing an embedder relaxes it, and the login session cookie, to `SameSite=None; Secure; Partitioned` so a cross-site iframe can authenticate at all; the Origin/Host match, not `SameSite`, is what stops cross-site requests, and it is unchanged.
 
 **What these layers do not do.** They defend against a *cross-site page* and a *rebound domain name*. They are not authentication, and in open mode the whole LAN is trusted:
 
