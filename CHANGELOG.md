@@ -17,6 +17,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`fetch-prebuilts` retries the transient half of a failed download instead of exiting 1** (todo item
+  121). All three downloads in `scripts/fetch-prebuilts.mjs` — the manifest, `SHA256SUMS`, and the
+  tarball — were one shot: any non-OK status went straight to `process.exit(1)`. The script runs inside
+  the **required** `build-and-test` check (`vitest.globalSetup.ts` invokes it), so on 2026-09-09, when
+  GitHub answered `500` for one of our own release assets, `main` went red over a blip that had already
+  cleared by the time anyone opened the log.
+  - **Three attempts, backing off 2s then 4s**, via a new exported `fetchWithRetry`.
+  - **The retry list is deliberately narrow: `429` and `5xx` only**, plus network/abort errors (DNS,
+    reset, the 30s `AbortSignal` timeout). A `404` is a real answer — the asset does not exist — and
+    retrying it only converts a fast, clear failure into a slow, identical one. `401`/`403` are the same:
+    no amount of waiting grows a permission.
+  - **The last attempt's response is returned as-is**, so the existing `console.error` still reports the
+    real status and the script still exits 1 on a genuine failure. Each retry prints the attempt, the
+    reason and the wait to stderr, so a green run that rode over a blip still says so in the log.
+  - 14 unit tests cover the status predicate, the backoff sequence, the 404 no-retry path, exhausting the
+    budget on both a status and a thrown error, and the `onRetry` reporting. `fetchImpl` and `sleep` are
+    injectable, so none of them touch the network or actually wait.
+
 ### Changed
 
 - **Biome is clean: 0 warnings, 0 infos across 566 files** (todo item 122). The lint step exits 0 on
@@ -38,7 +58,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     reordering can satisfy the rule (moving a block just re-points the complaint at the next rule above
     it). So each site carries a suppression naming its reason, and Biome's own `suppressions/unused`
     check turns a suppression red the moment it stops applying.
-  - **`modal.css` gained 37 lines and lost zero** — the change is comments only, with every selector and
+  - **`modal.css` gained 50 lines and lost zero** — the change is comments only, with every selector and
     declaration byte-identical. The tempting "proper" fix, rewriting the `.modal-advanced` selector list
     as `:is(select, input:not([type="checkbox"]))`, was tried and reverted: it is the same match set but
     raises specificity from (0,2,2) to (0,3,2), which levels it with the `:disabled` rule above and — by
