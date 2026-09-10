@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.119] - 2026-09-09
+
 ### Fixed
 
 - **A failed version check no longer silently skips a dependency for the whole boot** (todo items 124 and
