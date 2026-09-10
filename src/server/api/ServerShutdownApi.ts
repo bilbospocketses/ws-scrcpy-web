@@ -1,15 +1,11 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { isAuthEnabled } from '../auth/authState';
 import { requireAdmin } from '../auth/requireAdmin';
+import { hasAuthenticatedUser } from '../auth/requireOperator';
 import { Config } from '../Config';
 import { Logger } from '../Logger';
 import { isValidToken, parseTokenFromCookie } from '../security/instanceToken';
 import { isLoopback } from '../security/loopback';
-
-/** Whether AuthGate attached a validated session user to this request. */
-function hasAuthenticatedUser(req: IncomingMessage): boolean {
-    return (req as IncomingMessage & { user?: unknown }).user !== undefined;
-}
 
 const log = Logger.for('ServerShutdownApi');
 
