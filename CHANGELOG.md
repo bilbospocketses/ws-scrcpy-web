@@ -51,6 +51,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     version checks keep the 30s deadline they never had.
   - 25 new tests. The four regression tests were verified in the failing direction by disabling the
     `res.ok` guard — all four fail without it.
+  - **A failed *update* check no longer condemns an *installed* dependency.** The first cut of this fix
+    threw on any non-OK response, which is right when nothing is installed (that is the case item 124 is
+    about — `autoInstallMissing` skips it and the user must be told) and wrong when the dependency is
+    already there. The Docker image **seeds** scrcpy-server, so in a container it is present and usable
+    while `api.github.com` still rate-limits the *"is there a newer one"* lookup. Marking that `Error`
+    told smoke 20.9 and 20.12 a healthy container was faulty. Now: not installed → `Error`, as intended;
+    installed → keep it, report the update status as unknown, log at info.
+  - **The version-check phase no longer gates the whole hydrate.** Boot is
+    `checkAll().then(() => autoInstallMissing())`, and the seed promote plus every install lives inside
+    `autoInstallMissing` — so time spent checking versions is time before anything is installed at all.
+    Two changes: `checkAll` now runs the three latest-checks **concurrently** (worst case becomes the
+    slowest one rather than the sum), and version checks get their own **`VERSION_CHECK_POLICY`** — 2
+    attempts, 1s backoff, 10s timeout — instead of the download budget. With the download policy in that
+    position, one unreachable endpoint could hold the gate ~96s and three serially ~288s, which is what
+    blew 20.9's 180s hydrate poll and 20.12's 300s wait and left 1.9 reading `checking` where it expected
+    `error`. Downloads keep the generous budget; they are not in front of anything.
+  - 6 further tests pin all of it, including a concurrency test that counts **peak in-flight requests**
+    rather than elapsed time, so it cannot flake on a slow box. Both halves verified in the failing
+    direction by mutation: forcing the `Error` branch fails the installed-dependency test, and restoring
+    the serial loop fails the concurrency test.
 
 - **`fetch-prebuilts` retries the transient half of a failed download instead of exiting 1** (todo item
   121). All three downloads in `scripts/fetch-prebuilts.mjs` — the manifest, `SHA256SUMS`, and the

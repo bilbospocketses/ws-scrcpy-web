@@ -49,8 +49,31 @@ export interface RetryNotice {
     reason: string;
 }
 
+/**
+ * The budget for a "what is the latest version" query, which is NOT the budget
+ * for a download.
+ *
+ * Boot runs `checkAll().then(() => autoInstallMissing())`, and the seed promote
+ * plus every install lives inside `autoInstallMissing` — so time spent checking
+ * versions is time before ANY dependency is installed. With the download policy
+ * (3 attempts x 30s, plus 2s and 4s of backoff) one unreachable endpoint could
+ * hold that gate for ~96s, and three of them serially for ~288s. Measured
+ * 2026-09-09: that blew smoke 20.9's 180s hydrate poll and 20.12's 300s wait,
+ * and left 1.9 reading `checking` where it expected `error`.
+ *
+ * A version check is advisory — the app runs fine not knowing the latest
+ * version — so it gets a short, bounded budget and gets out of the way.
+ */
+export const VERSION_CHECK_POLICY = {
+    attempts: 2,
+    baseDelayMs: 1_000,
+    timeoutMs: 10_000,
+} as const;
+
 export interface FetchWithRetryOptions {
     attempts?: number;
+    /** Backoff base for `retryDelayMs`. Defaults to `RETRY_BASE_DELAY_MS` (2s). */
+    baseDelayMs?: number;
     /**
      * Per-attempt deadline, via `AbortSignal.timeout`. `null` disables it.
      *
@@ -85,6 +108,7 @@ const defaultSleep = (ms: number): Promise<void> => new Promise((resolve) => set
 export async function fetchWithRetry(url: string, opts: FetchWithRetryOptions = {}): Promise<Response> {
     const {
         attempts = DEFAULT_ATTEMPTS,
+        baseDelayMs = RETRY_BASE_DELAY_MS,
         timeoutMs = DEFAULT_FETCH_TIMEOUT_MS,
         fetchImpl = fetch,
         sleep = defaultSleep,
@@ -107,7 +131,7 @@ export async function fetchWithRetry(url: string, opts: FetchWithRetryOptions = 
             }
             onRetry({ url, attempt, attempts, reason: err instanceof Error ? err.message : String(err) });
         }
-        await sleep(retryDelayMs(attempt));
+        await sleep(retryDelayMs(attempt, baseDelayMs));
     }
 }
 

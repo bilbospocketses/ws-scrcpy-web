@@ -6,7 +6,7 @@ import { promisify } from 'util';
 import { Logger } from './Logger';
 import { loadManifest } from './NodePtyResolver';
 import { getInstalledScrcpyServerVersion } from './scrcpyServerVersion';
-import { fetchOkWithRetry } from './util/fetchWithRetry';
+import { fetchOkWithRetry, VERSION_CHECK_POLICY } from './util/fetchWithRetry';
 
 const log = Logger.for('DependencyDefinitions');
 
@@ -83,6 +83,7 @@ export function getDependencyDefinitions(depsPath: string): DependencyDefinition
             },
             checkLatest: async () => {
                 const res = await fetchOkWithRetry('https://nodejs.org/dist/index.json', {
+                    ...VERSION_CHECK_POLICY,
                     onRetry: (n) => log.warn(`node latest check ${n.attempt}/${n.attempts}: ${n.reason}`),
                 });
                 const releases = (await res.json()) as { version: string; lts: string | false }[];
@@ -132,6 +133,7 @@ export function getDependencyDefinitions(depsPath: string): DependencyDefinition
             },
             checkLatest: async () => {
                 const res = await fetchOkWithRetry('https://dl.google.com/android/repository/repository2-3.xml', {
+                    ...VERSION_CHECK_POLICY,
                     onRetry: (n) => log.warn(`adb latest check ${n.attempt}/${n.attempts}: ${n.reason}`),
                 });
                 const xml = await res.text();
@@ -176,6 +178,7 @@ export function getDependencyDefinitions(depsPath: string): DependencyDefinition
                 // they hydrated in the run where this one did not.
                 const res = await fetchOkWithRetry('https://api.github.com/repos/Genymobile/scrcpy/releases/latest', {
                     init: { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'ws-scrcpy-web' } },
+                    ...VERSION_CHECK_POLICY,
                     onRetry: (n) => log.warn(`scrcpy-server latest check ${n.attempt}/${n.attempts}: ${n.reason}`),
                 });
                 const data = (await res.json()) as { tag_name: string };
