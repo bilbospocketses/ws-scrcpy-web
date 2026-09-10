@@ -1,5 +1,44 @@
 /* ── Native <dialog> modal system ── */
 
+/* ── A note on the noDescendingSpecificity suppressions below (item 122, audited
+   2026-09-09) ──
+   Biome flagged 11 selectors in this file. Every one was checked by hand against
+   the rule it was flagged against, and all 11 are false positives, for one of
+   three reasons:
+
+   1. DISJOINT PROPERTIES (.modal-frame, 6 sites). The high-specificity rules
+      they collide with are the nested-modal and light-theme frame overrides
+      right below, which set `background` and nothing else. Every flagged rule
+      sets opacity/transform/transition or width/max-height — never `background`
+      — so nothing is shadowed either way.
+   2. MUTUALLY EXCLUSIVE DIALOG CLASSES (.modal-body, 3 sites).
+      `dialog.modal.shell-modal` versus `dialog.connect-modal`,
+      `dialog.list-files-modal`, `dialog.service-operation-modal`: a dialog
+      carries exactly one of these, so no element ever matches two of them.
+   3. SIBLING CONTAINERS (.modal-advanced, 2 sites). `.modal-controls` and
+      `.modal-advanced` are SIBLINGS — `ConfigureScrcpy.buildBody()` appends both
+      to the modal body — so an input under one is never under the other.
+
+   The rule assumes a stylesheet ordered by specificity; this one is ordered by
+   component section, which is the right organisation for it and cannot be
+   reconciled with the rule by reordering (moving a block merely re-points the
+   complaint at the next-highest rule above it). So the rule stays ON — it still
+   guards every other selector in this repo, and Biome's own `suppressions/unused`
+   check turns a suppression red once it stops applying — and all 11 sites carry
+   a suppression naming which of the three reasons applies: nine inline, plus one
+   `biome-ignore-start`/`-end` range over the `.modal-advanced` field rule (a
+   selector list needs one suppression per flagged selector, and interleaving
+   comments inside the list makes the formatter rewrap it).
+
+   NOT DONE, deliberately: raising the flagged selectors' specificity to silence
+   the rule "properly". Rewriting the `.modal-advanced` list as
+   `:is(select, input:not([type="checkbox"]))` does exactly that — same match set,
+   specificity (0,3,2) instead of (0,2,2) — and it CHANGES BEHAVIOUR. At (0,2,2)
+   the `select` selector loses to the `:disabled` rule above (also (0,3,2)) and a
+   disabled advanced select keeps its faded background; level them up and this
+   rule, being later, wins instead. Nothing here is worth a visual regression, so
+   the properties stay exactly as they were and only comments were added. */
+
 /* The <dialog> itself is an invisible full-screen positioning layer.
    padding:0 is critical: clicks on ::backdrop bubble to the <dialog> element,
    and we detect backdrop clicks by checking event.target === dialog.
@@ -82,6 +121,7 @@ dialog.modal[open] {
 }
 
 /* Frame: exit-end state (invisible, scaled down) */
+/* biome-ignore lint/style/noDescendingSpecificity: no background here; the earlier higher-specificity rule sets background only — disjoint properties, see the audit note at the top */
 dialog.modal .modal-frame {
     opacity: 0;
     transform: scale(0.96) translateY(8px);
@@ -91,6 +131,7 @@ dialog.modal .modal-frame {
 }
 
 /* Frame: visible state when open */
+/* biome-ignore lint/style/noDescendingSpecificity: no background here; the earlier higher-specificity rule sets background only — disjoint properties, see the audit note at the top */
 dialog.modal[open] .modal-frame {
     opacity: 1;
     transform: scale(1) translateY(0);
@@ -329,6 +370,7 @@ dialog.modal .modal-advanced .label {
     font-size: 13px;
 }
 
+/* biome-ignore-start lint/style/noDescendingSpecificity: reason 3 from the note at the top — `.modal-advanced` is a SIBLING of `.modal-controls` (ConfigureScrcpy.buildBody appends both to the modal body), never nested inside it, so no element ever matches both */
 dialog.modal .modal-advanced .input,
 dialog.modal .modal-advanced select,
 dialog.modal .modal-advanced input:not([type="checkbox"]) {
@@ -341,6 +383,7 @@ dialog.modal .modal-advanced input:not([type="checkbox"]) {
     color: var(--text-color, #ddd);
     padding: 4px 8px;
 }
+/* biome-ignore-end lint/style/noDescendingSpecificity: end of the sibling-container block above */
 
 dialog.modal .modal-controls input[type="checkbox"],
 dialog.modal .modal-advanced input[type="checkbox"] {
@@ -441,6 +484,7 @@ dialog.modal .connect-btn:disabled {
 }
 
 /* ── Shell modal overrides ── */
+/* biome-ignore lint/style/noDescendingSpecificity: no background here; the earlier higher-specificity rule sets background only — disjoint properties, see the audit note at the top */
 dialog.modal.shell-modal .modal-frame {
     width: clamp(500px, 90vw, 1600px);
     max-height: 90vh;
@@ -469,12 +513,14 @@ dialog.modal .terminal-container {
 }
 
 /* ── Connect modal overrides ── */
+/* biome-ignore lint/style/noDescendingSpecificity: no background here; the earlier higher-specificity rule sets background only — disjoint properties, see the audit note at the top */
 dialog.connect-modal .modal-frame {
     max-height: 90vh;
     width: fit-content;
     max-width: 95vw;
 }
 
+/* biome-ignore lint/style/noDescendingSpecificity: dialog.connect-modal and dialog.modal.shell-modal are mutually exclusive — no element matches both */
 dialog.connect-modal .modal-body {
     padding: 0;
     display: flex;
@@ -498,11 +544,13 @@ dialog.connect-modal .touch-layer {
 }
 
 /* ── List files modal overrides ── */
+/* biome-ignore lint/style/noDescendingSpecificity: no background here; the earlier higher-specificity rule sets background only — disjoint properties, see the audit note at the top */
 dialog.list-files-modal .modal-frame {
     width: clamp(500px, 70vw, 900px);
     max-height: 85vh;
 }
 
+/* biome-ignore lint/style/noDescendingSpecificity: dialog.list-files-modal and dialog.modal.shell-modal are mutually exclusive — no element matches both */
 dialog.list-files-modal .modal-body {
     padding: 0;
     display: flex;
@@ -517,6 +565,7 @@ dialog.list-files-modal .modal-body {
    scrollbar. The extra horizontal room lets that text breathe (fewer wrapped
    lines -> shorter content). Scoped to .settings-modal so the small confirm
    modals (AdminConfirmModal etc.) stay narrow. */
+/* biome-ignore lint/style/noDescendingSpecificity: no background here; the earlier higher-specificity rule sets background only — disjoint properties, see the audit note at the top */
 dialog.settings-modal .modal-frame {
     width: clamp(460px, 66vw, 820px);
     /* 95vh (not the base 80vh / prior 85vh): the App + Updates + Service
@@ -767,6 +816,7 @@ dialog.service-operation-modal .modal-header-controls {
     display: none;
 }
 
+/* biome-ignore lint/style/noDescendingSpecificity: dialog.service-operation-modal and dialog.modal.shell-modal are mutually exclusive — no element matches both */
 dialog.service-operation-modal .modal-body {
     text-align: center;
     padding: 1rem 0;
