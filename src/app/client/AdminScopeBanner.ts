@@ -135,12 +135,54 @@ export class AdminScopeBanner {
         signIn.className = 'admin-scope-banner__primary';
         signIn.textContent = 'Set up sign-in';
 
+        signIn.addEventListener('click', () => {
+            void this.onSetUpSignIn();
+        });
+
         const allow = document.createElement('button');
         allow.type = 'button';
         allow.className = 'admin-scope-banner__secondary';
         allow.textContent = 'Allow remote admin without sign-in';
+        allow.addEventListener('click', () => {
+            void this.onAllowRemoteAdmin();
+        });
 
         actions.append(signIn, allow);
         this.container.append(title, body, actions);
+    }
+
+    /**
+     * Open the surface that owns sign-in setup.
+     *
+     * The Users section is that surface: creating the first admin WITH a password is what runs
+     * lockdown and flips `authEnabled` (see UsersApi). There is no direct per-section entry point
+     * on SettingsModal yet, so this opens Settings and the user lands one scroll away.
+     *
+     * POST /api/auth/enable is operator-gated, so a remote caller could not complete this even if
+     * the button were forged into their page.
+     */
+    private async onSetUpSignIn(): Promise<void> {
+        const { SettingsModal } = await import('./SettingsModal');
+        new SettingsModal();
+    }
+
+    /**
+     * Declining the warning is not a dead end — it routes to the recommended path. The card exists
+     * to move people toward sign-in; someone who backs out of the risky option is exactly who
+     * should be shown the safe one.
+     */
+    private async onAllowRemoteAdmin(): Promise<void> {
+        const { RemoteAdminWarningModal } = await import('./RemoteAdminWarningModal');
+        const accepted = await RemoteAdminWarningModal.confirm();
+        if (!accepted) {
+            void this.onSetUpSignIn();
+            return;
+        }
+        await fetch('/api/config', {
+            method: 'PATCH',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ allowRemoteAdmin: true }),
+        });
+        await this.refresh();
     }
 }

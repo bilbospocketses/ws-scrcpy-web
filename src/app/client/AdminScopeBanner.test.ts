@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FirstRunStatus } from '../../common/ConfigEvents';
 import { AdminScopeBanner, bannerStateFor } from './AdminScopeBanner';
 
@@ -75,5 +75,69 @@ describe('AdminScopeBanner polling lifecycle', () => {
         expect(fetchSpy.mock.calls.length).toBe(callsAfterStart);
         vi.useRealTimers();
         vi.unstubAllGlobals();
+    });
+});
+
+// The card is a funnel toward sign-in, so backing out of the risky option must
+// route to the safe one — and must not have widened anything on the way.
+describe('AdminScopeBanner opt-out wiring', () => {
+    beforeEach(() => {
+        HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) {
+            this.setAttribute('open', '');
+        });
+        HTMLDialogElement.prototype.close = vi.fn(function (this: HTMLDialogElement) {
+            this.removeAttribute('open');
+        });
+    });
+
+    afterEach(() => {
+        document.body.replaceChildren();
+        vi.unstubAllGlobals();
+    });
+
+    it('declining the warning routes to sign-in and does NOT patch config', async () => {
+        const fetchSpy = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ runtime: {} }) });
+        vi.stubGlobal('fetch', fetchSpy);
+        const banner = new AdminScopeBanner();
+        banner.render(runtime({ adminScope: 'local', callerIsLocal: true }));
+        const allow = [...banner.getElement().querySelectorAll('button')].find(
+            (b) => b.textContent === 'Allow remote admin without sign-in',
+        );
+        allow?.click();
+        // Let the dynamic import + the modal's queueMicrotask body settle.
+        await vi.waitFor(() => {
+            expect(document.querySelector('dialog')).toBeTruthy();
+        });
+        const decline = [...document.querySelectorAll('button')].find(
+            (b) => b.textContent === 'Set up sign-in instead',
+        );
+        decline?.click();
+        await vi.waitFor(() => {
+            expect(document.querySelectorAll('dialog').length).toBeGreaterThan(0);
+        });
+        const patched = fetchSpy.mock.calls.some(([, init]) => (init as RequestInit | undefined)?.method === 'PATCH');
+        expect(patched).toBe(false);
+    });
+
+    it('accepting the warning PATCHes allowRemoteAdmin: true', async () => {
+        const fetchSpy = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ runtime: {} }) });
+        vi.stubGlobal('fetch', fetchSpy);
+        const banner = new AdminScopeBanner();
+        banner.render(runtime({ adminScope: 'local', callerIsLocal: true }));
+        [...banner.getElement().querySelectorAll('button')]
+            .find((b) => b.textContent === 'Allow remote admin without sign-in')
+            ?.click();
+        await vi.waitFor(() => {
+            expect(document.querySelector('dialog')).toBeTruthy();
+        });
+        [...document.querySelectorAll('button')]
+            .find((b) => b.textContent === 'I understand — allow remote admin')
+            ?.click();
+        await vi.waitFor(() => {
+            const patch = fetchSpy.mock.calls.find(([, init]) => (init as RequestInit | undefined)?.method === 'PATCH');
+            expect(patch).toBeTruthy();
+            const init = (patch as unknown[])[1] as RequestInit;
+            expect(JSON.parse(init.body as string)).toEqual({ allowRemoteAdmin: true });
+        });
     });
 });
