@@ -2001,10 +2001,16 @@ describe('ServiceApi', () => {
 
         // ── win32 branch (mirrors the linux structure: spawn the detached Rust
         //    helper, 200 uninstalling, scheduleExit). The staged launcher carries
-        //    raw `--windows-app-uninstall` argv; elevation is delegated to
-        //    Update.exe (PerMachine UAC manifest) at runtime, the same
-        //    "elevation lives in the launcher" model as the §30 --request-uac
-        //    path and the linux helper's pkexec self-elevation.
+        //    raw `--windows-app-uninstall` argv and THIS spawn stays unelevated;
+        //    the helper elevates itself via ShellExecuteExW(verb="runas") before
+        //    running msiexec — the same "elevation lives in the launcher" model
+        //    as the §30 --request-uac path and the linux helper's pkexec
+        //    self-elevation.
+        //
+        //    This used to say elevation was delegated to Update.exe's PerMachine
+        //    UAC manifest. It was not: #120 put msiexec first on every MSI
+        //    install, so Update.exe never ran, nothing requested a token, and
+        //    `msiexec /x` failed with Error 1730 (item 128).
 
         it('POST /uninstall-app {keep:false} on win32 → 200 uninstalling, spawns the staged launcher with --windows-app-uninstall --wipe + Update.exe', async () => {
             const client = fakeClient();

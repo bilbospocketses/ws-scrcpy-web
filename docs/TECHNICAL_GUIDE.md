@@ -1721,6 +1721,38 @@ The uninstall flow avoids UAC by deferring privileged work to a `post-stop.bat` 
 7. The fresh launcher writes its `webPort` to `config.json` and drops a stop marker. The operation-server detects the stop marker (or the fresh Node's readiness via `/api/discover`) and winds down.
 8. The browser's `ServiceOperationModal` detects the `config.json` mtime change, reads the new `webPort`, and navigates to the local-mode URL.
 
+### 19.2b Windows App Uninstall (whole-app removal) — distinct from 19.2
+
+**Do not confuse this with 19.2.** That section removes the *service* and deliberately avoids UAC by
+deferring privileged work to Servy's `post-stop.bat`. This one removes *the whole application*, and it
+**does** raise a UAC prompt.
+
+Entry point is `POST /api/service/uninstall-app` (Settings → Server → Uninstall…), which spawns the Rust
+helper with `--windows-app-uninstall` and sacrifices the local instance so the helper can remove the
+running install from outside it.
+
+1. **Phase 1** stages a copy of the launcher in temp (`ws-scrcpy-web-uninstall-<pid>.exe`) so the
+   original's image lock can release, then spawns that copy and exits.
+2. **Phase 2** (the copy) waits for phase 1 to exit, removes the app, then deletes the data-root targets
+   with a bounded retry. `keep` preserves `config.json` + `logs/`; `--wipe` takes the whole root.
+
+**Removal is `msiexec /x <ProductCode>`, not Update.exe.** Every real Windows install of this app is the
+MSI, and Velopack refuses to uninstall one (#120). The ProductCode is discovered from the ARP
+`UninstallString`, never hardcoded and never read from the key leaf — this app's key is literally
+`MSI:WsScrcpyWeb`. `Update.exe --uninstall` remains the path when no MSI ARP entry exists.
+
+**Phase 1 elevates the cleaner** with `ShellExecuteExW(verb="runas")` — the same hand-off §30 uses for
+`--request-uac`. Removing a per-machine MSI needs an elevated token, and without one `msiexec` answers
+`Error 1730` and the uninstall silently does nothing (item 128, measured on beta.119). The prompt fires
+in phase 1, while the app the user clicked is still alive, rather than later from a detached temp
+binary. Elevation is requested **only** when it is needed — an MSI install *and* a non-elevated process —
+so a per-user Velopack install and an already-elevated process spawn exactly as before.
+
+**A declined prompt deletes nothing** and returns `1223` (`ERROR_CANCELLED`), never 0. More generally,
+**a failed uninstall deletes nothing** (#655): the data root is only touched after removal is confirmed,
+and the log says the app is still installed and can be removed from Add/Remove Programs. Before #655 a
+refused uninstall gutted the install and reported success.
+
 ### 19.3 API Endpoints
 
 | Method | Path | Purpose |
@@ -1729,7 +1761,7 @@ The uninstall flow avoids UAC by deferring privileged work to a `post-stop.bat` 
 | POST | `/api/service/install` | Install the service. Triggers UAC. Returns 501 if not a Velopack install. |
 | POST | `/api/service/uninstall` | Uninstall the service via the operation-server pattern (no UAC). |
 | POST | `/api/service/install-system-wide` | (Linux) Relocate a local install to a machine-wide `/opt` install under one `pkexec` prompt; re-execs from `/opt`. |
-| POST | `/api/service/uninstall-app` `{keep}` | (Linux) Complete app uninstall — cascades through any service + `/opt` in one pass; `keep` preserves `config.json` + logs. |
+| POST | `/api/service/uninstall-app` `{keep}` | **(Linux + Windows)** Complete app uninstall — see 19.2b. On Linux it cascades through any service + `/opt` in one pass. `keep` preserves `config.json` + logs. |
 
 ### 19.4 Config.json Port Discovery
 

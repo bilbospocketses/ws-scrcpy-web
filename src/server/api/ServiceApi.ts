@@ -1138,14 +1138,26 @@ export class ServiceApi {
      * helper self-elevates (root → direct; non-root → pkexec; declined →
      * relaunch local), so this spawn stays unelevated.
      *
-     * win32 (`--windows-app-uninstall`): the helper runs
-     * `<installRoot>\Update.exe --uninstall` (fires Velopack's --veloapp-uninstall
-     * hook → service/tray teardown + ARP cleanup) then removes the dataRoot
-     * targets. Elevation is delegated to Update.exe (a PerMachine install's
-     * Update.exe self-elevates via UAC) — the same "elevation lives in the
-     * launcher binary" model as the §30 --request-uac path; this spawn itself
-     * stays unelevated. Both branches mirror the detached teardown handoff in
-     * handleUninstall.
+     * win32 (`--windows-app-uninstall`): the helper stages a copy of itself in
+     * temp and that copy does the work — on an MSI install (which is every real
+     * Windows install of this app) `msiexec /x <ProductCode>`, falling back to
+     * `<installRoot>\Update.exe --uninstall` only when no MSI ARP entry exists.
+     *
+     * **The cleaner elevates itself** via `ShellExecuteExW(verb="runas")`, the
+     * same mechanism as the §30 --request-uac path. This spawn stays unelevated;
+     * the UAC prompt is raised by the helper in its first phase, while this app
+     * is still alive.
+     *
+     * This paragraph used to say elevation was "delegated to Update.exe, which
+     * self-elevates via UAC". That was never true on an MSI install — #120 made
+     * `perform_uninstall` reach for msiexec FIRST, so Update.exe was not on the
+     * path at all — and nothing else asked for a token either, so `msiexec /x`
+     * died on `Error 1730` and the in-app uninstall silently did nothing on
+     * every Windows install (item 128). The comment asserting elevation was
+     * handled is a large part of why that went unnoticed; it is corrected here
+     * rather than deleted, so the next reader knows the claim was checked.
+     *
+     * Both branches mirror the detached teardown handoff in handleUninstall.
      *
      * `keep` (request body) preserves config.json + logs/ (`--keep`) vs. wiping
      * all state (`--wipe`). On keep we ALSO reset installMode to null up front so
