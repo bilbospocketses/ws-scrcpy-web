@@ -254,7 +254,7 @@ describe('checkLatest rejects a non-OK response instead of returning null (item 
     it('scrcpy-server: a rate-limited 403 throws rather than silently yielding null', async () => {
         // The literal body GitHub returns when the unauthenticated hourly cap is hit.
         fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValue(
-            new Response(JSON.stringify({ message: "API rate limit exceeded for 20.1.2.3.", documentation_url: '' }), {
+            new Response(JSON.stringify({ message: 'API rate limit exceeded for 20.1.2.3.', documentation_url: '' }), {
                 status: 403,
                 statusText: 'rate limit exceeded',
                 headers: { 'content-type': 'application/json' },
