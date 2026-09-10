@@ -1300,7 +1300,11 @@ git -C "C:/Users/jscha/source/repos/ws-scrcpy-web" commit -m "feat(settings): ta
 
 **Interfaces:**
 - Consumes: `TabDef` (Task 6), `StagedSettingsStore` (Task 4).
-- Produces: `export function buildEmbeddingTab(ctx: TabContext): HTMLElement` and the same for `Users` and `Service`; `export interface TabContext { role: Role | null; authEnabled: boolean; docker: boolean; reload(): void }`
+- Produces: `export function buildEmbeddingTab(ctx: TabContext, store: StagedSettingsStore): HTMLElement` and the same for `Users` and `Service`; `export interface TabContext { role: Role | null; authEnabled: boolean; docker: boolean; reload(): void }`
+
+**All three take `store` and ignore it.** The uniform two-argument signature is deliberate: it lets the
+"registers nothing" guarantee be table-tested across all three tabs in one assertion, and it removes any
+question about whether an action tab is *allowed* to stage — it can reach the store and chooses not to.
 
 **These three register NOTHING with the store.** They are actions, and that absence is the mechanism keeping them out of the summary. Do not add fields here.
 
