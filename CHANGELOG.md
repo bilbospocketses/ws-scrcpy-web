@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.120] - 2026-09-10
+
 ### Security
 
 - Admin actions now require proof that the caller is the operator — loopback, or a signed-in admin
