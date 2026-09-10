@@ -3,6 +3,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { promisify } from 'util';
+import { SERVER_VERSION } from '../common/Constants';
 import { Logger } from './Logger';
 import { loadManifest } from './NodePtyResolver';
 import { getInstalledScrcpyServerVersion } from './scrcpyServerVersion';
@@ -50,6 +51,21 @@ export interface DependencyDefinition {
     checkInstalled: (depsPath: string) => Promise<string | null>;
     checkLatest: () => Promise<string | null>;
     getDownloadUrl: (version: string) => string;
+    /**
+     * A version this build already knows how to install, used when
+     * `checkLatest` cannot answer.
+     *
+     * Without it, a first-run install is hostage to a version LOOKUP: nothing
+     * installs unless `latestVersion` is known, and scrcpy-server's lookup goes
+     * through `api.github.com`, which rate-limits per IP at 60/hour
+     * unauthenticated. A rate-limited runner therefore installed nothing and
+     * said nothing — smoke 9.4's 120s poll on 2026-09-09.
+     *
+     * Only meaningful where the repo ships a known-good version. The ASSET
+     * download is not the API and is not rate-limited the same way, so falling
+     * back genuinely works while the lookup is refused.
+     */
+    fallbackVersion?: string;
 }
 
 async function runVersionCommand(exe: string, args: string[], pattern: RegExp): Promise<string | null> {
@@ -154,6 +170,11 @@ export function getDependencyDefinitions(depsPath: string): DependencyDefinition
             displayName: 'scrcpy-server',
             description: 'Runs on Android device to capture screen, audio, and accept input',
             requiresRestart: false,
+            // The version this build ships in `assets/scrcpy-server`, with a
+            // pinned hash in common/Constants.ts. If api.github.com will not say
+            // what the newest release is, installing the one we already vouch
+            // for beats installing nothing.
+            fallbackVersion: SERVER_VERSION,
             checkInstalled: async (depsPath) => {
                 // The JAR file presence gates "installed at all"; the actual version
                 // comes from the .version marker (or SERVER_VERSION as fallback for
