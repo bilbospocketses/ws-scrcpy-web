@@ -5,6 +5,7 @@ import { Logger } from './Logger';
 import { detectLibc, type LibcFlavor } from './libcDetect';
 import { resolveSystemTool } from './service/systemTools';
 import { writeFileAtomicSync } from './util/atomicFile';
+import { fetchWithRetry } from './util/fetchWithRetry';
 
 /*
  * Pre-beta.23: this resolver tried two webpack escape hatches:
@@ -215,7 +216,10 @@ export async function loadManifest(depsPath: string): Promise<Manifest | null> {
     const cachedManifestPath = path.join(depsPath, MANIFEST_CACHE_RELPATH);
     try {
         const url = `${RELEASE_URL_BASE}/node-pty-prebuilds-latest/manifest.json`;
-        const res = await fetch(url, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
+        const res = await fetchWithRetry(url, {
+            timeoutMs: DOWNLOAD_TIMEOUT_MS,
+            onRetry: (n) => log.info(`manifest fetch ${n.attempt}/${n.attempts}: ${n.reason}`),
+        });
         if (res.ok) {
             const body = (await res.json()) as Manifest;
             fs.mkdirSync(path.dirname(cachedManifestPath), { recursive: true });
@@ -248,7 +252,17 @@ export async function downloadAndOverlayPtyNode(version: string, host: HostInfo,
     const sumsUrl = `${RELEASE_URL_BASE}/node-pty-prebuilds-v${version}/SHA256SUMS`;
 
     try {
-        const sumsRes = await fetch(sumsUrl, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
+        // Item 125. Both fetches here were one shot: any non-OK status returned
+        // false and the caller degraded to `shell:false` with a reason. That is
+        // the right answer for "no prebuilt exists for this host/ABI" and the
+        // wrong one for "GitHub had a bad two seconds" — the user silently loses
+        // shell mode until they think to retry, and nothing says it was
+        // transient. Retrying the transient half keeps the honest degradation
+        // for the genuinely-missing case (a 404 still fails on attempt one).
+        const sumsRes = await fetchWithRetry(sumsUrl, {
+            timeoutMs: DOWNLOAD_TIMEOUT_MS,
+            onRetry: (n) => log.info(`SHA256SUMS fetch ${n.attempt}/${n.attempts}: ${n.reason}`),
+        });
         if (!sumsRes.ok) {
             log.info(`SHA256SUMS fetch failed: ${sumsRes.status}`);
             return false;
@@ -261,7 +275,10 @@ export async function downloadAndOverlayPtyNode(version: string, host: HostInfo,
         }
         const expectedSha = sumLine.split(/\s+/)[0]!.toLowerCase();
 
-        const tarRes = await fetch(tarUrl, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
+        const tarRes = await fetchWithRetry(tarUrl, {
+            timeoutMs: DOWNLOAD_TIMEOUT_MS,
+            onRetry: (n) => log.info(`tarball fetch ${n.attempt}/${n.attempts}: ${n.reason}`),
+        });
         if (!tarRes.ok) {
             log.info(`tarball fetch failed: ${tarRes.status}`);
             return false;

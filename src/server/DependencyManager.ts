@@ -13,6 +13,7 @@ import { Logger } from './Logger';
 import { writeInstalledScrcpyServerVersion } from './scrcpyServerVersion';
 import { resolveSystemTool } from './service/systemTools';
 import { copyFileAtomic, copyFileAtomicSync, writeFileAtomicSync } from './util/atomicFile';
+import { fetchWithRetry } from './util/fetchWithRetry';
 import { extractZipTo } from './zipExtract';
 
 const log = Logger.for('DependencyManager');
@@ -295,7 +296,14 @@ export class DependencyManager {
     }
 
     private async download(url: string, destPath: string): Promise<void> {
-        const res = await fetch(url);
+        // `timeoutMs: null` deliberately. This streams the payload — the Node
+        // archive is ~110 MB — and `AbortSignal.timeout` aborts the whole
+        // exchange, body included, so any per-attempt deadline would kill a
+        // legitimately slow download mid-stream. Retry alone here.
+        const res = await fetchWithRetry(url, {
+            timeoutMs: null,
+            onRetry: (n) => log.warn(`download ${n.attempt}/${n.attempts} for ${n.url}: ${n.reason}`),
+        });
         if (!res.ok) {
             throw new Error(`Download failed: HTTP ${res.status} from ${url}`);
         }
