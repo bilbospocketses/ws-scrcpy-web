@@ -467,6 +467,171 @@ pub fn temp_copy_filename(pid: u32) -> String {
     format!("ws-scrcpy-web-uninstall-{pid}.exe")
 }
 
+/// Does the staged cleaner need an elevated token?
+///
+/// Removing a per-machine MSI requires one. Without it `msiexec /x` answers
+/// *"Error 1730. You must be an Administrator to remove this application."* and
+/// the in-app uninstall silently does nothing — which is what it had been doing
+/// on every Windows install of this app (item 128; qa-harness Arc 4 measured it
+/// on beta.119, twice, the second run on an idle host to rule out contention).
+///
+/// Both guards matter. A non-MSI install is Velopack's per-user layout under
+/// `%LocalAppData%`, where `Update.exe` needs no admin, so prompting would be a
+/// UAC dialog asking for nothing. And a process that is ALREADY elevated must
+/// not be sent through UAC a second time.
+pub fn cleaner_needs_elevation(is_msi_install: bool, already_elevated: bool) -> bool {
+    is_msi_install && !already_elevated
+}
+
+/// Build the single command line `ShellExecuteExW` hands to the child.
+///
+/// Unlike `Command::args`, which passes an argv vector, ShellExecuteExW takes
+/// one string that the child re-parses with `CommandLineToArgvW`. Every
+/// argument is therefore quoted: the real ones are paths like
+/// `C:\Program Files\WsScrcpyWeb\Update.exe` and `C:\ProgramData\WsScrcpyWeb`,
+/// and an unquoted join would split one argument into several — the cleaner
+/// would then fail `parse_run_args` and exit 2 having removed nothing.
+///
+/// Embedded double quotes are escaped. Nothing we build contains one today
+/// (they are our own flags plus OS paths), but a malformed command line is
+/// exactly the class of defect that only ever shows up on someone else's
+/// machine.
+pub fn shell_execute_parameters(args: &[String]) -> String {
+    args.iter()
+        .map(|a| format!("\"{}\"", a.replace('"', "\\\"")))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// How the elevated hand-off ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ElevationResult {
+    /// UAC accepted; the elevated cleaner is running and owns the outcome.
+    Started,
+    /// The user clicked No. Nothing was uninstalled and nothing was deleted.
+    Declined,
+    /// ShellExecuteExW failed for another reason (admin-approval mode off,
+    /// policy, a broken association). Caller falls back to the in-place path,
+    /// which fails safely and says so.
+    Failed,
+}
+
+/// `ERROR_CANCELLED` as an exit code — what a declined UAC prompt reports.
+///
+/// The same number Windows itself uses, so an operator reading the log can look
+/// it up. Deliberately NOT 0: nothing was uninstalled, and a bootstrap that
+/// reported success here would be telling the caller the app is gone while it is
+/// still installed — the exact class of lie item 120 was filed for.
+pub const EXIT_UAC_DECLINED: i32 = 1223;
+
+/// Exit code for a bootstrap whose elevation attempt ended this way.
+///
+/// `Failed` is absent by design: the caller routes it to the in-place fallback
+/// rather than returning a code here, so its exit is that path's verdict.
+pub fn bootstrap_exit_for(result: ElevationResult) -> i32 {
+    match result {
+        ElevationResult::Started => 0,
+        ElevationResult::Declined => EXIT_UAC_DECLINED,
+        ElevationResult::Failed => 1,
+    }
+}
+
+/// Is THIS process running with an elevated token?
+///
+/// Fails closed to `false`, which means "assume we need to ask". That is the
+/// safe direction: a redundant `runas` from an already-elevated process simply
+/// runs the child with no prompt, whereas skipping a needed elevation is the
+/// bug this whole change exists to fix.
+#[cfg(windows)]
+fn is_process_elevated() -> bool {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::Security::{
+        GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation,
+    };
+    use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+    unsafe {
+        let mut token = Default::default();
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token).is_err() {
+            return false;
+        }
+        let mut elevation = TOKEN_ELEVATION::default();
+        let mut returned = 0u32;
+        let ok = GetTokenInformation(
+            token,
+            TokenElevation,
+            Some(&mut elevation as *mut _ as *mut std::ffi::c_void),
+            std::mem::size_of::<TOKEN_ELEVATION>() as u32,
+            &mut returned,
+        )
+        .is_ok();
+        let _ = CloseHandle(token);
+        ok && elevation.TokenIsElevated != 0
+    }
+}
+
+/// Spawn the staged cleaner WITH an elevated token, via the same
+/// `ShellExecuteExW(verb="runas")` mechanism `uac_requester.rs` already uses for
+/// the service install/uninstall flow (§30 chose it over
+/// `powershell.exe Start-Process -Verb RunAs` for Local-Dependencies-Only
+/// compliance; reusing it inherits that rather than opening a new hole).
+///
+/// The prompt fires HERE, in phase 1, while the app the user just clicked is
+/// still alive — not from a detached temp binary after it has vanished, which is
+/// what a user would reasonably read as malware.
+///
+/// Considered and rejected: elevating `msiexec.exe` alone. Its UAC dialog would
+/// name Microsoft's binary, which looks more trustworthy, but the exit code then
+/// has to be plumbed back across the elevation boundary, and the data-root
+/// deletion would stay on the unelevated token. Elevating the cleaner keeps one
+/// process owning the whole sequence. Item 128 records the choice.
+#[cfg(windows)]
+fn spawn_cleaner_elevated(
+    exe: &std::path::Path,
+    run_args: &[String],
+    working_dir: &std::path::Path,
+) -> ElevationResult {
+    use windows::Win32::UI::Shell::{SHELLEXECUTEINFOW, ShellExecuteExW};
+    use windows::core::PCWSTR;
+
+    // HRESULT_FROM_WIN32(ERROR_CANCELLED) — what ShellExecuteExW surfaces when
+    // the user clicks No on the prompt.
+    const HRESULT_ERROR_CANCELLED: i32 = 0x800704C7u32 as i32;
+
+    let verb = crate::win_util::to_wide("runas");
+    let file = crate::win_util::to_wide(&exe.to_string_lossy());
+    let params = crate::win_util::to_wide(&shell_execute_parameters(run_args));
+    // CWD in temp, never under the data root — the property the unelevated
+    // spawn already had via `.current_dir()`, preserved here through
+    // lpDirectory. A CWD under the data root would hold a handle on the very
+    // tree the cleaner is about to delete.
+    let dir = crate::win_util::to_wide(&working_dir.to_string_lossy());
+
+    let mut info = SHELLEXECUTEINFOW {
+        cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+        fMask: 0,
+        lpVerb: PCWSTR(verb.as_ptr()),
+        lpFile: PCWSTR(file.as_ptr()),
+        lpParameters: PCWSTR(params.as_ptr()),
+        lpDirectory: PCWSTR(dir.as_ptr()),
+        nShow: 0, // SW_HIDE — no console flash for the elevated child
+        ..Default::default()
+    };
+
+    // SAFETY: SHELLEXECUTEINFOW is fully populated above and every PCWSTR
+    // points at a wide-string local that outlives the call.
+    match unsafe { ShellExecuteExW(&mut info) } {
+        Ok(()) => ElevationResult::Started,
+        Err(e) if e.code().0 == HRESULT_ERROR_CANCELLED => ElevationResult::Declined,
+        Err(e) => {
+            log::error(&format!(
+                "windows-app-uninstall: elevated spawn failed: {e}"
+            ));
+            ElevationResult::Failed
+        }
+    }
+}
+
 /// Dispatch `--windows-app-uninstall`. Returns `Some(exit_code)` when it
 /// owns the invocation, `None` to let the next dispatcher try.
 pub fn handle(args: &[String]) -> Option<i32> {
@@ -721,6 +886,49 @@ fn run_bootstrap(a: &UninstallArgs) -> i32 {
     }
 
     let run_args = build_run_args(pid, a.keep, &a.data_root, &a.update_exe);
+
+    // Item 128. Removing a per-machine MSI needs an elevated token; without one
+    // msiexec answers Error 1730 and the uninstall silently does nothing. Decide
+    // here, in phase 1, while the app the user just clicked is still alive — a
+    // UAC prompt raised later by a detached temp binary is what a user would
+    // reasonably read as malware.
+    //
+    // `find_msi_product_code` is a plain registry read and works unelevated, so
+    // asking the question costs nothing on the non-MSI path.
+    let needs_elevation =
+        cleaner_needs_elevation(find_msi_product_code().is_some(), is_process_elevated());
+
+    if needs_elevation {
+        log::info(&format!(
+            "windows-app-uninstall: staged cleaner at {dst:?}; requesting elevation (MSI install)"
+        ));
+        return match spawn_cleaner_elevated(&dst, &run_args, &temp_dir) {
+            ElevationResult::Started => {
+                log::info("windows-app-uninstall: elevation accepted; elevated cleaner spawned");
+                bootstrap_exit_for(ElevationResult::Started)
+            }
+            ElevationResult::Declined => {
+                // Nothing has been touched yet — the cleaner never ran. Say so
+                // in the same plain terms the refusal path uses, because from
+                // the user's side this looks identical to a failure.
+                log::error(
+                    "windows-app-uninstall: elevation was declined, so the app was NOT \
+                     uninstalled; leaving the install and data root untouched. The app is \
+                     still installed and can be removed from Add/Remove Programs.",
+                );
+                bootstrap_exit_for(ElevationResult::Declined)
+            }
+            ElevationResult::Failed => {
+                // Elevation is unavailable (admin-approval mode off, policy, a
+                // broken association). The in-place path cannot succeed either
+                // — it is the same unelevated token — but it fails SAFELY and
+                // logs why, which beats exiting with an unexplained code.
+                log::error("windows-app-uninstall: could not request elevation; in-place fallback");
+                run_uninstall_in_place(a)
+            }
+        };
+    }
+
     log::info(&format!(
         "windows-app-uninstall: staged cleaner at {dst:?}; spawning + exiting"
     ));
@@ -1282,5 +1490,82 @@ mod tests {
         assert!(!arp_display_name_matches("scrcpy"));
         assert!(!arp_display_name_matches("Microsoft Edge"));
         assert!(!arp_display_name_matches(""));
+    }
+
+    // ── Item 128: the cleaner must run elevated ────────────────────────────
+    //
+    // Removing a per-machine MSI needs an elevated token. The cleaner was
+    // spawned with plain CreateProcess, inheriting the launcher's medium
+    // integrity, so msiexec answered `Error 1730. You must be an Administrator
+    // to remove this application.` and the in-app uninstall never worked on
+    // Windows at all (qa-harness Arc 4 on beta.119, confirmed on two runs).
+
+    #[test]
+    fn an_msi_install_from_a_medium_process_needs_elevation() {
+        assert!(cleaner_needs_elevation(true, false));
+    }
+
+    #[test]
+    fn an_already_elevated_process_does_not_prompt_again() {
+        assert!(!cleaner_needs_elevation(true, true));
+    }
+
+    #[test]
+    fn a_non_msi_install_never_needs_elevation() {
+        // Velopack installs per-user under %LocalAppData%, so Update.exe needs
+        // no admin. Prompting there would be a UAC dialog for nothing.
+        assert!(!cleaner_needs_elevation(false, false));
+        assert!(!cleaner_needs_elevation(false, true));
+    }
+
+    // ShellExecuteExW takes ONE command line, which the child re-parses via
+    // CommandLineToArgvW. Every real path here contains spaces
+    // (`C:\Program Files\...`), so an unquoted join silently splits one
+    // argument into several and the cleaner parses garbage.
+
+    #[test]
+    fn shell_execute_parameters_quotes_each_argument() {
+        let args = vec![
+            "--windows-app-uninstall-run".to_string(),
+            "--data-root".to_string(),
+            r"C:\ProgramData\WsScrcpyWeb".to_string(),
+        ];
+        assert_eq!(
+            shell_execute_parameters(&args),
+            r#""--windows-app-uninstall-run" "--data-root" "C:\ProgramData\WsScrcpyWeb""#
+        );
+    }
+
+    #[test]
+    fn shell_execute_parameters_keeps_a_path_with_spaces_as_one_argument() {
+        let args = vec![
+            "--update-exe".to_string(),
+            r"C:\Program Files\WsScrcpyWeb\Update.exe".to_string(),
+        ];
+        assert_eq!(
+            shell_execute_parameters(&args),
+            r#""--update-exe" "C:\Program Files\WsScrcpyWeb\Update.exe""#
+        );
+    }
+
+    #[test]
+    fn shell_execute_parameters_is_empty_for_no_arguments() {
+        assert_eq!(shell_execute_parameters(&[]), "");
+    }
+
+    #[test]
+    fn a_declined_uac_prompt_never_reports_success() {
+        // The user said no. Nothing was uninstalled and nothing was deleted, so
+        // reporting 0 would tell the caller the app is gone when it is still
+        // installed -- the exact class of lie item 120 was filed for.
+        assert_eq!(bootstrap_exit_for(ElevationResult::Declined), 1223);
+        assert_ne!(bootstrap_exit_for(ElevationResult::Declined), 0);
+    }
+
+    #[test]
+    fn an_accepted_uac_prompt_reports_success() {
+        // The elevated cleaner is detached and owns the outcome from here; the
+        // bootstrap's job was only to hand off, and it did.
+        assert_eq!(bootstrap_exit_for(ElevationResult::Started), 0);
     }
 }
