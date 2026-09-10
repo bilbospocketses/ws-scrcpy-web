@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ADMIN_ONLY_SECTIONS, canSeeSection } from '../adminGate';
+import { ADMIN_ONLY_SECTIONS, adminApiReachable, canSeeSection } from '../adminGate';
 
 describe('canSeeSection', () => {
     describe('admin role', () => {
@@ -54,5 +54,36 @@ describe('canSeeSection', () => {
                 expect(canSeeSection(null, section)).toBe(false);
             });
         }
+    });
+});
+
+describe('adminApiReachable', () => {
+    it('is true on a server that predates the guard', () => {
+        expect(adminApiReachable({})).toBe(true);
+    });
+
+    it('is true for a loopback caller under the local policy', () => {
+        expect(adminApiReachable({ adminScope: 'local', callerIsLocal: true })).toBe(true);
+    });
+
+    it('is FALSE for a remote caller under the local policy — the flagless container', () => {
+        expect(adminApiReachable({ adminScope: 'local', callerIsLocal: false })).toBe(false);
+    });
+
+    it('is true once the opt-out is set, or once sign-in is on', () => {
+        expect(adminApiReachable({ adminScope: 'remote', callerIsLocal: false })).toBe(true);
+        expect(adminApiReachable({ adminScope: 'authenticated', callerIsLocal: false })).toBe(true);
+    });
+});
+
+describe('the two predicates are independent', () => {
+    it('an admin whose calls would 403 is gated by reachability, not by role', () => {
+        expect(canSeeSection('admin', 'dependencies')).toBe(true);
+        expect(adminApiReachable({ adminScope: 'local', callerIsLocal: false })).toBe(false);
+    });
+
+    it('a viewer on loopback is reachable but still not permitted', () => {
+        expect(adminApiReachable({ adminScope: 'local', callerIsLocal: true })).toBe(true);
+        expect(canSeeSection('user', 'dependencies')).toBe(false);
     });
 });

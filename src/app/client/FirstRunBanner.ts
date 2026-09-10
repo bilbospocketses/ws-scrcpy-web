@@ -1,5 +1,7 @@
+import type { FirstRunStatus } from '../../common/ConfigEvents';
 import type { DependencyInfo } from '../../common/DependencyTypes';
 import { DependencyStatus } from '../../common/DependencyTypes';
+import { adminApiReachable } from './adminGate';
 
 const POLL_INTERVAL_MS = 15_000;
 
@@ -14,8 +16,18 @@ export class FirstRunBanner {
         this.container.style.display = 'none';
     }
 
-    static async create(): Promise<FirstRunBanner> {
+    /**
+     * `runtime` is the envelope from GET /api/config, when the caller has one.
+     *
+     * GET /api/dependencies is admin-gated at the top of its handler, so a caller the admin API
+     * will not answer would poll a 403 every 15 s on a completely healthy app (item 81). When it is
+     * unreachable, mount inert: no first fetch, no interval. AdminScopeBanner sits directly above
+     * and already explains why the admin surface is quiet — a second copy of that sentence here
+     * would be noise, not information.
+     */
+    static async create(runtime?: Pick<FirstRunStatus, 'adminScope' | 'callerIsLocal'>): Promise<FirstRunBanner> {
         const banner = new FirstRunBanner();
+        if (runtime && !adminApiReachable(runtime)) return banner;
         await banner.refresh();
         banner.startPolling();
         return banner;

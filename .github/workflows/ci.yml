@@ -124,6 +124,14 @@ jobs:
         run: npm run test:e2e:docker
         env:
           WSSW_IMAGE: ws-scrcpy-web:ci
+          # In a container nobody is ever on loopback: the browser reaches the
+          # app through the Docker gateway, so `requireOperator` sees every
+          # request as off-box and refuses admin without this. Row 20.6 exists
+          # to prove graceful shutdown reaches node through start.sh, not to
+          # re-test the authorization guard (unit tests own that), so the tier
+          # runs as a deployment that has taken the documented opt-out — the
+          # same thing qa-harness sets on its own subject.
+          WS_SCRCPY_ALLOW_REMOTE_ADMIN: '1'
 
       - name: Bump/blob sync
         # The auto-release bump commit is assembled from an explicit blob list.

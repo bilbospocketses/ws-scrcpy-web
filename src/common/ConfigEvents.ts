@@ -34,6 +34,18 @@ export interface AppConfig {
     scanTcpTimeoutMs?: number;
     scanAdbConnectTimeoutMs?: number;
     scanProgressInterval?: number;
+
+    /**
+     * Allow admin actions from off-box while running WITHOUT sign-in.
+     *
+     * Off by default: in open mode `requireAdmin` resolves to the implicit admin and the instance
+     * token is handed to anything that can fetch a page, so without this guard any LAN host is an
+     * administrator. Turning it on is a deliberate act taken at the machine (the banner's
+     * confirmation modal) or by an operator who set WS_SCRCPY_ALLOW_REMOTE_ADMIN=1.
+     *
+     * Ignored entirely when sign-in is enabled — then a session is the proof, and this is moot.
+     */
+    allowRemoteAdmin?: boolean;
 }
 
 export interface FirstRunStatus {
@@ -62,6 +74,17 @@ export interface FirstRunStatus {
      * interoperate -- an absent field reads as "no origins", the safe answer.
      */
     frameAncestors?: string[];
+    /**
+     * The admin policy in force. Optional so an older server and a newer frontend interoperate — an
+     * absent field means "this server predates the guard", and the banner stays hidden.
+     */
+    adminScope?: 'local' | 'remote' | 'authenticated';
+    /**
+     * Whether the request that fetched this envelope came from loopback. Per-request, so it is
+     * composed by ConfigApi rather than snapshotted in Config. A browser cannot determine its own
+     * source address, so this has to come from the server.
+     */
+    callerIsLocal?: boolean;
 }
 
 /** Envelope shape returned by GET /api/config. */
@@ -110,6 +133,7 @@ export const APP_CONFIG_DEFAULTS: AppConfig = {
     channel: 'stable',
     githubOwner: 'bilbospocketses',
     webPort: 8000,
+    allowRemoteAdmin: false,
 };
 
 export const VALID_INSTALL_MODES: ReadonlyArray<InstallMode> = ['user', 'user-service', 'system', 'system-service'];

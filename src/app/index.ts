@@ -1,12 +1,14 @@
 import '../style/app.css';
+import '../style/admin-scope-banner.css';
 import '../style/bookmark-reminder.css';
 import '../style/dependencies.css';
 import '../style/first-run-banner.css';
 import '../style/home.css';
-import type { AppConfigEnvelope } from '../common/ConfigEvents';
+import type { AppConfigEnvelope, FirstRunStatus } from '../common/ConfigEvents';
 import type { ServiceStatusResponse } from '../common/ServiceEvents';
+import { AdminScopeBanner } from './client/AdminScopeBanner';
 import { authClient, type Role } from './client/AuthClient';
-import { canSeeSection } from './client/adminGate';
+import { adminApiReachable, canSeeSection } from './client/adminGate';
 import { shouldShowBookmark } from './client/bookmarkGate';
 import { DependencyPanel } from './client/DependencyPanel';
 import { startEmbedRequestWatch, stopEmbedRequestWatch } from './client/EmbedRequestPrompt';
@@ -365,9 +367,27 @@ window.onload = async (): Promise<void> => {
     let firstRunBanner: FirstRunBanner | undefined;
     let dependencyPanel: DependencyPanel | undefined;
 
-    FirstRunBanner.create().then((banner) => {
+    // One read of the runtime envelope, shared by everything below that needs to
+    // know whether the admin API will answer THIS caller at all (item 81).
+    // Deliberately its own fetch rather than reusing maybeShowWelcomeModal's:
+    // that one is entangled with the resume-uninstall race documented above, and
+    // /api/config is the cheap, unauthenticated readiness probe by design.
+    const runtimeFetch: Promise<FirstRunStatus | null> = fetch('/api/config')
+        .then((r) => (r.ok ? (r.json() as Promise<Partial<AppConfigEnvelope>>) : null))
+        .then((d) => d?.runtime ?? null)
+        .catch(() => null);
+
+    // Mounted synchronously, ahead of FirstRunBanner, so the order of the two is
+    // deterministic even though both fill in asynchronously: a security posture
+    // outranks a dependency-install notice.
+    const adminScopeBanner = new AdminScopeBanner();
+    pageContainer.appendChild(adminScopeBanner.getElement());
+    adminScopeBanner.start();
+
+    void runtimeFetch.then(async (runtime) => {
+        const banner = await FirstRunBanner.create(runtime ?? undefined);
         firstRunBanner = banner;
-        pageContainer.insertBefore(banner.getElement(), pageContainer.firstChild);
+        pageContainer.insertBefore(banner.getElement(), adminScopeBanner.getElement().nextSibling);
     });
 
     maybeShowFirstRunModal();
@@ -403,6 +423,14 @@ window.onload = async (): Promise<void> => {
             role = 'admin';
         }
         if (!canSeeSection(role, 'dependencies')) return;
+        // Two independent predicates (item 81). `canSeeSection` asks whether this
+        // ROLE may use the section; `adminApiReachable` asks whether the admin API
+        // will answer THIS caller at all. A container without the opt-out passes
+        // the first and fails the second — mounting anyway would show the panel
+        // with "Failed to load dependencies" in it, which is the same
+        // authorization-as-error-message bug finding 9.6 was about.
+        const runtime = await runtimeFetch;
+        if (runtime && !adminApiReachable(runtime)) return;
         const depPanel = await DependencyPanel.create();
         dependencyPanel = depPanel;
         pageContainer.appendChild(depPanel.getElement());
@@ -418,6 +446,7 @@ window.onload = async (): Promise<void> => {
     startEmbedRequestWatch();
 
     onPageTeardown(() => {
+        adminScopeBanner.destroy();
         firstRunBanner?.destroy();
         dependencyPanel?.destroy();
         stopEmbedRequestWatch();

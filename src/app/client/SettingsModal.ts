@@ -1,4 +1,9 @@
-import type { AppConfigEnvelope, AppConfigPatchResponse, UpdateChannel } from '../../common/ConfigEvents';
+import type {
+    AppConfigEnvelope,
+    AppConfigPatchResponse,
+    FirstRunStatus,
+    UpdateChannel,
+} from '../../common/ConfigEvents';
 import type {
     ServiceInstallResponse,
     ServiceStatusResponse,
@@ -9,7 +14,7 @@ import { sameOriginUrl } from '../sameOriginUrl';
 import { Modal } from '../ui/Modal';
 import { AdminConfirmModal, type AdminConfirmOptions } from './AdminConfirmModal';
 import { authClient, type Role } from './AuthClient';
-import { canSeeSection } from './adminGate';
+import { adminApiReachable, canSeeSection } from './adminGate';
 import { ConfirmModal } from './ConfirmModal';
 import { pollServiceUninstalled } from './pollServiceUninstalled';
 import { ResetConfirmModal } from './ResetConfirmModal';
@@ -117,14 +122,20 @@ export function resetPromptsPayload(): Record<string, boolean | null> {
 
 /**
  * The per-user prompt flags reset by "reset welcome and bookmark prompts" —
- * clears the three flags that live in user_settings (SettingsApi). Exported
+ * clears the four flags that live in user_settings (SettingsApi). Exported
  * (pure) for testing; applied alongside resetPromptsPayload() in buildResetControl.
+ *
+ * A "don't show again" flag that is NOT listed here becomes one-way: Reset
+ * Prompts cannot bring it back, and the only way out is editing the database.
+ * That trap is already documented for PortChangeModal; `adminScopeBannerDismissed`
+ * (item 81) joins the list for the same reason.
  */
 export function resetPromptSettingsPayload(): Record<string, boolean | null> {
     return {
         serviceFirstRunSeen: false,
         bookmarkDismissedForPort: null,
         bookmarkDismissedGlobally: false,
+        adminScopeBannerDismissed: false,
     };
 }
 
@@ -503,6 +514,11 @@ export class SettingsModal extends Modal {
      * implication and is deliberately never persisted to config.json.
      */
     private docker = false;
+    /**
+     * Will the admin API answer this caller at all (item 81)? Starts true and is
+     * narrowed once the runtime probe resolves — fail-open, like `role` above.
+     */
+    private adminReachable = true;
     /** Set by fillBody so applyDockerGating() can swap them once docker mode lands. */
     private updatesSectionEl: HTMLElement | null = null;
     private serviceSectionEl: HTMLElement | null = null;
@@ -556,7 +572,7 @@ export class SettingsModal extends Modal {
                 // dialog — this modal's own tests stub fetch as a never-resolving
                 // promise precisely to pin "the body still renders", and that is a
                 // real guarantee, not a test artifact.
-                const dockerProbe = this.probeDockerMode();
+                const runtimeProbe = this.probeRuntime();
                 try {
                     const me = await authClient.me();
                     role = me.user?.role ?? null;
@@ -579,13 +595,20 @@ export class SettingsModal extends Modal {
                     // Fail-open to "not a container": the desktop answer, and the one
                     // that shows MORE, so a transient error cannot silently strip a
                     // host user's Service and Updates sections.
-                    this.docker = await dockerProbe;
+                    const runtime = await runtimeProbe;
+                    this.docker = runtime?.docker === true;
+                    // Item 81: an admin whose calls would 403 regardless (a
+                    // container with no opt-out) must not have these fired at them
+                    // — the sections would fill with "couldn't reach server" where
+                    // the true answer is "not from here". Fails open when the probe
+                    // itself failed, matching the role fail-open above.
+                    this.adminReachable = runtime ? adminApiReachable(runtime) : true;
                     if (this.docker) {
                         this.applyDockerGating();
                         return;
                     }
-                    if (canSeeSection(this.role, 'service')) void this.refreshService();
-                    if (canSeeSection(this.role, 'updates')) void this.refreshUpdates();
+                    if (this.canUse('service')) void this.refreshService();
+                    if (this.canUse('updates')) void this.refreshUpdates();
                 })();
             })();
         });
@@ -1130,15 +1153,30 @@ export class SettingsModal extends Modal {
      * MORE, matching the role fail-open in the constructor: a transient fetch
      * error should not silently strip a host user's Service and Updates sections.
      */
-    private async probeDockerMode(): Promise<boolean> {
+    private async probeRuntime(): Promise<FirstRunStatus | null> {
         try {
             const r = await fetch('/api/config');
-            if (!r.ok) return false;
+            if (!r.ok) return null;
             const env = (await r.json()) as AppConfigEnvelope;
-            return env.runtime.docker === true;
+            return env.runtime;
         } catch {
-            return false;
+            return null;
         }
+    }
+
+    /**
+     * Both halves of the admin gate (item 81): may this ROLE use the section, and
+     * will the admin API answer THIS caller at all?
+     *
+     * Only meaningful AFTER the runtime probe resolves. `adminReachable` starts
+     * true and `fillBody` runs before the probe, deliberately — a hung
+     * /api/config must not render an empty dialog (see the comment at the probe's
+     * call site). So section VISIBILITY stays on `canSeeSection` alone; this gates
+     * the network calls, which is where an unreachable admin API would otherwise
+     * surface as "couldn't reach server" under perfectly healthy copy.
+     */
+    private canUse(section: string): boolean {
+        return canSeeSection(this.role, section) && this.adminReachable;
     }
 
     private async refreshServer(): Promise<void> {

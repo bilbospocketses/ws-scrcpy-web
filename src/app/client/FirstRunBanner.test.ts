@@ -64,3 +64,43 @@ describe('FirstRunBanner polling lifecycle (#36)', () => {
         expect(() => banner.destroy()).not.toThrow();
     });
 });
+
+// Item 81. GET /api/dependencies is admin-gated at the top of its handler, so a
+// caller the admin API will not answer would 403-spam every 15 s on a healthy
+// app. The banner must mount completely inert in that case — no first fetch,
+// no interval — not merely render nothing.
+describe('FirstRunBanner admin-reachability suppression (item 81)', () => {
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.stubGlobal(
+            'fetch',
+            vi.fn().mockResolvedValue({
+                ok: true,
+                json: async () => [dep('SomeDep')],
+            }),
+        );
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+        vi.unstubAllGlobals();
+    });
+
+    it('makes no request and starts no interval when the admin API is unreachable', async () => {
+        const banner = await FirstRunBanner.create({ adminScope: 'local', callerIsLocal: false });
+        expect(fetch).not.toHaveBeenCalled();
+        vi.advanceTimersByTime(120_000);
+        expect(fetch).not.toHaveBeenCalled();
+        expect(banner.getElement().style.display).toBe('none');
+    });
+
+    it('polls as usual for a loopback caller under the same policy', async () => {
+        await FirstRunBanner.create({ adminScope: 'local', callerIsLocal: true });
+        expect(fetch).toHaveBeenCalled();
+    });
+
+    it('polls as usual when no runtime is supplied (older callers)', async () => {
+        await FirstRunBanner.create();
+        expect(fetch).toHaveBeenCalled();
+    });
+});

@@ -1,0 +1,85 @@
+/*
+ * The admin-scope card (item 81). Sits directly above .first-run-banner and
+ * shares its geometry, so the two read as one stack rather than two designs.
+ *
+ * Colours come from the theme variables, unlike .first-run-banner's fixed amber:
+ * this card is informational in its default state, and a permanently-amber
+ * security notice on a healthy server trains the user to ignore it. The
+ * --warning modifier is the state that has earned the loud treatment.
+ */
+.admin-scope-banner {
+    margin: 1rem auto;
+    max-width: 960px;
+    padding: 0.75rem 1rem;
+    border-radius: 6px;
+    background-color: var(--header-bg-color);
+    color: var(--text-color);
+    border: 1px solid var(--info-color);
+    font-size: var(--font-size);
+}
+
+.admin-scope-banner strong {
+    display: block;
+    margin-bottom: 0.35rem;
+}
+
+.admin-scope-banner p {
+    margin: 0;
+    color: var(--text-color-light);
+}
+
+/* The opt-out is live: anyone who can reach the server can administer it. */
+.admin-scope-banner--warning {
+    border-color: var(--warning-color);
+}
+
+.admin-scope-banner--warning strong {
+    color: var(--warning-color);
+}
+
+.admin-scope-banner__actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+}
+
+.admin-scope-banner__actions button {
+    padding: 0.35rem 0.85rem;
+    border-radius: 4px;
+    border: 1px solid var(--button-border-color);
+    background: transparent;
+    color: var(--button-text-color);
+    font-size: var(--font-size);
+    cursor: pointer;
+}
+
+.admin-scope-banner__actions button:hover {
+    border-color: var(--info-color);
+}
+
+/*
+ * Sign-in is the recommended way out, so it carries the emphasis and the
+ * opt-out reads as the lesser option — the card is a funnel toward authEnabled,
+ * not a switch that defeats the guard.
+ */
+.admin-scope-banner__primary {
+    border-color: var(--info-color);
+    color: var(--info-color);
+    font-weight: 600;
+}
+
+.admin-scope-banner__secondary {
+    color: var(--text-color-light);
+}
+
+.admin-scope-banner__secondary:hover {
+    border-color: var(--danger-color);
+    color: var(--danger-color);
+}
+
+.admin-scope-banner__dismiss {
+    margin-left: auto;
+    color: var(--text-color-light);
+}

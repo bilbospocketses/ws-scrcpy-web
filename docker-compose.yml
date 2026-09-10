@@ -20,6 +20,22 @@ services:
       # every interface the host has — docs/traps.md records the general form of
       # that mistake.
       - "127.0.0.1:8123:8000"
+    environment:
+      # Pass-through, NOT a default. With no value Compose forwards the host's
+      # variable and omits it entirely when unset, so a plain `docker compose up`
+      # keeps the secure posture: admin actions are refused from off-box.
+      #
+      # It has to be here because IN A CONTAINER NOBODY IS EVER ON LOOPBACK — the
+      # browser arrives through the Docker gateway — so `requireOperator` sees
+      # every request as off-box. Set it (`WS_SCRCPY_ALLOW_REMOTE_ADMIN=1 docker
+      # compose up`) to administer a container without sign-in, understanding that
+      # it makes anyone who can reach the server an administrator. Enabling
+      # sign-in is the supported alternative; see SECURITY.md.
+      #
+      # CI sets it for the container e2e tier, which is what keeps smoke row 20.6
+      # ("stop server & exit" in a container) testing graceful shutdown rather
+      # than the authorization guard.
+      - WS_SCRCPY_ALLOW_REMOTE_ADMIN
     volumes:
       - wsdata:/data
 volumes:

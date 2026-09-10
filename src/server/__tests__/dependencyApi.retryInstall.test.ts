@@ -54,7 +54,9 @@ function makeMockRes() {
 }
 
 function makeReq(method: string, url: string) {
-    return { method, url } as any;
+    // Loopback: requireOperator refuses an off-box caller in open mode, and a req
+    // with no socket is not loopback.
+    return { method, url, socket: { remoteAddress: '127.0.0.1' } } as any;
 }
 
 describe('DependencyApi retry-install endpoint', () => {

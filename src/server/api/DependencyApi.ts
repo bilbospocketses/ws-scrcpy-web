@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { DependencyStatus } from '../../common/DependencyTypes';
-import { requireAdmin } from '../auth/requireAdmin';
+import { requireOperator } from '../auth/requireOperator';
 import type { DependencyManager } from '../DependencyManager';
 
 export class DependencyApi {
@@ -13,7 +13,7 @@ export class DependencyApi {
 
         res.setHeader('Content-Type', 'application/json');
 
-        if (!requireAdmin(req, res)) return true;
+        if (!requireOperator(req, res)) return true;
 
         try {
             // GET /api/dependencies — list all

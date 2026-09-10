@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import type { AppConfigEnvelope, AppConfigPatchResponse } from '../../common/ConfigEvents';
-import { requireAdmin } from '../auth/requireAdmin';
+import { callerIsLocal, requireOperator, resolveAdminScope } from '../auth/requireOperator';
 import { Config, ConfigValidationError } from '../Config';
 import { Logger } from '../Logger';
 import { writeFileAtomicSync } from '../util/atomicFile';
@@ -20,7 +20,11 @@ export class ConfigApi {
                 const cfg = Config.getInstance();
                 const envelope: AppConfigEnvelope = {
                     config: cfg.getAppConfig(),
-                    runtime: cfg.getFirstRunStatus(),
+                    runtime: {
+                        ...cfg.getFirstRunStatus(),
+                        adminScope: resolveAdminScope(),
+                        callerIsLocal: callerIsLocal(req),
+                    },
                 };
                 res.writeHead(200);
                 res.end(JSON.stringify(envelope));
@@ -28,7 +32,7 @@ export class ConfigApi {
             }
 
             if (req.method === 'PATCH' && url === '/api/config') {
-                if (!requireAdmin(req, res)) return true;
+                if (!requireOperator(req, res)) return true;
                 let body: string;
                 try {
                     body = await readBodyCapped(req);

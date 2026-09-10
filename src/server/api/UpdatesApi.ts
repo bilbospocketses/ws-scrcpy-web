@@ -7,7 +7,7 @@ import type {
     UpdatesErrorResponse,
     UpdatesStatusResponse,
 } from '../../common/UpdateEvents';
-import { requireAdmin } from '../auth/requireAdmin';
+import { requireOperator } from '../auth/requireOperator';
 import { Config } from '../Config';
 import { Logger } from '../Logger';
 import type { UpdateService } from '../UpdateService';
@@ -43,7 +43,7 @@ export class UpdatesApi {
 
         res.setHeader('Content-Type', 'application/json');
 
-        if (!requireAdmin(req, res)) return true;
+        if (!requireOperator(req, res)) return true;
 
         try {
             if (req.method === 'GET' && url === '/api/updates/status') {

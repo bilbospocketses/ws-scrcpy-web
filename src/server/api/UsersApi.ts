@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { lockdown } from '../auth/lockdown';
 import { hashPassword } from '../auth/password';
-import { requireAdmin } from '../auth/requireAdmin';
+import { requireOperator } from '../auth/requireOperator';
 import { SessionStore } from '../auth/session';
 import { Config } from '../Config';
 import type { Role } from '../db/UserStore';
@@ -20,7 +20,7 @@ export class UsersApi {
     async handle(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
         const pathname = new URL(req.url ?? '/', 'http://localhost').pathname;
         if (pathname !== '/api/users' && !pathname.startsWith('/api/users/')) return false;
-        if (!requireAdmin(req, res)) return true;
+        if (!requireOperator(req, res)) return true;
 
         const db = Config.getInstance().db;
 

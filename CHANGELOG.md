@@ -17,6 +17,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Admin actions now require proof that the caller is the operator — loopback, or a signed-in admin
+  session. Previously, running without sign-in (the default) meant any host on the LAN could fetch a
+  page, be handed the per-instance token, and reach the admin API: users, configuration, updates,
+  service control and shutdown. The token was never an authenticator; parts of the app treated it as
+  one.
+- A banner now states which posture the server is in and offers the two ways out — set up sign-in
+  (recommended) or allow remote admin explicitly. It is shown to every client but actionable only
+  from the machine itself, so it cannot be used to widen access from off-box.
+- New opt-out for trusted networks and automation: `WS_SCRCPY_ALLOW_REMOTE_ADMIN=1`, or
+  `allowRemoteAdmin` in `config.json`. **In a container nobody is ever on loopback**, so one of these
+  — or enabling sign-in — is required to administer a Dockerised deployment remotely.
+  `docker-compose.yml` forwards the variable from your shell, so
+  `WS_SCRCPY_ALLOW_REMOTE_ADMIN=1 docker compose up` is enough; leave it unset and the container keeps
+  the refusing default.
+
 ### Fixed
 
 - **A first-run install is no longer hostage to a version lookup.** `autoInstallMissing` installs only

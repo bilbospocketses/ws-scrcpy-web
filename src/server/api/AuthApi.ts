@@ -3,7 +3,7 @@ import { isAuthEnabled, parseCookie, SESSION_COOKIE, setAuthEnabled } from '../a
 import { resolveUserId } from '../auth/currentUser';
 import { login } from '../auth/loginService';
 import { hashPassword, verifyPassword } from '../auth/password';
-import { requireAdmin } from '../auth/requireAdmin';
+import { requireOperator } from '../auth/requireOperator';
 import { SessionStore } from '../auth/session';
 import { Config } from '../Config';
 import { IMPLICIT_ADMIN_ID } from '../db/constants';
@@ -131,7 +131,7 @@ export class AuthApi {
         }
 
         if (req.method === 'POST' && pathname === '/api/auth/enable') {
-            if (!requireAdmin(req, res)) return true;
+            if (!requireOperator(req, res)) return true;
             if (db.users.countEnabledAdminsWithPassword() < 1) {
                 sendJson(res, 409, { error: 'set an admin password before enabling auth' });
                 return true;
@@ -142,7 +142,7 @@ export class AuthApi {
         }
 
         if (req.method === 'POST' && pathname === '/api/auth/disable') {
-            if (!requireAdmin(req, res)) return true;
+            if (!requireOperator(req, res)) return true;
             setAuthEnabled(db, false);
             sendJson(res, 200, { ok: true });
             return true;

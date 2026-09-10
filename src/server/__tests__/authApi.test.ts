@@ -105,11 +105,11 @@ describe('AuthApi', () => {
     it('enable refused (409) with no admin password; succeeds once set', async () => {
         setup();
         const db = Config.getInstance().db;
-        const r1 = makeReqRes('POST', '/api/auth/enable', {});
+        const r1 = makeReqRes('POST', '/api/auth/enable', {}, {}, { remoteAddress: '127.0.0.1' });
         await new AuthApi().handle(r1.req, r1.res);
         expect(r1.getStatus()).toBe(409);
         db.users.setPasswordHash(IMPLICIT_ADMIN_ID, hashPassword('pw'));
-        const r2 = makeReqRes('POST', '/api/auth/enable', {});
+        const r2 = makeReqRes('POST', '/api/auth/enable', {}, {}, { remoteAddress: '127.0.0.1' });
         await new AuthApi().handle(r2.req, r2.res);
         expect(r2.getStatus()).toBe(200);
         expect(db.appSettings.get('authEnabled')).toBe(true);

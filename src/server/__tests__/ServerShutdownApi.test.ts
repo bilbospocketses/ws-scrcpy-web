@@ -10,7 +10,11 @@ import { EnvName } from '../EnvName';
 import { getInstanceToken } from '../security/instanceToken';
 
 const tmpDirs: string[] = [];
-const saved = { CONFIG: process.env[EnvName.CONFIG_PATH], DEPS: process.env['DEPS_PATH'] };
+const saved = {
+    CONFIG: process.env[EnvName.CONFIG_PATH],
+    DEPS: process.env['DEPS_PATH'],
+    ALLOW_REMOTE: process.env['WS_SCRCPY_ALLOW_REMOTE_ADMIN'],
+};
 beforeEach(() => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wsshutdown-'));
     tmpDirs.push(dir);
@@ -25,6 +29,10 @@ afterEach(() => {
     else process.env[EnvName.CONFIG_PATH] = saved.CONFIG;
     if (saved.DEPS === undefined) delete process.env['DEPS_PATH'];
     else process.env['DEPS_PATH'] = saved.DEPS;
+    // The opt-out is process-global. A test that sets it must not leave it set
+    // for the next one, or a refusal case passes for the wrong reason.
+    if (saved.ALLOW_REMOTE === undefined) delete process.env['WS_SCRCPY_ALLOW_REMOTE_ADMIN'];
+    else process.env['WS_SCRCPY_ALLOW_REMOTE_ADMIN'] = saved.ALLOW_REMOTE;
     while (tmpDirs.length) fs.rmSync(tmpDirs.pop()!, { recursive: true, force: true });
 });
 
@@ -108,9 +116,15 @@ describe('ServerShutdownApi', () => {
     // The regression CI caught on the first cut of this fix: requiring loopback
     // outright killed the Settings "stop server & exit" button inside a
     // container, where the browser arrives through the Docker gateway and is
-    // never on loopback (row 20.6). A caller holding the instance token is a
-    // browser that loaded the page and is authorized regardless of where it sits.
+    // never on loopback (row 20.6).
+    //
+    // Item 81 narrowed this. The token alone is no longer enough in open mode —
+    // it proves a browser loaded the page, not that the caller is the operator —
+    // so the container path now also needs the explicit opt-out. This test is the
+    // in-repo proof of the qa-harness coupling: row 20.6 keeps passing precisely
+    // because the harness sets WS_SCRCPY_ALLOW_REMOTE_ADMIN=1 on its subject.
     it('allows an off-box caller that carries the instance token (the container / LAN browser)', async () => {
+        process.env['WS_SCRCPY_ALLOW_REMOTE_ADMIN'] = '1';
         const schedule = vi.fn();
         const api = new ServerShutdownApi({ schedule, exit: vi.fn() });
         const { req, res } = makeReqRes('/api/server/shutdown', 'POST', '172.17.0.1', {
@@ -241,5 +255,76 @@ describe('ServerShutdownApi', () => {
         expect(exit).toHaveBeenCalledWith(0);
         // Ordering is the whole point: adb daemon + services torn down first.
         expect(order).toEqual(['cleanup', 'exit']);
+    });
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// Item 81. Off-box, in OPEN mode, the instance token stopped being sufficient:
+// it proves a browser loaded our page, not that the caller is the operator.
+// The env var / config opt-out is what restores it. Locked mode is unchanged —
+// there a session is the proof and the opt-out is never consulted.
+
+describe('ServerShutdownApi off-box opt-out', () => {
+    it('403s an off-box caller in open mode without the opt-out, even with a valid token', async () => {
+        const schedule = vi.fn();
+        const api = new ServerShutdownApi({ schedule, exit: vi.fn() });
+        const { req, res } = makeReqRes('/api/server/shutdown', 'POST', '192.168.1.50', {
+            cookie: `ws_scrcpy_token=${getInstanceToken()}`,
+        });
+
+        expect(await api.handle(req, res)).toBe(true);
+        expect((res as any).getStatus()).toBe(403);
+        expect(schedule).not.toHaveBeenCalled();
+    });
+
+    it('allows the same caller once WS_SCRCPY_ALLOW_REMOTE_ADMIN=1', async () => {
+        process.env['WS_SCRCPY_ALLOW_REMOTE_ADMIN'] = '1';
+        const schedule = vi.fn();
+        const api = new ServerShutdownApi({ schedule, exit: vi.fn() });
+        const { req, res } = makeReqRes('/api/server/shutdown', 'POST', '192.168.1.50', {
+            cookie: `ws_scrcpy_token=${getInstanceToken()}`,
+        });
+
+        expect(await api.handle(req, res)).toBe(true);
+        expect((res as any).getStatus()).toBe(200);
+        expect(schedule).toHaveBeenCalledTimes(1);
+    });
+
+    it('allows the same caller when config.json sets allowRemoteAdmin', async () => {
+        Config.getInstance().updateAppConfig({ allowRemoteAdmin: true });
+        const schedule = vi.fn();
+        const api = new ServerShutdownApi({ schedule, exit: vi.fn() });
+        const { req, res } = makeReqRes('/api/server/shutdown', 'POST', '192.168.1.50', {
+            cookie: `ws_scrcpy_token=${getInstanceToken()}`,
+        });
+
+        expect(await api.handle(req, res)).toBe(true);
+        expect((res as any).getStatus()).toBe(200);
+    });
+
+    it('still allows a loopback caller with no cookie — the tray helper', async () => {
+        const schedule = vi.fn();
+        const api = new ServerShutdownApi({ schedule, exit: vi.fn() });
+        const { req, res } = makeReqRes('/api/server/shutdown', 'POST');
+
+        expect(await api.handle(req, res)).toBe(true);
+        expect((res as any).getStatus()).toBe(200);
+        expect(schedule).toHaveBeenCalledTimes(1);
+    });
+
+    // The opt-out must stay inert once sign-in is on: a flag left set from an
+    // earlier container run cannot open a route around the login.
+    it('is ignored in locked mode — an unauthenticated off-box caller still gets 401', async () => {
+        setAuthEnabled(Config.getInstance().db, true);
+        process.env['WS_SCRCPY_ALLOW_REMOTE_ADMIN'] = '1';
+        const schedule = vi.fn();
+        const api = new ServerShutdownApi({ schedule, exit: vi.fn() });
+        const { req, res } = makeReqRes('/api/server/shutdown', 'POST', '192.168.1.50', {
+            cookie: `ws_scrcpy_token=${getInstanceToken()}`,
+        });
+
+        expect(await api.handle(req, res)).toBe(true);
+        expect((res as any).getStatus()).toBe(401);
+        expect(schedule).not.toHaveBeenCalled();
     });
 });
