@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.121] - 2026-09-10
+
 ### Fixed
 
 - **The in-app uninstall now works on Windows.** It never did: removing a per-machine MSI requires an
