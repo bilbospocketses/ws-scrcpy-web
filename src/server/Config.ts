@@ -52,6 +52,13 @@ export interface FlatConfig {
     channel?: 'stable' | 'beta';
     githubOwner?: string;
 
+    // Security: allow admin actions from off-box while running without sign-in.
+    // Unlike allowedHosts / frameAncestors below, this one IS part of AppConfig
+    // — the banner's confirmation modal writes it through PATCH /api/config,
+    // and that PATCH is itself operator-gated, so the switch cannot be thrown
+    // from off-box.
+    allowRemoteAdmin?: boolean;
+
     // Security: extra Host header hostnames accepted beyond localhost / IP
     // literals (reverse-proxy / domain deployments). Server-only and read at
     // boot — deliberately NOT part of AppConfig, so it is never exposed or
@@ -269,6 +276,7 @@ function validateField<K extends keyof AppConfig>(key: K, value: unknown): Valid
             return { ok: true, value: value as AppConfig[K] };
         }
         case 'firstRunComplete':
+        case 'allowRemoteAdmin':
         case 'autoUpdate': {
             if (typeof value !== 'boolean') {
                 return { ok: false, error: `${key} must be a boolean` };
@@ -316,6 +324,11 @@ function sanitizeAppConfig(
     if (raw.firstRunComplete !== undefined) {
         const r = validateField('firstRunComplete', raw.firstRunComplete);
         if (r.ok) out.firstRunComplete = r.value;
+        else warn(`config.json: ${r.error}; using default false`);
+    }
+    if (raw.allowRemoteAdmin !== undefined) {
+        const r = validateField('allowRemoteAdmin', raw.allowRemoteAdmin);
+        if (r.ok) out.allowRemoteAdmin = r.value as boolean;
         else warn(`config.json: ${r.error}; using default false`);
     }
     if (raw.autoUpdate !== undefined) {

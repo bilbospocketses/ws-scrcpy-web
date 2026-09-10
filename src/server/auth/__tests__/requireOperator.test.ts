@@ -110,3 +110,42 @@ describe('requireOperator — auth enabled', () => {
         expect(r.status()).toBe(403);
     });
 });
+
+describe('requireOperator — explicit opt-out', () => {
+    const savedFlag = process.env['WS_SCRCPY_ALLOW_REMOTE_ADMIN'];
+    afterEach(() => {
+        if (savedFlag === undefined) delete process.env['WS_SCRCPY_ALLOW_REMOTE_ADMIN'];
+        else process.env['WS_SCRCPY_ALLOW_REMOTE_ADMIN'] = savedFlag;
+    });
+
+    it('allows an off-box caller when the env var is exactly "1"', () => {
+        setup();
+        process.env['WS_SCRCPY_ALLOW_REMOTE_ADMIN'] = '1';
+        const r = mkRes();
+        expect(requireOperator(mkReq('192.168.1.50'), r.res)).toBe(true);
+    });
+
+    it('does NOT accept "true" — the value must be exactly "1"', () => {
+        setup();
+        process.env['WS_SCRCPY_ALLOW_REMOTE_ADMIN'] = 'true';
+        const r = mkRes();
+        expect(requireOperator(mkReq('192.168.1.50'), r.res)).toBe(false);
+        expect(r.status()).toBe(403);
+    });
+
+    it('allows an off-box caller when config.json sets allowRemoteAdmin', () => {
+        setup();
+        Config.getInstance().updateAppConfig({ allowRemoteAdmin: true });
+        const r = mkRes();
+        expect(requireOperator(mkReq('192.168.1.50'), r.res)).toBe(true);
+    });
+
+    it('is ignored when auth is enabled — a signed-in session is required regardless', () => {
+        setup();
+        setAuthEnabled(Config.getInstance().db, true);
+        process.env['WS_SCRCPY_ALLOW_REMOTE_ADMIN'] = '1';
+        const r = mkRes();
+        expect(requireOperator(mkReq('192.168.1.50'), r.res)).toBe(false);
+        expect(r.status()).toBe(403);
+    });
+});

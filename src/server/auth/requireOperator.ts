@@ -10,11 +10,19 @@ export function hasAuthenticatedUser(req: IncomingMessage): boolean {
 }
 
 /**
- * Has the operator deliberately allowed admin from off-box while running
- * without sign-in? Implemented in Task 2; false until then.
+ * Has the operator deliberately allowed admin from off-box while running without sign-in?
+ *
+ * The env var is first-class and checked first: a container or headless install has nobody at a
+ * browser on loopback, so it is the only path that does not require `docker exec`. qa-harness sets
+ * it. The value must be exactly '1' — a loose truthiness check would let an empty string or the
+ * string 'false' through.
+ *
+ * The config key is what the banner's confirmation modal writes, and that PATCH is itself
+ * operator-gated, so the switch cannot be thrown from off-box.
  */
 export function allowRemoteAdmin(): boolean {
-    return false;
+    if (process.env['WS_SCRCPY_ALLOW_REMOTE_ADMIN'] === '1') return true;
+    return Config.getInstance().getAppConfig().allowRemoteAdmin === true;
 }
 
 /**
