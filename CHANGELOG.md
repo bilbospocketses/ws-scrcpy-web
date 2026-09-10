@@ -36,6 +36,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - 14 unit tests cover the status predicate, the backoff sequence, the 404 no-retry path, exhausting the
     budget on both a status and a thrown error, and the `onRetry` reporting. `fetchImpl` and `sleep` are
     injectable, so none of them touch the network or actually wait.
+### Changed
+
+- **Biome is clean: 0 warnings, 0 infos across 566 files** (todo item 122). The lint step exits 0 on
+  warnings, so 11 warnings and 2 infos had been accumulating in plain sight for weeks.
+  - **`biome.json` migrated** via `biome migrate`: the `$schema` declared 2.5.11 against a pinned 2.5.12
+    CLI, and `linter.rules.recommended` is deprecated in favour of `preset: "recommended"` (slated for
+    removal in Biome's next major).
+  - **That drift can no longer recur.** A new test asserts the declared `$schema` equals the *installed*
+    CLI version, and that `preset` is used rather than `recommended`. The gap opened on its own every
+    time Dependabot bumped the devDependency, because nothing in that bump touches the `$schema` string;
+    now the bump that forgets `biome migrate` fails `npm test` instead of whispering at info level.
+  - **All 11 `noDescendingSpecificity` warnings in `src/style/modal.css` were audited by hand and every
+    one is a false positive**, for one of three reasons, now written down at the top of that file:
+    disjoint properties (6 sites — the rules they collide with set only `background`, the flagged ones
+    never do); mutually exclusive dialog classes (3 sites — `shell-modal` versus `connect-modal` /
+    `list-files-modal` / `service-operation-modal`); and sibling containers (2 sites — `.modal-controls`
+    and `.modal-advanced` are siblings appended by `ConfigureScrcpy.buildBody()`, never nested).
+  - **The rule stays ON.** The file is ordered by component section, not by specificity, and no
+    reordering can satisfy the rule (moving a block just re-points the complaint at the next rule above
+    it). So each site carries a suppression naming its reason, and Biome's own `suppressions/unused`
+    check turns a suppression red the moment it stops applying.
+  - **`modal.css` gained 37 lines and lost zero** — the change is comments only, with every selector and
+    declaration byte-identical. The tempting "proper" fix, rewriting the `.modal-advanced` selector list
+    as `:is(select, input:not([type="checkbox"]))`, was tried and reverted: it is the same match set but
+    raises specificity from (0,2,2) to (0,3,2), which levels it with the `:disabled` rule above and — by
+    being later — takes the faded background off disabled advanced selects. That is recorded in the file
+    so the next person does not rediscover it the hard way.
 
 ## [0.1.30-beta.118] - 2026-09-09
 
