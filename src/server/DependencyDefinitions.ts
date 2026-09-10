@@ -6,6 +6,7 @@ import { promisify } from 'util';
 import { Logger } from './Logger';
 import { loadManifest } from './NodePtyResolver';
 import { getInstalledScrcpyServerVersion } from './scrcpyServerVersion';
+import { fetchOkWithRetry, VERSION_CHECK_POLICY } from './util/fetchWithRetry';
 
 const log = Logger.for('DependencyDefinitions');
 
@@ -81,7 +82,10 @@ export function getDependencyDefinitions(depsPath: string): DependencyDefinition
                 return runVersionCommand(exe, ['--version'], /v([\d.]+)/);
             },
             checkLatest: async () => {
-                const res = await fetch('https://nodejs.org/dist/index.json');
+                const res = await fetchOkWithRetry('https://nodejs.org/dist/index.json', {
+                    ...VERSION_CHECK_POLICY,
+                    onRetry: (n) => log.warn(`node latest check ${n.attempt}/${n.attempts}: ${n.reason}`),
+                });
                 const releases = (await res.json()) as { version: string; lts: string | false }[];
                 const ltsReleases = releases.filter((r) => r.lts !== false);
                 if (ltsReleases.length === 0) return null;
@@ -128,7 +132,10 @@ export function getDependencyDefinitions(depsPath: string): DependencyDefinition
                 return runVersionCommand(exe, ['--version'], /Version ([\d.]+)/);
             },
             checkLatest: async () => {
-                const res = await fetch('https://dl.google.com/android/repository/repository2-3.xml');
+                const res = await fetchOkWithRetry('https://dl.google.com/android/repository/repository2-3.xml', {
+                    ...VERSION_CHECK_POLICY,
+                    onRetry: (n) => log.warn(`adb latest check ${n.attempt}/${n.attempts}: ${n.reason}`),
+                });
                 const xml = await res.text();
                 const match = xml.match(
                     /path="platform-tools"[\s\S]*?<major>(\d+)<\/major>\s*<minor>(\d+)<\/minor>\s*<micro>(\d+)<\/micro>/,
@@ -159,8 +166,20 @@ export function getDependencyDefinitions(depsPath: string): DependencyDefinition
                 return getInstalledScrcpyServerVersion(depsPath);
             },
             checkLatest: async () => {
-                const res = await fetch('https://api.github.com/repos/Genymobile/scrcpy/releases/latest', {
-                    headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'ws-scrcpy-web' },
+                // `fetchOkWithRetry`, not `fetch`. This call used to ignore
+                // `res.ok` entirely, so a 403 or 5xx got its ERROR BODY parsed
+                // as success, yielded no `tag_name`, and returned null —
+                // whereupon autoInstallMissing skipped scrcpy-server for the
+                // whole boot with no trace. That is smoke 20.11's 300s flake,
+                // and this endpoint is why: api.github.com rate-limits per IP
+                // at 60/hour unauthenticated, and CI runners share IPs. The
+                // other two dependencies resolve through nodejs.org and
+                // dl.google.com, which do not rate-limit — which is exactly why
+                // they hydrated in the run where this one did not.
+                const res = await fetchOkWithRetry('https://api.github.com/repos/Genymobile/scrcpy/releases/latest', {
+                    init: { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'ws-scrcpy-web' } },
+                    ...VERSION_CHECK_POLICY,
+                    onRetry: (n) => log.warn(`scrcpy-server latest check ${n.attempt}/${n.attempts}: ${n.reason}`),
                 });
                 const data = (await res.json()) as { tag_name: string };
                 return data.tag_name?.replace(/^v/, '') ?? null;

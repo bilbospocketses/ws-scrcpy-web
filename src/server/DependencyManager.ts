@@ -13,6 +13,7 @@ import { Logger } from './Logger';
 import { writeInstalledScrcpyServerVersion } from './scrcpyServerVersion';
 import { resolveSystemTool } from './service/systemTools';
 import { copyFileAtomic, copyFileAtomicSync, writeFileAtomicSync } from './util/atomicFile';
+import { fetchWithRetry } from './util/fetchWithRetry';
 import { extractZipTo } from './zipExtract';
 
 const log = Logger.for('DependencyManager');
@@ -93,9 +94,32 @@ export class DependencyManager {
             info.latestVersion = await def.checkLatest();
             this.resolveStatus(info);
         } catch (err) {
-            info.status = DependencyStatus.Error;
-            info.errorMessage = err instanceof Error ? err.message : String(err);
-            log.warn(`Latest-version check failed for ${name}: ${info.errorMessage}`);
+            const message = err instanceof Error ? err.message : String(err);
+            // A failed LATEST check is only an error when there is nothing
+            // installed. That is the item-124 case: we cannot learn what to
+            // install, so autoInstallMissing will skip this dependency and the
+            // user must be told rather than left with a silent no-op.
+            //
+            // When the dependency IS installed, it works — the seeded
+            // scrcpy-server in the Docker image is the everyday example. All we
+            // failed to learn is whether a newer version exists, which is
+            // advisory. Marking a present, usable dependency `Error` because
+            // api.github.com rate-limited us is a false alarm, and it broke
+            // smoke 20.9/20.12 on 2026-09-09 by asserting a healthy container
+            // was faulty. `resolveStatus` reports Unknown for a null
+            // latestVersion, which is the honest state.
+            info.latestVersion = null;
+            if (info.installedVersion === null) {
+                info.status = DependencyStatus.Error;
+                info.errorMessage = message;
+                log.warn(`Latest-version check failed for ${name} (not installed): ${message}`);
+            } else {
+                this.resolveStatus(info);
+                info.errorMessage = undefined;
+                log.info(
+                    `Latest-version check failed for ${name}; keeping installed ${info.installedVersion}: ${message}`,
+                );
+            }
         }
     }
 
@@ -103,9 +127,13 @@ export class DependencyManager {
         for (const def of this.definitions) {
             await this.checkInstalled(def.name);
         }
-        for (const def of this.definitions) {
-            await this.checkLatest(def.name);
-        }
+        // CONCURRENT, deliberately. Boot is `checkAll().then(() =>
+        // autoInstallMissing())`, and the seed promote plus every install lives
+        // inside autoInstallMissing — so this phase gates the entire hydrate.
+        // Run serially, three unreachable endpoints cost the SUM of their
+        // budgets; run together, the worst case is the slowest single one. Each
+        // checkLatest touches only its own info, so there is nothing to race.
+        await Promise.all(this.definitions.map((def) => this.checkLatest(def.name)));
         const infos = Array.from(this.state.values());
         const updates = infos.filter((i) => i.status === DependencyStatus.UpdateAvailable).map((i) => i.name);
         const upToDate = infos.filter((i) => i.status === DependencyStatus.UpToDate).length;
@@ -295,7 +323,14 @@ export class DependencyManager {
     }
 
     private async download(url: string, destPath: string): Promise<void> {
-        const res = await fetch(url);
+        // `timeoutMs: null` deliberately. This streams the payload — the Node
+        // archive is ~110 MB — and `AbortSignal.timeout` aborts the whole
+        // exchange, body included, so any per-attempt deadline would kill a
+        // legitimately slow download mid-stream. Retry alone here.
+        const res = await fetchWithRetry(url, {
+            timeoutMs: null,
+            onRetry: (n) => log.warn(`download ${n.attempt}/${n.attempts} for ${n.url}: ${n.reason}`),
+        });
         if (!res.ok) {
             throw new Error(`Download failed: HTTP ${res.status} from ${url}`);
         }

@@ -220,3 +220,62 @@ describe('nodejs.checkLatest (Option D gating)', () => {
         expect(await def.checkLatest()).toBe('24.14.1');
     });
 });
+
+/**
+ * Item 124 — the regression that produced smoke 20.11's 300s flake.
+ *
+ * Every `checkLatest` used to call bare `fetch` and never look at `res.ok`. On a
+ * non-OK response it parsed the ERROR BODY as if it were the payload, found no
+ * version field, and returned `null`. `DependencyManager.autoInstallMissing`
+ * deliberately skips a dependency whose latest version is unknown, so the
+ * install was never attempted and `installedVersion` stayed null for the rest of
+ * that boot — while `DependencyManager.checkLatest`'s own try/catch, which turns
+ * a throw into DependencyStatus.Error WITH the message, never fired.
+ *
+ * 403 is the shape that actually bit us: `api.github.com` rate-limits per IP at
+ * 60/hour unauthenticated and CI runners share IPs, which is why scrcpy-server
+ * alone failed to hydrate in a run where nodejs (nodejs.org) and adb
+ * (dl.google.com) both succeeded. It is also non-retryable here, so these
+ * assertions cost one call and no backoff.
+ */
+describe('checkLatest rejects a non-OK response instead of returning null (item 124)', () => {
+    let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+    afterEach(() => {
+        fetchSpy?.mockRestore();
+    });
+
+    function defFor(name: string) {
+        const d = getDependencyDefinitions('/tmp/test-deps').find((x) => x.name === name);
+        if (!d) throw new Error(`${name} definition missing`);
+        return d;
+    }
+
+    it('scrcpy-server: a rate-limited 403 throws rather than silently yielding null', async () => {
+        // The literal body GitHub returns when the unauthenticated hourly cap is hit.
+        fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValue(
+            new Response(JSON.stringify({ message: 'API rate limit exceeded for 20.1.2.3.', documentation_url: '' }), {
+                status: 403,
+                statusText: 'rate limit exceeded',
+                headers: { 'content-type': 'application/json' },
+            }),
+        );
+        await expect(defFor('scrcpy-server').checkLatest()).rejects.toThrow(/HTTP 403/);
+        expect(fetchSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('adb: a 403 throws', async () => {
+        fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValue(new Response('nope', { status: 403 }));
+        await expect(defFor('adb').checkLatest()).rejects.toThrow(/HTTP 403/);
+    });
+
+    it('nodejs: a 403 throws', async () => {
+        fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValue(new Response('nope', { status: 403 }));
+        await expect(defFor('nodejs').checkLatest()).rejects.toThrow(/HTTP 403/);
+    });
+
+    it('the thrown message names the URL, so the recorded errorMessage is actionable', async () => {
+        fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValue(new Response('nope', { status: 403 }));
+        await expect(defFor('scrcpy-server').checkLatest()).rejects.toThrow(/api\.github\.com/);
+    });
+});

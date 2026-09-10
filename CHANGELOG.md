@@ -19,6 +19,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A failed version check no longer silently skips a dependency for the whole boot** (todo items 124 and
+  125). Every `checkLatest` in `DependencyDefinitions.ts` called bare `fetch` and **never looked at
+  `res.ok`**. On a non-OK response it parsed the *error body* as if it were the payload, found no version
+  field, and returned `null` — and `autoInstallMissing` deliberately skips a dependency whose latest
+  version is unknown. So the install was never attempted, `installedVersion` stayed `null` for the rest of
+  that boot, and `DependencyManager.checkLatest`'s own try/catch — which records
+  `DependencyStatus.Error` *with the message* — never fired, because nothing threw.
+  - **This is what smoke 20.11's 300-second flake actually was.** Not a slow hydrate: a dead one. No
+    timeout could ever have helped, because nothing was retrying and nothing would.
+  - **`scrcpy-server` is resolved through `api.github.com`, which rate-limits per IP at 60/hour
+    unauthenticated — and CI runners share IPs.** `nodejs` (nodejs.org) and `adb` (dl.google.com) are on
+    endpoints that do not, which is exactly why those two hydrated in the same run where `scrcpy-server`
+    reported `unknown` for five minutes. It is not CI-only: a user behind corporate NAT hits the same cap
+    and silently gets no scrcpy-server.
+  - **New shared `src/server/util/fetchWithRetry.ts`**, the TypeScript sibling of the helper item 121 added
+    to `scripts/fetch-prebuilts.mjs` (the script must keep its own copy — it runs on a fresh clone before
+    `npm run build`). Same narrow policy: **`429` and `5xx` plus network/abort errors, never a `404`**, 3
+    attempts backing off 2s then 4s. `403` is deliberately *not* retried — GitHub's rate-limit `403` is
+    indistinguishable here from a genuine auth failure, and `429` is the status that means "try again".
+  - **`fetchOkWithRetry` throws on a non-OK final response**, and every `checkLatest` now uses it. A throw
+    is a state the manager, the API and the UI can all report; a `null` is indistinguishable from "this
+    dependency legitimately has no known latest version".
+  - **`NodePtyResolver`'s three fetches and `DependencyManager.download` now retry too** (that half is item
+    125). The pty resolver's `return false` → `shell:false` degradation is right for *"no prebuilt exists
+    for this host"* and wrong for *"GitHub had a bad two seconds"*; a 404 still fails on the first attempt,
+    so the honest degradation survives.
+  - **The large-download case is handled explicitly.** `AbortSignal.timeout` aborts body streaming as well
+    as the request, so a per-attempt deadline would kill the ~110 MB Node archive mid-transfer.
+    `DependencyManager.download` passes `timeoutMs: null` and relies on retry alone; the small JSON/XML
+    version checks keep the 30s deadline they never had.
+  - 25 new tests. The four regression tests were verified in the failing direction by disabling the
+    `res.ok` guard — all four fail without it.
+  - **A failed *update* check no longer condemns an *installed* dependency.** The first cut of this fix
+    threw on any non-OK response, which is right when nothing is installed (that is the case item 124 is
+    about — `autoInstallMissing` skips it and the user must be told) and wrong when the dependency is
+    already there. The Docker image **seeds** scrcpy-server, so in a container it is present and usable
+    while `api.github.com` still rate-limits the *"is there a newer one"* lookup. Marking that `Error`
+    told smoke 20.9 and 20.12 a healthy container was faulty. Now: not installed → `Error`, as intended;
+    installed → keep it, report the update status as unknown, log at info.
+  - **The version-check phase no longer gates the whole hydrate.** Boot is
+    `checkAll().then(() => autoInstallMissing())`, and the seed promote plus every install lives inside
+    `autoInstallMissing` — so time spent checking versions is time before anything is installed at all.
+    Two changes: `checkAll` now runs the three latest-checks **concurrently** (worst case becomes the
+    slowest one rather than the sum), and version checks get their own **`VERSION_CHECK_POLICY`** — 2
+    attempts, 1s backoff, 10s timeout — instead of the download budget. With the download policy in that
+    position, one unreachable endpoint could hold the gate ~96s and three serially ~288s, which is what
+    blew 20.9's 180s hydrate poll and 20.12's 300s wait and left 1.9 reading `checking` where it expected
+    `error`. Downloads keep the generous budget; they are not in front of anything.
+  - 6 further tests pin all of it, including a concurrency test that counts **peak in-flight requests**
+    rather than elapsed time, so it cannot flake on a slow box. Both halves verified in the failing
+    direction by mutation: forcing the `Error` branch fails the installed-dependency test, and restoring
+    the serial loop fails the concurrency test.
+
 - **`fetch-prebuilts` retries the transient half of a failed download instead of exiting 1** (todo item
   121). All three downloads in `scripts/fetch-prebuilts.mjs` — the manifest, `SHA256SUMS`, and the
   tarball — were one shot: any non-OK status went straight to `process.exit(1)`. The script runs inside
