@@ -1294,14 +1294,118 @@ git -C "C:/Users/jscha/source/repos/ws-scrcpy-web" commit -m "feat(settings): ta
 
 **Files:**
 - Create: `src/app/client/settings/tabs/EmbeddingTab.ts`, `tabs/UsersTab.ts`, `tabs/ServiceTab.ts`
+- Create: `src/app/client/settings/__tests__/actionTabs.test.ts`
 - Modify: `src/app/client/SettingsModal.ts` (delete the moved methods, import the tabs)
 - Modify: `src/app/client/__tests__/SettingsModal.test.ts` (import paths for moved helpers)
 
 **Interfaces:**
-- Consumes: `TabDef` (Task 6).
+- Consumes: `TabDef` (Task 6), `StagedSettingsStore` (Task 4).
 - Produces: `export function buildEmbeddingTab(ctx: TabContext): HTMLElement` and the same for `Users` and `Service`; `export interface TabContext { role: Role | null; authEnabled: boolean; docker: boolean; reload(): void }`
 
 **These three register NOTHING with the store.** They are actions, and that absence is the mechanism keeping them out of the summary. Do not add fields here.
+
+**⚠️ This is a ~700-line move, and a move is exactly where a silent behaviour change hides.** The characterization tests in Step 0 exist because the rest of this task has no new assertions of its own — they pin the properties that must survive the move, and they are written FIRST so they fail if a tab module does not exist yet and keep passing after each extraction.
+
+- [ ] **Step 0: Write the characterization tests BEFORE moving anything**
+
+Create `src/app/client/settings/__tests__/actionTabs.test.ts`:
+
+```ts
+// @vitest-environment jsdom
+
+import { describe, expect, it, vi } from 'vitest';
+import { StagedSettingsStore } from '../StagedSettingsStore';
+import { buildEmbeddingTab } from '../tabs/EmbeddingTab';
+import { buildServiceTab } from '../tabs/ServiceTab';
+import { buildUsersTab } from '../tabs/UsersTab';
+
+function ctx(role: 'admin' | 'user' = 'admin') {
+    return { role, authEnabled: false, docker: false, reload: () => undefined };
+}
+
+// A never-resolving fetch: these tabs refresh asynchronously, and the point of
+// every test here is that the BODY renders regardless. Same discipline as
+// SettingsModal's own probe test.
+function stubHangingFetch(): void {
+    vi.stubGlobal('fetch', vi.fn(() => new Promise(() => undefined)));
+}
+
+describe('action-only tabs register nothing', () => {
+    // THE structural guarantee of this design. If any of these ever fails, an
+    // action has become stageable and can reach the change summary -- which
+    // would make Save claim it is about to install a service or delete a user.
+    it.each([
+        ['Embedding', buildEmbeddingTab],
+        ['Users', buildUsersTab],
+        ['Service', buildServiceTab],
+    ])('%s contributes no staged fields', (_name, build) => {
+        stubHangingFetch();
+        const store = new StagedSettingsStore();
+        build(ctx(), store);
+        expect(store.isDirty()).toBe(false);
+        expect(store.changes()).toEqual([]);
+        vi.unstubAllGlobals();
+    });
+});
+
+describe('action-only tabs render without waiting on the network', () => {
+    it.each([
+        ['Embedding', buildEmbeddingTab],
+        ['Users', buildUsersTab],
+        ['Service', buildServiceTab],
+    ])('%s builds a non-empty body while fetch hangs', (_name, build) => {
+        stubHangingFetch();
+        const el = build(ctx(), new StagedSettingsStore());
+        expect(el).toBeInstanceOf(HTMLElement);
+        expect(el.childElementCount).toBeGreaterThan(0);
+        vi.unstubAllGlobals();
+    });
+});
+
+describe('the controls that must survive the move', () => {
+    it('Users still offers a way to add a user', () => {
+        stubHangingFetch();
+        const el = buildUsersTab(ctx(), new StagedSettingsStore());
+        const labels = [...el.querySelectorAll('button')].map((b) => b.textContent ?? '');
+        expect(labels.some((l) => /add|create/i.test(l))).toBe(true);
+        vi.unstubAllGlobals();
+    });
+
+    it('Service still offers install and uninstall controls', () => {
+        stubHangingFetch();
+        const el = buildServiceTab(ctx(), new StagedSettingsStore());
+        const text = el.textContent ?? '';
+        expect(/install/i.test(text)).toBe(true);
+        expect(/uninstall/i.test(text)).toBe(true);
+        vi.unstubAllGlobals();
+    });
+
+    it('Embedding still offers a way to add an origin', () => {
+        stubHangingFetch();
+        const el = buildEmbeddingTab(ctx(), new StagedSettingsStore());
+        const text = el.textContent ?? '';
+        expect(/origin|embed/i.test(text)).toBe(true);
+        vi.unstubAllGlobals();
+    });
+});
+
+describe('role gating survives the move', () => {
+    it('a non-admin gets no user-management controls', () => {
+        stubHangingFetch();
+        const el = buildUsersTab(ctx('user'), new StagedSettingsStore());
+        const labels = [...el.querySelectorAll('button')].map((b) => b.textContent ?? '');
+        expect(labels.some((l) => /delete|remove/i.test(l))).toBe(false);
+        vi.unstubAllGlobals();
+    });
+});
+```
+
+**All three builders take `(ctx, store)`** even though these tabs ignore the store — a uniform signature is what lets the "registers nothing" test be written once as a table, and what stops a future author wondering whether this tab is allowed to stage.
+
+- [ ] **Step 0b: Run the tests to verify they fail**
+
+Run: `npx vitest run src/app/client/settings/__tests__/actionTabs.test.ts`
+Expected: FAIL — cannot resolve `../tabs/EmbeddingTab`. All three modules are missing; they appear one at a time across the steps below.
 
 - [ ] **Step 1: Move `EmbeddingTab`**
 
@@ -1324,11 +1428,14 @@ Run: `npm test` → PASS.
 
 Same for `buildServiceSection` (`:1728`) and `refreshService` (`:1739`), plus the service-only exported helpers (`scopeRadioState`, `systemServiceInstallGate`, `applySystemInstallGate`, `lockScopeRadioControl`, `buildServiceInfoRow`, `buildInstallAllUsersControl`, `buildUninstallControl`, `classifyInstallPoll`, `uninstallFollowupMessage`).
 
-- [ ] **Step 6: Run everything**
+- [ ] **Step 6: Run everything, including the characterization suite**
 
+Run: `npx vitest run src/app/client/settings/__tests__/actionTabs.test.ts` → PASS, 9 tests. All three modules now exist, so every table row resolves.
 Run: `npm test` → PASS.
 Run: `npm run build:dev` → succeeds.
 Run: `npm run lint > /dev/null; echo $?` → `0`
+
+**If a characterization test fails here, the move changed behaviour — fix the move, not the test.** The one exception is a control whose label genuinely differs from the regex; widen the regex only after reading the moved code and confirming the control is really there.
 
 - [ ] **Step 7: Commit**
 
@@ -1766,4 +1873,4 @@ After the beta publishes and is verified (asset count + `:beta` digest match, RE
 
 **Type consistency:** `Change` is declared twice on purpose — server-side in Task 1, client-side in Task 4 — because importing a `node:sqlite` module into the browser bundle would be wrong. The shapes are identical and both are stated in full. `TabContext` is defined in Task 7 and consumed in Tasks 8, 9 and 11. `StagedSettingsStore`'s methods are used in Tasks 8–11 exactly as declared in Task 4. `BatchResult` is produced in Task 5 and consumed in Task 10.
 
-**One risk worth naming:** Task 7 moves ~700 lines with no new tests of its own, relying on the existing suite to catch breakage. That is deliberate — it is a pure move, and inventing tests for unchanged behaviour would be busywork — but it is the task most likely to need a second pass if the suite's coverage of those sections turns out to be thin.
+**Task 7's risk is now covered.** It moves ~700 lines, which is exactly where a silent behaviour change hides, and it originally leaned entirely on the existing suite. It now opens with nine characterization tests written **before** the move (Step 0), pinning four properties: that all three tabs register nothing with the store (the structural guarantee that keeps actions out of the summary), that each renders a non-empty body while `fetch` hangs, that the install/uninstall/add-user/add-origin controls survive, and that role gating still hides destructive controls from a non-admin. They fail at Step 0b because no tab module exists yet, then go green module by module as each extraction lands.
