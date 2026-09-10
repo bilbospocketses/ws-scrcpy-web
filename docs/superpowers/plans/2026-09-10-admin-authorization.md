@@ -18,6 +18,13 @@
 - **Config key name is exactly `allowRemoteAdmin`.**
 - **`GET /api/config` must stay reachable, 200, with no token, from off-box, in every state.** It is the launcher's readiness probe, the Docker image's `HEALTHCHECK`, and `qa-harness`'s `ReadyPath` (`config/linux.psd1:81`). Breaking it breaks all three at once.
 - **`requireAdmin` always runs last** so a signed-in non-admin is still refused everywhere.
+- **⚠️ The opt-out MUST stay inert when sign-in is enabled.** `requireOperator` uses a **ternary** —
+  `isAuthEnabled(db) ? hasAuthenticatedUser(req) : allowRemoteAdmin()` — so `allowRemoteAdmin()` is
+  never even called once auth is on. A flag left set from an earlier container run therefore does
+  **not** open a route around the login. **Do not "simplify" that ternary into
+  `hasAuthenticatedUser(req) || allowRemoteAdmin()`** — that reads as equivalent and is the exact
+  bypass this design exists to prevent. Task 2's test pins the behaviour; `ServerShutdownApi`'s new
+  clause guards on `!isAuthEnabled(...)` for the same reason.
 - **Do not edit `docs/smoke-tests/`.** Todo task 28 will rewrite the register and its row markers. Smoke row 20.6 is affected; it goes to `qa-harness` as a relay request.
 - **CHANGELOG entries go under `## [Unreleased]`**, never a pre-written version heading — `bump-version.mjs` aborts otherwise.
 - **One `release:beta` PR** for the whole feature; no manual version bump.
@@ -862,7 +869,11 @@ git -C "C:/Users/jscha/source/repos/ws-scrcpy-web" commit -m "feat(config): repo
 **Files:**
 - Create: `src/app/client/AdminScopeBanner.ts`
 - Create: `src/app/client/AdminScopeBanner.test.ts`
-- Modify: `src/app/index.ts` (mount beside `FirstRunBanner`, near lines 365-368)
+- Modify: `src/app/index.ts` (mount beside `FirstRunBanner`, near lines 365-368; pass the runtime to both pollers)
+- Modify: `src/app/client/adminGate.ts` (add `adminApiReachable`)
+- Modify: `src/app/client/FirstRunBanner.ts` (do not poll an unreachable admin API)
+- Modify: the dependency panel component (`grep -rn "api/dependencies" src/app/` to locate it) — same
+- Modify: `src/app/client/__tests__/adminGate.test.ts` (or create it if absent)
 - Modify: `src/style/` — the stylesheet that defines `.first-run-banner` gains `.admin-scope-banner`
 
 **Interfaces:**
@@ -870,6 +881,7 @@ git -C "C:/Users/jscha/source/repos/ws-scrcpy-web" commit -m "feat(config): repo
 - Produces:
   - `export class AdminScopeBanner` with `static create(): Promise<AdminScopeBanner>`, `getElement(): HTMLElement`, `destroy(): void`
   - `export function bannerStateFor(runtime: FirstRunStatus): 'hidden' | 'local-actionable' | 'local-readonly' | 'remote-warning'` — pure, exported for testing.
+  - `export function adminApiReachable(runtime: Pick<FirstRunStatus, 'adminScope' | 'callerIsLocal'>): boolean` in `adminGate.ts` — consumed by Task 8's dismissal logic and by both pollers.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1109,22 +1121,117 @@ Add the import beside the `FirstRunBanner` one at line 13:
 import { AdminScopeBanner } from './client/AdminScopeBanner';
 ```
 
-- [ ] **Step 6: Style it**
+- [ ] **Step 6: Stop polling an admin API this caller cannot use**
+
+Every admin handler gates at the **top of `handle`**, so the GETs are gated too — `DependencyApi.ts:16`
+and `UpdatesApi.ts:46` both guard before any routing, and `ServiceApi.ts:188` is the same shape.
+`FirstRunBanner` polls `GET /api/dependencies` every 15 s and the dependency panel polls on its own
+interval, so a **flagless container produces a steady 403 stream and matching console errors on a
+completely healthy app** — the exact shape qa-harness already wrote up at `docs/traps.md:1294` for
+`/api/embed-request`.
+
+**This is not a new principle.** `adminGate.ts:15-19` already makes this argument for the `role` case
+and the repo already accepted it as **finding 9.6**:
+
+> *"The dependency API answers 403 for a non-admin, so an ungated panel did not show less — it showed
+> 'Failed to load dependencies'. An authorization boundary that manifests as an error message reads as
+> a bug to the user and as coverage to the checklist."*
+
+This step extends that same rule from `role` to `adminScope`.
+
+Add to `src/app/client/adminGate.ts`:
+
+```ts
+import type { FirstRunStatus } from '../../common/ConfigEvents';
+
+/**
+ * Will the admin API answer THIS caller at all?
+ *
+ * Distinct from `canSeeSection`, which asks whether this ROLE may use a section. Both must hold: a
+ * signed-in admin reaching a container without the opt-out is an admin whose calls still 403, and a
+ * viewer on loopback is local but still not an admin.
+ *
+ * An absent `adminScope` is a server older than the guard, where the admin API always answered —
+ * assume reachable so a new frontend does not blank sections on an old server.
+ */
+export function adminApiReachable(runtime: Pick<FirstRunStatus, 'adminScope' | 'callerIsLocal'>): boolean {
+    if (runtime.adminScope === undefined) return true;
+    if (runtime.adminScope === 'local') return runtime.callerIsLocal === true;
+    return true;
+}
+```
+
+Then, in `FirstRunBanner` and the dependency panel, accept the runtime and skip the poll entirely when
+it is unreachable — do not start the interval, and render the "admin actions are limited to this
+machine" state instead of an error. `src/app/index.ts` already fetches the config envelope at boot
+(near lines 121-135), so pass `envelope.runtime` into `FirstRunBanner.create()` and the panel's
+constructor rather than making them re-fetch.
+
+In `SettingsModal`, compose the two predicates wherever `canSeeSection` is called:
+`canSeeSection(role, section) && adminApiReachable(runtime)`.
+
+- [ ] **Step 7: Test the suppression**
+
+Create or extend `src/app/client/__tests__/adminGate.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest';
+import { adminApiReachable, canSeeSection } from '../adminGate';
+
+describe('adminApiReachable', () => {
+    it('is true on a server that predates the guard', () => {
+        expect(adminApiReachable({})).toBe(true);
+    });
+
+    it('is true for a loopback caller under the local policy', () => {
+        expect(adminApiReachable({ adminScope: 'local', callerIsLocal: true })).toBe(true);
+    });
+
+    it('is FALSE for a remote caller under the local policy — the flagless container', () => {
+        expect(adminApiReachable({ adminScope: 'local', callerIsLocal: false })).toBe(false);
+    });
+
+    it('is true once the opt-out is set, or once sign-in is on', () => {
+        expect(adminApiReachable({ adminScope: 'remote', callerIsLocal: false })).toBe(true);
+        expect(adminApiReachable({ adminScope: 'authenticated', callerIsLocal: false })).toBe(true);
+    });
+});
+
+describe('the two predicates are independent', () => {
+    it('an admin whose calls would 403 is gated by reachability, not by role', () => {
+        expect(canSeeSection('admin', 'dependencies')).toBe(true);
+        expect(adminApiReachable({ adminScope: 'local', callerIsLocal: false })).toBe(false);
+    });
+
+    it('a viewer on loopback is reachable but still not permitted', () => {
+        expect(adminApiReachable({ adminScope: 'local', callerIsLocal: true })).toBe(true);
+        expect(canSeeSection('user', 'dependencies')).toBe(false);
+    });
+});
+```
+
+Add one lifecycle test asserting `FirstRunBanner` starts **no** interval when the runtime is
+unreachable — `FirstRunBanner.test.ts:28` already has a "polling lifecycle (#36)" block to extend.
+
+Run: `npx vitest run src/app/client/__tests__/adminGate.test.ts src/app/client/FirstRunBanner.test.ts`
+Expected: PASS.
+
+- [ ] **Step 8: Style it**
 
 Find the stylesheet defining `.first-run-banner` (`grep -rn "first-run-banner" src/style/`) and add
 `.admin-scope-banner` beside it, reusing the same layout tokens. The `--warning` modifier and the
 secondary button use the existing theme variables — see `reference_ws_scrcpy_theme_vars`; do not
 hard-code colours.
 
-- [ ] **Step 7: Build, test, lint, commit**
+- [ ] **Step 9: Build, test, lint, commit**
 
 Run: `npm run build:dev` → succeeds
 Run: `npm test` → PASS
 Run: `npm run lint > /dev/null; echo $?` → `0`
 
 ```bash
-git -C "C:/Users/jscha/source/repos/ws-scrcpy-web" add src/app/client/AdminScopeBanner.ts src/app/client/AdminScopeBanner.test.ts src/app/index.ts src/style
-git -C "C:/Users/jscha/source/repos/ws-scrcpy-web" commit -m "feat(ui): add the admin-scope banner"
+git -C "C:/Users/jscha/source/repos/ws-scrcpy-web" add src/app/client src/app/index.ts src/style
+git -C "C:/Users/jscha/source/repos/ws-scrcpy-web" commit -m "feat(ui): admin-scope banner, and stop polling an unreachable admin API"
 ```
 
 ---
