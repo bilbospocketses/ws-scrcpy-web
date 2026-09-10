@@ -30,6 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New opt-out for trusted networks and automation: `WS_SCRCPY_ALLOW_REMOTE_ADMIN=1`, or
   `allowRemoteAdmin` in `config.json`. **In a container nobody is ever on loopback**, so one of these
   — or enabling sign-in — is required to administer a Dockerised deployment remotely.
+  `docker-compose.yml` forwards the variable from your shell, so
+  `WS_SCRCPY_ALLOW_REMOTE_ADMIN=1 docker compose up` is enough; leave it unset and the container keeps
+  the refusing default.
 
 ### Fixed
 

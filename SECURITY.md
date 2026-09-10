@@ -80,7 +80,7 @@ The opt-out is **ignored entirely once sign-in is on** — then a session is the
 
 **In a container nobody is ever on loopback**: the browser reaches the server through the Docker gateway, so a containerised deployment has no operator by the loopback test. There are two supported paths:
 
-- set `WS_SCRCPY_ALLOW_REMOTE_ADMIN=1` on the container (`-e WS_SCRCPY_ALLOW_REMOTE_ADMIN=1`, or an `environment:` entry in Compose); or
+- set `WS_SCRCPY_ALLOW_REMOTE_ADMIN=1` on the container. `docker-compose.yml` already forwards it from your shell, so `WS_SCRCPY_ALLOW_REMOTE_ADMIN=1 docker compose up` is enough; with plain `docker run`, pass `-e WS_SCRCPY_ALLOW_REMOTE_ADMIN=1`. Unset, nothing is forwarded and the container keeps the refusing default; or
 - turn sign-in on once from inside the container, which *is* loopback:
 
   ```sh
