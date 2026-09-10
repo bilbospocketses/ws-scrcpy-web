@@ -36,6 +36,11 @@ export function bannerStateFor(runtime: FirstRunStatus): BannerState {
 export class AdminScopeBanner {
     private container: HTMLElement;
     private pollHandle: ReturnType<typeof setInterval> | null = null;
+    /**
+     * Per-user "don't show again", seeded from /api/settings. Never suppresses
+     * `remote-warning` — see `render()`.
+     */
+    private dismissed = false;
 
     constructor() {
         this.container = document.createElement('div');
@@ -45,9 +50,28 @@ export class AdminScopeBanner {
 
     static async create(): Promise<AdminScopeBanner> {
         const banner = new AdminScopeBanner();
+        await banner.seedDismissal();
         await banner.refresh();
         banner.startPolling();
         return banner;
+    }
+
+    /**
+     * Read the per-user "don't show again" flag before the first render, so a
+     * dismissed banner never flashes on load.
+     *
+     * `loadGlobal()` memoizes, so this shares the /api/settings read the boot
+     * sequence already makes rather than adding one. On failure the banner shows
+     * — the safe direction for a security notice.
+     */
+    private async seedDismissal(): Promise<void> {
+        try {
+            const { settingsService } = await import('./SettingsService');
+            const prefs = await settingsService.loadGlobal();
+            this.dismissed = prefs['adminScopeBannerDismissed'] === true;
+        } catch {
+            this.dismissed = false;
+        }
     }
 
     /**
@@ -56,7 +80,10 @@ export class AdminScopeBanner {
      * deterministic, then calls this.
      */
     start(): void {
-        void this.refresh();
+        void (async () => {
+            await this.seedDismissal();
+            await this.refresh();
+        })();
         this.startPolling();
     }
 
@@ -93,7 +120,10 @@ export class AdminScopeBanner {
     render(runtime: FirstRunStatus): void {
         const state = bannerStateFor(runtime);
         this.container.replaceChildren();
-        if (state === 'hidden') {
+        // `remote-warning` is deliberately NOT dismissible: it describes an
+        // exposure that is live right now, not a setup step the user has read
+        // and moved past. Everything else can be put away.
+        if (state === 'hidden' || (this.dismissed && state !== 'remote-warning')) {
             this.container.style.display = 'none';
             return;
         }
@@ -118,7 +148,13 @@ export class AdminScopeBanner {
             body.textContent =
                 'This server has no sign-in configured. To manage it, open this page on the machine ' +
                 'running the server — or set WS_SCRCPY_ALLOW_REMOTE_ADMIN=1.';
-            this.container.append(title, body);
+            // Instructions, never buttons: in open mode there is no auth, so a
+            // working "enable" control here would render for an attacker too —
+            // a switch that turns off the lock, mounted outside the door.
+            const readOnlyActions = document.createElement('div');
+            readOnlyActions.className = 'admin-scope-banner__actions';
+            readOnlyActions.appendChild(this.buildDismissButton());
+            this.container.append(title, body, readOnlyActions);
             return;
         }
 
@@ -147,8 +183,33 @@ export class AdminScopeBanner {
             void this.onAllowRemoteAdmin();
         });
 
-        actions.append(signIn, allow);
+        actions.append(signIn, allow, this.buildDismissButton());
         this.container.append(title, body, actions);
+    }
+
+    private buildDismissButton(): HTMLButtonElement {
+        const dismiss = document.createElement('button');
+        dismiss.type = 'button';
+        dismiss.className = 'admin-scope-banner__dismiss';
+        dismiss.textContent = 'Dismiss';
+        dismiss.addEventListener('click', () => {
+            void this.dismiss();
+        });
+        return dismiss;
+    }
+
+    /**
+     * Per-user, server-side (not localStorage), so it follows the operator to
+     * another browser — and so "reset welcome and bookmark prompts" can undo it.
+     */
+    private async dismiss(): Promise<void> {
+        this.dismissed = true;
+        this.container.style.display = 'none';
+        await fetch('/api/settings', {
+            method: 'PATCH',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ adminScopeBannerDismissed: true }),
+        });
     }
 
     /**

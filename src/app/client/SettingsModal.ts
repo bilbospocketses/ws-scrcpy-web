@@ -122,14 +122,20 @@ export function resetPromptsPayload(): Record<string, boolean | null> {
 
 /**
  * The per-user prompt flags reset by "reset welcome and bookmark prompts" —
- * clears the three flags that live in user_settings (SettingsApi). Exported
+ * clears the four flags that live in user_settings (SettingsApi). Exported
  * (pure) for testing; applied alongside resetPromptsPayload() in buildResetControl.
+ *
+ * A "don't show again" flag that is NOT listed here becomes one-way: Reset
+ * Prompts cannot bring it back, and the only way out is editing the database.
+ * That trap is already documented for PortChangeModal; `adminScopeBannerDismissed`
+ * (item 81) joins the list for the same reason.
  */
 export function resetPromptSettingsPayload(): Record<string, boolean | null> {
     return {
         serviceFirstRunSeen: false,
         bookmarkDismissedForPort: null,
         bookmarkDismissedGlobally: false,
+        adminScopeBannerDismissed: false,
     };
 }
 

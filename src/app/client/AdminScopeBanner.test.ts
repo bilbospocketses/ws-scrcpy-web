@@ -32,10 +32,17 @@ describe('bannerStateFor', () => {
 });
 
 describe('AdminScopeBanner rendering', () => {
-    it('renders no buttons in the read-only state', () => {
+    // Instructions only. A remote caller must be given no control that changes
+    // the server's posture — in open mode there is no auth, so a working
+    // "enable" button here would render for an attacker too. Dismiss is a
+    // per-user UI preference, not an action on the server, so it is allowed.
+    it('renders no ACTION buttons in the read-only state', () => {
         const banner = new AdminScopeBanner();
         banner.render(runtime({ adminScope: 'local', callerIsLocal: false }));
-        expect(banner.getElement().querySelectorAll('button').length).toBe(0);
+        const labels = [...banner.getElement().querySelectorAll('button')].map((b) => b.textContent);
+        expect(labels).not.toContain('Set up sign-in');
+        expect(labels).not.toContain('Allow remote admin without sign-in');
+        expect(labels).toEqual(['Dismiss']);
         expect(banner.getElement().textContent).toContain('WS_SCRCPY_ALLOW_REMOTE_ADMIN=1');
     });
 
@@ -139,5 +146,53 @@ describe('AdminScopeBanner opt-out wiring', () => {
             const init = (patch as unknown[])[1] as RequestInit;
             expect(JSON.parse(init.body as string)).toEqual({ allowRemoteAdmin: true });
         });
+    });
+});
+
+describe('AdminScopeBanner dismissal', () => {
+    it('the remote-warning state has no dismiss control', () => {
+        const banner = new AdminScopeBanner();
+        banner.render(runtime({ adminScope: 'remote', callerIsLocal: true }));
+        const labels = [...banner.getElement().querySelectorAll('button')].map((b) => b.textContent);
+        expect(labels).not.toContain('Dismiss');
+    });
+
+    it('offers Dismiss in both local states', () => {
+        const actionable = new AdminScopeBanner();
+        actionable.render(runtime({ adminScope: 'local', callerIsLocal: true }));
+        expect([...actionable.getElement().querySelectorAll('button')].map((b) => b.textContent)).toContain('Dismiss');
+
+        const readonly = new AdminScopeBanner();
+        readonly.render(runtime({ adminScope: 'local', callerIsLocal: false }));
+        expect([...readonly.getElement().querySelectorAll('button')].map((b) => b.textContent)).toContain('Dismiss');
+    });
+
+    it('a dismissed banner still shows the remote-warning state', () => {
+        const banner = new AdminScopeBanner();
+        (banner as unknown as { dismissed: boolean }).dismissed = true;
+        banner.render(runtime({ adminScope: 'remote', callerIsLocal: true }));
+        expect(banner.getElement().style.display).not.toBe('none');
+    });
+
+    it('a dismissed banner hides the local states', () => {
+        const banner = new AdminScopeBanner();
+        (banner as unknown as { dismissed: boolean }).dismissed = true;
+        banner.render(runtime({ adminScope: 'local', callerIsLocal: true }));
+        expect(banner.getElement().style.display).toBe('none');
+    });
+
+    it('Dismiss PATCHes the per-user flag', async () => {
+        const fetchSpy = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) });
+        vi.stubGlobal('fetch', fetchSpy);
+        const banner = new AdminScopeBanner();
+        banner.render(runtime({ adminScope: 'local', callerIsLocal: true }));
+        [...banner.getElement().querySelectorAll('button')].find((b) => b.textContent === 'Dismiss')?.click();
+        await vi.waitFor(() => {
+            const patch = fetchSpy.mock.calls.find(([url]) => url === '/api/settings');
+            expect(patch).toBeTruthy();
+            const init = (patch as unknown[])[1] as RequestInit;
+            expect(JSON.parse(init.body as string)).toEqual({ adminScopeBannerDismissed: true });
+        });
+        vi.unstubAllGlobals();
     });
 });

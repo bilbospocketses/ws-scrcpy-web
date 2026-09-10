@@ -171,11 +171,12 @@ describe('resetPromptsPayload', () => {
 });
 
 describe('resetPromptSettingsPayload', () => {
-    it('clears the three per-user prompt flags sent to /api/settings', () => {
+    it('clears the four per-user prompt flags sent to /api/settings', () => {
         expect(resetPromptSettingsPayload()).toEqual({
             serviceFirstRunSeen: false,
             bookmarkDismissedForPort: null,
             bookmarkDismissedGlobally: false,
+            adminScopeBannerDismissed: false,
         });
     });
 });
