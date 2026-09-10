@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { SERVER_VERSION } from '../../common/Constants';
 import { DependencyStatus } from '../../common/DependencyTypes';
 import { DependencyManager } from '../DependencyManager';
-import { VERSION_CHECK_POLICY } from '../util/fetchWithRetry';
+import { HttpStatusError, VERSION_CHECK_POLICY } from '../util/fetchWithRetry';
 
 /**
  * The 2026-09-09 regression, pinned.
@@ -113,6 +114,100 @@ describe('checkAll runs the latest-version checks concurrently', () => {
         await mgr.checkAll();
 
         expect(peak, 'serial execution would peak at 1').toBeGreaterThan(1);
+    });
+});
+
+/**
+ * The SERVER_VERSION fallback (2026-09-09, smoke 9.4).
+ *
+ * A first-run install was hostage to a version LOOKUP. `autoInstallMissing`
+ * installs only where `latestVersion !== null`, scrcpy-server's latestVersion
+ * comes from `api.github.com`, and that rate-limits per IP at 60/hour
+ * unauthenticated — so a rate-limited runner installed nothing and said
+ * nothing. CI does not run `stage-seed` before the fast tier, so there is no
+ * seed to promote either: the network download was the only path, and a refused
+ * API call closed it.
+ *
+ * The fallback is gated on REFUSED (the server answered with a status), not on
+ * UNREACHABLE (no answer). A refused lookup says nothing about whether release
+ * assets are reachable, so the download is worth trying. Offline, the download
+ * would fail too, and attempting it only holds the status at `Updating` — which
+ * is exactly what smoke 1.9 asserts is `error`.
+ */
+describe('the bundled-version fallback', () => {
+    let fetchSpy: ReturnType<typeof vi.spyOn> | undefined;
+
+    afterEach(() => {
+        fetchSpy?.mockRestore();
+        fetchSpy = undefined;
+    });
+
+    async function managerAfterLookup(failure: 'refused' | 'unreachable') {
+        fetchSpy =
+            failure === 'refused'
+                ? vi.spyOn(global, 'fetch').mockResolvedValue(new Response('{}', { status: 403 }))
+                : vi.spyOn(global, 'fetch').mockRejectedValue(new TypeError('fetch failed'));
+        const mgr = new DependencyManager('/tmp/test-deps-fallback');
+        const dep = mgr.getByName('scrcpy-server')!;
+        dep.installedVersion = null;
+        await mgr.checkLatest('scrcpy-server');
+        return mgr;
+    }
+
+    it('installs the bundled version when the lookup was REFUSED', async () => {
+        const mgr = await managerAfterLookup('refused');
+        const updateSpy = vi.spyOn(mgr, 'update').mockResolvedValue({
+            success: true,
+            newVersion: SERVER_VERSION,
+            requiresRestart: false,
+        });
+
+        await mgr.autoInstallMissing();
+
+        expect(updateSpy).toHaveBeenCalledWith('scrcpy-server');
+    });
+
+    it('does NOT attempt an install when the network was UNREACHABLE', async () => {
+        const mgr = await managerAfterLookup('unreachable');
+        const updateSpy = vi.spyOn(mgr, 'update').mockResolvedValue({
+            success: true,
+            newVersion: SERVER_VERSION,
+            requiresRestart: false,
+        });
+
+        await mgr.autoInstallMissing();
+
+        expect(updateSpy).not.toHaveBeenCalled();
+    });
+
+    it('leaves latestVersion null — the fallback is a download target, not a claim', async () => {
+        const mgr = await managerAfterLookup('refused');
+        // Reporting SERVER_VERSION as "latest" would render a false "up to date"
+        // in the panel; we genuinely do not know what the newest release is.
+        expect(mgr.getByName('scrcpy-server')!.latestVersion).toBeNull();
+    });
+
+    it('only scrcpy-server carries a fallback — node and adb have no shipped version to fall back to', async () => {
+        const mgr = await managerAfterLookup('refused');
+        const updateSpy = vi.spyOn(mgr, 'update').mockResolvedValue({
+            success: true,
+            newVersion: 'x',
+            requiresRestart: false,
+        });
+
+        await mgr.autoInstallMissing();
+
+        expect(updateSpy).not.toHaveBeenCalledWith('nodejs');
+        expect(updateSpy).not.toHaveBeenCalledWith('adb');
+    });
+});
+
+describe('HttpStatusError', () => {
+    it('carries the status so callers can tell refused from unreachable', () => {
+        const err = new HttpStatusError(403, 'Forbidden', 'https://api.github.com/x');
+        expect(err.status).toBe(403);
+        expect(err.message).toMatch(/HTTP 403 Forbidden from https:\/\/api\.github\.com\/x/);
+        expect(err).toBeInstanceOf(Error);
     });
 });
 

@@ -13,7 +13,7 @@ import { Logger } from './Logger';
 import { writeInstalledScrcpyServerVersion } from './scrcpyServerVersion';
 import { resolveSystemTool } from './service/systemTools';
 import { copyFileAtomic, copyFileAtomicSync, writeFileAtomicSync } from './util/atomicFile';
-import { fetchWithRetry } from './util/fetchWithRetry';
+import { fetchWithRetry, HttpStatusError } from './util/fetchWithRetry';
 import { extractZipTo } from './zipExtract';
 
 const log = Logger.for('DependencyManager');
@@ -23,6 +23,14 @@ export class DependencyManager {
     private readonly definitions: DependencyDefinition[];
     private readonly state: Map<string, DependencyInfo>;
     private readonly restartMarkerPath: string;
+    /**
+     * Names whose last `checkLatest` was REFUSED by the server (an HTTP status)
+     * rather than failing to reach it. Only these may fall back to a bundled
+     * version — see the note in `autoInstallMissing`. Deliberately not part of
+     * `DependencyInfo`: it is an internal diagnosis, not something the wire
+     * format or the UI has any use for.
+     */
+    private readonly lookupRefused = new Set<string>();
 
     constructor(
         private readonly depsPath: string,
@@ -92,9 +100,17 @@ export class DependencyManager {
         info.status = DependencyStatus.Checking;
         try {
             info.latestVersion = await def.checkLatest();
+            this.lookupRefused.delete(name);
             this.resolveStatus(info);
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
+            // Refused (the server answered with a status) vs unreachable (no
+            // answer). Only the former earns a fallback install.
+            if (err instanceof HttpStatusError) {
+                this.lookupRefused.add(name);
+            } else {
+                this.lookupRefused.delete(name);
+            }
             // A failed LATEST check is only an error when there is nothing
             // installed. That is the item-124 case: we cannot learn what to
             // install, so autoInstallMissing will skip this dependency and the
@@ -176,17 +192,35 @@ export class DependencyManager {
         };
 
         try {
-            // Ensure latest version is known
+            // Ensure latest version is known. `checkLatest` THROWS on a non-OK
+            // response (items 124/125), so the catch is what lets a definition
+            // with a fallbackVersion still install while the lookup is refused —
+            // without it, a rate-limited api.github.com turns a perfectly
+            // installable scrcpy-server into an update failure.
             if (!info.latestVersion) {
-                info.latestVersion = await def.checkLatest();
+                try {
+                    info.latestVersion = await def.checkLatest();
+                } catch (err) {
+                    // Same rule as autoInstallMissing: a refused lookup may fall
+                    // back, an unreachable one may not.
+                    if (!def.fallbackVersion || !(err instanceof HttpStatusError)) {
+                        throw err;
+                    }
+                    const why = err instanceof Error ? err.message : String(err);
+                    log.warn(`Latest-version lookup failed for ${name} (${why}); using bundled ${def.fallbackVersion}`);
+                }
             }
-            if (!info.latestVersion) {
+
+            // The fallback is used for the DOWNLOAD but deliberately not written
+            // to info.latestVersion: we still do not know what the latest is, and
+            // claiming otherwise would show a false "up to date" in the panel.
+            const version = info.latestVersion ?? def.fallbackVersion;
+            if (!version) {
                 throw new Error('Could not determine latest version');
             }
 
-            log.info(`Updating ${name}: ${fromVersion} → ${info.latestVersion}`);
+            log.info(`Updating ${name}: ${fromVersion} → ${version}`);
 
-            const version = info.latestVersion;
             const url = def.getDownloadUrl(version);
 
             // Create temp directory
@@ -240,7 +274,23 @@ export class DependencyManager {
         }
 
         for (const info of this.state.values()) {
-            if (info.installedVersion === null && info.latestVersion !== null) {
+            // A first-run install must not be hostage to a version LOOKUP.
+            // scrcpy-server's goes through api.github.com, which rate-limits per
+            // IP at 60/hour unauthenticated — and on a rate-limited runner this
+            // loop installed nothing and said nothing, which is smoke 9.4's 120s
+            // poll on 2026-09-09. Installing the version this build already ships
+            // beats installing none.
+            //
+            // Gated on the lookup having been REFUSED rather than merely absent.
+            // A refused lookup says nothing about whether release assets are
+            // reachable, so the download is worth trying. On a genuinely offline
+            // host the download would fail too, and attempting it only burns the
+            // retry budget while the status reads `Updating` — which is what
+            // smoke 1.9 asserts is `error`.
+            const def = this.definitions.find((d) => d.name === info.name);
+            const mayFallBack = def?.fallbackVersion !== undefined && this.lookupRefused.has(info.name);
+            const target = info.latestVersion ?? (mayFallBack ? def!.fallbackVersion! : null);
+            if (info.installedVersion === null && target != null) {
                 // Nothing is skipped here any more. Node and adb used to be, on
                 // every platform, whenever the packaged launcher was absent —
                 // which is every source checkout. On Windows that was invisible

@@ -146,10 +146,30 @@ export async function fetchWithRetry(url: string, opts: FetchWithRetryOptions = 
  * UI and the API can both report. A `null` is indistinguishable from "this
  * dependency legitimately has no known latest version" and is silently skipped.
  */
+/**
+ * The server ANSWERED and refused. Distinct from a network failure, where there
+ * was no answer at all.
+ *
+ * The distinction is load-bearing for the dependency fallback: a refused lookup
+ * (`403` from a rate-limited api.github.com) says nothing about whether release
+ * ASSETS are reachable, so falling back to a bundled version and downloading it
+ * is worth trying. An unreachable network says the download will fail too, so
+ * attempting it only burns the retry budget while the status sits at `Updating`.
+ */
+export class HttpStatusError extends Error {
+    public readonly status: number;
+
+    constructor(status: number, statusText: string, url: string) {
+        super(`HTTP ${status}${statusText ? ` ${statusText}` : ''} from ${url}`);
+        this.name = 'HttpStatusError';
+        this.status = status;
+    }
+}
+
 export async function fetchOkWithRetry(url: string, opts: FetchWithRetryOptions = {}): Promise<Response> {
     const res = await fetchWithRetry(url, opts);
     if (!res.ok) {
-        throw new Error(`HTTP ${res.status}${res.statusText ? ` ${res.statusText}` : ''} from ${url}`);
+        throw new HttpStatusError(res.status, res.statusText, url);
     }
     return res;
 }

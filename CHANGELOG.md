@@ -17,6 +17,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A first-run install is no longer hostage to a version lookup.** `autoInstallMissing` installs only
+  where `latestVersion !== null`; scrcpy-server's `latestVersion` comes from `api.github.com`, which
+  rate-limits **per IP at 60/hour unauthenticated**. On a rate-limited host that loop installed nothing
+  and said nothing. CI does not run `stage-seed` before the fast tier either, so there was no seed to
+  promote: the network download was the only path, and a refused API call closed it. Smoke 9.4's 120s
+  poll went red on it 2026-09-09.
+  - **`DependencyDefinition` gains an optional `fallbackVersion`**, set to `SERVER_VERSION` for
+    scrcpy-server — the version this build ships in `assets/scrcpy-server`, with a pinned hash in
+    `common/Constants.ts`. Installing the version we already vouch for beats installing none. The release
+    **asset** download is not the API and is not rate-limited the same way, so it genuinely works while
+    the lookup is refused.
+  - **Gated on REFUSED, not merely absent.** A new `HttpStatusError` separates *the server answered and
+    said no* from *there was no answer*. Only a refused lookup earns a fallback: offline, the download
+    would fail too, and attempting it would only hold the status at `Updating` — which is precisely what
+    smoke 1.9 asserts is `error`. The gate is load-bearing, and removing it fails five tests.
+  - **The fallback is a download target, not a claim.** `latestVersion` stays `null`, because we still do
+    not know what the newest release is; writing `SERVER_VERSION` there would render a false *"up to
+    date"* in the panel.
+  - Only scrcpy-server carries one. Node and adb have no shipped version to fall back to.
+
 ## [0.1.30-beta.119] - 2026-09-09
 
 ### Fixed
