@@ -74,6 +74,17 @@ export interface FirstRunStatus {
      * interoperate -- an absent field reads as "no origins", the safe answer.
      */
     frameAncestors?: string[];
+    /**
+     * The admin policy in force. Optional so an older server and a newer frontend interoperate — an
+     * absent field means "this server predates the guard", and the banner stays hidden.
+     */
+    adminScope?: 'local' | 'remote' | 'authenticated';
+    /**
+     * Whether the request that fetched this envelope came from loopback. Per-request, so it is
+     * composed by ConfigApi rather than snapshotted in Config. A browser cannot determine its own
+     * source address, so this has to come from the server.
+     */
+    callerIsLocal?: boolean;
 }
 
 /** Envelope shape returned by GET /api/config. */

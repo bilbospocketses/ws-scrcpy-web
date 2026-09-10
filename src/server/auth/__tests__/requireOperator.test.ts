@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { Config } from '../../Config';
 import { EnvName } from '../../EnvName';
 import { setAuthEnabled } from '../authState';
-import { requireOperator } from '../requireOperator';
+import { callerIsLocal, requireOperator, resolveAdminScope } from '../requireOperator';
 
 const tmpDirs: string[] = [];
 const saved = { CONFIG: process.env[EnvName.CONFIG_PATH], DEPS: process.env['DEPS_PATH'] };
@@ -147,5 +147,43 @@ describe('requireOperator — explicit opt-out', () => {
         const r = mkRes();
         expect(requireOperator(mkReq('192.168.1.50'), r.res)).toBe(false);
         expect(r.status()).toBe(403);
+    });
+});
+
+describe('resolveAdminScope', () => {
+    const savedFlag = process.env['WS_SCRCPY_ALLOW_REMOTE_ADMIN'];
+    afterEach(() => {
+        if (savedFlag === undefined) delete process.env['WS_SCRCPY_ALLOW_REMOTE_ADMIN'];
+        else process.env['WS_SCRCPY_ALLOW_REMOTE_ADMIN'] = savedFlag;
+    });
+
+    it("is 'local' in open mode with no opt-out", () => {
+        setup();
+        expect(resolveAdminScope()).toBe('local');
+    });
+
+    it("is 'remote' when the opt-out is set", () => {
+        setup();
+        process.env['WS_SCRCPY_ALLOW_REMOTE_ADMIN'] = '1';
+        expect(resolveAdminScope()).toBe('remote');
+    });
+
+    it("is 'authenticated' when sign-in is on, opt-out or not", () => {
+        setup();
+        setAuthEnabled(Config.getInstance().db, true);
+        process.env['WS_SCRCPY_ALLOW_REMOTE_ADMIN'] = '1';
+        expect(resolveAdminScope()).toBe('authenticated');
+    });
+});
+
+describe('callerIsLocal', () => {
+    it('is true for loopback and IPv4-mapped loopback', () => {
+        expect(callerIsLocal(mkReq('127.0.0.1'))).toBe(true);
+        expect(callerIsLocal(mkReq('::ffff:127.0.0.1'))).toBe(true);
+    });
+
+    it('is false for a LAN address and for a missing socket', () => {
+        expect(callerIsLocal(mkReq('192.168.1.50'))).toBe(false);
+        expect(callerIsLocal(mkReq(undefined))).toBe(false);
     });
 });

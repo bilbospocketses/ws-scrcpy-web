@@ -54,3 +54,23 @@ export function requireOperator(req: IncomingMessage, res: ServerResponse): bool
     }
     return requireAdmin(req, res);
 }
+
+/** Which admin policy this deployment is running under, for the client to render. */
+export type AdminScope = 'local' | 'remote' | 'authenticated';
+
+/**
+ * The policy in force — NOT a statement about the current caller.
+ *
+ * 'authenticated' outranks the opt-out: once sign-in is on, a session is the proof and
+ * `allowRemoteAdmin` is moot (requireOperator ignores it in that branch too).
+ */
+export function resolveAdminScope(): AdminScope {
+    if (isAuthEnabled(Config.getInstance().db)) return 'authenticated';
+    if (allowRemoteAdmin()) return 'remote';
+    return 'local';
+}
+
+/** Whether THIS request came from the machine the server runs on. */
+export function callerIsLocal(req: IncomingMessage): boolean {
+    return isLoopback(req.socket?.remoteAddress ?? '');
+}
