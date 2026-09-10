@@ -34,13 +34,19 @@ describe('UsersApi', () => {
     it('first POST /api/users runs lockdown and enables auth', async () => {
         setup();
         const db = Config.getInstance().db;
-        const r = makeReqRes('POST', '/api/users', {
-            adminUsername: 'owner',
-            adminPassword: 'pw1',
-            username: 'bob',
-            role: 'user',
-            password: 'pw2',
-        });
+        const r = makeReqRes(
+            'POST',
+            '/api/users',
+            {
+                adminUsername: 'owner',
+                adminPassword: 'pw1',
+                username: 'bob',
+                role: 'user',
+                password: 'pw2',
+            },
+            {},
+            { remoteAddress: '127.0.0.1' },
+        );
         await new UsersApi().handle(r.req, r.res);
         expect(r.getStatus()).toBe(201);
         expect(isAuthEnabled(db)).toBe(true);
@@ -51,7 +57,7 @@ describe('UsersApi', () => {
         setup();
         const db = Config.getInstance().db;
         db.users.create({ username: 'bob', role: 'user', passwordHash: hashPassword('x') });
-        const r = makeReqRes('GET', '/api/users');
+        const r = makeReqRes('GET', '/api/users', undefined, {}, { remoteAddress: '127.0.0.1' });
         await new UsersApi().handle(r.req, r.res);
         const body = r.getJson() as { users: Array<{ username: string; hasPassword: boolean }> };
         expect(body.users.find((u) => u.username === 'bob')?.hasPassword).toBe(true);
@@ -63,7 +69,7 @@ describe('UsersApi', () => {
         setup();
         const db = Config.getInstance().db;
         db.users.setPasswordHash(IMPLICIT_ADMIN_ID, hashPassword('adminpw'));
-        const r = makeReqRes('POST', '/api/users', { username: 'carol', role: 'admin', password: 'cpw' });
+        const r = makeReqRes('POST', '/api/users', { username: 'carol', role: 'admin', password: 'cpw' }, {}, { remoteAddress: '127.0.0.1' });
         await new UsersApi().handle(r.req, r.res);
         expect(r.getStatus()).toBe(201);
         expect(db.users.getByUsername('carol')?.role).toBe('admin');
@@ -74,7 +80,7 @@ describe('UsersApi', () => {
         db.users.setPasswordHash(IMPLICIT_ADMIN_ID, hashPassword('adminpw'));
         const bob = db.users.create({ username: 'bob', role: 'user', passwordHash: hashPassword('x') });
         new SessionStore(db.sqlite).create(bob.id, Date.now());
-        const r = makeReqRes('PATCH', `/api/users/${bob.id}`, { disabled: true });
+        const r = makeReqRes('PATCH', `/api/users/${bob.id}`, { disabled: true }, {}, { remoteAddress: '127.0.0.1' });
         await new UsersApi().handle(r.req, r.res);
         expect(r.getStatus()).toBe(200);
         expect(db.users.getById(bob.id)?.disabled).toBe(true);
@@ -85,21 +91,21 @@ describe('UsersApi', () => {
     it('refuses to disable the last enabled admin', async () => {
         setup();
         const db = Config.getInstance().db;
-        const r = makeReqRes('PATCH', `/api/users/${IMPLICIT_ADMIN_ID}`, { disabled: true });
+        const r = makeReqRes('PATCH', `/api/users/${IMPLICIT_ADMIN_ID}`, { disabled: true }, {}, { remoteAddress: '127.0.0.1' });
         await new UsersApi().handle(r.req, r.res);
         expect(r.getStatus()).toBe(409);
         expect(db.users.getById(IMPLICIT_ADMIN_ID)?.disabled).toBe(false);
     });
     it('refuses to demote the last enabled admin', async () => {
         setup();
-        const r = makeReqRes('PATCH', `/api/users/${IMPLICIT_ADMIN_ID}`, { role: 'user' });
+        const r = makeReqRes('PATCH', `/api/users/${IMPLICIT_ADMIN_ID}`, { role: 'user' }, {}, { remoteAddress: '127.0.0.1' });
         await new UsersApi().handle(r.req, r.res);
         expect(r.getStatus()).toBe(409);
         expect(Config.getInstance().db.users.getById(IMPLICIT_ADMIN_ID)?.role).toBe('admin');
     });
     it('refuses to delete the last enabled admin', async () => {
         setup();
-        const r = makeReqRes('DELETE', `/api/users/${IMPLICIT_ADMIN_ID}`, undefined);
+        const r = makeReqRes('DELETE', `/api/users/${IMPLICIT_ADMIN_ID}`, undefined, {}, { remoteAddress: '127.0.0.1' });
         await new UsersApi().handle(r.req, r.res);
         expect(r.getStatus()).toBe(409);
         expect(Config.getInstance().db.users.getById(IMPLICIT_ADMIN_ID)).toBeTruthy();
@@ -109,7 +115,7 @@ describe('UsersApi', () => {
         const db = Config.getInstance().db;
         const bob = db.users.create({ username: 'bob', role: 'user', passwordHash: hashPassword('x') });
         db.users.setLockout(bob.id, { failedAttempts: 5, lockoutWindowStart: 0, lockedUntil: 9_999_999_999_999 });
-        const r = makeReqRes('PATCH', `/api/users/${bob.id}`, { unlock: true });
+        const r = makeReqRes('PATCH', `/api/users/${bob.id}`, { unlock: true }, {}, { remoteAddress: '127.0.0.1' });
         await new UsersApi().handle(r.req, r.res);
         expect(r.getStatus()).toBe(200);
         expect(db.users.getById(bob.id)?.lockedUntil).toBeNull();
@@ -118,7 +124,7 @@ describe('UsersApi', () => {
         setup();
         const db = Config.getInstance().db;
         const bob = db.users.create({ username: 'bob', role: 'user', passwordHash: hashPassword('x') });
-        const r = makeReqRes('DELETE', `/api/users/${bob.id}`, undefined);
+        const r = makeReqRes('DELETE', `/api/users/${bob.id}`, undefined, {}, { remoteAddress: '127.0.0.1' });
         await new UsersApi().handle(r.req, r.res);
         expect(r.getStatus()).toBe(200);
         expect(db.users.getById(bob.id)).toBeUndefined();

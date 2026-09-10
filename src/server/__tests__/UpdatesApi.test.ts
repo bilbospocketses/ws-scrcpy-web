@@ -24,6 +24,10 @@ function makeReqRes(url: string, method = 'GET', body?: string) {
     const req = {
         url,
         method,
+        // Loopback: requireOperator refuses an off-box caller in open mode, and a
+        // req with no socket is not loopback -- without this every case below would
+        // 403 for the wrong reason while still asserting 403.
+        socket: { remoteAddress: '127.0.0.1' },
         on(event: string, handler: (...args: unknown[]) => void) {
             (listeners[event] ??= []).push(handler);
             if (event === 'end') {

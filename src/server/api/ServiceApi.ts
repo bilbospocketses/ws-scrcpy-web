@@ -15,7 +15,7 @@ import {
     WS_SCRCPY_SERVICE_NAME,
 } from '../../common/ServiceEvents';
 import { getAppVersion } from '../appVersion';
-import { requireAdmin } from '../auth/requireAdmin';
+import { requireOperator } from '../auth/requireOperator';
 import { Config } from '../Config';
 import { detectInstallScope } from '../InstallScope';
 import { Logger } from '../Logger';
@@ -185,7 +185,7 @@ export class ServiceApi {
 
         res.setHeader('Content-Type', 'application/json');
 
-        if (!requireAdmin(req, res)) return true;
+        if (!requireOperator(req, res)) return true;
 
         try {
             if (req.method === 'GET' && url === '/api/service/status') {

@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'http';
 import * as os from 'os';
 import * as path from 'path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { AuthApi } from '../api/AuthApi';
 import { ConfigApi } from '../api/ConfigApi';
 import { DependencyApi } from '../api/DependencyApi';
 import { ServerShutdownApi } from '../api/ServerShutdownApi';
@@ -73,7 +74,7 @@ describe('ConfigApi admin authorization', () => {
         setup();
         const db = Config.getInstance().db;
         const bob = db.users.create({ username: 'bob', role: 'user', passwordHash: 'x' });
-        const r = makeReqRes('PATCH', '/api/config', { webPort: 9000 });
+        const r = makeReqRes('PATCH', '/api/config', { webPort: 9000 }, {}, { remoteAddress: '127.0.0.1' });
         (r.req as any).user = { id: bob.id };
         await new ConfigApi().handle(r.req, r.res);
         expect(r.getStatus()).toBe(403);
@@ -83,7 +84,7 @@ describe('ConfigApi admin authorization', () => {
         setup();
         const db = Config.getInstance().db;
         const bob = db.users.create({ username: 'bob', role: 'user', passwordHash: 'x' });
-        const r = makeReqRes('GET', '/api/config');
+        const r = makeReqRes('GET', '/api/config', undefined, {}, { remoteAddress: '127.0.0.1' });
         (r.req as any).user = { id: bob.id };
         await new ConfigApi().handle(r.req, r.res);
         expect(r.getStatus()).not.toBe(403);
@@ -102,7 +103,7 @@ describe('DependencyApi admin authorization', () => {
         // Construct with a stub manager — it won't be called on the 403 path
         const stubManager = {} as any;
         const api = new DependencyApi(stubManager);
-        const r = makeReqRes('GET', '/api/dependencies');
+        const r = makeReqRes('GET', '/api/dependencies', undefined, {}, { remoteAddress: '127.0.0.1' });
         (r.req as any).user = { id: bob.id };
         await api.handle(r.req, r.res);
         expect(r.getStatus()).toBe(403);
@@ -116,7 +117,7 @@ describe('ServiceApi admin authorization', () => {
         const bob = db.users.create({ username: 'bob', role: 'user', passwordHash: 'x' });
         // Construct with minimal injectable stubs — won't be called on 403 path
         const api = new ServiceApi();
-        const r = makeReqRes('GET', '/api/service/status');
+        const r = makeReqRes('GET', '/api/service/status', undefined, {}, { remoteAddress: '127.0.0.1' });
         (r.req as any).user = { id: bob.id };
         await api.handle(r.req, r.res);
         expect(r.getStatus()).toBe(403);
@@ -131,7 +132,7 @@ describe('UpdatesApi admin authorization', () => {
         // Stub UpdateService — won't be called on 403 path
         const stubSvc = {} as any;
         const api = new UpdatesApi(stubSvc);
-        const r = makeReqRes('GET', '/api/updates/status');
+        const r = makeReqRes('GET', '/api/updates/status', undefined, {}, { remoteAddress: '127.0.0.1' });
         (r.req as any).user = { id: bob.id };
         await api.handle(r.req, r.res);
         expect(r.getStatus()).toBe(403);
@@ -144,9 +145,65 @@ describe('ServerShutdownApi admin authorization', () => {
         const db = Config.getInstance().db;
         const bob = db.users.create({ username: 'bob', role: 'user', passwordHash: 'x' });
         const api = new ServerShutdownApi();
-        const r = makeReqRes('POST', '/api/server/shutdown');
+        const r = makeReqRes('POST', '/api/server/shutdown', undefined, {}, { remoteAddress: '127.0.0.1' });
         (r.req as any).user = { id: bob.id };
         await api.handle(r.req, r.res);
         expect(r.getStatus()).toBe(403);
+    });
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// Off-box refusal (requireOperator). Distinguished from the non-admin 403s
+// above by the error BODY, so a test cannot pass for the wrong reason.
+
+const OFF_BOX = { remoteAddress: '192.168.1.50' };
+const OFF_BOX_ERROR = { error: 'admin actions are limited to this machine' };
+
+describe('off-box callers are refused in open mode', () => {
+    it('PATCH /api/config', async () => {
+        setup();
+        const r = makeReqRes('PATCH', '/api/config', { webPort: 9000 }, {}, OFF_BOX);
+        await new ConfigApi().handle(r.req, r.res);
+        expect(r.getStatus()).toBe(403);
+        expect(r.getJson()).toEqual(OFF_BOX_ERROR);
+    });
+
+    it('GET /api/dependencies', async () => {
+        setup();
+        const r = makeReqRes('GET', '/api/dependencies', undefined, {}, OFF_BOX);
+        await new DependencyApi({} as any).handle(r.req, r.res);
+        expect(r.getStatus()).toBe(403);
+        expect(r.getJson()).toEqual(OFF_BOX_ERROR);
+    });
+
+    it('GET /api/service/status', async () => {
+        setup();
+        const r = makeReqRes('GET', '/api/service/status', undefined, {}, OFF_BOX);
+        await new ServiceApi().handle(r.req, r.res);
+        expect(r.getStatus()).toBe(403);
+        expect(r.getJson()).toEqual(OFF_BOX_ERROR);
+    });
+
+    it('GET /api/updates/status', async () => {
+        setup();
+        const r = makeReqRes('GET', '/api/updates/status', undefined, {}, OFF_BOX);
+        await new UpdatesApi({} as any).handle(r.req, r.res);
+        expect(r.getStatus()).toBe(403);
+        expect(r.getJson()).toEqual(OFF_BOX_ERROR);
+    });
+
+    it('POST /api/auth/enable', async () => {
+        setup();
+        const r = makeReqRes('POST', '/api/auth/enable', {}, {}, OFF_BOX);
+        await new AuthApi().handle(r.req, r.res);
+        expect(r.getStatus()).toBe(403);
+        expect(r.getJson()).toEqual(OFF_BOX_ERROR);
+    });
+
+    it('GET /api/config stays 200 from off-box — probe, HEALTHCHECK, ReadyPath', async () => {
+        setup();
+        const r = makeReqRes('GET', '/api/config', undefined, {}, OFF_BOX);
+        await new ConfigApi().handle(r.req, r.res);
+        expect(r.getStatus()).toBe(200);
     });
 });

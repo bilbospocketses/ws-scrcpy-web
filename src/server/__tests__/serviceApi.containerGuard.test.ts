@@ -55,6 +55,10 @@ function makeReqRes(url: string) {
         url,
         method: 'POST',
         headers: {},
+        // Loopback: requireOperator refuses an off-box caller in open mode, and a
+        // req with no socket is not loopback -- without this every case below would
+        // 403 for the wrong reason while still asserting 403.
+        socket: { remoteAddress: '127.0.0.1' },
         on(event: string, handler: (...args: unknown[]) => void) {
             if (event === 'end') queueMicrotask(() => handler());
             return this;
