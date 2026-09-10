@@ -83,8 +83,10 @@ automation cases.
 
 ### 3.2 The guard
 
-New shared helper, `src/server/security/requireOperator.ts`, promoted from
-`EmbedRequestApi.requireLocalAdmin`:
+New shared helper, **`src/server/auth/requireOperator.ts`**, promoted from
+`EmbedRequestApi.requireLocalAdmin`. It sits beside the `requireAdmin` it wraps rather than in
+`security/`: `security/loopback.ts` is a network *primitive*, this is an authorization *policy*, and
+`auth/requireAdmin.ts` already imports `../Config` so the import direction is established.
 
 ```ts
 export function requireOperator(req: IncomingMessage, res: ServerResponse): boolean {
@@ -248,15 +250,15 @@ Item 81 offered three options. This design is not a fourth — it is all three, 
 (`compose/wssw-linux.yml`), and its Windows Playwright specs drive the guest from the driver
 container. Neither is on loopback. Two rows break the moment this guard lands:
 
-- **Row 18.7** (`docs/superpowers/plans/2026-09-01-p3-wssw-linux-suite.md:1326`) POSTs `/api/users`
+- **Row 18.7** (**in qa-harness**: `qa-harness/docs/superpowers/plans/2026-09-01-p3-wssw-linux-suite.md:1326`) POSTs `/api/users`
   via `page.evaluate` to prove a **non-admin** gets 401/403. Under a blanket guard the **admin** gets
   403 too, so the row stops distinguishing the two and would pass against a server with no
   authorization at all.
 - **`stopexit.spec.ts:152`** asserts `POST /api/server/shutdown` → 200 from the page.
 
-`qa-harness` has already met this exact failure class once and wrote it up —
-`docs/traps.md:1294`, *"`/api/embed-request` 403s continuously when the app is driven from another
-host."*
+`qa-harness` has already met this exact failure class once and wrote it up — **in qa-harness**:
+`qa-harness/docs/traps.md:1294`, *"`/api/embed-request` 403s continuously when the app is driven from
+another host."*
 
 **Order of landing:**
 

@@ -29,13 +29,15 @@
 - **CHANGELOG entries go under `## [Unreleased]`**, never a pre-written version heading — `bump-version.mjs` aborts otherwise.
 - **One `release:beta` PR** for the whole feature; no manual version bump.
 
-### Deviation from the spec (deliberate)
+### Where the new module lives
 
-The spec names the new module `src/server/security/requireOperator.ts`. This plan puts it at
-**`src/server/auth/requireOperator.ts`** instead, beside the `requireAdmin` it wraps.
-`security/loopback.ts` is a network *primitive*; this is an authorization *policy* and belongs with
-the other one. `auth/requireAdmin.ts` already imports `../Config`, so the import direction is
-established.
+**`src/server/auth/requireOperator.ts`**, beside the `requireAdmin` it wraps — `security/loopback.ts`
+is a network *primitive*, this is an authorization *policy*, and `auth/requireAdmin.ts` already
+imports `../Config`, so the import direction is established.
+
+The spec's first draft said `security/`; both documents now say `auth/`. Noted because the earlier
+wording briefly disagreed, and a plan that contradicts its own spec on a file path is the kind of
+thing an implementer resolves by guessing.
 
 ### Precondition — qa-harness lands first
 
@@ -1127,7 +1129,7 @@ Every admin handler gates at the **top of `handle`**, so the GETs are gated too 
 and `UpdatesApi.ts:46` both guard before any routing, and `ServiceApi.ts:188` is the same shape.
 `FirstRunBanner` polls `GET /api/dependencies` every 15 s and the dependency panel polls on its own
 interval, so a **flagless container produces a steady 403 stream and matching console errors on a
-completely healthy app** — the exact shape qa-harness already wrote up at `docs/traps.md:1294` for
+completely healthy app** — the exact shape qa-harness already wrote up at `qa-harness/docs/traps.md:1294` for
 `/api/embed-request`.
 
 **This is not a new principle.** `adminGate.ts:15-19` already makes this argument for the `role` case
