@@ -13,6 +13,7 @@ import { EmbedRequestApi } from './api/EmbedRequestApi';
 import { ServerShutdownApi } from './api/ServerShutdownApi';
 import { ServiceApi } from './api/ServiceApi';
 import { SettingsApi } from './api/SettingsApi';
+import { SettingsBatchApi } from './api/SettingsBatchApi';
 import { UpdatesApi } from './api/UpdatesApi';
 import { UsersApi } from './api/UsersApi';
 import { WhoamiApi } from './api/WhoamiApi';
@@ -170,6 +171,9 @@ if (__ssArgs) {
 
     const settingsApi = new SettingsApi();
     HttpServer.addApiHandler(settingsApi);
+
+    const settingsBatchApi = new SettingsBatchApi();
+    HttpServer.addApiHandler(settingsBatchApi);
 
     const serviceApi = new ServiceApi();
     HttpServer.addApiHandler(serviceApi);
