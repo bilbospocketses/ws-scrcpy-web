@@ -17,6 +17,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The in-app uninstall now works on Windows.** It never did: removing a per-machine MSI requires an
+  elevated token, and the staged cleaner was spawned with plain `CreateProcess`, so it inherited the
+  launcher's medium integrity and Windows Installer refused with *"Error 1730. You must be an
+  Administrator to remove this application."* The uninstall reported that it had failed — correctly,
+  and without deleting anything — but it could not succeed on any normally-launched install. The
+  cleaner is now elevated via the same `ShellExecuteExW(verb="runas")` hand-off the service
+  install/uninstall flow already uses.
+- **You will now see a UAC prompt when uninstalling from inside the app.** That is expected for
+  removing a per-machine MSI. Declining it leaves the app installed and the data root untouched, and
+  says so in the log rather than exiting silently. The prompt is raised while the app is still open,
+  not afterwards by a detached helper.
+- No prompt is raised where none is needed: a non-MSI (per-user) install and an
+  already-elevated process both spawn the cleaner exactly as before.
+
 ## [0.1.30-beta.120] - 2026-09-10
 
 ### Security
