@@ -69,7 +69,13 @@ describe('UsersApi', () => {
         setup();
         const db = Config.getInstance().db;
         db.users.setPasswordHash(IMPLICIT_ADMIN_ID, hashPassword('adminpw'));
-        const r = makeReqRes('POST', '/api/users', { username: 'carol', role: 'admin', password: 'cpw' }, {}, { remoteAddress: '127.0.0.1' });
+        const r = makeReqRes(
+            'POST',
+            '/api/users',
+            { username: 'carol', role: 'admin', password: 'cpw' },
+            {},
+            { remoteAddress: '127.0.0.1' },
+        );
         await new UsersApi().handle(r.req, r.res);
         expect(r.getStatus()).toBe(201);
         expect(db.users.getByUsername('carol')?.role).toBe('admin');
@@ -91,21 +97,39 @@ describe('UsersApi', () => {
     it('refuses to disable the last enabled admin', async () => {
         setup();
         const db = Config.getInstance().db;
-        const r = makeReqRes('PATCH', `/api/users/${IMPLICIT_ADMIN_ID}`, { disabled: true }, {}, { remoteAddress: '127.0.0.1' });
+        const r = makeReqRes(
+            'PATCH',
+            `/api/users/${IMPLICIT_ADMIN_ID}`,
+            { disabled: true },
+            {},
+            { remoteAddress: '127.0.0.1' },
+        );
         await new UsersApi().handle(r.req, r.res);
         expect(r.getStatus()).toBe(409);
         expect(db.users.getById(IMPLICIT_ADMIN_ID)?.disabled).toBe(false);
     });
     it('refuses to demote the last enabled admin', async () => {
         setup();
-        const r = makeReqRes('PATCH', `/api/users/${IMPLICIT_ADMIN_ID}`, { role: 'user' }, {}, { remoteAddress: '127.0.0.1' });
+        const r = makeReqRes(
+            'PATCH',
+            `/api/users/${IMPLICIT_ADMIN_ID}`,
+            { role: 'user' },
+            {},
+            { remoteAddress: '127.0.0.1' },
+        );
         await new UsersApi().handle(r.req, r.res);
         expect(r.getStatus()).toBe(409);
         expect(Config.getInstance().db.users.getById(IMPLICIT_ADMIN_ID)?.role).toBe('admin');
     });
     it('refuses to delete the last enabled admin', async () => {
         setup();
-        const r = makeReqRes('DELETE', `/api/users/${IMPLICIT_ADMIN_ID}`, undefined, {}, { remoteAddress: '127.0.0.1' });
+        const r = makeReqRes(
+            'DELETE',
+            `/api/users/${IMPLICIT_ADMIN_ID}`,
+            undefined,
+            {},
+            { remoteAddress: '127.0.0.1' },
+        );
         await new UsersApi().handle(r.req, r.res);
         expect(r.getStatus()).toBe(409);
         expect(Config.getInstance().db.users.getById(IMPLICIT_ADMIN_ID)).toBeTruthy();

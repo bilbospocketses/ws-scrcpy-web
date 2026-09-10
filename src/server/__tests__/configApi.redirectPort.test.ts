@@ -62,7 +62,13 @@ describe('PATCH /api/config port change', () => {
         vi.useFakeTimers({ toFake: ['setTimeout'] });
         const exit = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
 
-        const { req, res, getStatus, getJson } = makeReqRes('PATCH', '/api/config', { webPort: 8011 }, {}, { remoteAddress: '127.0.0.1' });
+        const { req, res, getStatus, getJson } = makeReqRes(
+            'PATCH',
+            '/api/config',
+            { webPort: 8011 },
+            {},
+            { remoteAddress: '127.0.0.1' },
+        );
         expect(await new ConfigApi().handle(req, res)).toBe(true);
         expect(getStatus()).toBe(200);
 
@@ -81,7 +87,13 @@ describe('PATCH /api/config port change', () => {
 
     it('omits redirectPort when nothing needs a restart', async () => {
         setup();
-        const { req, res, getStatus, getJson } = makeReqRes('PATCH', '/api/config', { firstRunComplete: true }, {}, { remoteAddress: '127.0.0.1' });
+        const { req, res, getStatus, getJson } = makeReqRes(
+            'PATCH',
+            '/api/config',
+            { firstRunComplete: true },
+            {},
+            { remoteAddress: '127.0.0.1' },
+        );
         expect(await new ConfigApi().handle(req, res)).toBe(true);
         expect(getStatus()).toBe(200);
         const body = getJson() as Record<string, unknown>;
