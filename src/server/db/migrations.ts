@@ -1,12 +1,13 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { migration001 } from './migrations/001_initial';
+import { migration002 } from './migrations/002_pending_settings';
 
 export interface Migration {
     version: number;
     up(db: DatabaseSync): void;
 }
 
-export const MIGRATIONS: Migration[] = [migration001];
+export const MIGRATIONS: Migration[] = [migration001, migration002];
 
 export function runMigrations(db: DatabaseSync): void {
     const current = (db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version;
