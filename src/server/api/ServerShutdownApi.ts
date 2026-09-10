@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { isAuthEnabled } from '../auth/authState';
 import { requireAdmin } from '../auth/requireAdmin';
-import { hasAuthenticatedUser } from '../auth/requireOperator';
+import { allowRemoteAdmin, hasAuthenticatedUser } from '../auth/requireOperator';
 import { Config } from '../Config';
 import { Logger } from '../Logger';
 import { isValidToken, parseTokenFromCookie } from '../security/instanceToken';
@@ -47,12 +47,15 @@ const log = Logger.for('ServerShutdownApi');
  *     any local process can stop the server, including a system-scope service a
  *     non-admin user could not otherwise stop. Loopback is the same trust
  *     boundary `WhoamiApi` and the embed-consent endpoints already draw.
- *   - **Off-box: unchanged from before the exemptions.** The caller must
- *     present the instance token (403 without it — a LAN client that never
- *     loaded the page has none), and in locked mode must be signed in (401).
- *     Note this is NOT "loopback only": a browser reaching a containerised
- *     server comes through the Docker gateway, and row 20.6 exists to catch
- *     exactly that regression.
+ *   - **Off-box: token, then the operator test.** The caller must present
+ *     the instance token (403 without it). In locked mode it must then be
+ *     signed in (401). In OPEN mode a token is not enough — it proves a
+ *     browser loaded the page, not that the caller is the operator — so
+ *     `allowRemoteAdmin()` must also be set (403 otherwise).
+ *     Note this is still NOT "loopback only": a browser reaching a
+ *     containerised server comes through the Docker gateway and is never on
+ *     loopback, which is why the opt-out exists and why qa-harness sets
+ *     WS_SCRCPY_ALLOW_REMOTE_ADMIN=1. Row 20.6 covers that path.
  *   - **`requireAdmin` runs last**, so a signed-in non-admin cannot stop the
  *     server from anywhere.
  */
@@ -93,20 +96,32 @@ export class ServerShutdownApi {
         res.setHeader('Content-Type', 'application/json');
 
         // Loopback is what authorizes the COOKIELESS caller this endpoint's
-        // exemptions exist for (the tray helper). An off-box caller gets the
-        // treatment it had before those exemptions: it must present the
-        // instance token it was handed with the page, and in locked mode it
-        // must be signed in.
+        // exemptions exist for (the tray helper). An off-box caller climbs a
+        // ladder instead: it must present the instance token it was handed with
+        // the page, then prove it is the operator — in open mode via the
+        // explicit opt-out (item 81), in locked mode via a signed-in session.
         //
         // This is not "loopback only". Requiring loopback outright broke the
         // Settings button inside a container, where the browser reaches the
         // server through the Docker gateway and so is never on loopback —
-        // caught by row 20.6 in CI, which is exactly what that row is for.
+        // caught by row 20.6 in CI, which is exactly what that row is for. That
+        // path now runs on the opt-out, which is why qa-harness sets it.
         if (!isLoopback(req.socket?.remoteAddress ?? '')) {
             if (!isValidToken(parseTokenFromCookie(req.headers.cookie))) {
                 log.warn(`refusing shutdown from ${req.socket?.remoteAddress ?? '<unknown>'}: no instance token`);
                 res.writeHead(403);
                 res.end(JSON.stringify({ error: 'this endpoint answers this machine only' }));
+                return true;
+            }
+            if (!isAuthEnabled(Config.getInstance().db) && !allowRemoteAdmin()) {
+                // Open mode: a token proves "a browser loaded our page", not "this
+                // is the operator". Stopping the server from off-box now needs the
+                // same explicit opt-out the rest of the admin API needs.
+                log.warn(
+                    `refusing shutdown from ${req.socket?.remoteAddress ?? '<unknown>'}: remote admin not allowed`,
+                );
+                res.writeHead(403);
+                res.end(JSON.stringify({ error: 'admin actions are limited to this machine' }));
                 return true;
             }
             if (isAuthEnabled(Config.getInstance().db) && !hasAuthenticatedUser(req)) {
