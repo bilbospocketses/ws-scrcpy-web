@@ -53,7 +53,41 @@ ws-scrcpy-web is **open (no login) by default**, intended for a trusted local or
 - the per-instance token is handed to **any** unauthenticated GET of an extensionless path, so anything that can fetch `/` can obtain one — it raises the cost of a blind attack, it does not identify a caller;
 - with login disabled, `requireAdmin` resolves to the implicit admin.
 
-Together that means a client already on your network can fetch `/`, take a token, and reach the admin API — users, config, shutdown. **`authEnabled` is the boundary**: enable login (Settings → Users) if the network is not one you trust. The embed-consent endpoints do not rely on this and are additionally restricted to loopback, which is why granting an embed permission cannot be done over the network.
+Together that means a client already on your network can fetch `/`, take a token, and reach *the device surface*. **`authEnabled` is the boundary for that surface**: enable login (Settings → Users) if the network is not one you trust. The embed-consent endpoints do not rely on this and are additionally restricted to loopback, which is why granting an embed permission cannot be done over the network.
+
+### Administering the server requires proof of operator
+
+The **admin** API is no longer part of the paragraph above. Since v0.1.30, `requireOperator` (`src/server/auth/requireOperator.ts`) requires the caller to prove they are the operator before any admin route runs:
+
+- **loopback** — the request came from the machine the server runs on; or
+- **a signed-in admin session** — when login is enabled, they have said who they are.
+
+Neither, and the route answers `403 {"error":"admin actions are limited to this machine"}`. That covers `UsersApi`, `ConfigApi` PATCH, `ServiceApi`, `DependencyApi`, `UpdatesApi`, `AuthApi`'s enable/disable, and `ServerShutdownApi`. `GET /api/config` is deliberately **not** gated: it is the launcher's readiness probe, the Docker image's `HEALTHCHECK`, and the test harness's ready path, and it discloses no secrets.
+
+`requireAdmin` still runs last, so a signed-in non-admin is refused everywhere regardless.
+
+**The per-instance token is not an authenticator and never was.** It distinguishes a browser that loaded a page from a script probing the port. Parts of this app used to treat it as identity; that is what this guard replaces.
+
+### Opting out: `WS_SCRCPY_ALLOW_REMOTE_ADMIN`
+
+Set `WS_SCRCPY_ALLOW_REMOTE_ADMIN=1` in the server's environment, or `"allowRemoteAdmin": true` in `config.json`, to allow admin from off-box **while running without sign-in**.
+
+Be plain about what this does: **it makes anyone who can reach the server an administrator.** They can create and delete users, change configuration, and shut the server down, with nothing protected by a password. Only do it on a network you fully control. **Enabling sign-in is the supported alternative**, and the in-app banner leads with it for that reason.
+
+The opt-out is **ignored entirely once sign-in is on** — then a session is the proof, and a flag left set from an earlier run cannot open a route around the login.
+
+### Containers
+
+**In a container nobody is ever on loopback**: the browser reaches the server through the Docker gateway, so a containerised deployment has no operator by the loopback test. There are two supported paths:
+
+- set `WS_SCRCPY_ALLOW_REMOTE_ADMIN=1` on the container (`-e WS_SCRCPY_ALLOW_REMOTE_ADMIN=1`, or an `environment:` entry in Compose); or
+- turn sign-in on once from inside the container, which *is* loopback:
+
+  ```sh
+  docker exec <container> curl -X POST http://127.0.0.1:8000/api/auth/enable
+  ```
+
+Then create the admin account in Settings → Users. After that, a signed-in admin can administer it from anywhere.
 
 **Serving on a domain / behind a reverse proxy.** Because the default rejects domain `Host` headers, a TLS-terminating reverse proxy on a domain name must be opted in via the server-only `allowedHosts` array in `config.json`:
 

@@ -2062,7 +2062,38 @@ History: v0.1.10's `PortChangeModal` was a `<dialog>` opened with `showModal()` 
 
 ws-scrcpy-web serves an API + WebSocket surface that is **unauthenticated by default**: anyone who can reach the port can drive connected devices. An **opt-in login subsystem has shipped** (smoke Module 18 — users, roles, sessions, `AuthGate`); while `authEnabled` is false the app runs in *open mode* and every request resolves to the implicit admin.
 
-**Open mode trusts the entire LAN, and `authEnabled` is the boundary.** The layers below stop a *cross-site* page and a *rebound DNS name* from reaching the API. They do not stop a direct client on the network: `server.listen(port)` binds all interfaces, `isHostAllowed` accepts any IP literal, the Origin match is skipped when the header is absent (which a non-browser client controls), and in open mode `requireAdmin` resolves to the implicit admin. A LAN client can therefore fetch `/`, collect the per-instance token from the response, and reach the admin API — `UsersApi`, `ConfigApi` PATCH, `ServerShutdownApi`. Turn login on to have a real boundary; the embed-consent endpoints are additionally loopback-gated for exactly this reason (§Framing in `SECURITY.md`).
+**Open mode trusts the entire LAN for the DEVICE surface, and `authEnabled` is that boundary.** The layers below stop a *cross-site* page and a *rebound DNS name* from reaching the API. They do not stop a direct client on the network: `server.listen(port)` binds all interfaces, `isHostAllowed` accepts any IP literal, the Origin match is skipped when the header is absent (which a non-browser client controls), and in open mode `requireAdmin` resolves to the implicit admin. A LAN client can therefore fetch `/`, collect the per-instance token from the response, and drive devices. Turn login on to have a real boundary; the embed-consent endpoints are additionally loopback-gated for exactly this reason (§Framing in `SECURITY.md`).
+
+### 24.0 Proof of operator on the admin API (item 81)
+
+The **admin** surface is no longer covered by that paragraph. `src/server/auth/requireOperator.ts` wraps `requireAdmin` with a pre-check that the caller *is the operator*, and six handlers call it instead: `UsersApi`, `ConfigApi` (PATCH only), `ServiceApi`, `DependencyApi`, `UpdatesApi`, `AuthApi` (enable/disable).
+
+```ts
+if (!isLoopback(req.socket?.remoteAddress ?? '')) {
+    const proven = isAuthEnabled(db) ? hasAuthenticatedUser(req) : allowRemoteAdmin();
+    if (!proven) return 403 { error: 'admin actions are limited to this machine' };
+}
+return requireAdmin(req, res);
+```
+
+**That ternary is load-bearing and must not become `hasAuthenticatedUser(req) || allowRemoteAdmin()`.** The two read as equivalent and are not: with `||`, a `WS_SCRCPY_ALLOW_REMOTE_ADMIN=1` left set from an earlier container run would open a route *around the login* once sign-in was enabled. The ternary means the opt-out is never even consulted in locked mode. A test pins it; `ServerShutdownApi`'s clause guards on `!isAuthEnabled(...)` for the same reason.
+
+**Fails closed:** a request with no socket is not loopback.
+
+**Why not plain loopback-gating.** It was tried and walked back. **In a container nobody is ever on loopback** — the browser arrives via the Docker gateway — so a blanket guard leaves a Docker user with no admin, no way to press an opt-in button (loopback-gated too) and no way to enable sign-in (`POST /api/auth/enable` is itself gated). That is a bootstrap deadlock, and CI's row 20.6 exists because it already happened once (`ServerShutdownApi.ts`).
+
+**Two routes are deliberately outside the guard:**
+
+- **`GET /api/config` is never gated.** It is the launcher's readiness probe, the Docker image's `HEALTHCHECK` and the test harness's ready path. Gating it breaks all three at once, and it discloses nothing sensitive. Only the PATCH branch is guarded.
+- **`ServerShutdownApi` keeps its own ladder** rather than adopting `requireOperator`, because its off-box branch must stay token-first (403) then session (401) for the cookieless tray helper. It gained one clause: in **open** mode an off-box caller now also needs the opt-out.
+
+**The opt-out.** `WS_SCRCPY_ALLOW_REMOTE_ADMIN=1` (exact string `'1'` — a loose truthiness check would admit `''` or `'false'`) or `allowRemoteAdmin: true` in `config.json`. The env var is first-class and checked first: a container has nobody at a loopback browser, so it is the only path that does not need `docker exec`. The config key is what the banner's confirmation modal writes, and that PATCH is itself operator-gated, so the switch cannot be thrown from off-box.
+
+**`runtime.adminScope` and `runtime.callerIsLocal` on `GET /api/config`.** Two fields, not one: `adminScope` (`'local' | 'remote' | 'authenticated'`) is the **policy in force**, `callerIsLocal` is whether **this** request can act under it. The client needs both — a `local` policy shows buttons to a loopback caller and instructions to everyone else. Both are optional on the wire, so an older server reads as "no opinion" and the banner stays hidden rather than claiming a posture it cannot verify.
+
+**The banner is informational to everyone, actionable only from loopback.** In open mode there is no auth, so a card with a working "enable" button would render for an attacker too — a switch that turns off the lock, mounted on the outside of the door. It leads with **Set up sign-in** (recommended); **Allow remote admin without sign-in** sits second behind a red confirmation whose every dismissal path resolves *no*.
+
+**`adminApiReachable()` (`src/app/client/adminGate.ts`) is a second, independent predicate.** Every admin handler gates at the top of `handle`, so the GETs are gated too — without it a flagless container would 403-spam every poll interval on a completely healthy app. It composes with `canSeeSection`: *permitted* and *reachable* are different questions, and a signed-in admin reaching a container without the opt-out passes the first and fails the second. This is finding 9.6's argument extended from `role` to `adminScope`.
 
 Against cross-network and cross-site attackers the server applies four layers, the first three evaluated in order in `src/server/security/requestGate.ts`:
 
@@ -2097,6 +2128,9 @@ By default only `localhost` + IP literals pass layer 1, so terminating TLS at a 
 | `src/server/security/embedRequests.ts` | Pending embed-consent request store (one at a time, five-minute expiry) |
 | `src/server/api/EmbedRequestApi.ts` | `/embed-request` ask + `/api/embed-request/decision` grant; both loopback-gated |
 | `src/server/auth/authState.ts` | `authEnabled` — the actual authentication boundary — plus the gate's allow-list |
+| `src/server/auth/requireOperator.ts` | Proof of operator (`requireOperator`), the opt-out (`allowRemoteAdmin`), and the wire fields (`resolveAdminScope`, `callerIsLocal`) — §24.0 |
+| `src/app/client/AdminScopeBanner.ts` | The posture card: informational everywhere, actionable only from loopback |
+| `src/app/client/adminGate.ts` | `canSeeSection` (may this ROLE) + `adminApiReachable` (will the API answer THIS caller) |
 | `src/server/security/instanceToken.ts` | Per-launch token mint, cookie build, constant-time validation; the two probe exemptions (`requiresToken`) |
 | `src/server/security/cookiePolicy.ts` | `cookieSameSiteAttrs()` — the shared SameSite/Secure/Partitioned decision for both cookies; relaxes only under a framing opt-in |
 | `src/server/security/forwardedProto.ts` | `isRequestSecure()` — the browser's scheme, trusting `X-Forwarded-Proto` from a loopback peer only |
