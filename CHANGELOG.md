@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.122] - 2026-09-11
+
 ### Changed
 
 - **Container image moved to `bilbospocketses/ws-scrcpy-web`**, mirrored at `ghcr.io/bilbospocketses/ws-scrcpy-web`. The full tag history was copied to both, digests unchanged. `jchapz30/ws-scrcpy-web` keeps receiving releases until **2026-12-09** and is deleted after that.
