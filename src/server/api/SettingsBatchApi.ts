@@ -4,6 +4,7 @@ import { requireOperator } from '../auth/requireOperator';
 import { Config } from '../Config';
 import type { Change } from '../db/PendingSettingsStore';
 import { Logger } from '../Logger';
+import { scheduleRestartForPortChange } from './restartRequest';
 import { BodyTooLargeError, readBodyCapped } from './utils';
 
 const log = Logger.for('SettingsBatchApi');
@@ -35,7 +36,22 @@ export function orderChanges(changes: Change[]): Change[] {
     return [...changes.filter((c) => c.id !== 'webPort'), ...changes.filter((c) => c.id === 'webPort')];
 }
 
+/**
+ * Test seams for the webPort restart (`scheduleRestartForPortChange`), mirroring
+ * `ServerShutdownApiOptions`. Production leaves both undefined and gets the real
+ * `setTimeout` / `process.exit`; tests inject both so a webPort batch never
+ * actually schedules a real timer or kills the vitest worker.
+ */
+export interface SettingsBatchApiOptions {
+    /** setTimeout seam -- tests inject to capture the scheduled callback. */
+    schedule?: (cb: () => void, ms: number) => unknown;
+    /** process.exit seam -- tests inject to avoid killing the worker. */
+    exit?: (code: number) => void;
+}
+
 export class SettingsBatchApi {
+    constructor(private readonly seams: SettingsBatchApiOptions = {}) {}
+
     public async handle(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
         if (req.url !== '/api/settings/batch' || req.method !== 'POST') return false;
         if (!requireOperator(req, res)) return true;
@@ -79,6 +95,9 @@ export class SettingsBatchApi {
                 cfg.db.pendingSettings.markCompleted(batchId);
                 const result = cfg.updateAppConfig({ webPort: change.to as number });
                 applied.push(change.id);
+                if (result.restartRequired) {
+                    scheduleRestartForPortChange(cfg.restartMarkerPath, log, this.seams);
+                }
                 res.writeHead(200, { 'content-type': 'application/json' });
                 res.end(
                     JSON.stringify({
