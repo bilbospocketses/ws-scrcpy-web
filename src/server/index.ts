@@ -21,6 +21,7 @@ import { AuthGate } from './auth/AuthGate';
 import { Config } from './Config';
 import { DependencyManager } from './DependencyManager';
 import { DeviceProbe } from './DeviceProbe';
+import { reconcilePendingSettings } from './db/reconcilePendingSettings';
 import { Logger } from './Logger';
 import { HostTracker } from './mw/HostTracker';
 import type { MwFactory } from './mw/Mw';
@@ -90,6 +91,11 @@ if (__ssArgs) {
     const runningServices: Service[] = [];
 
     const config = Config.getInstance();
+
+    // Boot-time reconciliation of the staged-settings write-ahead log: a row
+    // still 'pending' means a previous instance died mid-batch. Must run before
+    // any API handler can accept a new batch. See reconcilePendingSettings.ts.
+    reconcilePendingSettings(config.db);
 
     // Apply the operator-configured Host allowlist to the security layer before
     // any server starts accepting requests. Empty by default (localhost + IP

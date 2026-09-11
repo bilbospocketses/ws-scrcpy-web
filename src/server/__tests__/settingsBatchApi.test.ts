@@ -4,6 +4,7 @@ import * as path from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { orderChanges, SettingsBatchApi, STAGEABLE_IDS } from '../api/SettingsBatchApi';
 import { Config } from '../Config';
+import { reconcilePendingSettings } from '../db/reconcilePendingSettings';
 import { EnvName } from '../EnvName';
 import { makeReqRes } from './helpers/httpMock';
 
@@ -229,5 +230,26 @@ describe('POST /api/settings/batch — webPort restart', () => {
             .get() as { status: string; error: string } | undefined;
         expect(row?.status).toBe('failed');
         expect(row?.error).toBe('channel: channel must be one of: stable, beta');
+    });
+});
+
+describe('reconcilePendingSettings', () => {
+    it('abandons a pending row rather than re-applying it', () => {
+        setup();
+        const db = Config.getInstance().db;
+        db.pendingSettings.create(1, [{ id: 'webPort', label: 'Web port', from: 8000, to: 8010 }]);
+
+        const result = reconcilePendingSettings(db);
+
+        expect(result.abandoned).toBe(1);
+        expect(db.pendingSettings.getPending()).toHaveLength(0);
+        // The port was NOT changed -- silently applying settings a user may not
+        // remember confirming is worse than losing them.
+        expect(Config.getInstance().getAppConfig().webPort).toBe(8000);
+    });
+
+    it('reports nothing to do on a clean boot', () => {
+        setup();
+        expect(reconcilePendingSettings(Config.getInstance().db)).toEqual({ abandoned: 0, pruned: 0 });
     });
 });
