@@ -76,10 +76,13 @@ jobs:
       # publish never happens. `only-fixed` is deliberate. An advisory with no
       # fixed version cannot be acted on, and gating on it would hold every
       # release hostage to upstream; a fixable one is a bump we have not made.
-      # Docker Hub also has Scout analysis enabled for the canonical repo
-      # bilbospocketses/ws-scrcpy-web, so images that already shipped are
-      # re-evaluated as new advisories land. The free plan covers ONE repo;
-      # the deprecated jchapz30 mirror is deliberately not the analysed one.
+      # Separately from this gate, Docker Hub has its own Scout analysis: a
+      # MANUAL, per-repo setting that re-evaluates already-shipped images as new
+      # advisories land. The free plan covers ONE repo, and it must be pointed at
+      # the canonical bilbospocketses/ws-scrcpy-web -- not the deprecated
+      # jchapz30 mirror. It was enabled on jchapz30 before the namespace move.
+      # Nothing here can enable or even observe it, and it FAILS SILENTLY when
+      # missing, so do not read this comment as proof that it is on.
       # This action is on the repo's Actions allow-list (added 2026-09-03).
       - name: Build into the engine for the Scout gate
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
