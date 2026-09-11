@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`packages: write` is granted on the publishing job rather than on the whole container-publish workflow.** A workflow-level write extends to every job in the file — including the Docker Scout gate step, which pushes nothing — and Scorecard's Token-Permissions rule scores a top-level write as 0. The grant was correct in substance and wrong in placement. One gotcha is recorded inline because it is how the change breaks if copied: a job-level `permissions` block *replaces* the workflow default rather than merging with it, so `contents: read` has to be restated on the job or `actions/checkout` loses its read grant.
+
 ## [0.1.30-beta.122] - 2026-09-11
 
 ### Changed
