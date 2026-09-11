@@ -44,7 +44,17 @@ jobs:
           password: ${{ secrets.DOCKER_PAT }}
 
       # GHCR, the mirror. Same action, second registry -- no allow-list change.
-      # GITHUB_TOKEN is enough; no PAT and no new secret.
+      # GITHUB_TOKEN is enough, and no PAT or new secret is needed -- but there
+      # is a precondition that is invisible from here. This package is scoped to
+      # a personal account and was created by the tag backfill rather than by a
+      # workflow push, so it begins connected to NO repository, and GitHub
+      # requires a user-scoped package to grant the repo explicit access before
+      # a workflow token may write to it. `packages: write` above is necessary
+      # and not sufficient. Confirm with:
+      #   gh api users/bilbospocketses/packages/container/ws-scrcpy-web --jq .repository
+      # A null result means the push step below 403s on the ghcr refs -- after
+      # the Hub refs in the same step may already be up, which splits the digest
+      # set for that version. Fix in the package's settings, not in this file.
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
