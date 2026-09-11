@@ -4,108 +4,27 @@ import type {
     FirstRunStatus,
     UpdateChannel,
 } from '../../common/ConfigEvents';
-import type {
-    ServiceInstallResponse,
-    ServiceStatusResponse,
-    ServiceUninstallResponse,
-} from '../../common/ServiceEvents';
+import type { ServiceStatusResponse } from '../../common/ServiceEvents';
 import type { UpdatesConfigPatchRequest, UpdatesStatusResponse } from '../../common/UpdateEvents';
 import { sameOriginUrl } from '../sameOriginUrl';
 import { Modal } from '../ui/Modal';
-import { AdminConfirmModal, type AdminConfirmOptions } from './AdminConfirmModal';
 import { authClient, type Role } from './AuthClient';
 import { adminApiReachable, canSeeSection } from './adminGate';
 import { ConfirmModal } from './ConfirmModal';
-import { pollServiceUninstalled } from './pollServiceUninstalled';
 import { ResetConfirmModal } from './ResetConfirmModal';
-import { ServiceOperationModal } from './ServiceOperationModal';
 import { settingsService } from './SettingsService';
+import { StagedSettingsStore } from './settings/StagedSettingsStore';
 import { type TabDef, TabStrip } from './settings/TabStrip';
-import { UninstallConfirmModal } from './UninstallConfirmModal';
+import { buildEmbeddingTab, type TabContext } from './settings/tabs/EmbeddingTab';
+import {
+    buildInstallAllUsersControl,
+    buildServiceTab,
+    buildUninstallControl,
+    refreshService,
+    type ScopeRadioInputs,
+} from './settings/tabs/ServiceTab';
+import { buildUsersTab } from './settings/tabs/UsersTab';
 import { runUpgradingHandoff } from './UpgradingOverlay';
-import { UsersModal } from './UsersModal';
-
-/**
- * Follow-up copy shown after a Linux service uninstall begins, by scope.
- * User scope: the Rust teardown helper relaunches the home AppImage in local
- * mode, so the page will reconnect. System scope: no relaunch - user is
- * informed the service has been stopped.
- */
-export function uninstallFollowupMessage(mode: 'user' | 'system'): string {
-    return mode === 'system'
-        ? 'service removed. the system service has been stopped. relaunch the app manually to use local mode.'
-        : 'service removed. relaunching the app in local mode. this page will reconnect shortly.';
-}
-
-/**
- * Classify one tick of the post-install port-discovery poll. Pure (no DOM or
- * timers) so it is unit-testable. After a service install the web port is handed
- * off to the service-Node, which identifies itself via `servedByService` (the
- * WS_SCRCPY_SERVICE env set on its unit):
- * - reachable AND servedByService -> the service has taken over. Same port (no
- *   config.json mtime change) -> reconnect (reload the current URL); a different
- *   bound port (mtime changed + known disk port) -> navigate there.
- * - otherwise (the local instance is still answering, or the brief hand-off dead
- *   window where nothing holds the port) -> keep polling until the cap, then
- *   timeout.
- *
- * Keying success on the POSITIVE servedByService signal — rather than catching a
- * transient unreachable tick (a race against the 2s poll) or a config.json mtime
- * change a same-port rebind never produces — removes the intermittent
- * "port discovery timed out" failure (beta.47).
- */
-export type PollOutcome =
-    | { kind: 'keep-polling' }
-    | { kind: 'navigate'; port: number }
-    | { kind: 'reconnect' }
-    | { kind: 'timeout' };
-
-export function classifyInstallPoll(args: {
-    reachable: boolean;
-    servedByService: boolean;
-    configMtime: number | null;
-    baselineMtime: number;
-    diskWebPort: number | null;
-    /** The port the browser is actually on, so a shift can be detected. */
-    currentPort: number | null;
-    /** Sticky: any answering instance has reported the SERVICE as running. */
-    serviceSeenRunning: boolean;
-    iterations: number;
-    maxIterations: number;
-}): PollOutcome {
-    // A PORT SHIFT is its own positive signal, and it is the one case
-    // servedByService can never deliver. MEASURED 2026-09-07 (qa-harness Arc 1b row
-    // 4.3): the service could not bind 8000 because the exiting local instance still
-    // held it, so it took 8001. This poll is SAME-ORIGIN, so it kept asking 8000 —
-    // where servedByService is false by construction, since that flag is only ever
-    // true inside the service process. The branch below written for "a different
-    // bound port" was therefore unreachable in exactly the situation it exists for,
-    // and the user sat on a dying instance until the timeout.
-    //
-    // The exiting local instance can answer both halves of the question: its
-    // readDiskConfig reports diskWebPort from config.json, and its `status` comes
-    // from an sc.exe/systemctl query about the SERVICE, not about itself. So once
-    // the service is known to be running and the disk port differs from ours, we
-    // know where to go — whoever is answering.
-    const portMoved = args.diskWebPort != null && args.currentPort != null && args.diskWebPort !== args.currentPort;
-    if (portMoved && (args.servedByService || args.serviceSeenRunning)) {
-        return { kind: 'navigate', port: args.diskWebPort as number };
-    }
-    // Success requires a POSITIVE signal: the instance answering /api/service/status
-    // is the service itself (WS_SCRCPY_SERVICE on its unit), not the exiting local
-    // instance and not a transient dead port.
-    if (args.reachable && args.servedByService) {
-        // Different bound port -> navigate there; same port -> reload in place.
-        if (args.configMtime != null && args.configMtime !== args.baselineMtime && args.diskWebPort != null) {
-            return { kind: 'navigate', port: args.diskWebPort };
-        }
-        return { kind: 'reconnect' };
-    }
-    // Still the local instance answering, or the brief hand-off dead window:
-    // keep waiting until the service identifies itself, then cap out.
-    if (args.iterations > args.maxIterations) return { kind: 'timeout' };
-    return { kind: 'keep-polling' };
-}
 
 /**
  * The /api/config patch sent by "reset welcome and bookmark prompts" — clears
@@ -137,50 +56,6 @@ export function resetPromptSettingsPayload(): Record<string, boolean | null> {
         bookmarkDismissedForPort: null,
         bookmarkDismissedGlobally: false,
         adminScopeBannerDismissed: false,
-    };
-}
-
-/** Structural subset of ServiceStatusResponse that drives the scope radios.
- * Fields admit `undefined` explicitly for exactOptionalPropertyTypes so the
- * full ServiceStatusResponse is assignable. */
-export interface ScopeRadioInputs {
-    status?: string | undefined;
-    installMode?: string | null | undefined;
-    scope?: string | null | undefined;
-}
-
-export interface ScopeRadioState {
-    installedScope: 'user' | 'system' | null;
-    /** A service is installed -> the radios are read-only (locked). */
-    locked: boolean;
-    userChecked: boolean;
-    systemChecked: boolean;
-}
-
-/**
- * Derive the Linux service-scope radio state from the service status. Pure (no
- * DOM) so it is unit-testable. Prefers the authoritative filesystem scope
- * (resp.scope — which systemd unit exists) and falls back to mapping the
- * mutable installMode, accepting BOTH the bare ('user'/'system') and '-service'
- * forms for older servers that don't report scope. (The pre-fix render code
- * only mapped the two '-service' forms, so a drifted installMode left both
- * radios unselected even with a service installed.)
- */
-export function scopeRadioState(resp: ScopeRadioInputs): ScopeRadioState {
-    const isInstalled = (resp.status ?? 'not-installed') !== 'not-installed';
-    const scopeFromInstallMode: 'user' | 'system' | null =
-        resp.installMode === 'system-service' || resp.installMode === 'system'
-            ? 'system'
-            : resp.installMode === 'user-service' || resp.installMode === 'user'
-              ? 'user'
-              : null;
-    const installedScope: 'user' | 'system' | null =
-        resp.scope === 'user' || resp.scope === 'system' ? resp.scope : scopeFromInstallMode;
-    return {
-        installedScope,
-        locked: isInstalled,
-        userChecked: isInstalled ? installedScope === 'user' : true,
-        systemChecked: isInstalled && installedScope === 'system',
     };
 }
 
@@ -248,154 +123,6 @@ export function appSectionButtonsState(resp: {
         installAllUsersNote: linux && machineWide ? 'already installed for all users (/opt)' : null,
         showUninstall: (linux || resp.platform === 'win32') && !container,
     };
-}
-
-export interface SystemServiceInstallGate {
-    enabled: boolean;
-    note: string | null;
-}
-
-/** System-scope service install requires a machine-wide /opt install first
- *  (the root service execs the /opt binary; it can't exist without it). */
-export function systemServiceInstallGate(input: { machineWideInstalled: boolean }): SystemServiceInstallGate {
-    return input.machineWideInstalled
-        ? { enabled: true, note: null }
-        : { enabled: false, note: 'system service install requires installing system-wide for all users first.' };
-}
-
-/**
- * Apply the system-scope install gate to the Linux service-install button and
- * its note element. When the 'system' scope radio is the selected scope and the
- * app is NOT yet installed machine-wide (/opt), system-scope service install
- * can't work, so disable the button and surface the gate note; otherwise the
- * button is enabled and the note hidden. Pure DOM mutation on the passed
- * elements (mirrors lockScopeRadioControl) so it is unit-testable; the gate
- * logic itself lives in the unit-tested systemServiceInstallGate.
- */
-export function applySystemInstallGate(
-    btn: HTMLButtonElement,
-    note: HTMLElement,
-    systemSelected: boolean,
-    machineWideInstalled: boolean,
-): void {
-    const gate = systemServiceInstallGate({ machineWideInstalled });
-    const blocked = systemSelected && !gate.enabled;
-    btn.disabled = blocked;
-    note.textContent = blocked ? (gate.note ?? '') : '';
-    note.hidden = !blocked;
-}
-
-/**
- * Lock a service-scope radio as read-only WITHOUT the `disabled` attribute.
- * Chromium desaturates `accent-color` on :disabled form controls, which made
- * the selected dot invisible against the muted track (item 42 — the active
- * scope was unreadable when a service was installed). Keeping the radio
- * ENABLED lets accent-color render; tabindex=-1 removes it from the tab order,
- * and the `.settings-radio-locked` class applies `pointer-events: none` on the
- * label so it can't be clicked or toggled.
- */
-export function lockScopeRadioControl(label: HTMLLabelElement, radio: HTMLInputElement): void {
-    radio.tabIndex = -1;
-    label.classList.add('settings-radio-locked');
-}
-
-/**
- * Build a neutral (non-error) full-width service status line — a plain label,
- * no error styling, no retry button. Used for informational follow-ups like the
- * system-scope uninstall success message (item 40b — previously mis-rendered
- * through renderServiceError as red + a retry button, though it is an
- * informational success, not an error). Pure DOM so it is unit-testable, like
- * lockScopeRadioControl.
- */
-export function buildServiceInfoRow(message: string): HTMLElement {
-    const p = document.createElement('p');
-    p.className = 'settings-status';
-    p.style.gridColumn = '1 / -1';
-    p.textContent = message;
-    return p;
-}
-
-/**
- * Build the Linux-only "install for all users" control: an "install" button
- * plus its full-width status note. Clicking POSTs /api/service/install-system-wide
- * (the server runs pkexec, relocates to /opt, and re-execs — the OS pkexec prompt
- * IS the confirmation, so there is no extra modal); on success the server is
- * about to re-exec, so the page reloads; on failure the note shows an inline
- * error. `reload` is injected so the unit test can observe it without navigating.
- * Self-contained DOM + wiring (no network until clicked) so it is unit-testable
- * like buildServiceInfoRow. Show/hide + the machine-wide disabled+note state are
- * applied separately via appSectionButtonsState (from renderServiceState).
- */
-export function buildInstallAllUsersControl(opts: { reload: () => void }): {
-    button: HTMLButtonElement;
-    note: HTMLElement;
-} {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'settings-btn settings-btn-primary';
-    button.textContent = 'install';
-
-    const note = document.createElement('p');
-    note.className = 'settings-status';
-    note.style.gridColumn = '1 / -1';
-    note.hidden = true;
-
-    button.addEventListener('click', () => {
-        button.disabled = true;
-        button.textContent = 'installing…';
-        note.hidden = true;
-        void (async () => {
-            try {
-                const res = await fetch('/api/service/install-system-wide', { method: 'POST' });
-                if (res.ok) {
-                    // The server is re-execing from /opt — reload onto the new instance.
-                    opts.reload();
-                    return;
-                }
-                note.textContent = 'install failed — see the server logs and try again.';
-            } catch {
-                note.textContent = 'install failed — could not reach the server.';
-            }
-            note.hidden = false;
-            button.disabled = false;
-            button.textContent = 'install';
-        })();
-    });
-
-    return { button, note };
-}
-
-/**
- * Build the "uninstall ws-scrcpy-web" trigger button. When clicked, opens
- * UninstallConfirmModal (a top-layer <dialog>) instead of an inline panel.
- * On confirmation, POSTs /api/service/uninstall-app with { keep } and calls
- * opts.onUninstalled on success. Self-contained DOM + wiring; no network call
- * until the modal is confirmed.
- */
-export function buildUninstallControl(opts: { onUninstalled: () => void }): {
-    button: HTMLButtonElement;
-} {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'settings-btn settings-btn-danger';
-    button.textContent = 'uninstall…';
-
-    button.addEventListener('click', () => {
-        void (async () => {
-            const r = await UninstallConfirmModal.confirm();
-            if (!r.confirmed) return;
-            button.disabled = true;
-            button.textContent = 'uninstalling…';
-            await fetch('/api/service/uninstall-app', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ keep: r.keep }),
-            });
-            opts.onUninstalled();
-        })();
-    });
-
-    return { button };
 }
 
 /**
@@ -527,14 +254,19 @@ export class SettingsModal extends Modal {
      * visible regardless of which tab was active and orphaned TabStrip's cache.
      */
     private tabStrip: TabStrip | null = null;
-    private serviceSection!: HTMLElement;
-    private embedOriginsBody: HTMLElement | null = null;
+    /**
+     * The Service tab's root element, captured when `fillBody` builds it, so
+     * the constructor's post-probe block can re-enter its refresh via the
+     * exported `refreshService()` — `buildServiceTab` itself takes no `this`
+     * and fires no request on its own. Stays null if the tab was never built
+     * (role-gated out), mirroring the `if (!this.serviceSection) return;`
+     * guard this field replaces.
+     */
+    private serviceTabEl: HTMLElement | null = null;
     private webPortInput: HTMLInputElement | null = null;
     private webPortStatus: HTMLElement | null = null;
     private serverSaveBtn: HTMLButtonElement | null = null;
     private currentWebPort: number | null = null;
-    private serviceScopeSystemRadio: HTMLInputElement | null = null;
-    private servicePlatform: 'win32' | 'linux' | null = null;
 
     // ── Server section (folded App) state ────────────────────────────────
     private stopServerButton: HTMLButtonElement | null = null;
@@ -612,7 +344,18 @@ export class SettingsModal extends Modal {
                         this.applyDockerGating();
                         return;
                     }
-                    if (this.canUse('service')) void this.refreshService();
+                    if (this.canUse('service') && this.serviceTabEl) {
+                        void refreshService(this.serviceTabEl, {
+                            // renderServiceState (inside ServiceTab.ts) learns the
+                            // fresh ServiceStatusResponse and hands it back here so
+                            // the SERVER tab's rows can react to it too — see
+                            // ServiceTabCallbacks.
+                            onServiceStatus: (resp) => {
+                                this.applyStopServerButtonState(resp);
+                                this.applyAppSectionButtonsState(resp);
+                            },
+                        });
+                    }
                     if (this.canUse('updates')) void this.refreshUpdates();
                 })();
             })();
@@ -632,13 +375,24 @@ export class SettingsModal extends Modal {
         // Admin-only sections are gated on the current user's role (set before
         // fillBody is called). The server enforces the same set via requireAdmin.
         // The "Users" section (manage users button + auth toggle) is admin-only.
+        //
+        // `store` is a single StagedSettingsStore shared by every tab this
+        // dialog builds. Users/Embedding/Service (below) take it and register
+        // nothing — they are actions, not staged values (see StagedSettingsStore's
+        // class doc). Server and Updates start registering fields in Tasks 8-9.
+        const store = new StagedSettingsStore();
+        const ctx: TabContext = {
+            role: this.role,
+            authEnabled: this.authEnabled,
+            reload: () => window.location.reload(),
+        };
         const tabs: TabDef[] = [];
         if (canSeeSection(this.role, 'users')) {
-            tabs.push({ id: 'users', label: 'Users', build: () => this.buildUsersSection() });
+            tabs.push({ id: 'users', label: 'Users', build: () => buildUsersTab(ctx, store) });
         }
         // Next to Users: both answer "who is allowed to do what with this server".
         if (canSeeSection(this.role, 'embedOrigins')) {
-            tabs.push({ id: 'embedding', label: 'Embedding', build: () => this.buildEmbedOriginsSection() });
+            tabs.push({ id: 'embedding', label: 'Embedding', build: () => buildEmbeddingTab(ctx, store) });
         }
         // Built unconditionally; applyDockerGating() swaps them for the locked
         // container copy if the probe comes back true. Their refresh calls are
@@ -648,7 +402,15 @@ export class SettingsModal extends Modal {
             tabs.push({ id: 'updates', label: 'Updates', build: () => this.buildUpdatesSection() });
         }
         if (canSeeSection(this.role, 'service')) {
-            tabs.push({ id: 'service', label: 'Service', build: () => this.buildServiceSection() });
+            tabs.push({
+                id: 'service',
+                label: 'Service',
+                build: () => {
+                    const el = buildServiceTab(ctx, store);
+                    this.serviceTabEl = el; // so the constructor can trigger its refresh post-probe
+                    return el;
+                },
+            });
         }
         tabs.push({ id: 'server', label: 'Server', build: () => this.buildServerSection() }); // always (contains the user-level reset row)
         const strip = new TabStrip(tabs);
@@ -721,171 +483,6 @@ export class SettingsModal extends Modal {
         controlWrap.appendChild(control);
         row.appendChild(controlWrap);
         return { row, labelEl };
-    }
-
-    // ── Users section (admin-only) ─────────────────────────────────────────
-    /**
-     * Origins allowed to frame this app, each with a revoke button.
-     *
-     * Permission is granted through the consent prompt, which is a one-way door without this —
-     * approving wrote an origin into config.json and there was no way back short of hand-editing
-     * the file. Revoking takes effect on the running server immediately.
-     */
-    private buildEmbedOriginsSection(): HTMLElement {
-        const { section, body } = this.buildSection('Embedding');
-        this.embedOriginsBody = body;
-        this.renderEmbedOrigins(null);
-        void this.refreshEmbedOrigins();
-        return section;
-    }
-
-    private async refreshEmbedOrigins(): Promise<void> {
-        try {
-            const res = await fetch('/api/embed-origins', { headers: { Accept: 'application/json' } });
-            if (!res.ok) {
-                this.renderEmbedOrigins([], 'could not read the list — see server logs.');
-                return;
-            }
-            const body = (await res.json()) as { origins?: string[] };
-            this.renderEmbedOrigins(body.origins ?? []);
-        } catch {
-            this.renderEmbedOrigins([], 'could not reach the server.');
-        }
-    }
-
-    /** `origins === null` means "still loading". */
-    private renderEmbedOrigins(origins: string[] | null, error?: string): void {
-        const body = this.embedOriginsBody;
-        if (!body) return;
-        body.textContent = '';
-
-        if (error) {
-            body.appendChild(this.buildRow(error, document.createElement('span')));
-            return;
-        }
-        if (origins === null) {
-            body.appendChild(this.buildRow('loading…', document.createElement('span')));
-            return;
-        }
-        if (origins.length === 0) {
-            body.appendChild(this.buildRow('No other origins may embed this app.', document.createElement('span')));
-            return;
-        }
-
-        for (const origin of origins) {
-            const revokeBtn = document.createElement('button');
-            revokeBtn.type = 'button';
-            revokeBtn.className = 'modal-button';
-            revokeBtn.textContent = 'revoke';
-            revokeBtn.addEventListener('click', () => {
-                void (async () => {
-                    // Confirm first: revoking silently breaks a working embed in the other app,
-                    // and the browser reports that as "refused to connect" — easy to misread as
-                    // the server being down.
-                    const sure = await ConfirmModal.confirm({
-                        title: 'revoke embedding permission?',
-                        message:
-                            `${origin} will no longer be able to display this app in a frame. ` +
-                            'Anything it is currently showing will stop working immediately. ' +
-                            'It can ask again.',
-                    });
-                    if (!sure) return;
-
-                    revokeBtn.disabled = true;
-                    try {
-                        const res = await fetch('/api/embed-origins/revoke', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ origin }),
-                        });
-                        if (res.ok) {
-                            const updated = (await res.json()) as { origins?: string[] };
-                            this.renderEmbedOrigins(updated.origins ?? []);
-                        } else {
-                            // Most likely a stale list — re-read rather than guess.
-                            await this.refreshEmbedOrigins();
-                        }
-                    } catch {
-                        this.renderEmbedOrigins([], 'could not reach the server.');
-                    }
-                })();
-            });
-            body.appendChild(this.buildRow(origin, revokeBtn));
-        }
-    }
-
-    private buildUsersSection(): HTMLElement {
-        const { section, body } = this.buildSection('Users');
-
-        // 1. Manage users button — opens UsersModal (admin-only action).
-        const manageBtn = document.createElement('button');
-        manageBtn.type = 'button';
-        manageBtn.className = 'modal-button';
-        manageBtn.textContent = 'manage users';
-        manageBtn.addEventListener('click', () => {
-            new UsersModal();
-        });
-        body.appendChild(this.buildRow('user accounts', manageBtn));
-
-        // 2. Auth toggle — disable login (authEnabled=true) or enable login
-        //    (authEnabled=false). window.location.reload() on success.
-        const toggleStatus = document.createElement('p');
-        toggleStatus.className = 'settings-status';
-        toggleStatus.style.gridColumn = '1 / -1';
-        toggleStatus.hidden = true;
-
-        if (this.authEnabled) {
-            const disableBtn = document.createElement('button');
-            disableBtn.type = 'button';
-            disableBtn.className = 'modal-button';
-            disableBtn.textContent = 'disable login (return to open mode)';
-            disableBtn.addEventListener('click', () => {
-                disableBtn.disabled = true;
-                void (async () => {
-                    try {
-                        await authClient.disableAuth();
-                        window.location.reload();
-                    } catch {
-                        toggleStatus.textContent = 'failed to disable login — see server logs.';
-                        toggleStatus.hidden = false;
-                        disableBtn.disabled = false;
-                    }
-                })();
-            });
-            body.appendChild(this.buildRow('login', disableBtn));
-        } else {
-            const enableBtn = document.createElement('button');
-            enableBtn.type = 'button';
-            enableBtn.className = 'modal-button';
-            enableBtn.textContent = 'enable login';
-            enableBtn.addEventListener('click', () => {
-                enableBtn.disabled = true;
-                void (async () => {
-                    try {
-                        const res = await authClient.enableAuth();
-                        if (res.ok) {
-                            window.location.reload();
-                            return;
-                        }
-                        if (res.status === 409) {
-                            toggleStatus.textContent = 'Add a user with an admin password first (Users → manage users)';
-                        } else {
-                            toggleStatus.textContent = `failed to enable login (${res.status})`;
-                        }
-                        toggleStatus.hidden = false;
-                        enableBtn.disabled = false;
-                    } catch {
-                        toggleStatus.textContent = 'failed to enable login — could not reach server.';
-                        toggleStatus.hidden = false;
-                        enableBtn.disabled = false;
-                    }
-                })();
-            });
-            body.appendChild(this.buildRow('login', enableBtn));
-        }
-
-        body.appendChild(toggleStatus);
-        return section;
     }
 
     // ── Server section ─────────────────────────────────────────────────────
@@ -1742,472 +1339,9 @@ export class SettingsModal extends Modal {
         }
     }
 
-    // ── Service section ────────────────────────────────────────────────────
-    private buildServiceSection(): HTMLElement {
-        const { section, body } = this.buildSection('Service');
-        const placeholder = document.createElement('p');
-        placeholder.className = 'settings-status';
-        placeholder.style.gridColumn = '1 / -1';
-        placeholder.textContent = 'loading…';
-        body.appendChild(placeholder);
-        this.serviceSection = body;
-        return section;
-    }
-
-    private async refreshService(): Promise<void> {
-        if (!this.serviceSection) return; // service section not built yet (tab not active, or not admin)
-        this.serviceSection.replaceChildren();
-        const loading = document.createElement('p');
-        loading.className = 'settings-status';
-        loading.style.gridColumn = '1 / -1';
-        loading.textContent = 'loading…';
-        this.serviceSection.appendChild(loading);
-
-        let resp: ServiceStatusResponse | null = null;
-        try {
-            const r = await fetch('/api/service/status');
-            if (!r.ok) {
-                this.renderServiceError("couldn't reach server", () => void this.refreshService());
-                return;
-            }
-            resp = (await r.json()) as ServiceStatusResponse;
-        } catch {
-            this.renderServiceError("couldn't reach server", () => void this.refreshService());
-            return;
-        }
-        this.renderServiceState(resp);
-    }
-
-    private renderServiceState(resp: ServiceStatusResponse): void {
-        this.serviceSection.replaceChildren();
-        this.servicePlatform = (resp.platform as 'win32' | 'linux') ?? null;
-        // Gate the App-section "stop server & exit" button off in service mode.
-        this.applyStopServerButtonState(resp);
-        // Reveal/disable the Linux-only "install for all users" + "uninstall" rows.
-        this.applyAppSectionButtonsState(resp);
-
-        if (!resp.supported) {
-            const notice = document.createElement('p');
-            notice.className = 'settings-status';
-            notice.style.gridColumn = '1 / -1';
-            notice.textContent =
-                resp.unsupportedReason || 'service mode is currently windows-only. linux support arrives later in SP3.';
-            this.serviceSection.appendChild(notice);
-            return;
-        }
-
-        const status = resp.status ?? 'not-installed';
-
-        // Linux scope chooser: standard settings row matching the update
-        // channel row's pattern. Always rendered on Linux. When the service is
-        // installed the radios are pre-selected from the active scope and
-        // LOCKED (read-only) — switching scope requires a deliberate
-        // uninstall→reinstall (systemd user-scope and system-scope unit files
-        // live in different paths and can't coexist for the same service
-        // name). Pre-v0.1.30 the row was only rendered when not installed,
-        // leaving no in-UI way to tell which scope was active.
-        this.serviceScopeSystemRadio = null;
-        // Captured for the system-scope install gate wired after the button is
-        // built (both radios drive its re-evaluation on toggle).
-        let scopeUserRadio: HTMLInputElement | null = null;
-        let scopeSystemRadio: HTMLInputElement | null = null;
-        if (resp.platform === 'linux') {
-            // Detection + lock state (pure, unit-tested in scopeRadioState).
-            // Locked radios stay ENABLED and are made non-interactive via
-            // lockScopeRadioControl — NOT `disabled` — because Chromium
-            // desaturates accent-color on :disabled controls, which hid the
-            // selected dot (item 42).
-            const st = scopeRadioState(resp);
-
-            const scopeFrag = document.createDocumentFragment();
-
-            const userLabel = document.createElement('label');
-            userLabel.className = 'settings-radio-label';
-            const userRadio = document.createElement('input');
-            userRadio.type = 'radio';
-            userRadio.name = 'settings-scope';
-            userRadio.value = 'user';
-            userRadio.checked = st.userChecked;
-            userLabel.appendChild(userRadio);
-            userLabel.appendChild(document.createTextNode('user'));
-            if (st.locked) lockScopeRadioControl(userLabel, userRadio);
-            scopeFrag.appendChild(userLabel);
-
-            const sysLabel = document.createElement('label');
-            sysLabel.className = 'settings-radio-label';
-            const sysRadio = document.createElement('input');
-            sysRadio.type = 'radio';
-            sysRadio.name = 'settings-scope';
-            sysRadio.value = 'system';
-            sysRadio.checked = st.systemChecked;
-            sysLabel.appendChild(sysRadio);
-            sysLabel.appendChild(document.createTextNode('system (req. sudo)'));
-            if (st.locked) lockScopeRadioControl(sysLabel, sysRadio);
-            scopeFrag.appendChild(sysLabel);
-
-            this.serviceSection.appendChild(this.buildRow('service scope', scopeFrag));
-            // serviceScopeSystemRadio feeds the install request body; null it
-            // out when locked so the install handler (unreachable in that state
-            // anyway) can't accidentally consume a stale value.
-            this.serviceScopeSystemRadio = st.locked ? null : sysRadio;
-            scopeUserRadio = userRadio;
-            scopeSystemRadio = sysRadio;
-        }
-
-        // One row: label = informational blurb (left column, wraps),
-        // control = state-aware action button (left-aligned in right
-        // column like every other control). Green for install (positive
-        // action, mirrors apply-update); red for uninstall (destructive).
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        if (status === 'not-installed') {
-            btn.className = 'settings-btn settings-btn-ready';
-            btn.textContent = 'not installed — install?';
-            btn.addEventListener('click', () => {
-                void this.onInstallService(btn);
-            });
-        } else {
-            btn.className = 'settings-btn settings-btn-danger';
-            btn.textContent = `${status} — uninstall?`;
-            btn.addEventListener('click', () => {
-                void this.onUninstallService(btn);
-            });
-        }
-        this.serviceSection.appendChild(this.buildRow('installs/uninstalls server service', btn));
-
-        // Linux: gate the system-scope install button on a prior machine-wide
-        // (/opt) install — the root service execs the shared /opt binary, which
-        // must exist first. Only relevant in the not-installed state (the
-        // install button); when a service is installed the button is uninstall
-        // and the radios are locked. Re-evaluated whenever the scope radio
-        // toggles. Gate logic is the unit-tested applySystemInstallGate.
-        if (status === 'not-installed' && resp.platform === 'linux' && scopeSystemRadio) {
-            const systemRadio = scopeSystemRadio;
-            const machineWideInstalled = resp.machineWideInstalled ?? false;
-            const gateNote = document.createElement('p');
-            gateNote.className = 'settings-status';
-            gateNote.style.gridColumn = '1 / -1';
-            gateNote.hidden = true;
-            this.serviceSection.appendChild(gateNote);
-            const applyGate = (): void =>
-                applySystemInstallGate(btn, gateNote, systemRadio.checked, machineWideInstalled);
-            systemRadio.addEventListener('change', applyGate);
-            scopeUserRadio?.addEventListener('change', applyGate);
-            applyGate();
-        }
-    }
-
-    private renderServiceError(msg: string, onRetry: () => void): void {
-        this.serviceSection.replaceChildren();
-        const retryBtn = document.createElement('button');
-        retryBtn.type = 'button';
-        retryBtn.className = 'settings-btn';
-        retryBtn.textContent = 'retry';
-        retryBtn.addEventListener('click', onRetry);
-        const { row, labelEl } = this.buildDynamicLabelRow(msg, retryBtn);
-        labelEl.classList.add('settings-status-error');
-        this.serviceSection.appendChild(row);
-    }
-
-    /**
-     * Render a neutral informational message in the service section (no error
-     * styling, no retry button) — for informational follow-ups like the
-     * system-scope uninstall success message. See buildServiceInfoRow (item 40b).
-     */
-    private renderServiceInfo(msg: string): void {
-        this.serviceSection.replaceChildren();
-        this.serviceSection.appendChild(buildServiceInfoRow(msg));
-    }
-
-    private async onInstallService(btn: HTMLButtonElement): Promise<void> {
-        const isLinux = this.servicePlatform === 'linux';
-        const isSystemScope = this.serviceScopeSystemRadio?.checked ?? false;
-
-        if (isLinux && !isSystemScope) {
-            // User scope on Linux: no elevation needed, proceed directly.
-        } else {
-            const opts: AdminConfirmOptions = { action: 'install service' };
-            if (this.servicePlatform) opts.platform = this.servicePlatform;
-            const confirmed = await AdminConfirmModal.confirm(opts);
-            if (!confirmed) return;
-        }
-
-        btn.disabled = true;
-        const prevText = btn.textContent;
-        btn.textContent = 'installing…';
-
-        const requestBody: { scope?: 'user' | 'system' } = {};
-        if (this.serviceScopeSystemRadio) {
-            requestBody.scope = this.serviceScopeSystemRadio.checked ? 'system' : 'user';
-        }
-        const modal = new ServiceOperationModal({ operation: 'install' });
-        try {
-            const r = await fetch('/api/service/install', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(requestBody),
-            });
-            const data = (await r.json().catch(() => null)) as ServiceInstallResponse | null;
-            if (!r.ok || !data || data.ok !== true) {
-                const errMsg =
-                    data && data.ok === false
-                        ? SettingsModal.reasonToUserMessage(data.reason, data.error)
-                        : `install failed (${r.status})`;
-                modal.close();
-                btn.disabled = false;
-                btn.textContent = prevText;
-                this.renderServiceError(errMsg, () => void this.refreshService());
-                return;
-            }
-
-            // §39: mtime-based discovery. Poll /api/service/status until
-            // config.json mtime changes (service-Node wrote its bound port).
-            const baselineMtime = data.configMtime ?? 0;
-            const pollInterval = 2000;
-            const maxIterations = 30;
-            let iterations = 0;
-            // §7 (system-service takeover): update the visible copy to
-            // reflect the hand-off window — local instance is exiting,
-            // systemd is restarting, service will bind the same port.
-            if (isSystemScope) {
-                btn.textContent = 'switching to the system service…';
-            }
-            // Sticky across ticks: the origin dies mid-hand-off, so what we learned
-            // while the local instance was still answering has to outlive it.
-            let sawServiceRunning = false;
-            let lastDiskWebPort: number | null = null;
-            const browserPort = Number(window.location.port) || null;
-            const poll = setInterval(async () => {
-                iterations++;
-                // A thrown/aborted fetch means whoever was answering has dropped —
-                // the local instance exiting, or the brief hand-off dead window. We
-                // do NOT treat that as success: we wait for the service to answer with
-                // servedByService=true (below) before reconnecting/navigating.
-                let reachable = true;
-                let servedByService = false;
-                let configMtime: number | null = null;
-                let diskWebPort: number | null = null;
-                try {
-                    const statusResp = await fetch('/api/service/status', { signal: AbortSignal.timeout(5000) });
-                    if (statusResp.ok) {
-                        const statusData = (await statusResp.json()) as {
-                            configMtime?: number;
-                            diskWebPort?: number;
-                            servedByService?: boolean;
-                            status?: string;
-                        };
-                        configMtime = statusData.configMtime ?? null;
-                        diskWebPort = statusData.diskWebPort ?? null;
-                        servedByService = statusData.servedByService === true;
-                        // `status` is the SERVICE's state (sc.exe / systemctl), not the
-                        // answering process's, so the local instance can tell us the
-                        // service came up even though it is not the service.
-                        if (statusData.status === 'running') {
-                            sawServiceRunning = true;
-                        }
-                        if (diskWebPort != null) {
-                            lastDiskWebPort = diskWebPort;
-                        }
-                    }
-                } catch {
-                    reachable = false;
-                }
-                const outcome = classifyInstallPoll({
-                    reachable,
-                    servedByService,
-                    configMtime,
-                    baselineMtime,
-                    // The last port we saw on disk, not just this tick's: an
-                    // unreachable tick carries no body, and that is precisely the
-                    // tick after the local instance exits.
-                    diskWebPort: diskWebPort ?? lastDiskWebPort,
-                    currentPort: browserPort,
-                    serviceSeenRunning: sawServiceRunning,
-                    iterations,
-                    maxIterations,
-                });
-                switch (outcome.kind) {
-                    case 'navigate':
-                        clearInterval(poll);
-                        // Same host the browser is on, new port. A literal
-                        // localhost here sent every off-box client to its
-                        // own machine (qa-harness Arc 1b, rows 4.3 / 12.2).
-                        window.location.href = sameOriginUrl(outcome.port);
-                        return;
-                    case 'reconnect':
-                        // Same-port handoff: reload the current URL after a short
-                        // grace so the service has bound the port.
-                        clearInterval(poll);
-                        btn.textContent = 'reconnecting…';
-                        setTimeout(() => {
-                            window.location.reload();
-                        }, 2500);
-                        return;
-                    case 'timeout':
-                        clearInterval(poll);
-                        modal.close();
-                        btn.disabled = false;
-                        btn.textContent = prevText;
-                        this.renderServiceError(
-                            'service is running but port discovery timed out. reload the page at your usual address.',
-                            () => void this.refreshService(),
-                        );
-                        return;
-                    case 'keep-polling':
-                        return;
-                }
-            }, pollInterval);
-        } catch {
-            modal.close();
-            btn.disabled = false;
-            btn.textContent = prevText;
-            this.renderServiceError("couldn't reach server", () => void this.refreshService());
-        }
-    }
-
-    private async onUninstallService(btn: HTMLButtonElement): Promise<void> {
-        const isLinux = this.servicePlatform === 'linux';
-        const isSystemScope = this.serviceScopeSystemRadio?.checked ?? false;
-
-        if (isLinux && !isSystemScope) {
-            // User scope on Linux: no elevation needed, proceed directly.
-        } else {
-            const opts: AdminConfirmOptions = { action: 'uninstall service' };
-            if (this.servicePlatform) opts.platform = this.servicePlatform;
-            const confirmed = await AdminConfirmModal.confirm(opts);
-            if (!confirmed) return;
-        }
-
-        btn.disabled = true;
-        const prevText = btn.textContent;
-        btn.textContent = 'uninstalling…';
-
-        const modal = new ServiceOperationModal({ operation: 'uninstall' });
-        try {
-            const r = await fetch('/api/service/uninstall', { method: 'POST' });
-            const data = (await r.json().catch(() => null)) as ServiceUninstallResponse | null;
-            if (!r.ok || !data || data.ok !== true) {
-                const errMsg =
-                    data && data.ok === false
-                        ? SettingsModal.reasonToUserMessage(data.reason, data.error)
-                        : `uninstall failed (${r.status})`;
-                modal.close();
-                btn.disabled = false;
-                btn.textContent = prevText;
-                this.renderServiceError(errMsg, () => void this.refreshService());
-                return;
-            }
-            if (data.status === 'shutting-down') {
-                // Derive scope from the installMode field so we know whether a
-                // local relaunch is coming (user scope) or not (system scope).
-                const isSystemUninstall = data.installMode === 'system' || data.installMode === 'system-service';
-                if (isLinux && isSystemUninstall) {
-                    // System scope on Linux: the out-of-cgroup teardown helper runs
-                    // ASYNCHRONOUSLY. Do NOT claim success blindly — beta.60 #9 5.1: the
-                    // helper could core-dump (missing DATA_ROOT) while ServiceApi already
-                    // returned `shutting-down`, leaving the service running but the UI
-                    // saying "removed". Poll /api/service/status until the service is
-                    // actually gone, and surface a failure if it never does.
-                    modal.close();
-                    this.renderServiceInfo('removing the system service…');
-                    const outcome = await pollServiceUninstalled();
-                    btn.disabled = false;
-                    btn.textContent = prevText;
-                    if (outcome === 'uninstalled') {
-                        this.renderServiceInfo(uninstallFollowupMessage('system'));
-                    } else {
-                        this.renderServiceError(
-                            'the system service is still running — uninstall may not have completed. check the service logs and try again.',
-                            () => void this.refreshService(),
-                        );
-                    }
-                    return;
-                }
-                // User scope on Linux (or Windows): a fresh local instance is
-                // relaunching. Fall through to the mtime poll / navigate path.
-                // §39: mtime-based discovery via operation-server's /api/discover.
-                // The service-Node is about to die. The operation-server takes over
-                // the port. Poll /api/discover until config.json mtime changes
-                // (fresh launcher wrote its bound port), then navigate.
-                const baselineMtime = data.configMtime ?? 0;
-                const pollInterval = 2000;
-                const maxIterations = 30;
-                let iterations = 0;
-                let serverDied = false;
-
-                const poll = setInterval(async () => {
-                    iterations++;
-                    if (iterations > maxIterations) {
-                        clearInterval(poll);
-                        modal.close();
-                        btn.disabled = false;
-                        btn.textContent = prevText;
-                        this.renderServiceError(
-                            'service uninstalled but fresh instance not detected. try reloading.',
-                            () => void this.refreshService(),
-                        );
-                        return;
-                    }
-                    try {
-                        const resp = await fetch('/api/discover', { signal: AbortSignal.timeout(5000) });
-                        if (!resp.ok) return;
-                        const discoverData = (await resp.json()) as {
-                            webPort?: number | null;
-                            configMtime?: number | null;
-                        };
-                        if (
-                            discoverData.configMtime != null &&
-                            discoverData.configMtime !== baselineMtime &&
-                            discoverData.webPort != null
-                        ) {
-                            clearInterval(poll);
-                            window.location.href = sameOriginUrl(discoverData.webPort);
-                        }
-                    } catch {
-                        if (!serverDied) {
-                            serverDied = true;
-                        } else if (iterations > 5) {
-                            clearInterval(poll);
-                            window.location.reload();
-                        }
-                    }
-                }, pollInterval);
-                return;
-            }
-            // Non-shutting-down success (e.g., direct uninstall from user context)
-            modal.close();
-            btn.disabled = false;
-            btn.textContent = prevText;
-            await this.refreshService();
-        } catch {
-            modal.close();
-            btn.disabled = false;
-            btn.textContent = prevText;
-            this.renderServiceError("couldn't reach server", () => void this.refreshService());
-        }
-    }
-
-    private static reasonToUserMessage(reason: string | undefined, fallbackError: string): string {
-        switch (reason) {
-            case 'unsupported':
-                return 'Service mode is not supported on this platform.';
-            case 'uac-declined':
-                return 'Administrative privileges were declined. Try again and approve the prompt.';
-            case 'handoff-no-target':
-                return "Couldn't identify a user session to relay the action to.";
-            case 'invalid-token':
-                return 'Resume token is invalid or expired. Refresh the page and try again.';
-            case 'servy-failure':
-                return `Service install/uninstall failed: ${fallbackError}`;
-            case 'service-start-failed':
-                return 'The service was installed but did not start, so it was removed. The app is still running locally — check the service logs and try again.';
-            case 'unknown':
-            case undefined:
-                return `An unexpected error occurred: ${fallbackError}`;
-            default:
-                return fallbackError;
-        }
-    }
+    // Service tab (install/uninstall the OS service, Linux scope radios) moved
+    // to settings/tabs/ServiceTab.ts. `refreshService()` is triggered from the
+    // constructor's post-probe block, via `this.serviceTabEl`.
 
     // The former "App" section (reset, install-for-all-users, stop & exit,
     // uninstall) was folded into the Server section — see buildServerSection (beta.62).

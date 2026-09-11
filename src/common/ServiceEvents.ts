@@ -104,8 +104,8 @@ export interface ServiceActionSuccess {
  * Discriminator added in v0.1.25 to drive frontend error UX. Optional for
  * backward compatibility — older callers ignore unknown fields, and frontend
  * treats absence as 'unknown'. Add new variants here AND extend the
- * frontend mapping in `SettingsModal.ts::reasonToUserMessage` in the same
- * change to keep the discriminated union exhaustive.
+ * frontend mapping in `settings/tabs/ServiceTab.ts::reasonToUserMessage` in the
+ * same change to keep the discriminated union exhaustive.
  *
  * Variant semantics:
  * - `unsupported`: service mode not supported on this platform.

@@ -5,23 +5,25 @@ import * as AdminConfirmModalModule from '../AdminConfirmModal';
 import { authClient } from '../AuthClient';
 import * as ResetConfirmModalModule from '../ResetConfirmModal';
 import {
-    applySystemInstallGate,
     appSectionButtonsState,
-    buildInstallAllUsersControl,
     buildResetControl,
+    resetPromptSettingsPayload,
+    resetPromptsPayload,
+    SettingsModal,
+    stopServerButtonState,
+} from '../SettingsModal';
+import * as SettingsServiceModule from '../SettingsService';
+import {
+    applySystemInstallGate,
+    buildInstallAllUsersControl,
     buildServiceInfoRow,
     buildUninstallControl,
     classifyInstallPoll,
     lockScopeRadioControl,
-    resetPromptSettingsPayload,
-    resetPromptsPayload,
-    SettingsModal,
     scopeRadioState,
-    stopServerButtonState,
     systemServiceInstallGate,
     uninstallFollowupMessage,
-} from '../SettingsModal';
-import * as SettingsServiceModule from '../SettingsService';
+} from '../settings/tabs/ServiceTab';
 import * as UninstallConfirmModalModule from '../UninstallConfirmModal';
 
 /** Stub authClient.me to return an admin view — used in tests that construct SettingsModal
