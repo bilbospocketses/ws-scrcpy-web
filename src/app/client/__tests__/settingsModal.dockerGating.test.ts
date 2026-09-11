@@ -134,6 +134,46 @@ describe('SettingsModal applies the gating only in a container', () => {
         expect(urls.some((u) => u.startsWith('/api/updates/status'))).toBe(false);
     });
 
+    it('the note stays hidden behind whatever tab is active, and clicking through reveals it', async () => {
+        // The bug this pins: applyDockerGating() runs well after first paint,
+        // while Users (the first/default tab) is still active -- not
+        // Updates/Service. Asserting presence alone (the test above) cannot
+        // catch a note that swapped in VISIBLE regardless of the active tab,
+        // nor a tab button left permanently dead because TabStrip's cache still
+        // pointed at the replaced original.
+        stubMeAsAdmin();
+        stubConfigFetch({ firstRunComplete: true, portWasAutoShifted: false, webPort: 8000, docker: true });
+        new SettingsModal();
+        await flush();
+
+        const serviceNote = document.querySelector<HTMLElement>('[data-docker-note="service"]');
+        const updatesNote = document.querySelector<HTMLElement>('[data-docker-note="updates"]');
+        expect(serviceNote, 'service note missing').not.toBeNull();
+        expect(updatesNote, 'updates note missing').not.toBeNull();
+        // Users is the default active tab, so both notes must be hidden, not
+        // rendered visible beside it.
+        expect(serviceNote?.hidden).toBe(true);
+        expect(updatesNote?.hidden).toBe(true);
+
+        const tabButtons = [...document.querySelectorAll<HTMLButtonElement>('.settings-tab')];
+        const updatesTabBtn = tabButtons.find((b) => b.textContent === 'Updates');
+        const serviceTabBtn = tabButtons.find((b) => b.textContent === 'Service');
+        expect(updatesTabBtn, 'Updates tab button missing').toBeTruthy();
+        expect(serviceTabBtn, 'Service tab button missing').toBeTruthy();
+
+        // Clicking through to Updates reveals ONLY the Updates note -- proving
+        // TabStrip's cache was updated to the replacement node, not left
+        // pointing at the detached original.
+        updatesTabBtn?.click();
+        expect(updatesNote?.hidden).toBe(false);
+        expect(serviceNote?.hidden).toBe(true);
+
+        // And Service, symmetrically.
+        serviceTabBtn?.click();
+        expect(serviceNote?.hidden).toBe(false);
+        expect(updatesNote?.hidden).toBe(true);
+    });
+
     it('leaves the real sections alone when runtime.docker is absent', async () => {
         // The half that matters: a gate that fires unconditionally passes the
         // test above and is completely broken on the desktop.

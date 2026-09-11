@@ -100,4 +100,25 @@ export class TabStrip {
             btn.classList.toggle('settings-tab--active', tabId === id);
         }
     }
+
+    /**
+     * Swap a tab's body, preserving its visibility state and the cache.
+     *
+     * `applyDockerGating()` replaces whole sections after the /api/config probe
+     * resolves, well after the first tab has already been shown. Replacing the
+     * DOM node directly (bypassing TabStrip) left the replacement visible no
+     * matter which tab was active -- a fresh node carries no `hidden` attribute
+     * -- and orphaned the cached original, so that tab's button went dead: it
+     * kept toggling `hidden` on a node no longer attached to the panel.
+     *
+     * A no-op if `id` was never built (e.g. a tab role-gated out of existence
+     * entirely) -- same defensive shape as `activate()`.
+     */
+    replaceTabBody(id: string, body: HTMLElement): void {
+        const old = this.built.get(id);
+        if (!old) return;
+        body.hidden = id !== this.active;
+        old.replaceWith(body);
+        this.built.set(id, body);
+    }
 }

@@ -520,9 +520,13 @@ export class SettingsModal extends Modal {
      * narrowed once the runtime probe resolves — fail-open, like `role` above.
      */
     private adminReachable = true;
-    /** Set by fillBody so applyDockerGating() can swap them once docker mode lands. */
-    private updatesSectionEl: HTMLElement | null = null;
-    private serviceSectionEl: HTMLElement | null = null;
+    /**
+     * Set by fillBody so applyDockerGating() can route the Updates/Service swap
+     * through TabStrip.replaceTabBody() — going around TabStrip (a direct
+     * replaceWith on a captured element) left the replacement permanently
+     * visible regardless of which tab was active and orphaned TabStrip's cache.
+     */
+    private tabStrip: TabStrip | null = null;
     private serviceSection!: HTMLElement;
     private embedOriginsBody: HTMLElement | null = null;
     private webPortInput: HTMLInputElement | null = null;
@@ -641,27 +645,14 @@ export class SettingsModal extends Modal {
         // held until then, so a container never issues an inapplicable request
         // and never renders an error under the copy. See the constructor.
         if (canSeeSection(this.role, 'updates')) {
-            tabs.push({
-                id: 'updates',
-                label: 'Updates',
-                build: () => {
-                    this.updatesSectionEl = this.buildUpdatesSection();
-                    return this.updatesSectionEl;
-                },
-            });
+            tabs.push({ id: 'updates', label: 'Updates', build: () => this.buildUpdatesSection() });
         }
         if (canSeeSection(this.role, 'service')) {
-            tabs.push({
-                id: 'service',
-                label: 'Service',
-                build: () => {
-                    this.serviceSectionEl = this.buildServiceSection();
-                    return this.serviceSectionEl;
-                },
-            });
+            tabs.push({ id: 'service', label: 'Service', build: () => this.buildServiceSection() });
         }
         tabs.push({ id: 'server', label: 'Server', build: () => this.buildServerSection() }); // always (contains the user-level reset row)
         const strip = new TabStrip(tabs);
+        this.tabStrip = strip; // so applyDockerGating() can route its swap through TabStrip
         container.append(strip.getElement(), strip.getPanel());
     }
 
@@ -1147,16 +1138,23 @@ export class SettingsModal extends Modal {
      * before either section's refresh has been allowed to run — so nothing here
      * is racing a half-rendered async result.
      *
-     * The stale body references are dropped as well. `refreshService()` writes
-     * into `this.serviceSection` unconditionally; leaving it pointing at a
-     * detached node would let any later call render service UI into nothing,
-     * which is the kind of bug that only shows up as "the section is blank".
+     * Routed through `TabStrip.replaceTabBody()` rather than a direct
+     * `replaceWith` on a captured element: the probe resolves well after the
+     * first tab has already been shown (Users, not Updates/Service), so a
+     * direct DOM swap inserted a fresh node with no `hidden` attribute — it
+     * rendered visible beside whatever tab was actually active — and left
+     * TabStrip's cache pointing at the detached original, permanently killing
+     * that tab's button. `replaceTabBody` preserves the outgoing node's
+     * visibility and keeps the cache in sync, and is a no-op for a tab that was
+     * never built (e.g. role-gated out entirely).
+     *
+     * The stale sub-refs are dropped too: `updatesBody`/`updatesStatusEl`/
+     * `updatesCheckNowBtn` point inside the now-detached original Updates body,
+     * and leaving them set would let any later call render into nothing.
      */
     private applyDockerGating(): void {
-        this.updatesSectionEl?.replaceWith(buildDockerUpdatesNote());
-        this.serviceSectionEl?.replaceWith(buildDockerServiceNote());
-        this.updatesSectionEl = null;
-        this.serviceSectionEl = null;
+        this.tabStrip?.replaceTabBody('updates', buildDockerUpdatesNote());
+        this.tabStrip?.replaceTabBody('service', buildDockerServiceNote());
         this.updatesBody = null;
         this.updatesStatusEl = null;
         this.updatesCheckNowBtn = null;
