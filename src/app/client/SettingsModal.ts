@@ -467,8 +467,11 @@ export function buildResetControl(opts: { reload: () => void }): {
  * the whole modal, and so the locked copy has exactly one definition.
  *
  * The copy is LOCKED — reproduced verbatim from the SP4 design §8 and
- * `todo_ws_scrcpy_web` item 2 decision 4. Do not reword it casually; the
- * container smoke asserts on it.
+ * `todo_ws_scrcpy_web` item 2 decision 4, EXCEPT the image namespace, which was
+ * re-pointed to `bilbospocketses` on 2026-09-10 when the registry moved. SP4
+ * itself still reads `jchapz30`: it is a dated record, and the superseding note
+ * at the top of that file is the authority, not §8. Do not reword it casually;
+ * the container smoke asserts on it.
  *
  * `.settings-status` is the shared Settings-note convention (modal.css: indented
  * 1.25rem, italic, weight 600), so these read as sub-notes rather than as
