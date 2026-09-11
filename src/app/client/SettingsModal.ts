@@ -20,6 +20,7 @@ import { pollServiceUninstalled } from './pollServiceUninstalled';
 import { ResetConfirmModal } from './ResetConfirmModal';
 import { ServiceOperationModal } from './ServiceOperationModal';
 import { settingsService } from './SettingsService';
+import { type TabDef, TabStrip } from './settings/TabStrip';
 import { UninstallConfirmModal } from './UninstallConfirmModal';
 import { runUpgradingHandoff } from './UpgradingOverlay';
 import { UsersModal } from './UsersModal';
@@ -627,22 +628,41 @@ export class SettingsModal extends Modal {
         // Admin-only sections are gated on the current user's role (set before
         // fillBody is called). The server enforces the same set via requireAdmin.
         // The "Users" section (manage users button + auth toggle) is admin-only.
-        if (canSeeSection(this.role, 'users')) container.appendChild(this.buildUsersSection());
+        const tabs: TabDef[] = [];
+        if (canSeeSection(this.role, 'users')) {
+            tabs.push({ id: 'users', label: 'Users', build: () => this.buildUsersSection() });
+        }
         // Next to Users: both answer "who is allowed to do what with this server".
-        if (canSeeSection(this.role, 'embedOrigins')) container.appendChild(this.buildEmbedOriginsSection());
+        if (canSeeSection(this.role, 'embedOrigins')) {
+            tabs.push({ id: 'embedding', label: 'Embedding', build: () => this.buildEmbedOriginsSection() });
+        }
         // Built unconditionally; applyDockerGating() swaps them for the locked
         // container copy if the probe comes back true. Their refresh calls are
         // held until then, so a container never issues an inapplicable request
         // and never renders an error under the copy. See the constructor.
         if (canSeeSection(this.role, 'updates')) {
-            this.updatesSectionEl = this.buildUpdatesSection();
-            container.appendChild(this.updatesSectionEl);
+            tabs.push({
+                id: 'updates',
+                label: 'Updates',
+                build: () => {
+                    this.updatesSectionEl = this.buildUpdatesSection();
+                    return this.updatesSectionEl;
+                },
+            });
         }
         if (canSeeSection(this.role, 'service')) {
-            this.serviceSectionEl = this.buildServiceSection();
-            container.appendChild(this.serviceSectionEl);
+            tabs.push({
+                id: 'service',
+                label: 'Service',
+                build: () => {
+                    this.serviceSectionEl = this.buildServiceSection();
+                    return this.serviceSectionEl;
+                },
+            });
         }
-        container.appendChild(this.buildServerSection()); // always (contains the user-level reset row)
+        tabs.push({ id: 'server', label: 'Server', build: () => this.buildServerSection() }); // always (contains the user-level reset row)
+        const strip = new TabStrip(tabs);
+        container.append(strip.getElement(), strip.getPanel());
     }
 
     // ── Layout primitives ──────────────────────────────────────────────────
@@ -1737,6 +1757,7 @@ export class SettingsModal extends Modal {
     }
 
     private async refreshService(): Promise<void> {
+        if (!this.serviceSection) return; // service section not built yet (tab not active, or not admin)
         this.serviceSection.replaceChildren();
         const loading = document.createElement('p');
         loading.className = 'settings-status';

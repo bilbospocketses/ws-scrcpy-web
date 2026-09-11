@@ -575,6 +575,48 @@ dialog.settings-modal .modal-frame {
     max-height: 95vh;
 }
 
+/*
+ * Tab strip + panel (TabStrip.ts). Sections themselves are unchanged — each
+ * tab body is still a .settings-section, just hidden/shown by TabStrip
+ * instead of stacked in one long scroll. Every body is built and attached up
+ * front (see TabStrip's class doc); only the active one is unhidden, via the
+ * native `hidden` attribute, which needs no rule of its own here as long as
+ * nothing above sets `display` on `.settings-section` (nothing does).
+ */
+dialog.settings-modal .settings-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    border-bottom: 1px solid var(--modal-divider);
+    margin-bottom: 0.5rem;
+}
+
+dialog.settings-modal .settings-tab {
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    padding: 0.5rem 0.9rem;
+    font: inherit;
+    font-size: 13px;
+    color: var(--text-color-light, #888);
+    cursor: pointer;
+}
+
+dialog.settings-modal .settings-tab:hover {
+    color: var(--text-color, #ddd);
+}
+
+dialog.settings-modal .settings-tab--active {
+    color: var(--text-color, #ddd);
+    border-bottom-color: var(--accent-color);
+    font-weight: 600;
+}
+
+dialog.settings-modal .settings-tab-panel {
+    display: block;
+}
+
 dialog.settings-modal .settings-section {
     padding: 0.75rem 0;
     border-bottom: 1px solid var(--modal-divider);
