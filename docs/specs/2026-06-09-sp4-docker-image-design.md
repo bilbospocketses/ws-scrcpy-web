@@ -4,6 +4,14 @@
 **Status:** Approved (brainstorm) — pending implementation plan
 **Scope item:** `todo_ws_scrcpy_web.md` item 2 (SP4). Consumes and refines the 2026-05-28 locked-decision block recorded there.
 
+> **Superseded in part, 2026-09-10 — decision D2's registry name.** The image is now published as
+> `bilbospocketses/ws-scrcpy-web`, mirrored at `ghcr.io/bilbospocketses/ws-scrcpy-web`, with
+> `jchapz30/ws-scrcpy-web` deprecated until it is deleted on 2026-12-09. D2's stated reason — that
+> there is no `bilbospocketses` namespace on Docker Hub and that an organisation is a paid plan — was
+> wrong: a personal Hub account's handle *is* a namespace and registering it is free. Only an
+> *organisation* costs money. The decision text below is left as written because it is the dated record
+> of what was believed on 2026-06-09; D2's name is simply no longer current.
+
 ---
 
 ## 1. Goal

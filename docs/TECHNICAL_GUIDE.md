@@ -2336,8 +2336,10 @@ connects to devices over **wireless ADB only**.
 
 ### 26.1 What ships, and when
 
-- **Registry:** Docker Hub, `jchapz30/ws-scrcpy-web` (the account that exists; there
-  is no `bilbospocketses` namespace there — design amendment §16).
+- **Registry:** Docker Hub, `bilbospocketses/ws-scrcpy-web`, mirrored to
+  `ghcr.io/bilbospocketses/ws-scrcpy-web`. One build is pushed to both (plus the
+  deprecated `jchapz30/ws-scrcpy-web` until 2026-12-09), so a single digest
+  resolves identically at every coordinate.
 - **Tags, from `docker-publish.yml`:** every release pushes an immutable
   `:X.Y.Z[-beta.N]`. A beta release also moves **`:beta`**; a stable release also
   moves **`:stable`** and **`:latest`**. The rule is `version.includes('-beta')`, the

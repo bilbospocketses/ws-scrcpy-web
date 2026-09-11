@@ -1,5 +1,17 @@
 # ws-scrcpy-web
 
+> ## ⚠️ The Docker image is moving
+>
+> **The image is now published as [`bilbospocketses/ws-scrcpy-web`](https://hub.docker.com/r/bilbospocketses/ws-scrcpy-web), and mirrored at `ghcr.io/bilbospocketses/ws-scrcpy-web`.**
+>
+> **`jchapz30/ws-scrcpy-web` is deprecated and will be deleted on 2026-12-09.** Until then it receives every release, and both new coordinates already carry the full tag history — the digests are identical, so switching is a one-line change:
+>
+> ```
+> docker pull bilbospocketses/ws-scrcpy-web:beta
+> ```
+>
+> If you pull `jchapz30/...` on a schedule, update it before **2026-12-09**.
+
 <p align="center">
   <img src="assets/banner.png" alt="ws-scrcpy-web" width="600">
 </p>
@@ -160,7 +172,7 @@ Get the latest release from the [Releases page](https://github.com/bilbospockets
 - **Windows MSI** (recommended) — installs per-machine to `C:\Program Files\WsScrcpyWeb\` with writable runtime state at `C:\ProgramData\WsScrcpyWeb\`. Requires admin (UAC) to install and to apply each subsequent update. Multi-user friendly; service mode and local mode share configuration.
 - **Windows portable ZIP** — unzip and run; no install required, no auto-updates. Useful for air-gapped setups.
 - **Linux AppImage** — download `WsScrcpyWeb-linux-stable.AppImage` (or `WsScrcpyWeb-linux-beta.AppImage` for the beta channel), `chmod +x` it, and run. See [Linux install](#linux-install-appimage) below.
-- **Docker image** — `docker pull jchapz30/ws-scrcpy-web:beta` (the beta channel; `:latest` / `:stable` follow the first stable release). Every release also gets its own immutable `:X.Y.Z[-beta.N]` tag. See [Docker](#docker) below.
+- **Docker image** — `docker pull bilbospocketses/ws-scrcpy-web:beta` (the beta channel; `:latest` / `:stable` follow the first stable release). Every release also gets its own immutable `:X.Y.Z[-beta.N]` tag. See [Docker](#docker) below.
 
 Release artifacts are currently **unsigned** (no Authenticode / codesign) — code-signing is under evaluation. Each release ships a `SHA256SUMS` file and [Sigstore SLSA Provenance](https://slsa.dev/) attestations for supply-chain verification.
 
@@ -202,7 +214,7 @@ ws-scrcpy-web ships as a fully self-contained app with no system-wide installati
 
 | Path | Best for | Notes |
 |------|----------|-------|
-| **Docker image** (`jchapz30/ws-scrcpy-web`) | Home servers, NAS boxes, anything already running containers | One `docker run` with a `/data` volume. Wireless ADB only; put it behind HTTPS to stream from another machine. See [Docker](#docker). |
+| **Docker image** (`bilbospocketses/ws-scrcpy-web`) | Home servers, NAS boxes, anything already running containers | One `docker run` with a `/data` volume. Wireless ADB only; put it behind HTTPS to stream from another machine. See [Docker](#docker). |
 | **Windows MSI** (`*.msi`, recommended) | Most Windows users; multi-user / service-mode setups | Per-machine install to `C:\Program Files\WsScrcpyWeb\`. Writable state at `C:\ProgramData\WsScrcpyWeb\` (Authenticated Users:Modify). Velopack auto-updates apply with one UAC prompt each. |
 | **Linux AppImage** | Most Linux users | Single executable. Velopack-managed auto-updates. Optional systemd service mode. |
 | **Portable ZIP** (Windows) / source build | Air-gapped or no-install setups | Extract and run; layout shown below. |
@@ -387,10 +399,10 @@ See `docs/TECHNICAL_GUIDE.md` section 15 for details on the Logger utility and a
 
 ## Docker
 
-The image is published to Docker Hub as [`jchapz30/ws-scrcpy-web`](https://hub.docker.com/r/jchapz30/ws-scrcpy-web) on every release: `:beta` follows the beta channel (every `0.1.30-beta.N` also gets its own immutable tag), and `:latest` / `:stable` will follow the first stable release. `linux/amd64` only for now — Google publishes no arm64 Linux `platform-tools`, so an arm64 image would start and then fail on the first device.
+The image is published to Docker Hub as [`bilbospocketses/ws-scrcpy-web`](https://hub.docker.com/r/bilbospocketses/ws-scrcpy-web) and mirrored to [`ghcr.io/bilbospocketses/ws-scrcpy-web`](https://github.com/bilbospocketses/ws-scrcpy-web/pkgs/container/ws-scrcpy-web) on every release: `:beta` follows the beta channel (every `0.1.30-beta.N` also gets its own immutable tag), and `:latest` / `:stable` will follow the first stable release. `linux/amd64` only for now — Google publishes no arm64 Linux `platform-tools`, so an arm64 image would start and then fail on the first device. Pull from GHCR if Docker Hub's anonymous rate limit is a problem for you.
 
 ```bash
-docker run -d --name ws-scrcpy-web -p 127.0.0.1:8000:8000 -v wsdata:/data jchapz30/ws-scrcpy-web:beta
+docker run -d --name ws-scrcpy-web -p 127.0.0.1:8000:8000 -v wsdata:/data bilbospocketses/ws-scrcpy-web:beta
 ```
 
 (Bound to loopback on purpose; see the second note below before publishing it on a LAN interface.) The repo's `docker-compose.yml` is the developer and CI quickstart instead — it builds the image from source and publishes it on `127.0.0.1:8123`. Everything mutable lives on `/data` — `config.json`, the SQLite store, and the dependencies the container downloads on first boot (adb, ~9 MB; the health check allows 180 s for that). Update with `docker pull` and re-create the container; the volume carries your state across.
