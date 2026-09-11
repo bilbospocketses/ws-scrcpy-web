@@ -399,7 +399,7 @@ See `docs/TECHNICAL_GUIDE.md` section 15 for details on the Logger utility and a
 
 ## Docker
 
-The image is published to Docker Hub as [`bilbospocketses/ws-scrcpy-web`](https://hub.docker.com/r/bilbospocketses/ws-scrcpy-web) and mirrored to [`ghcr.io/bilbospocketses/ws-scrcpy-web`](https://github.com/bilbospocketses/ws-scrcpy-web/pkgs/container/ws-scrcpy-web) on every release: `:beta` follows the beta channel (every `0.1.30-beta.N` also gets its own immutable tag), and `:latest` / `:stable` will follow the first stable release. `linux/amd64` only for now — Google publishes no arm64 Linux `platform-tools`, so an arm64 image would start and then fail on the first device. Pull from GHCR if Docker Hub's anonymous rate limit is a problem for you.
+The image is published to Docker Hub as [`bilbospocketses/ws-scrcpy-web`](https://hub.docker.com/r/bilbospocketses/ws-scrcpy-web) and mirrored to [`ghcr.io/bilbospocketses/ws-scrcpy-web`](https://github.com/users/bilbospocketses/packages/container/package/ws-scrcpy-web) on every release: `:beta` follows the beta channel (every `0.1.30-beta.N` also gets its own immutable tag), and `:latest` / `:stable` will follow the first stable release. `linux/amd64` only for now — Google publishes no arm64 Linux `platform-tools`, so an arm64 image would start and then fail on the first device. Pull from GHCR if Docker Hub's anonymous rate limit is a problem for you.
 
 ```bash
 docker run -d --name ws-scrcpy-web -p 127.0.0.1:8000:8000 -v wsdata:/data bilbospocketses/ws-scrcpy-web:beta
