@@ -32,6 +32,7 @@ describe('StagedSettingsStore', () => {
         store.set('installService', true);
         expect(store.changes().map((c) => c.id)).toEqual([]);
         expect(store.isDirty()).toBe(false);
+        expect(store.get('installService')).toBeUndefined();
     });
 
     it('reset() restores every field to its initial', () => {
