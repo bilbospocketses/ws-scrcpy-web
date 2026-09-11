@@ -28,3 +28,12 @@ dependencies
 *.log
 docs
 .vs
+
+# .superpowers/ is the subagent-driven-development workspace: ledgers, task
+# briefs, implementer reports and review diffs. It is gitignored, but this is a
+# SEPARATE list -- gitignore has no bearing on the build context. Without this
+# line every write to that directory invalidates the `COPY . .` layer and forces
+# a full webpack rebuild inside the build stage. It never reached the published
+# image either way (the runtime stage copies named paths out of build, not the
+# whole tree), so this is build time, not exposure.
+.superpowers
