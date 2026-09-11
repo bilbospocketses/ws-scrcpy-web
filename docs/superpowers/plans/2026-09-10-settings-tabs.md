@@ -1312,7 +1312,15 @@ git -C "C:/Users/jscha/source/repos/ws-scrcpy-web" commit -m "feat(settings): ta
 
 **Interfaces:**
 - Consumes: `TabDef` (Task 6), `StagedSettingsStore` (Task 4).
-- Produces: `export function buildEmbeddingTab(ctx: TabContext, store: StagedSettingsStore): HTMLElement` and the same for `Users` and `Service`; `export interface TabContext { role: Role | null; authEnabled: boolean; docker: boolean; reload(): void }`
+- Produces: `export function buildEmbeddingTab(ctx: TabContext, store: StagedSettingsStore): HTMLElement` and the same for `Users` and `Service`; `export interface TabContext { role: Role | null; authEnabled: boolean; reload(): void }`
+
+**⚠️ `TabContext` deliberately does NOT carry `docker` or `adminReachable`.** Both are assigned only
+*after* the `/api/config` probe resolves (`SettingsModal.ts:600` and `:606`), whereas tabs are built
+eagerly during `fillBody`, which runs **before** it. A snapshot taken at build time would be permanently
+`false`/`true` and silently wrong. Neither is needed there: `applyDockerGating()` already handles docker
+post-probe by replacing whole sections, and `canUse()` gates only the post-probe refresh calls, which
+stay in `SettingsModal`. If a future tab genuinely needs live probe state, pass an accessor
+(`isDocker(): boolean`), never a boolean.
 
 **All three take `store` and ignore it.** The uniform two-argument signature is deliberate: it lets the
 "registers nothing" guarantee be table-tested across all three tabs in one assertion, and it removes any
