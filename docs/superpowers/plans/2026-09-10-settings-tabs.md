@@ -1185,8 +1185,20 @@ export interface TabDef {
 /**
  * The Settings tab strip and its panel.
  *
- * Each tab body is built ONCE and cached, so switching tabs preserves in-progress
- * edits without the store having to re-hydrate the DOM. Switching tabs never
+ * Every tab body is built EAGERLY in the constructor, exactly once each, and all
+ * of them are attached to the panel. `activate()` toggles the native `hidden`
+ * attribute rather than swapping the panel's children.
+ *
+ * **Do not make this lazy.** An earlier draft built each body on first
+ * activation and attached only the active one. That broke five existing tests
+ * (they query `document.body` for all five sections) and crashed
+ * `refreshService()`, which dereferences a `serviceSection` that only exists
+ * once its tab has been built. Eager build keeps the DOM shape the pre-tab code
+ * had, so the existing regression suite keeps asserting unchanged behaviour
+ * without a single test edit.
+ *
+ * Building once and caching is what preserves in-progress edits across tab
+ * switches -- that was always the point, not deferral. Switching tabs never
  * prompts: prompting between tabs of a single dialog is hostile and trains
  * people to click through.
  *
