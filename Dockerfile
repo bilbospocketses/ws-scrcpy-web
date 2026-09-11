@@ -77,6 +77,18 @@ FROM ${NODE_IMAGE} AS runtime
 RUN test -x /usr/bin/setpriv || (echo 'setpriv missing from base image; vendor gosu per SP4 E3' >&2; exit 1)
 
 WORKDIR /app
+
+# GHCR links a package to its repository via this label and no other means.
+# Measured 2026-09-10: qa-canary carries no label and its `repository` field
+# comes back empty from the packages API, leaving the package orphaned in the
+# UI. The label is read at push time, so it only takes effect on the next
+# published release.
+LABEL org.opencontainers.image.source="https://github.com/bilbospocketses/ws-scrcpy-web" \
+      org.opencontainers.image.url="https://github.com/bilbospocketses/ws-scrcpy-web" \
+      org.opencontainers.image.title="ws-scrcpy-web" \
+      org.opencontainers.image.description="Self-hosted, browser-based Android screen mirroring over WebSocket." \
+      org.opencontainers.image.licenses="GPL-3.0-only"
+
 COPY --from=build /out/tini            /usr/local/bin/tini
 COPY --from=build /src/package.json /src/package-lock.json ./
 

@@ -12,10 +12,13 @@ import { authClient } from '../AuthClient';
 import { buildDockerServiceNote, buildDockerUpdatesNote, SettingsModal } from '../SettingsModal';
 
 // The locked copy, verbatim from SP4 design §8 / todo_ws_scrcpy_web item 2
-// decision 4. Written out here rather than imported so a silent reword of the
-// source string fails this test instead of travelling with it.
+// decision 4 — except the image namespace, re-pointed to `bilbospocketses` on
+// 2026-09-10 when the registry moved. SP4 still reads `jchapz30` as a dated
+// record; its superseding note is the authority. Written out here rather than
+// imported so a silent reword of the source string fails this test instead of
+// travelling with it.
 const SERVICE_COPY = 'service install not applicable — this instance runs in a container.';
-const UPDATES_COPY = 'update via `docker pull jchapz30/ws-scrcpy-web:latest`.';
+const UPDATES_COPY = 'update via `docker pull bilbospocketses/ws-scrcpy-web:latest`.';
 
 describe('container replacements for Service and Updates', () => {
     beforeEach(() => {
