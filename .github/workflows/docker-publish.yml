@@ -13,14 +13,23 @@ on:
   push:
     tags: ['v*']
 
+# Workflow-level default is read-only. `packages: write` is granted on the job
+# that actually pushes, NOT here -- a top-level write grant would extend to every
+# job added to this file later, including ones with no reason to touch packages.
+# Scorecard's Token-Permissions rule scores a top-level write as 0 for exactly
+# that reason (alert #39, introduced by PR #675 and fixed here).
 permissions:
   contents: read
-  # GHCR pushes authenticate with GITHUB_TOKEN; without this the push 403s.
-  packages: write
 
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # A job-level block REPLACES the workflow default rather than merging with
+    # it, so `contents: read` has to be restated here for actions/checkout.
+    permissions:
+      contents: read
+      # GHCR pushes authenticate with GITHUB_TOKEN; without this the push 403s.
+      packages: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
