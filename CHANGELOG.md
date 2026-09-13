@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.124] - 2026-09-13
+
 ### Fixed
 
 - **The container image is published again.** beta.123's container publish was blocked by the Docker Scout gate on 14 fixable CVEs (5 critical) in four Debian base packages — `perl`, `glibc`, `sqlite3`, `pcre2` — so no beta.123 image was ever pushed and `:beta` stayed on beta.122. The base is digest-pinned, which is deliberate, but a pinned base also freezes the CVEs its packages had the day it was built. Bumping the digest would not have helped: upstream `node:24-trixie-slim` still shipped every one of the vulnerable versions. The runtime stage now applies Debian security updates at build time, which the gate re-verifies on every publish.
