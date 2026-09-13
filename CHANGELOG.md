@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.123] - 2026-09-13
+
 ### Fixed
 
 - **A Windows "remove my data" uninstall no longer leaves the data root behind whenever adb is running.** The recursive delete reached `dependencies\adb\adb.exe`, and Windows will not delete a running executable's image — but because the delete aborted on its first failure, that one locked file cost the entire tree: **2315 files survived**, `logs\` and `wsscrcpy.db*` among them, held by nothing. The condition is simply "adb is running", which is true for anyone who has connected a device that session, so a clean result was a coin-flip on whether the daemon happened to be alive. The cleaner now stops its own bundled adb server first (the Linux teardown has always done this), deletes what it can instead of stopping at the first refusal, and registers anything still locked for removal at the next reboot.
