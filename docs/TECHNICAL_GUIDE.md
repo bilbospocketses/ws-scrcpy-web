@@ -1733,8 +1733,47 @@ running install from outside it.
 
 1. **Phase 1** stages a copy of the launcher in temp (`ws-scrcpy-web-uninstall-<pid>.exe`) so the
    original's image lock can release, then spawns that copy and exits.
-2. **Phase 2** (the copy) waits for phase 1 to exit, removes the app, then deletes the data-root targets
-   with a bounded retry. `keep` preserves `config.json` + `logs/`; `--wipe` takes the whole root.
+2. **Phase 2** (the copy) waits for phase 1 to exit, removes the app, stops the bundled adb server, then
+   deletes the data-root targets with a bounded retry. `keep` preserves `config.json` + `logs/`;
+   `--wipe` takes the whole root. Anything still locked is registered for delete-on-reboot and written
+   to a residue report. The copy then registers *itself* the same way and exits.
+
+**adb is reaped before the delete, because Windows will not delete a running executable's image.** The
+recursive delete reaches `dependencies\adb\adb.exe`, and if the adb server is alive that file cannot go.
+`linux_service.rs` has reaped adb on teardown all along; the Windows uninstall path did not, and the
+result was that **2315 files survived a `--wipe`** — measured three times, same count. `kill-server`
+talks to the daemon over its loopback socket rather than terminating a process, so the elevated cleaner
+can stop a server the user's own medium-integrity session started.
+
+**The delete continues past failures instead of aborting on the first one.** It used to call
+`std::fs::remove_dir_all`, which stops at its first `Err` — so one locked `adb.exe` cost the entire tree,
+including `logs\` and `wsscrcpy.db*`, which nothing was holding. `remove_tree_collecting` walks
+depth-first, removes what it can, and returns what it could not, **children before parents**. That
+ordering is load-bearing: the delete-on-reboot queue is processed in order and `MoveFileEx` cannot remove
+a directory that still has contents.
+
+**What survives is registered for delete-on-reboot and reported.** Survivors go through `MoveFileEx` with
+`MOVEFILE_DELAY_UNTIL_REBOOT` (Win32 through the `windows` crate — deliberately *not* the usual
+`cmd /c del` self-delete trick, which resolves a binary off PATH) and are listed in
+`ProgramData\WsScrcpyWeb-uninstall-report.txt`. **The report sits beside the data root, never inside
+it** — writing into the tree is exactly how #120 resurrected it as a 74-byte `launcher.log`. No file
+means nothing survived. It falls back to `%TEMP%` when `C:\ProgramData`'s ACL refuses a non-elevated
+cleaner, and that fallback copy is *not* registered for deletion: a report that removes itself before
+anyone reads it is no report.
+
+The report exists because there is nowhere else for the answer to go. `ServerShutdownApi` sends its
+HTTP 200 *before* the cleaner starts, the app then exits, and the cleaner runs with logging disabled
+(`log::append` would `create_dir_all(<dataRoot>/logs)` and re-create what it just deleted). For the same
+reason the browser overlay reports that the uninstall has **started**, not that it finished — the page
+cannot learn the outcome, because the server it would ask is gone by the time one exists.
+
+**The staged copy removes itself.** It is put in `%TEMP%` precisely so the original's image lock
+releases, which leaves it the last process standing and unable to delete itself. The code described it
+as "self-managing"; nothing managed it, so a full copy of the launcher accumulated per uninstall on any
+machine that never runs Disk Cleanup. It now registers its own path for delete-on-reboot, guarded on the
+filename *it* stamps rather than on its directory — `current_exe()` reports whatever casing the loader
+resolved and `Path` equality is case-sensitive even on Windows, so a directory comparison would be a
+coin-flip whose only symptom is the cleanup quietly not happening.
 
 **Removal is `msiexec /x <ProductCode>`, not Update.exe.** Every real Windows install of this app is the
 MSI, and Velopack refuses to uninstall one (#120). The ProductCode is discovered from the ARP
