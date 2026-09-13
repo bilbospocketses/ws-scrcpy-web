@@ -2406,6 +2406,15 @@ Two stages on **one pinned base**, `node:24-trixie-slim` **by digest** (a tag mo
 and a base that moves under a digest-pinned qa-harness run makes a failure
 ambiguous between an app regression and a base change).
 
+⚠️ **The digest pins the base LAYER, not the package versions in the published image.** The runtime
+stage applies Debian security updates at build time (below), so two builds of the same commit on
+different days can contain different package versions. That is a deliberate trade, and the alternative
+was worse: a pinned base also freezes whatever CVEs its packages had the day it was built, and the Scout
+gate fails the publish on any *fixable* critical/high — which is what blocked beta.123's container
+publish entirely. Consumers are unaffected in practice because they pin the **published image** by digest
+(qa-harness's `wssw-linux.lock` holds `bilbospocketses/ws-scrcpy-web@sha256:…`), so what they run is fixed
+once published; the variability lives only between builds.
+
 - **Trixie, not bookworm** — a correction to the design's locked decision. Debian 12's
   glibc 2.36 cannot load `velopack`'s native addon (`GLIBC_2.39' not found`), and
   `src/server/index.ts` imports `VelopackApp` unconditionally, so a bookworm image
@@ -2416,10 +2425,16 @@ ambiguous between an app regression and a base change).
   (`stage-seed-node-pty.mjs`, `stage-seed-scrcpy-server.mjs`) → `fetch-tini.mjs`, which
   downloads the pinned static `tini` and verifies its SHA256. Dev dependencies stay
   in this stage.
-- **Stage `runtime`:** `dist/`, production `node_modules`, the seed tree, `start.sh`,
+- **Stage `runtime`:** Debian security updates (`apt-get update && apt-get upgrade`, apt lists not
+  shipped) → `dist/`, production `node_modules`, the seed tree, `start.sh`,
   `docker/entrypoint.sh` and the vendored `tini`. `setpriv` (util-linux) is
   **asserted at build time** — `RUN test -x /usr/bin/setpriv || exit 1` — so a base
   that ever drops it fails the build rather than silently running the app as root.
+  The security-update step exists because bumping the base digest does **not** substitute for it:
+  measured 2026-09-12, the newest `node:24-trixie-slim` still shipped every vulnerable version Scout
+  named (`libc6 …u3`, `pcre2 …u1`, `sqlite3 …u1`, `perl-base 5.40.1-6`) because upstream had not
+  rebuilt. Deliberately not `cmd`-style package pinning either — the fixed versions move, and a pinned
+  list goes stale into a failing gate.
 - **Node is the image's own interpreter.** `/app/seed/node/node` is a symlink to
   `/usr/local/bin/node`: arch- and ABI-correct by construction, no ~50 MB download
   per build. Local-Dependencies-Only treats the interpreter as the execution
