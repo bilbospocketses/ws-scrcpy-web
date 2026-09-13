@@ -17,8 +17,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A Windows "remove my data" uninstall no longer leaves the data root behind whenever adb is running.** The recursive delete reached `dependencies\adb\adb.exe`, and Windows will not delete a running executable's image — but because the delete aborted on its first failure, that one locked file cost the entire tree: **2315 files survived**, `logs\` and `wsscrcpy.db*` among them, held by nothing. The condition is simply "adb is running", which is true for anyone who has connected a device that session, so a clean result was a coin-flip on whether the daemon happened to be alive. The cleaner now stops its own bundled adb server first (the Linux teardown has always done this), deletes what it can instead of stopping at the first refusal, and registers anything still locked for removal at the next reboot.
+- **An uninstall that cannot finish now says so.** Whatever survives is listed in `ProgramData\WsScrcpyWeb-uninstall-report.txt` — written beside the data root, never inside it, since writing into the tree would re-create what was just deleted. No file means nothing survived. The report exists because there is nowhere else for the answer to go: the HTTP response is sent before the cleaner starts, and the app has exited by the time the outcome is known.
+- **The browser no longer claims the app is uninstalled before it is.** The overlay said *"ws-scrcpy-web uninstalled"* the moment the request was accepted — which only meant the helper had been spawned. It now reports that the uninstall has started.
+
 ### Changed
 
+- **The staged uninstall cleaner removes itself.** It is copied to `%TEMP%` precisely so the original's image lock releases, which leaves it as the last process running and unable to delete itself; it was described in the code as "self-managing", but nothing managed it, so a full copy of the launcher accumulated per uninstall on any machine that never runs Disk Cleanup. It now registers its own path for deletion at the next reboot.
 - **`packages: write` is granted on the publishing job rather than on the whole container-publish workflow.** A workflow-level write extends to every job in the file — including the Docker Scout gate step, which pushes nothing — and Scorecard's Token-Permissions rule scores a top-level write as 0. The grant was correct in substance and wrong in placement. One gotcha is recorded inline because it is how the change breaks if copied: a job-level `permissions` block *replaces* the workflow default rather than merging with it, so `contents: read` has to be restated on the job or `actions/checkout` loses its read grant.
 
 ## [0.1.30-beta.122] - 2026-09-11

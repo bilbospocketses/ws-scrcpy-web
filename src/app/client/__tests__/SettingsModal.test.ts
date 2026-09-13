@@ -7,6 +7,7 @@ import * as ResetConfirmModalModule from '../ResetConfirmModal';
 import {
     applySystemInstallGate,
     appSectionButtonsState,
+    appUninstallStartedMessage,
     buildInstallAllUsersControl,
     buildResetControl,
     buildServiceInfoRow,
@@ -45,6 +46,24 @@ describe('uninstallFollowupMessage', () => {
     });
     it('system scope -> service removed message', () => {
         expect(uninstallFollowupMessage('system')).toMatch(/removed|stopped/i);
+    });
+});
+
+describe('appUninstallStartedMessage', () => {
+    // Item 131. The overlay renders the moment POST /uninstall-app answers 200,
+    // and that 200 means "the helper has been spawned" — the cleaner has not run
+    // yet, the app has not exited yet, and nothing has been deleted yet. The old
+    // copy said "ws-scrcpy-web uninstalled", which on the measured failure (a
+    // running adb blocking the delete) was simply false, and the page cannot
+    // ever check: the server it would ask is gone by the time the answer exists.
+    it('does not claim the uninstall has finished', () => {
+        expect(appUninstallStartedMessage()).not.toMatch(/\buninstalled\b/i);
+    });
+
+    it('says the uninstall is under way and the tab can be closed', () => {
+        const msg = appUninstallStartedMessage();
+        expect(msg).toMatch(/uninstall/i);
+        expect(msg).toMatch(/close this tab/i);
     });
 });
 

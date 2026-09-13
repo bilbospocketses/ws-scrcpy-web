@@ -37,6 +37,22 @@ export function uninstallFollowupMessage(mode: 'user' | 'system'): string {
 }
 
 /**
+ * Copy for the overlay shown once the app uninstall has been handed off.
+ *
+ * It is deliberately about what STARTED, not what finished. `POST
+ * /api/service/uninstall-app` answers 200 as soon as the detached helper is
+ * spawned — before the cleaner runs, before the app exits, before anything is
+ * deleted — so the page renders this at a moment when the outcome does not yet
+ * exist. It can never learn the outcome either: the server it would ask is gone
+ * by then. The previous copy asserted "ws-scrcpy-web uninstalled", which was
+ * plainly false whenever a running adb blocked the delete (item 131), and is the
+ * same class of unearned success claim as #120.
+ */
+export function appUninstallStartedMessage(): string {
+    return 'uninstall started — ws-scrcpy-web is shutting down and removing itself. you can close this tab.';
+}
+
+/**
  * Classify one tick of the post-install port-discovery poll. Pure (no DOM or
  * timers) so it is unit-testable. After a service install the web port is handed
  * off to the service-Node, which identifies itself via `servedByService` (the
@@ -2300,7 +2316,7 @@ export class SettingsModal extends Modal {
             'position:fixed;inset:0;display:flex;align-items:center;justify-content:center;' +
             'padding:1rem;text-align:center;opacity:0.85;';
         const msg = document.createElement('p');
-        msg.textContent = 'ws-scrcpy-web uninstalled — you can close this tab.';
+        msg.textContent = appUninstallStartedMessage();
         overlay.appendChild(msg);
         document.body.replaceChildren(overlay);
     }
