@@ -1492,7 +1492,7 @@ import { describe, expect, it } from 'vitest';
 import { StagedSettingsStore } from '../StagedSettingsStore';
 import { buildServerTab } from '../tabs/ServerTab';
 
-const ctx = { role: 'admin' as const, authEnabled: false, docker: false, reload: () => undefined };
+const ctx = { role: 'admin' as const, authEnabled: false, reload: () => undefined };
 
 describe('ServerTab', () => {
     it('registers webPort so it can be staged', () => {
@@ -1571,7 +1571,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { StagedSettingsStore } from '../StagedSettingsStore';
 import { buildUpdatesTab } from '../tabs/UpdatesTab';
 
-const ctx = { role: 'admin' as const, authEnabled: false, docker: false, reload: () => undefined };
+const ctx = { role: 'admin' as const, authEnabled: false, reload: () => undefined };
 
 describe('UpdatesTab', () => {
     it('toggling auto-update stages it and sends NOTHING', () => {
