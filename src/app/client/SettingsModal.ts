@@ -1,5 +1,4 @@
-import type { AppConfigEnvelope, FirstRunStatus, UpdateChannel } from '../../common/ConfigEvents';
-import type { UpdatesConfigPatchRequest, UpdatesStatusResponse } from '../../common/UpdateEvents';
+import type { AppConfigEnvelope, FirstRunStatus } from '../../common/ConfigEvents';
 import { Modal } from '../ui/Modal';
 import { authClient, type Role } from './AuthClient';
 import { adminApiReachable, canSeeSection } from './adminGate';
@@ -8,8 +7,8 @@ import { type TabDef, TabStrip } from './settings/TabStrip';
 import { buildEmbeddingTab, type TabContext } from './settings/tabs/EmbeddingTab';
 import { applyServerServiceStatus, buildServerTab, refreshServer } from './settings/tabs/ServerTab';
 import { buildServiceTab, refreshService } from './settings/tabs/ServiceTab';
+import { buildUpdatesTab, refreshUpdates } from './settings/tabs/UpdatesTab';
 import { buildUsersTab } from './settings/tabs/UsersTab';
-import { runUpgradingHandoff } from './UpgradingOverlay';
 
 /**
  * Settings modal — unified two-column grid layout.
@@ -31,6 +30,10 @@ import { runUpgradingHandoff } from './UpgradingOverlay';
  * label-text length). Buttons live in section footers, never inline
  * with the inputs they affect, so the right column stays a clean
  * "value column" across all rows.
+ *
+ * The `buildSection` / `buildRow` / `buildDynamicLabelRow` helpers that produce
+ * that shape now live in each tab module under settings/tabs/ — this file owns
+ * no section of its own any more, only the tab strip and the container notes.
  */
 /**
  * The container replacements for the Service and Updates sections (SP4 E4).
@@ -122,19 +125,13 @@ export class SettingsModal extends Modal {
      * `applyServerServiceStatus()`.
      */
     private serverTabEl: HTMLElement | null = null;
-
-    // ── Updates section state ─────────────────────────────────────────────
-    private updatesBody: HTMLElement | null = null;
-    private updatesStatusEl: HTMLElement | null = null;
-    private updatesAutoCheckbox: HTMLInputElement | null = null;
-    private updatesIntervalInput: HTMLInputElement | null = null;
-    private updatesChannelStableRadio: HTMLInputElement | null = null;
-    private updatesChannelBetaRadio: HTMLInputElement | null = null;
-    private updatesOwnerInput: HTMLInputElement | null = null;
-    private updatesCheckNowBtn: HTMLButtonElement | null = null;
-    private updatesIntervalDebounce: number | undefined;
-    private updatesLastStatus: UpdatesStatusResponse | null = null;
-    private updatesApplyInFlight = false;
+    /**
+     * The Updates tab's root element, captured the same way and for the same
+     * reason as `serviceTabEl`. Its /api/updates/status read is held until
+     * container mode is known, so the constructor's post-probe block is what
+     * drives it, via the exported `refreshUpdates()`.
+     */
+    private updatesTabEl: HTMLElement | null = null;
 
     constructor() {
         super({ title: 'Settings' });
@@ -200,7 +197,7 @@ export class SettingsModal extends Modal {
                             },
                         });
                     }
-                    if (this.canUse('updates')) void this.refreshUpdates();
+                    if (this.canUse('updates') && this.updatesTabEl) void refreshUpdates(this.updatesTabEl);
                 })();
             })();
         });
@@ -223,8 +220,8 @@ export class SettingsModal extends Modal {
         // `store` is a single StagedSettingsStore shared by every tab this
         // dialog builds. Users/Embedding/Service (below) take it and register
         // nothing — they are actions, not staged values (see StagedSettingsStore's
-        // class doc). Server registers `webPort`; Updates starts registering in
-        // Task 9.
+        // class doc). Server registers `webPort`; Updates registers `channel`,
+        // `autoUpdate` and `updateCheckIntervalMinutes`.
         const store = new StagedSettingsStore();
         const ctx: TabContext = {
             role: this.role,
@@ -244,7 +241,15 @@ export class SettingsModal extends Modal {
         // held until then, so a container never issues an inapplicable request
         // and never renders an error under the copy. See the constructor.
         if (canSeeSection(this.role, 'updates')) {
-            tabs.push({ id: 'updates', label: 'Updates', build: () => this.buildUpdatesSection() });
+            tabs.push({
+                id: 'updates',
+                label: 'Updates',
+                build: () => {
+                    const el = buildUpdatesTab(ctx, store);
+                    this.updatesTabEl = el; // so the constructor can trigger its refresh post-probe
+                    return el;
+                },
+            });
         }
         if (canSeeSection(this.role, 'service')) {
             tabs.push({
@@ -272,73 +277,6 @@ export class SettingsModal extends Modal {
         container.append(strip.getElement(), strip.getPanel());
     }
 
-    // ── Layout primitives ──────────────────────────────────────────────────
-    /**
-     * Build a section shell. Returns { section, body } — body is the
-     * grid container into which rows + footer go.
-     */
-    private buildSection(title: string): { section: HTMLElement; body: HTMLElement } {
-        const section = document.createElement('section');
-        section.className = 'settings-section';
-        const heading = document.createElement('h3');
-        heading.className = 'settings-section-heading';
-        heading.textContent = title;
-        section.appendChild(heading);
-        const body = document.createElement('div');
-        body.className = 'settings-section-body';
-        section.appendChild(body);
-        return { section, body };
-    }
-
-    /**
-     * Build a single grid row: description label on the left, control(s)
-     * on the right. The control argument is appended to a flex container
-     * in the right column — pass a single input, or a fragment with
-     * multiple controls (e.g. radios + their labels).
-     */
-    private buildRow(labelText: string, control: HTMLElement | DocumentFragment): HTMLElement {
-        const row = document.createElement('div');
-        row.className = 'settings-row';
-
-        const label = document.createElement('span');
-        label.className = 'settings-label';
-        label.textContent = labelText;
-        row.appendChild(label);
-
-        const controlWrap = document.createElement('div');
-        controlWrap.className = 'settings-control';
-        controlWrap.appendChild(control);
-        row.appendChild(controlWrap);
-
-        return row;
-    }
-
-    /**
-     * Build a single grid row whose LABEL element is returned along with
-     * the row, so callers can mutate the label text dynamically (status
-     * messages, dynamic notes). Same shape as buildRow but exposes the
-     * label for live updates. Use this when the description on the left
-     * is itself the status / dynamic info — the action button on the
-     * right stays put while the label changes underneath the changing
-     * state.
-     */
-    private buildDynamicLabelRow(
-        labelText: string,
-        control: HTMLElement | DocumentFragment,
-    ): { row: HTMLElement; labelEl: HTMLSpanElement } {
-        const row = document.createElement('div');
-        row.className = 'settings-row';
-        const labelEl = document.createElement('span');
-        labelEl.className = 'settings-label';
-        labelEl.textContent = labelText;
-        row.appendChild(labelEl);
-        const controlWrap = document.createElement('div');
-        controlWrap.className = 'settings-control';
-        controlWrap.appendChild(control);
-        row.appendChild(controlWrap);
-        return { row, labelEl };
-    }
-
     /**
      * Replace the Service and Updates sections with the locked container copy
      * (SP4 E4). Called only once the probe has confirmed container mode, and
@@ -355,16 +293,15 @@ export class SettingsModal extends Modal {
      * visibility and keeps the cache in sync, and is a no-op for a tab that was
      * never built (e.g. role-gated out entirely).
      *
-     * The stale sub-refs are dropped too: `updatesBody`/`updatesStatusEl`/
-     * `updatesCheckNowBtn` point inside the now-detached original Updates body,
-     * and leaving them set would let any later call render into nothing.
+     * The stale tab ref is dropped too: `updatesTabEl` points at the now-detached
+     * original Updates section, and leaving it set would let a later
+     * `refreshUpdates()` render into nothing — and issue the /api/updates/status
+     * call this gate exists to avoid.
      */
     private applyDockerGating(): void {
         this.tabStrip?.replaceTabBody('updates', buildDockerUpdatesNote());
         this.tabStrip?.replaceTabBody('service', buildDockerServiceNote());
-        this.updatesBody = null;
-        this.updatesStatusEl = null;
-        this.updatesCheckNowBtn = null;
+        this.updatesTabEl = null;
     }
 
     /**
@@ -402,464 +339,6 @@ export class SettingsModal extends Modal {
      */
     private canUse(section: string): boolean {
         return canSeeSection(this.role, section) && this.adminReachable;
-    }
-
-    // ── Updates section ────────────────────────────────────────────────────
-    private buildUpdatesSection(): HTMLElement {
-        const { section, body } = this.buildSection('Updates');
-        const placeholder = document.createElement('p');
-        placeholder.className = 'settings-status';
-        placeholder.style.gridColumn = '1 / -1';
-        placeholder.textContent = 'loading…';
-        body.appendChild(placeholder);
-        this.updatesBody = body;
-        return section;
-    }
-
-    private async refreshUpdates(): Promise<void> {
-        let resp: UpdatesStatusResponse | null = null;
-        try {
-            const r = await fetch('/api/updates/status');
-            if (!r.ok) {
-                this.renderUpdatesError("couldn't reach server");
-                return;
-            }
-            resp = (await r.json()) as UpdatesStatusResponse;
-        } catch {
-            this.renderUpdatesError("couldn't reach server");
-            return;
-        }
-        this.updatesLastStatus = resp;
-        this.renderUpdatesSection(resp);
-    }
-
-    private renderUpdatesError(msg: string): void {
-        if (!this.updatesBody) return;
-        this.updatesBody.replaceChildren();
-        const retryBtn = document.createElement('button');
-        retryBtn.type = 'button';
-        retryBtn.className = 'settings-btn';
-        retryBtn.textContent = 'retry';
-        retryBtn.addEventListener('click', () => {
-            void this.refreshUpdates();
-        });
-        const { row, labelEl } = this.buildDynamicLabelRow(msg, retryBtn);
-        labelEl.classList.add('settings-status-error');
-        this.updatesBody.appendChild(row);
-    }
-
-    private renderUpdatesSection(s: UpdatesStatusResponse): void {
-        if (!this.updatesBody) return;
-        this.updatesBody.replaceChildren();
-        this.updatesAutoCheckbox = null;
-        this.updatesIntervalInput = null;
-        this.updatesChannelStableRadio = null;
-        this.updatesChannelBetaRadio = null;
-        this.updatesOwnerInput = null;
-        this.updatesCheckNowBtn = null;
-
-        if (!s.isInstalled) {
-            const devNote = document.createElement('p');
-            devNote.className = 'settings-stub-note';
-            devNote.style.gridColumn = '1 / -1';
-            const versionStr = s.currentVersion ? `current: v${s.currentVersion} — ` : '';
-            devNote.textContent = `${versionStr}dev mode — packaging features disabled`;
-            this.updatesBody.appendChild(devNote);
-            return;
-        }
-
-        // Row 1: auto-download checkbox.
-        const autoCheckbox = document.createElement('input');
-        autoCheckbox.type = 'checkbox';
-        autoCheckbox.checked = s.autoUpdate;
-        autoCheckbox.addEventListener('change', () => {
-            void this.patchUpdatesConfig({ autoUpdate: autoCheckbox.checked });
-        });
-        this.updatesBody.appendChild(this.buildRow('automatically download updates', autoCheckbox));
-        this.updatesAutoCheckbox = autoCheckbox;
-
-        // Row 2: check interval.
-        const intervalInput = document.createElement('input');
-        intervalInput.type = 'number';
-        intervalInput.min = '5';
-        intervalInput.max = '1440';
-        intervalInput.step = '1';
-        intervalInput.className = 'settings-input';
-        intervalInput.style.maxWidth = '110px';
-        intervalInput.value = String(s.updateCheckIntervalMinutes);
-        intervalInput.addEventListener('input', () => {
-            if (this.updatesIntervalDebounce !== undefined) {
-                window.clearTimeout(this.updatesIntervalDebounce);
-            }
-            this.updatesIntervalDebounce = window.setTimeout(() => {
-                this.commitIntervalChange(intervalInput);
-            }, 500);
-        });
-        intervalInput.addEventListener('blur', () => {
-            if (this.updatesIntervalDebounce !== undefined) {
-                window.clearTimeout(this.updatesIntervalDebounce);
-                this.updatesIntervalDebounce = undefined;
-            }
-            this.commitIntervalChange(intervalInput);
-        });
-        this.updatesBody.appendChild(this.buildRow('check interval (minutes)', intervalInput));
-        this.updatesIntervalInput = intervalInput;
-
-        // Row 3: channel radios.
-        const channelFrag = document.createDocumentFragment();
-        const stableLabel = document.createElement('label');
-        stableLabel.className = 'settings-radio-label';
-        const stableRadio = document.createElement('input');
-        stableRadio.type = 'radio';
-        stableRadio.name = 'updates-channel';
-        stableRadio.value = 'stable';
-        stableRadio.checked = s.channel === 'stable';
-        stableRadio.addEventListener('change', () => {
-            if (stableRadio.checked) {
-                void this.patchUpdatesConfig({ channel: 'stable' });
-            }
-        });
-        stableLabel.appendChild(stableRadio);
-        stableLabel.appendChild(document.createTextNode('stable'));
-        channelFrag.appendChild(stableLabel);
-
-        const betaLabel = document.createElement('label');
-        betaLabel.className = 'settings-radio-label';
-        const betaRadio = document.createElement('input');
-        betaRadio.type = 'radio';
-        betaRadio.name = 'updates-channel';
-        betaRadio.value = 'beta';
-        betaRadio.checked = s.channel === 'beta';
-        betaRadio.addEventListener('change', () => {
-            if (betaRadio.checked) {
-                void this.patchUpdatesConfig({ channel: 'beta' });
-            }
-        });
-        betaLabel.appendChild(betaRadio);
-        betaLabel.appendChild(document.createTextNode('beta'));
-        channelFrag.appendChild(betaLabel);
-
-        this.updatesBody.appendChild(this.buildRow('update channel', channelFrag));
-        this.updatesChannelStableRadio = stableRadio;
-        this.updatesChannelBetaRadio = betaRadio;
-
-        // Row 4: github owner.
-        const ownerInput = document.createElement('input');
-        ownerInput.type = 'text';
-        ownerInput.className = 'settings-input';
-        ownerInput.value = s.githubOwner;
-        ownerInput.addEventListener('blur', () => {
-            const next = ownerInput.value.trim();
-            if (next.length === 0) {
-                ownerInput.value = this.updatesLastStatus?.githubOwner ?? '';
-                return;
-            }
-            if (next === this.updatesLastStatus?.githubOwner) return;
-            void this.patchUpdatesConfig({ githubOwner: next });
-        });
-        this.updatesBody.appendChild(this.buildRow('github owner', ownerInput));
-        this.updatesOwnerInput = ownerInput;
-
-        // Action row: label = live status text (idle: "last checked … —
-        // up to date (vX)", ready: "vX ready to apply", checking/downloading:
-        // progress, error: failure reason — wraps in left column as needed),
-        // control = dual-purpose action button (left-aligned in right column
-        // like every other control). Same row pattern as inputs above. The
-        // button is "check for updates now" when there's nothing to apply
-        // and flips to "apply update v{X}" when status === 'ready' (mirroring
-        // the home-page UpdateButton chip). Single click handler branches on
-        // current status — we just retitle the button as state changes.
-        const actionBtn = document.createElement('button');
-        actionBtn.type = 'button';
-        actionBtn.className = 'settings-btn settings-btn-primary';
-        actionBtn.textContent = 'check for updates now';
-        actionBtn.addEventListener('click', () => {
-            const cur = this.updatesLastStatus;
-            if (cur && cur.status === 'ready') {
-                void this.onApplyClick(actionBtn);
-            } else {
-                void this.onCheckNowClick();
-            }
-        });
-        const { row: actionRow, labelEl: actionLabelEl } = this.buildDynamicLabelRow('', actionBtn);
-        this.updatesBody.appendChild(actionRow);
-        this.updatesCheckNowBtn = actionBtn;
-        // Track the label element so applyUpdatesStatusText can mutate it
-        // (kept type-compatible with the previous statusEl field).
-        this.updatesStatusEl = actionLabelEl as unknown as HTMLElement;
-
-        this.applyUpdatesStatusText(s);
-        this.applyActionButtonState(s);
-    }
-
-    private applyUpdatesStatusText(s: UpdatesStatusResponse): void {
-        if (!this.updatesStatusEl) return;
-        let text = '';
-        let isError = false;
-        let isReady = false;
-        switch (s.status) {
-            case 'idle':
-                text = `up to date: v${s.currentVersion}`;
-                break;
-            case 'checking':
-                text = 'checking for updates…';
-                break;
-            case 'downloading': {
-                const pct = typeof s.progress === 'number' ? Math.round(s.progress) : 0;
-                text = `downloading v${s.availableVersion ?? '?'} — ${pct}%`;
-                break;
-            }
-            case 'ready':
-                text = `update: v${s.availableVersion ?? '?'}`;
-                isReady = true;
-                break;
-            case 'error':
-                text = `check failed: ${s.errorMessage ?? 'unknown error'}`;
-                isError = true;
-                break;
-            default:
-                text = '';
-        }
-        this.updatesStatusEl.textContent = text;
-        this.updatesStatusEl.classList.toggle('settings-status-error', isError);
-        // Pair the description text color with the action button: green
-        // when an update is ready (mirrors .settings-btn-ready), default
-        // muted otherwise. Idle/up-to-date stays muted alongside the blue
-        // "check for updates now" button.
-        this.updatesStatusEl.classList.toggle('settings-status-ready', isReady);
-    }
-
-    /**
-     * Drive the dual-purpose action button's label + visual state from
-     * the latest status. The button physically stays mounted across
-     * polls/PATCHes; we just retitle and reskin it. Click branches on
-     * current status, so swapping label here is enough to swap behavior.
-     *
-     *   - status='ready' → "apply update v{availableVersion}", green
-     *     outline+text (.settings-btn-ready, mirrors home-page chip),
-     *     enabled
-     *   - status='checking' / 'downloading' → "check for updates now",
-     *     blue (.settings-btn-primary), disabled
-     *   - everything else → "check for updates now", blue, enabled
-     */
-    private applyActionButtonState(s: UpdatesStatusResponse): void {
-        if (!this.updatesCheckNowBtn) return;
-        const btn = this.updatesCheckNowBtn;
-        const busy = s.status === 'checking' || s.status === 'downloading';
-        btn.disabled = busy || this.updatesApplyInFlight;
-        if (s.status === 'ready') {
-            btn.textContent = s.availableVersion ? `apply v${s.availableVersion}` : 'apply update';
-            btn.classList.remove('settings-btn-primary');
-            btn.classList.add('settings-btn-ready');
-        } else {
-            btn.textContent = 'check for updates now';
-            btn.classList.remove('settings-btn-ready');
-            btn.classList.add('settings-btn-primary');
-        }
-    }
-
-    private commitIntervalChange(input: HTMLInputElement): void {
-        const raw = input.value.trim();
-        const n = Number.parseInt(raw, 10);
-        if (!Number.isFinite(n) || n < 5 || n > 1440) {
-            input.value = String(this.updatesLastStatus?.updateCheckIntervalMinutes ?? 60);
-            if (this.updatesStatusEl) {
-                this.updatesStatusEl.textContent = 'interval must be between 5 and 1440 minutes';
-                this.updatesStatusEl.classList.add('settings-status-error');
-            }
-            return;
-        }
-        if (n === this.updatesLastStatus?.updateCheckIntervalMinutes) return;
-        void this.patchUpdatesConfig({ updateCheckIntervalMinutes: n });
-    }
-
-    private async patchUpdatesConfig(body: UpdatesConfigPatchRequest): Promise<void> {
-        if (this.updatesStatusEl) {
-            this.updatesStatusEl.textContent = 'saving…';
-            this.updatesStatusEl.classList.remove('settings-status-error');
-        }
-        try {
-            const r = await fetch('/api/updates/config', {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body),
-            });
-            if (!r.ok) {
-                if (this.updatesStatusEl) {
-                    this.updatesStatusEl.textContent = `save failed (${r.status})`;
-                    this.updatesStatusEl.classList.add('settings-status-error');
-                }
-                return;
-            }
-            // The PATCH /api/updates/config endpoint returns a flat
-            // UpdatesStatusResponse (see UpdatesApi.handleConfig). Pre-v0.1.21
-            // this code tried to "tolerate either" a flat or wrapped shape via
-            // `'status' in data`, but UpdatesStatusResponse itself has a
-            // `status: UpdateState` string field — making `'status' in data`
-            // always true and unwrapping the flat response to the literal
-            // string. v0.1.21 fixes the type lie: the server only ever returns
-            // the flat shape, so we read it directly.
-            const status = (await r.json()) as UpdatesStatusResponse;
-            this.updatesLastStatus = status;
-            this.syncControlsToStatus(status);
-            this.applyUpdatesStatusText(status);
-            this.applyActionButtonState(status);
-        } catch {
-            if (this.updatesStatusEl) {
-                this.updatesStatusEl.textContent = "couldn't reach server";
-                this.updatesStatusEl.classList.add('settings-status-error');
-            }
-        }
-    }
-
-    /** Push server-side config values back into the rendered controls without rebuilding. */
-    private syncControlsToStatus(s: UpdatesStatusResponse): void {
-        if (this.updatesAutoCheckbox && this.updatesAutoCheckbox.checked !== s.autoUpdate) {
-            this.updatesAutoCheckbox.checked = s.autoUpdate;
-        }
-        if (
-            this.updatesIntervalInput &&
-            document.activeElement !== this.updatesIntervalInput &&
-            this.updatesIntervalInput.value !== String(s.updateCheckIntervalMinutes)
-        ) {
-            this.updatesIntervalInput.value = String(s.updateCheckIntervalMinutes);
-        }
-        const channel: UpdateChannel = s.channel;
-        if (this.updatesChannelStableRadio) {
-            this.updatesChannelStableRadio.checked = channel === 'stable';
-        }
-        if (this.updatesChannelBetaRadio) {
-            this.updatesChannelBetaRadio.checked = channel === 'beta';
-        }
-        if (
-            this.updatesOwnerInput &&
-            document.activeElement !== this.updatesOwnerInput &&
-            this.updatesOwnerInput.value !== s.githubOwner
-        ) {
-            this.updatesOwnerInput.value = s.githubOwner;
-        }
-    }
-
-    /**
-     * Apply a downloaded update from inside the Settings modal — mirrors
-     * the home-page UpdateButton chip's apply path. POST /api/updates/apply
-     * returns 200 then the server exits ~100ms later (after Velopack's
-     * pre-apply hygiene + waitExitThenApplyUpdate); we show a "restarting…"
-     * message and reload the page after a grace window so the user lands
-     * on the new version once Velopack's swap + relaunch completes.
-     */
-    private async onApplyClick(btn: HTMLButtonElement): Promise<void> {
-        if (this.updatesApplyInFlight) return;
-        this.updatesApplyInFlight = true;
-        btn.disabled = true;
-        const prevText = btn.textContent;
-        btn.textContent = 'applying…';
-        if (this.updatesStatusEl) {
-            this.updatesStatusEl.textContent = 'applying update…';
-            this.updatesStatusEl.classList.remove('settings-status-error');
-        }
-        try {
-            const r = await fetch('/api/updates/apply', { method: 'POST' });
-            if (!r.ok) {
-                if (this.updatesStatusEl) {
-                    this.updatesStatusEl.textContent = `apply failed (${r.status})`;
-                    this.updatesStatusEl.classList.add('settings-status-error');
-                }
-                btn.disabled = false;
-                btn.textContent = prevText;
-                this.updatesApplyInFlight = false;
-                // Re-poll to learn the current state (probably 409 because state
-                // wasn't 'ready' anymore by the time we got here).
-                void this.refreshUpdates();
-                return;
-            }
-            const applyBody = (await r.json().catch(() => ({}))) as { mode?: string };
-            if (applyBody.mode === 'reconnect') {
-                // Linux: server relaunching the AppImage. Show the upgrading
-                // overlay and poll the same origin until the new version answers.
-                await runUpgradingHandoff(this.updatesLastStatus?.currentVersion ?? '');
-                return;
-            }
-            // Success: server is exiting within ~100ms. Show "restarting…" and
-            // attempt a page reload after a 5s grace period. The reload will
-            // fail until Velopack finishes the swap and relaunches the server;
-            // that's expected — leave the message visible.
-            if (this.updatesStatusEl) {
-                this.updatesStatusEl.textContent = 'server restarting to apply update — page will reload…';
-            }
-            btn.textContent = 'restarting…';
-            window.setTimeout(() => {
-                try {
-                    window.location.reload();
-                } catch {
-                    /* server still down — user will reload manually */
-                }
-            }, 5_000);
-        } catch {
-            if (this.updatesStatusEl) {
-                this.updatesStatusEl.textContent = "couldn't reach server";
-                this.updatesStatusEl.classList.add('settings-status-error');
-            }
-            btn.disabled = false;
-            btn.textContent = prevText;
-            this.updatesApplyInFlight = false;
-            void this.refreshUpdates();
-        }
-    }
-
-    private async onCheckNowClick(): Promise<void> {
-        if (!this.updatesCheckNowBtn) return;
-        const btn = this.updatesCheckNowBtn;
-        btn.disabled = true;
-        btn.textContent = 'checking…';
-        if (this.updatesStatusEl) {
-            this.updatesStatusEl.textContent = 'checking for updates…';
-            this.updatesStatusEl.classList.remove('settings-status-error');
-        }
-        // §25b using-declaration replaces the prior try/finally. The dispose
-        // ONLY re-enables the button (when appropriate) — it deliberately
-        // does NOT restore textContent. The success path runs
-        // applyActionButtonState which sets the correct final label
-        // ("apply v{X}" when ready, "check for updates now" otherwise),
-        // and the failure paths set their own labels below. Prior code
-        // captured `prev` before the fetch and restored it in dispose,
-        // which clobbered the correct "apply v{X}" label that
-        // applyActionButtonState had just set — visible as a button with
-        // green-ready styling but stale "check for updates now" text
-        // (caught by v0.1.25-beta.15 smoke 2026-05-20).
-        using _restoreBtn = {
-            [Symbol.dispose]: (): void => {
-                if (
-                    this.updatesLastStatus &&
-                    this.updatesLastStatus.status !== 'checking' &&
-                    this.updatesLastStatus.status !== 'downloading'
-                ) {
-                    btn.disabled = false;
-                }
-            },
-        };
-        try {
-            const r = await fetch('/api/updates/check', { method: 'POST' });
-            if (!r.ok) {
-                if (this.updatesStatusEl) {
-                    this.updatesStatusEl.textContent = `check failed (${r.status})`;
-                    this.updatesStatusEl.classList.add('settings-status-error');
-                }
-                btn.textContent = 'check for updates now';
-                return;
-            }
-            const s = (await r.json()) as UpdatesStatusResponse;
-            this.updatesLastStatus = s;
-            this.syncControlsToStatus(s);
-            this.applyUpdatesStatusText(s);
-            this.applyActionButtonState(s);
-        } catch {
-            if (this.updatesStatusEl) {
-                this.updatesStatusEl.textContent = "couldn't reach server";
-                this.updatesStatusEl.classList.add('settings-status-error');
-            }
-            btn.textContent = 'check for updates now';
-        }
     }
 
     // Service tab (install/uninstall the OS service, Linux scope radios) moved
