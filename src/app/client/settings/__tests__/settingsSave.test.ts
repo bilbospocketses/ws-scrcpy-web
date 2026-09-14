@@ -1,4 +1,12 @@
 // @vitest-environment jsdom
+// @vitest-environment-options { "url": "http://box.lan:8000/" }
+//
+// Deliberately NOT jsdom's default localhost. The redirect assertions compare
+// the navigated host against this page's host, and under `localhost` that
+// comparison is `localhost === localhost` — it holds just as well for code that
+// hard-codes a literal `http://localhost:<port>`, which is the exact bug
+// `sameOriginUrl` exists to prevent (it sent every off-box client to its own
+// machine). On a non-localhost host the assertion can actually fail.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { authClient } from '../../AuthClient';
@@ -168,6 +176,9 @@ function mockDeps(overrides: Partial<SaveDeps> = {}): SaveDeps & { calls: string
         promptDirtyClose: vi.fn(async () => {
             calls.push('prompt');
             return 'cancel' as DirtyCloseChoice;
+        }),
+        navigate: vi.fn((url: string) => {
+            calls.push(`navigate(${url})`);
         }),
         ...overrides,
     };
@@ -536,6 +547,119 @@ describe('liveSaveDeps', () => {
         // The exact payload, not just the destination: a batch posted to the
         // right URL with the wrong changes is the failure that matters.
         expect(JSON.parse(String(f.mock.calls[0]?.[1].body))).toEqual({ changes: CHANGES });
+    });
+});
+
+/**
+ * The redirect as a USER experiences it: Save a new web port, and the browser
+ * ends up on that port.
+ *
+ * `performStagedSave` returning `{kind:'redirect', url}` is only the pure half.
+ * The effectful half — a `setTimeout` that assigns `location.href` — could be
+ * deleted outright with every other assertion in this file still green, while
+ * the server restarts and the browser sits on a dead port forever. That is the
+ * whole failure this requirement exists to prevent, so it is pinned here
+ * end-to-end: real modal, real Save button, real batch response.
+ */
+describe('the restart redirect actually navigates', () => {
+    /** Flush promise chains while timers are faked. */
+    const settle = async (): Promise<void> => {
+        for (let i = 0; i < 5; i += 1) await vi.advanceTimersByTimeAsync(0);
+    };
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        document.body.replaceChildren();
+        HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) {
+            this.setAttribute('open', '');
+        });
+        HTMLDialogElement.prototype.close = vi.fn(function (this: HTMLDialogElement) {
+            this.removeAttribute('open');
+        });
+        vi.spyOn(authClient, 'me').mockResolvedValue({
+            authEnabled: false,
+            user: { username: 'admin', role: 'admin' },
+        });
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    /** /api/config, then a batch that restarts the server on port 9000. */
+    function stubFetchRestartingOn(port: number): void {
+        vi.stubGlobal(
+            'fetch',
+            vi.fn((url: string) => {
+                if (typeof url === 'string' && url.startsWith('/api/settings/batch')) {
+                    return Promise.resolve({
+                        ok: true,
+                        status: 200,
+                        json: () =>
+                            Promise.resolve({
+                                ok: true,
+                                applied: ['webPort'],
+                                restartRequired: true,
+                                redirectPort: port,
+                            }),
+                    });
+                }
+                return Promise.resolve({
+                    ok: true,
+                    status: 200,
+                    json: () =>
+                        Promise.resolve({
+                            config: { webPort: 8000 },
+                            runtime: {
+                                firstRunComplete: true,
+                                portWasAutoShifted: false,
+                                webPort: 8000,
+                                docker: false,
+                            },
+                        }),
+                });
+            }),
+        );
+    }
+
+    it('waits out the delay, then navigates to the port the server named', async () => {
+        const navigate = vi.spyOn(liveSaveDeps, 'navigate').mockImplementation(() => undefined);
+        vi.spyOn(SettingsSummaryModal, 'confirm').mockResolvedValue(true);
+        stubFetchRestartingOn(9000);
+
+        new SettingsModal();
+        await settle();
+        const input = document.querySelector<HTMLInputElement>('dialog.settings-modal input[type="number"]');
+        expect(input, 'the web port input').not.toBeNull();
+        if (input) {
+            input.value = '9000';
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        await settle();
+        document.querySelector<HTMLButtonElement>('dialog.settings-modal .modal-footer button.settings-save')?.click();
+        await settle();
+
+        // The batch has come back and the notice is up, but the page has NOT
+        // moved yet — navigating before the supervisor rebinds the port gets a
+        // connection refused.
+        expect(
+            document.querySelector('dialog.settings-modal .settings-save-status')?.textContent,
+            'the notice while waiting',
+        ).toBe('restarting → redirecting…');
+        expect(navigate, 'before any time passes').not.toHaveBeenCalled();
+
+        await vi.advanceTimersByTimeAsync(RESTART_REDIRECT_DELAY_MS - 1);
+        expect(navigate, 'one millisecond before the delay elapses').not.toHaveBeenCalled();
+
+        await vi.advanceTimersByTimeAsync(1);
+
+        expect(navigate, 'once the delay elapses').toHaveBeenCalledTimes(1);
+        // Asserted apart from "it navigated": navigating to the WRONG port is
+        // still navigating, and strands the browser exactly as badly as not
+        // navigating at all.
+        const url = new URL(String(navigate.mock.calls[0]?.[0]));
+        expect(url.port).toBe('9000');
+        expect(url.hostname, 'the browser stays on its own host').toBe(window.location.hostname);
     });
 });
 

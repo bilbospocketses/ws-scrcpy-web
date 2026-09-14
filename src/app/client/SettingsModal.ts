@@ -125,13 +125,25 @@ export interface SaveDeps {
     confirm(changes: Change[]): Promise<boolean>;
     save(changes: Change[]): Promise<BatchResult>;
     promptDirtyClose(): Promise<DirtyCloseChoice>;
+    /**
+     * Leave this page for `url`. A seam for the same reason `SettingsBatchApi`
+     * injects `schedule`/`exit`: the effect is unobservable and untestable
+     * otherwise — jsdom throws "Not implemented: navigation" on a real
+     * `location.href` assignment, so without this the ONE line that actually
+     * rescues the browser from a dead port could be deleted with every
+     * assertion still green.
+     */
+    navigate(url: string): void;
 }
 
-/** The real dialogs and the real endpoint. */
+/** The real dialogs, the real endpoint, the real navigation. */
 export const liveSaveDeps: SaveDeps = {
     confirm: (changes) => SettingsSummaryModal.confirm(changes),
     save: (changes) => runSave(changes),
     promptDirtyClose: () => SettingsDirtyCloseModal.choose(),
+    navigate: (url) => {
+        window.location.href = url;
+    },
 };
 
 /** Which change the server refused, and what it said about it. */
@@ -604,7 +616,7 @@ export class SettingsModal extends Modal {
     }
 
     /** Act on what the save / close flow decided. */
-    private applyAction(action: SettingsAction): void {
+    private applyAction(action: SettingsAction, deps: SaveDeps = liveSaveDeps): void {
         switch (action.kind) {
             case 'stay':
                 return;
@@ -616,10 +628,11 @@ export class SettingsModal extends Modal {
                 this.setSaveStatus(action.message, true);
                 return;
             case 'redirect':
+                // The dialog stays up showing why, then follows the server. The
+                // wait is the supervisor's window to rebind the new port;
+                // navigating immediately gets a connection refused.
                 this.setSaveStatus('restarting → redirecting…', false);
-                setTimeout(() => {
-                    window.location.href = action.url;
-                }, RESTART_REDIRECT_DELAY_MS);
+                setTimeout(() => deps.navigate(action.url), RESTART_REDIRECT_DELAY_MS);
                 return;
         }
     }
