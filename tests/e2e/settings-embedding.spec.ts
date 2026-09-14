@@ -4,11 +4,19 @@ import { SEED_CONFIG } from './support/paths';
 
 const ORIGIN = 'http://localhost:5159';
 
-/** Open Settings and return its Embedding section. */
+/**
+ * Open Settings on its Embedding tab.
+ *
+ * The dialog opens on Users, and every other tab body carries `hidden`. Every
+ * assertion below is about what the operator can see and click, so the tab has
+ * to be the open one — including the "no origin is allow-listed" copy, which
+ * `toContainText` would otherwise read straight out of a closed tab.
+ */
 async function openEmbeddingSettings(page: import('@playwright/test').Page) {
     await page.getByRole('button', { name: 'Open settings' }).click();
     const settings = page.locator('dialog.settings-modal');
     await expect(settings).toBeVisible();
+    await settings.getByRole('tab', { name: 'Embedding', exact: true }).click();
     return settings;
 }
 

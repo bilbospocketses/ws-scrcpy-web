@@ -180,7 +180,7 @@ test.describe('settings prompts', () => {
         // in the device tier, where a label can actually be set through the UI.
     });
 
-    test('13.3 the Server section lists its rows in order with an inline port save, quiet at rest', async ({
+    test('13.3 the Server section lists its rows in order with the port staged for the dialog Save, quiet at rest', async ({
         page,
     }) => {
         await restoreHarnessPrompts(page);
@@ -189,6 +189,9 @@ test.describe('settings prompts', () => {
 
         const settings = page.locator('dialog.settings-modal');
         await expect(settings).toBeVisible();
+        // Server is a tab now, and not the one the dialog opens on. The row is
+        // about what this section SHOWS, so it has to be the visible one.
+        await settings.getByRole('tab', { name: 'Server', exact: true }).click();
         const server = settings.locator('section.settings-section').filter({
             has: page.locator('.settings-section-heading', { hasText: 'Server' }),
         });
@@ -217,21 +220,51 @@ test.describe('settings prompts', () => {
         expect(stop).toBeGreaterThan(install);
         expect(uninstall).toBeGreaterThan(stop);
 
-        // The web-port row carries its save INLINE, in the same control cell as
-        // the input — the beta.62 layout the row pins.
+        // The web-port row is a BARE input now. Editing it stages the value and
+        // the dialog's one footer Save sends the batch, so the inline save the
+        // beta.62 layout put in this cell is deliberately gone — ServerTab says
+        // so outright: "There is no per-field Save button any more".
+        //
+        // Asserted as a pair, because the absence on its own would also hold if
+        // the tab were simply closed (a role query does not see into a `hidden`
+        // subtree). The footer Save answers the same query in the same dialog,
+        // so the zero above is the row's layout talking, not the tab's state.
         await expect(control.locator('input')).toHaveCount(1);
-        await expect(control.getByRole('button', { name: 'save' })).toHaveCount(1);
+        await expect(control.getByRole('button')).toHaveCount(0);
+        await expect(settings.locator('button.settings-save')).toBeVisible();
 
         // Status empty AT REST: nothing status-shaped anywhere in the section.
         const statusy = server.locator('.settings-status', { hasText: /saving|saved|no change|error|couldn't/i });
         await expect(statusy).toHaveCount(0);
 
-        // And the status line is WIRED, proven with zero side effects: saving an
-        // unchanged port returns before any request is made and reports "no
-        // change." — which also identifies the one status element that the
-        // save path writes to, rather than trusting whichever <p> came first.
-        await control.getByRole('button', { name: 'save' }).click();
-        await expect(server.locator('.settings-status', { hasText: 'no change.' })).toHaveCount(1);
+        // And the status line is WIRED, still proven with zero side effects. The
+        // "no change." reply left with the button that produced it, so the proof
+        // re-homes onto the range guard, which moved the same way — "onto the
+        // stage rather than the save" (ServerTab). An out-of-range port is
+        // REFUSED the stage, so this writes the status line while issuing no
+        // request and leaving nothing for the footer Save to commit — and it
+        // still identifies the one status element the port path writes to,
+        // rather than trusting whichever <p> came first.
+        const portInput = control.locator('input');
+        const rangeMsg = server.locator('.settings-status', { hasText: 'port must be between 1024 and 65535' });
+        // TYPED, not `fill()`ed. The guard hangs off `change`, and a programmatic
+        // fill leaves the field un-dirtied, so no blur ever commits it and the
+        // status line stays empty — measured, not assumed: the first cut of this
+        // used fill() and found nothing.
+        const typePort = async (value: string) => {
+            await portInput.click();
+            await portInput.press('Control+a');
+            await portInput.pressSequentially(value);
+            await portInput.press('Tab');
+        };
+        await typePort('80');
+        await expect(rangeMsg).toHaveCount(1);
+
+        // A valid port clears the message again, which also hands the shared
+        // dialog back at its baseline rather than holding an edit for whatever
+        // runs next.
+        await typePort(String(E2E_PORT));
+        await expect(rangeMsg).toHaveCount(0);
 
         // NOT covered here, and said so: "change port → save → persists +
         // restarts" is deliberately manual. A real PATCH would move the shared

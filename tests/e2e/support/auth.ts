@@ -416,6 +416,37 @@ export function settingsSection(
     });
 }
 
+/**
+ * Open a Settings tab and return its section, ready to interact with.
+ *
+ * Every section now lives in a `TabStrip` body. The bodies are all built
+ * eagerly and attached, but the inactive ones carry the `hidden` attribute, and
+ * only ONE is ever visible. Two consequences the suite has to respect:
+ *
+ *   - `click()` and `toBeVisible()` never resolve against a hidden body, so any
+ *     spec that drives a control has to open its tab first.
+ *   - `getByRole()` matches the accessibility tree, and `hidden` takes a subtree
+ *     out of it. So a role query inside a closed tab finds NOTHING — which
+ *     makes `getByRole(...).toHaveCount(0)` pass for a reason that has nothing
+ *     to do with what it was written to pin. Absence assertions belong after
+ *     this call, where "absent" means absent from an OPEN tab.
+ *
+ * `settingsSection()` on its own is still correct for a pure presence check
+ * across every tab at once: it is CSS, and CSS matches hidden nodes.
+ *
+ * Tab labels and section headings are the same five strings by construction
+ * (see `SettingsModal.fillBody`), so one argument names both.
+ */
+export async function openSettingsTab(
+    settings: Locator,
+    title: 'Users' | 'Embedding' | 'Updates' | 'Service' | 'Server',
+): Promise<Locator> {
+    await settings.getByRole('tab', { name: title, exact: true }).click();
+    const section = settingsSection(settings, title);
+    await expect(section).toBeVisible();
+    return section;
+}
+
 /** Rows are `display: contents` — assert on a row's label or control, never on the row itself. */
 export function settingsRow(section: Locator, label: string): Locator {
     return section.locator('.settings-row').filter({

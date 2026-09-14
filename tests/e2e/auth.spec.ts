@@ -36,6 +36,7 @@ import {
     mintToken,
     newVisitorContext,
     openSettings,
+    openSettingsTab,
     openUsersModal,
     PROBE_USERNAME,
     probeWs,
@@ -447,7 +448,10 @@ test.describe('auth / opt-in login (smoke §18)', () => {
         await expect(settings.getByRole('button', { name: 'disable login (return to open mode)' })).toBeVisible();
         await expect(settings.getByRole('button', { name: 'enable login', exact: true })).toHaveCount(0);
         await expect(settings.getByRole('button', { name: 'manage users', exact: true })).toBeVisible();
-        const server = settingsSection(settings, 'Server');
+        // The three above live in the Users tab, which opens first. The rest are
+        // in Server, and a role query cannot see into a closed tab — hence the
+        // switch rather than a second locator.
+        const server = await openSettingsTab(settings, 'Server');
         await expect(settingsRow(server, 'web port').locator('input[type="number"]')).toHaveCount(1);
         await expect(settings.getByRole('button', { name: 'stop server & exit' })).toBeAttached();
         await expect(settings.locator('[data-action="change-password"]')).toHaveCount(1);
@@ -1061,7 +1065,8 @@ test.describe('auth / opt-in login (smoke §18)', () => {
             await gotoHome(adminPage);
             await expectAppShell(adminPage);
             const settings = await openSettings(adminPage);
-            const server = settingsSection(settings, 'Server');
+            // The session row is in the Server tab; Users opens first.
+            const server = await openSettingsTab(settings, 'Server');
             const logoutBtn = server.locator('button[data-action="logout"]');
             await expect(logoutBtn).toBeVisible();
             await expect(logoutBtn).toHaveText('log out');
@@ -1200,8 +1205,13 @@ test.describe('auth / opt-in login (smoke §18)', () => {
             const disableBtn = users.getByRole('button', { name: 'disable login (return to open mode)' });
             await expect(disableBtn).toBeVisible();
             await expect(users.getByRole('button', { name: 'enable login', exact: true })).toHaveCount(0);
+            // Both session controls live in the Server tab, so open it to see
+            // them — then come back to Users, where the disable button is.
+            await openSettingsTab(settings, 'Server');
             await expect(settings.getByRole('button', { name: 'log out', exact: true })).toBeVisible();
             await expect(settings.getByRole('button', { name: 'change password', exact: true })).toBeVisible();
+            await openSettingsTab(settings, 'Users');
+            await expect(disableBtn).toBeVisible();
 
             // A sentinel global survives a dialog close but not a real reload.
             await adminPage.evaluate(() => {
@@ -1253,9 +1263,15 @@ test.describe('auth / opt-in login (smoke §18)', () => {
             await expect(usersAfter.getByRole('button', { name: 'disable login (return to open mode)' })).toHaveCount(
                 0,
             );
+            await expect(after.locator('h3.settings-section-heading', { hasText: /^Users$/ })).toBeVisible();
+            // Both session controls are gone now that auth is back off. Asserted
+            // with the Server tab OPEN, because that is where they would render
+            // if they had survived. Counted from here — the Users tab — the zero
+            // would be the closed tab talking: a role query does not see into a
+            // `hidden` subtree, so it would read zero either way.
+            await openSettingsTab(after, 'Server');
             await expect(after.getByRole('button', { name: 'log out', exact: true })).toHaveCount(0);
             await expect(after.getByRole('button', { name: 'change password', exact: true })).toHaveCount(0);
-            await expect(after.locator('h3.settings-section-heading', { hasText: /^Users$/ })).toBeVisible();
             await closeTopModal(adminPage, after);
             const anonSettings = await openSettings(anon.page);
             await expect(anonSettings.locator('h3.settings-section-heading', { hasText: /^Users$/ })).toBeVisible();
