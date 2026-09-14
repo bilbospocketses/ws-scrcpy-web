@@ -163,25 +163,29 @@ describe('POST /api/settings/batch — webPort restart', () => {
         expect(exit).toHaveBeenCalledWith(75);
     });
 
-    it('marks the WAL row completed BEFORE applying the port change that ends the process', async () => {
+    it('marks the WAL row completed BEFORE scheduling the restart that ends the process', async () => {
         setup();
         const cfg = Config.getInstance();
-        let statusWhenApplyRan: unknown;
-        const originalUpdateAppConfig = cfg.updateAppConfig.bind(cfg);
-        vi.spyOn(cfg, 'updateAppConfig').mockImplementation((partial) => {
-            // Read the WAL row's raw status (bypassing getPending(), which
-            // only ever returns 'pending' rows) at the instant the apply
-            // that ends the process begins. A test that only asserted the
-            // FINAL status would pass even if the two statements below were
-            // swapped -- both still run before the handler returns, so the
-            // row ends up 'completed' either way. Reading it from inside the
-            // apply itself is what actually pins the order.
-            const row = cfg.db.sqlite.prepare('SELECT status FROM pending_settings ORDER BY id DESC LIMIT 1').get() as
-                | { status: string }
-                | undefined;
-            statusWhenApplyRan = row?.status;
-            return originalUpdateAppConfig(partial);
-        });
+        let statusWhenRestartScheduled: unknown;
+        // Read the WAL row's raw status (bypassing getPending(), which only ever
+        // returns 'pending' rows) at the instant the step that ends the process
+        // is scheduled. A test that only asserted the FINAL status would pass
+        // however the statements were ordered -- they all run before the handler
+        // returns, so the row ends up 'completed' either way. Reading it from
+        // inside the scheduling call is what actually pins the order.
+        //
+        // The probe reads from `schedule`, not from `updateAppConfig`: the config
+        // write is NOT what ends the process, the restart is, and marking the row
+        // completed before a write that can still throw wrote a 'completed' audit
+        // row for a change that never happened (see the invalid-webPort test
+        // below). Task 2's guarantee is unchanged -- nothing that could lose an
+        // instruction runs while the row still says 'pending'.
+        const statusNow = (): string | undefined =>
+            (
+                cfg.db.sqlite.prepare('SELECT status FROM pending_settings ORDER BY id DESC LIMIT 1').get() as
+                    | { status: string }
+                    | undefined
+            )?.status;
 
         const r = makeReqRes(
             'POST',
@@ -190,9 +194,55 @@ describe('POST /api/settings/batch — webPort restart', () => {
             {},
             LOOPBACK,
         );
-        await new SettingsBatchApi({ schedule: vi.fn(), exit: vi.fn() }).handle(r.req, r.res);
+        await new SettingsBatchApi({
+            schedule: () => {
+                statusWhenRestartScheduled = statusNow();
+            },
+            exit: vi.fn(),
+        }).handle(r.req, r.res);
 
-        expect(statusWhenApplyRan).toBe('completed');
+        expect(statusWhenRestartScheduled).toBe('completed');
+    });
+
+    // The per-field Save button that used to pre-screen the port is gone, so a
+    // value `Config.validateField` rejects can now reach this endpoint. It
+    // rejects by THROWING, and the webPort branch used to sit outside the
+    // try/catch that wraps every other change -- so a bad port wrote a
+    // 'completed' audit row for a write that never happened, then threw past
+    // the 400 handler.
+    it('answers 400 for an invalid webPort and leaves the WAL row failed, not completed', async () => {
+        setup();
+        const schedule = vi.fn();
+        const exit = vi.fn();
+        const r = makeReqRes(
+            'POST',
+            '/api/settings/batch',
+            { changes: [{ id: 'webPort', label: 'Web port', from: 8000, to: 0 }] },
+            {},
+            LOOPBACK,
+        );
+        await new SettingsBatchApi({ schedule, exit }).handle(r.req, r.res);
+
+        expect(r.getStatus()).toBe(400);
+        const body = r.getJson() as { ok: boolean; applied: string[]; failed: { id: string; error: string } };
+        expect(body.ok).toBe(false);
+        expect(body.applied).toEqual([]);
+        expect(body.failed.id).toBe('webPort');
+        expect(body.failed.error).toBe('webPort must be an integer between 1024 and 65535');
+
+        // Nothing was applied and nothing was scheduled: the port stands and the
+        // process is not going down.
+        expect(schedule).not.toHaveBeenCalled();
+        expect(exit).not.toHaveBeenCalled();
+        expect(Config.getInstance().getAppConfig().webPort).toBe(8000);
+
+        // The row landed in 'failed'. A 'completed' row here would be an audit
+        // trail asserting a write that did not happen.
+        const row = Config.getInstance()
+            .db.sqlite.prepare('SELECT status, error FROM pending_settings ORDER BY id DESC LIMIT 1')
+            .get() as { status: string; error: string } | undefined;
+        expect(row?.status).toBe('failed');
+        expect(row?.error).toBe('webPort: webPort must be an integer between 1024 and 65535');
     });
 
     it('a mid-batch failure marks the row failed and never reaches a later webPort change', async () => {

@@ -564,9 +564,10 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
     if (canSeeSection(ctx.role, 'webPort')) {
         // 2. web port — a number input, and nothing else. Editing it STAGES the
         //    value; the dialog's Save sends the whole batch. The status line below
-        //    the row is empty at rest and now only ever carries a READ error —
-        //    the save states it used to show ("saving…", "restarting →
-        //    redirecting…", "no change.") left with the button that produced them.
+        //    the row is empty at rest and carries either a read error or the
+        //    range message below — the save states it used to show ("saving…",
+        //    "restarting → redirecting…", "no change.") left with the button that
+        //    produced them.
         const input = document.createElement('input');
         input.type = 'number';
         input.min = '1024';
@@ -574,7 +575,23 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
         input.className = 'settings-input';
         input.style.maxWidth = '120px';
         input.addEventListener('change', () => {
-            store.set(WEB_PORT_ID, Number(input.value));
+            // The range guard `onSavePort` used to run, re-homed onto the stage
+            // rather than the save. `min`/`max` above are advisory: nothing
+            // enforces them outside a validating form submit, so an out-of-range
+            // or emptied field would otherwise stage a value that
+            // `Config.validateField` rejects by THROWING — which the batch
+            // endpoint answers as a 400 the user never asked for. Parsed exactly
+            // as `onSavePort` did, so an emptied field (NaN) is refused here
+            // rather than reaching the server as `Number('')` → 0.
+            const port = Number.parseInt(input.value.trim(), 10);
+            if (!Number.isFinite(port) || port < 1024 || port > 65535) {
+                // Refuse the stage: whatever was last staged stands, and the
+                // message stays up until a valid port replaces it.
+                setServerStatus('port must be between 1024 and 65535', true);
+                return;
+            }
+            setServerStatus('');
+            store.set(WEB_PORT_ID, port);
         });
         webPortInput = input;
 

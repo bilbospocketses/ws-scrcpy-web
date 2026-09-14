@@ -86,15 +86,42 @@ export class SettingsBatchApi {
         const ordered = orderChanges(changes);
         const applied: string[] = [];
 
+        /**
+         * One rejected apply: mark the WAL row failed, answer 400, end the batch.
+         *
+         * Shared by both apply paths rather than written twice, so webPort cannot
+         * drift away from the shape every other change already answers with.
+         * `updateAppConfig` validates through `validateField` and THROWS
+         * `ConfigValidationError`; reaching it with a bad value is now possible
+         * from the UI, since the per-field Save that used to pre-screen the port
+         * is gone.
+         */
+        const failBatch = (id: string, err: unknown): true => {
+            const message = err instanceof Error ? err.message : String(err);
+            cfg.db.pendingSettings.markFailed(batchId, `${id}: ${message}`);
+            log.warn(`batch ${batchId} failed at ${id}: ${message}`);
+            res.writeHead(400, { 'content-type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, applied, failed: { id, error: message } }));
+            return true;
+        };
+
         for (const change of ordered) {
             if (change.id === 'webPort') {
-                // Mark completed BEFORE the change that ends the process. After
-                // this apply we may never get another instruction in; a stale
-                // 'completed' is inert, whereas a stale 'pending' would be
+                let result: ReturnType<typeof cfg.updateAppConfig>;
+                try {
+                    result = cfg.updateAppConfig({ webPort: change.to as number });
+                } catch (err) {
+                    // A rejected port must NOT leave a 'completed' audit row
+                    // claiming a write that never happened.
+                    return failBatch(change.id, err);
+                }
+                applied.push(change.id);
+                // The config write has succeeded; mark completed BEFORE the step
+                // that ends the process — the scheduled restart below. Past that
+                // point we may never get another instruction in, and a stale
+                // 'completed' is inert whereas a stale 'pending' would be
                 // re-applied at the next boot.
                 cfg.db.pendingSettings.markCompleted(batchId);
-                const result = cfg.updateAppConfig({ webPort: change.to as number });
-                applied.push(change.id);
                 if (result.restartRequired) {
                     scheduleRestartForPortChange(cfg.restartMarkerPath, log, this.seams);
                 }
@@ -113,12 +140,7 @@ export class SettingsBatchApi {
                 cfg.updateAppConfig({ [change.id]: change.to } as never);
                 applied.push(change.id);
             } catch (err) {
-                const message = err instanceof Error ? err.message : String(err);
-                cfg.db.pendingSettings.markFailed(batchId, `${change.id}: ${message}`);
-                log.warn(`batch ${batchId} failed at ${change.id}: ${message}`);
-                res.writeHead(400, { 'content-type': 'application/json' });
-                res.end(JSON.stringify({ ok: false, applied, failed: { id: change.id, error: message } }));
-                return true;
+                return failBatch(change.id, err);
             }
         }
 
