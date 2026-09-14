@@ -26,16 +26,47 @@ export interface StagedField {
 export class StagedSettingsStore {
     private fields = new Map<string, StagedField>();
     private values = new Map<string, unknown>();
+    private listeners = new Set<() => void>();
+
+    /**
+     * Run `listener` after every mutation; returns an unsubscribe.
+     *
+     * Added for the dialog-level Save button, which is enabled exactly when
+     * `isDirty()`. There is no DOM event that reliably means "something was
+     * staged": the Updates check-interval field commits from a 500ms DEBOUNCE
+     * timer, so its `input` event fires half a second before the value reaches
+     * this store, and the commit itself fires no event at all. A modal
+     * inferring dirtiness from events therefore leaves Save greyed out over a
+     * real staged change until the user happens to click something else.
+     *
+     * Deliberately a bare "something changed" signal with no payload: every
+     * consumer re-reads `isDirty()` / `changes()`, so this cannot drift out of
+     * agreement with what a save would actually send.
+     */
+    subscribe(listener: () => void): () => void {
+        this.listeners.add(listener);
+        return () => {
+            this.listeners.delete(listener);
+        };
+    }
+
+    private notify(): void {
+        for (const listener of this.listeners) listener();
+    }
 
     register(field: StagedField): void {
         this.fields.set(field.id, field);
         this.values.set(field.id, field.initial);
+        // Registering MOVES the baseline (the tabs re-register from their
+        // refreshes), so it can change `isDirty()` just as much as `set` does.
+        this.notify();
     }
 
     set(id: string, value: unknown): void {
         // Silently ignored for an unregistered id: see the class comment.
         if (!this.fields.has(id)) return;
         this.values.set(id, value);
+        this.notify();
     }
 
     get(id: string): unknown {
@@ -59,10 +90,12 @@ export class StagedSettingsStore {
 
     reset(): void {
         for (const [id, field] of this.fields) this.values.set(id, field.initial);
+        this.notify();
     }
 
     clear(): void {
         this.fields.clear();
         this.values.clear();
+        this.notify();
     }
 }
