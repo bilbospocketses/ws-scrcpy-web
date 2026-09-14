@@ -7,7 +7,6 @@ import { sameOriginUrl } from '../../../sameOriginUrl';
 import { AdminConfirmModal, type AdminConfirmOptions } from '../../AdminConfirmModal';
 import { pollServiceUninstalled } from '../../pollServiceUninstalled';
 import { ServiceOperationModal } from '../../ServiceOperationModal';
-import { UninstallConfirmModal } from '../../UninstallConfirmModal';
 import type { StagedSettingsStore } from '../StagedSettingsStore';
 import type { TabContext } from './EmbeddingTab';
 
@@ -202,91 +201,6 @@ export function buildServiceInfoRow(message: string): HTMLElement {
     return p;
 }
 
-/**
- * Build the Linux-only "install for all users" control: an "install" button
- * plus its full-width status note. Clicking POSTs /api/service/install-system-wide
- * (the server runs pkexec, relocates to /opt, and re-execs — the OS pkexec prompt
- * IS the confirmation, so there is no extra modal); on success the server is
- * about to re-exec, so the page reloads; on failure the note shows an inline
- * error. `reload` is injected so the unit test can observe it without navigating.
- * Self-contained DOM + wiring (no network until clicked) so it is unit-testable
- * like buildServiceInfoRow. Show/hide + the machine-wide disabled+note state are
- * applied separately via appSectionButtonsState (from renderServiceState) — that
- * gating stays in SettingsModal.ts, since it drives the SERVER tab's row, not
- * this one; this control moved here purely as shared install/uninstall glue.
- */
-export function buildInstallAllUsersControl(opts: { reload: () => void }): {
-    button: HTMLButtonElement;
-    note: HTMLElement;
-} {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'settings-btn settings-btn-primary';
-    button.textContent = 'install';
-
-    const note = document.createElement('p');
-    note.className = 'settings-status';
-    note.style.gridColumn = '1 / -1';
-    note.hidden = true;
-
-    button.addEventListener('click', () => {
-        button.disabled = true;
-        button.textContent = 'installing…';
-        note.hidden = true;
-        void (async () => {
-            try {
-                const res = await fetch('/api/service/install-system-wide', { method: 'POST' });
-                if (res.ok) {
-                    // The server is re-execing from /opt — reload onto the new instance.
-                    opts.reload();
-                    return;
-                }
-                note.textContent = 'install failed — see the server logs and try again.';
-            } catch {
-                note.textContent = 'install failed — could not reach the server.';
-            }
-            note.hidden = false;
-            button.disabled = false;
-            button.textContent = 'install';
-        })();
-    });
-
-    return { button, note };
-}
-
-/**
- * Build the "uninstall ws-scrcpy-web" trigger button. When clicked, opens
- * UninstallConfirmModal (a top-layer <dialog>) instead of an inline panel.
- * On confirmation, POSTs /api/service/uninstall-app with { keep } and calls
- * opts.onUninstalled on success. Self-contained DOM + wiring; no network call
- * until the modal is confirmed.
- */
-export function buildUninstallControl(opts: { onUninstalled: () => void }): {
-    button: HTMLButtonElement;
-} {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'settings-btn settings-btn-danger';
-    button.textContent = 'uninstall…';
-
-    button.addEventListener('click', () => {
-        void (async () => {
-            const r = await UninstallConfirmModal.confirm();
-            if (!r.confirmed) return;
-            button.disabled = true;
-            button.textContent = 'uninstalling…';
-            await fetch('/api/service/uninstall-app', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ keep: r.keep }),
-            });
-            opts.onUninstalled();
-        })();
-    });
-
-    return { button };
-}
-
 function reasonToUserMessage(reason: string | undefined, fallbackError: string): string {
     switch (reason) {
         case 'unsupported':
@@ -369,9 +283,9 @@ function buildDynamicLabelRow(
  * a fresh `ServiceStatusResponse`, and that response ALSO drives two rows that
  * live in the Server tab: the "stop server & exit" button (service mode means
  * the OS owns the app's lifecycle) and the Linux-only "install for all
- * users"/"uninstall" rows. Server hasn't moved out of `SettingsModal.ts` yet
- * (Task 8), so this tab can't reach those rows itself — it hands the response
- * back through this callback instead of reaching for `this`.
+ * users"/"uninstall" rows. This tab holds no reference to that one, so it hands
+ * the response back through this callback; `SettingsModal` owns both tab
+ * elements and forwards it to `ServerTab`'s `applyServerServiceStatus()`.
  */
 export interface ServiceTabCallbacks {
     onServiceStatus(resp: ServiceStatusResponse): void;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ADMIN_ONLY_SECTIONS, canSeeSection } from '../adminGate';
-import { appSectionButtonsState } from '../SettingsModal';
+import { appSectionButtonsState } from '../settings/tabs/ServerTab';
 
 /**
  * Findings 9.6, 20.4 and 20.5 — two affordances offered where they cannot work.
