@@ -8,9 +8,8 @@ import type { AppConfigEnvelope, FirstRunStatus } from '../common/ConfigEvents';
 import type { ServiceStatusResponse } from '../common/ServiceEvents';
 import { AdminScopeBanner } from './client/AdminScopeBanner';
 import { authClient, type Role } from './client/AuthClient';
-import { adminApiReachable, canSeeSection } from './client/adminGate';
 import { shouldShowBookmark } from './client/bookmarkGate';
-import { DependencyPanel } from './client/DependencyPanel';
+import { DependencyAlertCard } from './client/DependencyAlertCard';
 import { startEmbedRequestWatch, stopEmbedRequestWatch } from './client/EmbedRequestPrompt';
 import { FirstRunBanner } from './client/FirstRunBanner';
 import { HostTracker } from './client/HostTracker';
@@ -365,7 +364,7 @@ window.onload = async (): Promise<void> => {
     // §36: capture the page-lifetime singletons so their polling intervals can
     // be released on page teardown (see onPageTeardown below).
     let firstRunBanner: FirstRunBanner | undefined;
-    let dependencyPanel: DependencyPanel | undefined;
+    let dependencyAlertCard: DependencyAlertCard | undefined;
 
     // One read of the runtime envelope, shared by everything below that needs to
     // know whether the admin API will answer THIS caller at all (item 81).
@@ -409,12 +408,15 @@ window.onload = async (): Promise<void> => {
     const discoveryPanel = new NetworkDiscoveryPanel();
     pageContainer.appendChild(discoveryPanel.getElement());
 
-    // The dependency API answers 403 for a non-admin, so mounting this
-    // unconditionally did not show a user less — it showed them the panel with
-    // "Failed to load dependencies" in it. An authorization boundary that
-    // manifests as an error message reads as a bug to the user and as coverage
-    // to the checklist (finding 9.6). Fail-open to admin on a me() error,
-    // matching SettingsModal: the server enforces the 403 regardless.
+    // The panel itself now lives in Settings → Dependencies; what stays here is
+    // an alert that appears only when something needs updating. Both admin
+    // predicates (role, and whether the admin API answers this caller at all)
+    // are the CARD's — it mounts inert rather than absent when either fails, so
+    // there is exactly one copy of that decision (item 81, finding 9.6).
+    // Fail-open to admin on a me() error, matching SettingsModal: the server
+    // enforces the 403 regardless. An absent runtime envelope is an old server,
+    // where the admin API always answered — `adminApiReachable` reads `{}` as
+    // reachable, which is the same fail-open this block did before.
     void (async () => {
         let role: Role | null = 'admin';
         try {
@@ -422,21 +424,13 @@ window.onload = async (): Promise<void> => {
         } catch {
             role = 'admin';
         }
-        if (!canSeeSection(role, 'dependencies')) return;
-        // Two independent predicates (item 81). `canSeeSection` asks whether this
-        // ROLE may use the section; `adminApiReachable` asks whether the admin API
-        // will answer THIS caller at all. A container without the opt-out passes
-        // the first and fails the second — mounting anyway would show the panel
-        // with "Failed to load dependencies" in it, which is the same
-        // authorization-as-error-message bug finding 9.6 was about.
         const runtime = await runtimeFetch;
-        if (runtime && !adminApiReachable(runtime)) return;
-        const depPanel = await DependencyPanel.create();
-        dependencyPanel = depPanel;
-        pageContainer.appendChild(depPanel.getElement());
+        const card = await DependencyAlertCard.create(runtime ?? {}, role);
+        dependencyAlertCard = card;
+        pageContainer.appendChild(card.getElement());
     })();
 
-    // §36: DependencyPanel + FirstRunBanner poll on intervals for the page
+    // §36: DependencyAlertCard + FirstRunBanner poll on intervals for the page
     // lifetime; release them on teardown so the intervals don't keep firing into
     // bfcache/unload. destroy() (= stopPolling) is idempotent.
     // Another local app can ask permission to embed this one; the prompt is
@@ -448,7 +442,7 @@ window.onload = async (): Promise<void> => {
     onPageTeardown(() => {
         adminScopeBanner.destroy();
         firstRunBanner?.destroy();
-        dependencyPanel?.destroy();
+        dependencyAlertCard?.destroy();
         stopEmbedRequestWatch();
     });
 

@@ -8,6 +8,7 @@ import { type BatchResult, runSave } from './settings/SaveRunner';
 import { SettingsSummaryModal } from './settings/SettingsSummaryModal';
 import { type Change, StagedSettingsStore } from './settings/StagedSettingsStore';
 import { type TabDef, TabStrip } from './settings/TabStrip';
+import { buildDependenciesTab, destroyDependenciesTab, refreshDependencies } from './settings/tabs/DependenciesTab';
 import { buildEmbeddingTab, type TabContext } from './settings/tabs/EmbeddingTab';
 import { applyServerServiceStatus, buildServerTab, refreshServer } from './settings/tabs/ServerTab';
 import { buildServiceTab, refreshService } from './settings/tabs/ServiceTab';
@@ -357,6 +358,21 @@ export class SettingsModal extends Modal {
      */
     private updatesTabEl: HTMLElement | null = null;
     /**
+     * The Dependencies tab's root element, captured the same way and for the
+     * same reason as `serviceTabEl`: `buildDependenciesTab` fires no request of
+     * its own, so the constructor drives it via the exported
+     * `refreshDependencies()`. It is also what `onBeforeClose()` hands to
+     * `destroyDependenciesTab()` — the panel inside polls every 15 s, and the
+     * dialog is opened and dismissed repeatedly.
+     */
+    private dependenciesTabEl: HTMLElement | null = null;
+    /**
+     * Which tab to show first, when the caller had a reason to pick one — the
+     * home page's dependency alert opens this dialog ON Dependencies. Null means
+     * "whatever comes first", which is what every other call site wants.
+     */
+    private initialTab: string | null = null;
+    /**
      * The one store every tab this dialog builds registers into, hoisted out of
      * `fillBody` so the footer's Save button and the close overrides can reach
      * it. Null until `fillBody` runs (it is held behind the role probe), which
@@ -378,8 +394,13 @@ export class SettingsModal extends Modal {
      */
     private saving = false;
 
-    constructor() {
+    constructor(options?: { initialTab?: string }) {
         super({ title: 'Settings' });
+        // After super(), never during it: class-field initialisers run as super()
+        // returns and would clobber anything assigned earlier (ES2022
+        // useDefineForClassFields, the same hazard as `fillBody`). `fillBody` is
+        // deferred to a microtask, so it reads this safely.
+        this.initialTab = options?.initialTab ?? null;
         this.dialog.classList.add('settings-modal');
         // Defer body fill past class-field init phase (ES2022 useDefineForClassFields).
         // Resolve the current user's role first so admin-only sections can be gated.
@@ -427,6 +448,14 @@ export class SettingsModal extends Modal {
                     // the true answer is "not from here". Fails open when the probe
                     // itself failed, matching the role fail-open above.
                     this.adminReachable = runtime ? adminApiReachable(runtime) : true;
+                    // Ahead of the container branch on purpose. Dependencies
+                    // are fetched into the app's own folder either way, so this
+                    // tab applies in a container exactly as it did on the home
+                    // page it came from — which gated on the admin questions
+                    // alone and never on `docker`.
+                    if (this.canUse('dependencies') && this.dependenciesTabEl) {
+                        void refreshDependencies(this.dependenciesTabEl);
+                    }
                     if (this.docker) {
                         this.applyDockerGating();
                         return;
@@ -508,6 +537,19 @@ export class SettingsModal extends Modal {
                 },
             });
         }
+        // The home page's dependency panel, moved here whole. Its read is held
+        // until the probe answers, like Service and Updates above.
+        if (canSeeSection(this.role, 'dependencies')) {
+            tabs.push({
+                id: 'dependencies',
+                label: 'Dependencies',
+                build: () => {
+                    const el = buildDependenciesTab(ctx, store);
+                    this.dependenciesTabEl = el; // so the constructor can start it post-probe
+                    return el;
+                },
+            });
+        }
         // Always built (it contains the user-level reset row).
         tabs.push({
             id: 'server',
@@ -520,6 +562,10 @@ export class SettingsModal extends Modal {
         });
         const strip = new TabStrip(tabs);
         this.tabStrip = strip; // so applyDockerGating() can route its swap through TabStrip
+        // After construction, which has already activated the first tab. A no-op
+        // for an id that was never built, so a caller asking for a tab this role
+        // cannot see lands on the first one rather than on nothing.
+        if (this.initialTab !== null) strip.activate(this.initialTab);
         container.append(strip.getElement(), strip.getPanel());
 
         // Keep Save's enabled state honest, straight off the store rather than
@@ -663,6 +709,16 @@ export class SettingsModal extends Modal {
 
     protected override onCloseButtonClick(): void {
         void this.attemptClose();
+    }
+
+    /**
+     * The Dependencies tab wraps a panel that polls every 15 s for as long as it
+     * lives. On the home page that interval was released by `onPageTeardown`;
+     * inside a dialog the page outlives the panel, so each open would otherwise
+     * leave another interval reading /api/dependencies forever (§36).
+     */
+    protected override onBeforeClose(): void {
+        if (this.dependenciesTabEl) destroyDependenciesTab(this.dependenciesTabEl);
     }
 
     /** Act on what the save / close flow decided. */

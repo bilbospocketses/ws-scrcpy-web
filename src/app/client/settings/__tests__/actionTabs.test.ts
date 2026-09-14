@@ -2,6 +2,7 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import { StagedSettingsStore } from '../StagedSettingsStore';
+import { buildDependenciesTab } from '../tabs/DependenciesTab';
 import { buildEmbeddingTab } from '../tabs/EmbeddingTab';
 import { buildServiceTab } from '../tabs/ServiceTab';
 import { buildUsersTab } from '../tabs/UsersTab';
@@ -28,6 +29,7 @@ describe('action-only tabs register nothing', () => {
         ['Embedding', buildEmbeddingTab],
         ['Users', buildUsersTab],
         ['Service', buildServiceTab],
+        ['Dependencies', buildDependenciesTab],
     ])('%s contributes no staged fields', (_name, build) => {
         stubHangingFetch();
         const store = new StagedSettingsStore();
@@ -43,6 +45,7 @@ describe('action-only tabs render without waiting on the network', () => {
         ['Embedding', buildEmbeddingTab],
         ['Users', buildUsersTab],
         ['Service', buildServiceTab],
+        ['Dependencies', buildDependenciesTab],
     ])('%s builds a non-empty body while fetch hangs', (_name, build) => {
         stubHangingFetch();
         const el = build(ctx(), new StagedSettingsStore());
