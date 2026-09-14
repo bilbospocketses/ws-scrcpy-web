@@ -216,6 +216,38 @@ describe('UpdatesTab', () => {
      * earlier 90 would still be staged while the field read 60, and Save would
      * write a value the user had already undone.
      */
+    /**
+     * The refusal message must not outlive the refusal.
+     *
+     * Without an explicit clear on the success path the label is STICKY: type 3
+     * (red, "interval must be between…"), then type 90 — the 90 stages fine, but
+     * the label keeps a red warning about a value that is no longer in the field
+     * or in the store, until some unrelated event repaints it. Both references
+     * clear it: pre-tabs the next valid commit went through the PATCH cycle
+     * (`saving…` → `applyUpdatesStatusText`), and `ServerTab` calls
+     * `setServerStatus('')` before `store.set`.
+     *
+     * This asserts the class separately from the text, because they are restored
+     * by one call and a regression could plausibly drop either.
+     */
+    it('a valid interval clears the refusal message left by an invalid one', async () => {
+        const { el, store } = await mountUpdatesTab(status({ updateCheckIntervalMinutes: 60 }));
+
+        const input = intervalInputOf(el);
+        input.value = '4';
+        input.dispatchEvent(new Event('blur'));
+        expect(actionStatusOf(el).textContent).toBe('interval must be between 5 and 1440 minutes');
+
+        input.value = '90';
+        input.dispatchEvent(new Event('blur'));
+
+        const line = actionStatusOf(el);
+        expect(line.textContent).toBe('up to date: v0.1.30');
+        expect(line.classList.contains('settings-status-error')).toBe(false);
+        // And the good value still staged — the clear must not cost the stage.
+        expect(store.changes().map((c) => c.to)).toEqual([90]);
+    });
+
     it('a refused interval leaves the previously staged one both on screen and staged', async () => {
         const { el, store } = await mountUpdatesTab(status({ updateCheckIntervalMinutes: 60 }));
 

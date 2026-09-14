@@ -445,6 +445,16 @@ export function buildUpdatesTab(ctx: TabContext, store: StagedSettingsStore): HT
             setStatusError(`interval must be between ${INTERVAL_MIN} and ${INTERVAL_MAX} minutes`);
             return;
         }
+        // Put the status line back before staging, the way ServerTab's guard
+        // clears its message on the success path. Without this the refusal
+        // message is STICKY: type 3 (red "interval must be between…"), then type
+        // 90 — the 90 stages fine but the label stays red with a message about a
+        // value that is no longer anywhere, until some unrelated event (a
+        // check-now, an owner PATCH) happens to repaint it. `applyStatusText`
+        // rather than a literal empty string, because this label is not a
+        // dedicated status line: it is the live update-status text, so what
+        // "cleared" means here is the current status, not blank.
+        if (lastStatus) applyStatusText(lastStatus);
         // No "same as the server's value, nothing to do" early return. That was
         // right for a PATCH and wrong for a stage: typing 90 then 60 back would
         // leave 90 staged while the field read 60, and Save would write a value

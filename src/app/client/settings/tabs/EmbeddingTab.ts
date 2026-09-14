@@ -26,10 +26,13 @@ export interface TabContext {
  * Build a section shell. Returns { section, body } — body is the grid
  * container into which rows go.
  *
- * A local copy of `SettingsModal`'s private `buildSection` — duplicated here
- * (and in the other extracted tabs) rather than shared, because the sections
- * still left in `SettingsModal.ts` (Server, Updates) need their own copy too,
- * and no shared layout module is part of this move.
+ * A local copy, duplicated here and in every other extracted tab rather than
+ * shared. There is nothing left to share it WITH: Task 9 moved the last section
+ * (Updates) out of `SettingsModal.ts` and deleted the private `buildSection` /
+ * `buildRow` / `buildDynamicLabelRow` these were copied from, so the modal now
+ * owns no section of its own. No shared layout module is part of this move
+ * either — one small duplicated helper per tab is what the plan sanctions.
+ * Introducing one is a deliberate change, not a tidy-up.
  */
 function buildSection(title: string): { section: HTMLElement; body: HTMLElement } {
     const section = document.createElement('section');

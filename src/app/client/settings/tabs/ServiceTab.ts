@@ -256,9 +256,10 @@ function buildRow(labelText: string, control: HTMLElement | DocumentFragment): H
 }
 
 /**
- * Local copy of `SettingsModal`'s private `buildDynamicLabelRow` — same shape
- * as `buildRow` but exposes the label element for live updates (status text
- * that changes underneath a retry button).
+ * Local copy — same shape as `buildRow` but exposes the label element for live
+ * updates (status text that changes underneath a retry button). See
+ * EmbeddingTab.ts's `buildSection` for why these are not shared; `UpdatesTab`
+ * carries the only other copy of this one.
  */
 function buildDynamicLabelRow(
     labelText: string,
