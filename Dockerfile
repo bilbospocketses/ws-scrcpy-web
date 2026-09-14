@@ -69,6 +69,28 @@ RUN node scripts/fetch-prebuilts.mjs \
 # -------------------------------------------------------------- runtime ------
 FROM ${NODE_IMAGE} AS runtime
 
+# Debian security updates for the pinned base.
+#
+# The digest pin above is deliberate and stays — it is what makes the base
+# deterministic. But a pinned base also freezes whatever CVEs its packages
+# carried the day it was built, and the Scout gate fails the publish on any
+# FIXABLE critical/high. That is what blocked beta.123's container publish: 14
+# fixable CVEs (5 critical) across perl, glibc, sqlite3 and pcre2.
+#
+# **Bumping the digest would not have fixed it, and this was measured rather
+# than assumed.** On 2026-09-12 the newest `node:24-trixie-slim` still shipped
+# libc6 2.41-12+deb13u3, pcre2 10.46-1~deb13u1, sqlite3 3.46.1-7+deb13u1 and
+# perl-base 5.40.1-6 — the exact vulnerable versions Scout named. Upstream had
+# not rebuilt. Upgrading in-image is what actually clears them (verified: u4,
+# u2, u2 and 5.40.1-6+deb13u1 respectively), and the gate re-verifies on every
+# publish, so this cannot silently rot the way the pin did.
+#
+# Same reasoning as the npm removal below, which was added when Scout found
+# fixable highs "that no base rebuild had cleared".
+RUN apt-get update \
+ && apt-get upgrade -y --no-install-recommends \
+ && rm -rf /var/lib/apt/lists/*
+
 # setpriv is the step-down mechanism (SP4 E3, which left it "to be verified
 # against node:24-bookworm-slim"). Asserted at BUILD time on purpose: if the
 # base ever drops util-linux, this build fails here rather than the entrypoint
@@ -77,6 +99,18 @@ FROM ${NODE_IMAGE} AS runtime
 RUN test -x /usr/bin/setpriv || (echo 'setpriv missing from base image; vendor gosu per SP4 E3' >&2; exit 1)
 
 WORKDIR /app
+
+# GHCR links a package to its repository via this label and no other means.
+# Measured 2026-09-10: qa-canary carries no label and its `repository` field
+# comes back empty from the packages API, leaving the package orphaned in the
+# UI. The label is read at push time, so it only takes effect on the next
+# published release.
+LABEL org.opencontainers.image.source="https://github.com/bilbospocketses/ws-scrcpy-web" \
+      org.opencontainers.image.url="https://github.com/bilbospocketses/ws-scrcpy-web" \
+      org.opencontainers.image.title="ws-scrcpy-web" \
+      org.opencontainers.image.description="Self-hosted, browser-based Android screen mirroring over WebSocket." \
+      org.opencontainers.image.licenses="GPL-3.0-only"
+
 COPY --from=build /out/tini            /usr/local/bin/tini
 COPY --from=build /src/package.json /src/package-lock.json ./
 

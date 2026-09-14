@@ -15,13 +15,40 @@
 // exists to prevent. It is unit-tested rather than first exercised on a real
 // release.
 
-export const IMAGE = 'jchapz30/ws-scrcpy-web';
+export const IMAGE_NAME = 'ws-scrcpy-web';
+
+// Fully-qualified namespaces. Written out rather than bare so a six-entry tag
+// list is unambiguous about which entry targets which registry; user-facing
+// docs use the bare `bilbospocketses/ws-scrcpy-web` form instead.
+export const CANONICAL = 'docker.io/bilbospocketses';
+export const MIRROR = 'ghcr.io/bilbospocketses';
+export const DEPRECATED = 'docker.io/jchapz30';
+
+// The deprecation window closes ITSELF. Publishing to a deleted namespace
+// fails the release, and a repo variable someone must remember to flip 90 days
+// out is exactly the thing that gets forgotten. The cost is that behaviour
+// changes with no commit — accepted deliberately; see the design doc.
+export const DEPRECATED_THROUGH = '2026-12-09';
+
+/**
+ * @param {Date} [now]
+ * @returns {string[]} namespaces to publish to, canonical first
+ */
+export function activeNamespaces(now = new Date()) {
+    const live = [CANONICAL, MIRROR];
+    if (now.getTime() <= Date.parse(`${DEPRECATED_THROUGH}T23:59:59Z`)) {
+        live.push(DEPRECATED);
+    }
+    return live;
+}
 
 /**
  * @param {string} tagName a release tag, with or without a leading `v`
+ * @param {{ now?: Date }} [opts] `now` is injected so the sunset boundary is
+ *   testable on both sides rather than trusted.
  * @returns {{version: string, isBeta: boolean, tags: string[]}}
  */
-export function computeTags(tagName) {
+export function computeTags(tagName, { now = new Date() } = {}) {
     if (typeof tagName !== 'string' || tagName.trim() === '') {
         throw new Error('docker-tags: a release tag name is required');
     }
@@ -31,13 +58,17 @@ export function computeTags(tagName) {
     }
 
     const isBeta = version.includes('-beta');
-    // The immutable, fully-qualified tag is ALWAYS emitted first. It is the only
-    // one that can be relied on to name one specific build forever.
-    const tags = [`${IMAGE}:${version}`];
-    if (isBeta) {
-        tags.push(`${IMAGE}:beta`);
-    } else {
-        tags.push(`${IMAGE}:latest`, `${IMAGE}:stable`);
+    const channels = isBeta ? ['beta'] : ['latest', 'stable'];
+
+    const tags = [];
+    for (const namespace of activeNamespaces(now)) {
+        const image = `${namespace}/${IMAGE_NAME}`;
+        // The immutable, fully-qualified tag is ALWAYS emitted first within a
+        // namespace. It is the only one that names one specific build forever.
+        tags.push(`${image}:${version}`);
+        for (const channel of channels) {
+            tags.push(`${image}:${channel}`);
+        }
     }
     return { version, isBeta, tags };
 }

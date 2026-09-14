@@ -27,6 +27,22 @@ import { buildUsersTab } from './settings/tabs/UsersTab';
 import { runUpgradingHandoff } from './UpgradingOverlay';
 
 /**
+ * Copy for the overlay shown once the app uninstall has been handed off.
+ *
+ * It is deliberately about what STARTED, not what finished. `POST
+ * /api/service/uninstall-app` answers 200 as soon as the detached helper is
+ * spawned — before the cleaner runs, before the app exits, before anything is
+ * deleted — so the page renders this at a moment when the outcome does not yet
+ * exist. It can never learn the outcome either: the server it would ask is gone
+ * by then. The previous copy asserted "ws-scrcpy-web uninstalled", which was
+ * plainly false whenever a running adb blocked the delete (item 131), and is the
+ * same class of unearned success claim as #120.
+ */
+export function appUninstallStartedMessage(): string {
+    return 'uninstall started — ws-scrcpy-web is shutting down and removing itself. you can close this tab.';
+}
+
+/**
  * The /api/config patch sent by "reset welcome and bookmark prompts" — clears
  * only `firstRunComplete`, which is the sole prompt-related boot-trio field.
  * The three per-user prompt-dismissal flags (`serviceFirstRunSeen`,
@@ -195,8 +211,11 @@ export function buildResetControl(opts: { reload: () => void }): {
  * the whole modal, and so the locked copy has exactly one definition.
  *
  * The copy is LOCKED — reproduced verbatim from the SP4 design §8 and
- * `todo_ws_scrcpy_web` item 2 decision 4. Do not reword it casually; the
- * container smoke asserts on it.
+ * `todo_ws_scrcpy_web` item 2 decision 4, EXCEPT the image namespace, which was
+ * re-pointed to `bilbospocketses` on 2026-09-10 when the registry moved. SP4
+ * itself still reads `jchapz30`: it is a dated record, and the superseding note
+ * at the top of that file is the authority, not §8. Do not reword it casually;
+ * the container smoke asserts on it.
  *
  * `.settings-status` is the shared Settings-note convention (modal.css: indented
  * 1.25rem, italic, weight 600), so these read as sub-notes rather than as
@@ -230,7 +249,11 @@ export function buildDockerServiceNote(): HTMLElement {
 }
 
 export function buildDockerUpdatesNote(): HTMLElement {
-    return buildDockerNoteSection('Updates', 'updates', 'update via `docker pull jchapz30/ws-scrcpy-web:latest`.');
+    return buildDockerNoteSection(
+        'Updates',
+        'updates',
+        'update via `docker pull bilbospocketses/ws-scrcpy-web:latest`.',
+    );
 }
 
 export class SettingsModal extends Modal {
@@ -1446,7 +1469,7 @@ export class SettingsModal extends Modal {
             'position:fixed;inset:0;display:flex;align-items:center;justify-content:center;' +
             'padding:1rem;text-align:center;opacity:0.85;';
         const msg = document.createElement('p');
-        msg.textContent = 'ws-scrcpy-web uninstalled — you can close this tab.';
+        msg.textContent = appUninstallStartedMessage();
         overlay.appendChild(msg);
         document.body.replaceChildren(overlay);
     }

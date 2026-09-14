@@ -17,6 +17,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **CI now runs the Rust test suite on Windows.** `main.rs` gates `windows_app_uninstall` behind `#[cfg(windows)]`, so on the ubuntu runner that module is not compiled at all — its 54 tests did not fail there, they did not exist there, and the same was true of every other Windows-only path. Nothing else covered them either: CodeQL's Windows job compiles the tree but runs no tests. They had only ever executed when someone typed `cargo test` on a Windows machine by hand. A new `windows-rust-checks` job runs `cargo test` and `clippy` on `windows-latest`.
+
+## [0.1.30-beta.124] - 2026-09-13
+
+### Fixed
+
+- **The container image is published again.** beta.123's container publish was blocked by the Docker Scout gate on 14 fixable CVEs (5 critical) in four Debian base packages — `perl`, `glibc`, `sqlite3`, `pcre2` — so no beta.123 image was ever pushed and `:beta` stayed on beta.122. The base is digest-pinned, which is deliberate, but a pinned base also freezes the CVEs its packages had the day it was built. Bumping the digest would not have helped: upstream `node:24-trixie-slim` still shipped every one of the vulnerable versions. The runtime stage now applies Debian security updates at build time, which the gate re-verifies on every publish.
+
+## [0.1.30-beta.123] - 2026-09-13
+
+### Fixed
+
+- **A Windows "remove my data" uninstall no longer leaves the data root behind whenever adb is running.** The recursive delete reached `dependencies\adb\adb.exe`, and Windows will not delete a running executable's image — but because the delete aborted on its first failure, that one locked file cost the entire tree: **2315 files survived**, `logs\` and `wsscrcpy.db*` among them, held by nothing. The condition is simply "adb is running", which is true for anyone who has connected a device that session, so a clean result was a coin-flip on whether the daemon happened to be alive. The cleaner now stops its own bundled adb server first (the Linux teardown has always done this), deletes what it can instead of stopping at the first refusal, and registers anything still locked for removal at the next reboot.
+- **An uninstall that cannot finish now says so.** Whatever survives is listed in `ProgramData\WsScrcpyWeb-uninstall-report.txt` — written beside the data root, never inside it, since writing into the tree would re-create what was just deleted. No file means nothing survived. The report exists because there is nowhere else for the answer to go: the HTTP response is sent before the cleaner starts, and the app has exited by the time the outcome is known.
+- **The browser no longer claims the app is uninstalled before it is.** The overlay said *"ws-scrcpy-web uninstalled"* the moment the request was accepted — which only meant the helper had been spawned. It now reports that the uninstall has started.
+
+### Changed
+
+- **The staged uninstall cleaner removes itself.** It is copied to `%TEMP%` precisely so the original's image lock releases, which leaves it as the last process running and unable to delete itself; it was described in the code as "self-managing", but nothing managed it, so a full copy of the launcher accumulated per uninstall on any machine that never runs Disk Cleanup. It now registers its own path for deletion at the next reboot.
+- **`packages: write` is granted on the publishing job rather than on the whole container-publish workflow.** A workflow-level write extends to every job in the file — including the Docker Scout gate step, which pushes nothing — and Scorecard's Token-Permissions rule scores a top-level write as 0. The grant was correct in substance and wrong in placement. One gotcha is recorded inline because it is how the change breaks if copied: a job-level `permissions` block *replaces* the workflow default rather than merging with it, so `contents: read` has to be restated on the job or `actions/checkout` loses its read grant.
+
+## [0.1.30-beta.122] - 2026-09-11
+
+### Changed
+
+- **Container image moved to `bilbospocketses/ws-scrcpy-web`**, mirrored at `ghcr.io/bilbospocketses/ws-scrcpy-web`. The full tag history was copied to both, digests unchanged. `jchapz30/ws-scrcpy-web` keeps receiving releases until **2026-12-09** and is deleted after that.
+
 ## [0.1.30-beta.121] - 2026-09-10
 
 ### Fixed

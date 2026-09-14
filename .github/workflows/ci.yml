@@ -176,3 +176,37 @@ jobs:
       - run: npm ci
       - run: npx tsc --noEmit
       - run: npm test
+
+  # The Windows half of the Rust tree, which `build-and-test` cannot see.
+  #
+  # `main.rs` gates the module as `#[cfg(windows)] mod windows_app_uninstall;`,
+  # so on ubuntu that file is not compiled at all — its 54 tests do not fail
+  # there, they do not EXIST there. Same for `elevated_runner`, `uac_requester`,
+  # `single_instance` and every other cfg(windows) path. `cargo test --workspace`
+  # in build-and-test has therefore never executed a single one of them, and
+  # neither has anything else: CodeQL's `Analyze (rust / windows-latest)` job
+  # compiles the tree (so a build break is still caught) but never runs a test.
+  #
+  # Until this job existed those tests ran only when someone typed `cargo test`
+  # on a Windows dev box by hand. That was noticed while adding tests for the
+  # uninstall residue fix (#680) — tests which would have landed straight into
+  # the same blind spot.
+  #
+  # A SEPARATE JOB, NOT A MATRIX ON build-and-test, and this is not a style
+  # preference: main's ruleset requires a status check named exactly
+  # `build-and-test`, and adding a matrix renames every leg to
+  # `build-and-test (windows-latest)` etc., so the required check disappears and
+  # the branch becomes unmergeable. `macos-node-checks` exists for the same
+  # reason and is the pattern to copy.
+  #
+  # Rust only. Node/biome/tsc findings are platform-independent and already run
+  # in build-and-test; repeating them here would buy nothing and cost minutes.
+  windows-rust-checks:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          components: clippy
+      - run: cargo test --workspace
+      - run: cargo clippy --workspace --all-targets -- -D warnings

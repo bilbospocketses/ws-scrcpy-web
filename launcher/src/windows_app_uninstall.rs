@@ -15,13 +15,26 @@
 //
 // Dispatch (`handle`): owns `--windows-app-uninstall`. Runs Update.exe via
 // `std::process::Command` (the absolute path supplied by the caller — no
-// PATH, no env-var). Removes each dataRoot target via `std::fs::remove_dir_all`
-// / `std::fs::remove_file`. Best-effort: logs + continues on errors (the
-// app is being uninstalled regardless).
+// PATH, no env-var). Removes each dataRoot target with `remove_tree_collecting`,
+// a depth-first walk that CONTINUES past failures and reports what it could not
+// remove. Best-effort: logs + continues on errors (the app is being uninstalled
+// regardless).
 //
-// Local-Dependencies-Only: Update.exe is the absolute path argument.
-// dataRoot deletion = `std::fs` compiled into the binary. No bare
-// cmd/rmdir/powershell on PATH.
+// Items 131 + 130 (the residue path). The delete used to be
+// `std::fs::remove_dir_all`, which aborts on the first error, so one running
+// `adb.exe` — true for anyone who has connected a device this session — left
+// 2315 files behind, `logs\` and `wsscrcpy.db*` among them, and the app still
+// reported a clean wipe. The cleaner now: reaps the bundled adb first, deletes
+// what it can, registers whatever still survives for delete-on-reboot, writes a
+// residue report NEXT TO (never inside) the data root, and finally registers its
+// own staged temp copy the same way — Windows cannot delete a running image, and
+// nothing else was ever going to remove it.
+//
+// Local-Dependencies-Only: Update.exe is the absolute path argument, adb is the
+// copy bundled under dataRoot, and dataRoot deletion + delete-on-reboot are
+// `std::fs` and Win32 compiled into the binary. No bare cmd/rmdir/powershell on
+// PATH — notably NOT the usual `cmd /c del` self-delete trick, which would
+// resolve a binary off PATH.
 
 use crate::log;
 
@@ -464,7 +477,33 @@ pub fn parse_run_args(args: &[String]) -> Option<RunArgs> {
 /// Filename for the temp copy of the launcher that performs the dataRoot
 /// deletion. PID-stamped so a retried/concurrent uninstall never collides.
 pub fn temp_copy_filename(pid: u32) -> String {
-    format!("ws-scrcpy-web-uninstall-{pid}.exe")
+    format!("{TEMP_COPY_PREFIX}{pid}.exe")
+}
+
+/// Shared by `temp_copy_filename` and `is_staged_copy` so the name we stage and
+/// the name we later schedule for deletion can never drift apart.
+const TEMP_COPY_PREFIX: &str = "ws-scrcpy-web-uninstall-";
+
+/// Is `exe` a cleaner copy WE staged?
+///
+/// Item 130 registers the running cleaner for delete-on-reboot, and
+/// `--windows-app-uninstall-run` is a public flag — run it by hand from the
+/// install tree without this guard and a perfectly good launcher gets scheduled
+/// for deletion at the next boot. The installed binary is
+/// `ws-scrcpy-web-launcher.exe` and never carries this prefix.
+///
+/// Matched on the filename WE stamp, not on the directory. The staging directory
+/// is whatever `GetTempPath2W` returned and `current_exe()` reports whatever
+/// casing the loader resolved; comparing those two with `Path`'s case-sensitive
+/// equality would be a coin-flip whose only symptom is item 130 quietly staying
+/// broken. The name is the half we control.
+fn is_staged_copy(exe: &std::path::Path) -> bool {
+    exe.file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| {
+            n.to_ascii_lowercase()
+                .starts_with(&TEMP_COPY_PREFIX.to_ascii_lowercase())
+        })
 }
 
 /// Does the staged cleaner need an elevated token?
@@ -739,48 +778,286 @@ fn perform_uninstall(update_exe_step: &[String]) -> bool {
     run_update_exe(update_exe_step)
 }
 
+/// Depth-first removal that CONTINUES past failures, pushing every path it
+/// could not remove onto `failures` — children before their parents.
+///
+/// That order is not cosmetic. `MoveFileEx` delete-on-reboot processes its queue
+/// in order and cannot remove a directory that still has contents, so listing a
+/// parent before its children would leave the parent behind forever.
+///
+/// Item 131: this replaces `std::fs::remove_dir_all`, which aborts on the FIRST
+/// error. One running `adb.exe` therefore cost the entire tree — 2315 files,
+/// including `logs\` and `wsscrcpy.db*`, which nothing was holding.
+fn remove_tree_collecting(path: &std::path::Path, failures: &mut Vec<String>) {
+    // symlink_metadata does not follow links, so a symlinked directory lands in
+    // the file branch below and is removed as a LINK. Following it would delete
+    // a tree we were never asked to touch.
+    let meta = match std::fs::symlink_metadata(path) {
+        Ok(m) => m,
+        // Already gone: nothing to remove, and nothing to report.
+        Err(_) => return,
+    };
+
+    if meta.is_dir() {
+        // An unreadable directory still gets its removal attempted below; the
+        // remove_dir is what decides whether it becomes a survivor.
+        if let Ok(entries) = std::fs::read_dir(path) {
+            for entry in entries.flatten() {
+                remove_tree_collecting(&entry.path(), failures);
+            }
+        }
+        if std::fs::remove_dir(path).is_err() {
+            failures.push(path.to_string_lossy().into_owned());
+        }
+        return;
+    }
+
+    if std::fs::remove_file(path).is_err() {
+        // A symlink pointing at a directory needs remove_dir on Windows.
+        if std::fs::remove_dir(path).is_err() {
+            failures.push(path.to_string_lossy().into_owned());
+        }
+    }
+}
+
 /// Remove each dataRoot target via std::fs (compiled-in; no PATH tools),
 /// retrying up to `attempts` times with a 500ms delay between tries to absorb
-/// residual handle-release lag (e.g. the originating helper exiting). Best-
-/// effort: logs and continues on failure.
-fn remove_targets(targets: &[String], attempts: u32) {
+/// residual handle-release lag (e.g. the originating helper exiting).
+///
+/// Returns every path it could not remove, children before parents. Best-effort
+/// throughout: it logs and continues, and an empty return means the targets are
+/// genuinely gone — which is what lets the caller stop asserting a wipe it did
+/// not perform (item 131, item 120's class).
+fn remove_targets(targets: &[String], attempts: u32) -> Vec<String> {
     let attempts = attempts.max(1);
+    let mut survivors: Vec<String> = Vec::new();
     for target in targets {
         let path = std::path::Path::new(target);
-        // Ok(true) = we removed it; Ok(false) = it was already absent; Err = failed.
-        let mut outcome: Result<bool, std::io::Error> = Ok(false);
+        let mut failures: Vec<String> = Vec::new();
+        let mut existed = false;
         for attempt in 0..attempts {
+            failures.clear();
             if !path.exists() {
-                outcome = Ok(false);
                 break;
             }
-            let result = if path.is_dir() {
-                std::fs::remove_dir_all(path)
-            } else {
-                std::fs::remove_file(path)
-            };
-            match result {
-                Ok(()) => {
-                    outcome = Ok(true);
-                    break;
-                }
-                Err(e) => {
-                    outcome = Err(e);
-                    if attempt + 1 < attempts {
-                        std::thread::sleep(std::time::Duration::from_millis(500));
-                    }
-                }
+            existed = true;
+            remove_tree_collecting(path, &mut failures);
+            if failures.is_empty() {
+                break;
+            }
+            if attempt + 1 < attempts {
+                std::thread::sleep(std::time::Duration::from_millis(500));
             }
         }
-        match outcome {
-            Ok(true) => log::info(&format!("windows-app-uninstall: removed {target}")),
-            Ok(false) => log::info(&format!(
-                "windows-app-uninstall: {target} already absent — nothing to remove"
-            )),
-            Err(e) => log::error(&format!(
-                "windows-app-uninstall: could not remove {target}: {e}"
-            )),
+        if failures.is_empty() {
+            if existed {
+                log::info(&format!("windows-app-uninstall: removed {target}"));
+            } else {
+                log::info(&format!(
+                    "windows-app-uninstall: {target} already absent — nothing to remove"
+                ));
+            }
+        } else {
+            log::error(&format!(
+                "windows-app-uninstall: {} path(s) under {target} could not be removed",
+                failures.len()
+            ));
+            survivors.append(&mut failures);
         }
+    }
+    survivors
+}
+
+/// What the pre-delete adb reap did. Recorded verbatim in the residue report:
+/// for anyone reading it, "we never even tried" and "we tried and something
+/// else holds the tree" are different problems.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AdbReap {
+    /// No bundled adb on disk — nothing to reap.
+    Absent,
+    /// `adb kill-server` ran and reported success.
+    Reaped,
+    /// `adb kill-server` could not be run, or exited non-zero.
+    Failed,
+}
+
+impl AdbReap {
+    fn describe(self) -> &'static str {
+        match self {
+            AdbReap::Absent => "no bundled adb on disk — nothing to reap",
+            AdbReap::Reaped => "kill-server ok",
+            AdbReap::Failed => "kill-server failed — the data root may still be locked",
+        }
+    }
+}
+
+/// The bundled adb, inside the tree we are about to delete.
+///
+/// Local-Dependencies-Only: never a PATH lookup. A system-installed adb is a
+/// different binary holding none of our files, and reaping it would stop a
+/// server this app never started.
+fn bundled_adb_path(data_root: &str) -> std::path::PathBuf {
+    std::path::Path::new(data_root)
+        .join("dependencies")
+        .join("adb")
+        .join("adb.exe")
+}
+
+/// Where the residue report goes: a SIBLING of the data root, e.g.
+/// `C:\ProgramData\WsScrcpyWeb-uninstall-report.txt`.
+///
+/// Never inside the data root. Writing there would re-create the tree we just
+/// wiped — which is exactly how #120 resurrected a 74-byte `launcher.log`.
+/// `None` when the data root has no parent or no name to build from.
+fn residue_report_path(data_root: &str) -> Option<std::path::PathBuf> {
+    let path = std::path::Path::new(data_root);
+    let name = path.file_name()?;
+    let parent = path.parent()?;
+    let mut filename = name.to_os_string();
+    filename.push("-uninstall-report.txt");
+    Some(parent.join(filename))
+}
+
+/// Filename used when the sibling path cannot be written (see `write_residue_report`).
+const RESIDUE_REPORT_FALLBACK_NAME: &str = "ws-scrcpy-web-uninstall-report.txt";
+
+/// How many survivor paths the report lists before truncating. The measured
+/// real number is 2315; a report nobody opens is no better than no report.
+const RESIDUE_REPORT_MAX_LISTED: usize = 40;
+
+/// The residue report body. Pure — the caller supplies the timestamp.
+fn format_residue_report(
+    timestamp: &str,
+    keep: bool,
+    reap: AdbReap,
+    survivors: &[String],
+) -> String {
+    let scope = if keep { "--keep" } else { "--wipe" };
+    let mut out = format!("ws-scrcpy-web uninstall {timestamp} UTC ({scope})\n");
+    out.push_str(&format!("adb reap: {}\n", reap.describe()));
+    out.push_str(&format!(
+        "could not remove {} path(s); each is registered for deletion at the next reboot:\n",
+        survivors.len()
+    ));
+    for path in survivors.iter().take(RESIDUE_REPORT_MAX_LISTED) {
+        out.push_str(&format!("  {path}\n"));
+    }
+    if let Some(extra) = survivors.len().checked_sub(RESIDUE_REPORT_MAX_LISTED) {
+        if extra > 0 {
+            out.push_str(&format!("  … and {extra} more\n"));
+        }
+    }
+    out
+}
+
+/// The report body, or `None` when nothing survived.
+///
+/// The file's PRESENCE is the signal. Writing "nothing survived" after every
+/// clean uninstall would leave litter of its own — item 130's whole complaint.
+fn residue_report_body(
+    timestamp: &str,
+    keep: bool,
+    reap: AdbReap,
+    survivors: &[String],
+) -> Option<String> {
+    if survivors.is_empty() {
+        return None;
+    }
+    Some(format_residue_report(timestamp, keep, reap, survivors))
+}
+
+/// Register `path` for deletion at the next boot.
+///
+/// `MoveFileExW` with a NULL destination and `MOVEFILE_DELAY_UNTIL_REBOOT` is
+/// the documented way to remove a file that is still open — here, files another
+/// process holds, and (item 130) the cleaner itself. Pure Win32 through the
+/// `windows` crate already in the dependency tree, so it stays
+/// Local-Dependencies-Only clean; the common `cmd /c del` trick would resolve a
+/// binary off PATH and is the wrong answer in this repo regardless.
+///
+/// Best-effort by design. The registration writes `PendingFileRenameOperations`
+/// under HKLM, which needs administrator rights — the cleaner HAS them on the
+/// MSI path, but the per-user Velopack path may not, and a failure there must
+/// never abort an otherwise successful uninstall. It also returns immediately:
+/// the cleaner's last act is exiting so its own image lock releases, and
+/// nothing here may delay that.
+#[cfg(windows)]
+fn delete_on_reboot(path: &std::path::Path) -> bool {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::PCWSTR;
+    use windows::Win32::Storage::FileSystem::{MoveFileExW, MOVEFILE_DELAY_UNTIL_REBOOT};
+
+    let wide: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    unsafe {
+        MoveFileExW(
+            PCWSTR(wide.as_ptr()),
+            PCWSTR::null(),
+            MOVEFILE_DELAY_UNTIL_REBOOT,
+        )
+        .is_ok()
+    }
+}
+
+/// Stop the bundled adb server before deleting the tree it lives in (item 131,
+/// fix direction 1).
+///
+/// This mirrors `linux_service.rs`, which has reaped adb on teardown all along
+/// for exactly this reason — the Windows uninstall path simply never picked it
+/// up. `kill-server` talks to the daemon over its loopback socket rather than
+/// terminating a process, so it works from the elevated cleaner against a server
+/// the user's own medium-integrity session started.
+#[cfg(windows)]
+fn reap_bundled_adb(data_root: &str) -> AdbReap {
+    use std::os::windows::process::CommandExt;
+    use std::process::Stdio;
+
+    let adb = bundled_adb_path(data_root);
+    if !adb.exists() {
+        return AdbReap::Absent;
+    }
+    match std::process::Command::new(&adb)
+        .arg("kill-server")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .creation_flags(crate::win_util::CREATE_NO_WINDOW)
+        .status()
+    {
+        Ok(status) if status.success() => AdbReap::Reaped,
+        _ => AdbReap::Failed,
+    }
+}
+
+/// Write the residue report, so a wipe that did not fully happen leaves a
+/// durable, truthful record (item 131, fix direction 2).
+///
+/// There is nowhere else for it to go: `ServerShutdownApi` answered HTTP 200
+/// before this process even started, the app has exited, and logging is disabled
+/// because `log::append` would `create_dir_all(<dataRoot>/logs)` and resurrect
+/// the tree we just deleted (#120).
+///
+/// The sibling path can be refused — `C:\ProgramData`'s own ACL does not
+/// guarantee a non-elevated process may create files there — so fall back to the
+/// temp directory, where the cleaner itself already lives and can certainly
+/// write. The fallback copy is deliberately NOT registered for delete-on-reboot:
+/// a report that deletes itself before anyone reads it is no report at all.
+#[cfg(windows)]
+fn write_residue_report(data_root: &str, keep: bool, reap: AdbReap, survivors: &[String]) {
+    let timestamp = log::format_timestamp_utc(std::time::SystemTime::now());
+    let Some(body) = residue_report_body(&timestamp, keep, reap, survivors) else {
+        return;
+    };
+    if let Some(path) = residue_report_path(data_root) {
+        if std::fs::write(&path, &body).is_ok() {
+            return;
+        }
+    }
+    if let Some(dir) = resolve_temp_dir() {
+        let _ = std::fs::write(dir.join(RESIDUE_REPORT_FALLBACK_NAME), &body);
     }
 }
 
@@ -802,7 +1079,10 @@ fn run_uninstall_in_place(a: &UninstallArgs) -> i32 {
         );
         return 1;
     }
-    remove_targets(&plan.data_root_targets, 1);
+    // Survivors are ignored on this path: it runs from the process whose own
+    // image lives under dataRoot, so leftovers are expected and already
+    // documented as the reason this path is fallback-only.
+    let _ = remove_targets(&plan.data_root_targets, 1);
     0
 }
 
@@ -996,8 +1276,16 @@ fn run_cleaner(a: &RunArgs) -> i32 {
         );
         return 1;
     }
-    // ~5s of retry (10 × 500ms) to absorb residual handle-release lag.
-    remove_targets(&plan.data_root_targets, 10);
+    // Item 131, fix direction 1 — the actual fix for the common case. The
+    // recursive delete below reaches `dependencies\adb\adb.exe`, and Windows
+    // will not delete a running executable's image. Stop our own adb server
+    // first; anyone who has connected a device this session has one running,
+    // which is the product's primary use, not an edge case.
+    let reap = reap_bundled_adb(&a.data_root);
+
+    // ~5s of retry (10 × 500ms) to absorb residual handle-release lag, which
+    // now also covers the adb daemon taking a moment to go away.
+    let _ = remove_targets(&plan.data_root_targets, 10);
 
     // Settle pass. We wait on the Phase-1 helper's pid, but the LAUNCHER is a
     // different process with its own logging, and its exit line lands about a
@@ -1008,7 +1296,31 @@ fn run_cleaner(a: &RunArgs) -> i32 {
     // already tearing the app down, and it catches any late writer, not only
     // the one we happen to know about.
     std::thread::sleep(std::time::Duration::from_millis(2_000));
-    remove_targets(&plan.data_root_targets, 2);
+    // The settle pass is authoritative: anything it still cannot remove is what
+    // genuinely survived this uninstall.
+    let survivors = remove_targets(&plan.data_root_targets, 2);
+
+    if !survivors.is_empty() {
+        // Children before parents (the order remove_targets returns), which is
+        // what lets the queue actually clear a whole tree at the next boot —
+        // MoveFileEx cannot remove a directory that still has contents.
+        for path in &survivors {
+            delete_on_reboot(std::path::Path::new(path));
+        }
+        write_residue_report(&a.data_root, a.keep, reap, &survivors);
+    }
+
+    // Item 130. Windows cannot delete a running executable, and this staged copy
+    // is the last process standing — `windows_app_uninstall.rs` used to call it
+    // "self-managing", which was generous: nothing managed it, so one full copy
+    // of the launcher accumulated in temp per uninstall on any machine that
+    // never runs Disk Cleanup. Registering the path costs nothing and does not
+    // delay the exit that releases our own lock.
+    if let Ok(exe) = std::env::current_exe() {
+        if is_staged_copy(&exe) {
+            delete_on_reboot(&exe);
+        }
+    }
     0
 }
 
@@ -1567,5 +1879,223 @@ mod tests {
         // The elevated cleaner is detached and owns the outcome from here; the
         // bootstrap's job was only to hand off, and it did.
         assert_eq!(bootstrap_exit_for(ElevationResult::Started), 0);
+    }
+
+    // ── items 131 + 130: adb reap, continue-on-error delete, residue report ──
+
+    /// Hold `path` open with NO sharing, so a delete fails with a sharing
+    /// violation — which is precisely what a running executable's mapped image
+    /// does, and precisely what `adb.exe` was doing.
+    ///
+    /// The read-only attribute is NOT a substitute: Rust's `remove_file` clears
+    /// it and deletes the file anyway, so a read-only "lock" proves nothing.
+    /// Dropping the returned handle releases the lock, which is why it must
+    /// outlive the call under test but die before the tempdir cleans up.
+    #[cfg(windows)]
+    #[must_use]
+    fn hold_exclusively(path: &std::path::Path) -> std::fs::File {
+        use std::os::windows::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(path)
+            .expect("open the stand-in with no sharing")
+    }
+
+    #[test]
+    fn the_adb_we_reap_is_the_one_bundled_under_the_data_root() {
+        // Local-Dependencies-Only: the adb holding the lock is OUR adb, inside
+        // the tree we are about to delete. Never a PATH lookup — a system adb is
+        // a different process holding nothing of ours.
+        assert_eq!(
+            bundled_adb_path(DATA_ROOT),
+            std::path::PathBuf::from(r"C:\ProgramData\WsScrcpyWeb\dependencies\adb\adb.exe")
+        );
+    }
+
+    #[test]
+    fn the_residue_report_is_a_sibling_of_the_data_root_never_inside_it() {
+        // Writing it INSIDE the data root would re-create the tree we just
+        // wiped — #120's 74-byte launcher.log, exactly.
+        let report = residue_report_path(DATA_ROOT).expect("data root has a parent");
+        assert_eq!(
+            report,
+            std::path::PathBuf::from(r"C:\ProgramData\WsScrcpyWeb-uninstall-report.txt")
+        );
+        assert!(
+            !report.starts_with(DATA_ROOT),
+            "{report:?} must not live under the data root"
+        );
+    }
+
+    #[test]
+    fn residue_report_path_is_none_when_the_data_root_has_no_parent() {
+        assert!(residue_report_path(r"C:\").is_none());
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn one_undeletable_file_does_not_cost_its_siblings() {
+        // THE BUG (item 131). std::fs::remove_dir_all aborts on the first Err, so
+        // a single locked adb.exe left 2315 files behind — including logs\ and
+        // wsscrcpy.db*, which nothing was holding.
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("dataroot");
+        std::fs::create_dir_all(root.join("dependencies").join("adb")).unwrap();
+        std::fs::create_dir_all(root.join("logs")).unwrap();
+
+        let locked = root.join("dependencies").join("adb").join("adb.exe");
+        std::fs::write(&locked, b"stand-in for a running image").unwrap();
+        let innocent = root.join("logs").join("launcher.log");
+        std::fs::write(&innocent, b"nothing holds this").unwrap();
+        let _lock = hold_exclusively(&locked);
+
+        let survivors = remove_targets(&[root.to_string_lossy().into_owned()], 1);
+
+        assert!(
+            !innocent.exists(),
+            "the unlocked sibling must be deleted even though adb.exe could not be"
+        );
+        assert!(locked.exists(), "the locked file itself is expected to survive");
+        assert!(
+            survivors.iter().any(|s| s.as_str() == locked.to_string_lossy()),
+            "the locked file must be reported: {survivors:?}"
+        );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn survivors_are_listed_children_before_parents() {
+        // Delete-on-reboot processes its queue in order, and MoveFileEx cannot
+        // remove a directory that still has contents. Children first is what
+        // makes the tree actually go away at the next boot.
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("dataroot");
+        let nested = root.join("dependencies").join("adb");
+        std::fs::create_dir_all(&nested).unwrap();
+        let locked = nested.join("adb.exe");
+        std::fs::write(&locked, b"x").unwrap();
+        let _lock = hold_exclusively(&locked);
+
+        let survivors = remove_targets(&[root.to_string_lossy().into_owned()], 1);
+
+        let pos = |p: &std::path::Path| {
+            survivors
+                .iter()
+                .position(|s| s.as_str() == p.to_string_lossy())
+                .unwrap_or_else(|| panic!("{p:?} missing from {survivors:?}"))
+        };
+        assert!(pos(&locked) < pos(&nested), "file before its directory");
+        assert!(pos(&nested) < pos(&root), "directory before its parent");
+    }
+
+    #[test]
+    fn a_clean_wipe_reports_no_survivors() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("dataroot");
+        std::fs::create_dir_all(root.join("logs")).unwrap();
+        std::fs::write(root.join("logs").join("launcher.log"), b"x").unwrap();
+
+        let survivors = remove_targets(&[root.to_string_lossy().into_owned()], 1);
+
+        assert!(!root.exists());
+        assert!(survivors.is_empty(), "expected nothing left: {survivors:?}");
+    }
+
+    #[test]
+    fn an_absent_target_is_not_a_survivor() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("never-existed");
+        assert!(remove_targets(&[missing.to_string_lossy().into_owned()], 1).is_empty());
+    }
+
+    #[test]
+    fn the_report_names_every_survivor_and_says_when_they_go() {
+        let body = format_residue_report(
+            "2026-09-12 18:04:11.000",
+            false,
+            AdbReap::Reaped,
+            &[r"C:\ProgramData\WsScrcpyWeb\dependencies\adb\adb.exe".to_string()],
+        );
+        assert!(body.contains("2026-09-12 18:04:11.000"), "{body}");
+        assert!(body.contains("--wipe"), "{body}");
+        assert!(body.contains(r"dependencies\adb\adb.exe"), "{body}");
+        assert!(body.contains("next reboot"), "{body}");
+    }
+
+    #[test]
+    fn the_report_records_what_the_adb_reap_did() {
+        // If the reap failed, that is the first thing a reader needs — it is the
+        // difference between "a stray handle" and "we never even tried".
+        let failed = format_residue_report("t", false, AdbReap::Failed, &["p".into()]);
+        assert!(failed.contains("adb"), "{failed}");
+        assert!(failed.contains("failed"), "{failed}");
+
+        let absent = format_residue_report("t", false, AdbReap::Absent, &["p".into()]);
+        assert!(absent.contains("adb"), "{absent}");
+        assert!(!absent.contains("failed"), "absent is not a failure: {absent}");
+    }
+
+    #[test]
+    fn the_report_distinguishes_a_keep_uninstall_from_a_wipe() {
+        let keep = format_residue_report("t", true, AdbReap::Reaped, &["p".into()]);
+        assert!(keep.contains("--keep"), "{keep}");
+        assert!(!keep.contains("--wipe"), "{keep}");
+    }
+
+    #[test]
+    fn a_huge_survivor_list_is_capped_but_still_states_the_true_total() {
+        // 2315 paths is the measured real number. A report nobody opens is no
+        // better than no report — but the COUNT must never be trimmed.
+        let many: Vec<String> = (0..2315).map(|i| format!(r"C:\x\{i}")).collect();
+        let body = format_residue_report("t", false, AdbReap::Failed, &many);
+
+        assert!(body.contains("2315"), "the true total must appear: {body}");
+        assert!(
+            body.lines().count() < 100,
+            "report should be readable, got {} lines",
+            body.lines().count()
+        );
+        assert!(body.contains("more"), "must say the list was truncated: {body}");
+    }
+
+    #[test]
+    fn only_the_staged_temp_copy_may_register_itself_for_deletion() {
+        // Item 130 deletes the cleaner at next boot because Windows will not let
+        // it delete itself now. The guard matters because `--windows-app-uninstall-run`
+        // is a public flag: run it by hand from the install tree and an
+        // unguarded registration would schedule a WORKING launcher for deletion
+        // at the next reboot.
+        let temp = std::path::Path::new(r"C:\Users\me\AppData\Local\Temp");
+        assert!(is_staged_copy(&temp.join(temp_copy_filename(1234))));
+        assert!(
+            !is_staged_copy(std::path::Path::new(
+                r"C:\Program Files\WsScrcpyWeb\current\ws-scrcpy-web-launcher.exe"
+            )),
+            "the installed launcher must never be scheduled for deletion"
+        );
+        assert!(
+            !is_staged_copy(&temp.join("something-else.exe")),
+            "only our own staged filename counts, even inside temp"
+        );
+    }
+
+    #[test]
+    fn the_staged_copy_is_recognised_whatever_case_the_path_arrives_in() {
+        // Windows paths are case-insensitive but Rust's Path comparison is not,
+        // and `current_exe()` reports whatever casing the loader resolved. A
+        // case-sensitive check here would silently skip the registration and
+        // quietly un-fix item 130 — a failure with no symptom until temp fills.
+        assert!(is_staged_copy(std::path::Path::new(
+            r"C:\Users\me\AppData\Local\TEMP\WS-SCRCPY-WEB-UNINSTALL-1234.EXE"
+        )));
+    }
+
+    #[test]
+    fn no_survivors_means_no_report_at_all() {
+        // The file's presence IS the signal. Writing "nothing survived" on every
+        // clean uninstall leaves litter of its own — item 130's own complaint.
+        assert!(residue_report_body("t", false, AdbReap::Reaped, &[]).is_none());
+        assert!(residue_report_body("t", false, AdbReap::Reaped, &["p".into()]).is_some());
     }
 }

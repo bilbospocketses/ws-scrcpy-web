@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 import { dockerImageInspect, dockerPull } from './support/dockerStack';
 
 /**
- * Smoke row 20.8 — the published image: `docker pull jchapz30/ws-scrcpy-web:beta`
+ * Smoke row 20.8 — the published image: `docker pull bilbospocketses/ws-scrcpy-web:beta`
  * pulls, and the tag points at the newest beta the release workflow pushed.
  *
  * The rule under test is docker-publish.yml's channel-tag rule (SP4 D3): every
@@ -18,7 +18,7 @@ import { dockerImageInspect, dockerPull } from './support/dockerStack';
  * than a timeout, and is a retry, not a product finding.
  */
 
-const REPO = 'jchapz30/ws-scrcpy-web';
+const REPO = 'bilbospocketses/ws-scrcpy-web';
 const BETA_TAG = /^0\.1\.30-beta\.(\d+)$/;
 
 interface HubTag {

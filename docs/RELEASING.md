@@ -53,13 +53,14 @@ This is the operational runbook for cutting a release. Every step is a concrete 
    ```bash
    gh run watch
    ```
-   The same tag push also triggers `.github/workflows/docker-publish.yml` — a separate workflow, so a Docker failure never blocks the installer release or vice versa. It builds the image, runs the Docker Scout gate (a fixable critical/high CVE fails the publish), and pushes to Docker Hub: the immutable `:X.Y.Z[-beta.N]` tag plus `:beta` for a beta, or `:stable` + `:latest` for a stable. Watch it with `gh run list --workflow docker-publish.yml`.
+   The same tag push also triggers `.github/workflows/docker-publish.yml` — a separate workflow, so a Docker failure never blocks the installer release or vice versa. It builds the image, runs the Docker Scout gate (a fixable critical/high CVE fails the publish), and pushes the same tag set to all three coordinates — `bilbospocketses/ws-scrcpy-web`, `ghcr.io/bilbospocketses/ws-scrcpy-web`, and the deprecated `jchapz30/ws-scrcpy-web` until 2026-12-09: the immutable `:X.Y.Z[-beta.N]` tag plus `:beta` for a beta, or `:stable` + `:latest` for a stable. Watch it with `gh run list --workflow docker-publish.yml`.
 8. **Verify the release** on the GitHub Releases page. Smoke-test downloads on a clean machine if possible.
 9. **Verify the image.** The channel tag must point at the tag you just cut:
    ```bash
-   docker manifest inspect jchapz30/ws-scrcpy-web:X.Y.Z-beta.N | head -5   # exists
-   docker pull jchapz30/ws-scrcpy-web:beta                                  # or :latest for a stable
-   docker image inspect jchapz30/ws-scrcpy-web:beta --format '{{json .RepoDigests}}'
+   docker manifest inspect bilbospocketses/ws-scrcpy-web:X.Y.Z-beta.N | head -5   # exists
+   docker pull bilbospocketses/ws-scrcpy-web:beta                                  # or :latest for a stable
+   docker image inspect bilbospocketses/ws-scrcpy-web:beta --format '{{json .RepoDigests}}'
+   docker buildx imagetools inspect ghcr.io/bilbospocketses/ws-scrcpy-web:beta --format '{{.Manifest.Digest}}'   # must equal the Hub digest
    ```
    The pulled `:beta` digest must equal the immutable tag's. Smoke row 20.8 (`container-publish.spec.ts`, CI only) asserts exactly this on every PR against the live Hub; a mismatch after a release means the publish workflow pushed one tag and not the other.
 
@@ -103,7 +104,7 @@ Beta users opt in by setting `channel=beta` in Settings (writes to `config.json`
 
 Reasoning: Velopack feed entries are append-only; deleting an entry breaks any client that already saw it.
 
-**The container image follows the same rule.** Never delete a published tag: the immutable `:X.Y.Z` stays where it is, and the fix-forward release moves the channel tag (`:beta`, or `:stable` + `:latest`) to the new version — that is the whole rollback for Docker users, since they pull the channel. If the bad image must not be pulled by name either, retag rather than delete: push the fix-forward image under the bad version's tag as well (`docker buildx imagetools create -t jchapz30/ws-scrcpy-web:X.Y.Z jchapz30/ws-scrcpy-web:X.Y.(Z+1)`), which keeps every existing reference resolvable.
+**The container image follows the same rule.** Never delete a published tag: the immutable `:X.Y.Z` stays where it is, and the fix-forward release moves the channel tag (`:beta`, or `:stable` + `:latest`) to the new version — that is the whole rollback for Docker users, since they pull the channel. If the bad image must not be pulled by name either, retag rather than delete: push the fix-forward image under the bad version's tag as well (`docker buildx imagetools create -t bilbospocketses/ws-scrcpy-web:X.Y.Z -t ghcr.io/bilbospocketses/ws-scrcpy-web:X.Y.Z bilbospocketses/ws-scrcpy-web:X.Y.(Z+1)`), which keeps every existing reference resolvable.
 
 ## Future signer setup (placeholder)
 
