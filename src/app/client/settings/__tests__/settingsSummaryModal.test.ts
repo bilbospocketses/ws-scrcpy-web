@@ -39,6 +39,29 @@ describe('SettingsSummaryModal', () => {
         expect(text).toContain('beta');
     });
 
+    /**
+     * The display half of the contract the store's raw `from`/`to` created.
+     * The store deliberately no longer formats the values -- `to: 'off'` on the
+     * wire was refused by `validateField` -- so the readable wording arrives in
+     * `fromText`/`toText` and rendering it is this modal's job. Without this,
+     * dropping the text fields would silently show the user "true → false".
+     */
+    it('renders the display text when a change carries it', () => {
+        void SettingsSummaryModal.confirm([
+            { id: 'autoUpdate', label: 'Automatic updates', from: true, to: false, fromText: 'on', toText: 'off' },
+        ]);
+        const text = document.querySelector('dialog')?.textContent ?? '';
+        expect(text).toContain('Automatic updates: on → off');
+        // And never the raw boolean it was formatted from.
+        expect(text).not.toContain('true');
+        expect(text).not.toContain('false');
+    });
+
+    it('falls back to the raw value when a change carries no display text', () => {
+        void SettingsSummaryModal.confirm([{ id: 'webPort', label: 'Web port', from: 8000, to: 8010 }]);
+        expect(document.querySelector('dialog')?.textContent).toContain('Web port: 8000 → 8010');
+    });
+
     it('warns that a webPort change restarts the server', () => {
         void SettingsSummaryModal.confirm(CHANGES);
         expect(document.querySelector('dialog')?.textContent).toContain('restart');

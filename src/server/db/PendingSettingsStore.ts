@@ -2,12 +2,25 @@ import type { DatabaseSync } from 'node:sqlite';
 
 export type BatchStatus = 'pending' | 'completed' | 'failed' | 'abandoned';
 
-/** One staged edit, as the summary renders it and the batch applies it. */
+/**
+ * One staged edit, as the batch applies it and the WAL records it.
+ *
+ * Declared here as well as client-side (`settings/StagedSettingsStore.ts`)
+ * because importing a `node:sqlite` module into the browser bundle would be
+ * wrong; the two shapes are deliberately identical.
+ *
+ * `to` is the RAW value and is what `updateAppConfig` receives -- it must
+ * survive `validateField`, so a boolean setting arrives as a boolean. The two
+ * text fields are display-only, written by the client's formatter and never
+ * read here; they are carried so the WAL row records what the user was shown.
+ */
 export interface Change {
     id: string;
     label: string;
     from: unknown;
     to: unknown;
+    fromText?: string;
+    toText?: string;
 }
 
 export interface BatchRow {

@@ -2,8 +2,13 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+// The REAL client store, imported into a server test on purpose: this file is
+// where the two halves of the `Change` contract are made to meet. It is pure
+// state with no DOM and no network, so it runs here unchanged.
+import { StagedSettingsStore } from '../../app/client/settings/StagedSettingsStore';
 import { orderChanges, SettingsBatchApi, STAGEABLE_IDS } from '../api/SettingsBatchApi';
 import { Config } from '../Config';
+import type { Change } from '../db/PendingSettingsStore';
 import { reconcilePendingSettings } from '../db/reconcilePendingSettings';
 import { EnvName } from '../EnvName';
 import { makeReqRes } from './helpers/httpMock';
@@ -289,6 +294,141 @@ describe('POST /api/settings/batch — webPort restart', () => {
             .get() as { status: string; error: string } | undefined;
         expect(row?.status).toBe('failed');
         expect(row?.error).toBe('channel: channel must be one of: stable, beta');
+    });
+});
+
+/**
+ * The client/server boundary, driven end to end: what `StagedSettingsStore`
+ * REALLY produces, fed to the REAL endpoint.
+ *
+ * This is the test whose absence was the actual defect. Every other test in
+ * this file hand-writes its `changes` array, and every test in
+ * `stagedSettingsStore.test.ts` inspects the store's output without ever
+ * sending it anywhere -- so the two halves were free to disagree, and they did:
+ * the store emitted `to: 'off'` for `autoUpdate` while `validateField` accepted
+ * only booleans, and BOTH suites were green because each pinned its own half of
+ * a contract neither one crossed.
+ *
+ * Nothing here may hand-write a change. The store builds them, so a future
+ * change to its output shape fails HERE rather than in production.
+ */
+describe('staged changes cross the wire intact', () => {
+    /** The real Updates-tab registration, formatter included. */
+    function autoUpdateStore(initial: boolean): StagedSettingsStore {
+        const store = new StagedSettingsStore();
+        store.register({
+            id: 'autoUpdate',
+            label: 'Automatic updates',
+            initial,
+            format: (v) => (v ? 'on' : 'off'),
+        });
+        return store;
+    }
+
+    it('a formatted boolean arrives as a BOOLEAN and is actually applied', async () => {
+        setup();
+        const cfg = Config.getInstance();
+        // The baseline the tab would re-register from, read from the real config
+        // rather than assumed.
+        expect(cfg.getAppConfig().autoUpdate).toBe(true);
+
+        const store = autoUpdateStore(cfg.getAppConfig().autoUpdate);
+        store.set('autoUpdate', false);
+        const changes = store.changes();
+
+        // What the store hands `runSave`, before anything touches it. `'off'`
+        // here is the bug; `false` is the contract.
+        expect(changes).toHaveLength(1);
+        expect(changes[0]?.to).toBe(false);
+        expect(typeof changes[0]?.to).toBe('boolean');
+
+        const r = makeReqRes('POST', '/api/settings/batch', { changes }, {}, LOOPBACK);
+        await new SettingsBatchApi().handle(r.req, r.res);
+
+        expect(r.getStatus()).toBe(200);
+        const body = r.getJson() as { ok: boolean; applied: string[] };
+        expect(body.ok).toBe(true);
+        expect(body.applied).toEqual(['autoUpdate']);
+
+        // Applied, not merely accepted: the setting really moved, and it is
+        // still a boolean on the other side.
+        expect(Config.getInstance().getAppConfig().autoUpdate).toBe(false);
+
+        // And the WAL says so. A `failed` row here is what the bug produced.
+        const row = Config.getInstance()
+            .db.sqlite.prepare('SELECT status, error FROM pending_settings ORDER BY id DESC LIMIT 1')
+            .get() as { status: string; error: string } | undefined;
+        expect(row?.status).toBe('completed');
+        expect(row?.error).toBeNull();
+    });
+
+    it('carries the display text along without the server minding it', async () => {
+        setup();
+        const store = autoUpdateStore(true);
+        store.set('autoUpdate', false);
+        const changes = store.changes();
+
+        // The wording the user confirmed on the summary screen travels with the
+        // batch -- that is the point of keeping it beside the value instead of
+        // in place of it.
+        expect(changes[0]?.fromText).toBe('on');
+        expect(changes[0]?.toText).toBe('off');
+
+        const r = makeReqRes('POST', '/api/settings/batch', { changes }, {}, LOOPBACK);
+        await new SettingsBatchApi().handle(r.req, r.res);
+        expect(r.getStatus()).toBe(200);
+
+        // The extra fields are inert on the server but ARE recorded, so the WAL
+        // row explains what the user was shown, not just what was written.
+        const row = Config.getInstance()
+            .db.sqlite.prepare('SELECT changes FROM pending_settings ORDER BY id DESC LIMIT 1')
+            .get() as { changes: string } | undefined;
+        const recorded = JSON.parse(row?.changes ?? '[]') as Change[];
+        expect(recorded[0]?.toText).toBe('off');
+        expect(recorded[0]?.to).toBe(false);
+
+        expect(Config.getInstance().getAppConfig().autoUpdate).toBe(false);
+    });
+
+    it('every stageable id survives the round trip in one batch', async () => {
+        setup();
+        const cfg = Config.getInstance().getAppConfig();
+        const store = new StagedSettingsStore();
+        store.register({ id: 'channel', label: 'Update channel', initial: cfg.channel });
+        store.register({
+            id: 'autoUpdate',
+            label: 'Automatic updates',
+            initial: cfg.autoUpdate,
+            format: (v) => (v ? 'on' : 'off'),
+        });
+        store.register({
+            id: 'updateCheckIntervalMinutes',
+            label: 'Check interval (minutes)',
+            initial: cfg.updateCheckIntervalMinutes,
+        });
+        store.register({ id: 'webPort', label: 'Web port', initial: cfg.webPort });
+
+        store.set('channel', cfg.channel === 'beta' ? 'stable' : 'beta');
+        store.set('autoUpdate', !cfg.autoUpdate);
+        store.set('updateCheckIntervalMinutes', 90);
+        store.set('webPort', 8010);
+
+        const schedule = vi.fn();
+        const exit = vi.fn();
+        const r = makeReqRes('POST', '/api/settings/batch', { changes: store.changes() }, {}, LOOPBACK);
+        await new SettingsBatchApi({ schedule, exit }).handle(r.req, r.res);
+
+        expect(r.getStatus()).toBe(200);
+        const body = r.getJson() as { ok: boolean; applied: string[]; restartRequired: boolean };
+        expect(body.ok).toBe(true);
+        // webPort last, and nothing dropped on the way.
+        expect(body.applied).toEqual(['channel', 'autoUpdate', 'updateCheckIntervalMinutes', 'webPort']);
+        expect(body.restartRequired).toBe(true);
+
+        const after = Config.getInstance().getAppConfig();
+        expect(after.autoUpdate).toBe(!cfg.autoUpdate);
+        expect(after.updateCheckIntervalMinutes).toBe(90);
+        expect(after.webPort).toBe(8010);
     });
 });
 

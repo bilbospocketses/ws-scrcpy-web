@@ -160,7 +160,19 @@ describe('UpdatesTab', () => {
         const toggle = autoCheckboxOf(el);
         toggle.checked = false;
         toggle.dispatchEvent(new Event('change', { bubbles: true }));
-        expect(store.changes()).toEqual([{ id: 'autoUpdate', label: 'Automatic updates', from: 'on', to: 'off' }]);
+        // Raw booleans, with the on/off wording alongside for the summary: the
+        // batch endpoint passes `to` to `updateAppConfig`, which refuses
+        // anything that is not a boolean.
+        expect(store.changes()).toEqual([
+            {
+                id: 'autoUpdate',
+                label: 'Automatic updates',
+                from: true,
+                to: false,
+                fromText: 'on',
+                toText: 'off',
+            },
+        ]);
     });
 
     // The range guard `commitIntervalChange` applied before PATCHing, re-homed

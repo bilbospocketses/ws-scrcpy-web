@@ -47,7 +47,11 @@ export class SettingsSummaryModal extends Modal {
         list.className = 'settings-summary__list';
         for (const c of this.changes) {
             const li = document.createElement('li');
-            li.textContent = `${c.label}: ${String(c.from)} → ${String(c.to)}`;
+            // Display text when the field has a formatter, the raw value
+            // otherwise. The store no longer formats `from`/`to` themselves --
+            // doing so put `'off'` on the wire for `autoUpdate` and every save
+            // of it was refused -- so rendering is this modal's job now.
+            li.textContent = `${c.label}: ${c.fromText ?? String(c.from)} → ${c.toText ?? String(c.to)}`;
             list.appendChild(li);
         }
         container.appendChild(list);

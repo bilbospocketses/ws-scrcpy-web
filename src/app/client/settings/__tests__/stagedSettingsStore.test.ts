@@ -43,7 +43,7 @@ describe('StagedSettingsStore', () => {
         expect(store.get('webPort')).toBe(8000);
     });
 
-    it('applies format() to both sides of the summary when one is given', () => {
+    it('puts format() in the TEXT fields and leaves the values raw', () => {
         store.register({
             id: 'autoUpdate',
             label: 'Automatic updates',
@@ -54,8 +54,37 @@ describe('StagedSettingsStore', () => {
         expect(store.changes()).toContainEqual({
             id: 'autoUpdate',
             label: 'Automatic updates',
-            from: 'on',
-            to: 'off',
+            from: true,
+            to: false,
+            fromText: 'on',
+            toText: 'off',
         });
+    });
+
+    /**
+     * The regression this file used to assert the WRONG way round: it pinned
+     * `to: 'off'` as correct, so the one field with a formatter was the one
+     * field the server could never accept. `toEqual` above would catch a
+     * reversion, but only by way of a whole-object mismatch; this says the
+     * actual rule out loud, in the terms `validateField` uses.
+     */
+    it('a boolean field stays a boolean — the server validates the TYPE', () => {
+        store.register({
+            id: 'autoUpdate',
+            label: 'Automatic updates',
+            initial: true,
+            format: (v) => (v ? 'on' : 'off'),
+        });
+        store.set('autoUpdate', false);
+        const change = store.changes().find((c) => c.id === 'autoUpdate');
+        expect(typeof change?.to).toBe('boolean');
+        expect(typeof change?.from).toBe('boolean');
+    });
+
+    it('omits the text fields entirely for a field with no formatter', () => {
+        store.set('webPort', 8010);
+        const change = store.changes().find((c) => c.id === 'webPort');
+        expect(change).not.toHaveProperty('fromText');
+        expect(change).not.toHaveProperty('toText');
     });
 });

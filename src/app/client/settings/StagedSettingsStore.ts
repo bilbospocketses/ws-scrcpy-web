@@ -1,9 +1,28 @@
-/** One staged edit, exactly as the summary renders it and the batch applies it. */
+/**
+ * One staged edit: the RAW values the batch applies, plus optional display text
+ * for the summary to render.
+ *
+ * `from`/`to` are the values as the field holds them and as the server must
+ * receive them -- never formatted. They used to carry the `format`ted string
+ * instead, which made `autoUpdate` unsavable: the store emitted `to: 'off'`,
+ * `SettingsBatchApi` passed that straight to `updateAppConfig`, and
+ * `validateField` refused it because `autoUpdate must be a boolean`. Every
+ * toggle-and-Save 400'd, with the WAL row marked `failed`.
+ *
+ * Display text therefore rides ALONGSIDE the value rather than replacing it.
+ * The extra fields are inert on the wire and in the WAL -- the server reads only
+ * `id` and `to` -- and being optional they cost nothing for the fields (every
+ * one but `autoUpdate`) that have no formatter.
+ */
 export interface Change {
     id: string;
     label: string;
     from: unknown;
     to: unknown;
+    /** `format(from)` when the field has a formatter; absent otherwise. */
+    fromText?: string;
+    /** `format(to)` when the field has a formatter; absent otherwise. */
+    toText?: string;
 }
 
 export interface StagedField {
@@ -77,13 +96,25 @@ export class StagedSettingsStore {
         return this.changes().length > 0;
     }
 
+    /**
+     * The staged edits, RAW. `from`/`to` are always the values themselves.
+     *
+     * A formatter adds `fromText`/`toText` for the summary to render; it never
+     * replaces the value. Formatting the value here is what broke `autoUpdate`
+     * -- see the `Change` doc comment. The store's job is state, and a value
+     * that cannot round-trip to the server is not state.
+     */
     changes(): Change[] {
         const out: Change[] = [];
         for (const [id, field] of this.fields) {
             const current = this.values.get(id);
             if (Object.is(current, field.initial)) continue;
-            const render = field.format ?? ((v: unknown): unknown => v);
-            out.push({ id, label: field.label, from: render(field.initial), to: render(current) });
+            const change: Change = { id, label: field.label, from: field.initial, to: current };
+            if (field.format) {
+                change.fromText = field.format(field.initial);
+                change.toText = field.format(current);
+            }
+            out.push(change);
         }
         return out;
     }
