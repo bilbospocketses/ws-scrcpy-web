@@ -63,6 +63,14 @@ const autoCheckboxOf = (el: HTMLElement): HTMLInputElement => el.querySelector('
 const intervalInputOf = (el: HTMLElement): HTMLInputElement => el.querySelector('input[type="number"]')!;
 const channelRadioOf = (el: HTMLElement, value: string): HTMLInputElement =>
     el.querySelector(`input[type="radio"][value="${value}"]`)!;
+/** The github owner row — this section's only text input. */
+const ownerInputOf = (el: HTMLElement): HTMLInputElement => el.querySelector('input[type="text"]')!;
+
+/** The first PATCH the spy saw, as [url, init]. */
+function patchCall(fetchSpy: ReturnType<typeof vi.fn>): [string, RequestInit] | undefined {
+    const call = fetchSpy.mock.calls.find(([, init]) => (init as RequestInit | undefined)?.method === 'PATCH');
+    return call ? [String(call[0]), call[1] as RequestInit] : undefined;
+}
 
 /**
  * The live status text — the LABEL of the action row, which doubles as this
@@ -247,6 +255,60 @@ describe('UpdatesTab', () => {
         expect(input.value).toBe('90');
         const stagedIds = store.changes().map((c) => c.id);
         expect(stagedIds.sort()).toEqual(['autoUpdate', 'updateCheckIntervalMinutes']);
+    });
+
+    /**
+     * `githubOwner` is the ONE Updates value still written immediately.
+     * `SettingsBatchApi.STAGEABLE_IDS` is an allowlist of `webPort`, `channel`,
+     * `autoUpdate` and `updateCheckIntervalMinutes`, so a staged `githubOwner`
+     * would not be staged at all — it would be a Save that 400s for the whole
+     * batch.
+     *
+     * Both halves are pinned because the failure mode is SILENT. `store.set` on
+     * an unregistered id is a deliberate no-op, so "tidying" this row into a
+     * stage would make the field stop working with no error anywhere: no
+     * exception, no failed request, no entry in the summary. The PATCH assertion
+     * is the half that catches that conversion; the `changes()` assertion
+     * catches a conversion that registers the field as well.
+     */
+    it('editing the github owner writes immediately and never stages', async () => {
+        const { el, store, fetchSpy } = await mountUpdatesTab(status({ githubOwner: 'bilbospocketses' }));
+
+        const owner = ownerInputOf(el);
+        owner.value = 'someone-else';
+        owner.dispatchEvent(new Event('blur'));
+        await flush();
+
+        const patch = patchCall(fetchSpy);
+        expect(patch).toBeTruthy();
+        expect(patch?.[0]).toBe('/api/updates/config');
+        expect(JSON.parse(String(patch?.[1].body))).toEqual({ githubOwner: 'someone-else' });
+        expect(store.changes().map((c) => c.id)).not.toContain('githubOwner');
+        expect(store.changes()).toEqual([]);
+    });
+
+    it('blurring an unchanged github owner writes nothing', async () => {
+        const { el, fetchSpy } = await mountUpdatesTab(status({ githubOwner: 'bilbospocketses' }));
+
+        ownerInputOf(el).dispatchEvent(new Event('blur'));
+        await flush();
+
+        expect(patched(fetchSpy)).toBe(false);
+    });
+
+    // The only feedback this row has. `Config.validateField('githubOwner')`
+    // rejects an empty string, so without the snap-back an emptied field would
+    // either 400 or sit there looking like it had saved.
+    it('an emptied github owner snaps back to the last known value and writes nothing', async () => {
+        const { el, fetchSpy } = await mountUpdatesTab(status({ githubOwner: 'bilbospocketses' }));
+
+        const owner = ownerInputOf(el);
+        owner.value = '   ';
+        owner.dispatchEvent(new Event('blur'));
+        await flush();
+
+        expect(owner.value).toBe('bilbospocketses');
+        expect(patched(fetchSpy)).toBe(false);
     });
 
     it('typing the original interval back clears the staged change', async () => {
