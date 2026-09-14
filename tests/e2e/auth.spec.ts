@@ -207,7 +207,10 @@ test.describe('auth / opt-in login (smoke §18)', () => {
                 user: { username: 'admin', role: 'admin' },
             });
 
-            const users = settingsSection(settings, 'Users');
+            // Explicitly, not by relying on Users being the first tab: the
+            // count-0 assertions below are role queries, which read zero inside a
+            // closed tab whether the control is absent or merely hidden.
+            const users = await openSettingsTab(settings, 'Users');
             await expect(users).toBeVisible();
             const enable = settingsRow(users, 'login').getByRole('button', { name: 'enable login', exact: true });
             await expect(enable).toBeVisible();
@@ -442,7 +445,26 @@ test.describe('auth / opt-in login (smoke §18)', () => {
         expect(adminRow?.lastLogin ?? 0).toBeGreaterThanOrEqual(t0);
 
         const settings = await openSettings(adminPage);
+        // The tab STRIP is what a user actually sees, and it is the list that
+        // grew: Dependencies contributes no `h3` (it wraps DependencyPanel,
+        // which brings its own <h2>), so the heading list below is the tab list
+        // minus that one. Asserting only the headings would have kept passing
+        // through a whole tab being added.
+        await expect(settings.getByRole('tab')).toHaveText([
+            'Users',
+            'Embedding',
+            'Updates',
+            'Service',
+            'Dependencies',
+            'Server',
+        ]);
         await expect(sectionHeadings(settings)).toHaveText(['Users', 'Embedding', 'Updates', 'Service', 'Server']);
+        // Users is the tab the dialog happens to open on for an admin, and the
+        // three assertions below are about controls that live in it. Opened
+        // explicitly so they stay true if the tab order ever changes — a role
+        // query reads zero inside a closed tab, which would make the count-0
+        // half pass for the wrong reason.
+        await openSettingsTab(settings, 'Users');
         // Rules out the fail-open path: 'disable login' renders only when a
         // SUCCESSFUL me() came back with authEnabled:true.
         await expect(settings.getByRole('button', { name: 'disable login (return to open mode)' })).toBeVisible();
@@ -850,7 +872,12 @@ test.describe('auth / opt-in login (smoke §18)', () => {
             }
 
             const settings = await openSettings(user.page);
+            await expect(settings.getByRole('tab')).toHaveText(['Server']);
             await expect(sectionHeadings(settings)).toHaveText(['Server']);
+            // The one tab this role gets, opened explicitly: every assertion
+            // below is a role query, and inside a closed tab those read zero
+            // (absent) or miss (present) regardless of the truth.
+            await openSettingsTab(settings, 'Server');
             await expect(settings.getByRole('button', { name: 'manage users', exact: true })).toHaveCount(0);
             await expect(settings.getByRole('button', { name: 'disable login (return to open mode)' })).toHaveCount(0);
             await expect(settings.getByText('web port', { exact: true })).toHaveCount(0);
@@ -863,6 +890,14 @@ test.describe('auth / opt-in login (smoke §18)', () => {
             // meaningful only if the same selectors find things for an admin.
             await gotoHome(adminPage);
             const adminSettings = await openSettings(adminPage);
+            await expect(adminSettings.getByRole('tab')).toHaveText([
+                'Users',
+                'Embedding',
+                'Updates',
+                'Service',
+                'Dependencies',
+                'Server',
+            ]);
             await expect(sectionHeadings(adminSettings)).toHaveText([
                 'Users',
                 'Embedding',
@@ -870,6 +905,9 @@ test.describe('auth / opt-in login (smoke §18)', () => {
                 'Service',
                 'Server',
             ]);
+            // Same explicitness as the user side above: 'manage users' lives in
+            // the Users tab, so the contrast is only a contrast with it open.
+            await openSettingsTab(adminSettings, 'Users');
             await expect(adminSettings.getByRole('button', { name: 'manage users', exact: true })).toHaveCount(1);
             await closeTopModal(adminPage, adminSettings);
         } finally {
@@ -1201,7 +1239,9 @@ test.describe('auth / opt-in login (smoke §18)', () => {
             await gotoHome(adminPage);
             await expectAppShell(adminPage);
             const settings = await openSettings(adminPage);
-            const users = settingsSection(settings, 'Users');
+            // Opened explicitly rather than trusting Users to be first: the
+            // count-0 on 'enable login' below is a role query.
+            const users = await openSettingsTab(settings, 'Users');
             const disableBtn = users.getByRole('button', { name: 'disable login (return to open mode)' });
             await expect(disableBtn).toBeVisible();
             await expect(users.getByRole('button', { name: 'enable login', exact: true })).toHaveCount(0);
@@ -1258,7 +1298,8 @@ test.describe('auth / opt-in login (smoke §18)', () => {
 
             // UI after, admin and anonymous alike.
             const after = await openSettings(adminPage);
-            const usersAfter = settingsSection(after, 'Users');
+            // Explicit for the same reason as every other Users block here.
+            const usersAfter = await openSettingsTab(after, 'Users');
             await expect(usersAfter.getByRole('button', { name: 'enable login', exact: true })).toBeVisible();
             await expect(usersAfter.getByRole('button', { name: 'disable login (return to open mode)' })).toHaveCount(
                 0,

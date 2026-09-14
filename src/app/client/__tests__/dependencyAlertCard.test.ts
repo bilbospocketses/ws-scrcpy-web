@@ -80,6 +80,17 @@ describe('DependencyAlertCard rendering', () => {
         card.destroy();
     });
 
+    it('hides on a refused read, not merely on a malformed one', async () => {
+        // The body is deliberately a WELL-FORMED array: a 403 whose body throws
+        // in `.filter` would hide the card without the status ever being read,
+        // so a realistic `{ error: 'forbidden' }` body could not tell a status
+        // check from its absence. This one can.
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 403, json: async () => [dep()] }));
+        const card = await DependencyAlertCard.create({ adminScope: 'local', callerIsLocal: true }, 'admin');
+        expect(card.getElement().hidden).toBe(true);
+        card.destroy();
+    });
+
     it('hides rather than rendering an error when a later read fails', async () => {
         // Driven from SHOWING into the failure on purpose. Asserting `hidden`
         // on a freshly created card proves nothing — it starts hidden, so that
@@ -120,6 +131,13 @@ describe('DependencyAlertCard link', () => {
     /** Flush one macrotask tick — the modal fills its body behind `await me()`. */
     const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
+    // Direct prototype assignments, which `vi.restoreAllMocks()` does not undo
+    // — jsdom implements neither method, so they have to be installed rather
+    // than spied, and put back by hand or every later file in the worker
+    // inherits them.
+    const realShowModal = HTMLDialogElement.prototype.showModal;
+    const realClose = HTMLDialogElement.prototype.close;
+
     beforeEach(() => {
         // The card's own polling is irrelevant here and the settings dialog
         // needs real timers to settle its async body fill.
@@ -145,6 +163,8 @@ describe('DependencyAlertCard link', () => {
     });
 
     afterEach(() => {
+        HTMLDialogElement.prototype.showModal = realShowModal;
+        HTMLDialogElement.prototype.close = realClose;
         document.body.replaceChildren();
         vi.restoreAllMocks();
     });
@@ -169,5 +189,17 @@ describe('DependencyAlertCard link', () => {
         // tab's body, which is the failure the user would actually see.
         const shown = [...document.querySelectorAll<HTMLElement>('.settings-tab-panel > *')].filter((el) => !el.hidden);
         expect(shown.map((el) => el.dataset['settingsTab'])).toEqual(['dependencies']);
+
+        // Close it rather than leaving a real dialog open: the tab it just
+        // opened mounts a DependencyPanel with its own 15 s interval, and only
+        // the close path runs `onBeforeClose` → `destroyDependenciesTab`. The ×
+        // is the LAST `.modal-close` — the theme toggle shares that class and
+        // sits before it.
+        const dialog = document.querySelector('dialog.settings-modal');
+        const closeBtn = [...(dialog?.querySelectorAll<HTMLButtonElement>('.modal-close') ?? [])].at(-1);
+        closeBtn?.click();
+        await flush();
+        await flush();
+        expect(document.querySelector('dialog.settings-modal[open]')).toBeNull();
     });
 });

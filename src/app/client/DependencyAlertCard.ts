@@ -109,6 +109,15 @@ export class DependencyAlertCard {
     private async refresh(): Promise<void> {
         try {
             const res = await fetch('/api/dependencies');
+            // `fetch` resolves normally for a 403 — the same trap Task 10 fixed in
+            // `runSave`. Without this the card hid a refused read only because
+            // `.filter` threw on the error object below, which is correctness by
+            // accident: a server that answered 403 with a JSON array would render
+            // an alert out of it.
+            if (!res.ok) {
+                this.container.hidden = true;
+                return;
+            }
             const deps: DependencyInfo[] = await res.json();
             this.render(deps.filter((d) => d.status === DependencyStatus.UpdateAvailable));
         } catch {

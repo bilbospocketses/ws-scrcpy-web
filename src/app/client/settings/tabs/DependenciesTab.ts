@@ -20,6 +20,18 @@ const panels = new WeakMap<HTMLElement, DependencyPanel>();
  * otherwise acquire a 15 s interval with nothing left to stop it.
  */
 const torndown = new WeakSet<HTMLElement>();
+/**
+ * Tabs whose panel is being created right now. `panels` is only set once
+ * `DependencyPanel.create()` resolves, so two calls arriving before that both
+ * get past a `panels`-only guard, build two panels, and leave the first one's
+ * 15 s interval running with nothing holding a reference to stop it — the very
+ * §36 leak this tab's teardown exists to prevent. Set synchronously, before the
+ * first await, which is what makes it a guard at all. Never cleared:
+ * `DependencyPanel.create()` cannot reject (its `load()` swallows its own
+ * errors), so there is no failure path to reopen it for, and the only other
+ * exit is teardown, which is terminal.
+ */
+const starting = new WeakSet<HTMLElement>();
 
 /**
  * The Dependencies tab (admin-only) — the home page's dependency panel, moved
@@ -60,7 +72,8 @@ export function buildDependenciesTab(_ctx: TabContext, _store: StagedSettingsSto
     section.appendChild(body);
 
     async function runRefresh(): Promise<void> {
-        if (torndown.has(section) || panels.has(section)) return;
+        if (torndown.has(section) || panels.has(section) || starting.has(section)) return;
+        starting.add(section);
         const panel = await DependencyPanel.create();
         if (torndown.has(section)) {
             // Closed while the first read was in flight. `create()` has already
@@ -70,7 +83,24 @@ export function buildDependenciesTab(_ctx: TabContext, _store: StagedSettingsSto
             return;
         }
         panels.set(section, panel);
-        body.replaceChildren(panel.getElement());
+        const el = panel.getElement();
+        // `.settings-section-body` is a two-column grid whose labels track is a
+        // FIXED 20rem (modal.css). A child that does not span both columns lands
+        // in that track, so a five-column dependency table renders ~280px wide
+        // with every description wrapped a word per line. Same idiom the
+        // placeholder above already uses. Measured, not guessed: without this the
+        // panel's right edge misses its parent's by 512px in Chromium.
+        el.style.gridColumn = '1 / -1';
+        // The panel keeps `class="home-section"` because `home.css` also styles
+        // `.home-section h2`, which is the panel's OWN heading — dropping the
+        // class would leave that <h2> at the UA default size inside the dialog.
+        // Nothing in dependencies.css keys off the class, so only the three box
+        // properties meant for a home-page section are neutralised here: they
+        // are a page-level card's frame, and the dialog draws its own.
+        el.style.padding = '0';
+        el.style.border = 'none';
+        el.style.marginBottom = '0';
+        body.replaceChildren(el);
     }
 
     refreshers.set(section, runRefresh);

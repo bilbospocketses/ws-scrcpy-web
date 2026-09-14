@@ -81,6 +81,25 @@ describe('Dependencies tab', () => {
         expect(fetch).not.toHaveBeenCalled();
     });
 
+    it('builds one panel, not two, when the refresh is driven twice before it resolves', async () => {
+        const el = buildDependenciesTab(ctx(), new StagedSettingsStore());
+        await Promise.all([refreshDependencies(el), refreshDependencies(el)]);
+
+        expect(el.querySelectorAll('#dependency-panel')).toHaveLength(1);
+        expect(fetch).toHaveBeenCalledTimes(1);
+
+        // The half that matters: a second panel would poll on its own 15 s
+        // interval that nothing holds a reference to, so teardown could not stop
+        // it (§36). Proven by tearing down and finding the reads have stopped —
+        // with the count above as the positive control that one really started.
+        await vi.advanceTimersByTimeAsync(15_000);
+        expect(fetch).toHaveBeenCalledTimes(2);
+        destroyDependenciesTab(el);
+        vi.mocked(fetch).mockClear();
+        await vi.advanceTimersByTimeAsync(120_000);
+        expect(fetch).not.toHaveBeenCalled();
+    });
+
     it('contributes no staged fields', () => {
         const store = new StagedSettingsStore();
         buildDependenciesTab(ctx(), store);

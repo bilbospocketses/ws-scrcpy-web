@@ -405,10 +405,14 @@ export async function openSettings(page: Page): Promise<Locator> {
     return settings;
 }
 
-export function settingsSection(
-    settings: Locator,
-    title: 'Users' | 'Embedding' | 'Updates' | 'Service' | 'Server',
-): Locator {
+export type SettingsTabTitle = 'Users' | 'Embedding' | 'Updates' | 'Service' | 'Dependencies' | 'Server';
+
+export function settingsSection(settings: Locator, title: SettingsTabTitle): Locator {
+    // Dependencies is the one tab with no `h3` of its own: it wraps
+    // DependencyPanel, which brings its own `<h2>Dependencies</h2>`, so a second
+    // heading directly above it would be the third copy of the word. It is
+    // resolved by the data hook the tab sets instead.
+    if (title === 'Dependencies') return settings.locator('section[data-settings-tab="dependencies"]');
     return settings.locator('section.settings-section').filter({
         has: settings
             .page()
@@ -434,13 +438,14 @@ export function settingsSection(
  * `settingsSection()` on its own is still correct for a pure presence check
  * across every tab at once: it is CSS, and CSS matches hidden nodes.
  *
- * Tab labels and section headings are the same five strings by construction
- * (see `SettingsModal.fillBody`), so one argument names both.
+ * One argument names both the tab and its section, because the labels and the
+ * headings are the same strings by construction (see `SettingsModal.fillBody`)
+ * — with ONE exception: Dependencies is a tab with no heading of its own, since
+ * it wraps DependencyPanel and that brings its own `<h2>`. `settingsSection()`
+ * resolves that one by its `data-settings-tab` hook instead, so the argument
+ * still names both here.
  */
-export async function openSettingsTab(
-    settings: Locator,
-    title: 'Users' | 'Embedding' | 'Updates' | 'Service' | 'Server',
-): Promise<Locator> {
+export async function openSettingsTab(settings: Locator, title: SettingsTabTitle): Promise<Locator> {
     await settings.getByRole('tab', { name: title, exact: true }).click();
     const section = settingsSection(settings, title);
     await expect(section).toBeVisible();
@@ -454,7 +459,13 @@ export function settingsRow(section: Locator, label: string): Locator {
     });
 }
 
-/** The subject of the exact ordered-list assertions (five headings for an admin, ['Server'] for a user). */
+/**
+ * The subject of the exact ordered-list assertions (five headings for an admin,
+ * ['Server'] for a user). NOT the same list as the tab strip: Dependencies is a
+ * tab that contributes no heading, so a spec that means "every tab" must assert
+ * on `getByRole('tab')` instead — asserting only on headings is how a whole tab
+ * can be added without a single assertion noticing.
+ */
 export function sectionHeadings(settings: Locator): Locator {
     return settings.locator('section.settings-section > h3.settings-section-heading');
 }

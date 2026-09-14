@@ -10,6 +10,7 @@ import {
     mintToken,
     newVisitorContext,
     openSettings,
+    openSettingsTab,
 } from './support/auth';
 import { gotoHome } from './support/consent';
 import { composeDown, composeUpFresh, dockerExecRoot, dockerLogs } from './support/dockerStack';
@@ -84,11 +85,33 @@ test.describe('dependencies (smoke §9.4, §9.5, §1.9)', () => {
             await expect(visitor.page.locator('#dependency-panel')).toHaveCount(0);
 
             const settings = await openSettings(visitor.page);
-            await settings.getByRole('tab', { name: 'Dependencies', exact: true }).click();
-            const panel = settings.locator('#dependency-panel');
+            const section = await openSettingsTab(settings, 'Dependencies');
+            const panel = section.locator('#dependency-panel');
             // Auto-waits: the tab holds its read until the /api/config probe
             // answers, so the panel mounts a beat after the tab is shown.
             await expect(panel).toBeVisible();
+
+            // It spans the whole tab, not the labels column. The section body is
+            // a two-column grid with a FIXED 20rem labels track (modal.css), so a
+            // child that does not span both columns renders a five-column table
+            // crushed into ~320px. Nothing else in either suite can see that:
+            // jsdom has no layout engine and toBeVisible() is true at any width.
+            //
+            // Geometry rather than toHaveCSS('grid-column'), deliberately: the
+            // edges stay true however the span is achieved, so moving the fix
+            // into a stylesheet later does not turn this red, while the 20rem
+            // track coming back by ANY route does. toBeVisible() has resolved
+            // above, so neither box can be null.
+            const panelBox = await panel.boundingBox();
+            const bodyBox = await section.locator('.settings-section-body').boundingBox();
+            expect(panelBox, 'panel bounding box').not.toBeNull();
+            expect(bodyBox, 'section body bounding box').not.toBeNull();
+            const left = Math.abs((panelBox?.x ?? 0) - (bodyBox?.x ?? 0));
+            const right = Math.abs(
+                (panelBox?.x ?? 0) + (panelBox?.width ?? 0) - ((bodyBox?.x ?? 0) + (bodyBox?.width ?? 0)),
+            );
+            expect(left, `panel left edge vs section body (panel ${panelBox?.width}px wide)`).toBeLessThanOrEqual(2);
+            expect(right, `panel right edge vs section body (panel ${panelBox?.width}px wide)`).toBeLessThanOrEqual(2);
             await expect(panel.locator('h2')).toHaveText('Dependencies');
             await expect(panel.locator('thead th')).toHaveText([
                 'Dependency',
@@ -189,6 +212,8 @@ test.describe('dependencies (smoke §9.4, §9.5, §1.9)', () => {
             // server and DOES get the tab and the rows, so neither half can
             // pass by accident.
             const userSettings = await openSettings(user.page);
+            // Hand-rolled rather than openSettingsTab(): the point is that the
+            // tab is NOT there to open.
             await expect(userSettings.getByRole('tab', { name: 'Dependencies', exact: true })).toHaveCount(0);
             await expect(userSettings.locator('#dependency-panel')).toHaveCount(0);
             // And it is absent rather than erroring — no failure text anywhere
@@ -207,9 +232,9 @@ test.describe('dependencies (smoke §9.4, §9.5, §1.9)', () => {
             expect((await admin.context.request.get('/api/dependencies')).status()).toBe(200);
             await admin.page.goto('/');
             const adminSettings = await openSettings(admin.page);
-            await adminSettings.getByRole('tab', { name: 'Dependencies', exact: true }).click();
-            await expect(adminSettings.locator('#dependency-panel tbody tr.dep-row').first()).toBeVisible();
-            await expect(adminSettings.locator('#dependency-panel td.dep-error-msg')).toHaveCount(0);
+            const adminSection = await openSettingsTab(adminSettings, 'Dependencies');
+            await expect(adminSection.locator('#dependency-panel tbody tr.dep-row').first()).toBeVisible();
+            await expect(adminSection.locator('#dependency-panel td.dep-error-msg')).toHaveCount(0);
         } finally {
             if (userCtx) await userCtx.close();
             if (adminCtx) await adminCtx.close();
