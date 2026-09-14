@@ -1,8 +1,12 @@
 // @vitest-environment jsdom
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { StagedSettingsStore } from '../StagedSettingsStore';
-import { buildServerTab } from '../tabs/ServerTab';
+import { buildServerTab, refreshServer } from '../tabs/ServerTab';
+
+afterEach(() => {
+    vi.unstubAllGlobals();
+});
 
 const ctx = { role: 'admin' as const, authEnabled: false, reload: () => undefined };
 
@@ -72,6 +76,37 @@ describe('ServerTab', () => {
         expect(webPortStatusOf(el).textContent).toBe('port must be between 1024 and 65535');
     });
 
+    // '8010.5' is the case `parseInt` got wrong: it truncated to 8010 and staged
+    // a port the user never typed. 'not-a-port' never reaches the guard as typed
+    // — a `type="number"` input sanitises junk to '' (verified in jsdom), so it
+    // arrives as the emptied case and is refused by the range arm, not the
+    // integer arm. Pinned anyway: what matters is that junk cannot stage.
+    it.each([
+        ['1023', 'below the floor'],
+        ['65536', 'above the ceiling'],
+        ['8010.5', 'not an integer'],
+        ['not-a-port', 'sanitised to empty by the number input'],
+    ])('refuses to stage %s (%s)', (value) => {
+        const store = new StagedSettingsStore();
+        const el = buildServerTab(ctx, store);
+        const input = el.querySelector('input[type="number"]') as HTMLInputElement;
+        input.value = value;
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+
+        expect(store.changes()).toEqual([]);
+        expect(webPortStatusOf(el).textContent).toBe('port must be between 1024 and 65535');
+    });
+
+    it.each(['1024', '65535'])('stages %s — the boundaries are inclusive, as the server accepts them', (value) => {
+        const store = new StagedSettingsStore();
+        const el = buildServerTab(ctx, store);
+        const input = el.querySelector('input[type="number"]') as HTMLInputElement;
+        input.value = value;
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+
+        expect(store.changes().map((c) => c.to)).toEqual([Number(value)]);
+    });
+
     it('clears the range message once a valid port replaces the bad one', () => {
         const store = new StagedSettingsStore();
         const el = buildServerTab(ctx, store);
@@ -85,5 +120,31 @@ describe('ServerTab', () => {
         const status = webPortStatusOf(el);
         expect(status.textContent).toBe('');
         expect(status.hidden).toBe(true);
+    });
+
+    // The port is registered with a `null` baseline at build time, because no
+    // tab can know the real one synchronously. `refreshServer` re-REGISTERS it
+    // with the value /api/config reports, which is what makes that value the
+    // baseline. If that ever became a `set`, an untouched dialog would sit
+    // permanently dirty at `null → 8000` and every batch Save would carry a
+    // webPort change — restarting the server for a setting nobody edited.
+    it('the /api/config read baselines the port rather than staging it', async () => {
+        vi.stubGlobal(
+            'fetch',
+            vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ config: { webPort: 8000 } }) }),
+        );
+        const store = new StagedSettingsStore();
+        const el = buildServerTab(ctx, store);
+
+        await refreshServer(el);
+
+        const input = el.querySelector('input[type="number"]') as HTMLInputElement;
+        expect(input.value).toBe('8000');
+        expect(store.changes()).toEqual([]);
+
+        // And the new baseline is what a later edit is measured against.
+        input.value = '8010';
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+        expect(store.changes()).toEqual([{ id: 'webPort', label: 'Web port', from: 8000, to: 8010 }]);
     });
 });

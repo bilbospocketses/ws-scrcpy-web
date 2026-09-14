@@ -580,11 +580,15 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
             // enforces them outside a validating form submit, so an out-of-range
             // or emptied field would otherwise stage a value that
             // `Config.validateField` rejects by THROWING — which the batch
-            // endpoint answers as a 400 the user never asked for. Parsed exactly
-            // as `onSavePort` did, so an emptied field (NaN) is refused here
-            // rather than reaching the server as `Number('')` → 0.
-            const port = Number.parseInt(input.value.trim(), 10);
-            if (!Number.isFinite(port) || port < 1024 || port > 65535) {
+            // endpoint answers as a 400 the user never asked for.
+            //
+            // `Number` + `isInteger`, NOT `parseInt`, so the test here is the
+            // same one `validateField` applies. `parseInt` TRUNCATES: '8010.5'
+            // would stage 8010 while the field still read 8010.5, silently
+            // saving a port the user never typed. `Number` gives NaN for junk
+            // and 0 for an emptied field, and both fail below.
+            const port = Number(input.value);
+            if (!Number.isInteger(port) || port < 1024 || port > 65535) {
                 // Refuse the stage: whatever was last staged stands, and the
                 // message stays up until a valid port replaces it.
                 setServerStatus('port must be between 1024 and 65535', true);

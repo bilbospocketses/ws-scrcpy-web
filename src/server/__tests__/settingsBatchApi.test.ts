@@ -214,6 +214,12 @@ describe('POST /api/settings/batch — webPort restart', () => {
         setup();
         const schedule = vi.fn();
         const exit = vi.fn();
+        // Spying on markCompleted is what pins the "AFTER updateAppConfig" half
+        // of the ordering. The final row status alone cannot: `setStatus` is an
+        // unconditional UPDATE (PendingSettingsStore), so a markCompleted call
+        // moved back above the try would be overwritten by the markFailed that
+        // follows, and the row would still read 'failed' below.
+        const markCompleted = vi.spyOn(Config.getInstance().db.pendingSettings, 'markCompleted');
         const r = makeReqRes(
             'POST',
             '/api/settings/batch',
@@ -235,6 +241,9 @@ describe('POST /api/settings/batch — webPort restart', () => {
         expect(schedule).not.toHaveBeenCalled();
         expect(exit).not.toHaveBeenCalled();
         expect(Config.getInstance().getAppConfig().webPort).toBe(8000);
+
+        // Never marked completed at all — not "marked completed then corrected".
+        expect(markCompleted).not.toHaveBeenCalled();
 
         // The row landed in 'failed'. A 'completed' row here would be an audit
         // trail asserting a write that did not happen.

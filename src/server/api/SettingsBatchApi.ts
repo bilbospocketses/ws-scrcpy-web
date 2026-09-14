@@ -118,9 +118,15 @@ export class SettingsBatchApi {
                 applied.push(change.id);
                 // The config write has succeeded; mark completed BEFORE the step
                 // that ends the process — the scheduled restart below. Past that
-                // point we may never get another instruction in, and a stale
-                // 'completed' is inert whereas a stale 'pending' would be
-                // re-applied at the next boot.
+                // point we may never get another instruction in, and the row
+                // would still say 'pending' when the process dies. Boot does not
+                // re-apply such a row (`reconcilePendingSettings` marks it
+                // 'abandoned' and deliberately never replays it), so the harm is
+                // not a double-apply — it is an audit trail that says a change
+                // was ABANDONED when it had in fact already been written to
+                // config.json, which is the record someone reads to explain why
+                // the port moved. A 'completed' row written here is inert by
+                // comparison: it describes a write that did happen.
                 cfg.db.pendingSettings.markCompleted(batchId);
                 if (result.restartRequired) {
                     scheduleRestartForPortChange(cfg.restartMarkerPath, log, this.seams);
