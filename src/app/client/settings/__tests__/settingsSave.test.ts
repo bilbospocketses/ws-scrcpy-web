@@ -259,8 +259,66 @@ describe('performStagedSave', () => {
 
         // Both halves: which change failed, and why. A message carrying only one
         // of them leaves the user unable to act on it.
-        expect(action.kind === 'failed' && action.message).toContain('webPort');
+        //
+        // The LABEL, as the summary showed it — not the wire id. The user just
+        // confirmed "Web port: 8000 → 80"; answering with `webPort` makes them
+        // translate an internal identifier back to the row they touched.
+        expect(action.kind === 'failed' && action.message).toContain('Web port');
+        expect(action.kind === 'failed' && action.message).not.toContain('webPort');
         expect(action.kind === 'failed' && action.message).toContain('port 80 is in use');
+    });
+
+    it('falls back to the id when the failure names something not in this batch', async () => {
+        // Nothing guarantees the server names an id the client staged. Better a
+        // raw id than "couldn't save undefined".
+        const deps = mockDeps({
+            save: vi.fn(async () => ({
+                ok: false,
+                applied: [],
+                failed: { id: 'somethingElse', error: 'nope' },
+            })),
+        });
+
+        const action = await performStagedSave(stagedStore(), deps);
+
+        expect(action.kind === 'failed' && action.message).toContain('somethingElse');
+    });
+
+    it('re-baselines the store on success, so applied changes stop counting as staged', async () => {
+        // Finding 3: on the restart path the dialog stays up for the countdown.
+        // A store still reporting these as staged makes that dialog prompt
+        // "unsaved changes" about a batch the server has already applied.
+        const store = stagedStore();
+        const deps = mockDeps({
+            save: vi.fn(async () => ({
+                ok: true,
+                applied: ['webPort'],
+                restartRequired: true,
+                redirectPort: 9000,
+            })),
+        });
+
+        await performStagedSave(store, deps);
+
+        expect(store.changes()).toEqual([]);
+        expect(store.isDirty()).toBe(false);
+        // Re-baselined to the SAVED value, not rolled back to the old one —
+        // `reset()` would have put 8000 back and told the user their port change
+        // had evaporated.
+        expect(store.get('webPort')).toBe(80);
+    });
+
+    it('does NOT re-baseline when the batch was refused', async () => {
+        // The other side of the same coin, and the one that must never move.
+        const store = stagedStore();
+        const deps = mockDeps({
+            save: vi.fn(async () => ({ ok: false, applied: [], failed: { id: 'webPort', error: 'nope' } })),
+        });
+
+        await performStagedSave(store, deps);
+
+        expect(store.isDirty()).toBe(true);
+        expect(store.get('webPort')).toBe(80);
     });
 
     it('redirects to the SAME origin on the new port when the server restarts', async () => {
@@ -587,39 +645,53 @@ describe('the restart redirect actually navigates', () => {
     });
 
     /** /api/config, then a batch that restarts the server on port 9000. */
-    function stubFetchRestartingOn(port: number): void {
-        vi.stubGlobal(
-            'fetch',
-            vi.fn((url: string) => {
-                if (typeof url === 'string' && url.startsWith('/api/settings/batch')) {
-                    return Promise.resolve({
-                        ok: true,
-                        status: 200,
-                        json: () =>
-                            Promise.resolve({
-                                ok: true,
-                                applied: ['webPort'],
-                                restartRequired: true,
-                                redirectPort: port,
-                            }),
-                    });
-                }
+    function stubFetchRestartingOn(port: number): { batchCount: () => number } {
+        const f = vi.fn((url: string) => {
+            if (typeof url === 'string' && url.startsWith('/api/settings/batch')) {
                 return Promise.resolve({
                     ok: true,
                     status: 200,
                     json: () =>
                         Promise.resolve({
-                            config: { webPort: 8000 },
-                            runtime: {
-                                firstRunComplete: true,
-                                portWasAutoShifted: false,
-                                webPort: 8000,
-                                docker: false,
-                            },
+                            ok: true,
+                            applied: ['webPort'],
+                            restartRequired: true,
+                            redirectPort: port,
                         }),
                 });
-            }),
-        );
+            }
+            return Promise.resolve({
+                ok: true,
+                status: 200,
+                json: () =>
+                    Promise.resolve({
+                        config: { webPort: 8000 },
+                        runtime: {
+                            firstRunComplete: true,
+                            portWasAutoShifted: false,
+                            webPort: 8000,
+                            docker: false,
+                        },
+                    }),
+            });
+        });
+        vi.stubGlobal('fetch', f);
+        return {
+            batchCount: () => f.mock.calls.filter((c) => String(c[0]).startsWith('/api/settings/batch')).length,
+        };
+    }
+
+    /** Stage a new web port and click Save. */
+    async function saveWebPort(value: string): Promise<void> {
+        const input = document.querySelector<HTMLInputElement>('dialog.settings-modal input[type="number"]');
+        expect(input, 'the web port input').not.toBeNull();
+        if (input) {
+            input.value = value;
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        await settle();
+        document.querySelector<HTMLButtonElement>('dialog.settings-modal .modal-footer button.settings-save')?.click();
+        await settle();
     }
 
     it('waits out the delay, then navigates to the port the server named', async () => {
@@ -660,6 +732,66 @@ describe('the restart redirect actually navigates', () => {
         const url = new URL(String(navigate.mock.calls[0]?.[0]));
         expect(url.port).toBe('9000');
         expect(url.hostname, 'the browser stays on its own host').toBe(window.location.hostname);
+    });
+
+    it('does not claim unsaved changes if the user closes during the countdown', async () => {
+        // Finding 3. The dialog is up for four seconds with × and Escape live,
+        // and by then the batch has been APPLIED — prompting "you have unsaved
+        // changes" about it is simply false, and offering to save it again
+        // offers to re-apply a port change to a restarting server.
+        vi.spyOn(liveSaveDeps, 'navigate').mockImplementation(() => undefined);
+        vi.spyOn(SettingsSummaryModal, 'confirm').mockResolvedValue(true);
+        const prompt = vi.spyOn(SettingsDirtyCloseModal, 'choose').mockResolvedValue('cancel');
+        stubFetchRestartingOn(9000);
+
+        new SettingsModal();
+        await settle();
+        const input = document.querySelector<HTMLInputElement>('dialog.settings-modal input[type="number"]');
+        if (input) {
+            input.value = '9000';
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        await settle();
+        document.querySelector<HTMLButtonElement>('dialog.settings-modal .modal-footer button.settings-save')?.click();
+        await settle();
+
+        // Mid-countdown, the user gives up waiting and hits the ×.
+        await vi.advanceTimersByTimeAsync(1000);
+        [...document.querySelectorAll<HTMLButtonElement>('dialog.settings-modal .modal-close')]
+            .find((b) => b.textContent === '×')
+            ?.click();
+        await settle();
+
+        expect(prompt, 'the unsaved-changes prompt').not.toHaveBeenCalled();
+    });
+
+    it('will not send another batch if the user edits a field during the countdown', async () => {
+        // The dialog is still interactive for those four seconds, and the server
+        // is on its way down. An edit here re-dirties the store, so nothing but
+        // the in-flight/leaving guard stops Save lighting up and firing a second
+        // webPort apply at a process that is mid-restart.
+        vi.spyOn(liveSaveDeps, 'navigate').mockImplementation(() => undefined);
+        vi.spyOn(SettingsSummaryModal, 'confirm').mockResolvedValue(true);
+        const { batchCount } = stubFetchRestartingOn(9000);
+
+        new SettingsModal();
+        await settle();
+        await saveWebPort('9000');
+        expect(batchCount(), 'the port change went out').toBe(1);
+
+        await vi.advanceTimersByTimeAsync(1000);
+        const input = document.querySelector<HTMLInputElement>('dialog.settings-modal input[type="number"]');
+        if (input) {
+            input.value = '9100';
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        await settle();
+
+        const btn = document.querySelector<HTMLButtonElement>(
+            'dialog.settings-modal .modal-footer button.settings-save',
+        );
+        expect(btn?.disabled, 'Save during the countdown').toBe(true);
+        expect(batchCount(), 'after editing during the countdown').toBe(1);
     });
 });
 
@@ -787,6 +919,151 @@ describe('the dialog-level Save button', () => {
         // Refusing the summary returns to the dialog with the change still
         // staged — so Save is live again, not stuck disabled.
         expect(saveButton()?.disabled).toBe(false);
+    });
+
+    /**
+     * A fetch whose /api/settings/batch never settles, so the test can act
+     * while the batch is genuinely in flight.
+     */
+    function stubFetchWithHangingBatch(): { fetch: ReturnType<typeof vi.fn>; batchCount: () => number } {
+        const f = vi.fn((url: string) => {
+            if (typeof url === 'string' && url.startsWith('/api/settings/batch')) {
+                return new Promise(() => undefined); // never settles
+            }
+            return Promise.resolve({
+                ok: true,
+                json: () =>
+                    Promise.resolve({
+                        config: { webPort: 8000 },
+                        runtime: { firstRunComplete: true, portWasAutoShifted: false, webPort: 8000, docker: false },
+                    }),
+            });
+        });
+        vi.stubGlobal('fetch', f);
+        return {
+            fetch: f as unknown as ReturnType<typeof vi.fn>,
+            batchCount: () =>
+                (f as unknown as ReturnType<typeof vi.fn>).mock.calls.filter((c: unknown[]) =>
+                    String(c[0]).startsWith('/api/settings/batch'),
+                ).length,
+        };
+    }
+
+    it('cannot send a second batch while the first is still in flight', async () => {
+        // The store has no idea a fetch is outstanding, and it is RIGHT not to:
+        // editing a field mid-request genuinely does make the dialog dirty
+        // again. So the dirtiness signal re-enables Save from underneath any
+        // guard that lives only at the click site, and the second batch races
+        // the first — a second webPort apply against a server that may already
+        // be restarting.
+        const { batchCount } = stubFetchWithHangingBatch();
+        vi.spyOn(SettingsSummaryModal, 'confirm').mockResolvedValue(true);
+        new SettingsModal();
+        await flush();
+
+        stageWebPort('9000');
+        await flush();
+        saveButton()?.click();
+        await flush();
+        expect(batchCount(), 'the first batch went out').toBe(1);
+
+        // Now dirty the dialog again while that batch hangs.
+        stageWebPort('9100');
+        await flush();
+
+        expect(saveButton()?.disabled, 'Save while a batch is in flight').toBe(true);
+        expect(batchCount(), 'after editing mid-flight').toBe(1);
+
+        // And the guard is real, not just a disabled attribute: force the button
+        // live and click it. A `disabled` that is the ONLY defence would let
+        // this through.
+        const btn = saveButton();
+        if (btn) btn.disabled = false;
+        btn?.click();
+        await flush();
+
+        expect(batchCount(), 'after clicking a force-enabled Save').toBe(1);
+    });
+
+    it('drops a dismissal that arrives while a batch is in flight', async () => {
+        // The close path reaches the same performStagedSave via its `save`
+        // choice, so guarding only the button leaves this door open.
+        const { batchCount } = stubFetchWithHangingBatch();
+        vi.spyOn(SettingsSummaryModal, 'confirm').mockResolvedValue(true);
+        const prompt = vi.spyOn(SettingsDirtyCloseModal, 'choose').mockResolvedValue('save');
+        new SettingsModal();
+        await flush();
+
+        stageWebPort('9000');
+        await flush();
+        saveButton()?.click();
+        await flush();
+        expect(batchCount()).toBe(1);
+
+        [...document.querySelectorAll<HTMLButtonElement>('dialog.settings-modal .modal-close')]
+            .find((b) => b.textContent === '×')
+            ?.click();
+        await flush();
+
+        expect(prompt, 'no prompt while the save it would ask about is outstanding').not.toHaveBeenCalled();
+        expect(batchCount()).toBe(1);
+        expect(document.querySelector('dialog.settings-modal')?.hasAttribute('open')).toBe(true);
+    });
+
+    it('a refused batch leaves the dialog open, the change staged and Save usable', async () => {
+        // Finding 2: requirement 2's hazard was a TAB REFRESHER, which only this
+        // class can call — so the pin has to be here, not on performStagedSave.
+        // A refreshServer() added to the failure branch re-registers webPort
+        // from /api/config and silently discards the staged edit; every
+        // assertion below is chosen to notice that.
+        const bodies: unknown[] = [];
+        const f = vi.fn((url: string, init?: RequestInit) => {
+            if (typeof url === 'string' && url.startsWith('/api/settings/batch')) {
+                bodies.push(JSON.parse(String(init?.body)));
+                return Promise.resolve({
+                    ok: false,
+                    status: 400,
+                    json: () =>
+                        Promise.resolve({
+                            ok: false,
+                            applied: [],
+                            failed: { id: 'webPort', error: 'port 9000 is in use' },
+                        }),
+                });
+            }
+            return Promise.resolve({
+                ok: true,
+                json: () =>
+                    Promise.resolve({
+                        config: { webPort: 8000 },
+                        runtime: { firstRunComplete: true, portWasAutoShifted: false, webPort: 8000, docker: false },
+                    }),
+            });
+        });
+        vi.stubGlobal('fetch', f);
+        vi.spyOn(SettingsSummaryModal, 'confirm').mockResolvedValue(true);
+        new SettingsModal();
+        await flush();
+
+        stageWebPort('9000');
+        await flush();
+        saveButton()?.click();
+        await flush();
+
+        expect(
+            document.querySelector('dialog.settings-modal .settings-save-status')?.textContent,
+            'the refusal, named and explained',
+        ).toBe("couldn't save Web port: port 9000 is in use");
+        expect(document.querySelector('dialog.settings-modal')?.hasAttribute('open'), 'the dialog').toBe(true);
+        expect(saveButton()?.disabled, 'Save after a refusal').toBe(false);
+
+        // The staged change survived: sending again sends the SAME change.
+        // This is what a refresh on the failure path would destroy.
+        saveButton()?.click();
+        await flush();
+        expect(bodies).toHaveLength(2);
+        expect(bodies[1]).toEqual(bodies[0]);
+        expect(bodies[1]).toMatchObject({ changes: [{ id: 'webPort', from: 8000, to: 9000 }] });
     });
 });
 

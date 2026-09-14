@@ -93,6 +93,26 @@ export class StagedSettingsStore {
         this.notify();
     }
 
+    /**
+     * Adopt the current values as the new baseline — what was staged is saved.
+     *
+     * The opposite of `reset()`, and the counterpart every successful save
+     * needs: after the batch lands, those values ARE the settings, so continuing
+     * to report them as staged is simply wrong. It is what stops the restart
+     * countdown from prompting "unsaved changes" about a batch the server has
+     * already applied.
+     *
+     * Note this re-baselines EVERY registered field to whatever it currently
+     * holds, not just the ones in a particular batch — correct here because a
+     * save always sends the whole change list, so nothing staged is left behind.
+     */
+    commit(): void {
+        for (const [id, field] of this.fields) {
+            this.fields.set(id, { ...field, initial: this.values.get(id) });
+        }
+        this.notify();
+    }
+
     clear(): void {
         this.fields.clear();
         this.values.clear();

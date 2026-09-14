@@ -146,14 +146,22 @@ export const liveSaveDeps: SaveDeps = {
     },
 };
 
-/** Which change the server refused, and what it said about it. */
-function saveFailureMessage(res: BatchResult): string {
+/**
+ * Which change the server refused, and what it said about it.
+ *
+ * Named with the change's LABEL, not its wire id: the user has just confirmed a
+ * summary reading "Web port: 8000 → 80", so answering with `webPort` makes them
+ * translate an internal identifier back to the row they touched. The id is the
+ * fallback for a failure naming something that was not in this batch.
+ */
+function saveFailureMessage(res: BatchResult, changes: Change[]): string {
     const failed = res.failed;
     if (!failed) return "couldn't save the changes";
     // `failed.id` is empty for the transport failures runSave synthesises
     // ("couldn't reach server"), where naming a setting would be a lie.
     if (!failed.id) return `couldn't save the changes: ${failed.error}`;
-    return `couldn't save ${failed.id}: ${failed.error}`;
+    const label = changes.find((c) => c.id === failed.id)?.label ?? failed.id;
+    return `couldn't save ${label}: ${failed.error}`;
 }
 
 /**
@@ -193,7 +201,15 @@ export async function performStagedSave(
     if (!(await deps.confirm(changes))) return { kind: 'stay' };
 
     const res = await deps.save(changes);
-    if (!res.ok) return { kind: 'failed', message: saveFailureMessage(res) };
+    if (!res.ok) return { kind: 'failed', message: saveFailureMessage(res, changes) };
+
+    // The server has them now, so they are no longer STAGED — they are the
+    // current settings. Without this the store stays dirty after a successful
+    // save, and on the restart path the dialog then sits through a 4-second
+    // countdown still believing it holds unsaved work: closing during it raises
+    // an "unsaved changes" prompt about a batch that has already been applied,
+    // and Save comes back to life offering to send it a second time.
+    store.commit();
 
     // Both halves required: a `redirectPort` without a restart is an echo, and
     // a restart without a port has nowhere to send the browser — better to
@@ -355,6 +371,12 @@ export class SettingsModal extends Modal {
      * longer see.
      */
     private closePromptOpen = false;
+    /**
+     * A batch is in flight. Distinct from `closePromptOpen`: that one stops a
+     * second PROMPT stacking, this one stops a second BATCH — and the two arrive
+     * by different doors (the Save button, and the prompt's `save` choice).
+     */
+    private saving = false;
 
     constructor() {
         super({ title: 'Settings' });
@@ -558,10 +580,48 @@ export class SettingsModal extends Modal {
         el.classList.toggle('settings-status-error', isError);
     }
 
+    /**
+     * `this.saving` is an equal partner with dirtiness here, not a refinement.
+     *
+     * Disabling the button directly at the click site does NOT hold: the tabs
+     * stay interactive while the batch is in flight (the summary has closed by
+     * then), and `store.subscribe(…)` calls straight back into this method on
+     * the next `set` — re-enabling Save mid-request from a signal that is
+     * perfectly correct about dirtiness and knows nothing about the fetch. Two
+     * racing batches is not merely a duplicate request: the second `webPort`
+     * apply lands on a server that may already be restarting.
+     */
     private syncSaveButton(): void {
         const btn = this.saveBtn;
         if (!btn) return;
-        btn.disabled = this.store?.isDirty() !== true;
+        btn.disabled = this.saving || this.store?.isDirty() !== true;
+    }
+
+    /**
+     * Run one save/close flow with Save held down for its whole duration.
+     *
+     * Both entry points funnel through here so the in-flight guard cannot be
+     * half-applied — the close path reaches exactly the same `performStagedSave`
+     * via its `save` choice, so guarding only the button would leave the other
+     * door open.
+     */
+    private async runGuarded(flow: () => Promise<SettingsAction>): Promise<void> {
+        if (this.saving) return;
+        this.saving = true;
+        this.syncSaveButton();
+        try {
+            const action = await flow();
+            // Released only on the paths that leave the dialog open and usable.
+            // After a close or a redirect we are on our way out, and a live Save
+            // button would invite a second batch at the worst possible moment.
+            if (action.kind === 'stay' || action.kind === 'failed') this.saving = false;
+            this.applyAction(action);
+        } catch {
+            this.saving = false;
+            this.setSaveStatus("couldn't save the changes", true);
+        } finally {
+            this.syncSaveButton();
+        }
     }
 
     private async onSaveClick(): Promise<void> {
@@ -570,19 +630,7 @@ export class SettingsModal extends Modal {
         // Clear any previous refusal before re-attempting, so a stale message
         // cannot be read as a fresh one.
         this.setSaveStatus('', false);
-        const btn = this.saveBtn;
-        if (btn) btn.disabled = true;
-        try {
-            const action = await performStagedSave(store);
-            this.applyAction(action);
-            // Re-enable only on the paths that leave the dialog up. After a
-            // close or a redirect the changes are gone or the page is leaving,
-            // and a live Save button would invite a second batch.
-            if (action.kind === 'stay' || action.kind === 'failed') this.syncSaveButton();
-        } catch {
-            this.setSaveStatus("couldn't save the changes", true);
-            this.syncSaveButton();
-        }
+        await this.runGuarded(() => performStagedSave(store));
     }
 
     /**
@@ -590,14 +638,16 @@ export class SettingsModal extends Modal {
      * and the × alike. `close()` itself is deliberately NOT overridden: it is
      * what the flow below calls once the answer is in, and what the tabs' own
      * hand-offs (reset, uninstall, a reload) use to tear the dialog down.
+     *
+     * A dismissal arriving while a batch is in flight is dropped by
+     * `runGuarded`: the question "what about your unsaved changes" has no honest
+     * answer while the save that would resolve it is still outstanding.
      */
     private async attemptClose(): Promise<void> {
         if (this.closePromptOpen) return;
         this.closePromptOpen = true;
         try {
-            this.applyAction(await performDirtyClose(this.store ?? new StagedSettingsStore()));
-        } catch {
-            this.setSaveStatus("couldn't save the changes", true);
+            await this.runGuarded(() => performDirtyClose(this.store ?? new StagedSettingsStore()));
         } finally {
             this.closePromptOpen = false;
         }
@@ -616,7 +666,7 @@ export class SettingsModal extends Modal {
     }
 
     /** Act on what the save / close flow decided. */
-    private applyAction(action: SettingsAction, deps: SaveDeps = liveSaveDeps): void {
+    private applyAction(action: SettingsAction): void {
         switch (action.kind) {
             case 'stay':
                 return;
@@ -632,7 +682,7 @@ export class SettingsModal extends Modal {
                 // wait is the supervisor's window to rebind the new port;
                 // navigating immediately gets a connection refused.
                 this.setSaveStatus('restarting → redirecting…', false);
-                setTimeout(() => deps.navigate(action.url), RESTART_REDIRECT_DELAY_MS);
+                setTimeout(() => liveSaveDeps.navigate(action.url), RESTART_REDIRECT_DELAY_MS);
                 return;
         }
     }
