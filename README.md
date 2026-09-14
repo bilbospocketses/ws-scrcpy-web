@@ -329,7 +329,7 @@ On Linux the launcher shows a StatusNotifierItem tray icon wherever a StatusNoti
 
 ## Configuration
 
-Almost all configuration is managed through the in-app **Settings** dialog (gear icon, top-right of the home page). Settings persist to `config.json` next to the running app:
+Almost all configuration is managed through the in-app **Settings** dialog (gear icon, top-right of the home page):
 
 | Field | Default | Where to change it |
 |-------|---------|--------------------|
@@ -342,6 +342,8 @@ Almost all configuration is managed through the in-app **Settings** dialog (gear
 | `githubOwner` | `bilbospocketses` | Settings → Updates → GitHub owner (override for forks) |
 | `frameAncestors` | `[]` (nothing may frame the app) | Settings → Embedding, or edit `config.json` |
 | `allowedHosts` | `[]` (localhost + IP literals only) | `config.json` only — server-only, never exposed via the API |
+
+**Where these are stored depends on which one it is**, which matters if you ever go looking for one by hand. `webPort`, `installMode` and `firstRunComplete` live in `config.json` next to the running app, because the launcher has to read them before the server — and the database — is up; `frameAncestors` and `allowedHosts` are in that file too. The four update settings (`autoUpdate`, `updateCheckIntervalMinutes`, `channel`, `githubOwner`) are stored in the database instead, in the `app_settings` table of `wsscrcpy.db` under the data root. A value for one of those in `config.json` is still read as the starting point, but once it has been set in Settings the stored value wins — so editing `config.json` alone may appear to do nothing.
 
 **Settings is a tabbed dialog, and most settings are staged until you press Save.** The tabs are Users, Embedding, Updates, Service, Dependencies and Server — which ones you see depends on your role. Editing a value does not write it; it stages it, and the dialog's single **save** button (bottom right, greyed out until something is staged) applies the whole set at once. Save always shows a **review screen listing every pending change** as `setting: old → new` before anything is written, so nothing is applied that was not named first.
 
