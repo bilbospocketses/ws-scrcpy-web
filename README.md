@@ -329,7 +329,7 @@ On Linux the launcher shows a StatusNotifierItem tray icon wherever a StatusNoti
 
 ## Configuration
 
-Almost all configuration is managed through the in-app **Settings** panel (gear icon, top-right of the home page). Settings persist to `config.json` next to the running app:
+Almost all configuration is managed through the in-app **Settings** dialog (gear icon, top-right of the home page). Settings persist to `config.json` next to the running app:
 
 | Field | Default | Where to change it |
 |-------|---------|--------------------|
@@ -342,6 +342,14 @@ Almost all configuration is managed through the in-app **Settings** panel (gear 
 | `githubOwner` | `bilbospocketses` | Settings → Updates → GitHub owner (override for forks) |
 | `frameAncestors` | `[]` (nothing may frame the app) | Settings → Embedding, or edit `config.json` |
 | `allowedHosts` | `[]` (localhost + IP literals only) | `config.json` only — server-only, never exposed via the API |
+
+**Settings is a tabbed dialog, and most settings are staged until you press Save.** The tabs are Users, Embedding, Updates, Service, Dependencies and Server — which ones you see depends on your role. Editing a value does not write it; it stages it, and the dialog's single **save** button (bottom right, greyed out until something is staged) applies the whole set at once. Save always shows a **review screen listing every pending change** as `setting: old → new` before anything is written, so nothing is applied that was not named first.
+
+Switching tabs keeps your edits and never prompts. Closing the dialog with unsaved changes asks whether to **save, discard or cancel** — cancel puts you back in the dialog with everything still staged. If the server refuses a change, the dialog stays open with your edits intact and says which one it refused.
+
+Buttons are not settings and are never staged: install/uninstall the service, add or delete a user, install a dependency, reset, log out, stop & exit and the rest all act immediately when clicked, and never appear on the review screen. The **GitHub owner** field on the Updates tab is the one text field that still writes as soon as you leave it.
+
+**Changing the web port restarts the server.** It is applied last, after every other change in the batch, and the browser then redirects itself to the new port a few seconds later — long enough for the server to come back up. The app is not crashing.
 
 Not a stored field, but reached the same way: **Settings → Server → stop the server and close the app** cleanly stops the server and quits the app — the clean-exit path on desktops without a tray host (stock GNOME), disabled in service mode; where a StatusNotifier host exists (KDE Plasma) the tray's **Exit… → stop the server and quit** does the same.
 
