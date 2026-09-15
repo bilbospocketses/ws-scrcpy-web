@@ -127,3 +127,66 @@ export function assertDeletablePaths(paths: unknown): string[] {
     }
     return paths as string[];
 }
+
+// ---------------------------------------------------------------------------
+// Wireless pairing (`adb pair <address> <code>`)
+//
+// Moved here from `api/PairingApi.ts`: these are adb-argv validators for
+// untrusted request-body input, which is what this module is, and keeping them
+// beside `isValidSerial` and `assertSafeRemotePath` is how the next person
+// finds them.
+//
+// SCOPE, because the names invite reuse: these are the PAIRING shapes, not
+// general adb-endpoint shapes. `isPairingAddress` requires a port and refuses a
+// bracketed IPv6 literal, neither of which is true of `adb connect`, which
+// documents `HOST[:PORT]` and accepts IPv6. Applying this to
+// `/api/devices/connect` would narrow what that route accepts today; a
+// `isConnectAddress` for that path would be a different function.
+// ---------------------------------------------------------------------------
+
+/**
+ * `address` reaches adb as an argv element of `adb pair <address> <code>`.
+ * `PairingService.startCode` does NOT validate it and `AdbClient.pair` only
+ * validates a `-s` serial, so this is the only place it is checked — and it is
+ * request-body input.
+ *
+ * execFile means there is no shell to inject into, so the real hazards are
+ * option injection (adb parses a leading `-` as a flag, e.g. `-H` to redirect
+ * to another adb server) and a value that is not an endpoint at all. The
+ * phone's wireless-debugging screen shows `IP:port`, so that is the only shape
+ * accepted: an IPv4 literal or a hostname, plus a port. The port range is
+ * checked numerically because the pattern alone would accept `:0` and `:99999`.
+ *
+ * A bracketed IPv6 literal is deliberately REFUSED, though adb itself accepts
+ * one. `PairingService.startCode` derives its connect-service fallback IP with
+ * `address.split(':')[0]`, which on `[fe80::1]:5555` yields `"["` — so an IPv6
+ * pairing could only ever finish `paired-not-connected`. Accepting a form we
+ * cannot complete is worse for the user than refusing it at the door with a
+ * clear 400. (Fixing that split belongs to `PairingService`, not here.)
+ */
+const HOST_PORT_RE =
+    /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*:(\d{1,5})$/;
+
+export function isPairingAddress(value: string): boolean {
+    if (value.length > 300) {
+        return false;
+    }
+    const match = HOST_PORT_RE.exec(value);
+    if (!match) {
+        return false;
+    }
+    const port = Number(match[1] ?? '');
+    return port >= 1 && port <= 65535;
+}
+
+/**
+ * Android's wireless-debugging pairing code is six digits. Accepting digits
+ * only — with a little slack on the length rather than a hard six, in case a
+ * vendor build differs — keeps anything that could be read as an adb option or
+ * a control character out of the argv.
+ */
+const PAIRING_CODE_RE = /^[0-9]{4,10}$/;
+
+export function isPairingCode(value: string): boolean {
+    return PAIRING_CODE_RE.test(value);
+}

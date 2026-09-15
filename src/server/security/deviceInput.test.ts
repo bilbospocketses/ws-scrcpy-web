@@ -3,6 +3,8 @@ import {
     assertDeletablePaths,
     assertSafeRemotePath,
     assertSerial,
+    isPairingAddress,
+    isPairingCode,
     isSafeEncoderName,
     isValidSerial,
     shArg,
@@ -147,6 +149,75 @@ describe('deviceInput', () => {
 
         it('allows entries beneath a protected root', () => {
             expect(assertDeletablePaths(['/sdcard/Download'])).toEqual(['/sdcard/Download']);
+        });
+    });
+
+    // Moved here from api/PairingApi.ts. The route-level behaviour is covered by
+    // pairingApi.test.ts; these pin the predicates directly, now that they sit
+    // in a module whose other exports invite reuse.
+    describe('isPairingAddress', () => {
+        it('accepts the IP:port and host:port shapes the phone shows', () => {
+            expect(isPairingAddress('192.168.86.190:41415')).toBe(true);
+            expect(isPairingAddress('qa-android:5555')).toBe(true);
+            expect(isPairingAddress('phone.local:37571')).toBe(true);
+        });
+
+        it('refuses option injection and anything that is not an endpoint', () => {
+            // adb reads a leading '-' as a flag: `-H` redirects it to another
+            // adb server entirely.
+            expect(isPairingAddress('-H evil')).toBe(false);
+            // …and that one does NOT test the hyphen. It fails on the space and
+            // the missing port, so a pattern that happily allowed a leading
+            // hyphen still rejected it — verified by mutation. The hazard needs
+            // a value that is well-formed in every OTHER respect.
+            expect(isPairingAddress('-Hevil.com:5555')).toBe(false);
+            expect(isPairingAddress('-h:5555')).toBe(false);
+            // Same rule at the other end: a label may not start or end with a
+            // hyphen, which is also what DNS requires.
+            expect(isPairingAddress('evil-:5555')).toBe(false);
+            expect(isPairingAddress('a.-b:5555')).toBe(false);
+            expect(isPairingAddress('10.0.0.5:41415;whoami')).toBe(false);
+            expect(isPairingAddress('10.0.0.5:41415 extra')).toBe(false);
+            expect(isPairingAddress('')).toBe(false);
+            expect(isPairingAddress(`${'a'.repeat(301)}:5555`)).toBe(false);
+        });
+
+        it('checks the port numerically, which the pattern alone cannot', () => {
+            expect(isPairingAddress('10.0.0.5:0')).toBe(false);
+            expect(isPairingAddress('10.0.0.5:70000')).toBe(false);
+            expect(isPairingAddress('10.0.0.5:65535')).toBe(true);
+        });
+
+        // THE TWO REFUSALS THAT MAKE THIS PAIRING-ONLY, pinned so the next
+        // person to reach for it on another route sees why it does not fit.
+        // `adb connect` documents `HOST[:PORT]` and accepts an IPv6 literal;
+        // this rejects both, deliberately, for reasons specific to pairing.
+        it('requires a port, which adb connect does not', () => {
+            expect(isPairingAddress('192.168.86.190')).toBe(false);
+        });
+
+        it('refuses a bracketed IPv6 literal, though adb accepts one', () => {
+            // PairingService.startCode derives its fallback IP with
+            // `address.split(':')[0]`, which here yields '[' — so an IPv6
+            // pairing could only ever finish paired-not-connected.
+            expect(isPairingAddress('[fe80::1]:5555')).toBe(false);
+        });
+    });
+
+    describe('isPairingCode', () => {
+        it('accepts the digit strings a phone displays', () => {
+            expect(isPairingCode('123456')).toBe(true);
+            expect(isPairingCode('1234')).toBe(true);
+            expect(isPairingCode('1234567890')).toBe(true);
+        });
+
+        it('refuses anything that could reach adb as an option or a control character', () => {
+            expect(isPairingCode('-H')).toBe(false);
+            expect(isPairingCode('abcdef')).toBe(false);
+            expect(isPairingCode('12 34')).toBe(false);
+            expect(isPairingCode('123')).toBe(false);
+            expect(isPairingCode('12345678901')).toBe(false);
+            expect(isPairingCode('123456\n')).toBe(false);
         });
     });
 });
