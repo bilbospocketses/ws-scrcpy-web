@@ -20,7 +20,10 @@ jobs:
           cache: npm
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
-          components: clippy
+          # rustfmt ships with the stable toolchain today, but the `cargo fmt
+          # --all --check` step below depends on it, and an implicit component
+          # is one toolchain change away from a confusing CI failure.
+          components: clippy, rustfmt
       - run: npm ci
       # Biome. Runs first because it is the cheapest gate here (~2s over 545
       # files) and the one most likely to trip on a hand-edited file, so a
@@ -38,6 +41,19 @@ jobs:
       - run: npm run lint
       - run: npx tsc --noEmit
       - run: npm test
+      # rustfmt. Same reasoning as Biome above -- cheapest Rust gate here, and
+      # the one a hand-edited file is most likely to trip, so a formatting-only
+      # failure does not cost a full cargo test + clippy run to discover.
+      #
+      # The convention is pinned in rustfmt.toml (style_edition 2024) rather
+      # than left to the toolchain default, so a future change to rustfmt's
+      # default style edition cannot turn this step red on its own.
+      #
+      # build-and-test only, deliberately: windows-rust-checks exists to compile
+      # and test the cfg(windows) paths, and formatting is platform-independent
+      # -- rustfmt follows `mod` declarations without evaluating cfg, so this
+      # single run already covers the cfg(windows) and cfg(linux) modules alike.
+      - run: cargo fmt --all --check
       - run: cargo test --workspace
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: npm run build
