@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.125] - 2026-09-15
+
 ### Changed
 
 - **CI now runs the Rust test suite on Windows.** `main.rs` gates `windows_app_uninstall` behind `#[cfg(windows)]`, so on the ubuntu runner that module is not compiled at all — its 54 tests did not fail there, they did not exist there, and the same was true of every other Windows-only path. Nothing else covered them either: CodeQL's Windows job compiles the tree but runs no tests. They had only ever executed when someone typed `cargo test` on a Windows machine by hand. A new `windows-rust-checks` job runs `cargo test` and `clippy` on `windows-latest`.
