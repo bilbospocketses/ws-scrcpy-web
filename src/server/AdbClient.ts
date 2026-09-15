@@ -326,7 +326,15 @@ export class AdbClient {
         try {
             out = await this.exec(['pair', address, code], { timeoutMs: DEFAULT_TIMEOUT_MS.pair });
         } catch (e) {
-            const kind = e instanceof AdbExecError && e.kind === 'timeout' ? 'timeout' : 'unknown';
+            // Only a timeout on OUR `pair` argv is a pairing timeout. `exec`
+            // awaits `daemon.ensureReady()` first, which throws its own
+            // AdbExecError('timeout', …, ['start-server']) when adb itself
+            // never came up (AdbDaemonManager) — reporting that as
+            // PairingError('timeout') would tell the user pairing timed out
+            // and send them back to the phone for a fresh code against a
+            // daemon that is not running. Anything not ours is 'unknown'.
+            const isPairTimeout = e instanceof AdbExecError && e.kind === 'timeout' && e.args[0] === 'pair';
+            const kind = isPairTimeout ? 'timeout' : 'unknown';
             throw new PairingError(kind, `adb pair failed (${kind})`);
         }
         // adb exits 0 while printing a failure for a wrong code, so the exit
