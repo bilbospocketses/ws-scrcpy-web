@@ -185,6 +185,28 @@ export function renderPairingSection(deps: PairingSectionDeps): HTMLElement {
         return current !== null && current.generation === session.generation;
     }
 
+    /**
+     * Whether `session` is still the one the user is waiting on — i.e. whether a
+     * reply that arrives for it may touch the screen or schedule more work.
+     *
+     * Two ways it stops being live, and a guard needs BOTH: a newer session took
+     * the generation (`isCurrent`), or the user cancelled this one (`cancelled`).
+     * The second is not implied by the first — `cancelSession` deliberately
+     * leaves `current` pointing at the session it cancels, which is the whole
+     * mechanism the flag relies on, so `isCurrent` stays TRUE for a session the
+     * user just stopped.
+     *
+     * Every await in `poll` is a window where either can change underneath it, so
+     * every resumption point re-asks this. Extracted after two review rounds each
+     * found a window the previous one had missed: it does NOT make a future fifth
+     * await check itself, but it does mean a correction to the predicate happens
+     * once instead of four times, and that the guard is one name to grep for
+     * rather than a boolean to re-derive at each site.
+     */
+    function sessionIsLive(session: PairingSession): boolean {
+        return isCurrent(session) && !session.cancelled;
+    }
+
     function setStatus(text: string, kind: 'info' | 'error' | 'success' = 'info'): void {
         statusEl.textContent = text;
         statusEl.classList.toggle('error', kind === 'error');
@@ -307,7 +329,7 @@ export function renderPairingSection(deps: PairingSectionDeps): HTMLElement {
             // A cancel cannot recall a request already in flight, so BOTH exits
             // need this: without it an errored fetch overwrites "Pairing
             // cancelled." with a red "Lost contact…" and a restart button.
-            if (session.cancelled || !isCurrent(session)) {
+            if (!sessionIsLive(session)) {
                 return;
             }
             session.transportFailures++;
@@ -331,13 +353,15 @@ export function renderPairingSection(deps: PairingSectionDeps): HTMLElement {
         // server-side makes the next status read a miss, which is the
         // confirmation it is gone rather than a failure. `cancelSession` has
         // already written that copy synchronously.
-        if (session.cancelled) {
+        if (!sessionIsLive(session)) {
             return;
         }
         session.transportFailures = 0;
 
         if (res.status === 404) {
-            if (isCurrent(session)) {
+            // No await between the check above and here, so the session cannot
+            // have changed underneath: this is the same liveness, not a re-ask.
+            if (sessionIsLive(session)) {
                 cancelBtn.hidden = true;
                 clearQr();
                 setStatus('That pairing session is no longer available.', 'error');
@@ -350,7 +374,7 @@ export function renderPairingSection(deps: PairingSectionDeps): HTMLElement {
             // `serverError` reads the body, so this await is a cancel window too
             // — see the guard below for why `isCurrent` alone does not close one.
             const message = await serverError(res, 'Could not read the pairing status.');
-            if (!isCurrent(session) || session.cancelled) {
+            if (!sessionIsLive(session)) {
                 return;
             }
             cancelBtn.hidden = true;
@@ -361,26 +385,23 @@ export function renderPairingSection(deps: PairingSectionDeps): HTMLElement {
         }
 
         const status = await readJson<PairingStatus>(res);
-        // BOTH HALVES ARE LOAD-BEARING, and each has its own test. This is the
-        // THIRD cancel window in this function, not a defensive leftover: reading
-        // the body is itself an await, so a click can land inside it.
+        // THE THIRD CANCEL WINDOW, not a defensive leftover: reading the body is
+        // itself an await, so a Cancel click can land inside it. The guard above
+        // catches a cancel that arrives before the body is read; this one catches
+        // a cancel that arrives during it.
         //
-        // `isCurrent` covers REPLACEMENT — a newer session took the generation
-        // while this one was parsing.
+        // Without `sessionIsLive`'s cancelled half, a cancel during `res.json()`
+        // lets `render` overwrite the "Pairing cancelled." copy and `schedulePoll`
+        // re-arm a session the user stopped — which then goes on to announce
+        // "Paired and connected." with the Cancel button already hidden. Same
+        // hazard the stale tick had against `PairingService` in Task 4.
         //
-        // `session.cancelled` covers CANCELLATION of the still-current session,
-        // which `isCurrent` cannot see: `cancelSession` deliberately leaves
-        // `current` pointing here (that is how the flag works at all), so
-        // `isCurrent` stays TRUE for a session the user just stopped. Without the
-        // flag half, a cancel during `res.json()` lets `render` overwrite the
-        // "Pairing cancelled." copy and `schedulePoll` re-arm a session the user
-        // stopped — which then goes on to announce "Paired and connected." with
-        // the Cancel button already hidden.
-        //
-        // The guard above catches a cancel that lands before the body is read;
-        // this one catches a cancel that lands during it. Same hazard the stale
-        // tick had against `PairingService` in Task 4 of this plan.
-        if (!isCurrent(session) || session.cancelled) {
+        // COVERAGE, stated precisely rather than generously: the cancelled half
+        // has a test here. The `isCurrent` half does NOT — nothing exercises a
+        // session being REPLACED mid-poll, as opposed to cancelled. It is
+        // exercised at `startQr`'s two guards, which is why no test was written
+        // just to back this sentence, but the claim stops at what is true.
+        if (!sessionIsLive(session)) {
             return;
         }
         if (status === null) {
