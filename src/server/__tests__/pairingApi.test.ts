@@ -5,10 +5,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PairingError } from '../AdbClient';
 import { DeviceDiscoveryApi } from '../api/DeviceDiscoveryApi';
 import { PairingApi } from '../api/PairingApi';
+import { MAX_BODY_BYTES } from '../api/utils';
 import { Config } from '../Config';
 import { EnvName } from '../EnvName';
+import { Logger } from '../Logger';
 import type { PairingDeps } from '../pairing/PairingService';
 import { PairingService } from '../pairing/PairingService';
+import { getInstanceToken } from '../security/instanceToken';
+import { createHttpRequestHandler } from '../services/HttpServer';
 import { makeReqRes } from './helpers/httpMock';
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -183,6 +187,11 @@ describe('PairingApi code mode', () => {
             '10.0.0.5:70000', // port out of range
             '10.0.0.5:41415 extra',
             '10.0.0.5:41415;whoami',
+            // Refused deliberately, though adb would accept it: PairingService
+            // derives its connect-fallback IP with `address.split(':')[0]`,
+            // which yields '[' here, so an IPv6 pairing could only ever end
+            // paired-not-connected. Better a clear 400 than a half-finish.
+            '[fe80::1]:5555',
         ]) {
             const r = await post(api, '/api/devices/pair/code', { address, code: '123456' });
             expect(r.res.statusCode, address).toBe(400);
@@ -272,15 +281,134 @@ describe('PairingApi routing', () => {
         expect(r.res.statusCode).toBe(200);
     });
 
-    it('DeviceDiscoveryApi would swallow these routes — PairingApi MUST be registered first', async () => {
+    it('falls through for an owned prefix with no matching route', async () => {
+        const { api } = makeApi();
+        // Wrong method on a real route, and a trailing slash that is not one.
+        // Both are inside the owned prefix but match no route, so they must
+        // return false and let the chain answer — not be claimed and 404'd here.
+        const wrongMethod = makeReqRes('GET', '/api/devices/pair/qr');
+        expect(await api.handle(wrongMethod.req, wrongMethod.res)).toBe(false);
+        expect(wrongMethod.getStatus()).toBe(0);
+
+        const trailingSlash = makeReqRes('POST', '/api/devices/pair/qr/');
+        expect(await api.handle(trailingSlash.req, trailingSlash.res)).toBe(false);
+        expect(trailingSlash.getStatus()).toBe(0);
+    });
+
+    it('documents why the order matters: DeviceDiscoveryApi alone claims a pairing route and 404s it', async () => {
         setup();
         const discovery = new DeviceDiscoveryApi();
         const r = makeReqRes('POST', '/api/devices/pair/qr');
-        // It claims the request (true) and answers 404: register it ahead of
-        // PairingApi and every pairing route dies silently. This test exists to
-        // make that ordering requirement fail loudly if it is ever reversed.
+        // DOCUMENTS the hazard; it does not pin the order. This assertion holds
+        // whichever way index.ts registers the two, so reversing the
+        // registration would not fail it. The chain tests below are what prove
+        // the ordering mechanism; index.ts's own order is held by the comment
+        // there, not by this suite.
         expect(await discovery.handle(r.req, r.res)).toBe(true);
         expect(r.getStatus()).toBe(404);
+    });
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// Registration order, through the REAL dispatch chain
+//
+// createHttpRequestHandler is the production chain: it walks the handler array
+// and stops at the first one returning true. Driving it with the array in each
+// order is what makes the ordering requirement executable rather than folklore.
+
+/** Drive the real request chain and wait for its async handler walk to settle. */
+async function driveChain(handlers: { handle: PairingApi['handle'] }[], method: string, url: string, body?: unknown) {
+    const chain = createHttpRequestHandler(handlers, undefined, false);
+    const r = makeReqRes(method, url, body, {
+        host: 'localhost:8000',
+        origin: 'http://localhost:8000',
+        // The per-instance token gate sits ahead of every handler on the
+        // sensitive API surface; without it the chain 403s before PairingApi
+        // is ever consulted and the test would prove nothing about ordering.
+        cookie: `ws_scrcpy_token=${getInstanceToken()}`,
+    });
+    chain(r.req, r.res);
+    for (let i = 0; i < 20 && r.getStatus() === 0; i++) {
+        await new Promise((resolve) => setImmediate(resolve));
+    }
+    return r;
+}
+
+describe('PairingApi registration order (real dispatch chain)', () => {
+    it('serves a pairing route when PairingApi is registered BEFORE DeviceDiscoveryApi', async () => {
+        const { svc } = makeApi();
+        const r = await driveChain(
+            [new PairingApi(() => svc), new DeviceDiscoveryApi()],
+            'POST',
+            '/api/devices/pair/qr',
+        );
+        expect(r.getStatus()).toBe(200);
+        expect(String((r.getJson() as Record<string, unknown>)['svg']).startsWith('<svg')).toBe(true);
+    });
+
+    it('404s the same route when DeviceDiscoveryApi is registered first', async () => {
+        const { svc } = makeApi();
+        // The failing half of the pair. DeviceDiscoveryApi claims any
+        // /api/devices url and 404s what it does not recognise, so it never
+        // reaches PairingApi — the exact silent failure the ordering exists to
+        // prevent, reproduced here so the mechanism is proven in both directions.
+        const r = await driveChain(
+            [new DeviceDiscoveryApi(), new PairingApi(() => svc)],
+            'POST',
+            '/api/devices/pair/qr',
+        );
+        expect(r.getStatus()).toBe(404);
+        expect(r.getJson()).toEqual({ error: 'Not found' });
+    });
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// Failure handling — the catch block's two security properties
+
+describe('PairingApi failure handling', () => {
+    it('answers a generic 500 and keeps the error text out of BOTH the body and the log', async () => {
+        setup();
+        // The sentinel stands in for anything an unaudited throw could carry —
+        // in this handler that would be the pairing code or the QR payload.
+        const boom = new Error('boom SENTINEL');
+        (boom as { code?: string }).code = 'ECONNRESET';
+        const svc = {
+            startQr() {
+                throw boom;
+            },
+        } as unknown as PairingService;
+        // Logger.for() returns a fresh instance, so the module-level `log` in
+        // PairingApi cannot be reached directly — but it dispatches through the
+        // prototype at call time, so spying there captures exactly what was
+        // written to the real sink.
+        const errorSpy = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+        try {
+            const r = makeReqRes('POST', '/api/devices/pair/qr');
+            expect(await new PairingApi(() => svc).handle(r.req, r.res)).toBe(true);
+
+            expect(r.getStatus()).toBe(500);
+            expect(r.getJson()).toEqual({ error: 'internal error' });
+
+            const logged = errorSpy.mock.calls.flat().map(String).join(' ');
+            expect(errorSpy).toHaveBeenCalled(); // a silent catch would pass the two below vacuously
+            expect(JSON.stringify(r.getJson())).not.toContain('SENTINEL');
+            expect(logged).not.toContain('SENTINEL');
+            // Finding 3: the name alone is 'Error' and says nothing, so the
+            // code has to survive for the line to be worth writing.
+            expect(logged).toContain('ECONNRESET');
+            expect(logged).toContain('/api/devices/pair/qr');
+        } finally {
+            errorSpy.mockRestore();
+        }
+    });
+
+    it('413s a body over the cap instead of buffering it', async () => {
+        const { api } = makeApi();
+        const oversized = 'x'.repeat(MAX_BODY_BYTES + 1024);
+        const r = makeReqRes('POST', '/api/devices/pair/cancel', { sessionId: oversized });
+        expect(await api.handle(r.req, r.res)).toBe(true);
+        expect(r.getStatus()).toBe(413);
+        expect(r.getJson()).toEqual({ error: 'request body too large' });
     });
 });
 

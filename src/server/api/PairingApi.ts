@@ -20,12 +20,18 @@ const PREFIX = '/api/devices/pair';
  * option injection (adb parses a leading `-` as a flag, e.g. `-H` to redirect
  * to another adb server) and a value that is not an endpoint at all. The
  * phone's wireless-debugging screen shows `IP:port`, so that is the only shape
- * accepted: an IPv4 literal or a hostname, or a bracketed IPv6 literal, plus a
- * port. The port range is checked numerically because the pattern alone would
- * accept `:0` and `:99999`.
+ * accepted: an IPv4 literal or a hostname, plus a port. The port range is
+ * checked numerically because the pattern alone would accept `:0` and `:99999`.
+ *
+ * A bracketed IPv6 literal is deliberately REFUSED, though adb itself accepts
+ * one. `PairingService.startCode` derives its connect-service fallback IP with
+ * `address.split(':')[0]`, which on `[fe80::1]:5555` yields `"["` — so an IPv6
+ * pairing could only ever finish `paired-not-connected`. Accepting a form we
+ * cannot complete is worse for the user than refusing it at the door with a
+ * clear 400. (Fixing that split belongs to `PairingService`, not here.)
  */
 const HOST_PORT_RE =
-    /^(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*|\[[0-9A-Fa-f:.]{2,45}\]):(\d{1,5})$/;
+    /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*:(\d{1,5})$/;
 
 export function isPairingAddress(value: string): boolean {
     if (value.length > 300) {
@@ -206,11 +212,21 @@ export class PairingApi {
                 res.end(JSON.stringify({ error: 'invalid JSON body' }));
                 return true;
             }
-            // NAME only, never `.message`. The pairing code and the QR payload
-            // are arguments to calls made above, so an error from an unaudited
-            // path could carry one into the log — the exact leak `AdbClient.pair`
-            // exists to prevent. The route is enough to locate the failure.
-            log.error(`${req.method} ${pathname} threw ${(err as Error)?.name || 'Error'}`);
+            // NAME and `code` only, never `.message` and never the stack. The
+            // pairing code and the QR payload are arguments to calls made above,
+            // so an error from an unaudited path could carry one into the log —
+            // the exact leak `AdbClient.pair` exists to prevent.
+            //
+            // `code` is included because the name alone is not enough to debug
+            // with: for the failures actually reachable here — a socket error
+            // during the body read, a double-write — `err.name` is literally
+            // 'Error', and the line would say nothing. Node's `code` is a fixed
+            // identifier from a known set (ECONNRESET, ERR_HTTP_HEADERS_SENT),
+            // never free text, so it carries no caller input.
+            const name = (err as Error)?.name || 'Error';
+            const code = (err as { code?: unknown })?.code;
+            const suffix = typeof code === 'string' || typeof code === 'number' ? ` (${code})` : '';
+            log.error(`${req.method} ${pathname} threw ${name}${suffix}`);
             sendInternalError(res);
             return true;
         }
