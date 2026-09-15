@@ -124,6 +124,30 @@ describe('parseCnxnReply', () => {
         expect(parseCnxnReply(Buffer.alloc(10)).isAdb).toBe(false);
     });
 
+    it('recognises an STLS reply as adb that requires pairing', () => {
+        // Android 11+ wireless debugging answers CNXN with STLS on the secure
+        // connect port: it IS adb, but pairing is required before use.
+        const header = Buffer.alloc(HEADER_SIZE);
+        header.writeUInt32LE(0x534c5453, 0); // "STLS"
+        header.writeUInt32LE(0x01000000, 4); // version
+        header.writeUInt32LE(0, 8); // data_max (unused for this reply)
+        header.writeUInt32LE(0, 12); // data length
+        header.writeUInt32LE(0, 16); // data_check
+        header.writeUInt32LE((0x534c5453 ^ 0xffffffff) >>> 0, 20); // magic
+        expect(parseCnxnReply(header)).toEqual({ isAdb: true, requiresPairing: true });
+    });
+
+    it('returns isAdb=false for STLS with wrong magic', () => {
+        const header = Buffer.alloc(HEADER_SIZE);
+        header.writeUInt32LE(0x534c5453, 0); // "STLS"
+        header.writeUInt32LE(0x01000000, 4);
+        header.writeUInt32LE(0, 8);
+        header.writeUInt32LE(0, 12);
+        header.writeUInt32LE(0, 16);
+        header.writeUInt32LE(0xdeadbeef, 20); // bad magic
+        expect(parseCnxnReply(header).isAdb).toBe(false);
+    });
+
     it('returns isAdb=false when data_length exceeds buffer', () => {
         const header = Buffer.alloc(HEADER_SIZE);
         header.writeUInt32LE(A_CNXN, 0);
