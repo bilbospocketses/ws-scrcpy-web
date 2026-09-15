@@ -1315,6 +1315,33 @@ Useful when touching the probe path — kept in-tree for ADB-protocol debugging.
 
 **Requirement:** Devices must have wireless debugging (Settings -> Developer options) enabled and be on the same local network. mDNS discovery works on standard home networks; TCP port-5555 sweep works even on networks where mDNS is blocked or the device doesn't advertise.
 
+#### 14.2.7 Wireless Pairing
+
+An Android 11+ device on a secure wireless-debugging port refuses an unpaired client at the TLS handshake — `AdbHandshakeProbe.parseCnxnReply` recognizes this as an `STLS` reply and reports `{ isAdb: true, requiresPairing: true }`, but there is no notification on the device to react to: pairing is client-initiated, from the phone's own Settings → Developer options → Wireless debugging → **Pair device with…** screen, never offered to an incoming connection. This section covers pairing itself; discovery and connect are 14.2.1-14.2.6.
+
+**The two-service dance.** Android advertises two *different* mDNS service types over the device's lifecycle, and they are not two views of the same thing:
+
+- `_adb-tls-pairing._tcp` — advertised only while the phone's pairing screen is open (QR or code). This is what a QR-mode session polls for.
+- `_adb-tls-connect._tcp` — advertised once the device has paired with *some* client and is ready to accept an authenticated connection.
+
+**The pairing port and the connect port are unrelated ephemerals — never infer one from the other.** Measured on one device across sessions: pairing came up on 41415 and the connect port on 37571 one day, 43777 a different day. Nothing about the pairing port predicts the connect port, so `PairingService.pairAndConnect` does not try: `adb pair`'s success line carries a `guid` (`Successfully paired to 192.168.86.190:41415 [guid=adb-5C061JEA327610-bo0E0q]`, parsed by `parsePairGuid` in `AdbClient.ts`), and that guid is matched against the `name` field of the freshly-seen `_adb-tls-connect._tcp` services to find the right one. Only if no service names the guid does it fall back to matching by IP address; matching "the only connect service on the network" is never attempted; a device that could not be resolved either way is reported as `paired-not-connected` rather than a failure — the pairing itself succeeded and is durable.
+
+**`AdbClient.pair()` is a redaction boundary.** `AdbExecError` (the general adb-failure type) builds its message by joining the full argv, which for `adb pair <address> <code>` includes the one-time pairing password — so letting that error propagate anywhere near a log would put the password in it. `pair()` therefore never lets the original error out: it catches everything `exec()` throws and re-raises a `PairingError` that carries only a failure kind (`timeout` / `refused` / `unknown`) and a fixed message, no args and no cause chain. Every catch site above it in `PairingService` follows the same rule — an error from an *unaudited* path (not `PairingError`) is logged as the fixed string `'pairing failed'`, never `.message`.
+
+**The pairing code is visible in the OS process table for the life of the `adb pair` call** — it travels as a plain argv element to a spawned child process, and any tool that reads process arguments (Task Manager's command-line column, `ps aux`, `/proc/<pid>/cmdline`) can see it while that one call is in flight. This is accepted, not overlooked: the code is single-use, valid for the pairing session's 180 s window (see `PAIRING_TTL_MS`), and worthless the moment `adb pair` returns success, because adb has already exchanged keys by then.
+
+**The 180 s TTL bounds the scan, not the whole pairing.** It only applies while a session is in `awaiting-scan` — the state a QR session starts in, waiting for the phone's pairing screen to advertise `_adb-tls-pairing._tcp`. A typed pairing-code session skips that state entirely (the address is already known), and a QR session that found its device moves to `pairing`/`connecting`, where each further step has its own independent adb timeout instead. `expired` is therefore final and only ever reachable from `awaiting-scan` — see `PairingSession.isExpired` and the state diagram in `src/common/PairingStatus.ts`.
+
+| File | Purpose |
+|---|---|
+| `src/server/pairing/qr.ts` | Vendored zero-dependency QR encoder (byte mode, ECC level M, versions 1-10), ported from Project Nayuki's MIT-licensed reference implementation — kept as source rather than an npm dependency so the runtime dependency count stays at 2. See `THIRD-PARTY-NOTICES.md`. |
+| `src/server/pairing/PairingSession.ts` | Pure state machine for one pairing attempt: its secret, its deadline, and where it got to. States: `awaiting-scan \| pairing \| connecting \| paired \| paired-not-connected \| failed \| expired`. |
+| `src/server/pairing/PairingService.ts` | Drives one session at a time: hands out the QR payload, polls adb's mDNS list every `POLL_INTERVAL_MS` (1 s) for the exact service name it advertised, pairs, then auto-connects. |
+| `src/server/AdbClient.ts` | `pair()` (the redaction boundary above) and `parsePairGuid()`. |
+| `src/server/api/PairingApi.ts` | Four admin-gated routes under `/api/devices/pair` — `qr`, `code`, `status`, `cancel`. Registered **before** `DeviceDiscoveryApi`, which otherwise 404s anything under `/api/devices` that it doesn't own itself. |
+| `src/server/network/AdbHandshakeProbe.ts` | `parseCnxnReply`'s `STLS` branch — see above. |
+| `src/app/client/NetworkDiscoveryPanel.ts` | The QR / pairing-code UI, inside the existing scan/connect modal. |
+
 ### 14.3 Dependencies
 
 The dependency updater panel (section 13) now lives in **Settings → Dependencies** (section 27), not on the home page. It shows installed vs. latest versions for Node.js + node-pty, ADB, and scrcpy-server with update controls. See section 13 for full details.

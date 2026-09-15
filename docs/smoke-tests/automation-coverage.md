@@ -7,8 +7,9 @@ canonical list of rows and their steps.
 
 Derived from `smoke-test.md` at `v0.1.30-beta.92`, which held **140 rows**; item 63
 (the Linux tray, 2026-09-06) added 14.8 and 14.9, item 114 (the tray's Exit, same
-day) added 15.6, and item 24 (live rotation, 2026-09-15) added 8.10 and 8.11, so the
-doc holds **145**. Row ids are stable and gappy; so are the lines here.
+day) added 15.6, item 24 (live rotation, 2026-09-15) added 8.10 and 8.11, and the
+wireless-pairing task (2026-09-15) added 7.6 and 7.7, so the doc holds **147**.
+Row ids are stable and gappy; so are the lines here.
 
 | | Rows | Where |
 |---|---|---|
@@ -19,23 +20,26 @@ doc holds **145**. Row ids are stable and gappy; so are the lines here.
 | Windows guest **and** Linux residual | 2 | Windows half P4; Linux half nobody |
 | Automatable, no spec written yet | 2 | — (8.10 / 8.11, item 24's rotation rows; the six of 2026-09-04 were written 2026-09-06, item 104) |
 | **Residual — Linux installer and desktop** | **50** | nobody (14.8 / 14.9 are assertable by qa-harness item 14's Linux guests) |
-| **Residual — un-automatable** | **7** | nobody, ever |
-| **Total** | **145** | |
+| **Residual — un-automatable** | **9** | nobody, ever |
+| **Total** | **147** | |
 
-**Automated today: 58 of 145 = 40 %.** After P4: 84 of 145 = 58 %, plus the
+**Automated today: 58 of 147 = 39 %.** After P4: 84 of 147 = 57 %, plus the
 Windows halves of the two split rows. (52 / 37 % and 77 / 55 % until 2026-09-06,
 when item 104 wrote the six specs this table used to list as "automatable, no
 spec"; the denominator was 140 until item 63 added the two tray rows and item 114
-added 15.6, and 143 until item 24 added 8.10 and 8.11 on 2026-09-15 — the
-percentages fell a point each because those two rows are real coverage owed, not
-coverage held.)
+added 15.6, 143 until item 24 added 8.10 and 8.11 on 2026-09-15, and 145 until the
+same day's wireless-pairing task added 7.6 and 7.7 — the percentages fell again
+because pairing needs a real phone with its pairing screen open, which no phase
+of this stack builds, so both rows land in the un-automatable bucket rather than
+adding coverage.)
 
 Three different row counts have been quoted for this document, and only one of them
 is wrong. The plan that commissioned this register worked from **127**, which was
 the correct count for `v0.1.30-beta.82` — the version it named. Module 20's
 thirteen container rows were added afterwards by P3 task 5, and nothing has been
 removed since, so 127 + 13 = 140 (item 63's two tray rows and item 114's 15.6 make
-it 143 as of 2026-09-06; item 24's 8.10 and 8.11 make it 145 as of 2026-09-15).
+it 143 as of 2026-09-06; item 24's 8.10 and 8.11 make it 145, and the
+wireless-pairing task's 7.6 and 7.7 make it 147, both as of 2026-09-15).
 A count of **135** also circulated while this
 task was being scoped, and that one is a miscount: it matches row ids as
 `<module>.<number>`, which silently drops the five that carry a suffix —
@@ -47,8 +51,9 @@ entirely on the Linux gap this register exists to measure.
 from manual minutes to automated seconds". That figure counted partial rows as
 covered and assumed the Linux installer rows were reachable. The measured number
 was **37 %** when this register was written, **40 %** since item 104 and item 24
-(41 % between them, on a denominator of 143), and 58 % once P4 lands. Item 13 was
-closed into this register on 2026-09-06: the register
+(41 % between them, on a denominator of 143), **39 %** since the wireless-pairing
+task widened the denominator to 147 without adding coverage, and 57 % once P4
+lands. Item 13 was closed into this register on 2026-09-06: the register
 is the source of truth for coverage, and the only ws-scrcpy-web-side action it
 had left was item 104.
 
@@ -147,6 +152,8 @@ Sorted by module, then by row number, which is not the doc's execution order.
 | 7.3 | `[Win]` | USB device | residual: un-automatable | USB, barred by the wireless-only lock. Neither a container nor the emulator has a USB bus to offer. |
 | 7.4 | `[Both]` | Device list updates in place | device | `device/connect.spec.ts` |
 | 7.5 | `[Both]` | Remembered device model in scan hits | residual: un-automatable | The enrichment lives on `POST /api/devices/scan`, which the UI never calls (finding 7.6). Becomes a device row the moment that defect is fixed. |
+| 7.6 | `[Both]` | Pair by QR | residual: un-automatable | Needs a real phone with its pairing screen open — the emulator never advertises `_adb-tls-pairing._tcp`, so there is nothing for a QR-mode poll to find. |
+| 7.7 | `[Both]` | Pair by typed pairing code | residual: un-automatable | Same constraint as 7.6: the emulator never advertises `_adb-tls-pairing._tcp` or shows a pairing code to type. This is also the only path that can pair a camera-less device, which a headless emulator cannot exercise either way. |
 | 8.1 | `[Both]` | Video stream | device | `device/streaming.spec.ts` |
 | 8.2 | `[Both]` | Control | device | `device/streaming.spec.ts` |
 | 8.3 | `[Both]` | Audio | device | `device/streaming.spec.ts` |
@@ -427,7 +434,7 @@ precisely the ones no container will ever reach, which is what makes it a *deskt
 phase rather than a container with systemd in it. Recorded as a recommendation, not
 scheduled: P0–P6 are not being widened here.
 
-The remaining 7 are un-automatable, though not all for the same kind of reason, and
+The remaining 9 are un-automatable, though not all for the same kind of reason, and
 the distinction matters to anyone deciding what to fix:
 
 - **Hardware that does not exist here.** 7.3 (USB, barred by the wireless-only lock)
@@ -438,6 +445,10 @@ the distinction matters to anyone deciding what to fix:
   8.11).
 - **An app defect, not a testing limit.** 7.5's enrichment lives on a route the UI
   never calls (finding 7.6). It becomes an ordinary device row the day that is fixed.
+- **A live pairing screen, which nothing but a real phone shows.** 7.6 and 7.7 need
+  a device actively advertising `_adb-tls-pairing._tcp` from its own Wireless
+  debugging pairing screen; the Android emulator never advertises that service, so
+  there is no pairing screen for a device-tier spec to find.
 - **A decision nobody has taken.** 20.4 and 20.5 wait on what "install for all users"
   and "uninstall" should even mean inside a container. 20.3 is a tombstone — the
   libfuse2 gate it checked no longer exists.

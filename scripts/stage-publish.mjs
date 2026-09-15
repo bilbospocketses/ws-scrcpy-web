@@ -123,6 +123,17 @@ function main() {
         copyFileSync(pkgLock, join(PUBLISH, 'package-lock.json')),
     );
 
+    // 5a. THIRD-PARTY-NOTICES.md — nothing else in the shipped artifact carries
+    // it. `src/server/pairing/qr.ts` vendors Project Nayuki's MIT-licensed QR
+    // encoder with an in-file `/* */` header, and webpack's default terser
+    // minifier only preserves `/*!`, `@license` and `@preserve` comments — a
+    // plain `/* */` block does not survive the production build. This file is
+    // the only remaining carrier of that notice once the bundle is minified.
+    const noticesFile = join(REPO_ROOT, 'THIRD-PARTY-NOTICES.md');
+    step('Copy THIRD-PARTY-NOTICES.md', () =>
+        copyFileSync(noticesFile, join(PUBLISH, 'THIRD-PARTY-NOTICES.md')),
+    );
+
     // 5b. Linux menu icon — bundle the 256x256 tray-icon.png alongside
     // package.json so the machine-wide install can copy it into the hicolor theme
     // for the system .desktop entry (Icon=ws-scrcpy-web). Resolved at runtime via
