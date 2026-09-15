@@ -13,7 +13,9 @@
 //                                                npm run build + npm ci)
 //   - publish/ws-scrcpy-web-launcher            (Linux launcher binary)
 //   - assets/tray-icon.png                      (256x256 PNG; vpk insists on PNG)
-//   - vpk on PATH                               (`dotnet tool install -g vpk`)
+//
+// The vpk CLI is NOT a prerequisite: scripts/vpk-path.mjs fetches it into
+// dependencies/vpk/v<version>/ on demand and returns its absolute path.
 //
 // Output:
 //   Releases/<channel>/                         (vpk default; usually
@@ -29,6 +31,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { ensureVpk } from './vpk-path.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -83,16 +86,6 @@ export function parseCargoWorkspaceVersion(tomlText) {
     return m ? m[1] : null;
 }
 
-/** Verify `vpk` is callable on PATH. Returns true / false. */
-function vpkOnPath() {
-    try {
-        execFileSync('vpk', ['--help'], { stdio: ['ignore', 'pipe', 'pipe'] });
-        return true;
-    } catch {
-        return false;
-    }
-}
-
 function main() {
     if (process.platform !== 'linux') {
         log(`Linux packaging is Linux-only; current platform is ${process.platform}. Skipping.`);
@@ -112,12 +105,11 @@ function main() {
     if (!existsSync(ICON_PATH)) {
         throw new Error(`Icon not found at ${ICON_PATH}.`);
     }
-    if (!vpkOnPath()) {
-        throw new Error(
-            'vpk not on PATH. Install via `dotnet tool install -g vpk` ' +
-            '(see https://docs.velopack.io/getting-started/installation).',
-        );
-    }
+    // Resolve (and fetch on first run) the app-local vpk. Throws with a
+    // descriptive error if the install fails — there is deliberately no PATH
+    // fallback, so a broken fetch fails loudly instead of silently packing with
+    // whatever vpk the host happens to have.
+    const vpk = ensureVpk();
 
     const version = readVersion();
     // Linux ships per-platform Velopack channels (linux-beta / linux-stable) so
@@ -136,7 +128,7 @@ function main() {
     // the releases.<channel>.json feed, and the *-full.nupkg all land directly
     // in Releases/ for the CI upload globs to harvest.
     execFileSync(
-        'vpk',
+        vpk,
         [
             'pack',
             '-u', PACK_ID,

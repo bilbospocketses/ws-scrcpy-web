@@ -67,10 +67,15 @@ jobs:
         with:
           dotnet-version: 10.x
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
-      # vpk 1.2.0 (stable) has --msi / --instLocation and produces
-      # true Windows Installer MSIs. Match the npm `velopack` package
-      # version to keep client/server serialization in sync.
-      - run: dotnet tool install -g vpk --version 1.2.0
+      # Local-Dependencies-Only: vpk is installed with --tool-path into the
+      # app's own dependencies/vpk/v<version>/ and invoked by absolute path --
+      # never `-g` + bare `vpk`, which resolves through PATH. The version is not
+      # pinned here: scripts/vpk-path.mjs derives it from the resolved `velopack`
+      # npm dependency in package-lock.json, because the client library and the
+      # packaging CLI must agree on the release-feed serialization. This step
+      # pre-fetches so a NuGet failure surfaces here rather than mid-pack.
+      - name: Fetch app-local vpk
+        run: node scripts/vpk-path.mjs
       - run: npm ci --omit=dev
       - run: npm run build
       - run: cargo build --release --workspace
@@ -108,7 +113,12 @@ jobs:
           # dropped Setup.exe, not the MSI. The next step reparents INSTALLFOLDER
           # to C:\Program Files\WsScrcpyWeb; the launcher's veloapp-install hook
           # grants the ProgramData ACL at install time.
-          vpk pack `
+          #
+          # $vpk is the absolute path under dependencies/vpk/v<version>/ (the
+          # resolver already fetched it above; this call is a no-op lookup).
+          $vpk = node scripts/vpk-path.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'could not resolve the app-local vpk' }
+          & $vpk pack `
             --packId WsScrcpyWeb `
             --packVersion ${{ needs.prepare.outputs.version }} `
             --packDir publish `
@@ -207,10 +217,12 @@ jobs:
         run: |
           sudo rm -f /etc/apt/sources.list.d/google-chrome.list
           sudo apt-get update && sudo apt-get install -y musl-tools
-      # vpk 1.2.0 (stable) has --msi / --instLocation and produces
-      # true Windows Installer MSIs. Match the npm `velopack` package
-      # version to keep client/server serialization in sync.
-      - run: dotnet tool install -g vpk --version 1.2.0
+      # Local-Dependencies-Only: same app-local vpk as the Windows leg, resolved
+      # by scripts/vpk-path.mjs into dependencies/vpk/v<version>/ (binary is
+      # `vpk`, not `vpk.exe`, here). package-linux.mjs resolves it again at pack
+      # time; this step pre-fetches so a NuGet failure surfaces early.
+      - name: Fetch app-local vpk
+        run: node scripts/vpk-path.mjs
       - run: npm ci --omit=dev
       - run: npm run build
       - name: Build launcher (musl-static — no glibc dependency)

@@ -77,10 +77,19 @@ Write-Host "  v1 build out : $BuildOutV1"
 Write-Host "  v2 build out : $BuildOutV2"
 Write-Host ''
 
-# -------- Pre-flight: vpk on PATH --------
-if (-not (Get-Command vpk -ErrorAction SilentlyContinue)) {
-    throw 'vpk not found on PATH. Install via: dotnet tool install -g vpk'
+# -------- Pre-flight: resolve the app-local vpk --------
+# Local-Dependencies-Only: vpk is fetched into dependencies/vpk/v<version>/ by
+# scripts/vpk-path.mjs and invoked by absolute path -- never from PATH.
+# Seed $LASTEXITCODE: it is session-global and only set by a NATIVE command, so
+# an unrelated earlier exit code must not be mistaken for this call's result.
+$global:LASTEXITCODE = 0
+# The resolver logs to stderr and prints ONLY the absolute path on stdout;
+# -Last 1 guards against any stray line still reaching stdout.
+$Vpk = (& node (Join-Path $RepoRoot 'scripts/vpk-path.mjs')) | Select-Object -Last 1
+if ($LASTEXITCODE -ne 0 -or -not $Vpk -or -not (Test-Path $Vpk)) {
+    throw "Could not resolve the app-local vpk via scripts/vpk-path.mjs (got '$Vpk')."
 }
+Write-Host "[step] using vpk at $Vpk"
 
 function Invoke-StepBuild {
     param(
@@ -111,7 +120,7 @@ function Invoke-StepBuild {
         if ($LASTEXITCODE -ne 0) { throw 'stage-publish failed' }
 
         Write-Host "[step] vpk pack -> $OutDir"
-        & vpk pack `
+        & $Vpk pack `
             --packId WsScrcpyWeb `
             --packVersion $Version `
             --packDir 'publish' `
