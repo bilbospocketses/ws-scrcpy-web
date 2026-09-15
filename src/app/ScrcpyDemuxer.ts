@@ -20,8 +20,21 @@ export type VideoFrameCallback = (data: Uint8Array, pts: bigint, isConfig: boole
 
 export type AudioFrameCallback = (data: Uint8Array, pts: bigint, isConfig: boolean) => void;
 
+/**
+ * A mid-stream capture-session change — a rotation or a resize (item 24).
+ * Deliberately separate from {@link SessionMetadata}: metadata is the
+ * once-per-session envelope (codec, audio, device name), and re-sending it to
+ * announce a rotation would make `StreamClientScrcpy` build a second
+ * AudioPlayer every time the device turned.
+ */
+export interface SessionChange {
+    width: number;
+    height: number;
+}
+
 export type DeviceMessageCallback = (data: Uint8Array) => void;
 export type MetadataCallback = (meta: SessionMetadata) => void;
+export type SessionChangeCallback = (change: SessionChange) => void;
 export type DisconnectCallback = (ev: CloseEvent) => void;
 
 export class ScrcpyDemuxer {
@@ -30,6 +43,7 @@ export class ScrcpyDemuxer {
     private audioCallback?: AudioFrameCallback;
     private deviceMsgCallback?: DeviceMessageCallback;
     private metadataCallback?: MetadataCallback;
+    private sessionChangeCallback?: SessionChangeCallback;
     private disconnectCallback?: DisconnectCallback;
     private pendingControl: Uint8Array[] = [];
 
@@ -56,6 +70,10 @@ export class ScrcpyDemuxer {
 
     onMetadata(cb: MetadataCallback): void {
         this.metadataCallback = cb;
+    }
+
+    onSessionChange(cb: SessionChangeCallback): void {
+        this.sessionChangeCallback = cb;
     }
 
     onDisconnect(cb: DisconnectCallback): void {
@@ -108,6 +126,9 @@ export class ScrcpyDemuxer {
             case ChannelId.METADATA:
                 this.handleMetadata(payload);
                 break;
+            case ChannelId.SESSION:
+                this.handleSessionChange(payload);
+                break;
         }
     };
 
@@ -127,6 +148,21 @@ export class ScrcpyDemuxer {
             this.videoCallback?.(data, pts, isConfig, isKeyframe);
         } else {
             this.audioCallback?.(data, pts, isConfig);
+        }
+    }
+
+    /**
+     * A rotation or resize. Guarded like {@link handleMetadata}: a malformed
+     * payload must not take the video stream down with it — the picture is
+     * still arriving and still decodable, it is only the geometry we failed to
+     * learn, and the next session packet will carry it again.
+     */
+    private handleSessionChange(payload: Uint8Array): void {
+        try {
+            const change: SessionChange = JSON.parse(new TextDecoder().decode(payload));
+            this.sessionChangeCallback?.(change);
+        } catch {
+            console.error('[ScrcpyDemuxer] Failed to parse session change');
         }
     }
 

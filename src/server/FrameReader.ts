@@ -21,9 +21,22 @@ export interface ScrcpyFrame {
     data: Buffer;
 }
 
+/**
+ * A mid-stream capture-session change — the device rotated, or the capture was
+ * resized. The dimensions are scrcpy's own notion of the video size, which is
+ * the number the browser must size the canvas and the touch mapping by:
+ * scrcpy-server rejects touch events whose screenSize does not match its video
+ * size, so the SPS dimensions (which carry alignment padding) will not do.
+ */
+export interface ScrcpySessionChange {
+    width: number;
+    height: number;
+}
+
 export class FrameReader {
     private buffer: Buffer = Buffer.alloc(0);
     private frameCallback?: ((frame: ScrcpyFrame) => void) | undefined;
+    private sessionChangeCallback?: ((change: ScrcpySessionChange) => void) | undefined;
     private endCallback?: (() => void) | undefined;
 
     constructor(private readonly socket: net.Socket) {
@@ -34,6 +47,10 @@ export class FrameReader {
 
     onFrame(callback: (frame: ScrcpyFrame) => void): void {
         this.frameCallback = callback;
+    }
+
+    onSessionChange(callback: (change: ScrcpySessionChange) => void): void {
+        this.sessionChangeCallback = callback;
     }
 
     onEnd(callback: () => void): void {
@@ -52,16 +69,22 @@ export class FrameReader {
             // the first 8 bytes: MSB set = session packet, MSB clear = media
             // packet. The initial session packet right after codec ID is parsed
             // by ScrcpyConnection.parseMetadata; any session packet that
-            // arrives here is a mid-stream rotate/resize. We don't currently
-            // expose rotation events downstream — skip the 12 bytes (flags +
-            // width + height) and move on. See §24 in todo_ws_scrcpy_web.md
-            // (deferred — promote on user request for live rotation handling).
+            // arrives here is a mid-stream rotate/resize (item 24).
             const rawHeader = this.buffer.readBigUInt64BE(0);
             if ((rawHeader & PACKET_FLAG_SESSION) !== 0n) {
-                // Session packet: total 12 bytes (4 flags + 4 width + 4 height).
-                // HEADER_SIZE is also 12, so the length check at loop top suffices.
-                // No `data` segment follows — just consume the 12 bytes and continue.
+                // Session packet: total 12 bytes (4 flags + 4 width + 4 height),
+                // laid out exactly as parseMetadata documents for the initial
+                // one. HEADER_SIZE is also 12, so the length check at loop top
+                // already guarantees all three fields are present — a packet
+                // split across TCP chunks waits there rather than being read at
+                // an offset that does not hold its width yet.
+                // No `data` segment follows.
+                const width = this.buffer.readUInt32BE(4);
+                const height = this.buffer.readUInt32BE(8);
                 this.buffer = this.buffer.subarray(HEADER_SIZE);
+                // Consume BEFORE notifying: a callback that throws must not
+                // leave the packet in the buffer to be parsed a second time.
+                this.sessionChangeCallback?.({ width, height });
                 continue;
             }
 
@@ -87,6 +110,7 @@ export class FrameReader {
     destroy(): void {
         this.socket.removeListener('data', this.onData);
         this.frameCallback = undefined;
+        this.sessionChangeCallback = undefined;
         this.endCallback = undefined;
     }
 }

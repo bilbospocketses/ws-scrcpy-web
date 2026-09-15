@@ -403,6 +403,42 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
     }
 
     /**
+     * The capture session changed size mid-stream — the device rotated, or the
+     * capture was resized (item 24). Driven by ChannelId.SESSION, which carries
+     * scrcpy's own video size.
+     *
+     * Two things happen here, and BOTH are load-bearing:
+     *
+     *  1. The metadata size is replaced. Without this the config packet that the
+     *     restarted encoder sends a moment later would undo the resize:
+     *     `pushVideoFrame` computes `displayW = this.metadataWidth || result.width`,
+     *     and the opening metadata is always truthy, so it beat the new SPS and
+     *     pinned the display to the pre-rotation geometry for the rest of the
+     *     session. That was the bug.
+     *  2. `scaleCanvas` runs immediately rather than waiting for that config
+     *     packet. It is idempotent — the config branch recomputes the same
+     *     numbers from the same fields — so the cost is nil, and it means a
+     *     rotation that somehow arrives without a following config packet still
+     *     lands. It also rebuilds the ScreenInfo that
+     *     FeaturedInteractionHandler maps every tap through, which is what stops
+     *     a correct-looking screen from silently sending taps to the old
+     *     coordinates.
+     *
+     * A zero or negative dimension is ignored: `scaleCanvas` would size the
+     * canvas to nothing and blank the picture, and no real capture is 0 wide.
+     */
+    public onSourceResize(width: number, height: number): void {
+        if (!(width > 0) || !(height > 0)) {
+            console.warn('[WebCodecsPlayer]', `ignoring session resize to ${width}x${height}`);
+            return;
+        }
+        if (width === this.metadataWidth && height === this.metadataHeight) return;
+        console.log('[WebCodecsPlayer]', `session resized to ${width}x${height}`);
+        this.setMetadataSize(width, height);
+        this.scaleCanvas(width, height);
+    }
+
+    /**
      * VP8/VP9 arrive without a config packet (see `CONFIGLESS_CODECS`), so the
      * `isConfig` branch in {@link pushVideoFrame} — where every other codec has
      * its decoder configured — is never reached for them. Session metadata

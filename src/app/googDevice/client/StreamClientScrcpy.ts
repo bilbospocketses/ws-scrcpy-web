@@ -344,6 +344,25 @@ export class StreamClientScrcpy
         }
     };
 
+    /**
+     * The device rotated, or the capture was resized mid-stream (item 24).
+     *
+     * Note what this deliberately does NOT do: it touches neither the audio
+     * pipeline nor the session-info overlay. That is the whole reason a rotation
+     * travels on its own channel instead of as a re-sent METADATA — `onMetadata`
+     * above constructs an AudioPlayer, so routing rotations through it would
+     * build a new one every time the user turned the phone.
+     */
+    private onSessionChange = (change: { width: number; height: number }): void => {
+        console.log(TAG, `Session resized: ${change.width}x${change.height}`);
+        if (this.player && 'onSourceResize' in this.player) {
+            (this.player as unknown as { onSourceResize(w: number, h: number): void }).onSourceResize(
+                change.width,
+                change.height,
+            );
+        }
+    };
+
     private isRefreshing = false;
     private isStopping = false;
 
@@ -521,6 +540,7 @@ export class StreamClientScrcpy
         this.demuxer.onAudioFrame(this.onAudioFrame);
         this.demuxer.onDeviceMessage(this.OnDeviceMessage);
         this.demuxer.onMetadata(this.onMetadata);
+        this.demuxer.onSessionChange(this.onSessionChange);
         this.demuxer.onDisconnect(this.onDisconnected);
 
         // Always enable keyboard capture
@@ -639,6 +659,7 @@ export class StreamClientScrcpy
         this.demuxer.onAudioFrame(this.onAudioFrame);
         this.demuxer.onDeviceMessage(this.OnDeviceMessage);
         this.demuxer.onMetadata(this.onMetadata);
+        this.demuxer.onSessionChange(this.onSessionChange);
         this.demuxer.onDisconnect(this.onDisconnected);
     }
 

@@ -473,6 +473,17 @@ export class ScrcpyConnection extends Mw {
             header.writeUInt32BE(frame.data.length, 8);
             this.sendChannel(ChannelId.VIDEO, Buffer.concat([header, frame.data]));
         });
+        // Rotation / resize: session packet → channel 5 → WS (item 24).
+        //
+        // Only the video socket carries these. The browser needs them because
+        // its display geometry comes from the opening METADATA, which is a
+        // snapshot of the capture at connect time — without this the canvas and
+        // the touch mapping stay pinned to the pre-rotation size for the life of
+        // the session, and the only cure was disconnect-and-reconnect.
+        this.videoReader.onSessionChange(({ width, height }) => {
+            log.info(`Session changed: ${width}x${height}`);
+            this.sendChannel(ChannelId.SESSION, Buffer.from(JSON.stringify({ width, height })));
+        });
         this.videoReader.onEnd(() => this.release());
 
         // Audio: TCP → channel 1 → WS
