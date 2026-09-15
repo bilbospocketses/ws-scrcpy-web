@@ -55,20 +55,45 @@ export class PairingSession {
     private _message: string | undefined;
     private _serial: string | undefined;
     private _address: string | undefined;
+    private _password: string;
 
     constructor(
         readonly id: string,
         readonly mode: PairingMode,
         /** mDNS service name the device will advertise. Empty for `'code'` mode. */
         readonly serviceName: string,
-        /**
-         * The pairing secret. NEVER put this in a log line, an error message, an
-         * HTTP response body or the database -- see `toStatus`.
-         */
-        readonly password: string,
+        password: string,
         readonly expiresAt: number,
     ) {
+        this._password = password;
         this._state = mode === 'qr' ? 'awaiting-scan' : 'pairing';
+    }
+
+    /**
+     * The pairing secret. NEVER put this in a log line, an error message, an
+     * HTTP response body or the database -- see `toStatus`.
+     *
+     * Empty once `clearSecret()` has run, so read it before handing the session
+     * to anything that may finish it.
+     */
+    get password(): string {
+        return this._password;
+    }
+
+    /**
+     * Blank the secret. The session stays fully readable -- `state`, `message`,
+     * `serial`, `address` and `toStatus` all keep working, because the UI still
+     * has to poll a finished session to learn that it paired.
+     *
+     * This exists because nothing evicts a session: the driver holds the current
+     * one until another replaces it, so a password that has already served its
+     * purpose would otherwise sit in memory for the rest of the process's life.
+     * Once a session is terminal the secret can never be used again, so there is
+     * no reason to keep it. The driver (`PairingService`) calls this on every
+     * terminal transition and whenever it drops a session.
+     */
+    clearSecret(): void {
+        this._password = '';
     }
 
     get state(): PairingState {

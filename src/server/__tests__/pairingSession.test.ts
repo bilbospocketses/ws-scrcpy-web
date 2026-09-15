@@ -110,6 +110,22 @@ describe('PairingSession', () => {
         expect(t.state).toBe('paired');
     });
 
+    it('blanks the secret on clearSecret while staying fully readable', () => {
+        // The secret is dropped once it can no longer be used, but the session is
+        // NOT: the UI still polls a finished session to learn that it paired, so
+        // everything except the password has to survive.
+        const s = newSession('qr', T0);
+        s.markPairing();
+        s.markConnecting('SERIAL1', '192.168.1.5:5555');
+        s.markPaired();
+        s.clearSecret();
+        expect(s.password).toBe('');
+        const st = s.toStatus(T0 + 200_000);
+        expect(st.state).toBe('paired');
+        expect(st.serial).toBe('SERIAL1');
+        expect(st.address).toBe('192.168.1.5:5555');
+    });
+
     it('refuses a random source too short to fill the draw, rather than emitting a malformed secret', () => {
         // A short buffer would otherwise index past the end, and `alphabet[NaN]`
         // would turn the password into a run of the text "undefined".
