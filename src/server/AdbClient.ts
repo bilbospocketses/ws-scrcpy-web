@@ -40,6 +40,21 @@ export class AdbExecError extends Error {
     }
 }
 
+/**
+ * Error thrown by `AdbClient.pair`. Deliberately carries NO args and NO cause
+ * chain: `AdbExecError` interpolates `args.join(' ')` into its message, and the
+ * pairing args contain the one-time pairing password. See `AdbClient.pair`.
+ */
+export class PairingError extends Error {
+    constructor(
+        public readonly kind: 'timeout' | 'refused' | 'unknown',
+        message: string,
+    ) {
+        super(message);
+        this.name = 'PairingError';
+    }
+}
+
 interface AdbExecOptions {
     /** Hard timeout in ms. 0 / undefined = unbounded. */
     timeoutMs?: number;
@@ -52,6 +67,9 @@ interface AdbExecOptions {
 export const DEFAULT_TIMEOUT_MS = {
     devices: 5_000,
     mdnsServices: 8_000,
+    // Pairing involves a TLS handshake and user-paced input, so it gets a
+    // longer budget than `connect`.
+    pair: 20_000,
     connect: 8_000,
     disconnect: 5_000,
     forwardOps: 5_000,
@@ -100,6 +118,17 @@ export function parseGetProp(output: string): Record<string, string> {
         }
     }
     return props;
+}
+
+/**
+ * Pull the guid out of a successful `adb pair` line, e.g.
+ * `Successfully paired to 192.168.86.190:41415 [guid=adb-5C061JEA327610-bo0E0q]`.
+ * Callers match it against an `_adb-tls-connect._tcp` mDNS service name to find
+ * the connect port the freshly-paired device came up on. Returns undefined when
+ * adb printed no guid.
+ */
+export function parsePairGuid(output: string): string | undefined {
+    return /\[guid=([^\]]+)\]/.exec(output)?.[1];
 }
 
 export class AdbClient {
@@ -281,6 +310,34 @@ export class AdbClient {
 
     async connect(address: string): Promise<string> {
         return this.exec(['connect', address], { timeoutMs: DEFAULT_TIMEOUT_MS.connect });
+    }
+
+    /**
+     * Pair with a device. NEVER lets the pairing code escape.
+     *
+     * AdbExecError builds its message from `args.join(' ')`, so letting one
+     * propagate from here would put the pairing password into every log that
+     * catches it. This method is the redaction boundary: it swallows the
+     * original error entirely — no args, no cause chain — and throws a
+     * PairingError whose message names only the failure kind.
+     */
+    async pair(address: string, code: string): Promise<string> {
+        let out: string;
+        try {
+            out = await this.exec(['pair', address, code], { timeoutMs: DEFAULT_TIMEOUT_MS.pair });
+        } catch (e) {
+            const kind = e instanceof AdbExecError && e.kind === 'timeout' ? 'timeout' : 'unknown';
+            throw new PairingError(kind, `adb pair failed (${kind})`);
+        }
+        // adb exits 0 while printing a failure for a wrong code, so the exit
+        // code is not the success signal — the text is.
+        if (!/successfully paired/i.test(out)) {
+            throw new PairingError(
+                'refused',
+                'pairing refused — check the code and that the phone is still on the pairing screen',
+            );
+        }
+        return out;
     }
 
     async disconnect(address: string): Promise<string> {
