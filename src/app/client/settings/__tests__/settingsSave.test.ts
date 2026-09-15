@@ -68,12 +68,21 @@ describe('runSave treats a non-ok response as a failure', () => {
         // `{ error: 'not a stageable setting: …' }` — no `ok`, no `applied`, no
         // `failed`. Reading the body alone yields `ok: undefined`, so this is
         // the shape that a missing `res.ok` check cannot survive.
-        stubFetch(400, { error: 'not a stageable setting: githubOwner' });
+        //
+        // `installService` because the response here is HAND-WRITTEN: nothing in
+        // this test consults the real `STAGEABLE_IDS`, so an id that later
+        // becomes stageable leaves the test green while describing a refusal the
+        // server would no longer make. This one used to say `githubOwner`, and
+        // `githubOwner` is now stageable. An ACTION can never join the allowlist
+        // — that is what the allowlist is for — so it cannot go stale the same
+        // way. The real endpoint's matching 400 is pinned in
+        // settingsBatchApi.test.ts ("shape 3"), on the same id.
+        stubFetch(400, { error: 'not a stageable setting: installService' });
 
-        const result = await runSave([{ id: 'githubOwner', label: 'Owner', from: 'a', to: 'b' }]);
+        const result = await runSave([{ id: 'installService', label: 'Install service', from: false, to: true }]);
 
         expect(result.ok).toBe(false);
-        expect(result.failed?.error).toContain('not a stageable setting: githubOwner');
+        expect(result.failed?.error).toContain('not a stageable setting: installService');
     });
 
     it('surfaces failed.id and failed.error from a rejected-apply 400', async () => {

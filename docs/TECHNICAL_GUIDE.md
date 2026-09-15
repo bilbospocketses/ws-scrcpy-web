@@ -2662,19 +2662,30 @@ export const STAGEABLE_IDS: ReadonlySet<string> = new Set([
     'channel',
     'autoUpdate',
     'updateCheckIntervalMinutes',
+    'githubOwner',
 ]);
 ```
 
 Two things the allowlist implies, both easy to state wrongly:
 
-- **`githubOwner` is not staged.** The Updates tab's GitHub-owner field still
-  writes immediately on blur, via `PATCH /api/updates/config`, exactly as it did
-  before the tabs work. Staging it would not be "staged" — it would be a Save
-  that fails for the whole batch.
+- **`githubOwner` stages like the rest.** The Updates tab's GitHub-owner field
+  used to write immediately on blur via `PATCH /api/updates/config`; it now
+  registers with the store and rides the batch, so closing the dialog without
+  Save leaves it untouched. `PATCH /api/updates/config` still accepts the field —
+  nothing was removed from the endpoint — the tab simply no longer calls it.
 - **"check for updates now" and "apply update" are actions**, as are everything
   on Users, Embedding and Service and the Server tab's reset / change password /
   log out / install for all users / stop & exit / uninstall. They fire on click
   and register nothing.
+
+**Every staged text/number field refuses bad input the same way**: the typed
+value stays on screen, an inline message says what is wrong, and nothing is
+staged. That covers `webPort` (`ServerTab`), the check interval and the GitHub
+owner (`UpdatesTab`). A refusal is a no-op on the store, never a rollback of it —
+so an earlier value that *did* pass the guard stays staged, and the field and the
+store can legitimately show different things until the entry is corrected. The
+guards exist because `Config.validateField` rejects by **throwing**, which the
+batch endpoint turns into a 400 for the whole batch at Save time.
 
 `PATCH /api/config` **still exists and still accepts `webPort`**, restart
 scheduling included (`src/server/api/ConfigApi.ts`). What the tabs work removed

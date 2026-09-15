@@ -76,6 +76,10 @@ describe('STAGEABLE_IDS', () => {
     it('contains only settings, never actions', () => {
         expect(STAGEABLE_IDS.has('webPort')).toBe(true);
         expect(STAGEABLE_IDS.has('channel')).toBe(true);
+        // The Updates tab registers this one and Save sends it; an allowlist
+        // that omitted it would refuse the whole batch with a 400 the moment
+        // anyone edited the github-owner row.
+        expect(STAGEABLE_IDS.has('githubOwner')).toBe(true);
         // Actions must never be stageable: they fire UAC, delete users, etc.
         expect(STAGEABLE_IDS.has('installService')).toBe(false);
         expect(STAGEABLE_IDS.has('deleteUser')).toBe(false);
@@ -460,11 +464,18 @@ describe('staged changes cross the wire intact', () => {
             label: 'Check interval (minutes)',
             initial: cfg.updateCheckIntervalMinutes,
         });
+        // The Updates tab's fourth staged field, and the only STRING among them.
+        // It reaches a `validateField` that demands a non-empty string, so this
+        // is the id whose round trip is worth watching: `channel` is checked
+        // against an enum, `autoUpdate` against a type, the interval against a
+        // range — none of them can be broken by a value arriving as `''`.
+        store.register({ id: 'githubOwner', label: 'GitHub owner', initial: cfg.githubOwner });
         store.register({ id: 'webPort', label: 'Web port', initial: cfg.webPort });
 
         store.set('channel', cfg.channel === 'beta' ? 'stable' : 'beta');
         store.set('autoUpdate', !cfg.autoUpdate);
         store.set('updateCheckIntervalMinutes', 90);
+        store.set('githubOwner', 'someone-else');
         store.set('webPort', 8010);
 
         const schedule = vi.fn();
@@ -476,12 +487,13 @@ describe('staged changes cross the wire intact', () => {
         const body = r.getJson() as { ok: boolean; applied: string[]; restartRequired: boolean };
         expect(body.ok).toBe(true);
         // webPort last, and nothing dropped on the way.
-        expect(body.applied).toEqual(['channel', 'autoUpdate', 'updateCheckIntervalMinutes', 'webPort']);
+        expect(body.applied).toEqual(['channel', 'autoUpdate', 'updateCheckIntervalMinutes', 'githubOwner', 'webPort']);
         expect(body.restartRequired).toBe(true);
 
         const after = Config.getInstance().getAppConfig();
         expect(after.autoUpdate).toBe(!cfg.autoUpdate);
         expect(after.updateCheckIntervalMinutes).toBe(90);
+        expect(after.githubOwner).toBe('someone-else');
         expect(after.webPort).toBe(8010);
     });
 });
@@ -563,6 +575,46 @@ describe('the server response parses into the BatchResult the client expects', (
         expect(result.ok).toBe(false);
         expect(result.applied).toEqual([]);
         expect(result.failed?.error).toBe('not a stageable setting: installService');
+    });
+
+    /**
+     * `githubOwner` crosses this boundary as a STRING, which no other staged id
+     * does — and the server it reaches demands a non-empty one.
+     *
+     * It is here because it is the newest id on the allowlist and the one whose
+     * two halves were written apart: the tab's guard (client) and
+     * `Config.validateField` (server) both say "non-empty", and nothing made
+     * them meet until this. Both directions are pinned, because a string field
+     * can fail either way — a value that should save and doesn't, or an empty
+     * one that should be refused and isn't.
+     */
+    it('shape 1c — a github-owner batch applies the string and says so', async () => {
+        setup();
+        const result = await throughRunSave([
+            { id: 'githubOwner', label: 'GitHub owner', from: 'bilbospocketses', to: 'someone-else' },
+        ]);
+        expect(result.ok).toBe(true);
+        expect(result.applied).toEqual(['githubOwner']);
+        expect(result.failed).toBeUndefined();
+        // Applied, not merely accepted.
+        expect(Config.getInstance().getAppConfig().githubOwner).toBe('someone-else');
+    });
+
+    it('shape 2c — an EMPTY github owner is refused with the real validator message', async () => {
+        setup();
+        const before = Config.getInstance().getAppConfig().githubOwner;
+        const result = await throughRunSave([
+            { id: 'githubOwner', label: 'GitHub owner', from: 'bilbospocketses', to: '' },
+        ]);
+        expect(result.ok).toBe(false);
+        expect(result.applied).toEqual([]);
+        expect(result.failed?.id).toBe('githubOwner');
+        // The message the user would be shown, straight from `validateField` —
+        // not a paraphrase written here.
+        expect(result.failed?.error).toBe('githubOwner must be a non-empty string');
+        // And nothing moved. `''` is not `undefined`, so the endpoint's
+        // valueless check does not catch it and it really does reach the writer.
+        expect(Config.getInstance().getAppConfig().githubOwner).toBe(before);
     });
 
     it('shape 2b — a half-applied batch reports what already landed', async () => {

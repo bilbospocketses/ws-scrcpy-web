@@ -66,12 +66,6 @@ const channelRadioOf = (el: HTMLElement, value: string): HTMLInputElement =>
 /** The github owner row — this section's only text input. */
 const ownerInputOf = (el: HTMLElement): HTMLInputElement => el.querySelector('input[type="text"]')!;
 
-/** The first PATCH the spy saw, as [url, init]. */
-function patchCall(fetchSpy: ReturnType<typeof vi.fn>): [string, RequestInit] | undefined {
-    const call = fetchSpy.mock.calls.find(([, init]) => (init as RequestInit | undefined)?.method === 'PATCH');
-    return call ? [String(call[0]), call[1] as RequestInit] : undefined;
-}
-
 /**
  * The live status text — the LABEL of the action row, which doubles as this
  * section's status line (see the action-row comment in UpdatesTab). Located via
@@ -137,17 +131,23 @@ describe('UpdatesTab', () => {
     });
 
     /**
-     * The three fields are registered with a `null` baseline at build time,
+     * The four fields are registered with a `null` baseline at build time,
      * because no tab can know the real values synchronously — every tab is built
      * before the read that learns them. `refreshUpdates` re-REGISTERS them with
      * what /api/updates/status reports, which is what makes those values the
      * baseline. If that ever became a `set`, an untouched dialog would sit
-     * permanently dirty at `null → …` on all three, and every batch Save would
-     * carry three update-config writes nobody asked for.
+     * permanently dirty at `null → …` on all four, and every batch Save would
+     * carry four update-config writes nobody asked for.
+     *
+     * `githubOwner` is asserted here alongside the other three because it is the
+     * one that arrived late: it wrote immediately on blur until it joined
+     * `STAGEABLE_IDS`, so a re-baseline that quietly skipped it would leave the
+     * field permanently dirty at `null → …` and push an owner write into every
+     * Save — the exact failure this test exists to catch, on the newest field.
      */
-    it('the /api/updates/status read baselines the three fields rather than staging them', async () => {
+    it('the /api/updates/status read baselines the four fields rather than staging them', async () => {
         const { el, store } = await mountUpdatesTab(
-            status({ autoUpdate: true, channel: 'beta', updateCheckIntervalMinutes: 90 }),
+            status({ autoUpdate: true, channel: 'beta', updateCheckIntervalMinutes: 90, githubOwner: 'forky' }),
         );
 
         expect(store.changes()).toEqual([]);
@@ -155,6 +155,7 @@ describe('UpdatesTab', () => {
         expect(intervalInputOf(el).value).toBe('90');
         expect(channelRadioOf(el, 'beta').checked).toBe(true);
         expect(channelRadioOf(el, 'stable').checked).toBe(false);
+        expect(ownerInputOf(el).value).toBe('forky');
 
         // And the new baseline is what a later edit is measured against.
         const toggle = autoCheckboxOf(el);
@@ -197,15 +198,24 @@ describe('UpdatesTab', () => {
 
         const input = intervalInputOf(el);
         input.value = value;
+        // What the field actually HOLDS after the assignment, which is not always
+        // what was assigned: a type="number" input sanitises '90.5' through
+        // unchanged but turns 'junk' into ''. Read rather than assumed, so the
+        // assertion below says "the guard left the field alone" rather than
+        // "the field equals the string this test typed".
+        const onScreen = input.value;
         input.dispatchEvent(new Event('blur'));
 
         expect(store.changes()).toEqual([]);
         const line = actionStatusOf(el);
         expect(line.textContent).toBe('interval must be between 5 and 1440 minutes');
         expect(line.classList.contains('settings-status-error')).toBe(true);
-        // The refused value does not stay on screen either — the field snaps
-        // back to the last value the server reported.
-        expect(input.value).toBe('60');
+        // The refused value STAYS on screen — `ServerTab`'s web-port guard has
+        // always worked this way and this one now matches it. Snapping back to
+        // 60 here (the old behaviour) would erase the entry the user has to look
+        // at to see what they got wrong, and would leave two staged number
+        // fields in one dialog disagreeing about what invalid input does.
+        expect(input.value).toBe(onScreen);
     });
 
     it.each(['5', '1440'])(
@@ -260,7 +270,7 @@ describe('UpdatesTab', () => {
         expect(store.changes().map((c) => c.to)).toEqual([90]);
     });
 
-    it('a refused interval leaves the previously staged one both on screen and staged', async () => {
+    it('a refused interval leaves the typed value on screen and the earlier one staged', async () => {
         const { el, store } = await mountUpdatesTab(status({ updateCheckIntervalMinutes: 60 }));
 
         const input = intervalInputOf(el);
@@ -269,21 +279,31 @@ describe('UpdatesTab', () => {
         input.value = '99999';
         input.dispatchEvent(new Event('blur'));
 
-        // Snapping back to the server's 60 here would leave the field showing 60
-        // while Save wrote 90.
-        expect(input.value).toBe('90');
+        // The two halves of one refusal, and they are deliberately different
+        // values: the field keeps what was just typed so the user can fix it,
+        // while the STORE keeps the last value that passed the guard. A refusal
+        // is a no-op on the store, never a rollback of it.
+        expect(input.value).toBe('99999');
         expect(store.changes().map((c) => c.to)).toEqual([90]);
     });
 
     /**
      * "check now" answers with a full UpdatesStatusResponse, which carries the
-     * server's copy of all three staged values. Pushing those back into the
+     * server's copy of all four staged values. Pushing those back into the
      * controls — as the pre-tabs code did — would silently revert an edit the
      * user had just made while it stayed in the store, so the dialog would show
      * one value and Save would write another.
+     *
+     * The github-owner field is in here because it is the one that was still
+     * being re-synced from this response (`syncOwnerToStatus`). That was right
+     * while the field wrote immediately on blur — the response was the
+     * authoritative answer to a write it had just made — and became this bug the
+     * moment the field started staging instead.
      */
     it('a "check now" response does not clobber a staged edit', async () => {
-        const { el, store } = await mountUpdatesTab(status({ autoUpdate: true, updateCheckIntervalMinutes: 60 }));
+        const { el, store } = await mountUpdatesTab(
+            status({ autoUpdate: true, updateCheckIntervalMinutes: 60, githubOwner: 'bilbospocketses' }),
+        );
 
         const toggle = autoCheckboxOf(el);
         toggle.checked = false;
@@ -291,31 +311,41 @@ describe('UpdatesTab', () => {
         const input = intervalInputOf(el);
         input.value = '90';
         input.dispatchEvent(new Event('blur'));
+        const owner = ownerInputOf(el);
+        owner.value = 'someone-else';
+        owner.dispatchEvent(new Event('blur'));
 
         [...el.querySelectorAll('button')].find((b) => /check/i.test(b.textContent ?? ''))?.click();
         await flush();
 
         expect(toggle.checked).toBe(false);
         expect(input.value).toBe('90');
+        expect(owner.value).toBe('someone-else');
         const stagedIds = store.changes().map((c) => c.id);
-        expect(stagedIds.sort()).toEqual(['autoUpdate', 'updateCheckIntervalMinutes']);
+        expect(stagedIds.sort()).toEqual(['autoUpdate', 'githubOwner', 'updateCheckIntervalMinutes']);
     });
 
     /**
-     * `githubOwner` is the ONE Updates value still written immediately.
-     * `SettingsBatchApi.STAGEABLE_IDS` is an allowlist of `webPort`, `channel`,
-     * `autoUpdate` and `updateCheckIntervalMinutes`, so a staged `githubOwner`
-     * would not be staged at all — it would be a Save that 400s for the whole
-     * batch.
+     * `githubOwner` STAGES like its three siblings, and — this is the half that
+     * used to be the opposite — sends nothing on blur.
      *
-     * Both halves are pinned because the failure mode is SILENT. `store.set` on
-     * an unregistered id is a deliberate no-op, so "tidying" this row into a
-     * stage would make the field stop working with no error anywhere: no
-     * exception, no failed request, no entry in the summary. The PATCH assertion
-     * is the half that catches that conversion; the `changes()` assertion
-     * catches a conversion that registers the field as well.
+     * It wrote immediately via `PATCH /api/updates/config` until it joined
+     * `SettingsBatchApi.STAGEABLE_IDS`. Both halves stay pinned because each
+     * failure mode is silent in its own way: a reverted stage would leave the
+     * change out of the summary and out of the batch with nothing raised
+     * anywhere (`store.set` on an unregistered id is a deliberate no-op), and a
+     * surviving PATCH would write the value the moment the user tabbed away —
+     * so closing the dialog without Save, or cancelling at the summary, would
+     * still have changed the setting.
+     *
+     * The staged change is asserted whole rather than by id, because the SUMMARY
+     * renders from exactly this object: `label` is the text the user reads and
+     * `from`/`to` are the raw strings either side of the arrow. `githubOwner` has
+     * no formatter, so `SettingsSummaryModal` falls through to `String(from)` →
+     * `String(to)`, which for a string value is the value itself — "GitHub owner:
+     * bilbospocketses → someone-else".
      */
-    it('editing the github owner writes immediately and never stages', async () => {
+    it('editing the github owner stages it and sends NOTHING', async () => {
         const { el, store, fetchSpy } = await mountUpdatesTab(status({ githubOwner: 'bilbospocketses' }));
 
         const owner = ownerInputOf(el);
@@ -323,36 +353,81 @@ describe('UpdatesTab', () => {
         owner.dispatchEvent(new Event('blur'));
         await flush();
 
-        const patch = patchCall(fetchSpy);
-        expect(patch).toBeTruthy();
-        expect(patch?.[0]).toBe('/api/updates/config');
-        expect(JSON.parse(String(patch?.[1].body))).toEqual({ githubOwner: 'someone-else' });
-        expect(store.changes().map((c) => c.id)).not.toContain('githubOwner');
-        expect(store.changes()).toEqual([]);
+        expect(patched(fetchSpy)).toBe(false);
+        expect(store.changes()).toEqual([
+            { id: 'githubOwner', label: 'GitHub owner', from: 'bilbospocketses', to: 'someone-else' },
+        ]);
     });
 
-    it('blurring an unchanged github owner writes nothing', async () => {
-        const { el, fetchSpy } = await mountUpdatesTab(status({ githubOwner: 'bilbospocketses' }));
+    it('blurring an unchanged github owner stages nothing and sends nothing', async () => {
+        const { el, store, fetchSpy } = await mountUpdatesTab(status({ githubOwner: 'bilbospocketses' }));
 
         ownerInputOf(el).dispatchEvent(new Event('blur'));
         await flush();
 
+        expect(store.changes()).toEqual([]);
         expect(patched(fetchSpy)).toBe(false);
     });
 
-    // The only feedback this row has. `Config.validateField('githubOwner')`
-    // rejects an empty string, so without the snap-back an emptied field would
-    // either 400 or sit there looking like it had saved.
-    it('an emptied github owner snaps back to the last known value and writes nothing', async () => {
-        const { el, fetchSpy } = await mountUpdatesTab(status({ githubOwner: 'bilbospocketses' }));
+    it('typing the original github owner back clears the staged change', async () => {
+        const { el, store } = await mountUpdatesTab(status({ githubOwner: 'bilbospocketses' }));
 
         const owner = ownerInputOf(el);
-        owner.value = '   ';
+        owner.value = 'someone-else';
+        owner.dispatchEvent(new Event('blur'));
+        expect(store.changes().map((c) => c.id)).toEqual(['githubOwner']);
+
+        owner.value = 'bilbospocketses';
+        owner.dispatchEvent(new Event('blur'));
+        expect(store.changes()).toEqual([]);
+    });
+
+    // `Config.validateField('githubOwner')` rejects an empty string by THROWING
+    // out of `updateAppConfig`, so an unguarded stage is a 400 for the WHOLE
+    // batch at Save time — every sibling change refused along with it, about a
+    // field the user blanked minutes earlier.
+    //
+    // '   ' rather than '': the server's test is `length === 0`, so untrimmed
+    // whitespace would sail past it and be SAVED as the github owner. The guard
+    // trims before testing, which is what makes this case a refusal.
+    it.each([
+        ['', 'emptied'],
+        ['   ', 'whitespace only'],
+    ])('refuses to stage a github owner that is %s (%s)', async (value) => {
+        const { el, store, fetchSpy } = await mountUpdatesTab(status({ githubOwner: 'bilbospocketses' }));
+
+        const owner = ownerInputOf(el);
+        owner.value = value;
         owner.dispatchEvent(new Event('blur'));
         await flush();
 
-        expect(owner.value).toBe('bilbospocketses');
+        expect(store.changes()).toEqual([]);
+        const line = actionStatusOf(el);
+        expect(line.textContent).toBe('github owner cannot be empty');
+        expect(line.classList.contains('settings-status-error')).toBe(true);
+        // Left on screen, exactly as the interval and web-port guards leave a
+        // refused number. The old behaviour snapped this field back to the last
+        // known owner and said nothing at all.
+        expect(owner.value).toBe(value);
         expect(patched(fetchSpy)).toBe(false);
+    });
+
+    it('a valid github owner clears the refusal message left by an empty one', async () => {
+        const { el, store } = await mountUpdatesTab(status({ githubOwner: 'bilbospocketses' }));
+
+        const owner = ownerInputOf(el);
+        owner.value = '';
+        owner.dispatchEvent(new Event('blur'));
+        expect(actionStatusOf(el).textContent).toBe('github owner cannot be empty');
+
+        owner.value = 'someone-else';
+        owner.dispatchEvent(new Event('blur'));
+
+        const line = actionStatusOf(el);
+        expect(line.textContent).toBe('up to date: v0.1.30');
+        expect(line.classList.contains('settings-status-error')).toBe(false);
+        // And the good value still staged — the clear must not cost the stage.
+        expect(store.changes().map((c) => c.to)).toEqual(['someone-else']);
     });
 
     it('typing the original interval back clears the staged change', async () => {

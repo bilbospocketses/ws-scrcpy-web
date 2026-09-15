@@ -23,6 +23,7 @@ export const STAGEABLE_IDS: ReadonlySet<string> = new Set([
     'channel',
     'autoUpdate',
     'updateCheckIntervalMinutes',
+    'githubOwner',
 ]);
 
 /**

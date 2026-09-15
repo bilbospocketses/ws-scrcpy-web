@@ -63,20 +63,22 @@ function buildDynamicLabelRow(
 const CHANNEL_ID = 'channel';
 const AUTO_UPDATE_ID = 'autoUpdate';
 const INTERVAL_ID = 'updateCheckIntervalMinutes';
+const OWNER_ID = 'githubOwner';
 
 /** The interval bounds `Config.validateField('updateCheckIntervalMinutes')` enforces. */
 const INTERVAL_MIN = 5;
 const INTERVAL_MAX = 1440;
 
-/** The three values this tab stages, as /api/updates/status reports them. */
+/** The four values this tab stages, as /api/updates/status reports them. */
 interface UpdatesBaseline {
     channel: UpdateChannel | null;
     autoUpdate: boolean | null;
     updateCheckIntervalMinutes: number | null;
+    githubOwner: string | null;
 }
 
 /**
- * Register — or RE-baseline — the three staged Updates fields.
+ * Register — or RE-baseline — the four staged Updates fields.
  *
  * Called twice, deliberately: once at build time with `null` initials, and again
  * from the refresh with the values /api/updates/status reports. `register`
@@ -85,7 +87,7 @@ interface UpdatesBaseline {
  *
  * It has to be a re-`register` and not a `set`. A `set` would leave `initial` at
  * the build-time `null`, so an untouched dialog would sit permanently dirty at
- * `null → …` on all three fields and every batch Save would carry three
+ * `null → …` on all four fields and every batch Save would carry four
  * update-config writes nobody asked for.
  *
  * Both call sites go through this one function so the ids, labels and the
@@ -106,6 +108,7 @@ function registerUpdatesFields(store: StagedSettingsStore, initial: UpdatesBasel
         label: 'Check interval (minutes)',
         initial: initial.updateCheckIntervalMinutes,
     });
+    store.register({ id: OWNER_ID, label: 'GitHub owner', initial: initial.githubOwner });
 }
 
 /**
@@ -122,17 +125,15 @@ const refreshers = new WeakMap<HTMLElement, () => Promise<void>>();
 /**
  * The Updates tab.
  *
- * `channel`, `autoUpdate` and `updateCheckIntervalMinutes` are STAGED: editing
- * one calls `store.set(...)` and nothing else, and the dialog's Save sends the
- * whole batch to POST /api/settings/batch. This is a behaviour change users can
- * see — before the tabs work, every toggle fired its own PATCH
+ * `channel`, `autoUpdate`, `updateCheckIntervalMinutes` and `githubOwner` are
+ * STAGED: editing one calls `store.set(...)` and nothing else, and the dialog's
+ * Save sends the whole batch to POST /api/settings/batch. This is a behaviour
+ * change users can see — before the tabs work, every toggle fired its own PATCH
  * /api/updates/config, so flipping auto-update and closing the dialog saved it.
  * Now closing without Save changes nothing.
  *
  * "check for updates now" / "apply update" stay ACTIONS: they fire immediately
- * on click and register nothing, so they cannot reach the change summary. So
- * does the github owner field — the batch endpoint's allowlist does not carry
- * `githubOwner`, so it is written the way it always was.
+ * on click and register nothing, so they cannot reach the change summary.
  *
  * Builds synchronously and fires no network request of its own. Everything
  * below the "loading…" placeholder is rendered by the externally-triggered
@@ -151,7 +152,12 @@ export function buildUpdatesTab(ctx: TabContext, store: StagedSettingsStore): HT
     // Registered with null baselines because the real values are not knowable
     // synchronously — every tab is built before the read that learns them.
     // `runRefresh` re-registers with the true values; see registerUpdatesFields.
-    registerUpdatesFields(store, { channel: null, autoUpdate: null, updateCheckIntervalMinutes: null });
+    registerUpdatesFields(store, {
+        channel: null,
+        autoUpdate: null,
+        updateCheckIntervalMinutes: null,
+        githubOwner: null,
+    });
 
     // Replaces the instance fields `SettingsModal` held for this section
     // (`this.updatesStatusEl`, `this.updatesLastStatus`, …). Each stays null
@@ -160,7 +166,6 @@ export function buildUpdatesTab(ctx: TabContext, store: StagedSettingsStore): HT
     // still READS survive the move: the four control refs the old
     // `syncControlsToStatus` wrote through are gone with it.
     let statusEl: HTMLElement | null = null;
-    let ownerInput: HTMLInputElement | null = null;
     let actionBtn: HTMLButtonElement | null = null;
     let intervalDebounce: number | undefined;
     let lastStatus: UpdatesStatusResponse | null = null;
@@ -182,7 +187,7 @@ export function buildUpdatesTab(ctx: TabContext, store: StagedSettingsStore): HT
         lastStatus = resp;
         // The first moment the true values are known, so this is where they
         // become the baseline. Ahead of the isInstalled branch below because the
-        // dev-mode response still carries all three, and a baseline that is only
+        // dev-mode response still carries all four, and a baseline that is only
         // set on some paths is a baseline nobody can reason about.
         //
         // This also RESETS any staged edit, since `register` overwrites the
@@ -194,6 +199,7 @@ export function buildUpdatesTab(ctx: TabContext, store: StagedSettingsStore): HT
             channel: resp.channel,
             autoUpdate: resp.autoUpdate,
             updateCheckIntervalMinutes: resp.updateCheckIntervalMinutes,
+            githubOwner: resp.githubOwner,
         });
         renderSection(resp);
     }
@@ -217,7 +223,6 @@ export function buildUpdatesTab(ctx: TabContext, store: StagedSettingsStore): HT
     function renderSection(s: UpdatesStatusResponse): void {
         body.replaceChildren();
         statusEl = null;
-        ownerInput = null;
         actionBtn = null;
 
         if (!s.isInstalled) {
@@ -301,22 +306,15 @@ export function buildUpdatesTab(ctx: TabContext, store: StagedSettingsStore): HT
 
         body.appendChild(buildRow('update channel', channelFrag));
 
-        // Row 4: github owner. NOT staged — see patchGithubOwner.
+        // Row 4: github owner. STAGED, behind the non-empty guard below.
         const owner = document.createElement('input');
         owner.type = 'text';
         owner.className = 'settings-input';
         owner.value = s.githubOwner;
         owner.addEventListener('blur', () => {
-            const next = owner.value.trim();
-            if (next.length === 0) {
-                owner.value = lastStatus?.githubOwner ?? '';
-                return;
-            }
-            if (next === lastStatus?.githubOwner) return;
-            void patchGithubOwner(next);
+            commitOwnerChange(owner);
         });
         body.appendChild(buildRow('github owner', owner));
-        ownerInput = owner;
 
         // Action row: label = live status text (idle: "up to date (vX)", ready:
         // "vX ready to apply", checking/downloading: progress, error: failure
@@ -433,15 +431,19 @@ export function buildUpdatesTab(ctx: TabContext, store: StagedSettingsStore): HT
      * the field still read 90.5, saving an interval the user never typed.
      * `Number` gives NaN for junk and 0 for an emptied field, and both fail below.
      *
-     * A refused value snaps back to what is currently STAGED rather than to what
-     * the server last reported: the field and the store have to agree, or the
-     * dialog shows one interval and Save writes another.
+     * A refused value is LEFT ON SCREEN with the message beside it, and nothing
+     * is staged — the same refusal shape `ServerTab`'s web-port guard has always
+     * had. This used to snap the field back to the staged value instead, so the
+     * dialog had two staged number fields disagreeing about what an invalid
+     * entry does: one kept the typing, the other silently erased it. Leaving it
+     * is also the kinder half of the pair, because the user can see and correct
+     * the digit they got wrong rather than having to retype the whole value.
      */
     function commitIntervalChange(input: HTMLInputElement): void {
         const n = Number(input.value.trim());
         if (!Number.isInteger(n) || n < INTERVAL_MIN || n > INTERVAL_MAX) {
-            const staged = store.get(INTERVAL_ID);
-            input.value = String(staged ?? lastStatus?.updateCheckIntervalMinutes ?? 60);
+            // Refuse the stage: whatever was last staged stands, and the message
+            // stays up until a valid interval replaces it.
             setStatusError(`interval must be between ${INTERVAL_MIN} and ${INTERVAL_MAX} minutes`);
             return;
         }
@@ -450,7 +452,7 @@ export function buildUpdatesTab(ctx: TabContext, store: StagedSettingsStore): HT
         // message is STICKY: type 3 (red "interval must be between…"), then type
         // 90 — the 90 stages fine but the label stays red with a message about a
         // value that is no longer anywhere, until some unrelated event (a
-        // check-now, an owner PATCH) happens to repaint it. `applyStatusText`
+        // check-now, an apply) happens to repaint it. `applyStatusText`
         // rather than a literal empty string, because this label is not a
         // dedicated status line: it is the live update-status text, so what
         // "cleared" means here is the current status, not blank.
@@ -464,57 +466,40 @@ export function buildUpdatesTab(ctx: TabContext, store: StagedSettingsStore): HT
     }
 
     /**
-     * The one Updates value still written immediately, because the staging path
-     * cannot carry it: `SettingsBatchApi.STAGEABLE_IDS` is an allowlist of
-     * `webPort`, `channel`, `autoUpdate` and `updateCheckIntervalMinutes`, and a
-     * batch naming anything else is refused outright with a 400. Staging
-     * `githubOwner` would therefore not be "staged" — it would be a Save that
-     * fails for the whole batch.
+     * Stage the github owner, behind the non-empty guard the old per-field PATCH
+     * used to apply before sending.
      *
-     * So this keeps the pre-tabs behaviour for this field exactly: blur writes,
-     * the response re-syncs, an error shows on the status line.
-     */
-    async function patchGithubOwner(githubOwner: string): Promise<void> {
-        if (statusEl) {
-            statusEl.textContent = 'saving…';
-            statusEl.classList.remove('settings-status-error');
-        }
-        try {
-            const r = await fetch('/api/updates/config', {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ githubOwner }),
-            });
-            if (!r.ok) {
-                setStatusError(`save failed (${r.status})`);
-                return;
-            }
-            // PATCH /api/updates/config returns a flat UpdatesStatusResponse
-            // (see UpdatesApi.handleConfig).
-            const s = (await r.json()) as UpdatesStatusResponse;
-            lastStatus = s;
-            syncOwnerToStatus(s);
-            applyStatusText(s);
-            applyActionButtonState(s);
-        } catch {
-            setStatusError("couldn't reach server");
-        }
-    }
-
-    /**
-     * Push the server's github owner back into its input without rebuilding.
+     * This field wrote immediately on blur until `githubOwner` joined
+     * `SettingsBatchApi.STAGEABLE_IDS`; now it stages like its three siblings and
+     * the dialog's Save is what writes it. The guard travels with it, because
+     * `Config.validateField('githubOwner')` wants a NON-EMPTY string and
+     * `updateAppConfig` rejects anything else by THROWING — so an unguarded stage
+     * becomes a 400 at Save time, about a field the user blanked minutes earlier
+     * in a dialog that said nothing at the time.
      *
-     * Only that field. The pre-tabs version of this also re-synced the auto-update
-     * checkbox, the interval and the channel radios, which is exactly wrong once
-     * those are staged: a "check now" response would silently revert a control
-     * the user had just edited while the edit stayed in the store, leaving the
-     * dialog showing one value and Save writing another. Staged controls belong
-     * to the user until Save; only `runRefresh` re-baselines them.
+     * `trim()` before the emptiness test AND before staging, so a field holding
+     * only spaces is refused rather than saved as whitespace the server would
+     * happily accept (its check is `length === 0`, not "blank").
+     *
+     * A refused value is left on screen with the message beside it and nothing is
+     * staged — the same refusal shape as the interval guard above and
+     * `ServerTab`'s web-port guard. All three staged text/number fields in this
+     * dialog now answer bad input identically.
      */
-    function syncOwnerToStatus(s: UpdatesStatusResponse): void {
-        if (ownerInput && document.activeElement !== ownerInput && ownerInput.value !== s.githubOwner) {
-            ownerInput.value = s.githubOwner;
+    function commitOwnerChange(input: HTMLInputElement): void {
+        const next = input.value.trim();
+        if (next.length === 0) {
+            setStatusError('github owner cannot be empty');
+            return;
         }
+        // Clear the refusal message before staging, for the reason spelled out
+        // in `commitIntervalChange`: without it the red warning outlives the
+        // value it was about.
+        if (lastStatus) applyStatusText(lastStatus);
+        // No "same as the server's value, nothing to do" early return, for the
+        // same reason as the interval: re-staging the baseline is how a change
+        // CLEARS, since `changes()` compares rather than latches.
+        store.set(OWNER_ID, next);
     }
 
     /**
@@ -616,7 +601,14 @@ export function buildUpdatesTab(ctx: TabContext, store: StagedSettingsStore): HT
             }
             const s = (await r.json()) as UpdatesStatusResponse;
             lastStatus = s;
-            syncOwnerToStatus(s);
+            // Status text and button state only. The response also carries the
+            // server's copy of all four staged values, and pushing ANY of them
+            // back into its control would silently revert an edit the user had
+            // just made while it stayed in the store — the dialog would show one
+            // value and Save would write another. This used to re-sync the github
+            // owner, which was correct while that field wrote immediately and
+            // became this bug the moment it started staging. Staged controls
+            // belong to the user until Save; only `runRefresh` re-baselines them.
             applyStatusText(s);
             applyActionButtonState(s);
         } catch {
@@ -632,7 +624,7 @@ export function buildUpdatesTab(ctx: TabContext, store: StagedSettingsStore): HT
 /**
  * Externally trigger the /api/updates/status read for an Updates tab
  * `buildUpdatesTab` already built — it renders the section's body and baselines
- * the three staged fields. A no-op if `section` was never built through
+ * the four staged fields. A no-op if `section` was never built through
  * `buildUpdatesTab`.
  */
 export async function refreshUpdates(section: HTMLElement): Promise<void> {

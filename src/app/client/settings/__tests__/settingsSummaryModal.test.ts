@@ -62,6 +62,22 @@ describe('SettingsSummaryModal', () => {
         expect(document.querySelector('dialog')?.textContent).toContain('Web port: 8000 → 8010');
     });
 
+    /**
+     * The fallback is `String(from) → String(to)`, and `githubOwner` is the only
+     * staged field whose values are already strings — so the check worth making
+     * is that the fallback does not DECORATE them. A quoting or JSON-stringify
+     * "improvement" here would read as `"bilbospocketses" → "someone-else"` on
+     * the one screen the user confirms before the batch is sent.
+     */
+    it('renders a staged string value plainly — no quotes, no JSON', () => {
+        void SettingsSummaryModal.confirm([
+            { id: 'githubOwner', label: 'GitHub owner', from: 'bilbospocketses', to: 'someone-else' },
+        ]);
+        const text = document.querySelector('dialog')?.textContent ?? '';
+        expect(text).toContain('GitHub owner: bilbospocketses → someone-else');
+        expect(text).not.toContain('"');
+    });
+
     it('warns that a webPort change restarts the server', () => {
         void SettingsSummaryModal.confirm(CHANGES);
         expect(document.querySelector('dialog')?.textContent).toContain('restart');
