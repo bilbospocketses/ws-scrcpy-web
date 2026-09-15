@@ -588,9 +588,14 @@ export function renderPairingSection(deps: PairingSectionDeps): HTMLElement {
         const address = status.address;
         if (!address) {
             // `paired-not-connected` without an address means the connect service
-            // was never found. The pairing still stands; the user finishes it
-            // with the address from the phone's wireless-debugging screen.
-            setStatus(`${pairingStatusText(status).text} Use “manually add” with the address shown on the phone.`);
+            // was never found, so there is nothing here to pre-fill with -- the
+            // user types the address themselves. It has to come from the phone's
+            // MAIN wireless-debugging screen: the pairing dialog shows a
+            // different, ephemeral pairing port, and 5555 is wrong too on a
+            // device that only speaks TLS.
+            setStatus(
+                `${pairingStatusText(status).text} Open “manually add” and type the IP and port shown on the phone's Wireless debugging screen — not the port from the pairing dialog.`,
+            );
             hideAction();
             deps.onConnectByHand?.(status);
             return;
@@ -738,12 +743,13 @@ export class NetworkDiscoveryPanel {
                 // list, and the tracker is already pushed that over its own
                 // socket. What is left is to put the panel's own copy back.
                 onPaired: () => this.restoreInfoText(),
-                onConnectByHand: (status) => {
-                    this.toggleManualForm(true);
-                    const [ip = '', port = ''] = (status.address ?? '').split(':');
-                    if (ip) (this.container.querySelector('.discovery-manual-address') as HTMLInputElement).value = ip;
-                    if (port) (this.container.querySelector('.discovery-manual-port') as HTMLInputElement).value = port;
-                },
+                // Opens the form and nothing more. There is deliberately no
+                // pre-fill: this fires only on the `paired-not-connected` branch
+                // that has NO address (`connectPaired` uses the address itself
+                // whenever there is one), so every field would be filled from
+                // `undefined`. The pairing section's own status line tells the
+                // user where to read the address off the phone.
+                onConnectByHand: () => this.toggleManualForm(true),
             }),
         );
     }

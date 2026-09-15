@@ -112,6 +112,65 @@ describe('PairingService', () => {
         expect(adb.connect).toHaveBeenCalledWith('10.0.0.5:43777');
     });
 
+    it('reports the STRIPPED device serial, not the raw mDNS guid', async () => {
+        // `PairingStatus.serial` is documented as "Device serial", and the rest
+        // of the app keys devices by the stripped form. The guid carries both
+        // the `adb-` prefix and a per-advertisement instance suffix, so storing
+        // it raw would put a value in that field that matches nothing.
+        const { svc, adb } = makeService();
+        const guid = 'adb-5C061JEA327610-bo0E0q';
+        adb.pair.mockResolvedValue(`Successfully paired to 10.0.0.5:41415 [guid=${guid}]`);
+        const { sessionId, payload } = svc.startQr();
+        const name = /S:([^;]+)/.exec(payload)![1]!;
+        adb.mdnsServices.mockResolvedValue([
+            { name, service: PAIR_SVC, address: '10.0.0.5', port: 41415 },
+            { name: guid, service: CONNECT_SVC, address: '10.0.0.5', port: 43777 },
+        ]);
+        await svc.pollOnce();
+        expect(svc.status(sessionId)!.serial).toBe('5C061JEA327610');
+        expect(svc.status(sessionId)!.serial).not.toBe(guid);
+    });
+
+    it('auto-connects a typed-code session by the guid adb pair reported', async () => {
+        // Code mode skips discovery entirely -- there is no `awaiting-scan` and
+        // no `pollOnce`; `startCode` pairs immediately off the address the user
+        // typed. The decoy below SHARES the paired device's IP and is listed
+        // first, so this goes green only if the guid is consulted before the IP
+        // fallback -- against a decoy on some other IP, an IP-first
+        // implementation would pick the right service anyway and the test would
+        // pass having proved nothing about the guid.
+        const { svc, adb } = makeService();
+        adb.pair.mockResolvedValue('Successfully paired to 10.0.0.5:41415 [guid=adb-SER1-bo0E0q]');
+        adb.mdnsServices.mockResolvedValue([
+            { name: 'adb-DECOY-aa', service: CONNECT_SVC, address: '10.0.0.5', port: 40001 },
+            { name: 'adb-SER1-bo0E0q', service: CONNECT_SVC, address: '10.0.0.5', port: 43777 },
+        ]);
+        const { sessionId } = svc.startCode('10.0.0.5:41415', '123456');
+        await flush();
+        expect(adb.pair).toHaveBeenCalledWith('10.0.0.5:41415', '123456');
+        expect(adb.connect).toHaveBeenCalledWith('10.0.0.5:43777');
+        expect(svc.status(sessionId)!.state).toBe('paired');
+        expect(svc.status(sessionId)!.serial).toBe('SER1');
+    });
+
+    it('falls back to the same IP for a typed-code session whose guid names no connect service', async () => {
+        // This is why `startCode` splits the IP off the address it was given
+        // rather than passing it through whole: the typed address carries the
+        // PAIRING port (41415), and the fallback has to match on the IP alone
+        // or it would compare '10.0.0.5:41415' against a connect endpoint that
+        // is on a different, unrelated ephemeral port.
+        const { svc, adb } = makeService();
+        adb.pair.mockResolvedValue('Successfully paired to 10.0.0.5:41415 [guid=adb-SER1-bo0E0q]');
+        adb.mdnsServices.mockResolvedValue([
+            { name: 'adb-NOTUS-zz', service: CONNECT_SVC, address: '10.0.0.5', port: 43777 },
+            { name: 'adb-OTHER-yy', service: CONNECT_SVC, address: '10.9.9.9', port: 40000 },
+        ]);
+        const { sessionId } = svc.startCode('10.0.0.5:41415', '123456');
+        await flush();
+        expect(adb.connect).toHaveBeenCalledWith('10.0.0.5:43777');
+        expect(svc.status(sessionId)!.state).toBe('paired');
+    });
+
     it('reports paired-not-connected when pairing works but no connect service exists', async () => {
         const { svc, adb } = makeService();
         const { sessionId, payload } = svc.startQr();
@@ -119,7 +178,44 @@ describe('PairingService', () => {
         adb.mdnsServices.mockResolvedValue([{ name, service: PAIR_SVC, address: '10.0.0.5', port: 41415 }]);
         await svc.pollOnce();
         expect(svc.status(sessionId)!.state).toBe('paired-not-connected');
+        expect(svc.status(sessionId)!.message).toBe('no connect service was advertised for this device');
     });
+
+    // Every paired-not-connected message is a DETAIL CLAUSE, not a sentence:
+    // the client renders "Paired, but not connected yet -- <message>.", so one
+    // that opened with "paired, but" would reach the user doubled. Three
+    // separate paths produce one, and each is pinned below.
+    it.each([
+        ['no connect service exists', undefined, 'no connect service was advertised for this device'],
+        [
+            'connect answers without connecting',
+            'failed to connect to 10.0.0.5:43777',
+            'connect said: failed to connect to 10.0.0.5:43777',
+        ],
+        ['connect throws', new Error('boom'), 'the connect attempt failed'],
+    ])(
+        'phrases the paired-not-connected message as a detail clause when %s',
+        async (_case, connectResult, expected) => {
+            const { svc, adb } = makeService();
+            const { sessionId, payload } = svc.startQr();
+            const name = /S:([^;]+)/.exec(payload)![1]!;
+            const mdns = [{ name, service: PAIR_SVC, address: '10.0.0.5', port: 41415 }];
+            if (connectResult !== undefined) {
+                mdns.push({ name: 'adb-SER1-xx', service: CONNECT_SVC, address: '10.0.0.5', port: 43777 });
+                if (connectResult instanceof Error) {
+                    adb.connect.mockRejectedValue(connectResult);
+                } else {
+                    adb.connect.mockResolvedValue(connectResult);
+                }
+            }
+            adb.mdnsServices.mockResolvedValue(mdns);
+            await svc.pollOnce();
+
+            const message = svc.status(sessionId)!.message;
+            expect(message).toBe(expected);
+            expect(message?.toLowerCase().startsWith('paired, but')).toBe(false);
+        },
+    );
 
     it('discards a result belonging to a superseded session', async () => {
         const { svc, adb } = makeService();

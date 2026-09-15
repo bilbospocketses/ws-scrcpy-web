@@ -1,5 +1,5 @@
 import type { PairingStatus } from '../../common/PairingStatus';
-import { AdbClient, PairingError, parsePairGuid } from '../AdbClient';
+import { AdbClient, PairingError, parsePairGuid, parseSerialFromMdnsName } from '../AdbClient';
 import { Config } from '../Config';
 import { Logger } from '../Logger';
 import { newSession, type PairingSession } from './PairingSession';
@@ -193,17 +193,25 @@ export class PairingService {
         // guid first, then same IP. NEVER "the only connect service on the
         // network" -- with several devices advertising that is a coin toss.
         const target = (guid && connects.find((x) => x.name === guid)) ?? connects.find((x) => x.address === ip);
+        // Every `markPairedNotConnected` message below -- all three of them --
+        // is a DETAIL CLAUSE, not a sentence. The client owns the framing:
+        // `pairingStatusText` renders "Paired, but not connected yet --
+        // <message>.", so a message that opens with "paired, but" reaches the
+        // user doubled. (The log lines are sentences and are not affected.)
         if (!target) {
             // Not a failure: the device trusts us now. Only the automatic
             // connect could not be completed, so the user finishes by hand.
             log.info(`session ${s.id} paired, but no connect service was advertised`);
-            this.terminate(s, () =>
-                s.markPairedNotConnected('paired, but no connect service was advertised for this device'),
-            );
+            this.terminate(s, () => s.markPairedNotConnected('no connect service was advertised for this device'));
             return;
         }
         const address = `${target.address}:${target.port}`;
-        s.markConnecting(guid, address);
+        // The guid is an mDNS instance name (`adb-<serial>-<suffix>`), not a
+        // serial: `PairingStatus.serial` is documented as one, and the rest of
+        // the app keys devices by the stripped form (DeviceDiscoveryApi runs
+        // every connect-service name through the same helper), so storing the
+        // guid raw would put a value in that field that matches nothing.
+        s.markConnecting(guid ? parseSerialFromMdnsName(guid, CONNECT_SVC) : undefined, address);
         try {
             const res = await this.deps.adb.connect(address);
             if (this.session !== s) {
@@ -213,11 +221,11 @@ export class PairingService {
                 log.info(`session ${s.id} paired and connected ${address}`);
                 this.terminate(s, () => s.markPaired());
             } else {
-                this.terminate(s, () => s.markPairedNotConnected(`paired, but connect said: ${res.trim()}`));
+                this.terminate(s, () => s.markPairedNotConnected(`connect said: ${res.trim()}`));
             }
         } catch {
             if (this.session === s) {
-                this.terminate(s, () => s.markPairedNotConnected('paired, but the connect attempt failed'));
+                this.terminate(s, () => s.markPairedNotConnected('the connect attempt failed'));
             }
         }
     }

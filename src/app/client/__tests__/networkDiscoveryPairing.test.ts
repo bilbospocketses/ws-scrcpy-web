@@ -233,6 +233,40 @@ describe('renderPairingSection', () => {
         expect(statusLine(el).classList.contains('error')).toBe(false);
     });
 
+    it('sends an ADDRESSLESS paired-not-connected to manual-add, and says where to read the address', async () => {
+        // The precondition IS the absence of an address. `connectPaired` uses
+        // the address whenever the server found one, so this branch runs ONLY
+        // when no connect service was ever advertised -- which is exactly the
+        // case in which there is nothing to pre-fill a form from. The copy has
+        // to carry the whole instruction, and it has to name the phone's main
+        // Wireless debugging screen: the PAIRING dialog is on screen at that
+        // moment and shows a different, one-shot port.
+        const onConnectByHand = vi.fn();
+        fetchFn.mockResolvedValueOnce(qrStartRes()).mockResolvedValue(
+            jsonRes(200, {
+                state: 'paired-not-connected',
+                message: 'no connect service was advertised for this device',
+            }),
+        );
+        const el = mount({ onConnectByHand });
+        await startQr(el);
+        await vi.advanceTimersByTimeAsync(1000);
+
+        actionButton(el).click();
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(onConnectByHand).toHaveBeenCalledTimes(1);
+        expect(onConnectByHand.mock.calls[0]![0]).not.toHaveProperty('address');
+        // Nothing to connect TO -- it must not fire the connect route blind.
+        expect(fetchFn.mock.calls.some((c) => c[0] === '/api/devices/connect')).toBe(false);
+
+        const text = statusLine(el).textContent ?? '';
+        expect(text).toMatch(/wireless debugging/i);
+        expect(text).toMatch(/not the port from the pairing dialog/i);
+        // It must not promise a pre-fill that this branch cannot deliver.
+        expect(text).not.toMatch(/pre-?fill/i);
+    });
+
     it('treats the 404 that follows the user cancelling as confirmation, not an error', async () => {
         // Cancelling drops the session server-side, so an in-flight status poll
         // lands on a 404. Reporting that as a failure tells the user pairing
