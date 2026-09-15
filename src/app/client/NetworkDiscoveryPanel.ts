@@ -729,6 +729,12 @@ export class NetworkDiscoveryPanel {
     private chip?: ScanProgressChip | undefined;
     private scanWs?: WebSocket | undefined;
     private scanSessionHits = new Map<string, HTMLElement>();
+    /**
+     * Set only when the manual-add form was opened from the pairing flow, where
+     * the port is something the user must read off the phone rather than a
+     * value this form can guess. Cleared whenever the form is reset.
+     */
+    private manualPortIsRequired = false;
     private defaultInfoText = '';
 
     constructor() {
@@ -794,7 +800,7 @@ export class NetworkDiscoveryPanel {
                 // whenever there is one), so every field would be filled from
                 // `undefined`. The pairing section's own status line tells the
                 // user where to read the address off the phone.
-                onConnectByHand: () => this.toggleManualForm(true),
+                onConnectByHand: () => this.openManualFormForPairing(),
             }),
         );
     }
@@ -993,7 +999,32 @@ export class NetworkDiscoveryPanel {
         }
     }
 
+    /**
+     * Open the manual-add form for a device that paired but whose connect
+     * service was never found.
+     *
+     * The same form, with one difference: the port is CLEARED rather than left
+     * at the 5555 default. This path is reached only for a device that pairs
+     * over TLS, whose connect port is an ephemeral the user has to read off the
+     * phone — 5555 is never the answer there, and a field pre-typed with a
+     * wrong value is worse than an empty one, because it looks like an answer.
+     *
+     * Nothing is pre-FILLED. There is no address to fill from on this branch —
+     * see `connectPaired` — and clearing a known-wrong default is not the same
+     * thing as inventing a value.
+     *
+     * Deliberately scoped to this entry point: the ordinary "manually add"
+     * button still opens the form with 5555, which is right for the legacy
+     * `_adb._tcp` devices that path exists for.
+     */
+    private openManualFormForPairing(): void {
+        this.toggleManualForm(true);
+        this.manualPortIsRequired = true;
+        (this.container.querySelector('.discovery-manual-port') as HTMLInputElement).value = '';
+    }
+
     private clearManualForm(): void {
+        this.manualPortIsRequired = false;
         (this.container.querySelector('.discovery-manual-address') as HTMLInputElement).value = '';
         (this.container.querySelector('.discovery-manual-port') as HTMLInputElement).value = '5555';
         (this.container.querySelector('.discovery-manual-label') as HTMLInputElement).value = '';
@@ -1018,7 +1049,7 @@ export class NetworkDiscoveryPanel {
         const btn = this.container.querySelector('.discovery-manual-connect') as HTMLButtonElement;
 
         const ip = addressInput.value.trim();
-        const port = portInput.value.trim() || '5555';
+        const typedPort = portInput.value.trim();
         const label = labelInput.value.trim();
 
         if (!ip) {
@@ -1026,6 +1057,21 @@ export class NetworkDiscoveryPanel {
             addressInput.focus();
             return;
         }
+        // Opened from the pairing flow, an empty port must NOT quietly become
+        // 5555. That is the one port this device is known not to listen on, so
+        // defaulting it would submit a value the user never typed and could not
+        // see, and return a failure that looks like the device is unreachable.
+        // Everywhere else the 5555 default is the convenience it has always
+        // been.
+        if (!typedPort && this.manualPortIsRequired) {
+            this.showManualResult(
+                'Port is required — read it from the phone’s Wireless debugging screen (not the pairing dialog).',
+                'error',
+            );
+            portInput.focus();
+            return;
+        }
+        const port = typedPort || '5555';
 
         const address = `${ip}:${port}`;
         btn.disabled = true;
