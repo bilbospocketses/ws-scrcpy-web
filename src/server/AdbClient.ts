@@ -87,7 +87,16 @@ export function parseMdnsOutput(output: string): MdnsDevice[] {
         const address = addressPort.substring(0, colonIdx);
         const port = parseInt(addressPort.substring(colonIdx + 1), 10);
         if (Number.isNaN(port)) continue;
-        results.push({ name: name.trim(), service: service.trim(), address, port });
+        // The service type is normalised to its UNDOTTED form here, at the one
+        // place adb's output enters the process. DNS-SD names are fully
+        // qualified and may carry a trailing root dot (`_adb-tls-pairing._tcp.`),
+        // and the two consumers disagree about it: the scan path asks
+        // `service.includes('_adb')`, which tolerates either, while the pairing
+        // path compares `service === '_adb-tls-pairing._tcp'`, which does not.
+        // An adb that emits the dot would therefore break QR discovery SILENTLY
+        // — no error, just a device that is never found — while the scan went on
+        // working. Normalising once here is what makes the two agree.
+        results.push({ name: name.trim(), service: service.trim().replace(/\.$/, ''), address, port });
     }
     return results;
 }
@@ -340,9 +349,14 @@ export class AdbClient {
         // adb exits 0 while printing a failure for a wrong code, so the exit
         // code is not the success signal — the text is.
         if (!/successfully paired/i.test(out)) {
+            // Deliberately does NOT say the code was wrong. This fires whenever
+            // adb failed to report success, which includes adb-side failures
+            // like "Unable to start pairing client" — and in QR mode the user
+            // never typed a code at all, so telling them to check it names
+            // something that does not exist on their screen.
             throw new PairingError(
                 'refused',
-                'pairing refused — check the code and that the phone is still on the pairing screen',
+                'Pairing did not complete. Make sure the phone is still showing its pairing screen — and, if you typed a pairing code, that it was entered correctly — then try again.',
             );
         }
         return out;

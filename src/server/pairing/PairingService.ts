@@ -12,9 +12,17 @@ export type { PairingStatus };
 
 const log = Logger.for('PairingService');
 
-/** mDNS service types Android advertises while pairing and once paired. */
-const PAIR_SVC = '_adb-tls-pairing._tcp';
-const CONNECT_SVC = '_adb-tls-connect._tcp';
+/**
+ * mDNS service types Android advertises while pairing and once paired.
+ *
+ * Exported so tests can pin them against what `parseMdnsOutput` actually
+ * produces, rather than against a second copy that would drift silently: these
+ * are compared with `===`, so a service type that arrives in any other spelling
+ * (a trailing DNS root dot, say) makes discovery fail with no error at all.
+ * `parseMdnsOutput` normalises the dot away for exactly that reason.
+ */
+export const PAIR_SVC = '_adb-tls-pairing._tcp';
+export const CONNECT_SVC = '_adb-tls-connect._tcp';
 
 /** How often a QR session re-asks adb what it can see. */
 export const POLL_INTERVAL_MS = 1_000;

@@ -20,10 +20,20 @@ describe('parseMdnsOutput', () => {
             'adb-SERIAL2\t_adb-tls-connect._tcp.\t192.168.86.44:5555',
         ].join('\n');
         const result = parseMdnsOutput(output);
+        // The trailing DNS root dot is stripped: it is part of a fully qualified
+        // DNS-SD name, not part of the service type, and the pairing path
+        // compares service types with `===`. See the note in `parseMdnsOutput`.
         expect(result).toEqual([
-            { name: 'adb-SERIAL1', service: '_adb-tls-connect._tcp.', address: '192.168.86.43', port: 5555 },
-            { name: 'adb-SERIAL2', service: '_adb-tls-connect._tcp.', address: '192.168.86.44', port: 5555 },
+            { name: 'adb-SERIAL1', service: '_adb-tls-connect._tcp', address: '192.168.86.43', port: 5555 },
+            { name: 'adb-SERIAL2', service: '_adb-tls-connect._tcp', address: '192.168.86.44', port: 5555 },
         ]);
+    });
+
+    it('normalises the service type whether or not adb prints the trailing dot', () => {
+        const dotted = parseMdnsOutput('adb-SERIAL1\t_adb-tls-connect._tcp.\t192.168.86.43:5555');
+        const bare = parseMdnsOutput('adb-SERIAL1\t_adb-tls-connect._tcp\t192.168.86.43:5555');
+        expect(dotted).toEqual(bare);
+        expect(dotted[0]!.service).toBe('_adb-tls-connect._tcp');
     });
 
     it('returns empty array for no services', () => {
@@ -37,7 +47,7 @@ describe('parseMdnsOutput', () => {
             'adb-SERIAL1\t_adb-tls-pairing._tcp.\t192.168.86.43:37485',
         ].join('\n');
         const result = parseMdnsOutput(output);
-        expect(result[0]!.service).toBe('_adb-tls-pairing._tcp.');
+        expect(result[0]!.service).toBe('_adb-tls-pairing._tcp');
         expect(result[0]!.port).toBe(37485);
     });
 

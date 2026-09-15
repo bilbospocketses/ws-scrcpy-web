@@ -72,6 +72,27 @@ describe('AdbClient.pair', () => {
         expect(pairingError.cause).toBeUndefined();
     });
 
+    it('does not blame the pairing code when adb simply did not report success', async () => {
+        // adb exits 0 while printing a failure, so this branch fires on ANY
+        // unsuccessful output — a wrong code, yes, but equally adb's own
+        // "Unable to start pairing client". And in QR mode the user never typed
+        // a code at all, so "check the code" names something that is not on
+        // their screen. The wording has to cover both modes and stop asserting
+        // which half was wrong.
+        const client = new AdbClient('C:/fake/adb.exe');
+        vi.spyOn(execOf(client), 'exec').mockResolvedValue('Unable to start pairing client');
+
+        const err = await client.pair('1.2.3.4:5555', SECRET).catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(PairingError);
+        const pairingError = err as PairingError;
+        expect(pairingError.kind).toBe('refused');
+        expectNoSecretAnywhere(pairingError);
+        // Conditional about the code, never an accusation.
+        expect(pairingError.message).toMatch(/if you typed/i);
+        expect(pairingError.message).toMatch(/pairing screen/i);
+        expect(pairingError.message).not.toMatch(/check the code/i);
+    });
+
     it('reports an adb pair timeout as kind timeout, still without the code', async () => {
         const client = new AdbClient('C:/fake/adb.exe');
         const raw = new AdbExecError('timeout', 'C:/fake/adb.exe', ['pair', '1.2.3.4:5555', SECRET]);

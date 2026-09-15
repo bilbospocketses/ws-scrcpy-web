@@ -1,10 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { parseMdnsOutput } from '../AdbClient';
 import type { PairingDeps } from '../pairing/PairingService';
-import { PairingService } from '../pairing/PairingService';
+import { CONNECT_SVC, PAIR_SVC, PairingService } from '../pairing/PairingService';
 import type { PairingSession } from '../pairing/PairingSession';
-
-const PAIR_SVC = '_adb-tls-pairing._tcp';
-const CONNECT_SVC = '_adb-tls-connect._tcp';
 
 // Every service built by makeService is stopped after the test. A QR session
 // arms a real 1s discovery timer, and with the clock frozen at t=1000 it never
@@ -68,6 +66,28 @@ function flush(): Promise<void> {
 }
 
 describe('PairingService', () => {
+    // The QR flow matches the service type with `===`, so it is not enough that
+    // these constants look right — they have to equal what `parseMdnsOutput`
+    // actually hands the service. DNS-SD names are fully qualified and may
+    // carry a trailing root dot; an adb that prints one would make discovery
+    // fail SILENTLY (no error, the device simply never found) while the scan
+    // path, which uses `includes`, went on working. Driven from parser output
+    // in BOTH spellings rather than from a hand-written constant.
+    it.each([
+        ['undotted', '_adb-tls-pairing._tcp', '_adb-tls-connect._tcp'],
+        ['dotted', '_adb-tls-pairing._tcp.', '_adb-tls-connect._tcp.'],
+    ])('matches the service types adb prints in its %s form', (_form, pairSvc, connectSvc) => {
+        const parsed = parseMdnsOutput(
+            [
+                'List of discovered mdns services',
+                `wsscrcpy-abc\t${pairSvc}\t10.0.0.5:41415`,
+                `adb-SER1-xx\t${connectSvc}\t10.0.0.5:43777`,
+            ].join('\n'),
+        );
+        expect(parsed[0]!.service).toBe(PAIR_SVC);
+        expect(parsed[1]!.service).toBe(CONNECT_SVC);
+    });
+
     it('builds the Android WIFI:T:ADB payload from the session', () => {
         const { svc } = makeService();
         const { payload } = svc.startQr();
