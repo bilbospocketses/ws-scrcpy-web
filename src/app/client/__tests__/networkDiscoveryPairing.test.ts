@@ -2,7 +2,12 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PairingStatus } from '../../../common/PairingStatus';
-import { isTerminalPairingState, pairingStatusText, renderPairingSection } from '../NetworkDiscoveryPanel';
+import {
+    isTerminalPairingState,
+    pairingStatusText,
+    renderPairingSection,
+    scanHitPairingHint,
+} from '../NetworkDiscoveryPanel';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -81,6 +86,34 @@ describe('pairingStatusText', () => {
         for (const state of ['awaiting-scan', 'pairing', 'connecting', 'paired'] as const) {
             expect(pairingStatusText({ state }).action).toBeUndefined();
         }
+    });
+});
+
+describe('scanHitPairingHint', () => {
+    it('warns on a hit that advertises the TLS transport', () => {
+        const hint = scanHitPairingHint({ mayNeedPairing: true });
+        expect(hint).toMatch(/pairing/i);
+        // It has to point at the thing that fixes it. "Needs pairing" with no
+        // route to the pairing UI leaves the user exactly where they were.
+        expect(hint).toMatch(/pair a new device/i);
+    });
+
+    it('says MAY need, never DOES need', () => {
+        // The service type establishes that the device pairs over TLS, not that
+        // this server is unpaired with it — an already-paired device advertises
+        // exactly the same thing and connects fine. Telling that user to pair
+        // again sends them to the phone for nothing.
+        const hint = scanHitPairingHint({ mayNeedPairing: true });
+        expect(hint).toMatch(/\bmay\b/i);
+        expect(hint).not.toMatch(/failed|error|cannot|must pair/i);
+    });
+
+    it('says nothing for a hit that cannot know', () => {
+        // A TCP-probe hit and a legacy `_adb._tcp` device both arrive without
+        // the flag. Warning there would put the notice on every port-5555
+        // device on the network.
+        expect(scanHitPairingHint({})).toBe('');
+        expect(scanHitPairingHint({ mayNeedPairing: false })).toBe('');
     });
 });
 

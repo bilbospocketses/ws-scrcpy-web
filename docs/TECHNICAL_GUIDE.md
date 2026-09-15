@@ -1340,7 +1340,7 @@ An Android 11+ device on a secure wireless-debugging port refuses an unpaired cl
 | `src/server/pairing/PairingService.ts` | Drives one session at a time: hands out the QR payload, polls adb's mDNS list every `POLL_INTERVAL_MS` (1 s) for the exact service name it advertised, pairs, then auto-connects. |
 | `src/server/AdbClient.ts` | `pair()` (the redaction boundary above) and `parsePairGuid()`. |
 | `src/server/api/PairingApi.ts` | Four admin-gated routes under `/api/devices/pair` — `qr`, `code`, `status`, `cancel`. Registered **before** `DeviceDiscoveryApi`, which otherwise 404s anything under `/api/devices` that it doesn't own itself. |
-| `src/server/network/AdbHandshakeProbe.ts` | `parseCnxnReply`'s `STLS` branch — see above. Nothing outside the probe and its own tests reads `requiresPairing` yet; it is not currently surfaced on a scan hit. |
+| `src/server/network/AdbHandshakeProbe.ts` | `parseCnxnReply`'s `STLS` branch — see above. **Still nothing reads `requiresPairing`, and nothing can:** the TCP probe only ever knocks on port 5555 (`NetworkScanner`), where an Android 11+ device answers `AUTH` or nothing at all, so the `STLS` branch is unreachable from the scan path. The flag a scan hit actually carries is `mayNeedPairing`, derived from the mDNS SERVICE TYPE instead — `_adb-tls-connect._tcp` *is* the statement that the device speaks the TLS transport. "May", not "does": the service type says nothing about whether this server has already paired, and an already-paired device advertises exactly the same thing. |
 | `src/app/client/NetworkDiscoveryPanel.ts` | The "Pair a new device" QR / pairing-code UI, in the **Available Network Devices** panel on Home, beside **scan network** and **manually add** — not a modal. |
 
 ### 14.3 Dependencies

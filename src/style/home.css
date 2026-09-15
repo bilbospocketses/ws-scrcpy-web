@@ -162,6 +162,16 @@
     text-overflow: ellipsis;
 }
 
+/* Shown on a scan hit that advertises the Android 11+ TLS transport, which
+   refuses an unpaired client. Advisory, not an error: the device may already be
+   paired with this server, and the card's connect button stays enabled. */
+.discovery-card-hint {
+    font-size: 11px;
+    color: var(--text-color-light);
+    margin-top: 2px;
+    white-space: normal;
+}
+
 .discovery-card-actions {
     display: flex;
     flex-wrap: wrap;

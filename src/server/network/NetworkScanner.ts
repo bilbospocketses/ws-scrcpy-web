@@ -61,6 +61,8 @@ interface ScanHitInternal {
     name: string;
     /** Explicit label (from caller); takes precedence over DB lookup. */
     label?: string;
+    /** See `ScanHitMessage.mayNeedPairing` — passed straight through to the wire. */
+    mayNeedPairing?: boolean;
     /** Internal only — carries raw hit data so emit() can resolve labels per-spectator. */
     _hitMeta: { mac: string | null; serial: string };
 }
@@ -247,6 +249,12 @@ export class NetworkScanner {
                         address,
                         serial,
                         name: `adb-${serial}`,
+                        // `_adb-tls-connect._tcp` IS the statement that this
+                        // device speaks the Android 11+ TLS transport, and such
+                        // a device refuses any client it has not paired with.
+                        // The legacy `_adb._tcp` carries no such requirement.
+                        // `includes`, to match the rest of the discovery path.
+                        mayNeedPairing: hit.service.includes('tls-connect'),
                     });
                 }
             } catch {
@@ -331,6 +339,7 @@ export class NetworkScanner {
         name: string;
         mac?: string | null;
         label?: string;
+        mayNeedPairing?: boolean;
     }): void {
         if (this.emittedAddresses.has(partial.address)) return;
         this.emittedAddresses.add(partial.address);
@@ -344,6 +353,10 @@ export class NetworkScanner {
             serial: partial.serial,
             name: partial.name,
             ...(partial.label !== undefined ? { label: partial.label } : {}),
+            // Only carried when true: a `false` on every TCP hit would be noise
+            // on the wire, and `exactOptionalPropertyTypes` rejects an explicit
+            // `undefined` for an optional property.
+            ...(partial.mayNeedPairing ? { mayNeedPairing: true } : {}),
             _hitMeta: { mac: partial.mac ?? null, serial: partial.serial },
         };
         this.emit(internalMsg);

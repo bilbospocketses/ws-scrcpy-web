@@ -28,6 +28,27 @@ export function scanHitDisplayName(hit: { name?: string | undefined; model?: str
     return hit.name || hit.model || '';
 }
 
+/**
+ * The advisory shown on a scan card for a device that advertises the Android
+ * 11+ TLS transport, and empty for anything else.
+ *
+ * Said BEFORE the user clicks connect, because afterwards it cannot be said at
+ * all: such a device refuses an unpaired client at the TLS handshake and the
+ * failure arrives as a plain "failed to connect", indistinguishable from an
+ * unreachable host.
+ *
+ * "May", deliberately. The service type establishes that the device pairs over
+ * TLS, not that this server is unpaired with it — an already-paired device
+ * advertises exactly the same thing and connects fine. So this is advice, the
+ * connect button stays enabled, and nothing here is styled as an error.
+ *
+ * Extracted as a pure function, like `scanHitDisplayName` above, so those
+ * judgements are assertable without standing up the whole panel.
+ */
+export function scanHitPairingHint(hit: { mayNeedPairing?: boolean | undefined }): string {
+    return hit.mayNeedPairing ? 'may need pairing first — use “Pair a new device”' : '';
+}
+
 // ---------------------------------------------------------------------------
 // Wireless pairing
 //
@@ -916,7 +937,14 @@ export class NetworkDiscoveryPanel {
     }
 
     private renderHit(
-        hit: { address: string; serial: string; name: string; label: string; model?: string },
+        hit: {
+            address: string;
+            serial: string;
+            name: string;
+            label: string;
+            model?: string;
+            mayNeedPairing?: boolean;
+        },
         grid: HTMLElement,
     ): void {
         if (this.scanSessionHits.has(hit.address)) return;
@@ -928,10 +956,12 @@ export class NetworkDiscoveryPanel {
         // render a blank top line even when the app knew perfectly well what it
         // was (finding 7.6).
         const displayName = scanHitDisplayName(hit);
+        const pairingHint = scanHitPairingHint(hit);
         card.innerHTML = `
             <div class="discovery-card-info">
                 <div class="discovery-card-name" title="${escapeHtml(displayName)}">${escapeHtml(displayName)}</div>
                 <div class="discovery-card-address" title="${escapeHtml(hit.address)}">${escapeHtml(hit.address)}</div>
+                ${pairingHint ? `<div class="discovery-card-hint">${escapeHtml(pairingHint)}</div>` : ''}
             </div>
             <div class="discovery-card-actions">
                 <input type="text" class="discovery-name-input" placeholder="Name this device..." value="${escapeHtml(hit.label || '')}" />

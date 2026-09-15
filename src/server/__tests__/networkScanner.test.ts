@@ -465,6 +465,53 @@ describe('NetworkScanner — mDNS track', () => {
         expect(hits[0]).toMatchObject({ source: 'mdns', serial: 'SERIAL1' });
     });
 
+    it('flags a TLS-transport mDNS hit as one that may need pairing, and a legacy one as not', async () => {
+        // The device's SERVICE TYPE is the only place this is knowable. The
+        // STLS handshake reply says the same thing, but the TCP probe only ever
+        // knocks on port 5555, where an Android 11+ device answers AUTH or
+        // nothing — so that branch is unreachable and the flag has to come from
+        // here or not at all.
+        const scanner = new NetworkScanner(
+            baseDeps({
+                adbMdnsServices: async () => [
+                    { name: 'adb-NEW11-xx', service: '_adb-tls-connect._tcp.', address: '1.1.1.5', port: 43777 },
+                    { name: 'adb-OLD10', service: '_adb._tcp.', address: '1.1.1.6', port: 5555 },
+                ],
+                progressInterval: 1,
+                concurrency: 2,
+            }),
+        );
+        const { ws, messages } = makeWs();
+        await scanner.start([makeSubnet([])], ws, 0);
+        const hits = messages.filter((m) => m.type === 'scan.hit');
+        expect(hits).toHaveLength(2);
+        expect(hits[0]).toMatchObject({ address: '1.1.1.5:43777', mayNeedPairing: true });
+        // Legacy `_adb._tcp` carries no pairing requirement, and the flag is
+        // omitted rather than sent as false.
+        expect(hits[1]).toMatchObject({ address: '1.1.1.6:5555' });
+        expect(hits[1]).not.toHaveProperty('mayNeedPairing');
+    });
+
+    it('never flags a TCP-probe hit, which cannot know', async () => {
+        // The probe knocks on 5555 and learns nothing about the TLS transport.
+        // Claiming otherwise would put the warning on every port-5555 device.
+        const scanner = new NetworkScanner(
+            baseDeps({
+                adbMdnsServices: async () => [],
+                adbHandshakeProbe: async (h: string) =>
+                    h === '1.1.1.9' ? { isAdb: true, model: 'Pixel' } : { isAdb: false },
+                progressInterval: 1,
+                concurrency: 2,
+            }),
+        );
+        const { ws, messages } = makeWs();
+        await scanner.start([makeSubnet(['1.1.1.9'])], ws, 0);
+        const hits = messages.filter((m) => m.type === 'scan.hit');
+        expect(hits).toHaveLength(1);
+        expect(hits[0]).toMatchObject({ source: 'tcp' });
+        expect(hits[0]).not.toHaveProperty('mayNeedPairing');
+    });
+
     it('skips mDNS hits already in adb devices', async () => {
         const scanner = new NetworkScanner(
             baseDeps({
