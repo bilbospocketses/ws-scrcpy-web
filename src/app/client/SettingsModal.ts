@@ -119,13 +119,32 @@ export function buildDockerUpdatesNote(): HTMLElement {
  * The tab stays VISIBLE and says why, rather than disappearing — an admin who
  * used it on the desktop and finds it simply gone learns nothing. Same reason
  * Service and Updates are replaced rather than hidden.
+ *
+ * Carries `data-settings-tab="dependencies"` as well as its `data-docker-note`,
+ * and that is load-bearing rather than decorative. In container mode this
+ * element IS the Dependencies tab body, so it has to answer to every hook the
+ * real body answers to — and Dependencies is the ONE tab with no `<h3>` of its
+ * own (it wraps `DependencyPanel`, which brings its own `<h2>`), so that data
+ * hook is the only way anything finds it. `tests/e2e/support/auth.ts`'s
+ * `settingsSection()` special-cases it for exactly that reason, and without the
+ * attribute `openSettingsTab(settings, 'Dependencies')` cannot resolve the note
+ * at all: CI caught precisely that, `element(s) not found` on
+ * `section[data-settings-tab="dependencies"]`.
+ *
+ * Service and Updates deliberately do NOT get the same treatment: their real
+ * bodies do not carry the hook either (`DependenciesTab.ts` is the only place in
+ * `src/` that sets it), and both are found by their headings, which
+ * `buildDockerNoteSection` already renders. The rule is "the note answers to the
+ * same hooks its real body does", not "every note gets every hook".
  */
 export function buildDockerDependenciesNote(): HTMLElement {
-    return buildDockerNoteSection(
+    const section = buildDockerNoteSection(
         'Dependencies',
         'dependencies',
         'dependency updates not applicable — this instance runs in a container; pull a newer image to update.',
     );
+    section.dataset['settingsTab'] = 'dependencies';
+    return section;
 }
 
 /**

@@ -105,8 +105,17 @@ test.describe('container mode', () => {
         // dependency; 0 here is only meaningful because the tab is open (see the
         // hidden-subtree note above).
         await expect(dependencies.getByRole('button')).toHaveCount(0);
-        // And the real body is detached, not merely covered by the note.
-        await expect(settings.locator('[data-settings-tab="dependencies"]')).toHaveCount(0);
+        // And the real body is detached, not merely covered by the note. The
+        // note carries the SAME `data-settings-tab` hook — it has to, because
+        // Dependencies has no heading and `openSettingsTab` above resolves it by
+        // that hook alone — so this cannot be an absence check. Exactly one
+        // element answers to the hook, and it is the note: a surviving real panel
+        // would make it 2, and a swap that never fired would leave the single
+        // match without `data-docker-note`.
+        await expect(settings.locator('section[data-settings-tab="dependencies"]')).toHaveCount(1);
+        await expect(
+            settings.locator('section[data-settings-tab="dependencies"][data-docker-note="dependencies"]'),
+        ).toHaveCount(1);
     });
 
     test('@docker the home page raises no dependency-update alert', async ({ page }) => {

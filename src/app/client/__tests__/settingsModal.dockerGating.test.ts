@@ -73,6 +73,38 @@ describe('container replacements for Service, Updates and Dependencies', () => {
         expect(note?.textContent).toBe(DEPENDENCIES_COPY);
     });
 
+    it('answers to the data-settings-tab hook, which is the ONLY way anything finds this tab', () => {
+        // The gap CI caught, and the reason it got past 2,258 green unit tests:
+        // the unit suite asserted the note RENDERS and the e2e asserted it is
+        // FINDABLE, and nothing asserted the attribute that joins them.
+        //
+        // Dependencies is the one tab with no `<h3>` of its own — it wraps
+        // DependencyPanel, which brings its own `<h2>` — so `settingsSection()`
+        // in tests/e2e/support/auth.ts special-cases it to
+        // `section[data-settings-tab="dependencies"]`. Without this attribute
+        // `openSettingsTab(settings, 'Dependencies')` cannot resolve the note at
+        // all, and the container tier fails with `element(s) not found`.
+        const el = buildDockerDependenciesNote();
+        expect(el.dataset['settingsTab']).toBe('dependencies');
+        // Both hooks on ONE element: the e2e finds the tab by the first and
+        // identifies it as the note by the second.
+        expect(el.dataset['dockerNote']).toBe('dependencies');
+        expect(el.matches('section[data-settings-tab="dependencies"]')).toBe(true);
+    });
+
+    it('does not put that hook on the Service or Updates notes', () => {
+        // The other half, and the reason this is not "every note gets every
+        // hook": neither real body carries `data-settings-tab` either
+        // (DependenciesTab.ts is the only place in src/ that sets it), and both
+        // are found by their headings. A note answers to the hooks ITS real body
+        // answers to — no more.
+        expect(buildDockerServiceNote().dataset['settingsTab']).toBeUndefined();
+        expect(buildDockerUpdatesNote().dataset['settingsTab']).toBeUndefined();
+        // ...and they are still findable the way the e2e actually finds them.
+        expect(buildDockerServiceNote().querySelector('h3.settings-section-heading')?.textContent).toBe('Service');
+        expect(buildDockerUpdatesNote().querySelector('h3.settings-section-heading')?.textContent).toBe('Updates');
+    });
+
     it('names no image tag, so the copy stays true across the 1.0 boundary', () => {
         // The item-135 bug in one line. `:latest` 404s today and resolves after
         // the first stable release; `:beta` is the reverse. A note that names
@@ -176,9 +208,16 @@ describe('SettingsModal applies the gating only in a container', () => {
         expect(document.querySelector('[data-docker-note="service"]')).not.toBeNull();
         expect(document.querySelector('[data-docker-note="updates"]')).not.toBeNull();
         expect(document.querySelector('[data-docker-note="dependencies"]')).not.toBeNull();
-        // The real Dependencies body is GONE, not merely covered: its own
-        // `data-settings-tab` hook is what `replaceTabBody` detached.
-        expect(document.querySelector('[data-settings-tab="dependencies"]')).toBeNull();
+        // The real Dependencies body is GONE, not merely covered. This can no
+        // longer be "the hook is absent" — the note deliberately carries the same
+        // `data-settings-tab` hook, because in a container the note IS the tab
+        // body and nothing could find it otherwise. So the assertion is that
+        // exactly ONE element answers to the hook and that it is the NOTE: a
+        // surviving real panel would make the count 2, and a swap that never
+        // happened would leave the one match carrying no `data-docker-note`.
+        const byHook = document.querySelectorAll('[data-settings-tab="dependencies"]');
+        expect(byHook.length).toBe(1);
+        expect((byHook[0] as HTMLElement).dataset['dockerNote']).toBe('dependencies');
 
         // And the inapplicable endpoints were never asked. This is the whole
         // reason the refreshes are held until docker mode is known: firing them
