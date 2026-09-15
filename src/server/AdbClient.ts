@@ -96,6 +96,13 @@ export function parseMdnsOutput(output: string): MdnsDevice[] {
         // An adb that emits the dot would therefore break QR discovery SILENTLY
         // — no error, just a device that is never found — while the scan went on
         // working. Normalising once here is what makes the two agree.
+        //
+        // The bundled adb 37.0.1 does NOT emit the dot: the capture in
+        // `docs/superpowers/specs/2026-09-15-qr-pairing-design.md` §1 shows a
+        // bare `_adb-tls-connect._tcp` from this exact build. So this is
+        // future-proofing, not a live fix — and note that several test fixtures
+        // in this repo model the dotted form, which is what made the question
+        // look open. They are wrong about real adb output; the code was right.
         results.push({ name: name.trim(), service: service.trim().replace(/\.$/, ''), address, port });
     }
     return results;

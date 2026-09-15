@@ -691,10 +691,17 @@ Routes, all admin-scoped, mirroring how `DeviceDiscoveryApi` gates:
 
 | Method | Route | Returns |
 |---|---|---|
-| POST | `/api/devices/pair/qr` | `{ sessionId, svg, expiresAt }` |
+| POST | `/api/devices/pair/qr` | `{ sessionId, svg, expiresAt }` — **shipped as `expiresInMs`**, see below |
 | POST | `/api/devices/pair/code` | `{ sessionId }` |
 | GET | `/api/devices/pair/status?sessionId=` | `{ state, message?, serial?, address? }` |
 | POST | `/api/devices/pair/cancel` | `{ ok: true }` |
+
+> **As-planned vs as-shipped.** `/pair/qr` returns `expiresInMs`, a duration, not the absolute
+> `expiresAt` this plan specified. It changed during the final review round: the browser cannot read
+> the server's clock, so a deadline forced it to difference two unrelated clocks and reported the skew
+> between them as time the user did or did not have. The plan text below is left as written — it is
+> the record of what was planned — so read this table against the design spec
+> (`docs/superpowers/specs/2026-09-15-qr-pairing-design.md` §5) for the shipped contract.
 
 - [ ] **Step 1: Write the failing test**
 
