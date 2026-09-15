@@ -40,6 +40,21 @@ export class AdbExecError extends Error {
     }
 }
 
+/**
+ * Error thrown by `AdbClient.pair`. Deliberately carries NO args and NO cause
+ * chain: `AdbExecError` interpolates `args.join(' ')` into its message, and the
+ * pairing args contain the one-time pairing password. See `AdbClient.pair`.
+ */
+export class PairingError extends Error {
+    constructor(
+        public readonly kind: 'timeout' | 'refused' | 'unknown',
+        message: string,
+    ) {
+        super(message);
+        this.name = 'PairingError';
+    }
+}
+
 interface AdbExecOptions {
     /** Hard timeout in ms. 0 / undefined = unbounded. */
     timeoutMs?: number;
@@ -52,6 +67,9 @@ interface AdbExecOptions {
 export const DEFAULT_TIMEOUT_MS = {
     devices: 5_000,
     mdnsServices: 8_000,
+    // Pairing involves a TLS handshake and user-paced input, so it gets a
+    // longer budget than `connect`.
+    pair: 20_000,
     connect: 8_000,
     disconnect: 5_000,
     forwardOps: 5_000,
@@ -69,7 +87,23 @@ export function parseMdnsOutput(output: string): MdnsDevice[] {
         const address = addressPort.substring(0, colonIdx);
         const port = parseInt(addressPort.substring(colonIdx + 1), 10);
         if (Number.isNaN(port)) continue;
-        results.push({ name: name.trim(), service: service.trim(), address, port });
+        // The service type is normalised to its UNDOTTED form here, at the one
+        // place adb's output enters the process. DNS-SD names are fully
+        // qualified and may carry a trailing root dot (`_adb-tls-pairing._tcp.`),
+        // and the two consumers disagree about it: the scan path asks
+        // `service.includes('_adb')`, which tolerates either, while the pairing
+        // path compares `service === '_adb-tls-pairing._tcp'`, which does not.
+        // An adb that emits the dot would therefore break QR discovery SILENTLY
+        // — no error, just a device that is never found — while the scan went on
+        // working. Normalising once here is what makes the two agree.
+        //
+        // The bundled adb 37.0.1 does NOT emit the dot: the capture in
+        // `docs/superpowers/specs/2026-09-15-qr-pairing-design.md` §1 shows a
+        // bare `_adb-tls-connect._tcp` from this exact build. So this is
+        // future-proofing, not a live fix — and note that several test fixtures
+        // in this repo model the dotted form, which is what made the question
+        // look open. They are wrong about real adb output; the code was right.
+        results.push({ name: name.trim(), service: service.trim().replace(/\.$/, ''), address, port });
     }
     return results;
 }
@@ -100,6 +134,17 @@ export function parseGetProp(output: string): Record<string, string> {
         }
     }
     return props;
+}
+
+/**
+ * Pull the guid out of a successful `adb pair` line, e.g.
+ * `Successfully paired to 192.168.86.190:41415 [guid=adb-5C061JEA327610-bo0E0q]`.
+ * Callers match it against an `_adb-tls-connect._tcp` mDNS service name to find
+ * the connect port the freshly-paired device came up on. Returns undefined when
+ * adb printed no guid.
+ */
+export function parsePairGuid(output: string): string | undefined {
+    return /\[guid=([^\]]+)\]/.exec(output)?.[1];
 }
 
 export class AdbClient {
@@ -281,6 +326,47 @@ export class AdbClient {
 
     async connect(address: string): Promise<string> {
         return this.exec(['connect', address], { timeoutMs: DEFAULT_TIMEOUT_MS.connect });
+    }
+
+    /**
+     * Pair with a device. NEVER lets the pairing code escape.
+     *
+     * AdbExecError builds its message from `args.join(' ')`, so letting one
+     * propagate from here would put the pairing password into every log that
+     * catches it. This method is the redaction boundary: it swallows the
+     * original error entirely — no args, no cause chain — and throws a
+     * PairingError whose message names only the failure kind.
+     */
+    async pair(address: string, code: string): Promise<string> {
+        let out: string;
+        try {
+            out = await this.exec(['pair', address, code], { timeoutMs: DEFAULT_TIMEOUT_MS.pair });
+        } catch (e) {
+            // Only a timeout on OUR `pair` argv is a pairing timeout. `exec`
+            // awaits `daemon.ensureReady()` first, which throws its own
+            // AdbExecError('timeout', …, ['start-server']) when adb itself
+            // never came up (AdbDaemonManager) — reporting that as
+            // PairingError('timeout') would tell the user pairing timed out
+            // and send them back to the phone for a fresh code against a
+            // daemon that is not running. Anything not ours is 'unknown'.
+            const isPairTimeout = e instanceof AdbExecError && e.kind === 'timeout' && e.args[0] === 'pair';
+            const kind = isPairTimeout ? 'timeout' : 'unknown';
+            throw new PairingError(kind, `adb pair failed (${kind})`);
+        }
+        // adb exits 0 while printing a failure for a wrong code, so the exit
+        // code is not the success signal — the text is.
+        if (!/successfully paired/i.test(out)) {
+            // Deliberately does NOT say the code was wrong. This fires whenever
+            // adb failed to report success, which includes adb-side failures
+            // like "Unable to start pairing client" — and in QR mode the user
+            // never typed a code at all, so telling them to check it names
+            // something that does not exist on their screen.
+            throw new PairingError(
+                'refused',
+                'Pairing did not complete. Make sure the phone is still showing its pairing screen — and, if you typed a pairing code, that it was entered correctly — then try again.',
+            );
+        }
+        return out;
     }
 
     async disconnect(address: string): Promise<string> {

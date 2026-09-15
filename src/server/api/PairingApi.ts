@@ -1,0 +1,197 @@
+import type { IncomingMessage, ServerResponse } from 'http';
+import { requireAdmin } from '../auth/requireAdmin';
+import { Logger } from '../Logger';
+import { PairingService } from '../pairing/PairingService';
+import { encodeQrSvg } from '../pairing/qr';
+import { isPairingAddress, isPairingCode } from '../security/deviceInput';
+import { BodyTooLargeError, InvalidJsonError, readJsonBodyStrict, sendInternalError } from './utils';
+
+const log = Logger.for('PairingApi');
+
+/** Every route this handler owns lives under here. */
+const PREFIX = '/api/devices/pair';
+
+/**
+ * The HTTP surface for wireless pairing: start a QR or pairing-code session,
+ * poll it, cancel it.
+ *
+ * REGISTRATION ORDER IS LOAD-BEARING. `DeviceDiscoveryApi.handle` claims ANY
+ * url starting `/api/devices`, and when none of its own routes match it answers
+ * 404 and returns `true`. Registered after it, every route here 404s with
+ * nothing in the log to say why. Register this handler FIRST — see
+ * `src/server/index.ts`, and the routing test in `pairingApi.test.ts` that
+ * pins the behaviour.
+ *
+ * The pairing password never leaves this process. The QR payload embeds it, so
+ * the QR route converts it to markup and drops the string: it is not returned,
+ * not logged, not stored. `PairingStatus` has no field that could carry it in
+ * any state, and the catch below logs an error's NAME only — the pairing code
+ * is an argument to calls made in here, so an unaudited error message is not
+ * safe to log. `PairingService` logs its own already-redacted detail.
+ */
+export class PairingApi {
+    /**
+     * Lazy by default, mirroring `AuthGate`'s `getDb`: resolving the singleton
+     * eagerly would build an `AdbClient` (and read `Config`) at construction
+     * time. Tests pass their own service rather than mutating the singleton,
+     * which would leak a live discovery timer between them.
+     */
+    constructor(private readonly getService: () => PairingService = () => PairingService.getInstance()) {}
+
+    async handle(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+        let pathname: string;
+        let params: URLSearchParams;
+        try {
+            const parsed = new URL(req.url || '', 'http://localhost');
+            pathname = parsed.pathname;
+            params = parsed.searchParams;
+        } catch {
+            return false; // unparseable target — not ours to answer
+        }
+        // Match on the PATH, not the raw url: `url === '/api/devices/pair/qr'`
+        // would miss a query string, and `startsWith('.../status')` would also
+        // claim `/api/devices/pair/statuses`.
+        if (pathname !== PREFIX && !pathname.startsWith(`${PREFIX}/`)) {
+            return false;
+        }
+
+        res.setHeader('Content-Type', 'application/json');
+
+        // Admin-scoped, and DELIBERATELY stricter than the neighbouring device
+        // routes — this asymmetry is the decision, not an oversight to be tidied
+        // away. Pairing establishes a PERSISTENT trust relationship with a NEW
+        // device, on behalf of the whole server; `/api/devices/connect` merely
+        // attaches to a device that is already trusted. That is a real
+        // difference in privilege.
+        //
+        // In open mode this passes: the acting user resolves to the implicit
+        // admin. It is deliberately NOT `requireOperator`, which also demands
+        // loopback — the ordinary way to use this feature is standing at the
+        // phone driving the UI from a laptop across the room, and requiring
+        // loopback would lock that out unless WS_SCRCPY_ALLOW_REMOTE_ADMIN=1.
+        //
+        // The gate sits here — after the ownership check, before the route
+        // table — so that a route added later cannot silently land ungated,
+        // while a URL this handler does not own still falls through with
+        // `false` instead of being answered with somebody else's 403.
+        if (!requireAdmin(req, res)) {
+            return true;
+        }
+
+        const svc = this.getService();
+        try {
+            if (req.method === 'POST' && pathname === `${PREFIX}/qr`) {
+                const { sessionId, payload, expiresInMs } = svc.startQr();
+                // The payload is converted here and never returned, logged, or
+                // stored. Only the rendered SVG leaves the process.
+                const svg = encodeQrSvg(payload);
+                res.writeHead(200);
+                // `expiresInMs` rather than an absolute `expiresAt`: the browser
+                // cannot read this process's clock, so a deadline would force it
+                // to difference two clocks and report the skew as lost time.
+                res.end(JSON.stringify({ sessionId, svg, expiresInMs }));
+                return true;
+            }
+
+            if (req.method === 'POST' && pathname === `${PREFIX}/code`) {
+                const body = await readJsonBodyStrict<{ address?: unknown; code?: unknown }>(req);
+                const address = typeof body.address === 'string' ? body.address.trim() : '';
+                const code = typeof body.code === 'string' ? body.code.trim() : '';
+                if (!address || !code) {
+                    res.writeHead(400);
+                    res.end(JSON.stringify({ error: 'address and code are required' }));
+                    return true;
+                }
+                // Validated separately from the presence check so the user is
+                // told which half is wrong. Neither message echoes the input —
+                // the code is a secret and the address is attacker-controlled.
+                if (!isPairingAddress(address)) {
+                    res.writeHead(400);
+                    res.end(JSON.stringify({ error: 'address must be IP:port, as shown on the phone' }));
+                    return true;
+                }
+                if (!isPairingCode(code)) {
+                    res.writeHead(400);
+                    res.end(JSON.stringify({ error: 'code must be the numeric pairing code shown on the phone' }));
+                    return true;
+                }
+                res.writeHead(200);
+                // Built explicitly rather than serialising the service's return
+                // value straight through. The response shape is a wire contract
+                // this route owns; passing the internal object through makes any
+                // field added to it for server-side reasons ship to the browser
+                // by accident, which for this service means the pairing secret.
+                const { sessionId } = svc.startCode(address, code);
+                res.end(JSON.stringify({ sessionId }));
+                return true;
+            }
+
+            if (req.method === 'GET' && pathname === `${PREFIX}/status`) {
+                const status = svc.status(params.get('sessionId') ?? '');
+                if (!status) {
+                    // 404 rather than returning the active session: an unknown
+                    // id must not be a way to read somebody else's pairing.
+                    //
+                    // A CANCELLED session lands here too — `cancel` drops the
+                    // session outright, so the next poll is a miss rather than
+                    // a 'failed' status. For the client, a 404 that follows its
+                    // own cancel is the success signal, not an error.
+                    res.writeHead(404);
+                    res.end(JSON.stringify({ error: 'no such pairing session' }));
+                    return true;
+                }
+                // `expired` and the three terminal states are final: the client
+                // can stop polling on any of them. A session past 'awaiting-scan'
+                // never reports 'expired' — the TTL bounds the scan window only.
+                res.writeHead(200);
+                res.end(JSON.stringify(status));
+                return true;
+            }
+
+            if (req.method === 'POST' && pathname === `${PREFIX}/cancel`) {
+                const { sessionId } = await readJsonBodyStrict<{ sessionId?: string }>(req);
+                // Idempotent on purpose: `cancel` already no-ops for an id that
+                // is not current, and a teardown path should not have to care
+                // whether it won the race against expiry or a replacement.
+                if (typeof sessionId === 'string' && sessionId) {
+                    svc.cancel(sessionId);
+                }
+                res.writeHead(200);
+                res.end(JSON.stringify({ ok: true }));
+                return true;
+            }
+
+            // An owned prefix but no route — let the chain answer it, which is
+            // DeviceDiscoveryApi's `/api/devices` 404.
+            return false;
+        } catch (err) {
+            if (err instanceof BodyTooLargeError) {
+                res.writeHead(413);
+                res.end(JSON.stringify({ error: 'request body too large' }));
+                return true;
+            }
+            if (err instanceof InvalidJsonError) {
+                res.writeHead(400);
+                res.end(JSON.stringify({ error: 'invalid JSON body' }));
+                return true;
+            }
+            // NAME and `code` only, never `.message` and never the stack. The
+            // pairing code and the QR payload are arguments to calls made above,
+            // so an error from an unaudited path could carry one into the log —
+            // the exact leak `AdbClient.pair` exists to prevent.
+            //
+            // `code` is included because the name alone is not enough to debug
+            // with: for the failures actually reachable here — a socket error
+            // during the body read, a double-write — `err.name` is literally
+            // 'Error', and the line would say nothing. Node's `code` is a fixed
+            // identifier from a known set (ECONNRESET, ERR_HTTP_HEADERS_SENT),
+            // never free text, so it carries no caller input.
+            const name = (err as Error)?.name || 'Error';
+            const code = (err as { code?: unknown })?.code;
+            const suffix = typeof code === 'string' || typeof code === 'number' ? ` (${code})` : '';
+            log.error(`${req.method} ${pathname} threw ${name}${suffix}`);
+            sendInternalError(res);
+            return true;
+        }
+    }
+}

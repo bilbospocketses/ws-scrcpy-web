@@ -7,35 +7,39 @@ canonical list of rows and their steps.
 
 Derived from `smoke-test.md` at `v0.1.30-beta.92`, which held **140 rows**; item 63
 (the Linux tray, 2026-09-06) added 14.8 and 14.9, item 114 (the tray's Exit, same
-day) added 15.6, and item 24 (live rotation, 2026-09-15) added 8.10 and 8.11, so the
-doc holds **145**. Row ids are stable and gappy; so are the lines here.
+day) added 15.6, item 24 (live rotation, 2026-09-15) added 8.10 and 8.11, and
+item 73 (wireless pairing, 2026-09-15) added 7.6 and 7.7, so the doc holds **147**.
+Row ids are stable and gappy; so are the lines here.
 
 | | Rows | Where |
 |---|---|---|
 | Automated, fast tier | 30 | `build-and-test`, every PR |
-| Automated, container tier | 11 | `build-and-test`'s docker step, and qa-harness nightly |
+| Automated, container tier | 13 | `build-and-test`'s docker step, and qa-harness nightly |
 | Automated, device tier | 17 | qa-harness, nightly |
 | Windows guest | 26 | qa-harness, nightly, once P4 lands |
 | Windows guest **and** Linux residual | 2 | Windows half P4; Linux half nobody |
 | Automatable, no spec written yet | 2 | — (8.10 / 8.11, item 24's rotation rows; the six of 2026-09-04 were written 2026-09-06, item 104) |
 | **Residual — Linux installer and desktop** | **50** | nobody (14.8 / 14.9 are assertable by qa-harness item 14's Linux guests) |
 | **Residual — un-automatable** | **7** | nobody, ever |
-| **Total** | **145** | |
+| **Total** | **147** | |
 
-**Automated today: 58 of 145 = 40 %.** After P4: 84 of 145 = 58 %, plus the
+**Automated today: 58 of 147 = 39 %.** After P4: 84 of 147 = 57 %, plus the
 Windows halves of the two split rows. (52 / 37 % and 77 / 55 % until 2026-09-06,
 when item 104 wrote the six specs this table used to list as "automatable, no
 spec"; the denominator was 140 until item 63 added the two tray rows and item 114
-added 15.6, and 143 until item 24 added 8.10 and 8.11 on 2026-09-15 — the
-percentages fell a point each because those two rows are real coverage owed, not
-coverage held.)
+added 15.6, 143 until item 24 added 8.10 and 8.11 on 2026-09-15, and 145 until the
+same day's item 73 added 7.6 and 7.7 — the percentages fell again because pairing
+needs a real phone with its pairing screen open, which no phase of this stack
+builds, so both rows land in the un-automatable bucket rather than adding
+coverage.)
 
 Three different row counts have been quoted for this document, and only one of them
 is wrong. The plan that commissioned this register worked from **127**, which was
 the correct count for `v0.1.30-beta.82` — the version it named. Module 20's
 thirteen container rows were added afterwards by P3 task 5, and nothing has been
 removed since, so 127 + 13 = 140 (item 63's two tray rows and item 114's 15.6 make
-it 143 as of 2026-09-06; item 24's 8.10 and 8.11 make it 145 as of 2026-09-15).
+it 143 as of 2026-09-06; item 24's 8.10 and 8.11 make it 145, and item 73's 7.6
+and 7.7 make it 147, both as of 2026-09-15).
 A count of **135** also circulated while this
 task was being scoped, and that one is a miscount: it matches row ids as
 `<module>.<number>`, which silently drops the five that carry a suffix —
@@ -47,8 +51,9 @@ entirely on the Linux gap this register exists to measure.
 from manual minutes to automated seconds". That figure counted partial rows as
 covered and assumed the Linux installer rows were reachable. The measured number
 was **37 %** when this register was written, **40 %** since item 104 and item 24
-(41 % between them, on a denominator of 143), and 58 % once P4 lands. Item 13 was
-closed into this register on 2026-09-06: the register
+(41 % between them, on a denominator of 143), **39 %** since item 73 widened the
+denominator to 147 without adding coverage, and 57 % once P4
+lands. Item 13 was closed into this register on 2026-09-06: the register
 is the source of truth for coverage, and the only ws-scrcpy-web-side action it
 had left was item 104.
 
@@ -56,7 +61,7 @@ had left was item 104.
 line below: 8.5, 8.8 and 9.5, whose remainder `smoke-test.md` itself calls
 residual, and 9.4, 10.3, 12.4 and 13.3, whose remainder it calls manual. They are
 counted once, in the tier that covers their automated half, so a reader adding the
-buckets up does not count them twice — but the residual set is larger than its 55
+buckets up does not count them twice — but the residual set is larger than its 57
 rows by these seven halves.
 
 Two further rows are marked **Split** rather than **Partial**, which is a different
@@ -146,7 +151,9 @@ Sorted by module, then by row number, which is not the doc's execution order.
 | 7.2 | `[Both]` | Scan subnet | device | `device/connect.spec.ts`. **Split across two tiers:** the public-range refusal is untagged and runs in the fast tier on every PR; the scan and connect-from-the-card need the emulator. |
 | 7.3 | `[Win]` | USB device | residual: un-automatable | USB, barred by the wireless-only lock. Neither a container nor the emulator has a USB bus to offer. |
 | 7.4 | `[Both]` | Device list updates in place | device | `device/connect.spec.ts` |
-| 7.5 | `[Both]` | Remembered device model in scan hits | residual: un-automatable | The enrichment lives on `POST /api/devices/scan`, which the UI never calls (finding 7.6). Becomes a device row the moment that defect is fixed. |
+| 7.5 | `[Both]` | Remembered device model in scan hits | residual: un-automatable | The enrichment lives on `POST /api/devices/scan`, which the UI never calls (register finding 7.6). Becomes a device row the moment that defect is fixed. |
+| 7.6 | `[Both]` | Pair by QR | residual: un-automatable | Needs a real phone with its pairing screen open — the emulator never advertises `_adb-tls-pairing._tcp`, so there is nothing for a QR-mode poll to find. |
+| 7.7 | `[Both]` | Pair by typed pairing code | residual: un-automatable | Same constraint as 7.6: the emulator never advertises `_adb-tls-pairing._tcp` or shows a pairing code to type. This is also the only path that can pair a camera-less device, which a headless emulator cannot exercise either way. |
 | 8.1 | `[Both]` | Video stream | device | `device/streaming.spec.ts` |
 | 8.2 | `[Both]` | Control | device | `device/streaming.spec.ts` |
 | 8.3 | `[Both]` | Audio | device | `device/streaming.spec.ts` |
@@ -365,7 +372,7 @@ namespace — see finding 8.10 for why that is not a convenience.
 | 7.1 | wireless connect | automated — the manual-add form; the row appears in ~5 s (annotated per run; the bound is one adb poll cycle, 20 s) |
 | 7.2 | scan subnet + private-range guard | automated — the refusal (public CIDR and a malformed subnet, and proof no scan started) in the **fast** tier; a /32 scan finding the emulator and connect-from-the-card in the device tier. One stub: the gateway prefill, which would otherwise be the container's /16 |
 | 7.4 | device list updates in place | automated — a settled device causes zero table refreshes in 6 s, a rename costs exactly zero label fetches and keeps the row node, a real reconnect yields a new node (the control). With one device "once per row" and "once per refresh" are indistinguishable; the row's ~1 s is one adb poll cycle in practice (measured 0.8-3.3 s to drop, ~5.3 s to return) |
-| 7.5 | remembered model in scan hits | **manual** — finding 7.6 |
+| 7.5 | remembered model in scan hits | **manual** — register finding 7.6 |
 | 8.1 | video stream | automated, device tier — a picture arrives (decoded frames counted, canvas changing, not black), no decode errors; the canvas follows a viewport resize keeping the device aspect ratio. **Intermittently red by name: finding 8.14** (video arrives, nothing decodes, nothing reports it) |
 | 8.2 | control | automated, device tier — the on-screen Home/Back buttons, verified out of band through `dumpsys window`'s focus; see the spec for what key input can and cannot prove |
 | 8.3 | audio | automated, device tier — opus, aac and the source toggle each connect and report their codec (headless chromium cannot prove sound); **the audio-disabled connect fails by name: finding 8.13**, the stream never starts on the reverse tunnel with audio off |
@@ -396,9 +403,9 @@ namespace — see finding 8.10 for why that is not a convenience.
 
 ---
 
-## Why 55, and what would move most of them
+## Why 57, and what would move most of them
 
-48 of the 55 are Linux **installer** and **desktop-integration** rows, and two more
+50 of the 57 are Linux **installer** and **desktop-integration** rows, and two more
 contribute their Linux halves: AppImage launch under Ubuntu's unprivileged-userns
 restriction and with no `libfuse2` on the host, AppArmor denials, polkit dialogs
 under both GNOME and KDE, desktop menu entries and icon caches, systemd user- and
@@ -419,7 +426,7 @@ RECOMMENDED, EXPLICITLY OUT OF P3: a Linux desktop guest phase. It is far cheape
 than P1's — no licence, no 20-minute unattended install, no 8.4 GB ISO that dockur
 deletes afterwards; a Fedora and an Ubuntu cloud image boot under the same KVM this
 host already exposes, and the whole overlay mechanism P1 built transfers unchanged.
-Its scope is exactly these 48 rows plus the two Linux halves. Not all of them need a
+Its scope is exactly these 50 rows plus the two Linux halves. Not all of them need a
 graphical session — the SELinux labelling, the headless install and uninstall paths
 and the no-`libfuse2` rows would boot on a plain cloud image — but the ones that do,
 the GUI first-run modal, the pkexec takeover, the GNOME and KDE menu entries, are
@@ -437,10 +444,15 @@ the distinction matters to anyone deciding what to fix:
   order to observe one being *offered*, and no browser in this runner does (finding
   8.11).
 - **An app defect, not a testing limit.** 7.5's enrichment lives on a route the UI
-  never calls (finding 7.6). It becomes an ordinary device row the day that is fixed.
-- **A decision nobody has taken.** 20.4 and 20.5 wait on what "install for all users"
-  and "uninstall" should even mean inside a container. 20.3 is a tombstone — the
-  libfuse2 gate it checked no longer exists.
+  never calls (register finding 7.6). It becomes an ordinary device row the day
+  that is fixed.
+- **A live pairing screen, which nothing but a real phone shows.** 7.6 and 7.7 need
+  a device actively advertising `_adb-tls-pairing._tcp` from its own Wireless
+  debugging pairing screen; the Android emulator never advertises that service, so
+  there is no pairing screen for a device-tier spec to find.
+- **A tombstone.** 20.3 — the libfuse2 gate it checked no longer exists. (20.4 and
+  20.5 moved to the container tier on 2026-09-04, #601 — see "Module 20 — container
+  (Docker) behaviour" above — and are no longer counted here.)
 
 Six further rows are automatable with the tiers already built and simply have no
 spec yet: 4.5 in the fast tier, 20.6, 20.8, 20.11 and 20.12 in the container tier,

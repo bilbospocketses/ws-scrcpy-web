@@ -135,6 +135,35 @@ export class ControlCenter extends BaseControlCenter<GoogDeviceDescriptor> imple
         this.initialized = true;
     }
 
+    /**
+     * Run one device poll immediately, outside the 5 s cadence.
+     *
+     * For the case where THIS process just changed the device set and knows it —
+     * the `adb connect` that follows a successful pairing, say. Left to the
+     * timer, the new row lags the green "Paired and connected." message by up to
+     * a full `POLL_INTERVAL`, and an empty device list in that window reads as a
+     * failure.
+     *
+     * Safe at any time, and deliberately does not disturb the interval. It is
+     * the same idempotent poll the timer runs, and it swallows its own errors.
+     *
+     * An overlapping call cannot interleave where it would matter. `pollDevices`
+     * awaits TWICE — once on `devices()`, once on the per-device checks — and
+     * every map mutation happens synchronously BETWEEN those two, so the later
+     * run observes the earlier run's bookkeeping already committed and finds
+     * nothing left to transition. What an overlap does cost is a second round of
+     * `checkScreenState` / `detectDeviceKind` per connected device: a few extra
+     * adb shells, on an event that happens once per successful pairing.
+     *
+     * A no-op before `init`, when there is nothing to refresh.
+     */
+    public async refreshNow(): Promise<void> {
+        if (!this.initialized) {
+            return;
+        }
+        await this.pollDevices();
+    }
+
     private stopTracking(): void {
         if (this.pollIntervalId) {
             clearInterval(this.pollIntervalId);

@@ -1,5 +1,6 @@
 // src/app/client/NetworkDiscoveryPanel.ts
 
+import type { PairingState, PairingStatus } from '../../common/PairingStatus';
 import { SCAN_WS_PATH, type ScanServerMessage } from '../../common/ScanMessage';
 import { ScanNetworkModal } from './ScanNetworkModal';
 import { ScanProgressChip } from './ScanProgressChip';
@@ -27,6 +28,700 @@ export function scanHitDisplayName(hit: { name?: string | undefined; model?: str
     return hit.name || hit.model || '';
 }
 
+/**
+ * The advisory shown on a scan card for a device that advertises the Android
+ * 11+ TLS transport, and empty for anything else.
+ *
+ * Said BEFORE the user clicks connect, because afterwards it cannot be said at
+ * all: such a device refuses an unpaired client at the TLS handshake and the
+ * failure arrives as a plain "failed to connect", indistinguishable from an
+ * unreachable host.
+ *
+ * "May", deliberately. The service type establishes that the device pairs over
+ * TLS, not that this server is unpaired with it — an already-paired device
+ * advertises exactly the same thing and connects fine. So this is advice, the
+ * connect button stays enabled, and nothing here is styled as an error.
+ *
+ * Extracted as a pure function, like `scanHitDisplayName` above, so those
+ * judgements are assertable without standing up the whole panel.
+ */
+export function scanHitPairingHint(hit: { mayNeedPairing?: boolean | undefined }): string {
+    return hit.mayNeedPairing ? 'may need pairing first — use “Pair a new device”' : '';
+}
+
+// ---------------------------------------------------------------------------
+// Wireless pairing
+//
+// The browser drives a pairing session entirely through `/api/devices/pair/*`.
+// It never sees the pairing password: the QR route renders the payload to markup
+// server-side and returns only the markup, and `PairingStatus` has no field that
+// could carry the secret in any state. Nothing here reconstructs it.
+// ---------------------------------------------------------------------------
+
+/** How often the browser polls a live pairing session, matching the server's own cadence. */
+const PAIR_POLL_INTERVAL_MS = 1_000;
+
+/**
+ * The states a session never leaves.
+ *
+ * `expired` is one of them. Expiry applies ONLY while a session is
+ * `awaiting-scan` — the TTL bounds the window in which a human can scan, because
+ * the phone advertises its pairing service only while its pairing screen is
+ * open — so a session that has reached `pairing` or `connecting` never reports
+ * it. There is no expired→paired flip to defend against, which is why the client
+ * may stop polling and offer a restart the moment it sees one.
+ */
+const TERMINAL_PAIRING_STATES: readonly PairingState[] = ['paired', 'paired-not-connected', 'failed', 'expired'];
+
+export function isTerminalPairingState(state: PairingState): boolean {
+    return TERMINAL_PAIRING_STATES.includes(state);
+}
+
+/**
+ * The copy for one pairing state, plus the action (if any) the user should be
+ * offered next. Pure on purpose: the interesting judgements — that
+ * `paired-not-connected` is a partial success and that `expired` is recoverable
+ * — are then assertable without any DOM or timer choreography.
+ */
+export function pairingStatusText(status: PairingStatus): { text: string; action?: 'connect' | 'restart' } {
+    switch (status.state) {
+        case 'awaiting-scan':
+            return { text: 'Scan this code on the phone: Wireless debugging → Pair device with QR code.' };
+        case 'pairing':
+            return { text: 'Pairing…' };
+        case 'connecting':
+            return { text: 'Paired. Connecting…' };
+        case 'paired':
+            // The "within a few seconds" is not padding. The server's
+            // ControlCenter discovers device-set changes by polling adb every
+            // 5000 ms, so the row can lag this message by up to ~5 s, and an
+            // empty list in that window reads as a failure unless it is named.
+            // (A client-side refresh cannot shorten it: the tracker only diffs
+            // descriptors it was pushed, so there is nothing local to re-fetch.)
+            return { text: 'Paired and connected. The device appears in the list within a few seconds.' };
+        case 'paired-not-connected':
+            // Deliberately NOT phrased as a failure, and deliberately not styled
+            // as one either. The pairing is durable and survives; only the
+            // auto-connect leg fell short. Calling this "failed" makes the user
+            // re-pair a device the server already trusts.
+            return {
+                text: `Paired, but not connected yet — ${status.message ?? 'no connect service found'}.`,
+                action: 'connect',
+            };
+        case 'expired':
+            return { text: 'The pairing window closed. Start again to get a fresh code.', action: 'restart' };
+        case 'failed':
+            return { text: status.message ?? 'Pairing failed.', action: 'restart' };
+        default: {
+            // Unreachable for a known state; the `never` binding makes adding a
+            // state to PairingState a compile error here rather than a silent
+            // `undefined` at runtime if the server ever ships one we predate.
+            const unhandled: never = status.state;
+            return { text: `Pairing reported an unknown state (${String(unhandled)}).`, action: 'restart' };
+        }
+    }
+}
+
+export interface PairingSectionDeps {
+    fetchFn: typeof fetch;
+    /** A session reached `paired`. The device tracker picks the device up over its own socket; this is for the surrounding UI. */
+    onPaired?: (status: PairingStatus) => void;
+    /** The user took the Connect action but the server never learned an address, so it has to be done by hand. */
+    onConnectByHand?: (status: PairingStatus) => void;
+}
+
+/** One pairing session as the browser tracks it. */
+interface PairingSession {
+    id: string;
+    mode: 'qr' | 'code';
+    /** Bumped whenever a new session starts, so a late response for an old one is discarded. */
+    generation: number;
+    /** The user cancelled it — a 404 from the status route is now the CONFIRMATION, not an error. */
+    cancelled: boolean;
+    /** It reached a terminal state, so there is nothing left to cancel. */
+    settled: boolean;
+    /**
+     * When the scan window shuts, on the BROWSER's clock — derived once from the
+     * `expiresInMs` duration the server sends, never from a server timestamp.
+     * `null` when the server did not say, and for code mode, which has no scan.
+     */
+    expiresAt: number | null;
+    /** Consecutive polls that never reached the server. Reset by any answer at all. */
+    transportFailures: number;
+}
+
+/**
+ * How many polls in a row may fail to reach the server before the session is
+ * given up on. A single dropped request is not evidence of anything — the server
+ * may be mid-`adb pair` and about to succeed — and abandoning the session there
+ * pushes the user into re-pairing a device that is about to pair itself.
+ */
+const MAX_POLL_TRANSPORT_FAILURES = 3;
+
+/**
+ * Builds the "Pair a new device" section: a QR mode and a typed-pairing-code
+ * mode, a status line, and at most one follow-up action.
+ */
+export function renderPairingSection(deps: PairingSectionDeps): HTMLElement {
+    const section = document.createElement('div');
+    section.className = 'discovery-pairing';
+    // Static markup — nothing here is interpolated from input.
+    section.innerHTML = `
+        <div class="discovery-pairing-header">
+            <span class="discovery-pairing-title">Pair a new device</span>
+            <div class="discovery-pairing-modes">
+                <button class="dep-btn" data-pair-mode="qr" aria-pressed="false">scan QR code</button>
+                <button class="dep-btn" data-pair-mode="code" aria-pressed="false">pairing code</button>
+                <button class="dep-btn discovery-pairing-cancel" data-pair-cancel>cancel</button>
+            </div>
+        </div>
+        <div class="discovery-pairing-qr" data-pair-qr></div>
+        <div class="discovery-pairing-code" data-pair-code-form>
+            <input type="text" data-pair-address placeholder="192.168.86.190:41415" autocomplete="off" spellcheck="false" aria-label="pairing address shown on the phone" />
+            <input type="text" data-pair-code placeholder="123456" inputmode="numeric" maxlength="10" autocomplete="off" spellcheck="false" aria-label="pairing code shown on the phone" />
+            <button class="dep-btn" data-pair-submit disabled>pair</button>
+        </div>
+        <div class="discovery-pairing-status" data-pair-status role="status"></div>
+        <button class="dep-btn discovery-pairing-action" data-pair-action></button>
+    `;
+
+    const qrBtn = section.querySelector<HTMLButtonElement>('[data-pair-mode="qr"]')!;
+    const codeBtn = section.querySelector<HTMLButtonElement>('[data-pair-mode="code"]')!;
+    const cancelBtn = section.querySelector<HTMLButtonElement>('[data-pair-cancel]')!;
+    const qrBox = section.querySelector<HTMLElement>('[data-pair-qr]')!;
+    const codeForm = section.querySelector<HTMLElement>('[data-pair-code-form]')!;
+    const addressInput = section.querySelector<HTMLInputElement>('[data-pair-address]')!;
+    const codeInput = section.querySelector<HTMLInputElement>('[data-pair-code]')!;
+    const submitBtn = section.querySelector<HTMLButtonElement>('[data-pair-submit]')!;
+    const statusEl = section.querySelector<HTMLElement>('[data-pair-status]')!;
+    const actionBtn = section.querySelector<HTMLButtonElement>('[data-pair-action]')!;
+    qrBox.hidden = true;
+    codeForm.hidden = true;
+    cancelBtn.hidden = true;
+    actionBtn.hidden = true;
+
+    let generation = 0;
+    let current: PairingSession | null = null;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let pendingAction: { kind: 'connect' | 'restart'; status: PairingStatus } | null = null;
+
+    /** True while `session` is the one the status line is speaking for. */
+    function isCurrent(session: PairingSession): boolean {
+        return current !== null && current.generation === session.generation;
+    }
+
+    /**
+     * Whether `session` is still the one the user is waiting on — i.e. whether a
+     * reply that arrives for it may touch the screen or schedule more work.
+     *
+     * Two ways it stops being live, and a guard needs BOTH: a newer session took
+     * the generation (`isCurrent`), or the user cancelled this one (`cancelled`).
+     * The second is not implied by the first — `cancelSession` deliberately
+     * leaves `current` pointing at the session it cancels, which is the whole
+     * mechanism the flag relies on, so `isCurrent` stays TRUE for a session the
+     * user just stopped.
+     *
+     * Every await in `poll` is a window where either can change underneath it, so
+     * every resumption point re-asks this. Extracted after two review rounds each
+     * found a window the previous one had missed: it does NOT make a future fifth
+     * await check itself, but it does mean a correction to the predicate happens
+     * once instead of four times, and that the guard is one name to grep for
+     * rather than a boolean to re-derive at each site.
+     */
+    function sessionIsLive(session: PairingSession): boolean {
+        return isCurrent(session) && !session.cancelled;
+    }
+
+    function setStatus(text: string, kind: 'info' | 'error' | 'success' = 'info'): void {
+        statusEl.textContent = text;
+        statusEl.classList.toggle('error', kind === 'error');
+        statusEl.classList.toggle('success', kind === 'success');
+    }
+
+    function showAction(kind: 'connect' | 'restart', status: PairingStatus): void {
+        pendingAction = { kind, status };
+        // Labelled by what the button DOES, which is not the same thing in both
+        // `connect` sub-cases: with an address it connects, without one it can
+        // only open the manual-add form for the user to type the address into
+        // (see `connectPaired`). A button that says "connect" and then opens a
+        // form is an affordance that lies.
+        actionBtn.textContent = kind === 'restart' ? 'start again' : status.address ? 'connect' : 'add it manually';
+        actionBtn.hidden = false;
+    }
+
+    function hideAction(): void {
+        pendingAction = null;
+        actionBtn.hidden = true;
+    }
+
+    function stopPolling(): void {
+        if (timer !== null) {
+            clearTimeout(timer);
+            timer = null;
+        }
+    }
+
+    function clearQr(): void {
+        qrBox.textContent = '';
+        qrBox.hidden = true;
+    }
+
+    function schedulePoll(session: PairingSession): void {
+        stopPolling();
+        timer = setTimeout(() => {
+            void poll(session);
+        }, PAIR_POLL_INTERVAL_MS);
+    }
+
+    /**
+     * Reads a JSON body, or `null` when the response turns out not to be JSON.
+     *
+     * `res.json()` REJECTS on a non-JSON 200 — a proxy's HTML error page, a
+     * truncated body. Left unguarded inside a `void poll()` that is an unhandled
+     * rejection with no message and no re-arm, and the panel sits on "Scan this
+     * code…" forever. Every caller turns a `null` into the ordinary error path.
+     */
+    async function readJson<T>(res: Response): Promise<T | null> {
+        try {
+            return (await res.json()) as T;
+        } catch {
+            return null;
+        }
+    }
+
+    /** The server's own wording for a rejection, which is written to be read by a user. */
+    async function serverError(res: Response, fallback: string): Promise<string> {
+        if (res.status === 403) {
+            // All four pairing routes are admin-gated, and deliberately stricter
+            // than /api/devices/connect: pairing establishes a persistent trust
+            // relationship with a NEW device on the whole server's behalf.
+            return 'Pairing needs an admin account. Ask an administrator to pair this device.';
+        }
+        try {
+            const body = (await res.json()) as { error?: unknown };
+            if (typeof body.error === 'string' && body.error) {
+                return body.error;
+            }
+        } catch {
+            // Non-JSON body — fall through to the caller's wording.
+        }
+        return fallback;
+    }
+
+    /**
+     * How long the code stays scannable, stated once rather than ticked down: a
+     * poll surfaces `expired` within a second of it happening anyway.
+     */
+    function validityNote(expiresAt: number | null): string {
+        if (expiresAt === null) {
+            return '';
+        }
+        const seconds = Math.round((expiresAt - Date.now()) / 1000);
+        if (seconds <= 0) {
+            return '';
+        }
+        return seconds < 90
+            ? ` It stops working in about ${seconds} seconds.`
+            : ` It stops working in about ${Math.round(seconds / 60)} minutes.`;
+    }
+
+    /**
+     * The ONE path that puts a pairing state on screen, including every failure
+     * the client synthesises for itself. Nothing else may call `setStatus` +
+     * `showAction` as a pair to end a session.
+     *
+     * Each bespoke failure site used to have to remember three separate things
+     * — `current.settled`, the Cancel button and the QR — and the
+     * transport-failure exit remembered none of them: it left a SCANNABLE QR
+     * and a live Cancel under a red "Lost contact…" with polling already
+     * stopped, so a phone that scanned that code paired server-side with
+     * nothing left running to report it.
+     */
+    function render(status: PairingStatus): void {
+        const { text, action } = pairingStatusText(status);
+        // `paired-not-connected` is NOT styled as an error — see pairingStatusText.
+        const kind = status.state === 'failed' ? 'error' : status.state === 'paired' ? 'success' : 'info';
+        // Re-appended on every awaiting-scan render, not just the first: the
+        // status line is rewritten whole each poll, so a note written once at
+        // startQr would survive exactly one second.
+        const note = status.state === 'awaiting-scan' ? validityNote(current?.expiresAt ?? null) : '';
+        setStatus(text + note, kind);
+        if (action) {
+            showAction(action, status);
+        } else {
+            hideAction();
+        }
+        // Cancel is offered ONLY while waiting for a scan, which is the one
+        // state in which it stops something: no `adb pair` is in flight yet, so
+        // dropping the session really does end the attempt. From `pairing`
+        // onward the adb call is already running and WILL complete — the phone
+        // ends up paired whatever this page says — so a Cancel button there
+        // promises something the server cannot deliver.
+        cancelBtn.hidden = status.state !== 'awaiting-scan';
+        if (isTerminalPairingState(status.state)) {
+            if (current) {
+                current.settled = true;
+            }
+            clearQr();
+        }
+        if (status.state === 'paired') {
+            deps.onPaired?.(status);
+        }
+    }
+
+    async function poll(session: PairingSession): Promise<void> {
+        let res: Response;
+        try {
+            res = await deps.fetchFn(`/api/devices/pair/status?sessionId=${encodeURIComponent(session.id)}`);
+        } catch {
+            // A cancel cannot recall a request already in flight, so BOTH exits
+            // need this: without it an errored fetch overwrites "Pairing
+            // cancelled." with a red "Lost contact…" and a restart button.
+            if (!sessionIsLive(session)) {
+                return;
+            }
+            session.transportFailures++;
+            if (session.transportFailures < MAX_POLL_TRANSPORT_FAILURES) {
+                schedulePoll(session);
+                return;
+            }
+            render({ state: 'failed', message: 'Lost contact with the server while pairing.' });
+            return;
+        }
+
+        // The whole point of the cancelled flag. `cancelSession` clears the
+        // timer but leaves `current` pointing here, so `isCurrent` still passes:
+        // without this line a poll already in flight renders over "Pairing
+        // cancelled." and — worse — schedules another, and since the cancel POST
+        // swallows a lost request, a session the user stopped could go on to
+        // announce "Paired and connected."
+        //
+        // It also covers the 404 that a cancel provokes: dropping the session
+        // server-side makes the next status read a miss, which is the
+        // confirmation it is gone rather than a failure. `cancelSession` has
+        // already written that copy synchronously.
+        if (!sessionIsLive(session)) {
+            return;
+        }
+        session.transportFailures = 0;
+
+        if (res.status === 404) {
+            // No await between the check above and here, so the session cannot
+            // have changed underneath: this is the same liveness, not a re-ask.
+            render({ state: 'failed', message: 'That pairing session is no longer available.' });
+            return;
+        }
+
+        if (!res.ok) {
+            // `serverError` reads the body, so this await is a cancel window too
+            // — see the guard below for why `isCurrent` alone does not close one.
+            const message = await serverError(res, 'Could not read the pairing status.');
+            if (!sessionIsLive(session)) {
+                return;
+            }
+            render({ state: 'failed', message });
+            return;
+        }
+
+        const status = await readJson<PairingStatus>(res);
+        // THE THIRD CANCEL WINDOW, not a defensive leftover: reading the body is
+        // itself an await, so a Cancel click can land inside it. The guard above
+        // catches a cancel that arrives before the body is read; this one catches
+        // a cancel that arrives during it.
+        //
+        // Without `sessionIsLive`'s cancelled half, a cancel during `res.json()`
+        // lets `render` overwrite the "Pairing cancelled." copy and `schedulePoll`
+        // re-arm a session the user stopped — which then goes on to announce
+        // "Paired and connected." with the Cancel button already hidden. Same
+        // hazard the stale tick had against `PairingService` in Task 4.
+        //
+        // COVERAGE, stated precisely rather than generously: the cancelled half
+        // has a test here. The `isCurrent` half does NOT — nothing exercises a
+        // session being REPLACED mid-poll, as opposed to cancelled. It is
+        // exercised at `startQr`'s two guards, which is why no test was written
+        // just to back this sentence, but the claim stops at what is true.
+        if (!sessionIsLive(session)) {
+            return;
+        }
+        if (status === null) {
+            render({ state: 'failed', message: 'The server sent a pairing status this page could not read.' });
+            return;
+        }
+        render(status);
+        // Stop here on a terminal state: nothing after it changes, so another
+        // poll would only be noise.
+        if (!isTerminalPairingState(status.state)) {
+            schedulePoll(session);
+        }
+    }
+
+    /** Tears down whatever is running and claims the next generation for a new session. */
+    function beginSession(): number {
+        stopPolling();
+        hideAction();
+        cancelBtn.hidden = true;
+        current = null;
+        return ++generation;
+    }
+
+    function cancelSession(): void {
+        const session = current;
+        stopPolling();
+        cancelBtn.hidden = true;
+        clearQr();
+        hideAction();
+        if (!session || session.settled || session.cancelled) {
+            return;
+        }
+        session.cancelled = true;
+        setStatus('Pairing cancelled.');
+        void deps
+            .fetchFn('/api/devices/pair/cancel', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ sessionId: session.id }),
+            })
+            .catch(() => {
+                // The route is idempotent and the session expires on its own;
+                // there is nothing useful to tell the user here.
+            });
+    }
+
+    async function startQr(): Promise<void> {
+        const gen = beginSession();
+        codeForm.hidden = true;
+        qrBtn.setAttribute('aria-pressed', 'true');
+        codeBtn.setAttribute('aria-pressed', 'false');
+        clearQr();
+        setStatus('Requesting a pairing code…');
+
+        let res: Response;
+        try {
+            res = await deps.fetchFn('/api/devices/pair/qr', { method: 'POST' });
+        } catch {
+            if (gen === generation) setStatus('Could not reach the server to start pairing.', 'error');
+            return;
+        }
+        if (gen !== generation) {
+            return;
+        }
+        if (!res.ok) {
+            setStatus(await serverError(res, 'Could not start a pairing session.'), 'error');
+            return;
+        }
+        const body = await readJson<{ sessionId?: unknown; svg?: unknown; expiresInMs?: unknown }>(res);
+        if (gen !== generation) {
+            return;
+        }
+        const sessionId = typeof body?.sessionId === 'string' ? body.sessionId : '';
+        const svg = typeof body?.svg === 'string' ? body.svg : '';
+        if (!sessionId || !svg) {
+            setStatus('The server did not return a pairing code.', 'error');
+            return;
+        }
+        // The server sends a DURATION, and it is turned into a deadline on THIS
+        // clock immediately. Every later `Date.now()` is then compared against a
+        // reading of the same clock, so the countdown is right however far the
+        // server's clock is from the browser's.
+        const expiresInMs =
+            typeof body?.expiresInMs === 'number' && Number.isFinite(body.expiresInMs) ? body.expiresInMs : null;
+        const expiresAt = expiresInMs === null ? null : Date.now() + expiresInMs;
+        // SAFE HERE, AND ONLY HERE: `svg` comes from our own `encodeQrSvg`, which
+        // emits a <rect> and a <path> built from a numeric module matrix and
+        // never interpolates the payload text into the markup. Do not copy this
+        // to markup from a source you do not control.
+        qrBox.innerHTML = svg;
+        qrBox.hidden = false;
+        current = {
+            id: sessionId,
+            mode: 'qr',
+            generation: gen,
+            cancelled: false,
+            settled: false,
+            expiresAt,
+            transportFailures: 0,
+        };
+        // Rendered through `render` rather than a bespoke setStatus, so the
+        // validity note comes from the one place that appends it — and so that
+        // `render` is the one place that decides whether Cancel is offered.
+        render({ state: 'awaiting-scan' });
+        schedulePoll(current);
+    }
+
+    function syncSubmit(): void {
+        submitBtn.disabled = addressInput.value.trim() === '' || codeInput.value.trim() === '';
+    }
+
+    function showCodeForm(): void {
+        codeForm.hidden = false;
+        qrBtn.setAttribute('aria-pressed', 'false');
+        codeBtn.setAttribute('aria-pressed', 'true');
+        syncSubmit();
+    }
+
+    async function submitCode(): Promise<void> {
+        const address = addressInput.value.trim();
+        const code = codeInput.value.trim();
+        if (!address || !code) {
+            return;
+        }
+        const gen = beginSession();
+        clearQr();
+        submitBtn.disabled = true;
+        setStatus(pairingStatusText({ state: 'pairing' }).text);
+
+        let res: Response;
+        try {
+            res = await deps.fetchFn('/api/devices/pair/code', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ address, code }),
+            });
+        } catch {
+            if (gen === generation) {
+                setStatus('Could not reach the server to start pairing.', 'error');
+                syncSubmit();
+            }
+            return;
+        }
+        if (gen !== generation) {
+            return;
+        }
+        if (!res.ok) {
+            // The server's 400s name which half is wrong and are written for a
+            // user to read, so they beat any wording invented here. The address
+            // and code shapes are checked there rather than duplicated into the
+            // client, where the two copies would drift.
+            setStatus(await serverError(res, 'Could not start a pairing session.'), 'error');
+            syncSubmit();
+            return;
+        }
+        const body = await readJson<{ sessionId?: unknown }>(res);
+        if (gen !== generation) {
+            return;
+        }
+        const sessionId = typeof body?.sessionId === 'string' ? body.sessionId : '';
+        if (!sessionId) {
+            setStatus('The server did not start a pairing session.', 'error');
+            syncSubmit();
+            return;
+        }
+        // The pairing code is single-use and is a secret while it lives: take it
+        // off the screen the moment it has been spent.
+        codeInput.value = '';
+        syncSubmit();
+        current = {
+            id: sessionId,
+            mode: 'code',
+            generation: gen,
+            cancelled: false,
+            settled: false,
+            // A typed code goes straight to `pairing`, which never expires:
+            // the TTL bounds the scan window, and there is no scan here.
+            expiresAt: null,
+            transportFailures: 0,
+        };
+        // No Cancel in code mode, at any point: the server starts `adb pair` the
+        // moment this route returns, so there is never a window in which
+        // cancelling stops anything. `render` would hide it a second later
+        // anyway; offering it for that second would just be a lie with a
+        // shorter life.
+        schedulePoll(current);
+    }
+
+    async function connectPaired(status: PairingStatus): Promise<void> {
+        const address = status.address;
+        if (!address) {
+            // `paired-not-connected` without an address means the connect service
+            // was never found, so there is nothing here to pre-fill with -- the
+            // user types the address themselves. It has to come from the phone's
+            // MAIN wireless-debugging screen: the pairing dialog shows a
+            // different, ephemeral pairing port, and 5555 is wrong too on a
+            // device that only speaks TLS.
+            setStatus(
+                `${pairingStatusText(status).text} Open “manually add” and type the IP and port shown on the phone's Wireless debugging screen — not the port from the pairing dialog.`,
+            );
+            hideAction();
+            deps.onConnectByHand?.(status);
+            return;
+        }
+        actionBtn.disabled = true;
+        try {
+            const res = await deps.fetchFn('/api/devices/connect', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ address, serial: status.serial }),
+            });
+            const result = (await res.json()) as { success?: unknown; message?: unknown };
+            if (result.success === true) {
+                setStatus(`Connected to ${address}.`, 'success');
+                hideAction();
+                deps.onPaired?.(status);
+            } else {
+                // Still not an error about the PAIRING — that survives either way.
+                setStatus(
+                    typeof result.message === 'string' && result.message
+                        ? result.message
+                        : `Paired, but could not connect to ${address}.`,
+                    'error',
+                );
+            }
+        } catch {
+            setStatus(`Paired, but could not connect to ${address}.`, 'error');
+        } finally {
+            actionBtn.disabled = false;
+        }
+    }
+
+    function restart(): void {
+        const mode = current?.mode ?? 'qr';
+        hideAction();
+        if (mode === 'code') {
+            beginSession();
+            showCodeForm();
+            codeInput.value = '';
+            syncSubmit();
+            setStatus('Enter the new pairing code shown on the phone.');
+            codeInput.focus();
+            return;
+        }
+        void startQr();
+    }
+
+    qrBtn.addEventListener('click', () => {
+        cancelSession();
+        void startQr();
+    });
+    codeBtn.addEventListener('click', () => {
+        cancelSession();
+        beginSession();
+        clearQr();
+        showCodeForm();
+        setStatus('');
+    });
+    cancelBtn.addEventListener('click', () => cancelSession());
+    submitBtn.addEventListener('click', () => void submitCode());
+    actionBtn.addEventListener('click', () => {
+        const pending = pendingAction;
+        if (!pending) {
+            return;
+        }
+        if (pending.kind === 'restart') {
+            restart();
+            return;
+        }
+        void connectPaired(pending.status);
+    });
+    for (const input of [addressInput, codeInput]) {
+        input.addEventListener('input', syncSubmit);
+        input.addEventListener('keydown', (e) => {
+            if ((e as KeyboardEvent).key === 'Enter' && !submitBtn.disabled) void submitCode();
+        });
+    }
+
+    return section;
+}
+
 export class NetworkDiscoveryPanel {
     private container: HTMLElement;
     private infoBox: HTMLElement;
@@ -34,6 +729,12 @@ export class NetworkDiscoveryPanel {
     private chip?: ScanProgressChip | undefined;
     private scanWs?: WebSocket | undefined;
     private scanSessionHits = new Map<string, HTMLElement>();
+    /**
+     * Set only when the manual-add form was opened from the pairing flow, where
+     * the port is something the user must read off the phone rather than a
+     * value this form can guess. Cleared whenever the form is reset.
+     */
+    private manualPortIsRequired = false;
     private defaultInfoText = '';
 
     constructor() {
@@ -57,6 +758,7 @@ export class NetworkDiscoveryPanel {
                 <button class="discovery-manual-close" aria-label="close" title="close">×</button>
                 <div class="discovery-manual-result" hidden></div>
             </div>
+            <div class="discovery-pairing-mount"></div>
             <div class="discovery-results"></div>
             <div class="empty-state-card discovery-info">Click quick scan for modern Android devices on your network, or scan network to probe a full subnet. Make sure wireless debugging is enabled on the devices you wish to connect with.</div>
         `;
@@ -78,6 +780,29 @@ export class NetworkDiscoveryPanel {
                 if ((e as KeyboardEvent).key === 'Enter') this.manualConnect();
             });
         }
+
+        // Pairing sits alongside the scan and manual-add controls: a scan can
+        // only find a device that already trusts this server, so pairing is the
+        // step that comes BEFORE the other two for a device it has never met.
+        //
+        // `fetch` is wrapped rather than passed by reference — an unbound
+        // `fetch` throws "Illegal invocation" in Chrome.
+        this.container.querySelector('.discovery-pairing-mount')!.appendChild(
+            renderPairingSection({
+                fetchFn: (...args: Parameters<typeof fetch>) => fetch(...args),
+                // Nothing to refresh by hand: `adb connect` changes the device
+                // list, and the tracker is already pushed that over its own
+                // socket. What is left is to put the panel's own copy back.
+                onPaired: () => this.restoreInfoText(),
+                // Opens the form and nothing more. There is deliberately no
+                // pre-fill: this fires only on the `paired-not-connected` branch
+                // that has NO address (`connectPaired` uses the address itself
+                // whenever there is one), so every field would be filled from
+                // `undefined`. The pairing section's own status line tells the
+                // user where to read the address off the phone.
+                onConnectByHand: () => this.openManualFormForPairing(),
+            }),
+        );
     }
 
     getElement(): HTMLElement {
@@ -218,7 +943,14 @@ export class NetworkDiscoveryPanel {
     }
 
     private renderHit(
-        hit: { address: string; serial: string; name: string; label: string; model?: string },
+        hit: {
+            address: string;
+            serial: string;
+            name: string;
+            label: string;
+            model?: string;
+            mayNeedPairing?: boolean;
+        },
         grid: HTMLElement,
     ): void {
         if (this.scanSessionHits.has(hit.address)) return;
@@ -230,10 +962,12 @@ export class NetworkDiscoveryPanel {
         // render a blank top line even when the app knew perfectly well what it
         // was (finding 7.6).
         const displayName = scanHitDisplayName(hit);
+        const pairingHint = scanHitPairingHint(hit);
         card.innerHTML = `
             <div class="discovery-card-info">
                 <div class="discovery-card-name" title="${escapeHtml(displayName)}">${escapeHtml(displayName)}</div>
                 <div class="discovery-card-address" title="${escapeHtml(hit.address)}">${escapeHtml(hit.address)}</div>
+                ${pairingHint ? `<div class="discovery-card-hint">${escapeHtml(pairingHint)}</div>` : ''}
             </div>
             <div class="discovery-card-actions">
                 <input type="text" class="discovery-name-input" placeholder="Name this device..." value="${escapeHtml(hit.label || '')}" />
@@ -265,7 +999,32 @@ export class NetworkDiscoveryPanel {
         }
     }
 
+    /**
+     * Open the manual-add form for a device that paired but whose connect
+     * service was never found.
+     *
+     * The same form, with one difference: the port is CLEARED rather than left
+     * at the 5555 default. This path is reached only for a device that pairs
+     * over TLS, whose connect port is an ephemeral the user has to read off the
+     * phone — 5555 is never the answer there, and a field pre-typed with a
+     * wrong value is worse than an empty one, because it looks like an answer.
+     *
+     * Nothing is pre-FILLED. There is no address to fill from on this branch —
+     * see `connectPaired` — and clearing a known-wrong default is not the same
+     * thing as inventing a value.
+     *
+     * Deliberately scoped to this entry point: the ordinary "manually add"
+     * button still opens the form with 5555, which is right for the legacy
+     * `_adb._tcp` devices that path exists for.
+     */
+    private openManualFormForPairing(): void {
+        this.toggleManualForm(true);
+        this.manualPortIsRequired = true;
+        (this.container.querySelector('.discovery-manual-port') as HTMLInputElement).value = '';
+    }
+
     private clearManualForm(): void {
+        this.manualPortIsRequired = false;
         (this.container.querySelector('.discovery-manual-address') as HTMLInputElement).value = '';
         (this.container.querySelector('.discovery-manual-port') as HTMLInputElement).value = '5555';
         (this.container.querySelector('.discovery-manual-label') as HTMLInputElement).value = '';
@@ -290,7 +1049,7 @@ export class NetworkDiscoveryPanel {
         const btn = this.container.querySelector('.discovery-manual-connect') as HTMLButtonElement;
 
         const ip = addressInput.value.trim();
-        const port = portInput.value.trim() || '5555';
+        const typedPort = portInput.value.trim();
         const label = labelInput.value.trim();
 
         if (!ip) {
@@ -298,6 +1057,21 @@ export class NetworkDiscoveryPanel {
             addressInput.focus();
             return;
         }
+        // Opened from the pairing flow, an empty port must NOT quietly become
+        // 5555. That is the one port this device is known not to listen on, so
+        // defaulting it would submit a value the user never typed and could not
+        // see, and return a failure that looks like the device is unreachable.
+        // Everywhere else the 5555 default is the convenience it has always
+        // been.
+        if (!typedPort && this.manualPortIsRequired) {
+            this.showManualResult(
+                'Port is required — read it from the phone’s Wireless debugging screen (not the pairing dialog).',
+                'error',
+            );
+            portInput.focus();
+            return;
+        }
+        const port = typedPort || '5555';
 
         const address = `${ip}:${port}`;
         btn.disabled = true;

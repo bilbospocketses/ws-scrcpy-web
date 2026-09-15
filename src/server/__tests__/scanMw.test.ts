@@ -62,7 +62,7 @@ describe('ScanMw integration', () => {
             adbMdnsServices: async () => [
                 {
                     name: 'adb-ABCD._adb-tls-connect._tcp.local.',
-                    service: '_adb-tls-connect._tcp.',
+                    service: '_adb-tls-connect._tcp',
                     address: '10.0.0.5',
                     port: 5555,
                 },
@@ -203,7 +203,7 @@ describe('ScanMw integration', () => {
             adbMdnsServices: async () => [
                 {
                     name: 'adb-TESTDEV._adb._tcp.local.',
-                    service: '_adb._tcp.',
+                    service: '_adb._tcp',
                     address: '10.0.0.99',
                     port: 5555,
                 },

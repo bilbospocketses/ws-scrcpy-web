@@ -162,6 +162,16 @@
     text-overflow: ellipsis;
 }
 
+/* Shown on a scan hit that advertises the Android 11+ TLS transport, which
+   refuses an unpaired client. Advisory, not an error: the device may already be
+   paired with this server, and the card's connect button stays enabled. */
+.discovery-card-hint {
+    font-size: 11px;
+    color: var(--text-color-light);
+    margin-top: 2px;
+    white-space: normal;
+}
+
 .discovery-card-actions {
     display: flex;
     flex-wrap: wrap;
@@ -271,6 +281,135 @@
 
 .discovery-manual-result.success,
 .discovery-card-result.success {
+    color: var(--success-color);
+}
+
+/* --- Pair a new device --------------------------------------------------- */
+
+.discovery-pairing {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+    margin-bottom: 12px;
+    padding: 12px;
+    border: 1px solid var(--device-border-color);
+    border-radius: 8px;
+    background: var(--device-list-default-color);
+}
+
+.discovery-pairing-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+}
+
+.discovery-pairing-title {
+    color: var(--text-color);
+    font-size: 14px;
+    font-weight: 600;
+    margin-right: auto;
+}
+
+.discovery-pairing-modes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+/* .dep-btn's base ALREADY paints border and text in --accent-color, so recolouring
+   them here would leave the selected mode looking exactly like the unselected one.
+   The selected state has to be a fill. It is a tint of the accent rather than
+   --device-list-hover-color, which .dep-btn:hover already uses — otherwise
+   "selected" and "the pointer is over it" would be the same thing. */
+.dep-btn[data-pair-mode][aria-pressed="true"] {
+    background: rgba(var(--accent-rgb), 0.15);
+}
+
+/* The real payload encodes as a version-4 symbol: 33 modules, 41 across with the
+   quiet zone. At 288px that is ~7px a module, which a phone reads at arm's
+   length; sizing this for a smaller symbol makes the code a struggle to scan.
+   The SVG carries no width/height of its own, only a viewBox, so this box is
+   what decides the rendered size. It also paints its own white ground (quiet
+   zone included), so it stays scannable in the dark theme. */
+.discovery-pairing-qr {
+    width: 288px;
+    max-width: 100%;
+    padding: 8px;
+    border-radius: 6px;
+    background: #fff;
+}
+
+.discovery-pairing-qr[hidden] {
+    display: none;
+}
+
+.discovery-pairing-qr svg {
+    display: block;
+    width: 100%;
+    height: auto;
+}
+
+.discovery-pairing-code {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
+.discovery-pairing-code[hidden] {
+    display: none;
+}
+
+.discovery-pairing-code input[type="text"] {
+    background: var(--stream-bg-color);
+    border: 1px solid var(--device-border-color);
+    border-radius: 6px;
+    color: var(--text-color);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    padding: 6px 10px;
+}
+
+.discovery-pairing-code input[type="text"]:focus {
+    outline: none;
+    border-color: var(--accent-color);
+}
+
+.discovery-pairing-code input[type="text"]::placeholder {
+    color: var(--text-color-light);
+}
+
+.discovery-pairing-code input[data-pair-address] {
+    flex: 1;
+    min-width: 180px;
+}
+
+.discovery-pairing-code input[data-pair-code] {
+    width: 110px;
+    letter-spacing: 2px;
+}
+
+.discovery-pairing-status {
+    font-size: 13px;
+    color: var(--text-color);
+    overflow-wrap: anywhere;
+}
+
+.discovery-pairing-status:empty {
+    display: none;
+}
+
+/* Only a genuine failure turns red. `paired-not-connected` deliberately keeps
+   the default colour: the pairing survived, and colouring it as an error is how
+   a user is led to re-pair a device the server already trusts. */
+.discovery-pairing-status.error {
+    color: var(--danger-color);
+}
+
+.discovery-pairing-status.success {
     color: var(--success-color);
 }
 
