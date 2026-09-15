@@ -6,9 +6,9 @@ does. Companion to `smoke-test.md`, not a replacement — that document remains 
 canonical list of rows and their steps.
 
 Derived from `smoke-test.md` at `v0.1.30-beta.92`, which held **140 rows**; item 63
-(the Linux tray, 2026-09-06) added 14.8 and 14.9 and item 114 (the tray's Exit, same
-day) added 15.6, so the doc holds **143**. Row ids are stable and gappy; so are the
-lines here.
+(the Linux tray, 2026-09-06) added 14.8 and 14.9, item 114 (the tray's Exit, same
+day) added 15.6, and item 24 (live rotation, 2026-09-15) added 8.10 and 8.11, so the
+doc holds **145**. Row ids are stable and gappy; so are the lines here.
 
 | | Rows | Where |
 |---|---|---|
@@ -17,23 +17,26 @@ lines here.
 | Automated, device tier | 17 | qa-harness, nightly |
 | Windows guest | 26 | qa-harness, nightly, once P4 lands |
 | Windows guest **and** Linux residual | 2 | Windows half P4; Linux half nobody |
-| Automatable, no spec written yet | 0 | — (the six of 2026-09-04 were written 2026-09-06, item 104) |
+| Automatable, no spec written yet | 2 | — (8.10 / 8.11, item 24's rotation rows; the six of 2026-09-04 were written 2026-09-06, item 104) |
 | **Residual — Linux installer and desktop** | **50** | nobody (14.8 / 14.9 are assertable by qa-harness item 14's Linux guests) |
 | **Residual — un-automatable** | **7** | nobody, ever |
-| **Total** | **143** | |
+| **Total** | **145** | |
 
-**Automated today: 58 of 143 = 41 %.** After P4: 84 of 143 = 59 %, plus the
+**Automated today: 58 of 145 = 40 %.** After P4: 84 of 145 = 58 %, plus the
 Windows halves of the two split rows. (52 / 37 % and 77 / 55 % until 2026-09-06,
 when item 104 wrote the six specs this table used to list as "automatable, no
 spec"; the denominator was 140 until item 63 added the two tray rows and item 114
-added 15.6.)
+added 15.6, and 143 until item 24 added 8.10 and 8.11 on 2026-09-15 — the
+percentages fell a point each because those two rows are real coverage owed, not
+coverage held.)
 
 Three different row counts have been quoted for this document, and only one of them
 is wrong. The plan that commissioned this register worked from **127**, which was
 the correct count for `v0.1.30-beta.82` — the version it named. Module 20's
 thirteen container rows were added afterwards by P3 task 5, and nothing has been
 removed since, so 127 + 13 = 140 (item 63's two tray rows and item 114's 15.6 make
-it 143 as of 2026-09-06). A count of **135** also circulated while this
+it 143 as of 2026-09-06; item 24's 8.10 and 8.11 make it 145 as of 2026-09-15).
+A count of **135** also circulated while this
 task was being scoped, and that one is a miscount: it matches row ids as
 `<module>.<number>`, which silently drops the five that carry a suffix —
 `4.2-user`, `4.2-system-cli`, `4.2-system-gui`, `5.3a` and `5.3b`. All five are
@@ -43,8 +46,9 @@ entirely on the Linux gap this register exists to measure.
 `todo_ws_scrcpy_web` item 13 estimated "~60 % of the current smoke checklist goes
 from manual minutes to automated seconds". That figure counted partial rows as
 covered and assumed the Linux installer rows were reachable. The measured number
-was **37 %** when this register was written, **41 %** since item 104, and 59 %
-once P4 lands. Item 13 was closed into this register on 2026-09-06: the register
+was **37 %** when this register was written, **40 %** since item 104 and item 24
+(41 % between them, on a denominator of 143), and 58 % once P4 lands. Item 13 was
+closed into this register on 2026-09-06: the register
 is the source of truth for coverage, and the only ws-scrcpy-web-side action it
 had left was item 104.
 
@@ -152,6 +156,8 @@ Sorted by module, then by row number, which is not the doc's execution order.
 | 8.7 | `[Both]` | Browser codec refusal is honoured | residual: un-automatable | Needs a second browser engine *and* a device whose encoder list includes H.265. No browser in the Linux runner decodes H.265 (finding 8.11), so "offered in Chromium" cannot be observed here at all. |
 | 8.8 | `[Both]` | Locked device is reported, not shown as a black screen | device | `device/streaming.spec.ts`. **Partial:** the app reports the lock and never self-reconnects, which is covered; the banner half is residual because this emulator composes its keyguard instead of blanking it (finding 8.12). |
 | 8.9 | `[Both]` | Hardware encoder is offered | residual: un-automatable | Needs a vendor hardware encoder (`c2.exynos.*`, `c2.amlogic.*`). The emulator offers only the `c2.android.*` software one. |
+| 8.10 | `[Both]` | Rotating the device re-fits the picture | automatable: no spec yet | Device tier. The emulator rotates on demand (`adb shell settings put system user_rotation`), and the assertion is a dimension change the client logs, so nothing here needs a human — only a spec. |
+| 8.11 | `[Both]` | Touch still lands correctly after a rotation | automatable: no spec yet | Device tier. Rotate, inject a tap at a known edge coordinate, and assert where it landed on the device. Deliberately separate from 8.10: the picture and the touch mapping fail independently, and this is the half a human checking the picture would tick without testing. |
 | 9.1 | `[Both]` | Shell modal | device | `device/modals.spec.ts` |
 | 9.2 | `[Both]` | File listing/transfer | device | `device/modals.spec.ts` |
 | 9.3 | `[Both]` | Device actions | device | `device/modals.spec.ts` |
