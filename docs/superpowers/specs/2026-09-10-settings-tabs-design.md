@@ -129,6 +129,16 @@ supervisor restarts on the new port → the browser navigates itself there after
 
 ### 4.2 Why `completed` is marked before that PATCH
 
+> **SUPERSEDED 2026-09-14 — this section records the 2026-09-10 design, not the shipped behaviour.**
+> The Task 8 ruling reversed the ordering. As shipped, the row is marked `completed` **after** a
+> successful `updateAppConfig` and **before** `scheduleRestartForPortChange`, so a REJECTED port
+> cannot leave a `completed` row asserting a write that threw — `failBatch` marks it `failed`
+> instead. The "stale `completed` vs stale `pending`" analysis below is superseded too: a stale
+> `pending` does **not** re-apply anything (§4.4's `abandoned` rule, which shipped as written), so
+> the asymmetry is not double-apply versus inertness — it is an audit trail that would read
+> ABANDONED for a change already written to `config.json`. Authoritative description:
+> `docs/TECHNICAL_GUIDE.md` §27.8.
+
 After the port PATCH we may never get another instruction in. The two failure shapes are not symmetric:
 
 - **Stale `completed`** (crash during the port PATCH): inert. Nothing re-applies.
@@ -254,3 +264,10 @@ rather than discovering it.
 | 5 | Mark `completed` **before** the port PATCH | a stale `completed` is inert; a stale `pending` re-applies |
 | 6 | Mixed batches **allowed** | 1 + 2 already prevent stranding |
 | 7 | Apply **server-side**, one `POST /api/settings/batch` | keeps ordering and the WAL transitions in one process, so 5 is correct by construction rather than by careful client sequencing |
+
+> **SUPERSEDED 2026-09-14 — row 5 only; rows 1–4, 6 and 7 shipped as decided.** Row 5's ordering was
+> reversed by the Task 8 ruling: the row is marked `completed` **after** a successful
+> `updateAppConfig` and **before** the restart is scheduled, so a rejected port leaves a `failed`
+> row rather than a `completed` one. Row 5's stated rationale is superseded as well — a stale
+> `pending` does not re-apply (see §4.4). Left unedited as the record of what was decided on
+> 2026-09-10; see §4.2's note and `docs/TECHNICAL_GUIDE.md` §27.8 for the shipped behaviour.

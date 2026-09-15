@@ -16,6 +16,16 @@
 - **Lint:** `npm run lint` — **check the exit code**, do not eyeball the tail. `npm run lint > /dev/null; echo $?` must print `0`. If it fails on formatting only, `npm run format` then re-check.
 - **`webPort` is applied LAST in every batch, always.** It is the only change that ends the process (`restartRequired` → exit 75 → supervisor restart). Anything applied after it can be lost.
 - **The WAL row is marked `completed` BEFORE the `webPort` apply.** A stale `completed` is inert; a stale `pending` would re-apply settings the user already has on the next boot.
+
+  > **SUPERSEDED 2026-09-14 — left in place as the record of what was decided on 2026-09-10.**
+  > The Task 8 ruling reversed the ordering. As shipped, the row is marked `completed` **after** a
+  > successful `updateAppConfig` and **before** `scheduleRestartForPortChange`
+  > (`SettingsBatchApi.ts`), so a port the server REJECTS cannot leave a `completed` row claiming a
+  > write that threw. The stated rationale above is also superseded: a stale `pending` does **not**
+  > re-apply anything, because `reconcilePendingSettings` marks it `abandoned` and never replays it
+  > (which the next bullet already said). The real harm of a stale `pending` is an audit trail
+  > reading ABANDONED for a change that had in fact already been written to `config.json`.
+  > Authoritative description: `docs/TECHNICAL_GUIDE.md` §27.8.
 - **A `pending` row found at boot is marked `abandoned`, never auto-applied.**
 - **Action-only tabs call `register()` zero times.** Do not add a "skip in summary" flag — absence from the store is the mechanism.
 - **`fillBody` must keep rendering the body without awaiting the `/api/config` probe.** `SettingsModal.test.ts` stubs fetch as a never-resolving promise to pin this. A tab shell that awaits the probe before building reintroduces the empty-dialog bug.
