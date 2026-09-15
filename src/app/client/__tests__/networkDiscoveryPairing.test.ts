@@ -298,6 +298,73 @@ describe('renderPairingSection', () => {
         expect(fetchFn.mock.calls.length).toBe(afterCancel);
     });
 
+    it('does not re-arm when the cancel lands while the status BODY is being parsed', async () => {
+        // The third cancel window, and the one isCurrent cannot close: the fetch
+        // has already resolved 200, so the guard before the 404 branch waved it
+        // through while `cancelled` was still false, and the click lands during
+        // res.json(). cancelSession leaves `current` pointing at this session by
+        // design — that is how the flag works — so isCurrent is still TRUE here.
+        let resolveJson: ((v: unknown) => void) | undefined;
+        fetchFn
+            .mockResolvedValueOnce(qrStartRes())
+            .mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: () =>
+                    new Promise((resolve) => {
+                        resolveJson = resolve;
+                    }),
+            })
+            .mockResolvedValue(jsonRes(200, { ok: true }));
+
+        const el = mount();
+        await startQr(el);
+        await vi.advanceTimersByTimeAsync(1000); // the poll fires; the BODY hangs
+
+        el.querySelector<HTMLButtonElement>('[data-pair-cancel]')!.click();
+        await vi.advanceTimersByTimeAsync(0);
+        const afterCancel = fetchFn.mock.calls.length;
+
+        resolveJson!({ state: 'awaiting-scan' });
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(statusLine(el).textContent).toMatch(/cancelled/i);
+        await vi.advanceTimersByTimeAsync(5000);
+        expect(statusLine(el).textContent).toMatch(/cancelled/i);
+        expect(fetchFn.mock.calls.length).toBe(afterCancel);
+    });
+
+    it('does not paint an error when the cancel lands while a FAILING status body is being parsed', async () => {
+        // Same window on the !res.ok branch: serverError reads the body too, so
+        // that await is a cancel window of its own.
+        let resolveJson: ((v: unknown) => void) | undefined;
+        fetchFn
+            .mockResolvedValueOnce(qrStartRes())
+            .mockResolvedValueOnce({
+                ok: false,
+                status: 500,
+                json: () =>
+                    new Promise((resolve) => {
+                        resolveJson = resolve;
+                    }),
+            })
+            .mockResolvedValue(jsonRes(200, { ok: true }));
+
+        const el = mount();
+        await startQr(el);
+        await vi.advanceTimersByTimeAsync(1000);
+
+        el.querySelector<HTMLButtonElement>('[data-pair-cancel]')!.click();
+        await vi.advanceTimersByTimeAsync(0);
+
+        resolveJson!({ error: 'internal error' });
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(statusLine(el).textContent).toMatch(/cancelled/i);
+        expect(statusLine(el).classList.contains('error')).toBe(false);
+        expect(actionButton(el).hidden).toBe(true);
+    });
+
     it('does not overwrite the cancelled line when an in-flight poll ERRORS after a cancel', async () => {
         let rejectStatus: ((e: unknown) => void) | undefined;
         fetchFn

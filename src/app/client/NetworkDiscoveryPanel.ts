@@ -347,34 +347,40 @@ export function renderPairingSection(deps: PairingSectionDeps): HTMLElement {
         }
 
         if (!res.ok) {
+            // `serverError` reads the body, so this await is a cancel window too
+            // — see the guard below for why `isCurrent` alone does not close one.
             const message = await serverError(res, 'Could not read the pairing status.');
-            if (isCurrent(session)) {
-                cancelBtn.hidden = true;
-                clearQr();
-                setStatus(message, 'error');
-                showAction('restart', { state: 'failed' });
+            if (!isCurrent(session) || session.cancelled) {
+                return;
             }
+            cancelBtn.hidden = true;
+            clearQr();
+            setStatus(message, 'error');
+            showAction('restart', { state: 'failed' });
             return;
         }
 
         const status = await readJson<PairingStatus>(res);
-        // DELIBERATELY UNREACHABLE TODAY — do not delete this as dead code.
+        // BOTH HALVES ARE LOAD-BEARING, and each has its own test. This is the
+        // THIRD cancel window in this function, not a defensive leftover: reading
+        // the body is itself an await, so a click can land inside it.
         //
-        // It is unreachable BY CONSTRUCTION, not by accident: every path that
-        // replaces a live session goes through `cancelSession()` first, which
-        // sets `cancelled` and is checked above, and `restart()` only runs from a
-        // terminal state, where no poll is in flight. Change either of those and
-        // this line is the only thing standing between a superseded session's
-        // reply and the live session's status line. That construction is exactly
-        // what a refactor touching the call graph would quietly break.
+        // `isCurrent` covers REPLACEMENT — a newer session took the generation
+        // while this one was parsing.
         //
-        // Kept because the same hazard — a stale tick re-arming for its
-        // successor — was the Important finding against `PairingService` in Task
-        // 4 of this plan. It is cheap here and it has already bitten once.
+        // `session.cancelled` covers CANCELLATION of the still-current session,
+        // which `isCurrent` cannot see: `cancelSession` deliberately leaves
+        // `current` pointing here (that is how the flag works at all), so
+        // `isCurrent` stays TRUE for a session the user just stopped. Without the
+        // flag half, a cancel during `res.json()` lets `render` overwrite the
+        // "Pairing cancelled." copy and `schedulePoll` re-arm a session the user
+        // stopped — which then goes on to announce "Paired and connected." with
+        // the Cancel button already hidden.
         //
-        // No test covers it; reaching it would mean contorting the code, and a
-        // test that cannot fail for the property it names is worse than none.
-        if (!isCurrent(session)) {
+        // The guard above catches a cancel that lands before the body is read;
+        // this one catches a cancel that lands during it. Same hazard the stale
+        // tick had against `PairingService` in Task 4 of this plan.
+        if (!isCurrent(session) || session.cancelled) {
             return;
         }
         if (status === null) {
