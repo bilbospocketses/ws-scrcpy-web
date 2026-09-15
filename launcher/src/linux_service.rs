@@ -68,10 +68,29 @@ pub fn teardown_commands(scope: Scope, name: &str, bindir: &str) -> Vec<Vec<Stri
     // stop (synchronous; reaps the in-cgroup launcher+Node+children), disable, reset-failed,
     // remove unit file, reload — always present.
     let mut cmds: Vec<Vec<String>> = vec![
-        [vec![systemctl.clone()], pre.clone(), vec!["stop".into(), unit.clone()]].concat(),
-        [vec![systemctl.clone()], pre.clone(), vec!["disable".into(), unit.clone()]].concat(),
-        [vec![systemctl.clone()], pre.clone(), vec!["reset-failed".into(), unit.clone()]].concat(),
-        vec![rm.clone(), "-f".into(), unit_file.to_string_lossy().into_owned()],
+        [
+            vec![systemctl.clone()],
+            pre.clone(),
+            vec!["stop".into(), unit.clone()],
+        ]
+        .concat(),
+        [
+            vec![systemctl.clone()],
+            pre.clone(),
+            vec!["disable".into(), unit.clone()],
+        ]
+        .concat(),
+        [
+            vec![systemctl.clone()],
+            pre.clone(),
+            vec!["reset-failed".into(), unit.clone()],
+        ]
+        .concat(),
+        vec![
+            rm.clone(),
+            "-f".into(),
+            unit_file.to_string_lossy().into_owned(),
+        ],
     ];
     // system scope also removes the /opt staging + /var/lib state + the /opt fcontext rule
     if scope == Scope::System {
@@ -82,10 +101,22 @@ pub fn teardown_commands(scope: Scope, name: &str, bindir: &str) -> Vec<Vec<Stri
         // remove the /opt bin_t fcontext rule the install added. The /var/lib state
         // needs NO custom rule (var_lib_t by the policy's default /var/lib(/.*)? rule),
         // so there is nothing else to remove.
-        cmds.push(vec![semanage, "fcontext".into(), "-d".into(), "/opt/ws-scrcpy-web(/.*)?".into()]);
+        cmds.push(vec![
+            semanage,
+            "fcontext".into(),
+            "-d".into(),
+            "/opt/ws-scrcpy-web(/.*)?".into(),
+        ]);
     }
     // reload
-    cmds.push([vec![systemctl.clone()], pre.clone(), vec!["daemon-reload".into()]].concat());
+    cmds.push(
+        [
+            vec![systemctl.clone()],
+            pre.clone(),
+            vec!["daemon-reload".into()],
+        ]
+        .concat(),
+    );
     cmds
 }
 
@@ -109,7 +140,11 @@ pub fn parse_args(args: &[String]) -> Option<(Scope, String)> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BootstrapAction { ExecOpt(PathBuf), RunHomeOfferUpdate, RunHome }
+pub enum BootstrapAction {
+    ExecOpt(PathBuf),
+    RunHomeOfferUpdate,
+    RunHome,
+}
 
 /// Compare versions like "0.1.31" / "0.1.31-beta.4". Core (X.Y.Z) numeric; a
 /// `-beta.N` pre-release sorts BEFORE the same core release, and by N among betas.
@@ -117,8 +152,12 @@ fn version_cmp(a: &str, b: &str) -> std::cmp::Ordering {
     fn parse(v: &str) -> ([u64; 3], Option<u64>) {
         let (core, pre) = v.split_once('-').map_or((v, None), |(c, p)| (c, Some(p)));
         let mut nums = [0u64; 3];
-        for (i, part) in core.split('.').take(3).enumerate() { nums[i] = part.parse().unwrap_or(0); }
-        let beta = pre.and_then(|p| p.rsplit('.').next()).and_then(|n| n.parse::<u64>().ok());
+        for (i, part) in core.split('.').take(3).enumerate() {
+            nums[i] = part.parse().unwrap_or(0);
+        }
+        let beta = pre
+            .and_then(|p| p.rsplit('.').next())
+            .and_then(|n| n.parse::<u64>().ok());
         (nums, beta)
     }
     let (ca, ba) = parse(a);
@@ -133,12 +172,23 @@ fn version_cmp(a: &str, b: &str) -> std::cmp::Ordering {
 
 /// `self_version` = the running (home) AppImage's version; `opt_version` = parsed
 /// /opt/ws-scrcpy-web/VERSION (None if absent/unreadable). Pure.
-pub fn bootstrap_decision(opt_exists: bool, appimage_env: Option<&str>, self_version: &str, opt_version: Option<&str>) -> BootstrapAction {
+pub fn bootstrap_decision(
+    opt_exists: bool,
+    appimage_env: Option<&str>,
+    self_version: &str,
+    opt_version: Option<&str>,
+) -> BootstrapAction {
     let opt = PathBuf::from("/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage");
-    let is_self_opt = appimage_env.map(|p| p == opt.to_string_lossy()).unwrap_or(false);
-    if !opt_exists || appimage_env.is_none() || is_self_opt { return BootstrapAction::RunHome; }
+    let is_self_opt = appimage_env
+        .map(|p| p == opt.to_string_lossy())
+        .unwrap_or(false);
+    if !opt_exists || appimage_env.is_none() || is_self_opt {
+        return BootstrapAction::RunHome;
+    }
     match opt_version {
-        Some(ov) if version_cmp(self_version, ov) == std::cmp::Ordering::Greater => BootstrapAction::RunHomeOfferUpdate,
+        Some(ov) if version_cmp(self_version, ov) == std::cmp::Ordering::Greater => {
+            BootstrapAction::RunHomeOfferUpdate
+        }
         _ => BootstrapAction::ExecOpt(opt),
     }
 }
@@ -162,7 +212,11 @@ pub fn bootstrap_target(opt_exists: bool, appimage_env: Option<&str>) -> Option<
 /// tokens (e.g. WS_SCRCPY_NO_BROWSER on the apply path), inserted before the
 /// target. Pure — the single builder shared by the teardown, install-handoff,
 /// uninstall, and apply user-scope relaunch seams. (#71)
-pub fn user_relaunch_command(systemd_run: &str, extra_setenv: &[&str], target: &str) -> Vec<String> {
+pub fn user_relaunch_command(
+    systemd_run: &str,
+    extra_setenv: &[&str],
+    target: &str,
+) -> Vec<String> {
     let mut argv = vec![
         systemd_run.to_string(),
         "--user".to_string(),
@@ -240,7 +294,9 @@ pub fn service_defer_url(
         return None;
     }
     match (install_mode, web_port) {
-        (Some("system-service"), Some(port)) if port_live => Some(format!("http://localhost:{port}")),
+        (Some("system-service"), Some(port)) if port_live => {
+            Some(format!("http://localhost:{port}"))
+        }
         _ => None,
     }
 }
@@ -282,7 +338,9 @@ fn teardown_failure_is_benign(argv: &[String]) -> bool {
 
 fn run(scope: Scope, unit: &str) -> i32 {
     let bd = tool_dir("systemctl");
-    log::info(&format!("linux-service-teardown: scope={scope:?} unit={unit}"));
+    log::info(&format!(
+        "linux-service-teardown: scope={scope:?} unit={unit}"
+    ));
 
     // 1. Teardown sequence (best-effort; log non-zero, keep going).
     for argv in teardown_commands(scope, unit, &bd) {
@@ -296,7 +354,11 @@ fn run(scope: Scope, unit: &str) -> i32 {
                 argv.join(" "),
                 s.code()
             )),
-            Ok(s) => log::error(&format!("teardown non-zero ({:?}): {}", s.code(), argv.join(" "))),
+            Ok(s) => log::error(&format!(
+                "teardown non-zero ({:?}): {}",
+                s.code(),
+                argv.join(" ")
+            )),
             Err(e) => log::error(&format!("teardown spawn failed: {} ({e})", argv.join(" "))),
         }
     }
@@ -331,7 +393,8 @@ fn run(scope: Scope, unit: &str) -> i32 {
         let (cmd, rest) = argv.split_first().expect("non-empty argv");
         match std::process::Command::new(cmd).args(rest).status() {
             Ok(s) => log::info(&format!(
-                "teardown: relaunched local {target_str} via systemd-run (exit {:?})", s.code()
+                "teardown: relaunched local {target_str} via systemd-run (exit {:?})",
+                s.code()
             )),
             Err(e) => log::error(&format!("teardown: relaunch via systemd-run failed: {e}")),
         }
@@ -450,7 +513,9 @@ fn run_install_handoff(scope: Scope, unit: &str) -> i32 {
     // 1. Wait for the local instance to release the port (it exits to free the
     //    per-user single-instance lock the service needs). Best-effort.
     if wait_port(web_port, false, 20) {
-        log::info(&format!("install-handoff: local instance released port {web_port}"));
+        log::info(&format!(
+            "install-handoff: local instance released port {web_port}"
+        ));
     } else {
         log::error(&format!(
             "install-handoff: port {web_port} still held after 20s; starting anyway"
@@ -461,7 +526,10 @@ fn run_install_handoff(scope: Scope, unit: &str) -> i32 {
     let argv = start_command(scope, unit, &bd);
     let (cmd, rest) = argv.split_first().expect("non-empty argv");
     match std::process::Command::new(cmd).args(rest).status() {
-        Ok(s) => log::info(&format!("install-handoff: started {unit} (exit {:?})", s.code())),
+        Ok(s) => log::info(&format!(
+            "install-handoff: started {unit} (exit {:?})",
+            s.code()
+        )),
         Err(e) => log::error(&format!("install-handoff: start spawn failed: {e}")),
     }
 
@@ -505,7 +573,10 @@ fn run_install_handoff(scope: Scope, unit: &str) -> i32 {
 fn read_local_appimage_marker() -> Option<String> {
     let data_root = common::config::data_root_from_env()?;
     let p = data_root.join("control").join("local-appimage");
-    std::fs::read_to_string(p).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+    std::fs::read_to_string(p)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
 }
 
 #[cfg(test)]
@@ -516,9 +587,14 @@ mod tests {
     fn reset_failed_nonzero_is_benign() {
         // systemctl reset-failed exits non-zero when the unit isn't failed —
         // the normal case after a clean stop+disable; must NOT log as ERROR.
-        let argv = ["/usr/bin/systemctl", "--user", "reset-failed", "WsScrcpyWeb.service"]
-            .map(String::from)
-            .to_vec();
+        let argv = [
+            "/usr/bin/systemctl",
+            "--user",
+            "reset-failed",
+            "WsScrcpyWeb.service",
+        ]
+        .map(String::from)
+        .to_vec();
         assert!(teardown_failure_is_benign(&argv));
     }
 
@@ -540,8 +616,16 @@ mod tests {
         let cmds = teardown_commands(Scope::User, "WsScrcpyWeb", "/usr/bin");
         let joined: Vec<String> = cmds.iter().map(|c| c.join(" ")).collect();
         assert!(joined[0].contains("--user stop WsScrcpyWeb.service"));
-        assert!(joined.iter().any(|c| c.contains("--user disable WsScrcpyWeb.service")));
-        assert!(joined.iter().any(|c| c.contains("--user reset-failed WsScrcpyWeb.service")));
+        assert!(
+            joined
+                .iter()
+                .any(|c| c.contains("--user disable WsScrcpyWeb.service"))
+        );
+        assert!(
+            joined
+                .iter()
+                .any(|c| c.contains("--user reset-failed WsScrcpyWeb.service"))
+        );
         assert!(joined.iter().any(|c| c.contains("--user daemon-reload")));
         // user scope does NOT touch /opt
         assert!(!joined.iter().any(|c| c.contains("/opt/ws-scrcpy-web")));
@@ -551,8 +635,16 @@ mod tests {
     fn system_scope_teardown_removes_opt_and_fcontext() {
         let cmds = teardown_commands(Scope::System, "WsScrcpyWeb", "/usr/bin");
         let joined: Vec<String> = cmds.iter().map(|c| c.join(" ")).collect();
-        assert!(joined.iter().any(|c| c.contains("stop WsScrcpyWeb.service") && !c.contains("--user")));
-        assert!(joined.iter().any(|c| c.contains("rm") && c.contains("/opt/ws-scrcpy-web")));
+        assert!(
+            joined
+                .iter()
+                .any(|c| c.contains("stop WsScrcpyWeb.service") && !c.contains("--user"))
+        );
+        assert!(
+            joined
+                .iter()
+                .any(|c| c.contains("rm") && c.contains("/opt/ws-scrcpy-web"))
+        );
         assert!(joined.iter().any(|c| c.contains("semanage fcontext -d")));
     }
 
@@ -575,12 +667,15 @@ mod tests {
         let cmds = teardown_commands(Scope::System, "WsScrcpyWeb", "/usr/bin");
         let joined: Vec<String> = cmds.iter().map(|c| c.join(" ")).collect();
         let removes_dir = |d: &str| joined.iter().any(|c| c.contains("rm") && c.contains(d));
-        let removes_fcontext = |spec: &str|
-            joined.iter().any(|c| c.contains("semanage fcontext -d") && c.ends_with(spec));
+        let removes_fcontext = |spec: &str| {
+            joined
+                .iter()
+                .any(|c| c.contains("semanage fcontext -d") && c.ends_with(spec))
+        };
         assert!(removes_dir("/opt/ws-scrcpy-web"));
         assert!(removes_dir("/var/lib/ws-scrcpy-web"));
-        assert!(removes_fcontext("/opt/ws-scrcpy-web(/.*)?"));         // bin_t tree
-        assert!(!removes_fcontext("/var/lib/ws-scrcpy-web(/.*)?"));    // /var/lib: NO custom rule
+        assert!(removes_fcontext("/opt/ws-scrcpy-web(/.*)?")); // bin_t tree
+        assert!(!removes_fcontext("/var/lib/ws-scrcpy-web(/.*)?")); // /var/lib: NO custom rule
     }
 
     #[test]
@@ -598,18 +693,30 @@ mod tests {
     #[test]
     fn relaunch_target_rejects_unsafe_or_missing_markers() {
         // system scope -> never relaunch (even with a marker)
-        assert_eq!(relaunch_target(Scope::System, Some("/opt/x/App.AppImage".into())), None);
+        assert_eq!(
+            relaunch_target(Scope::System, Some("/opt/x/App.AppImage".into())),
+            None
+        );
         // missing marker
         assert_eq!(relaunch_target(Scope::User, None), None);
         // relative path
-        assert_eq!(relaunch_target(Scope::User, Some("Apps/App.AppImage".into())), None);
+        assert_eq!(
+            relaunch_target(Scope::User, Some("Apps/App.AppImage".into())),
+            None
+        );
         // absolute but nonexistent
-        assert_eq!(relaunch_target(Scope::User, Some("/nonexistent/App.AppImage".into())), None);
+        assert_eq!(
+            relaunch_target(Scope::User, Some("/nonexistent/App.AppImage".into())),
+            None
+        );
         // absolute but contains a `..` traversal component
         let tmp = tempfile::tempdir().expect("tempdir");
         let app = tmp.path().join("App.AppImage");
         std::fs::write(&app, b"x").expect("write");
-        let traversal = format!("{}/../App.AppImage", app.parent().unwrap().to_string_lossy());
+        let traversal = format!(
+            "{}/../App.AppImage",
+            app.parent().unwrap().to_string_lossy()
+        );
         assert_eq!(relaunch_target(Scope::User, Some(traversal)), None);
     }
 
@@ -625,9 +732,15 @@ mod tests {
         // relative path
         assert!(!is_safe_relaunch_target(Path::new("App.AppImage"), false));
         // contains `..`
-        assert!(!is_safe_relaunch_target(&tmp.path().join("..").join("App.AppImage"), false));
+        assert!(!is_safe_relaunch_target(
+            &tmp.path().join("..").join("App.AppImage"),
+            false
+        ));
         // nonexistent
-        assert!(!is_safe_relaunch_target(&tmp.path().join("nope.AppImage"), false));
+        assert!(!is_safe_relaunch_target(
+            &tmp.path().join("nope.AppImage"),
+            false
+        ));
         // a directory is not a regular file
         assert!(!is_safe_relaunch_target(tmp.path(), false));
         // a symlink lstat's as a symlink, not a regular file -> rejected (no redirect)
@@ -643,19 +756,30 @@ mod tests {
     #[test]
     fn bootstrap_target_execs_opt_when_present_and_not_self() {
         let opt = "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage";
-        assert_eq!(bootstrap_target(true, Some("/home/u/App.AppImage")), Some(PathBuf::from(opt)));
-        assert_eq!(bootstrap_target(true, Some(opt)), None);              // we ARE /opt -> don't re-exec self
+        assert_eq!(
+            bootstrap_target(true, Some("/home/u/App.AppImage")),
+            Some(PathBuf::from(opt))
+        );
+        assert_eq!(bootstrap_target(true, Some(opt)), None); // we ARE /opt -> don't re-exec self
         assert_eq!(bootstrap_target(false, Some("/home/u/App.AppImage")), None); // no /opt -> run in place
-        assert_eq!(bootstrap_target(true, None), None);                  // from-source (no $APPIMAGE) -> None
+        assert_eq!(bootstrap_target(true, None), None); // from-source (no $APPIMAGE) -> None
     }
 
     #[test]
     fn defer_to_service_only_when_system_service_and_port_live() {
         // running_as_service = false: a plain local/home launch may defer to a live system service.
-        assert_eq!(service_defer_url(Some("system-service"), Some(8000), true, false),
-                   Some("http://localhost:8000".to_string()));
-        assert_eq!(service_defer_url(Some("system-service"), Some(8000), false, false), None); // installed but down
-        assert_eq!(service_defer_url(Some("user"), Some(8000), true, false), None);            // not service mode
+        assert_eq!(
+            service_defer_url(Some("system-service"), Some(8000), true, false),
+            Some("http://localhost:8000".to_string())
+        );
+        assert_eq!(
+            service_defer_url(Some("system-service"), Some(8000), false, false),
+            None
+        ); // installed but down
+        assert_eq!(
+            service_defer_url(Some("user"), Some(8000), true, false),
+            None
+        ); // not service mode
         assert_eq!(service_defer_url(None, None, true, false), None);
     }
 
@@ -664,7 +788,10 @@ mod tests {
         // WS_SCRCPY_SERVICE=1 -> this process IS the system service; it must start its
         // server, never defer to a "live" port (which, during the install handoff, is
         // just the outgoing local instance). beta.56 self-defer regression guard.
-        assert_eq!(service_defer_url(Some("system-service"), Some(8000), true, true), None);
+        assert_eq!(
+            service_defer_url(Some("system-service"), Some(8000), true, true),
+            None
+        );
     }
 
     #[test]
@@ -672,7 +799,12 @@ mod tests {
         // §71 — plain user-scope relaunch, no extra setenv.
         assert_eq!(
             user_relaunch_command("/usr/bin/systemd-run", &[], "/home/u/App.AppImage"),
-            vec!["/usr/bin/systemd-run", "--user", "--collect", "/home/u/App.AppImage"]
+            vec![
+                "/usr/bin/systemd-run",
+                "--user",
+                "--collect",
+                "/home/u/App.AppImage"
+            ]
         );
         // With an extra --setenv (the apply path's NO_BROWSER) inserted before
         // the target — same builder, one shared shape.
@@ -683,8 +815,11 @@ mod tests {
                 "/home/u/App.AppImage"
             ),
             vec![
-                "/usr/bin/systemd-run", "--user", "--collect",
-                "--setenv=WS_SCRCPY_NO_BROWSER=1", "/home/u/App.AppImage"
+                "/usr/bin/systemd-run",
+                "--user",
+                "--collect",
+                "--setenv=WS_SCRCPY_NO_BROWSER=1",
+                "/home/u/App.AppImage"
             ]
         );
     }
@@ -702,19 +837,42 @@ mod tests {
     #[test]
     fn bootstrap_decides_by_version() {
         let opt = "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage";
-        assert_eq!(bootstrap_decision(true, Some("/home/u/App.AppImage"), "0.1.30", Some("0.1.31")), BootstrapAction::ExecOpt(opt.into()));
-        assert_eq!(bootstrap_decision(true, Some("/home/u/App.AppImage"), "0.1.31", Some("0.1.31")), BootstrapAction::ExecOpt(opt.into()));
-        assert_eq!(bootstrap_decision(true, Some("/home/u/App.AppImage"), "0.1.32", Some("0.1.31")), BootstrapAction::RunHomeOfferUpdate);
-        assert_eq!(bootstrap_decision(true, Some(opt), "0.1.31", Some("0.1.31")), BootstrapAction::RunHome);   // we ARE /opt
-        assert_eq!(bootstrap_decision(false, Some("/home/u/App.AppImage"), "0.1.31", None), BootstrapAction::RunHome);  // no /opt
-        assert_eq!(bootstrap_decision(true, Some("/home/u/App.AppImage"), "0.1.31", None), BootstrapAction::ExecOpt(opt.into())); // unknown /opt version -> run /opt
+        assert_eq!(
+            bootstrap_decision(true, Some("/home/u/App.AppImage"), "0.1.30", Some("0.1.31")),
+            BootstrapAction::ExecOpt(opt.into())
+        );
+        assert_eq!(
+            bootstrap_decision(true, Some("/home/u/App.AppImage"), "0.1.31", Some("0.1.31")),
+            BootstrapAction::ExecOpt(opt.into())
+        );
+        assert_eq!(
+            bootstrap_decision(true, Some("/home/u/App.AppImage"), "0.1.32", Some("0.1.31")),
+            BootstrapAction::RunHomeOfferUpdate
+        );
+        assert_eq!(
+            bootstrap_decision(true, Some(opt), "0.1.31", Some("0.1.31")),
+            BootstrapAction::RunHome
+        ); // we ARE /opt
+        assert_eq!(
+            bootstrap_decision(false, Some("/home/u/App.AppImage"), "0.1.31", None),
+            BootstrapAction::RunHome
+        ); // no /opt
+        assert_eq!(
+            bootstrap_decision(true, Some("/home/u/App.AppImage"), "0.1.31", None),
+            BootstrapAction::ExecOpt(opt.into())
+        ); // unknown /opt version -> run /opt
     }
 
     #[test]
     fn start_command_user_and_system() {
         assert_eq!(
             start_command(Scope::User, "WsScrcpyWeb", "/usr/bin"),
-            vec!["/usr/bin/systemctl", "--user", "start", "WsScrcpyWeb.service"]
+            vec![
+                "/usr/bin/systemctl",
+                "--user",
+                "start",
+                "WsScrcpyWeb.service"
+            ]
         );
         assert_eq!(
             start_command(Scope::System, "WsScrcpyWeb", "/usr/bin"),

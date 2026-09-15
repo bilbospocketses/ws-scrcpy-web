@@ -18,12 +18,12 @@
 #![cfg(target_os = "linux")]
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use common::config::AppConfig;
 use common::tray::TrayAction;
-use common::tray_policy::{icon_argb_22, session_bus_present, should_spawn_tray, TrayLabels};
+use common::tray_policy::{TrayLabels, icon_argb_22, session_bus_present, should_spawn_tray};
 
 use crate::log;
 
@@ -46,7 +46,9 @@ fn ensure_session_bus_env() -> bool {
     if addr.as_deref().is_none_or(|a| a.trim().is_empty()) {
         if let Some(sock) = socket {
             let value = format!("unix:path={}", sock.display());
-            log::info(&format!("linux-tray: DBUS_SESSION_BUS_ADDRESS was unset; using {value}"));
+            log::info(&format!(
+                "linux-tray: DBUS_SESSION_BUS_ADDRESS was unset; using {value}"
+            ));
             std::env::set_var("DBUS_SESSION_BUS_ADDRESS", value);
         }
     }
@@ -75,26 +77,35 @@ pub fn spawn_if_eligible(data_root: &Path, stop: Arc<AtomicBool>) {
     let labels = TrayLabels::for_mode(cfg.is_service_mode());
     let data_root = data_root.to_path_buf();
 
-    let spawned = std::thread::Builder::new().name("linux-tray".into()).spawn(move || {
-        // Re-read config.json on every click: a web-port change or a mode swap
-        // mid-session must open the port that is live NOW (same rule as the
-        // Windows helper). The tray opens the browser ON this machine, so
-        // localhost is the right host here.
-        let provider: Box<dyn Fn() -> String> = Box::new(move || {
-            let live = AppConfig::load(&data_root);
-            format!("http://localhost:{}", live.web_port.unwrap_or(8000))
+    let spawned = std::thread::Builder::new()
+        .name("linux-tray".into())
+        .spawn(move || {
+            // Re-read config.json on every click: a web-port change or a mode swap
+            // mid-session must open the port that is live NOW (same rule as the
+            // Windows helper). The tray opens the browser ON this machine, so
+            // localhost is the right host here.
+            let provider: Box<dyn Fn() -> String> = Box::new(move || {
+                let live = AppConfig::load(&data_root);
+                format!("http://localhost:{}", live.web_port.unwrap_or(8000))
+            });
+            match common::tray::run(
+                icon,
+                labels.tooltip,
+                labels.exit_title,
+                labels.exit_action,
+                provider,
+                None,
+            ) {
+                Ok(TrayAction::ConfirmedExit) => {
+                    log::info("linux-tray: exit confirmed; asking the supervisor to stop Node");
+                    stop.store(true, Ordering::SeqCst);
+                }
+                Ok(TrayAction::Cancelled) => {
+                    // run() already logged why (no host / no bus / host gone).
+                }
+                Err(e) => log::error(&format!("linux-tray: {e}")),
+            }
         });
-        match common::tray::run(icon, labels.tooltip, labels.exit_title, labels.exit_action, provider, None) {
-            Ok(TrayAction::ConfirmedExit) => {
-                log::info("linux-tray: exit confirmed; asking the supervisor to stop Node");
-                stop.store(true, Ordering::SeqCst);
-            }
-            Ok(TrayAction::Cancelled) => {
-                // run() already logged why (no host / no bus / host gone).
-            }
-            Err(e) => log::error(&format!("linux-tray: {e}")),
-        }
-    });
     if let Err(e) = spawned {
         log::error(&format!("linux-tray: could not spawn the tray thread: {e}"));
     }

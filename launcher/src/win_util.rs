@@ -17,5 +17,8 @@ pub const DETACHED_PROCESS: u32 = 0x0000_0008;
 /// Convert a Rust string to a null-terminated UTF-16 buffer for the W-suffixed
 /// Win32 APIs.
 pub fn to_wide(s: &str) -> Vec<u16> {
-    OsStr::new(s).encode_wide().chain(std::iter::once(0)).collect()
+    OsStr::new(s)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect()
 }

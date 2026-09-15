@@ -78,7 +78,11 @@ impl Paths {
         };
 
         let restart_marker = data_root.join(".restart");
-        let node_bin_old = if cfg!(windows) { "node.exe.old" } else { "node.old" };
+        let node_bin_old = if cfg!(windows) {
+            "node.exe.old"
+        } else {
+            "node.old"
+        };
         let old_node = deps_path.join("node").join(node_bin_old);
 
         Ok(Self {
@@ -93,10 +97,7 @@ impl Paths {
     /// Compute paths from process state.
     pub fn from_env() -> Result<Self> {
         let exe = std::env::current_exe().context("could not determine current exe path")?;
-        let exe_dir = exe
-            .parent()
-            .context("exe has no parent dir")?
-            .to_path_buf();
+        let exe_dir = exe.parent().context("exe has no parent dir")?.to_path_buf();
         let deps_override = std::env::var("DEPS_PATH").ok();
         let programdata = std::env::var("PROGRAMDATA").ok();
         Self::compute(&exe_dir, deps_override.as_deref(), programdata.as_deref())
@@ -123,7 +124,10 @@ mod tests {
 
         assert_eq!(paths.install_root, install_root);
         assert_eq!(paths.data_root, fake_pd.join("WsScrcpyWeb"));
-        assert_eq!(paths.deps_path, fake_pd.join("WsScrcpyWeb").join("dependencies"));
+        assert_eq!(
+            paths.deps_path,
+            fake_pd.join("WsScrcpyWeb").join("dependencies")
+        );
         assert_eq!(
             paths.restart_marker,
             fake_pd.join("WsScrcpyWeb").join(".restart")
@@ -182,6 +186,9 @@ mod tests {
 
         let paths = Paths::compute(&exe_dir, None, None).unwrap();
         // Falls back to C:\ProgramData\WsScrcpyWeb per data_root_for_windows.
-        assert_eq!(paths.data_root, PathBuf::from("C:\\ProgramData\\WsScrcpyWeb"));
+        assert_eq!(
+            paths.data_root,
+            PathBuf::from("C:\\ProgramData\\WsScrcpyWeb")
+        );
     }
 }

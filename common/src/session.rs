@@ -57,8 +57,8 @@ pub fn active_interactive_session() -> Option<u32> {
 pub fn active_interactive_sessions() -> Vec<u32> {
     use windows::Win32::Foundation::HANDLE;
     use windows::Win32::System::RemoteDesktop::{
-        WTSActive, WTSEnumerateSessionsW, WTSFreeMemory, WTSGetActiveConsoleSessionId,
-        WTSQuerySessionInformationW, WTSUserName, WTS_SESSION_INFOW,
+        WTS_SESSION_INFOW, WTSActive, WTSEnumerateSessionsW, WTSFreeMemory,
+        WTSGetActiveConsoleSessionId, WTSQuerySessionInformationW, WTSUserName,
     };
 
     // SAFETY: all WTS API calls below have no preconditions beyond the

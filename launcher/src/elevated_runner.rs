@@ -55,7 +55,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::log;
 #[cfg(windows)]
-use crate::user_session_spawn::{spawn_in_active_user_session, SpawnUserLauncherArgs};
+use crate::user_session_spawn::{SpawnUserLauncherArgs, spawn_in_active_user_session};
 
 /// Args we accept from the Node caller. Each `command` has its own
 /// expected schema; we deserialize as a generic JSON value first and then
@@ -144,7 +144,9 @@ pub fn handle(args: &[String]) -> Option<i32> {
     let final_code = result.exit_code;
     let nonce = read_nonce(&args_path);
     if let Err(e) = write_result(&result_path, &result, nonce.as_deref()) {
-        log::error(&format!("could not write result JSON to {result_path:?}: {e}"));
+        log::error(&format!(
+            "could not write result JSON to {result_path:?}: {e}"
+        ));
         // Even a failed result-write doesn't change the exit code we
         // return; the caller will see "no result file present" and infer
         // that the helper itself died. Use exit code 5 only when result
@@ -168,7 +170,10 @@ fn write_result(path: &Path, result: &ElevatedResult, nonce: Option<&str>) -> Re
     // JSON layer to avoid threading a field through every ElevatedResult literal.
     let mut value = serde_json::to_value(result).map_err(|e| e.to_string())?;
     if let (Some(n), Some(obj)) = (nonce, value.as_object_mut()) {
-        obj.insert("nonce".to_string(), serde_json::Value::String(n.to_string()));
+        obj.insert(
+            "nonce".to_string(),
+            serde_json::Value::String(n.to_string()),
+        );
     }
     let json = serde_json::to_string_pretty(&value).map_err(|e| e.to_string())?;
     let mut f = fs::File::create(path).map_err(|e| e.to_string())?;
@@ -199,7 +204,10 @@ fn fail(code: i32, msg: &str) -> ElevatedResult {
 /// `--maxRotations 1` bound service.log natively (servy owns the append fd, so
 /// the app can't rename/truncate it — servy rotates it itself; size rotation
 /// takes precedence over date rotation per servy 8.2).
-fn build_servy_install_args(args: &InstallServiceArgs, post_stop_bat: Option<&PathBuf>) -> Vec<String> {
+fn build_servy_install_args(
+    args: &InstallServiceArgs,
+    post_stop_bat: Option<&PathBuf>,
+) -> Vec<String> {
     let mut servy_args = vec![
         "install".to_string(),
         "--name".to_string(),
@@ -287,7 +295,9 @@ fn install_service(args: &InstallServiceArgs) -> ElevatedResult {
             }
         },
         None => {
-            log::info("install-service: data_root not provided — skipping post-stop wiring (legacy bridge path will handle recovery)");
+            log::info(
+                "install-service: data_root not provided — skipping post-stop wiring (legacy bridge path will handle recovery)",
+            );
             None
         }
     };
@@ -313,8 +323,10 @@ fn install_service(args: &InstallServiceArgs) -> ElevatedResult {
 
     // Auto-start: same try-best-effort semantics as the Node-side ServyClient
     // had in v0.1.6 — we capture but don't fail the overall install.
-    let start_out = run_capture(&args.servy_path, &["start", "--name", &args.name])
-        .unwrap_or_else(|e| CapturedOutput::error_only(&format!("servy-cli start spawn failed: {e}")));
+    let start_out =
+        run_capture(&args.servy_path, &["start", "--name", &args.name]).unwrap_or_else(|e| {
+            CapturedOutput::error_only(&format!("servy-cli start spawn failed: {e}"))
+        });
 
     // Spawn the tray detached so the installing admin immediately gets
     // a tray icon for their session. The tray_supervisor polling thread
@@ -384,7 +396,10 @@ fn uninstall_service(args: &UninstallServiceArgs) -> ElevatedResult {
     match run_capture(&args.servy_path, &["stop", "--name", &args.name]) {
         Ok(out) => log::info(&format!(
             "uninstall-service: servy-cli stop result success={} code={:?} stdout_len={} stderr_len={}",
-            out.success, out.code, out.stdout.len(), out.stderr.len()
+            out.success,
+            out.code,
+            out.stdout.len(),
+            out.stderr.len()
         )),
         Err(e) => log::error(&format!(
             "uninstall-service: servy-cli stop spawn failed (continuing to uninstall anyway, stop is best-effort): {e}"
@@ -399,7 +414,10 @@ fn uninstall_service(args: &UninstallServiceArgs) -> ElevatedResult {
         Ok(out) => {
             log::info(&format!(
                 "uninstall-service: servy-cli uninstall result success={} code={:?} stdout_len={} stderr_len={}",
-                out.success, out.code, out.stdout.len(), out.stderr.len()
+                out.success,
+                out.code,
+                out.stdout.len(),
+                out.stderr.len()
             ));
             out
         }
@@ -555,7 +573,9 @@ fn run_capture(exe: &str, args: &[impl AsRef<std::ffi::OsStr>]) -> Result<Captur
 pub(crate) fn assert_safe_bat_token(value: &str, what: &str) -> Result<(), String> {
     const FORBIDDEN: &[char] = &['"', '&', '|', '<', '>', '^', '%', '!', '\r', '\n', '`'];
     if let Some(c) = value.chars().find(|c| FORBIDDEN.contains(c)) {
-        return Err(format!("refusing to write bat: {what} contains an unsafe character {c:?}"));
+        return Err(format!(
+            "refusing to write bat: {what} contains an unsafe character {c:?}"
+        ));
     }
     Ok(())
 }
@@ -565,9 +585,13 @@ pub(crate) fn assert_safe_bat_token(value: &str, what: &str) -> Result<(), Strin
 /// a safe charset. (#13)
 pub(crate) fn assert_safe_service_name(name: &str) -> Result<(), String> {
     if name.is_empty()
-        || !name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
     {
-        return Err(format!("refusing to write bat: invalid service name {name:?}"));
+        return Err(format!(
+            "refusing to write bat: invalid service name {name:?}"
+        ));
     }
     Ok(())
 }
@@ -599,9 +623,8 @@ pub(crate) fn write_post_stop_bat(
     use std::fs;
 
     let post_stop_dir = data_root.join("control").join("post-stop");
-    fs::create_dir_all(&post_stop_dir).map_err(|e| {
-        format!("create_dir_all {post_stop_dir:?} failed: {e}")
-    })?;
+    fs::create_dir_all(&post_stop_dir)
+        .map_err(|e| format!("create_dir_all {post_stop_dir:?} failed: {e}"))?;
 
     let bat_path = post_stop_dir.join("post-stop.bat");
     let apply_marker = data_root.join("control").join("apply-update-pending");
@@ -690,9 +713,7 @@ pub(crate) fn write_post_stop_bat(
         log_dir = log_dir_str,
     );
 
-    fs::write(&bat_path, bat.as_bytes()).map_err(|e| {
-        format!("write {bat_path:?} failed: {e}")
-    })?;
+    fs::write(&bat_path, bat.as_bytes()).map_err(|e| format!("write {bat_path:?} failed: {e}"))?;
     Ok(bat_path)
 }
 
@@ -721,9 +742,15 @@ mod rotation_tests {
     fn servy_install_args_enable_size_rotation_10mb_one_backup() {
         let argv = build_servy_install_args(&sample_args(), None);
         assert!(argv.iter().any(|a| a == "--enableSizeRotation"));
-        let pos = argv.iter().position(|a| a == "--rotationSize").expect("--rotationSize present");
+        let pos = argv
+            .iter()
+            .position(|a| a == "--rotationSize")
+            .expect("--rotationSize present");
         assert_eq!(argv[pos + 1], "10");
-        let mpos = argv.iter().position(|a| a == "--maxRotations").expect("--maxRotations present");
+        let mpos = argv
+            .iter()
+            .position(|a| a == "--maxRotations")
+            .expect("--maxRotations present");
         assert_eq!(argv[mpos + 1], "1");
     }
 }
@@ -745,7 +772,10 @@ mod tests {
         for bad in [
             "a\"b", "a&b", "a|b", "a<b", "a>b", "a^b", "a%b", "a!b", "a\rb", "a\nb", "a`b",
         ] {
-            assert!(assert_safe_bat_token(bad, "x").is_err(), "expected {bad:?} rejected");
+            assert!(
+                assert_safe_bat_token(bad, "x").is_err(),
+                "expected {bad:?} rejected"
+            );
         }
         assert!(assert_safe_bat_token("C:/app/control/post-stop/post-stop.bat", "x").is_ok());
     }
@@ -762,14 +792,24 @@ mod tests {
     #[test]
     fn write_post_stop_bat_rejects_an_injected_service_name() {
         let dir = tempdir().unwrap();
-        let r = write_post_stop_bat(dir.path(), "Ws & calc", "C:/app/servy-cli.exe", "C:/app/launcher.exe");
+        let r = write_post_stop_bat(
+            dir.path(),
+            "Ws & calc",
+            "C:/app/servy-cli.exe",
+            "C:/app/launcher.exe",
+        );
         assert!(r.is_err());
     }
 
     #[test]
     fn write_post_stop_bat_writes_for_a_clean_service_name() {
         let dir = tempdir().unwrap();
-        let r = write_post_stop_bat(dir.path(), "WsScrcpyWeb", "C:/app/servy-cli.exe", "C:/app/launcher.exe");
+        let r = write_post_stop_bat(
+            dir.path(),
+            "WsScrcpyWeb",
+            "C:/app/servy-cli.exe",
+            "C:/app/launcher.exe",
+        );
         assert!(r.is_ok());
     }
 
@@ -809,7 +849,10 @@ mod tests {
         assert_eq!(exit, 2);
 
         let mut json = String::new();
-        fs::File::open(&result_path).unwrap().read_to_string(&mut json).unwrap();
+        fs::File::open(&result_path)
+            .unwrap()
+            .read_to_string(&mut json)
+            .unwrap();
         assert!(json.contains("unknown elevate-and-run command"));
         assert!(json.contains("\"ok\": false"));
     }
@@ -833,9 +876,18 @@ mod tests {
         handle(&argv).expect("flag matched");
 
         let mut json = String::new();
-        fs::File::open(&result_path).unwrap().read_to_string(&mut json).unwrap();
-        assert!(json.contains("\"nonce\""), "result missing nonce field: {json}");
-        assert!(json.contains("nonce-xyz"), "result missing nonce value: {json}");
+        fs::File::open(&result_path)
+            .unwrap()
+            .read_to_string(&mut json)
+            .unwrap();
+        assert!(
+            json.contains("\"nonce\""),
+            "result missing nonce field: {json}"
+        );
+        assert!(
+            json.contains("nonce-xyz"),
+            "result missing nonce value: {json}"
+        );
     }
 
     #[test]
@@ -847,14 +899,20 @@ mod tests {
             "launcher.exe".to_string(),
             "--elevate-and-run".to_string(),
             "install-service".to_string(),
-            dir.path().join("does-not-exist.json").to_string_lossy().into_owned(),
+            dir.path()
+                .join("does-not-exist.json")
+                .to_string_lossy()
+                .into_owned(),
             result_path.to_string_lossy().into_owned(),
         ];
         let exit = handle(&argv).expect("flag matched");
         assert_eq!(exit, 3);
 
         let mut json = String::new();
-        fs::File::open(&result_path).unwrap().read_to_string(&mut json).unwrap();
+        fs::File::open(&result_path)
+            .unwrap()
+            .read_to_string(&mut json)
+            .unwrap();
         assert!(json.contains("could not read args JSON"));
     }
 
@@ -872,7 +930,10 @@ mod tests {
         write_result(&path, &r, None).unwrap();
 
         let mut s = String::new();
-        fs::File::open(&path).unwrap().read_to_string(&mut s).unwrap();
+        fs::File::open(&path)
+            .unwrap()
+            .read_to_string(&mut s)
+            .unwrap();
         // Field name uses snake_case as serialized; consumers (Node) parse
         // these explicitly.
         assert!(s.contains("\"ok\": true"));
@@ -888,7 +949,8 @@ mod tests {
             "WsScrcpyWeb",
             r"C:\dependencies\servy\servy-cli.exe",
             r"C:\Program Files\WsScrcpyWeb\current\ws-scrcpy-web-launcher.exe",
-        ).expect("write");
+        )
+        .expect("write");
         let content = std::fs::read_to_string(&bat_path).expect("read");
         assert!(
             content.contains("--operation-server"),
@@ -908,7 +970,8 @@ mod tests {
             "WsScrcpyWeb",
             r"C:\dependencies\servy\servy-cli.exe",
             r"C:\Program Files\WsScrcpyWeb\current\ws-scrcpy-web-launcher.exe",
-        ).expect("write");
+        )
+        .expect("write");
         let content = std::fs::read_to_string(&bat_path).expect("read");
         // The bat is Windows-only at runtime but the test runs on both
         // Windows and Linux CI. Use the platform's separator so we match
@@ -932,10 +995,17 @@ mod tests {
             "WsScrcpyWeb",
             r"C:\dependencies\servy\servy-cli.exe",
             r"C:\Program Files\WsScrcpyWeb\current\ws-scrcpy-web-launcher.exe",
-        ).expect("write");
+        )
+        .expect("write");
         let content = std::fs::read_to_string(&bat_path).expect("read");
-        assert!(content.contains("apply-update-pending"), "apply-update branch present: {content}");
-        assert!(content.contains("sc start WsScrcpyWeb"), "apply-update branch invokes sc start: {content}");
+        assert!(
+            content.contains("apply-update-pending"),
+            "apply-update branch present: {content}"
+        );
+        assert!(
+            content.contains("sc start WsScrcpyWeb"),
+            "apply-update branch invokes sc start: {content}"
+        );
     }
 
     #[test]
@@ -946,13 +1016,29 @@ mod tests {
             "WsScrcpyWeb",
             r"C:\dependencies\servy\servy-cli.exe",
             r"C:\Program Files\WsScrcpyWeb\current\ws-scrcpy-web-launcher.exe",
-        ).expect("write");
+        )
+        .expect("write");
         let content = std::fs::read_to_string(&bat_path).expect("read");
-        assert!(content.contains("uninstall-pending"), "uninstall branch present: {content}");
-        assert!(content.contains(r"servy-cli.exe"), "uninstall branch references servy-cli: {content}");
-        assert!(content.contains("uninstall --name WsScrcpyWeb"), "uninstall branch invokes servy-cli uninstall: {content}");
-        assert!(content.contains("--spawn-user-launcher"), "uninstall branch spawns fresh user-session launcher: {content}");
-        assert!(content.contains(r"--launcher-path"), "uninstall branch passes --launcher-path: {content}");
+        assert!(
+            content.contains("uninstall-pending"),
+            "uninstall branch present: {content}"
+        );
+        assert!(
+            content.contains(r"servy-cli.exe"),
+            "uninstall branch references servy-cli: {content}"
+        );
+        assert!(
+            content.contains("uninstall --name WsScrcpyWeb"),
+            "uninstall branch invokes servy-cli uninstall: {content}"
+        );
+        assert!(
+            content.contains("--spawn-user-launcher"),
+            "uninstall branch spawns fresh user-session launcher: {content}"
+        );
+        assert!(
+            content.contains(r"--launcher-path"),
+            "uninstall branch passes --launcher-path: {content}"
+        );
     }
 
     #[test]
@@ -963,12 +1049,25 @@ mod tests {
             "WsScrcpyWeb",
             r"C:\dependencies\servy\servy-cli.exe",
             r"C:\Program Files\WsScrcpyWeb\current\ws-scrcpy-web-launcher.exe",
-        ).expect("write");
+        )
+        .expect("write");
         let content = std::fs::read_to_string(&bat_path).expect("read");
-        assert!(content.contains("post-stop.log"), "bat should log to post-stop.log: {content}");
-        assert!(content.contains("[post-stop] apply-update-pending marker found"), "apply-update branch logged: {content}");
-        assert!(content.contains("[post-stop] uninstall-pending marker found"), "uninstall branch logged: {content}");
-        assert!(content.contains("[post-stop] no marker found"), "no-op branch logged: {content}");
+        assert!(
+            content.contains("post-stop.log"),
+            "bat should log to post-stop.log: {content}"
+        );
+        assert!(
+            content.contains("[post-stop] apply-update-pending marker found"),
+            "apply-update branch logged: {content}"
+        );
+        assert!(
+            content.contains("[post-stop] uninstall-pending marker found"),
+            "uninstall branch logged: {content}"
+        );
+        assert!(
+            content.contains("[post-stop] no marker found"),
+            "no-op branch logged: {content}"
+        );
     }
 
     #[test]
@@ -979,10 +1078,15 @@ mod tests {
             "WsScrcpyWeb",
             r"C:\dependencies\servy\servy-cli.exe",
             r"C:\Program Files\WsScrcpyWeb\current\ws-scrcpy-web-launcher.exe",
-        ).expect("write");
+        )
+        .expect("write");
         let content = std::fs::read_to_string(&bat_path).expect("read");
-        let apply_idx = content.find("apply-update-pending").expect("apply-update token present");
-        let uninstall_idx = content.find("uninstall-pending").expect("uninstall token present");
+        let apply_idx = content
+            .find("apply-update-pending")
+            .expect("apply-update token present");
+        let uninstall_idx = content
+            .find("uninstall-pending")
+            .expect("uninstall token present");
         assert!(
             apply_idx < uninstall_idx,
             "apply-update branch must come first (mutual-exclusion ordering)"

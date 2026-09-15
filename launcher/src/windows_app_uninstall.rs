@@ -80,7 +80,10 @@ pub fn windows_app_uninstall_commands(
         vec![data_root.to_string()]
     };
 
-    UninstallPlan { update_exe_step, data_root_targets }
+    UninstallPlan {
+        update_exe_step,
+        data_root_targets,
+    }
 }
 
 // ─── MSI uninstall (#120) ──────────────────────────────────────────────────
@@ -275,10 +278,14 @@ impl Drop for RegKey {
 }
 
 #[cfg(windows)]
-fn reg_open(root: windows::Win32::System::Registry::HKEY, subkey: &str, view: u32) -> Option<RegKey> {
-    use windows::core::PCWSTR;
+fn reg_open(
+    root: windows::Win32::System::Registry::HKEY,
+    subkey: &str,
+    view: u32,
+) -> Option<RegKey> {
     use windows::Win32::Foundation::ERROR_SUCCESS;
-    use windows::Win32::System::Registry::{RegOpenKeyExW, HKEY, KEY_READ, REG_SAM_FLAGS};
+    use windows::Win32::System::Registry::{HKEY, KEY_READ, REG_SAM_FLAGS, RegOpenKeyExW};
+    use windows::core::PCWSTR;
 
     let wide: Vec<u16> = subkey.encode_utf16().chain(std::iter::once(0)).collect();
     let mut out = HKEY::default();
@@ -299,9 +306,9 @@ fn reg_open(root: windows::Win32::System::Registry::HKEY, subkey: &str, view: u3
 /// Names of the immediate subkeys of `key`.
 #[cfg(windows)]
 fn reg_enum_subkeys(key: &RegKey) -> Vec<String> {
-    use windows::core::PWSTR;
     use windows::Win32::Foundation::ERROR_SUCCESS;
     use windows::Win32::System::Registry::RegEnumKeyExW;
+    use windows::core::PWSTR;
 
     let mut names = Vec::new();
     // 256 is the documented maximum registry key-name length; +1 for the NUL.
@@ -334,9 +341,9 @@ fn reg_enum_subkeys(key: &RegKey) -> Vec<String> {
 /// callers can compare `WindowsInstaller` against "1" without a second reader.
 #[cfg(windows)]
 fn reg_read_string(key: &RegKey, value: &str) -> Option<String> {
-    use windows::core::PCWSTR;
     use windows::Win32::Foundation::ERROR_SUCCESS;
-    use windows::Win32::System::Registry::{RegQueryValueExW, REG_DWORD, REG_VALUE_TYPE};
+    use windows::Win32::System::Registry::{REG_DWORD, REG_VALUE_TYPE, RegQueryValueExW};
+    use windows::core::PCWSTR;
 
     let wide: Vec<u16> = value.encode_utf16().chain(std::iter::once(0)).collect();
     let mut kind = REG_VALUE_TYPE::default();
@@ -345,7 +352,14 @@ fn reg_read_string(key: &RegKey, value: &str) -> Option<String> {
     // SAFETY: passing None for the data pointer with a live size out-param is
     // the documented way to ask RegQueryValueExW how many bytes it needs.
     let rc = unsafe {
-        RegQueryValueExW(key.0, PCWSTR(wide.as_ptr()), None, Some(&mut kind), None, Some(&mut size))
+        RegQueryValueExW(
+            key.0,
+            PCWSTR(wide.as_ptr()),
+            None,
+            Some(&mut kind),
+            None,
+            Some(&mut size),
+        )
     };
     if rc != ERROR_SUCCESS || size == 0 {
         return None;
@@ -409,7 +423,11 @@ pub fn parse_args(args: &[String]) -> Option<UninstallArgs> {
     let data_root = flag_value(args, "--data-root")?;
     let update_exe = flag_value(args, "--update-exe")?;
 
-    Some(UninstallArgs { update_exe, data_root, keep })
+    Some(UninstallArgs {
+        update_exe,
+        data_root,
+        keep,
+    })
 }
 
 /// Exactly one of `--keep` / `--wipe`. `Some(true)` = keep, `Some(false)` =
@@ -471,7 +489,12 @@ pub fn parse_run_args(args: &[String]) -> Option<RunArgs> {
     let wait_pid = flag_value(args, "--wait-pid").and_then(|s| s.parse::<u32>().ok())?;
     let data_root = flag_value(args, "--data-root")?;
     let update_exe = flag_value(args, "--update-exe")?;
-    Some(RunArgs { wait_pid, update_exe, data_root, keep })
+    Some(RunArgs {
+        wait_pid,
+        update_exe,
+        data_root,
+        keep,
+    })
 }
 
 /// Filename for the temp copy of the launcher that performs the dataRoot
@@ -498,12 +521,10 @@ const TEMP_COPY_PREFIX: &str = "ws-scrcpy-web-uninstall-";
 /// equality would be a coin-flip whose only symptom is item 130 quietly staying
 /// broken. The name is the half we control.
 fn is_staged_copy(exe: &std::path::Path) -> bool {
-    exe.file_name()
-        .and_then(|n| n.to_str())
-        .is_some_and(|n| {
-            n.to_ascii_lowercase()
-                .starts_with(&TEMP_COPY_PREFIX.to_ascii_lowercase())
-        })
+    exe.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
+        n.to_ascii_lowercase()
+            .starts_with(&TEMP_COPY_PREFIX.to_ascii_lowercase())
+    })
 }
 
 /// Does the staged cleaner need an elevated token?
@@ -984,8 +1005,8 @@ fn residue_report_body(
 #[cfg(windows)]
 fn delete_on_reboot(path: &std::path::Path) -> bool {
     use std::os::windows::ffi::OsStrExt;
+    use windows::Win32::Storage::FileSystem::{MOVEFILE_DELAY_UNTIL_REBOOT, MoveFileExW};
     use windows::core::PCWSTR;
-    use windows::Win32::Storage::FileSystem::{MoveFileExW, MOVEFILE_DELAY_UNTIL_REBOOT};
 
     let wide: Vec<u16> = path
         .as_os_str()
@@ -1101,7 +1122,9 @@ fn temp_path_from_buf(buf: &[u16], len: usize) -> Option<std::path::PathBuf> {
     if len == 0 || len >= buf.len() {
         return None;
     }
-    Some(std::path::PathBuf::from(String::from_utf16_lossy(&buf[..len])))
+    Some(std::path::PathBuf::from(String::from_utf16_lossy(
+        &buf[..len],
+    )))
 }
 
 /// Resolve the context-appropriate temp directory: the user's temp under a
@@ -1238,7 +1261,7 @@ fn run_bootstrap(a: &UninstallArgs) -> i32 {
 fn wait_for_pid(pid: u32, timeout_ms: u32) {
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::System::Threading::{
-        OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE,
+        OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject,
     };
     unsafe {
         if let Ok(handle) = OpenProcess(PROCESS_SYNCHRONIZE, false, pid) {
@@ -1354,12 +1377,21 @@ mod tests {
     #[test]
     fn temp_path_from_buf_rejects_zero_and_out_of_bounds_lengths() {
         let buf = [0u16; 8];
-        assert!(temp_path_from_buf(&buf, 0).is_none(), "zero length (API failure) -> None");
-        assert!(temp_path_from_buf(&buf, 9).is_none(), "len > buf.len() -> None");
+        assert!(
+            temp_path_from_buf(&buf, 0).is_none(),
+            "zero length (API failure) -> None"
+        );
+        assert!(
+            temp_path_from_buf(&buf, 9).is_none(),
+            "len > buf.len() -> None"
+        );
         // §55: a successful GetTempPath*W leaves room for the NUL terminator,
         // so len == buf.len() can't be a valid result -- reject it too (>=),
         // rather than slicing to the brim of an undocumented cap.
-        assert!(temp_path_from_buf(&buf, 8).is_none(), "len == buf.len() -> None");
+        assert!(
+            temp_path_from_buf(&buf, 8).is_none(),
+            "len == buf.len() -> None"
+        );
     }
 
     #[test]
@@ -1447,7 +1479,12 @@ mod tests {
         assert_eq!(plan.update_exe_step.len(), 2);
         assert_eq!(plan.update_exe_step[1], "--uninstall");
         // data_root_targets has no Update.exe entry.
-        assert!(!plan.data_root_targets.iter().any(|t| t.contains("Update.exe")));
+        assert!(
+            !plan
+                .data_root_targets
+                .iter()
+                .any(|t| t.contains("Update.exe"))
+        );
     }
 
     #[test]
@@ -1571,32 +1608,45 @@ mod tests {
 
     #[test]
     fn parse_args_rejects_missing_data_root() {
-        let args: Vec<String> =
-            ["--windows-app-uninstall", "--keep", "--update-exe", UPDATE_EXE]
-                .iter()
-                .map(|s| s.to_string())
-                .collect();
+        let args: Vec<String> = [
+            "--windows-app-uninstall",
+            "--keep",
+            "--update-exe",
+            UPDATE_EXE,
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
         assert_eq!(parse_args(&args), None);
     }
 
     #[test]
     fn parse_args_rejects_missing_update_exe() {
-        let args: Vec<String> =
-            ["--windows-app-uninstall", "--keep", "--data-root", DATA_ROOT]
-                .iter()
-                .map(|s| s.to_string())
-                .collect();
+        let args: Vec<String> = [
+            "--windows-app-uninstall",
+            "--keep",
+            "--data-root",
+            DATA_ROOT,
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
         assert_eq!(parse_args(&args), None);
     }
 
     #[test]
     fn parse_args_rejects_data_root_without_value() {
         // --data-root present but no value following it → parse error.
-        let args: Vec<String> =
-            ["--windows-app-uninstall", "--keep", "--data-root", "--update-exe", UPDATE_EXE]
-                .iter()
-                .map(|s| s.to_string())
-                .collect();
+        let args: Vec<String> = [
+            "--windows-app-uninstall",
+            "--keep",
+            "--data-root",
+            "--update-exe",
+            UPDATE_EXE,
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
         // --data-root's "value" would be "--update-exe" (the next flag), and
         // --update-exe would then have no value. parse_args returns None for
         // missing --update-exe value.
@@ -1650,37 +1700,66 @@ mod tests {
     fn parse_run_args_requires_the_run_flag() {
         // Same fields but the Phase-1 flag, not the run flag → not ours.
         let argv: Vec<String> = [
-            "--windows-app-uninstall", "--wait-pid", "1", "--wipe",
-            "--data-root", DATA_ROOT, "--update-exe", UPDATE_EXE,
+            "--windows-app-uninstall",
+            "--wait-pid",
+            "1",
+            "--wipe",
+            "--data-root",
+            DATA_ROOT,
+            "--update-exe",
+            UPDATE_EXE,
         ]
-        .iter().map(|s| s.to_string()).collect();
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
         assert_eq!(parse_run_args(&argv), None);
     }
 
     #[test]
     fn parse_run_args_rejects_missing_or_bad_wait_pid() {
         let no_pid: Vec<String> = [
-            "--windows-app-uninstall-run", "--wipe",
-            "--data-root", DATA_ROOT, "--update-exe", UPDATE_EXE,
+            "--windows-app-uninstall-run",
+            "--wipe",
+            "--data-root",
+            DATA_ROOT,
+            "--update-exe",
+            UPDATE_EXE,
         ]
-        .iter().map(|s| s.to_string()).collect();
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
         assert_eq!(parse_run_args(&no_pid), None);
 
         let bad_pid: Vec<String> = [
-            "--windows-app-uninstall-run", "--wait-pid", "notanumber",
-            "--wipe", "--data-root", DATA_ROOT, "--update-exe", UPDATE_EXE,
+            "--windows-app-uninstall-run",
+            "--wait-pid",
+            "notanumber",
+            "--wipe",
+            "--data-root",
+            DATA_ROOT,
+            "--update-exe",
+            UPDATE_EXE,
         ]
-        .iter().map(|s| s.to_string()).collect();
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
         assert_eq!(parse_run_args(&bad_pid), None);
     }
 
     #[test]
     fn parse_run_args_rejects_neither_keep_nor_wipe() {
         let argv: Vec<String> = [
-            "--windows-app-uninstall-run", "--wait-pid", "1",
-            "--data-root", DATA_ROOT, "--update-exe", UPDATE_EXE,
+            "--windows-app-uninstall-run",
+            "--wait-pid",
+            "1",
+            "--data-root",
+            DATA_ROOT,
+            "--update-exe",
+            UPDATE_EXE,
         ]
-        .iter().map(|s| s.to_string()).collect();
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
         assert_eq!(parse_run_args(&argv), None);
     }
 
@@ -1731,16 +1810,24 @@ mod tests {
         );
         // Uppercase /X and no space, as some writers emit it.
         assert_eq!(
-            product_code_from_uninstall_string("MsiExec.exe /X{EF20C75C-1234-4ABC-9DEF-0123456789AB}")
-                .as_deref(),
+            product_code_from_uninstall_string(
+                "MsiExec.exe /X{EF20C75C-1234-4ABC-9DEF-0123456789AB}"
+            )
+            .as_deref(),
             Some("{EF20C75C-1234-4ABC-9DEF-0123456789AB}")
         );
     }
 
     #[test]
     fn product_code_rejects_anything_that_is_not_a_guid() {
-        assert_eq!(product_code_from_uninstall_string("Update.exe --uninstall"), None);
-        assert_eq!(product_code_from_uninstall_string("msiexec.exe /x {not-a-guid}"), None);
+        assert_eq!(
+            product_code_from_uninstall_string("Update.exe --uninstall"),
+            None
+        );
+        assert_eq!(
+            product_code_from_uninstall_string("msiexec.exe /x {not-a-guid}"),
+            None
+        );
         assert_eq!(product_code_from_uninstall_string(""), None);
         // Right length, wrong contents — a non-hex character must not pass.
         assert_eq!(
@@ -1956,9 +2043,14 @@ mod tests {
             !innocent.exists(),
             "the unlocked sibling must be deleted even though adb.exe could not be"
         );
-        assert!(locked.exists(), "the locked file itself is expected to survive");
         assert!(
-            survivors.iter().any(|s| s.as_str() == locked.to_string_lossy()),
+            locked.exists(),
+            "the locked file itself is expected to survive"
+        );
+        assert!(
+            survivors
+                .iter()
+                .any(|s| s.as_str() == locked.to_string_lossy()),
             "the locked file must be reported: {survivors:?}"
         );
     }
@@ -2033,7 +2125,10 @@ mod tests {
 
         let absent = format_residue_report("t", false, AdbReap::Absent, &["p".into()]);
         assert!(absent.contains("adb"), "{absent}");
-        assert!(!absent.contains("failed"), "absent is not a failure: {absent}");
+        assert!(
+            !absent.contains("failed"),
+            "absent is not a failure: {absent}"
+        );
     }
 
     #[test]
@@ -2056,7 +2151,10 @@ mod tests {
             "report should be readable, got {} lines",
             body.lines().count()
         );
-        assert!(body.contains("more"), "must say the list was truncated: {body}");
+        assert!(
+            body.contains("more"),
+            "must say the list was truncated: {body}"
+        );
     }
 
     #[test]

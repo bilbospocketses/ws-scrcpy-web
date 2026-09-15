@@ -13,8 +13,8 @@
 
 use anyhow::Result;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
 
@@ -210,10 +210,7 @@ pub fn run() -> Result<(i32, Option<Arc<AtomicBool>>)> {
                     "supervisor: could not write operation-server stop marker (non-fatal): {e}"
                 ));
             }
-            crate::operation_server::wait_for_port_free(
-                port,
-                std::time::Duration::from_secs(5),
-            );
+            crate::operation_server::wait_for_port_free(port, std::time::Duration::from_secs(5));
             log::info(&format!(
                 "supervisor: port {port} verified free, proceeding to spawn Node"
             ));
@@ -242,7 +239,10 @@ pub fn run() -> Result<(i32, Option<Arc<AtomicBool>>)> {
     // when deps node is absent (first-run bootstrap). DEPS_PATH is also set on
     // the Node CHILD's env so the backend DependencyManager knows where to
     // install Node / ADB / scrcpy-server.
-    log::info(&format!("supervisor: deps_path resolved to {:?} (passed to Node child)", paths.deps_path));
+    log::info(&format!(
+        "supervisor: deps_path resolved to {:?} (passed to Node child)",
+        paths.deps_path
+    ));
 
     // D1: only the FIRST Node spawn of this fresh launch should tell Node to open
     // a browser tab (WS_SCRCPY_OPEN_BROWSER, both platforms). Subsequent loop
@@ -289,18 +289,32 @@ pub fn run() -> Result<(i32, Option<Arc<AtomicBool>>)> {
                 }
 
                 let servy_path = paths.install_root.join("current").join("servy-cli.exe");
-                let launcher_path =
-                    paths.install_root.join("current").join("ws-scrcpy-web-launcher.exe");
+                let launcher_path = paths
+                    .install_root
+                    .join("current")
+                    .join("ws-scrcpy-web-launcher.exe");
                 let log_dir = paths.data_root.join("logs");
 
                 let bat_path = paths.data_root.join("control").join("uninstall-now.bat");
                 let task_name = "WsScrcpyWebUninstall";
                 // Defense in depth (#13): refuse to write the elevated uninstall bat
                 // if any interpolated path carries a batch metacharacter.
-                if let Err(e) = crate::elevated_runner::assert_safe_bat_token(&log_dir.to_string_lossy(), "log_dir")
-                    .and_then(|()| crate::elevated_runner::assert_safe_bat_token(&servy_path.to_string_lossy(), "servy_path"))
-                    .and_then(|()| crate::elevated_runner::assert_safe_bat_token(&launcher_path.to_string_lossy(), "launcher_path"))
-                {
+                if let Err(e) = crate::elevated_runner::assert_safe_bat_token(
+                    &log_dir.to_string_lossy(),
+                    "log_dir",
+                )
+                .and_then(|()| {
+                    crate::elevated_runner::assert_safe_bat_token(
+                        &servy_path.to_string_lossy(),
+                        "servy_path",
+                    )
+                })
+                .and_then(|()| {
+                    crate::elevated_runner::assert_safe_bat_token(
+                        &launcher_path.to_string_lossy(),
+                        "launcher_path",
+                    )
+                }) {
                     log::error(&format!("supervisor: refusing to write uninstall bat: {e}"));
                     return Ok((code, tray_stop_flag.clone()));
                 }
@@ -334,10 +348,20 @@ pub fn run() -> Result<(i32, Option<Arc<AtomicBool>>)> {
 
                 let create_result = std::process::Command::new(schtasks)
                     .args([
-                        "/create", "/tn", task_name,
-                        "/tr", &format!("C:\\Windows\\System32\\cmd.exe /c \"{bat_str}\""),
-                        "/sc", "once", "/st", "00:00",
-                        "/rl", "highest", "/ru", "SYSTEM", "/f",
+                        "/create",
+                        "/tn",
+                        task_name,
+                        "/tr",
+                        &format!("C:\\Windows\\System32\\cmd.exe /c \"{bat_str}\""),
+                        "/sc",
+                        "once",
+                        "/st",
+                        "00:00",
+                        "/rl",
+                        "highest",
+                        "/ru",
+                        "SYSTEM",
+                        "/f",
                     ])
                     .stdout(std::process::Stdio::null())
                     .stderr(std::process::Stdio::null())
@@ -370,7 +394,9 @@ pub fn run() -> Result<(i32, Option<Arc<AtomicBool>>)> {
 
                 match run_result {
                     Ok(s) if s.success() => {
-                        log::info("supervisor: triggered scheduled task; blocking until stop signal");
+                        log::info(
+                            "supervisor: triggered scheduled task; blocking until stop signal",
+                        );
                     }
                     Ok(s) => {
                         log::error(&format!(
@@ -389,7 +415,9 @@ pub fn run() -> Result<(i32, Option<Arc<AtomicBool>>)> {
 
                 loop {
                     if stop.load(Ordering::SeqCst) {
-                        log::info("supervisor: stop signal received during uninstall; exiting cleanly");
+                        log::info(
+                            "supervisor: stop signal received during uninstall; exiting cleanly",
+                        );
                         return Ok((0, tray_stop_flag.clone()));
                     }
                     thread::sleep(POLL_INTERVAL);
@@ -422,7 +450,9 @@ fn cleanup_stale_marker(marker: &Path) {
     if marker.exists() {
         match std::fs::remove_file(marker) {
             Ok(()) => log::info(&format!("supervisor: removed stale marker {marker:?}")),
-            Err(e) => log::error(&format!("supervisor: could not remove stale marker {marker:?}: {e}")),
+            Err(e) => log::error(&format!(
+                "supervisor: could not remove stale marker {marker:?}: {e}"
+            )),
         }
     }
 }
@@ -474,7 +504,9 @@ fn wait_with_signal(
                 ));
                 let pid = rustix::process::Pid::from_child(child);
                 if let Err(e) = rustix::process::kill_process(pid, rustix::process::Signal::TERM) {
-                    log::error(&format!("supervisor: SIGTERM to child failed ({e}); killing instead"));
+                    log::error(&format!(
+                        "supervisor: SIGTERM to child failed ({e}); killing instead"
+                    ));
                 } else {
                     let started = std::time::Instant::now();
                     loop {
@@ -533,9 +565,13 @@ mod tests {
     #[test]
     fn graceful_wait_is_exhausted_exactly_at_the_timeout() {
         assert!(!graceful_wait_exhausted(Duration::from_secs(0)));
-        assert!(!graceful_wait_exhausted(GRACEFUL_STOP_TIMEOUT - Duration::from_millis(1)));
+        assert!(!graceful_wait_exhausted(
+            GRACEFUL_STOP_TIMEOUT - Duration::from_millis(1)
+        ));
         assert!(graceful_wait_exhausted(GRACEFUL_STOP_TIMEOUT));
-        assert!(graceful_wait_exhausted(GRACEFUL_STOP_TIMEOUT + Duration::from_secs(1)));
+        assert!(graceful_wait_exhausted(
+            GRACEFUL_STOP_TIMEOUT + Duration::from_secs(1)
+        ));
     }
 
     #[test]
@@ -549,7 +585,9 @@ mod tests {
     fn apply_update_pending_marker_is_under_control() {
         assert_eq!(
             apply_update_pending_marker(Path::new("D")),
-            std::path::PathBuf::from("D").join("control").join("apply-update-pending")
+            std::path::PathBuf::from("D")
+                .join("control")
+                .join("apply-update-pending")
         );
     }
 
@@ -564,7 +602,10 @@ mod tests {
         std::fs::write(&marker, b"").unwrap();
         assert!(marker.exists());
         cleanup_stale_marker(&marker);
-        assert!(!marker.exists(), "the marker must not outlive the launcher that comes up after the swap");
+        assert!(
+            !marker.exists(),
+            "the marker must not outlive the launcher that comes up after the swap"
+        );
         // Idempotent: a second call on an absent marker is a no-op, not an error.
         cleanup_stale_marker(&marker);
         assert!(!marker.exists());
@@ -602,5 +643,4 @@ mod tests {
         let e = std::io::Error::other("synthetic");
         assert!(!refresh_error_is_benign_busy(&e));
     }
-
 }

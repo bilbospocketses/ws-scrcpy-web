@@ -155,8 +155,7 @@ fn run_tray() -> Result<()> {
     let argv: Vec<String> = std::env::args().collect();
     let show_launcher_balloon = argv.iter().any(|a| a == "--launcher-spawn");
 
-    let is_service_mode_at_start =
-        common::config::AppConfig::load(&config_dir).is_service_mode();
+    let is_service_mode_at_start = common::config::AppConfig::load(&config_dir).is_service_mode();
     common::log::info(&format!(
         "tray: is_service_mode_at_start={is_service_mode_at_start} show_launcher_balloon={show_launcher_balloon}"
     ));
@@ -227,10 +226,7 @@ fn run_tray() -> Result<()> {
 /// root — appropriate for a manual-test "drop next to config.json" run.
 fn install_root_from_exe() -> Result<PathBuf> {
     let exe = env::current_exe().context("current_exe")?;
-    let parent = exe
-        .parent()
-        .context("exe has no parent dir")?
-        .to_path_buf();
+    let parent = exe.parent().context("exe has no parent dir")?.to_path_buf();
     if parent.file_name().and_then(|n| n.to_str()) == Some("current") {
         let root = parent.parent().context("install root")?.to_path_buf();
         Ok(root)

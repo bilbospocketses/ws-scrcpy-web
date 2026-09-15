@@ -49,7 +49,7 @@ use std::thread;
 use std::time::Duration;
 
 use crate::log;
-use crate::user_session_spawn::{spawn_in_session, SpawnUserLauncherArgs};
+use crate::user_session_spawn::{SpawnUserLauncherArgs, spawn_in_session};
 
 const TRAY_POLL_INTERVAL_SECS: u64 = 10;
 pub(crate) const TRAY_PROCESS_NAME: &str = "ws-scrcpy-web-tray.exe";
@@ -229,11 +229,13 @@ fn tray_supervisor_loop(
 /// on any I/O or parse error (marker missing, corrupt, etc.) — treated
 /// as "no claim about previous mode," so no kill fires.
 fn read_persisted_tray_mode(path: &Path) -> Option<bool> {
-    std::fs::read_to_string(path).ok().and_then(|s| match s.trim() {
-        "service" => Some(true),
-        "local" => Some(false),
-        _ => None,
-    })
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| match s.trim() {
+            "service" => Some(true),
+            "local" => Some(false),
+            _ => None,
+        })
 }
 
 /// Persist the spawn-time mode of the live tray. Best-effort — write
@@ -439,7 +441,7 @@ fn is_tray_running_in_session(session_id: u32) -> bool {
 fn enumerate_processes_with_sessions() -> Vec<ProcEntry> {
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::System::Diagnostics::ToolHelp::{
-        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
         TH32CS_SNAPPROCESS,
     };
     use windows::Win32::System::RemoteDesktop::ProcessIdToSessionId;
@@ -571,7 +573,7 @@ mod tests {
     // reports for that pass is the part worth pinning; the enumeration and the
     // spawn themselves need a second logged-on user and cannot be unit-tested.
     mod combine_session_outcomes {
-        use super::super::{combine_session_outcomes, EnsureOutcome};
+        use super::super::{EnsureOutcome, combine_session_outcomes};
 
         #[test]
         fn a_success_anywhere_beats_a_failure_anywhere() {
@@ -579,11 +581,20 @@ mod tests {
             // Reporting SpawnFailed here would call a partly-working state
             // broken, and the next poll retries the failed session regardless.
             let out = combine_session_outcomes(
-                Some(EnsureOutcome::Spawned { pid: 42, session: 1 }),
+                Some(EnsureOutcome::Spawned {
+                    pid: 42,
+                    session: 1,
+                }),
                 Some("WTSQueryUserToken failed (session 2)".to_string()),
                 0,
             );
-            assert!(matches!(out, EnsureOutcome::Spawned { pid: 42, session: 1 }));
+            assert!(matches!(
+                out,
+                EnsureOutcome::Spawned {
+                    pid: 42,
+                    session: 1
+                }
+            ));
         }
 
         #[test]
@@ -613,7 +624,10 @@ mod tests {
                 None,
                 0,
             );
-            assert!(matches!(spawned, EnsureOutcome::Spawned { pid: 7, session: 1 }));
+            assert!(matches!(
+                spawned,
+                EnsureOutcome::Spawned { pid: 7, session: 1 }
+            ));
             assert!(matches!(
                 combine_session_outcomes(None, None, 1),
                 EnsureOutcome::AlreadyRunning
