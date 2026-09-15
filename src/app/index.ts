@@ -409,10 +409,13 @@ window.onload = async (): Promise<void> => {
     pageContainer.appendChild(discoveryPanel.getElement());
 
     // The panel itself now lives in Settings → Dependencies; what stays here is
-    // an alert that appears only when something needs updating. Both admin
-    // predicates (role, and whether the admin API answers this caller at all)
-    // are the CARD's — it mounts inert rather than absent when either fails, so
-    // there is exactly one copy of that decision (item 81, finding 9.6).
+    // an alert that appears only when something needs updating. All three of its
+    // predicates — role, whether the admin API answers this caller at all, and
+    // (item 135) whether this is a container, where the image owns the
+    // dependency set and Settings → Dependencies is a note — are the CARD's. It
+    // mounts inert rather than absent when any of them fails, so there is
+    // exactly one copy of that decision (item 81, finding 9.6). All three read
+    // off the runtime envelope fetched once above.
     // Fail-open to admin on a me() error, matching SettingsModal: the server
     // enforces the 403 regardless. An absent runtime envelope is an old server,
     // where the admin API always answered — `adminApiReachable` reads `{}` as

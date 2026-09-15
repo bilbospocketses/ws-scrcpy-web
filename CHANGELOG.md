@@ -17,6 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The container Updates note no longer names a tag that does not exist.** It read *"update via `docker pull …:latest`"*, and `:latest` 404s: a beta is deliberately never promoted to `:latest`, so no such tag has been published and none will be until the first stable release. Naming `:beta` instead would have been wrong the other way round from that release onward. Both notes now say what is true in either era — in a container the app is updated by pulling a newer image, whichever tag you track.
+
+### Changed
+
+- **Dependencies is unavailable in a container, and now says so.** The image ships the dependency set it was built with, and fetching a new binary into a container layer is undone by the next `docker run` — but Settings → Dependencies still offered the full panel, and the home page still raised "an update is available" alerts for it. The tab is now replaced by a note explaining that pulling a newer image is the way to move the set forward, and the home-page alert card stays silent, matching how Service and Updates have always behaved in a container. The tab deliberately stays in the strip rather than disappearing, so the reason is visible rather than merely the tab being gone.
+
 ## [0.1.30-beta.125] - 2026-09-15
 
 ### Changed

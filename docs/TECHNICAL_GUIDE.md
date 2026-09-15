@@ -1311,7 +1311,7 @@ Useful when touching the probe path — kept in-tree for ADB-protocol debugging.
 
 The dependency updater panel (section 13) now lives in **Settings → Dependencies** (section 27), not on the home page. It shows installed vs. latest versions for Node.js + node-pty, ADB, and scrcpy-server with update controls. See section 13 for full details.
 
-What is left on the home page is `DependencyAlertCard` — an alert, not a list. It stays hidden until something actually needs updating, says only which dependency that is, and its button opens the Settings dialog **on the Dependencies tab**. It polls `/api/dependencies` every 15 s, and mounts inert (no fetch, no interval) unless the caller's role may see the section *and* the admin API will answer this caller at all — polling regardless 403-spams a healthy app. Any non-OK response or error **hides** the card rather than replacing it with an error box.
+What is left on the home page is `DependencyAlertCard` — an alert, not a list. It stays hidden until something actually needs updating, says only which dependency that is, and its button opens the Settings dialog **on the Dependencies tab**. It polls `/api/dependencies` every 15 s, and mounts inert (no fetch, no interval) unless all three of its predicates hold: the caller's role may see the section, the admin API will answer this caller at all — polling regardless 403-spams a healthy app — and this is **not** a container, where the image owns the dependency set and the tab the card's button opens is itself replaced by a note (§26.5). All three are the card's own, read off one `/api/config` runtime envelope, so there is exactly one copy of the decision. Any non-OK response or error **hides** the card rather than replacing it with an error box.
 
 ---
 
@@ -2528,11 +2528,28 @@ in `Config` (§23 has the modal side):
    outlive the flag and suppress the welcome modal on any host that later mounted
    that volume.
 2. **Exposes `docker: true`** on the `/api/config` runtime envelope and on
-   `/api/service/status`, so the UI gates without a second probe: Settings → Service
-   and → Updates are replaced by a one-line note each (*"update via `docker pull
-   …:latest`"*), the Linux "install for all users" and "uninstall" rows are hidden,
-   and the system-wide-install first-run modal never opens. **"stop server & exit" is
-   NOT gated** — it is the same teardown `docker stop` relies on (row 20.6).
+   `/api/service/status`, so the UI gates without a second probe: Settings → Service,
+   → Updates and → Dependencies are replaced by a one-line note each, the home page's
+   `DependencyAlertCard` mounts inert, the Linux "install for all users" and
+   "uninstall" rows are hidden, and the system-wide-install first-run modal never
+   opens. **"stop server & exit" is NOT gated** — it is the same teardown `docker
+   stop` relies on (row 20.6).
+
+   The three notes **name no image tag**, deliberately. The Updates note used to read
+   *"update via `docker pull …:latest`"* and was wrong for the whole pre-1.0 window:
+   `docker-publish.yml`'s `computeTags()` refuses to move `:latest` onto a beta (and
+   `scripts/__tests__/docker-tags.test.mjs` pins that refusal), so `:latest` 404s
+   today while `:beta` resolves. Naming `:beta` instead only moves the expiry date —
+   it becomes wrong at the first stable release. "pull a newer image to update" is
+   true in both eras and needs no second copy change at 1.0.
+
+   Ordering is load-bearing, not incidental. `applyDockerGating()` runs **before** the
+   Dependencies refresh in the `SettingsModal` constructor, because
+   `refreshDependencies()` mounts a `DependencyPanel` that polls every 15 s and
+   `TabStrip.replaceTabBody()` detaches the panel's element **without** stopping its
+   interval — starting it and then swapping the body would leak a poll for the life
+   of the page (§36). The unit assertion that no `/api/dependencies` request is made
+   in a container is what pins that order.
 
 ### 26.6 Networking
 

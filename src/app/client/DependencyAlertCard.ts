@@ -59,19 +59,37 @@ export class DependencyAlertCard {
     /**
      * `runtime` is the envelope from GET /api/config.
      *
-     * Two independent questions. `canSeeSection` asks whether this ROLE may
+     * THREE independent questions. `canSeeSection` asks whether this ROLE may
      * use the section; `adminApiReachable` asks whether the admin API will
      * answer THIS caller at all. GET /api/dependencies is gated at the top
      * of its handler, so failing either means mounting inert -- no fetch, no
      * interval. Polling anyway 403-spams a healthy app and renders an error
      * to a user who has done nothing wrong: finding 9.6.
+     *
+     * `runtime.docker` is the third (item 135), and it is not an admin question
+     * at all: in a container the image owns the dependency set, so Settings ->
+     * Dependencies is replaced by a note saying so. An alert card offering to
+     * open a tab that cannot act would be a signpost to a dead end, and its
+     * "open dependencies" button lands on exactly that note.
+     *
+     * Kept here rather than at the mount site in index.ts so there is still
+     * exactly ONE copy of the decision (finding 9.6's whole point), and read off
+     * the same `/api/config` runtime envelope `SettingsModal.probeRuntime()`
+     * uses -- the flag is an env implication the server never persists to
+     * config.json, so the envelope is the only source.
+     *
+     * Fails OPEN on an absent flag, like the two above and like
+     * `SettingsModal`: `docker` is optional on the envelope, an old server does
+     * not send it, and the answer that shows MORE is the right one for a
+     * transient failure.
      */
     static async create(
-        runtime: Pick<FirstRunStatus, 'adminScope' | 'callerIsLocal'>,
+        runtime: Pick<FirstRunStatus, 'adminScope' | 'callerIsLocal' | 'docker'>,
         role: Role | null,
     ): Promise<DependencyAlertCard> {
         const card = new DependencyAlertCard();
         if (!canSeeSection(role, 'dependencies') || !adminApiReachable(runtime)) return card;
+        if (runtime.docker === true) return card;
         await card.refresh();
         card.startPolling();
         return card;

@@ -44,6 +44,54 @@ describe('DependencyAlertCard', () => {
         await DependencyAlertCard.create({ adminScope: 'local', callerIsLocal: true }, 'admin');
         expect(fetch).toHaveBeenCalled();
     });
+
+    it('makes no request in a container, where the image owns the dependency set', async () => {
+        // Item 135. Settings -> Dependencies is replaced by a note in a
+        // container, so a card offering to open it would be a signpost to a dead
+        // end -- its button lands on exactly that note. The caller here is a
+        // loopback admin, i.e. the one case the two assertions above PASS, so
+        // this can only be satisfied by the docker check itself.
+        const card = await DependencyAlertCard.create(
+            { adminScope: 'local', callerIsLocal: true, docker: true },
+            'admin',
+        );
+        expect(fetch).not.toHaveBeenCalled();
+        // Inert, not merely quiet on the first read: no interval either.
+        vi.advanceTimersByTime(120_000);
+        expect(fetch).not.toHaveBeenCalled();
+        card.destroy();
+    });
+
+    it('shows nothing in a container even when an update is waiting', async () => {
+        // The behaviour, not the request count. Without the gate this card would
+        // render "adb has an update available" on a container home page, next to
+        // a tab that says updating is not applicable.
+        vi.stubGlobal(
+            'fetch',
+            vi.fn().mockResolvedValue({ ok: true, json: async () => [dep({ name: 'adb', displayName: 'adb' })] }),
+        );
+        const card = await DependencyAlertCard.create(
+            { adminScope: 'local', callerIsLocal: true, docker: true },
+            'admin',
+        );
+        expect(card.getElement().hidden).toBe(true);
+        expect(card.getElement().textContent).not.toContain('adb');
+        card.destroy();
+    });
+
+    it('polls when docker is false or absent, so the gate cannot be unconditional', async () => {
+        // The half that matters (the file's own opening argument): a container
+        // check that fired for everyone would pass both tests above and leave
+        // every DESKTOP admin without the alert. `docker` is optional on the
+        // envelope, so an old server that omits it must still poll -- fail-open,
+        // like adminScope.
+        await DependencyAlertCard.create({ adminScope: 'local', callerIsLocal: true, docker: false }, 'admin');
+        expect(fetch).toHaveBeenCalled();
+
+        vi.mocked(fetch).mockClear();
+        await DependencyAlertCard.create({ adminScope: 'local', callerIsLocal: true }, 'admin');
+        expect(fetch).toHaveBeenCalled();
+    });
 });
 
 describe('DependencyAlertCard rendering', () => {

@@ -41,23 +41,26 @@ import { buildUsersTab } from './settings/tabs/UsersTab';
  * no section of its own any more, only the tab strip and the container notes.
  */
 /**
- * The container replacements for the Service and Updates sections (SP4 E4).
+ * The container replacements for the Service, Updates and Dependencies sections
+ * (SP4 E4; Dependencies added by item 135).
  *
  * Exported and free-standing so the gating is unit-testable without standing up
  * the whole modal, and so the locked copy has exactly one definition.
  *
  * The copy is LOCKED — reproduced verbatim from the SP4 design §8 and
- * `todo_ws_scrcpy_web` item 2 decision 4, EXCEPT the image namespace, which was
- * re-pointed to `bilbospocketses` on 2026-09-10 when the registry moved. SP4
- * itself still reads `jchapz30`: it is a dated record, and the superseding note
- * at the top of that file is the authority, not §8. Do not reword it casually;
- * the container smoke asserts on it.
+ * `todo_ws_scrcpy_web` item 2 decision 4, EXCEPT the Updates text, which item
+ * 135 rewrote on 2026-09-15 (see `buildDockerUpdatesNote`). Do not reword these
+ * casually; the container smoke asserts on them.
  *
  * `.settings-status` is the shared Settings-note convention (modal.css: indented
  * 1.25rem, italic, weight 600), so these read as sub-notes rather than as
  * settings — which is what the SP4 branch's 730e521 exists to specify.
  */
-function buildDockerNoteSection(title: string, kind: 'service' | 'updates', text: string): HTMLElement {
+function buildDockerNoteSection(
+    title: string,
+    kind: 'service' | 'updates' | 'dependencies',
+    text: string,
+): HTMLElement {
     const section = document.createElement('section');
     section.className = 'settings-section';
     section.dataset['dockerNote'] = kind; // stable hook for the container smoke
@@ -84,11 +87,44 @@ export function buildDockerServiceNote(): HTMLElement {
     );
 }
 
+/**
+ * Names no TAG, deliberately (item 135).
+ *
+ * The previous copy read ``update via `docker pull …:latest`.`` and was wrong
+ * about the registry for the whole pre-1.0 window: `docker-publish.yml`'s
+ * `computeTags()` refuses to move `:latest` onto a beta (and
+ * `scripts/__tests__/docker-tags.test.mjs` pins that refusal), so `:latest`
+ * 404s today while `:beta` and the immutable `:X.Y.Z-beta.N` tags resolve.
+ * Naming `:beta` instead would just move the expiry date — it becomes the wrong
+ * advice at the first stable release, when `:latest` starts resolving and is
+ * what a user should track.
+ *
+ * "pull a newer image" is true in BOTH eras and needs no second copy change at
+ * 1.0, which is the property the tag-naming versions could not have.
+ */
 export function buildDockerUpdatesNote(): HTMLElement {
     return buildDockerNoteSection(
         'Updates',
         'updates',
-        'update via `docker pull bilbospocketses/ws-scrcpy-web:latest`.',
+        'app updates not applicable — this instance runs in a container; pull a newer image to update.',
+    );
+}
+
+/**
+ * Dependencies is unavailable in a container for the same reason Updates is
+ * (item 135): the image ships the dependency set it was built with, and the way
+ * to move it forward is to pull a newer image, not to fetch a binary into a
+ * layer that the next `docker run` discards.
+ *
+ * The tab stays VISIBLE and says why, rather than disappearing — an admin who
+ * used it on the desktop and finds it simply gone learns nothing. Same reason
+ * Service and Updates are replaced rather than hidden.
+ */
+export function buildDockerDependenciesNote(): HTMLElement {
+    return buildDockerNoteSection(
+        'Dependencies',
+        'dependencies',
+        'dependency updates not applicable — this instance runs in a container; pull a newer image to update.',
     );
 }
 
@@ -469,17 +505,28 @@ export class SettingsModal extends Modal {
                     // the true answer is "not from here". Fails open when the probe
                     // itself failed, matching the role fail-open above.
                     this.adminReachable = runtime ? adminApiReachable(runtime) : true;
-                    // Ahead of the container branch on purpose. Dependencies
-                    // are fetched into the app's own folder either way, so this
-                    // tab applies in a container exactly as it did on the home
-                    // page it came from — which gated on the admin questions
-                    // alone and never on `docker`.
-                    if (this.canUse('dependencies') && this.dependenciesTabEl) {
-                        void refreshDependencies(this.dependenciesTabEl);
-                    }
+                    // The container branch runs FIRST and returns, so no tab
+                    // gated by it ever starts anything.
+                    //
+                    // Dependencies used to be started ABOVE this branch, on the
+                    // reasoning that a dependency is fetched into the app's own
+                    // folder either way. Item 135 settled the opposite: in a
+                    // container the image owns the dependency set, so the tab is
+                    // replaced by a note like Service and Updates. The ORDER is
+                    // what makes that safe rather than a leak —
+                    // `refreshDependencies` mounts a `DependencyPanel` that
+                    // polls every 15 s, and `applyDockerGating` replaces the tab
+                    // BODY, which detaches the panel's element without stopping
+                    // its interval. Starting it and then swapping the body would
+                    // leave a 15 s /api/dependencies poll running for the life
+                    // of the page with nothing holding a reference to stop it
+                    // (the §36 leak). Never started, never leaked.
                     if (this.docker) {
                         this.applyDockerGating();
                         return;
+                    }
+                    if (this.canUse('dependencies') && this.dependenciesTabEl) {
+                        void refreshDependencies(this.dependenciesTabEl);
                     }
                     if (this.canUse('service') && this.serviceTabEl) {
                         void refreshService(this.serviceTabEl, {
@@ -765,10 +812,12 @@ export class SettingsModal extends Modal {
     }
 
     /**
-     * Replace the Service and Updates sections with the locked container copy
-     * (SP4 E4). Called only once the probe has confirmed container mode, and
-     * before either section's refresh has been allowed to run — so nothing here
-     * is racing a half-rendered async result.
+     * Replace the Service, Updates and Dependencies sections with the locked
+     * container copy (SP4 E4; Dependencies added by item 135). Called only once
+     * the probe has confirmed container mode, and before any of the three
+     * sections' refreshes has been allowed to run — so nothing here is racing a
+     * half-rendered async result, and in particular the Dependencies panel's
+     * 15 s poll has never been started (see the call site).
      *
      * Routed through `TabStrip.replaceTabBody()` rather than a direct
      * `replaceWith` on a captured element: the probe resolves well after the
@@ -780,15 +829,20 @@ export class SettingsModal extends Modal {
      * visibility and keeps the cache in sync, and is a no-op for a tab that was
      * never built (e.g. role-gated out entirely).
      *
-     * The stale tab ref is dropped too: `updatesTabEl` points at the now-detached
-     * original Updates section, and leaving it set would let a later
-     * `refreshUpdates()` render into nothing — and issue the /api/updates/status
-     * call this gate exists to avoid.
+     * The stale tab refs are dropped too: `updatesTabEl` and `dependenciesTabEl`
+     * point at the now-detached original sections, and leaving them set would
+     * let a later `refreshUpdates()` / `refreshDependencies()` render into
+     * nothing — and issue the /api/updates/status and /api/dependencies calls
+     * this gate exists to avoid. Dropping `dependenciesTabEl` also makes
+     * `onBeforeClose()`'s `destroyDependenciesTab` a no-op, which is correct
+     * here: no panel was ever created, so there is no interval to stop.
      */
     private applyDockerGating(): void {
         this.tabStrip?.replaceTabBody('updates', buildDockerUpdatesNote());
         this.tabStrip?.replaceTabBody('service', buildDockerServiceNote());
+        this.tabStrip?.replaceTabBody('dependencies', buildDockerDependenciesNote());
         this.updatesTabEl = null;
+        this.dependenciesTabEl = null;
     }
 
     /**
