@@ -358,6 +358,22 @@ export function renderPairingSection(deps: PairingSectionDeps): HTMLElement {
         }
 
         const status = await readJson<PairingStatus>(res);
+        // DELIBERATELY UNREACHABLE TODAY — do not delete this as dead code.
+        //
+        // It is unreachable BY CONSTRUCTION, not by accident: every path that
+        // replaces a live session goes through `cancelSession()` first, which
+        // sets `cancelled` and is checked above, and `restart()` only runs from a
+        // terminal state, where no poll is in flight. Change either of those and
+        // this line is the only thing standing between a superseded session's
+        // reply and the live session's status line. That construction is exactly
+        // what a refactor touching the call graph would quietly break.
+        //
+        // Kept because the same hazard — a stale tick re-arming for its
+        // successor — was the Important finding against `PairingService` in Task
+        // 4 of this plan. It is cheap here and it has already bitten once.
+        //
+        // No test covers it; reaching it would mean contorting the code, and a
+        // test that cannot fail for the property it names is worse than none.
         if (!isCurrent(session)) {
             return;
         }
