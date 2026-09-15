@@ -127,12 +127,15 @@ export class PairingApi {
         const svc = this.getService();
         try {
             if (req.method === 'POST' && pathname === `${PREFIX}/qr`) {
-                const { sessionId, payload, expiresAt } = svc.startQr();
+                const { sessionId, payload, expiresInMs } = svc.startQr();
                 // The payload is converted here and never returned, logged, or
                 // stored. Only the rendered SVG leaves the process.
                 const svg = encodeQrSvg(payload);
                 res.writeHead(200);
-                res.end(JSON.stringify({ sessionId, svg, expiresAt }));
+                // `expiresInMs` rather than an absolute `expiresAt`: the browser
+                // cannot read this process's clock, so a deadline would force it
+                // to difference two clocks and report the skew as lost time.
+                res.end(JSON.stringify({ sessionId, svg, expiresInMs }));
                 return true;
             }
 

@@ -119,10 +119,16 @@ not applied. Every async continuation re-checks that its session is still the cu
 
 | Method | Route | Body / returns |
 |---|---|---|
-| `POST` | `/api/devices/pair/qr` | → `{ sessionId, svg, expiresAt }` |
+| `POST` | `/api/devices/pair/qr` | → `{ sessionId, svg, expiresInMs }` [^expiry] |
 | `POST` | `/api/devices/pair/code` | `{ address, code }` → `{ sessionId }` |
 | `GET` | `/api/devices/pair/status?sessionId=` | → `{ state, message?, serial?, address? }` |
 | `POST` | `/api/devices/pair/cancel` | `{ sessionId }` |
+
+[^expiry]: As designed this was an absolute `expiresAt`. It became a duration during the final review
+    round: the browser cannot read the server's clock, so a deadline forced it to difference two
+    unrelated clocks, and any skew between them came out as a wrong "stops working in about N" — or
+    as no note at all when the skew ran the other way. A duration is converted to a deadline on the
+    browser's own clock the instant it arrives.
 
 **The QR endpoint returns rendered SVG, never the payload string.** The password therefore never crosses
 the wire as readable JSON and never lands in a request log or devtools network pane. The SVG still

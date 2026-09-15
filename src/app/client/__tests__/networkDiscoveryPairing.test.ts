@@ -16,10 +16,13 @@ function jsonRes(status: number, body: unknown): { ok: boolean; status: number; 
     return { ok: status >= 200 && status < 300, status, json: async () => body };
 }
 
-const QR_START = { sessionId: 's1', svg: '<svg viewBox="0 0 41 41"></svg>', expiresAt: 0 };
+// `expiresInMs` is a DURATION on purpose — the client turns it into a deadline
+// on its own clock, so nothing here differences a server timestamp against
+// `Date.now()`.
+const QR_START = { sessionId: 's1', svg: '<svg viewBox="0 0 41 41"></svg>', expiresInMs: 180_000 };
 
 function qrStartRes(): ReturnType<typeof jsonRes> {
-    return jsonRes(200, { ...QR_START, expiresAt: Date.now() + 180_000 });
+    return jsonRes(200, { ...QR_START });
 }
 
 function statusLine(el: HTMLElement): HTMLElement {
@@ -28,6 +31,30 @@ function statusLine(el: HTMLElement): HTMLElement {
 
 function actionButton(el: HTMLElement): HTMLButtonElement {
     return el.querySelector<HTMLButtonElement>('[data-pair-action]')!;
+}
+
+function cancelButton(el: HTMLElement): HTMLButtonElement {
+    return el.querySelector<HTMLButtonElement>('[data-pair-cancel]')!;
+}
+
+/**
+ * Everything a client-synthesised failure has to leave behind, asserted as one
+ * set because the whole point of routing them through `render` is that no site
+ * can do three of the four. The QR matters most: polling has stopped by then,
+ * so a code still on screen is one a phone can scan into a session nothing is
+ * watching — it pairs server-side and never reports.
+ */
+function expectTornDown(el: HTMLElement, fetchFn: ReturnType<typeof vi.fn>): void {
+    expect(statusLine(el).classList.contains('error')).toBe(true);
+    expect(el.querySelector('svg')).toBeNull();
+    expect(cancelButton(el).hidden).toBe(true);
+    expect(actionButton(el).hidden).toBe(false);
+    expect(actionButton(el).textContent).toMatch(/start again/i);
+    // `settled` is not readable from outside, so it is asserted by its
+    // consequence: `cancelSession` returns early on a settled session, so a
+    // Cancel click must not reach the server.
+    cancelButton(el).click();
+    expect(fetchFn.mock.calls.some((c) => c[0] === '/api/devices/pair/cancel')).toBe(false);
 }
 
 describe('pairingStatusText', () => {
@@ -102,7 +129,7 @@ describe('renderPairingSection', () => {
             json: async () => ({
                 sessionId: 's1',
                 svg: '<svg viewBox="0 0 29 29"></svg>',
-                expiresAt: Date.now() + 180000,
+                expiresInMs: 180_000,
             }),
         });
         const el = renderPairingSection({ fetchFn: fetchFn as never });
@@ -129,7 +156,7 @@ describe('renderPairingSection', () => {
             jsonRes(200, {
                 sessionId: 's1',
                 svg: '<svg viewBox="0 0 41 41"></svg>',
-                expiresAt: Date.now() + 180_000,
+                expiresInMs: 180_000,
                 payload,
             }),
         );
@@ -158,7 +185,7 @@ describe('renderPairingSection', () => {
         fetchFn
             .mockResolvedValueOnce({
                 ok: true,
-                json: async () => ({ sessionId: 's1', svg: '<svg></svg>', expiresAt: Date.now() + 180000 }),
+                json: async () => ({ sessionId: 's1', svg: '<svg></svg>', expiresInMs: 180_000 }),
             })
             .mockResolvedValue({ ok: true, json: async () => ({ state: 'paired' }) });
         const el = renderPairingSection({ fetchFn: fetchFn as never });
@@ -545,6 +572,104 @@ describe('renderPairingSection', () => {
         expect(statusLine(el).textContent).toMatch(/stops working in about 3 minutes/i);
     });
 
+    // ------------------------------------------------------------------
+    // The three client-synthesised failures. Each used to tear the UI down
+    // its own way; the transport one tore down nothing at all.
+    // ------------------------------------------------------------------
+
+    it('tears the session down completely when contact with the server is lost', async () => {
+        fetchFn.mockResolvedValueOnce(qrStartRes()).mockRejectedValue(new Error('offline'));
+        const el = mount();
+        await startQr(el);
+        expect(el.querySelector('svg')).not.toBeNull();
+
+        // Two failures are tolerated; the third gives up.
+        await vi.advanceTimersByTimeAsync(1000);
+        await vi.advanceTimersByTimeAsync(1000);
+        await vi.advanceTimersByTimeAsync(1000);
+
+        expect(statusLine(el).textContent).toMatch(/lost contact/i);
+        expectTornDown(el, fetchFn);
+    });
+
+    it('tears the session down when the server no longer has it', async () => {
+        fetchFn.mockResolvedValueOnce(qrStartRes()).mockResolvedValue(jsonRes(404, { error: 'gone' }));
+        const el = mount();
+        await startQr(el);
+        await vi.advanceTimersByTimeAsync(1000);
+
+        expect(statusLine(el).textContent).toMatch(/no longer available/i);
+        expectTornDown(el, fetchFn);
+    });
+
+    it('tears the session down when the status body cannot be read', async () => {
+        fetchFn.mockResolvedValueOnce(qrStartRes()).mockResolvedValue({
+            ok: true,
+            status: 200,
+            json: async () => {
+                throw new SyntaxError('Unexpected token < in JSON');
+            },
+        });
+        const el = mount();
+        await startQr(el);
+        await vi.advanceTimersByTimeAsync(1000);
+
+        expect(statusLine(el).textContent).toMatch(/could not read/i);
+        expectTornDown(el, fetchFn);
+    });
+
+    it('withdraws Cancel once pairing has started, because it can no longer stop it', async () => {
+        // Cancelling during `pairing` cannot recall the `adb pair` already in
+        // flight: it completes, the phone ends up paired, and the page says
+        // "Pairing cancelled." Offering the button there promises what the
+        // server cannot deliver.
+        fetchFn.mockResolvedValueOnce(qrStartRes()).mockResolvedValue(jsonRes(200, { state: 'pairing' }));
+        const el = mount();
+        await startQr(el);
+        expect(cancelButton(el).hidden).toBe(false);
+
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(statusLine(el).textContent).toMatch(/pairing/i);
+        expect(cancelButton(el).hidden).toBe(true);
+    });
+
+    it('labels the paired-not-connected action by what it will actually do', async () => {
+        // With an address the button connects; without one it can only open the
+        // manual-add form, and calling that "connect" is the same lie in button
+        // form that the docs used to tell in prose.
+        for (const [address, label] of [
+            ['10.0.0.5:43777', /^connect$/i],
+            [undefined, /add it manually/i],
+        ] as const) {
+            fetchFn = vi.fn();
+            fetchFn.mockResolvedValueOnce(qrStartRes()).mockResolvedValue(
+                jsonRes(200, {
+                    state: 'paired-not-connected',
+                    message: 'no connect service was advertised for this device',
+                    ...(address ? { address } : {}),
+                }),
+            );
+            const el = mount();
+            await startQr(el);
+            await vi.advanceTimersByTimeAsync(1000);
+            expect(actionButton(el).textContent).toMatch(label);
+        }
+    });
+
+    it('derives the validity note from the duration, never from a server timestamp', async () => {
+        // A server clock an hour behind the browser's would put `expiresAt` in
+        // the past: differencing it against `Date.now()` yields a negative
+        // remainder and the note silently disappears. The decoy below is
+        // exactly that response; the duration beside it is the truth, and the
+        // client must read only the duration.
+        fetchFn
+            .mockResolvedValueOnce(jsonRes(200, { ...QR_START, expiresAt: Date.now() - 57 * 60_000 }))
+            .mockResolvedValue(jsonRes(200, { state: 'awaiting-scan' }));
+        const el = mount();
+        await startQr(el);
+        expect(statusLine(el).textContent).toMatch(/stops working in about 3 minutes/i);
+    });
+
     it('warns that the device row lags the paired message', async () => {
         // The server discovers device-set changes by polling adb every 5 s, so an
         // empty list right after "Paired" is expected, not a failure.
@@ -575,7 +700,7 @@ describe('renderPairingSection', () => {
                     }),
             )
             .mockResolvedValueOnce(
-                jsonRes(200, { sessionId: 's2', svg: '<svg id="second"></svg>', expiresAt: Date.now() + 180_000 }),
+                jsonRes(200, { sessionId: 's2', svg: '<svg id="second"></svg>', expiresInMs: 180_000 }),
             )
             .mockResolvedValue(jsonRes(200, { state: 'awaiting-scan' }));
 
@@ -585,9 +710,7 @@ describe('renderPairingSection', () => {
         el.querySelector<HTMLButtonElement>('[data-pair-mode="qr"]')!.click();
         await vi.advanceTimersByTimeAsync(0);
 
-        resolveFirst!(
-            jsonRes(200, { sessionId: 's1', svg: '<svg id="first"></svg>', expiresAt: Date.now() + 180_000 }),
-        );
+        resolveFirst!(jsonRes(200, { sessionId: 's1', svg: '<svg id="first"></svg>', expiresInMs: 180_000 }));
         await vi.advanceTimersByTimeAsync(0);
 
         expect(el.querySelector('svg')!.id).toBe('second');
@@ -613,7 +736,7 @@ describe('renderPairingSection', () => {
                     }),
             )
             .mockResolvedValueOnce(
-                jsonRes(200, { sessionId: 's2', svg: '<svg id="second"></svg>', expiresAt: Date.now() + 180_000 }),
+                jsonRes(200, { sessionId: 's2', svg: '<svg id="second"></svg>', expiresInMs: 180_000 }),
             )
             .mockResolvedValue(jsonRes(200, { state: 'awaiting-scan' }));
 
@@ -645,7 +768,7 @@ describe('renderPairingSection', () => {
                     }),
             })
             .mockResolvedValueOnce(
-                jsonRes(200, { sessionId: 's2', svg: '<svg id="second"></svg>', expiresAt: Date.now() + 180_000 }),
+                jsonRes(200, { sessionId: 's2', svg: '<svg id="second"></svg>', expiresInMs: 180_000 }),
             )
             .mockResolvedValue(jsonRes(200, { state: 'awaiting-scan' }));
 
@@ -655,7 +778,7 @@ describe('renderPairingSection', () => {
         el.querySelector<HTMLButtonElement>('[data-pair-mode="qr"]')!.click();
         await vi.advanceTimersByTimeAsync(0);
 
-        resolveJson!({ sessionId: 's1', svg: '<svg id="first"></svg>', expiresAt: Date.now() + 180_000 });
+        resolveJson!({ sessionId: 's1', svg: '<svg id="first"></svg>', expiresInMs: 180_000 });
         await vi.advanceTimersByTimeAsync(0);
 
         expect(el.querySelector('svg')!.id).toBe('second');

@@ -68,14 +68,20 @@ export class PairingService {
      * caller only -- the API layer turns it into an SVG and drops the string. It
      * must never be logged, stored, or put in a response body as text.
      */
-    startQr(): { sessionId: string; payload: string; expiresAt: number } {
-        const s = newSession('qr', this.deps.now());
+    startQr(): { sessionId: string; payload: string; expiresInMs: number } {
+        const now = this.deps.now();
+        const s = newSession('qr', now);
         this.replace(s);
         log.info(`session ${s.id} started (qr), advertising as ${s.serviceName}`);
         return {
             sessionId: s.id,
             payload: `WIFI:T:ADB;S:${s.serviceName};P:${s.password};;`,
-            expiresAt: s.expiresAt,
+            // A DURATION, not the absolute deadline. The browser has no way to
+            // read this clock, so handing it `expiresAt` made it difference two
+            // unrelated clocks -- any skew between the server and the user's
+            // machine came out as a wrong "stops working in about N", or as no
+            // note at all when the skew ran the other way.
+            expiresInMs: s.expiresAt - now,
         };
     }
 

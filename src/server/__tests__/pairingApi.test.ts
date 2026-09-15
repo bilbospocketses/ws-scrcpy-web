@@ -101,11 +101,14 @@ describe('PairingApi QR', () => {
         expect(body['payload']).toBeUndefined();
     });
 
-    it('returns exactly sessionId, svg and expiresAt', async () => {
+    it('returns exactly sessionId, svg and expiresInMs', async () => {
         const { api } = makeApi();
         const { body } = await post(api, '/api/devices/pair/qr');
-        expect(Object.keys(body).sort()).toEqual(['expiresAt', 'sessionId', 'svg']);
-        expect(typeof body['expiresAt']).toBe('number');
+        expect(Object.keys(body).sort()).toEqual(['expiresInMs', 'sessionId', 'svg']);
+        // A DURATION, not a deadline. An absolute timestamp would force the
+        // browser to difference its own clock against this process's, and report
+        // the skew between them as time the user does or does not have.
+        expect(body['expiresInMs']).toBe(180_000);
     });
 
     it('does not leak the password the session actually holds', async () => {

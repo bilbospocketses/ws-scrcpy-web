@@ -119,7 +119,11 @@ interface PairingSession {
     cancelled: boolean;
     /** It reached a terminal state, so there is nothing left to cancel. */
     settled: boolean;
-    /** When the scan window shuts, for the QR mode; `null` when the server did not say. */
+    /**
+     * When the scan window shuts, on the BROWSER's clock — derived once from the
+     * `expiresInMs` duration the server sends, never from a server timestamp.
+     * `null` when the server did not say, and for code mode, which has no scan.
+     */
     expiresAt: number | null;
     /** Consecutive polls that never reached the server. Reset by any answer at all. */
     transportFailures: number;
@@ -215,7 +219,12 @@ export function renderPairingSection(deps: PairingSectionDeps): HTMLElement {
 
     function showAction(kind: 'connect' | 'restart', status: PairingStatus): void {
         pendingAction = { kind, status };
-        actionBtn.textContent = kind === 'connect' ? 'connect' : 'start again';
+        // Labelled by what the button DOES, which is not the same thing in both
+        // `connect` sub-cases: with an address it connects, without one it can
+        // only open the manual-add form for the user to type the address into
+        // (see `connectPaired`). A button that says "connect" and then opens a
+        // form is an affordance that lies.
+        actionBtn.textContent = kind === 'restart' ? 'start again' : status.address ? 'connect' : 'add it manually';
         actionBtn.hidden = false;
     }
 
@@ -295,6 +304,18 @@ export function renderPairingSection(deps: PairingSectionDeps): HTMLElement {
             : ` It stops working in about ${Math.round(seconds / 60)} minutes.`;
     }
 
+    /**
+     * The ONE path that puts a pairing state on screen, including every failure
+     * the client synthesises for itself. Nothing else may call `setStatus` +
+     * `showAction` as a pair to end a session.
+     *
+     * Each bespoke failure site used to have to remember three separate things
+     * — `current.settled`, the Cancel button and the QR — and the
+     * transport-failure exit remembered none of them: it left a SCANNABLE QR
+     * and a live Cancel under a red "Lost contact…" with polling already
+     * stopped, so a phone that scanned that code paired server-side with
+     * nothing left running to report it.
+     */
     function render(status: PairingStatus): void {
         const { text, action } = pairingStatusText(status);
         // `paired-not-connected` is NOT styled as an error — see pairingStatusText.
@@ -309,11 +330,17 @@ export function renderPairingSection(deps: PairingSectionDeps): HTMLElement {
         } else {
             hideAction();
         }
+        // Cancel is offered ONLY while waiting for a scan, which is the one
+        // state in which it stops something: no `adb pair` is in flight yet, so
+        // dropping the session really does end the attempt. From `pairing`
+        // onward the adb call is already running and WILL complete — the phone
+        // ends up paired whatever this page says — so a Cancel button there
+        // promises something the server cannot deliver.
+        cancelBtn.hidden = status.state !== 'awaiting-scan';
         if (isTerminalPairingState(status.state)) {
             if (current) {
                 current.settled = true;
             }
-            cancelBtn.hidden = true;
             clearQr();
         }
         if (status.state === 'paired') {
@@ -337,8 +364,7 @@ export function renderPairingSection(deps: PairingSectionDeps): HTMLElement {
                 schedulePoll(session);
                 return;
             }
-            setStatus('Lost contact with the server while pairing.', 'error');
-            showAction('restart', { state: 'failed' });
+            render({ state: 'failed', message: 'Lost contact with the server while pairing.' });
             return;
         }
 
@@ -361,12 +387,7 @@ export function renderPairingSection(deps: PairingSectionDeps): HTMLElement {
         if (res.status === 404) {
             // No await between the check above and here, so the session cannot
             // have changed underneath: this is the same liveness, not a re-ask.
-            if (sessionIsLive(session)) {
-                cancelBtn.hidden = true;
-                clearQr();
-                setStatus('That pairing session is no longer available.', 'error');
-                showAction('restart', { state: 'failed' });
-            }
+            render({ state: 'failed', message: 'That pairing session is no longer available.' });
             return;
         }
 
@@ -377,10 +398,7 @@ export function renderPairingSection(deps: PairingSectionDeps): HTMLElement {
             if (!sessionIsLive(session)) {
                 return;
             }
-            cancelBtn.hidden = true;
-            clearQr();
-            setStatus(message, 'error');
-            showAction('restart', { state: 'failed' });
+            render({ state: 'failed', message });
             return;
         }
 
@@ -405,10 +423,7 @@ export function renderPairingSection(deps: PairingSectionDeps): HTMLElement {
             return;
         }
         if (status === null) {
-            cancelBtn.hidden = true;
-            clearQr();
-            setStatus('The server sent a pairing status this page could not read.', 'error');
-            showAction('restart', { state: 'failed' });
+            render({ state: 'failed', message: 'The server sent a pairing status this page could not read.' });
             return;
         }
         render(status);
@@ -473,7 +488,7 @@ export function renderPairingSection(deps: PairingSectionDeps): HTMLElement {
             setStatus(await serverError(res, 'Could not start a pairing session.'), 'error');
             return;
         }
-        const body = await readJson<{ sessionId?: unknown; svg?: unknown; expiresAt?: unknown }>(res);
+        const body = await readJson<{ sessionId?: unknown; svg?: unknown; expiresInMs?: unknown }>(res);
         if (gen !== generation) {
             return;
         }
@@ -483,8 +498,13 @@ export function renderPairingSection(deps: PairingSectionDeps): HTMLElement {
             setStatus('The server did not return a pairing code.', 'error');
             return;
         }
-        const expiresAt =
-            typeof body?.expiresAt === 'number' && Number.isFinite(body.expiresAt) ? body.expiresAt : null;
+        // The server sends a DURATION, and it is turned into a deadline on THIS
+        // clock immediately. Every later `Date.now()` is then compared against a
+        // reading of the same clock, so the countdown is right however far the
+        // server's clock is from the browser's.
+        const expiresInMs =
+            typeof body?.expiresInMs === 'number' && Number.isFinite(body.expiresInMs) ? body.expiresInMs : null;
+        const expiresAt = expiresInMs === null ? null : Date.now() + expiresInMs;
         // SAFE HERE, AND ONLY HERE: `svg` comes from our own `encodeQrSvg`, which
         // emits a <rect> and a <path> built from a numeric module matrix and
         // never interpolates the payload text into the markup. Do not copy this
@@ -501,9 +521,9 @@ export function renderPairingSection(deps: PairingSectionDeps): HTMLElement {
             transportFailures: 0,
         };
         // Rendered through `render` rather than a bespoke setStatus, so the
-        // validity note comes from the one place that appends it.
+        // validity note comes from the one place that appends it — and so that
+        // `render` is the one place that decides whether Cancel is offered.
         render({ state: 'awaiting-scan' });
-        cancelBtn.hidden = false;
         schedulePoll(current);
     }
 
@@ -580,7 +600,11 @@ export function renderPairingSection(deps: PairingSectionDeps): HTMLElement {
             expiresAt: null,
             transportFailures: 0,
         };
-        cancelBtn.hidden = false;
+        // No Cancel in code mode, at any point: the server starts `adb pair` the
+        // moment this route returns, so there is never a window in which
+        // cancelling stops anything. `render` would hide it a second later
+        // anyway; offering it for that second would just be a lie with a
+        // shorter life.
         schedulePoll(current);
     }
 
