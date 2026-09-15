@@ -35,11 +35,30 @@ describe('TabStrip', () => {
         expect(strip.getPanel().textContent).toContain('A body');
     });
 
-    it('switching tabs swaps the panel', () => {
+    /**
+     * Asserts `hidden`, NOT `textContent`.
+     *
+     * This test used to check that the panel's text contained 'B body', which it
+     * cannot fail: every body is built eagerly in the constructor and attached to
+     * the panel, so BOTH bodies' text is always present regardless of which tab is
+     * active. `activate()` could be deleted outright and the old assertion stayed
+     * green. `hidden` is the only thing `activate()` actually changes, so it is
+     * the only thing worth asserting.
+     */
+    it('switching tabs shows the new body and hides the old one', () => {
         const strip = new TabStrip(makeTabs());
+        const bodyOf = (text: string): HTMLElement =>
+            [...strip.getPanel().children].find((el) => el.textContent === text) as HTMLElement;
+
         strip.activate('b');
         expect(strip.activeId()).toBe('b');
-        expect(strip.getPanel().textContent).toContain('B body');
+        expect(bodyOf('B body').hidden).toBe(false);
+        expect(bodyOf('A body').hidden).toBe(true);
+
+        // And back, so this cannot pass on a one-way toggle either.
+        strip.activate('a');
+        expect(bodyOf('A body').hidden).toBe(false);
+        expect(bodyOf('B body').hidden).toBe(true);
     });
 
     it('builds each tab body only once, so edits survive a round trip', () => {

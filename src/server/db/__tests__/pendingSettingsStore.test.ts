@@ -44,6 +44,12 @@ describe('PendingSettingsStore', () => {
         const id = store.create(1, CHANGES);
         store.markAbandoned(id);
         expect(store.getPending()).toHaveLength(0);
+        // The literal status, not just "no longer pending": `markCompleted` would
+        // satisfy that weaker check too, and a boot row recorded as `completed`
+        // claims a write that never happened. This is the assertion that makes
+        // `reconcilePendingSettings` marking ABANDONED a tested fact.
+        const row = db.prepare('SELECT status FROM pending_settings WHERE id = ?').get(id) as { status: string };
+        expect(row.status).toBe('abandoned');
     });
 
     it('prunes only finished rows older than the cutoff, never pending ones', () => {

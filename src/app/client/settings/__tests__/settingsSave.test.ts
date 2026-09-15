@@ -268,6 +268,75 @@ describe('performStagedSave', () => {
         expect(action.kind === 'failed' && action.message).toContain('port 80 is in use');
     });
 
+    /**
+     * A batch can genuinely HALF-land: `SettingsBatchApi` applies non-webPort
+     * changes one at a time and stops at the first refusal, so the siblings
+     * before it are already written on the server. The user is reading this
+     * message to decide whether to Discard — and a message that names only the
+     * failure invites them to throw away edits that have in fact taken effect.
+     */
+    it('names what was already applied when a batch half-lands', async () => {
+        const store = new StagedSettingsStore();
+        store.register({ id: 'channel', label: 'Update channel', initial: 'beta' });
+        store.register({ id: 'autoUpdate', label: 'Automatic updates', initial: true });
+        store.set('channel', 'stable');
+        store.set('autoUpdate', false);
+
+        const deps = mockDeps({
+            save: vi.fn(async () => ({
+                ok: false,
+                applied: ['channel'],
+                // Deliberately an error string that does NOT repeat the wire id,
+                // so the "never shows a wire id" assertion below tests the
+                // message's own wording rather than the server's error text.
+                failed: { id: 'autoUpdate', error: 'must be a boolean' },
+            })),
+        });
+
+        const action = await performStagedSave(store, deps);
+        const message = action.kind === 'failed' ? action.message : '';
+
+        // Both by LABEL, like the failure itself — the user confirmed a summary
+        // of labels, not wire ids.
+        expect(message).toContain('applied Update channel');
+        expect(message).toContain("couldn't save Automatic updates");
+        expect(message).not.toContain('autoUpdate');
+        expect(message).not.toContain('channel:');
+    });
+
+    it('says nothing about applied changes when none landed', async () => {
+        const deps = mockDeps({
+            save: vi.fn(async () => ({
+                ok: false,
+                applied: [],
+                failed: { id: 'webPort', error: 'port 80 is in use' },
+            })),
+        });
+
+        const action = await performStagedSave(stagedStore(), deps);
+        // A bare "applied ;" prefix on the common case would be noise.
+        expect(action.kind === 'failed' && action.message).not.toContain('applied');
+    });
+
+    it('reports what landed even when the connection dropped and no id is named', async () => {
+        const store = new StagedSettingsStore();
+        store.register({ id: 'channel', label: 'Update channel', initial: 'beta' });
+        store.set('channel', 'stable');
+
+        const deps = mockDeps({
+            save: vi.fn(async () => ({
+                ok: false,
+                applied: ['channel'],
+                failed: { id: '', error: "couldn't reach server" },
+            })),
+        });
+
+        const action = await performStagedSave(store, deps);
+        const message = action.kind === 'failed' ? action.message : '';
+        expect(message).toContain('applied Update channel');
+        expect(message).toContain("couldn't reach server");
+    });
+
     it('falls back to the id when the failure names something not in this batch', async () => {
         // Nothing guarantees the server names an id the client staged. Better a
         // raw id than "couldn't save undefined".

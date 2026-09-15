@@ -71,6 +71,33 @@ export class SettingsBatchApi {
             return true;
         }
 
+        // Shape-check BEFORE the scan below, which reads `c.id` off every
+        // element. A non-array `changes`, or an array holding a null, threw
+        // there -- outside the try/catch above -- and surfaced as a generic 500
+        // from the caller's error handler, reporting a server fault for what is
+        // simply a malformed request. Reachable only by a crafted operator
+        // request, since the real client always sends `store.changes()`.
+        if (!Array.isArray(changes) || changes.some((c) => c === null || typeof c !== 'object')) {
+            res.writeHead(400, { 'content-type': 'application/json' });
+            res.end(JSON.stringify({ error: 'changes must be an array of change objects' }));
+            return true;
+        }
+
+        // A change with no `to` is refused rather than applied. `updateAppConfig`
+        // SKIPS an undefined value (Config.ts, `if (value === undefined) continue`)
+        // without complaining, so such a change fell through to `applied.push`
+        // and a `completed` WAL row -- an audit trail asserting a write that
+        // never happened, which is the one thing the marks either side of the
+        // apply exist to prevent. Note `undefined`, not falsy: `to: false` and
+        // `to: 0` are real values. JSON drops an explicit `to: undefined`, so
+        // this catches both the absent key and the explicit one.
+        const valueless = changes.find((c) => c.to === undefined);
+        if (valueless) {
+            res.writeHead(400, { 'content-type': 'application/json' });
+            res.end(JSON.stringify({ error: `change has no value: ${valueless.id}` }));
+            return true;
+        }
+
         const unknown = changes.find((c) => !STAGEABLE_IDS.has(c.id));
         if (unknown) {
             // Refuse BEFORE writing the WAL row: a rejected batch should leave

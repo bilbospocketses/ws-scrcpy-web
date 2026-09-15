@@ -5,8 +5,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 // The REAL client store, imported into a server test on purpose: this file is
 // where the two halves of the `Change` contract are made to meet. It is pure
 // state with no DOM and no network, so it runs here unchanged.
+import { type BatchResult, runSave } from '../../app/client/settings/SaveRunner';
 import { StagedSettingsStore } from '../../app/client/settings/StagedSettingsStore';
-import { orderChanges, SettingsBatchApi, STAGEABLE_IDS } from '../api/SettingsBatchApi';
+import { orderChanges, SettingsBatchApi, type SettingsBatchApiOptions, STAGEABLE_IDS } from '../api/SettingsBatchApi';
 import { Config } from '../Config';
 import type { Change } from '../db/PendingSettingsStore';
 import { reconcilePendingSettings } from '../db/reconcilePendingSettings';
@@ -39,6 +40,8 @@ function setup(): string {
 
 afterEach(() => {
     vi.restoreAllMocks();
+    // The BatchResult boundary block stubs `fetch`; a no-op for every other test.
+    vi.unstubAllGlobals();
     Config._resetForTest();
     if (saved.CONFIG === undefined) delete process.env[EnvName.CONFIG_PATH];
     else process.env[EnvName.CONFIG_PATH] = saved.CONFIG;
@@ -110,6 +113,57 @@ describe('POST /api/settings/batch', () => {
         await new SettingsBatchApi().handle(r.req, r.res);
         expect(r.getStatus()).toBe(400);
         expect(Config.getInstance().db.pendingSettings.getPending()).toHaveLength(0);
+    });
+
+    it('400s a malformed changes list rather than throwing a 500 at it', async () => {
+        setup();
+        // Both used to reach `changes.find((c) => !STAGEABLE_IDS.has(c.id))`,
+        // which dereferences `c.id`, OUTSIDE the try/catch around the parse —
+        // so the caller's handler turned a bad request into a server fault.
+        for (const changes of [{ nope: true }, [null], ['not an object']]) {
+            const r = makeReqRes('POST', '/api/settings/batch', { changes }, {}, LOOPBACK);
+            await new SettingsBatchApi().handle(r.req, r.res);
+            expect(r.getStatus(), JSON.stringify(changes)).toBe(400);
+            expect((r.getJson() as { error: string }).error).toBe('changes must be an array of change objects');
+        }
+        // Nothing was recorded for any of them.
+        expect(Config.getInstance().db.pendingSettings.getPending()).toHaveLength(0);
+    });
+
+    it('400s a change carrying no value instead of marking it completed', async () => {
+        setup();
+        // `updateAppConfig` SKIPS an undefined value silently, so this used to be
+        // pushed to `applied` and the row marked `completed` — an audit trail
+        // claiming a write that never happened.
+        const r = makeReqRes(
+            'POST',
+            '/api/settings/batch',
+            { changes: [{ id: 'channel', label: 'Update channel', from: 'beta' }] },
+            {},
+            LOOPBACK,
+        );
+        await new SettingsBatchApi().handle(r.req, r.res);
+        expect(r.getStatus()).toBe(400);
+        expect((r.getJson() as { error: string }).error).toBe('change has no value: channel');
+        // Refused before the WAL row, like every other shape rejection.
+        const row = Config.getInstance().db.sqlite.prepare('SELECT COUNT(*) AS n FROM pending_settings').get() as {
+            n: number;
+        };
+        expect(row.n).toBe(0);
+    });
+
+    it('still applies a falsy value — `to: false` and `to: 0` are values, not absence', async () => {
+        setup();
+        const r = makeReqRes(
+            'POST',
+            '/api/settings/batch',
+            { changes: [{ id: 'autoUpdate', label: 'Automatic updates', from: true, to: false }] },
+            {},
+            LOOPBACK,
+        );
+        await new SettingsBatchApi().handle(r.req, r.res);
+        expect(r.getStatus()).toBe(200);
+        expect(Config.getInstance().getAppConfig().autoUpdate).toBe(false);
     });
 
     it('403s an off-box caller — the route is operator-gated like every admin route', async () => {
@@ -432,6 +486,100 @@ describe('staged changes cross the wire intact', () => {
     });
 });
 
+/**
+ * The SECOND half of the same boundary: the real server's response body parsed
+ * by the real client.
+ *
+ * `BatchResult` (`SaveRunner.ts`) is hand-declared against the JSON literals
+ * `SettingsBatchApi` writes, exactly as `Change` was — client tests hand-write
+ * server bodies, server tests assert them, and nothing pipes one into the other.
+ * That is the structure that produced the auto-update bug, so it gets closed the
+ * same way: the endpoint's REAL response goes through `runSave` and the parsed
+ * `BatchResult` is asserted.
+ *
+ * All three response shapes are covered, because they are not variations of one
+ * shape — the third has no `ok` field at all, which is the case `runSave`'s
+ * `res.ok` normalisation exists for.
+ */
+describe('the server response parses into the BatchResult the client expects', () => {
+    /** Real endpoint in, real `runSave` out. Nothing hand-written between them. */
+    async function throughRunSave(changes: Change[], seams: SettingsBatchApiOptions = {}): Promise<BatchResult> {
+        const r = makeReqRes('POST', '/api/settings/batch', { changes }, {}, LOOPBACK);
+        await new SettingsBatchApi(seams).handle(r.req, r.res);
+        const body = JSON.stringify(r.getJson());
+        const status = r.getStatus();
+        vi.stubGlobal(
+            'fetch',
+            vi.fn(async () => new Response(body, { status })),
+        );
+        return runSave(changes);
+    }
+
+    it('shape 1 — a successful batch', async () => {
+        setup();
+        const result = await throughRunSave([{ id: 'channel', label: 'Update channel', from: 'beta', to: 'stable' }]);
+        expect(result.ok).toBe(true);
+        expect(result.applied).toEqual(['channel']);
+        expect(result.failed).toBeUndefined();
+        // Not a restart batch, so the client must not be told to navigate.
+        expect(result.restartRequired).toBeUndefined();
+        expect(result.redirectPort).toBeUndefined();
+    });
+
+    it('shape 1b — a webPort batch carries the restart and the port the client redirects to', async () => {
+        setup();
+        const result = await throughRunSave([{ id: 'webPort', label: 'Web port', from: 8000, to: 8010 }], {
+            schedule: vi.fn(),
+            exit: vi.fn(),
+        });
+        expect(result.ok).toBe(true);
+        expect(result.restartRequired).toBe(true);
+        // `SettingsModal` refuses to navigate unless this is a number — a string
+        // here would strand the browser on a dead port without failing anything.
+        expect(typeof result.redirectPort).toBe('number');
+        expect(result.redirectPort).toBe(8010);
+    });
+
+    it('shape 2 — a rejected apply arrives as ok:false with the failing id and the real message', async () => {
+        setup();
+        const result = await throughRunSave([
+            { id: 'channel', label: 'Update channel', from: 'stable', to: 'not-a-channel' },
+        ]);
+        expect(result.ok).toBe(false);
+        expect(result.applied).toEqual([]);
+        // The id must match a change in the batch, or `saveFailureMessage` cannot
+        // resolve it to the label the user just confirmed.
+        expect(result.failed?.id).toBe('channel');
+        expect(result.failed?.error).toBe('channel must be one of: stable, beta');
+    });
+
+    it('shape 3 — a bare 400 with no `ok` field still reads as a refusal, not a success', async () => {
+        setup();
+        const result = await throughRunSave([{ id: 'installService', label: 'Install', from: false, to: true }]);
+        // The trap this normalisation exists for: the server sends `{ error }`
+        // with no `ok`, so `body.ok` is `undefined` — and `undefined` is not
+        // `false`, so a naive `if (result.ok)` would treat a REFUSED batch as
+        // applied and commit the store's baseline over it.
+        expect(result.ok).toBe(false);
+        expect(result.applied).toEqual([]);
+        expect(result.failed?.error).toBe('not a stageable setting: installService');
+    });
+
+    it('shape 2b — a half-applied batch reports what already landed', async () => {
+        setup();
+        const result = await throughRunSave([
+            { id: 'channel', label: 'Update channel', from: 'beta', to: 'stable' },
+            { id: 'updateCheckIntervalMinutes', label: 'Check interval (minutes)', from: 60, to: 99999 },
+        ]);
+        expect(result.ok).toBe(false);
+        // The applied sibling really was written, and the client is told so —
+        // this is the list `saveFailureMessage` now names for the user.
+        expect(result.applied).toEqual(['channel']);
+        expect(result.failed?.id).toBe('updateCheckIntervalMinutes');
+        expect(Config.getInstance().getAppConfig().channel).toBe('stable');
+    });
+});
+
 describe('reconcilePendingSettings', () => {
     it('abandons a pending row rather than re-applying it', () => {
         setup();
@@ -442,6 +590,14 @@ describe('reconcilePendingSettings', () => {
 
         expect(result.abandoned).toBe(1);
         expect(db.pendingSettings.getPending()).toHaveLength(0);
+        // The literal status, not just "no longer pending". `markCompleted` here
+        // would satisfy the weaker check while recording that an interrupted
+        // batch had been WRITTEN -- the opposite of what happened, and the row
+        // someone reads to explain why a setting did or did not move.
+        const row = Config.getInstance()
+            .db.sqlite.prepare('SELECT status FROM pending_settings ORDER BY id DESC LIMIT 1')
+            .get() as { status: string };
+        expect(row.status).toBe('abandoned');
         // The port was NOT changed -- silently applying settings a user may not
         // remember confirming is worse than losing them.
         expect(Config.getInstance().getAppConfig().webPort).toBe(8000);

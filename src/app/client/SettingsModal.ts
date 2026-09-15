@@ -147,22 +147,43 @@ export const liveSaveDeps: SaveDeps = {
     },
 };
 
+/** A change's summary LABEL, falling back to its wire id if it was not in this batch. */
+function labelFor(id: string, changes: Change[]): string {
+    return changes.find((c) => c.id === id)?.label ?? id;
+}
+
 /**
- * Which change the server refused, and what it said about it.
+ * Which change the server refused, what it said about it, and what it had
+ * ALREADY applied before it stopped.
  *
  * Named with the change's LABEL, not its wire id: the user has just confirmed a
  * summary reading "Web port: 8000 → 80", so answering with `webPort` makes them
  * translate an internal identifier back to the row they touched. The id is the
  * fallback for a failure naming something that was not in this batch.
+ *
+ * The applied prefix matters because `SettingsBatchApi` applies non-`webPort`
+ * changes ONE AT A TIME and stops at the first refusal, so a mixed batch can
+ * genuinely half-land: the WAL row records that correctly, but this message was
+ * the user's only view of it and said nothing. They are reading it to decide
+ * whether to Discard — and the siblings are already written on the server, so
+ * "couldn't save Automatic updates" alone invites them to discard edits that
+ * have in fact taken effect.
+ *
+ * It reports only; nothing is un-staged here. Re-sending an applied change is
+ * idempotent, and dropping it from the store would need a per-id commit the
+ * store does not have.
  */
 function saveFailureMessage(res: BatchResult, changes: Change[]): string {
     const failed = res.failed;
     if (!failed) return "couldn't save the changes";
     // `failed.id` is empty for the transport failures runSave synthesises
-    // ("couldn't reach server"), where naming a setting would be a lie.
-    if (!failed.id) return `couldn't save the changes: ${failed.error}`;
-    const label = changes.find((c) => c.id === failed.id)?.label ?? failed.id;
-    return `couldn't save ${label}: ${failed.error}`;
+    // ("couldn't reach server"), where naming a setting would be a lie. The
+    // applied list is still worth reporting: a batch can be applied in part and
+    // THEN lose the connection.
+    const applied =
+        res.applied.length > 0 ? `applied ${res.applied.map((id) => labelFor(id, changes)).join(', ')}; ` : '';
+    if (!failed.id) return `${applied}couldn't save the changes: ${failed.error}`;
+    return `${applied}couldn't save ${labelFor(failed.id, changes)}: ${failed.error}`;
 }
 
 /**
