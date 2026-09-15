@@ -21,7 +21,10 @@ mod imp {
     use std::os::windows::ffi::OsStrExt;
 
     fn to_wide(s: &str) -> Vec<u16> {
-        OsStr::new(s).encode_wide().chain(std::iter::once(0)).collect()
+        OsStr::new(s)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect()
     }
 
     /// RAII handle that releases the named mutex on drop.
@@ -56,9 +59,7 @@ mod imp {
         // would prevent any future WaitForSingleObject pattern from
         // working correctly. Mirrors the launcher's single_instance.rs
         // pattern exactly.
-        let handle = unsafe {
-            CreateMutexW(None, false, PCWSTR::from_raw(wide.as_ptr()))?
-        };
+        let handle = unsafe { CreateMutexW(None, false, PCWSTR::from_raw(wide.as_ptr()))? };
         let last = unsafe { GetLastError() };
         if last == ERROR_ALREADY_EXISTS {
             unsafe {
@@ -84,9 +85,9 @@ mod imp {
     }
 }
 
-pub use imp::acquire;
 #[allow(unused_imports)]
 pub use imp::InstanceGuard;
+pub use imp::acquire;
 
 /// Canonical mutex name. `Local\` prefix auto-scopes per logon session.
 pub const MUTEX_NAME: &str = r"Local\WsScrcpyWebTray-SingleInstance";
@@ -118,7 +119,10 @@ mod tests {
         let name = unique_name();
         let first = acquire(&name).unwrap().expect("first acquire");
         let second = acquire(&name).unwrap();
-        assert!(second.is_none(), "second acquire should see ERROR_ALREADY_EXISTS");
+        assert!(
+            second.is_none(),
+            "second acquire should see ERROR_ALREADY_EXISTS"
+        );
         drop(first);
     }
 

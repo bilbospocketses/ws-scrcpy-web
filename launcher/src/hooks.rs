@@ -17,7 +17,6 @@
 
 use std::path::{Path, PathBuf};
 
-
 use common::config::AppConfig;
 
 use crate::log;
@@ -91,7 +90,12 @@ pub fn hook_version_arg(args: &[String], flag: &str) -> Option<String> {
 pub fn default_channel_for_version(version: &str) -> &'static str {
     let v = version.to_ascii_lowercase();
     let is_beta = match v.split_once("-beta") {
-        Some((_, rest)) => rest.is_empty() || rest.starts_with('.') || rest.starts_with('-') || rest.starts_with('+'),
+        Some((_, rest)) => {
+            rest.is_empty()
+                || rest.starts_with('.')
+                || rest.starts_with('-')
+                || rest.starts_with('+')
+        }
         None => false,
     };
     if is_beta { "beta" } else { "stable" }
@@ -221,7 +225,9 @@ fn on_install(install_root: &Path, data_root: &Path, version: Option<&str>) -> i
     // system locale.
     if !data_root.exists() {
         if let Err(e) = std::fs::create_dir_all(data_root) {
-            log::error(&format!("hook(install): could not create {data_root:?}: {e}"));
+            log::error(&format!(
+                "hook(install): could not create {data_root:?}: {e}"
+            ));
             return 0;
         }
     }
@@ -230,7 +236,9 @@ fn on_install(install_root: &Path, data_root: &Path, version: Option<&str>) -> i
 
     let cfg_path = data_root.join("config.json");
     if cfg_path.exists() {
-        log::info(&format!("hook(install): {cfg_path:?} already present; leaving as-is"));
+        log::info(&format!(
+            "hook(install): {cfg_path:?} already present; leaving as-is"
+        ));
         return 0;
     }
     match std::fs::write(&cfg_path, default_config_json(version)) {
@@ -368,7 +376,10 @@ fn on_updated(install_root: &Path, data_root: &Path) -> i32 {
     // For users on Part 4-era installs (where the bat file is present), the
     // bat is the clean path and the bridge MUST NOT fire (Part 3 smoke
     // showed the bridge actively races the post-stop and breaks recovery).
-    let post_stop_bat = data_root.join("control").join("post-stop").join("post-stop.bat");
+    let post_stop_bat = data_root
+        .join("control")
+        .join("post-stop")
+        .join("post-stop.bat");
     if post_stop_bat.exists() {
         log::info(&format!(
             "hook(updated): post-stop bat present at {post_stop_bat:?} — Servy will handle recovery via --postStopPath; hook is a no-op"
@@ -383,7 +394,9 @@ fn on_updated(install_root: &Path, data_root: &Path) -> i32 {
     let old_post_stop_bat = data_root.join("post-stop").join("post-stop.bat");
     if old_post_stop_bat.exists() {
         let servy_path = install_root.join("current").join("servy-cli.exe");
-        let launcher_path = install_root.join("current").join("ws-scrcpy-web-launcher.exe");
+        let launcher_path = install_root
+            .join("current")
+            .join("ws-scrcpy-web-launcher.exe");
         match crate::elevated_runner::write_post_stop_bat(
             data_root,
             "WsScrcpyWeb",
@@ -406,9 +419,9 @@ fn on_updated(install_root: &Path, data_root: &Path) -> i32 {
                     let new_path = data_root.join("control").join(old_dir);
                     if old_path.exists() && new_path.exists() {
                         match std::fs::remove_dir_all(&old_path) {
-                            Ok(()) => log::info(&format!(
-                                "hook(updated): removed legacy {old_path:?}"
-                            )),
+                            Ok(()) => {
+                                log::info(&format!("hook(updated): removed legacy {old_path:?}"))
+                            }
                             Err(e) => log::error(&format!(
                                 "hook(updated): could not remove legacy {old_path:?}: {e}"
                             )),
@@ -428,7 +441,11 @@ fn on_updated(install_root: &Path, data_root: &Path) -> i32 {
     log::info(&format!(
         "hook(updated): post-stop bat absent at {post_stop_bat:?} — firing legacy synchronous servy-cli restart bridge"
     ));
-    run_servy(install_root, &["restart", "--name", "WsScrcpyWeb"], "updated")
+    run_servy(
+        install_root,
+        &["restart", "--name", "WsScrcpyWeb"],
+        "updated",
+    )
 }
 
 fn on_uninstall(install_root: &Path, data_root: &Path) -> i32 {
@@ -444,7 +461,11 @@ fn on_uninstall(install_root: &Path, data_root: &Path) -> i32 {
     // address any service. Pre-v0.1.21 these calls used positional args, so
     // servy-cli ran but the SCM entry survived MSI uninstall + reboot —
     // hooks::run_servy was missed during the v0.1.5 Servy-8.2 flag migration.
-    let stop_code = run_servy(install_root, &["stop", "--name", "WsScrcpyWeb"], "uninstall:stop");
+    let stop_code = run_servy(
+        install_root,
+        &["stop", "--name", "WsScrcpyWeb"],
+        "uninstall:stop",
+    );
     let uninstall_code = run_servy(
         install_root,
         &["uninstall", "--name", "WsScrcpyWeb"],
@@ -490,7 +511,10 @@ fn run_servy(install_root: &Path, args: &[&str], tag: &str) -> i32 {
         return 0;
     }
     log::info(&format!("hook({tag}): invoking {servy:?} {args:?}"));
-    match crate::elevated_runner::silent_command(&servy).args(args).status() {
+    match crate::elevated_runner::silent_command(&servy)
+        .args(args)
+        .status()
+    {
         Ok(status) => {
             let code = status.code().unwrap_or(1);
             log::info(&format!("hook({tag}): servy exited with {code}"));
@@ -610,7 +634,10 @@ mod tests {
         let body = fs::read_to_string(&cfg).unwrap();
         assert!(body.contains("\"firstRunComplete\""));
         assert!(body.contains("\"webPort\""));
-        assert!(body.contains("\"channel\": \"stable\""), "a release build's skeleton is on stable: {body}");
+        assert!(
+            body.contains("\"channel\": \"stable\""),
+            "a release build's skeleton is on stable: {body}"
+        );
         // Round-trip: AppConfig reader should parse it without error.
         let parsed = AppConfig::load(dir.path());
         assert!(!parsed.first_run_complete);
@@ -623,9 +650,15 @@ mod tests {
         // beta.103 MSI, so the app asked a beta-only feed for releases.stable.json
         // and sat at `status: error … 404` until the Updates radio was flipped.
         let dir = tempdir().unwrap();
-        assert_eq!(on_install(dir.path(), dir.path(), Some("0.1.30-beta.115")), 0);
+        assert_eq!(
+            on_install(dir.path(), dir.path(), Some("0.1.30-beta.115")),
+            0
+        );
         let body = fs::read_to_string(dir.path().join("config.json")).unwrap();
-        assert!(body.contains("\"channel\": \"beta\""), "a beta build's skeleton is on beta: {body}");
+        assert!(
+            body.contains("\"channel\": \"beta\""),
+            "a beta build's skeleton is on beta: {body}"
+        );
         // And the Rust reader takes it.
         let parsed = AppConfig::load(dir.path());
         assert_eq!(parsed.web_port, Some(8000));
@@ -654,12 +687,31 @@ mod tests {
 
     #[test]
     fn hook_version_arg_reads_the_token_after_the_flag() {
-        let args = vec![s("ws-scrcpy-web-launcher.exe"), s("--veloapp-install"), s("0.1.30-beta.115")];
-        assert_eq!(hook_version_arg(&args, FLAG_INSTALL), Some(s("0.1.30-beta.115")));
+        let args = vec![
+            s("ws-scrcpy-web-launcher.exe"),
+            s("--veloapp-install"),
+            s("0.1.30-beta.115"),
+        ];
+        assert_eq!(
+            hook_version_arg(&args, FLAG_INSTALL),
+            Some(s("0.1.30-beta.115"))
+        );
         // Absent flag, flag as the last token, or a flag where the version should be: None.
-        assert_eq!(hook_version_arg(&[s("--veloapp-updated"), s("1.2.3")], FLAG_INSTALL), None);
-        assert_eq!(hook_version_arg(&[s("--veloapp-install")], FLAG_INSTALL), None);
-        assert_eq!(hook_version_arg(&[s("--veloapp-install"), s("--veloapp-firstrun")], FLAG_INSTALL), None);
+        assert_eq!(
+            hook_version_arg(&[s("--veloapp-updated"), s("1.2.3")], FLAG_INSTALL),
+            None
+        );
+        assert_eq!(
+            hook_version_arg(&[s("--veloapp-install")], FLAG_INSTALL),
+            None
+        );
+        assert_eq!(
+            hook_version_arg(
+                &[s("--veloapp-install"), s("--veloapp-firstrun")],
+                FLAG_INSTALL
+            ),
+            None
+        );
     }
 
     #[test]
@@ -751,7 +803,10 @@ mod tests {
         assert_eq!(parsed.install_mode, None);
         assert!(!parsed.first_run_complete);
         assert_eq!(parsed.web_port, Some(8000));
-        assert!(body.contains("\"channel\": \"stable\""), "no version known -> stable: {body}");
+        assert!(
+            body.contains("\"channel\": \"stable\""),
+            "no version known -> stable: {body}"
+        );
         // Pretty-printed and trailing-newline (Contract 1 persistence semantics).
         assert!(body.ends_with('\n'));
         assert!(body.contains("\n  "));

@@ -28,7 +28,9 @@
 //
 // Local-Dependencies-Only: every tool is resolved under `bindir` (sbin tools via
 // `sbindir_from(bindir)`) — never a bare name and never via PATH.
-use crate::linux_service::{is_safe_relaunch_target, scope_prefix, sbindir_from, tool_dir, unit_path, Scope};
+use crate::linux_service::{
+    Scope, is_safe_relaunch_target, sbindir_from, scope_prefix, tool_dir, unit_path,
+};
 use crate::log;
 
 /// App / systemd-unit identity shared by every footprint path.
@@ -48,10 +50,7 @@ const SYS_ICON: &str = "/usr/share/icons/hicolor/256x256/apps/ws-scrcpy-web.png"
 /// tree rule, plus the legacy beta.40 /opt/.../data rule (removed too so a stale
 /// rule never lingers). The /var/lib state needs NO rule (var_lib_t by the policy
 /// default `/var/lib(/.*)?`), so it is not listed. Matches clear-install.sh.
-const FCONTEXT_SPECS: [&str; 2] = [
-    "/opt/ws-scrcpy-web(/.*)?",
-    "/opt/ws-scrcpy-web/data(/.*)?",
-];
+const FCONTEXT_SPECS: [&str; 2] = ["/opt/ws-scrcpy-web(/.*)?", "/opt/ws-scrcpy-web/data(/.*)?"];
 
 /// Ordered teardown argv-vectors for a complete app uninstall, split by
 /// privilege. `privileged` is meant to run under ONE elevation (pkexec, Task 2);
@@ -79,11 +78,35 @@ fn service_teardown(scope: Scope, bindir: &str) -> Vec<Vec<String>> {
     let unit = format!("{UNIT_NAME}.service");
     let unit_file = unit_path(scope, UNIT_NAME);
     vec![
-        [vec![systemctl.clone()], pre.clone(), vec!["stop".into(), unit.clone()]].concat(),
-        [vec![systemctl.clone()], pre.clone(), vec!["disable".into(), unit.clone()]].concat(),
-        [vec![systemctl.clone()], pre.clone(), vec!["reset-failed".into(), unit.clone()]].concat(),
-        vec![rm.clone(), "-f".into(), unit_file.to_string_lossy().into_owned()],
-        [vec![systemctl.clone()], pre.clone(), vec!["daemon-reload".into()]].concat(),
+        [
+            vec![systemctl.clone()],
+            pre.clone(),
+            vec!["stop".into(), unit.clone()],
+        ]
+        .concat(),
+        [
+            vec![systemctl.clone()],
+            pre.clone(),
+            vec!["disable".into(), unit.clone()],
+        ]
+        .concat(),
+        [
+            vec![systemctl.clone()],
+            pre.clone(),
+            vec!["reset-failed".into(), unit.clone()],
+        ]
+        .concat(),
+        vec![
+            rm.clone(),
+            "-f".into(),
+            unit_file.to_string_lossy().into_owned(),
+        ],
+        [
+            vec![systemctl.clone()],
+            pre.clone(),
+            vec!["daemon-reload".into()],
+        ]
+        .concat(),
     ]
 }
 
@@ -134,7 +157,12 @@ pub fn app_uninstall_commands(
 
     // 1b. reap the bundled adb daemon by exact name — it daemonizes and escapes
     //     the pattern pkill above.
-    user_owned.push(vec![format!("{bindir}/pkill"), "-KILL".into(), "-x".into(), "adb".into()]);
+    user_owned.push(vec![
+        format!("{bindir}/pkill"),
+        "-KILL".into(),
+        "-x".into(),
+        "adb".into(),
+    ]);
 
     // 2. user-scope service cascade — only when the service was installed --user.
     if svc_scope == Some(Scope::User) {
@@ -152,7 +180,11 @@ pub fn app_uninstall_commands(
 
     // 3. single-instance lock — only when the runtime dir is known.
     if let Some(xrd) = xdg_runtime_dir {
-        user_owned.push(vec![rm.clone(), "-f".into(), format!("{xrd}/ws-scrcpy-web.lock")]);
+        user_owned.push(vec![
+            rm.clone(),
+            "-f".into(),
+            format!("{xrd}/ws-scrcpy-web.lock"),
+        ]);
     }
 
     // 4. data root — user-owned ONLY for local / user-scope installs (data_root is
@@ -199,7 +231,10 @@ pub fn app_uninstall_commands(
         }
     }
 
-    UninstallPlan { privileged, user_owned }
+    UninstallPlan {
+        privileged,
+        user_owned,
+    }
 }
 
 // ─── Task 2: dispatch + execution (runs the pure builder above) ────────────────
@@ -287,7 +322,13 @@ pub fn parse_args(args: &[String]) -> Option<UninstallArgs> {
         .and_then(|i| args.get(i + 1))
         .cloned()
         .unwrap_or_default();
-    Some(UninstallArgs { svc_scope, machine_wide, keep, data_root, relaunch })
+    Some(UninstallArgs {
+        svc_scope,
+        machine_wide,
+        keep,
+        data_root,
+        relaunch,
+    })
 }
 
 /// Dispatch the UNELEVATED entry `--linux-app-uninstall` — the one the Node
@@ -352,7 +393,9 @@ fn run_unelevated(a: &UninstallArgs) -> i32 {
             // Already root (system-service mode): run the privileged group
             // DIRECTLY, best-effort (mirrors linux_service::run / the user_owned
             // loop). No relaunch — a complete uninstall never relaunches.
-            log::info("uninstall: already root (system-service) — running privileged group directly");
+            log::info(
+                "uninstall: already root (system-service) — running privileged group directly",
+            );
             run_best_effort(&plan.privileged, "uninstall (root)");
         }
         PrivMode::Pkexec => {
@@ -442,7 +485,11 @@ fn run_best_effort(group: &[Vec<String>], label: &str) {
         let (cmd, rest) = argv.split_first().expect("non-empty argv");
         match std::process::Command::new(cmd).args(rest).status() {
             Ok(s) if s.success() => log::info(&format!("{label} ok: {}", argv.join(" "))),
-            Ok(s) => log::error(&format!("{label} non-zero ({:?}): {}", s.code(), argv.join(" "))),
+            Ok(s) => log::error(&format!(
+                "{label} non-zero ({:?}): {}",
+                s.code(),
+                argv.join(" ")
+            )),
             Err(e) => log::error(&format!("{label} spawn failed: {} ({e})", argv.join(" "))),
         }
     }
@@ -547,8 +594,14 @@ mod tests {
     #[test]
     fn local_wipe() {
         // No service, no /opt, wipe the whole data root.
-        let plan =
-            app_uninstall_commands(None, false, false, "/usr/bin", DR_LOCAL, Some("/run/user/1000"));
+        let plan = app_uninstall_commands(
+            None,
+            false,
+            false,
+            "/usr/bin",
+            DR_LOCAL,
+            Some("/run/user/1000"),
+        );
         // Exact ordered user_owned: pattern-kill -> adb-kill -> autostart -> lock
         // -> data-root wipe. (autostart is HOME-relative: matched by prefix+suffix.)
         let u = joined(&plan.user_owned);
@@ -558,8 +611,10 @@ mod tests {
             "/usr/bin/pkill -KILL -f WsScrcpyWeb|ws-scrcpy-web-tray|ws-scrcpy-web-launcher|scrcpy-server"
         );
         assert_eq!(u[1], "/usr/bin/pkill -KILL -x adb");
-        assert!(u[2].starts_with("/usr/bin/rm -f ")
-            && u[2].ends_with("/.config/autostart/ws-scrcpy-web-tray.desktop"));
+        assert!(
+            u[2].starts_with("/usr/bin/rm -f ")
+                && u[2].ends_with("/.config/autostart/ws-scrcpy-web-tray.desktop")
+        );
         assert_eq!(u[3], "/usr/bin/rm -f /run/user/1000/ws-scrcpy-web.lock");
         assert_eq!(u[4], "/usr/bin/rm -rf /home/u/.local/share/WsScrcpyWeb");
         // privileged is empty -> no elevation.
@@ -571,22 +626,33 @@ mod tests {
     #[test]
     fn local_keep() {
         // keep=true deletes only deps/bin/control; preserves root, config.json, logs/.
-        let plan =
-            app_uninstall_commands(None, false, true, "/usr/bin", DR_LOCAL, Some("/run/user/1000"));
+        let plan = app_uninstall_commands(
+            None,
+            false,
+            true,
+            "/usr/bin",
+            DR_LOCAL,
+            Some("/run/user/1000"),
+        );
         let u = joined(&plan.user_owned);
-        assert!(u
-            .iter()
-            .any(|c| c.as_str() == "/usr/bin/rm -rf /home/u/.local/share/WsScrcpyWeb/dependencies"));
-        assert!(u
-            .iter()
-            .any(|c| c.as_str() == "/usr/bin/rm -rf /home/u/.local/share/WsScrcpyWeb/bin"));
-        assert!(u
-            .iter()
-            .any(|c| c.as_str() == "/usr/bin/rm -rf /home/u/.local/share/WsScrcpyWeb/control"));
+        assert!(
+            u.iter()
+                .any(|c| c.as_str()
+                    == "/usr/bin/rm -rf /home/u/.local/share/WsScrcpyWeb/dependencies")
+        );
+        assert!(
+            u.iter()
+                .any(|c| c.as_str() == "/usr/bin/rm -rf /home/u/.local/share/WsScrcpyWeb/bin")
+        );
+        assert!(
+            u.iter()
+                .any(|c| c.as_str() == "/usr/bin/rm -rf /home/u/.local/share/WsScrcpyWeb/control")
+        );
         // NOT a bare wipe of the data root itself.
-        assert!(!u
-            .iter()
-            .any(|c| c.as_str() == "/usr/bin/rm -rf /home/u/.local/share/WsScrcpyWeb"));
+        assert!(
+            !u.iter()
+                .any(|c| c.as_str() == "/usr/bin/rm -rf /home/u/.local/share/WsScrcpyWeb")
+        );
         // preserved paths are never referenced.
         assert!(!u.iter().any(|c| c.contains("config.json")));
         assert!(!u.iter().any(|c| c.contains("/logs")));
@@ -605,14 +671,21 @@ mod tests {
             Some("/run/user/1000"),
         );
         let u = joined(&plan.user_owned);
-        assert!(u.iter().any(|c| c.as_str() == "/usr/bin/systemctl --user stop WsScrcpyWeb.service"));
-        assert!(u
-            .iter()
-            .any(|c| c.as_str() == "/usr/bin/systemctl --user disable WsScrcpyWeb.service"));
+        assert!(
+            u.iter()
+                .any(|c| c.as_str() == "/usr/bin/systemctl --user stop WsScrcpyWeb.service")
+        );
+        assert!(
+            u.iter()
+                .any(|c| c.as_str() == "/usr/bin/systemctl --user disable WsScrcpyWeb.service")
+        );
         assert!(u
             .iter()
             .any(|c| c.as_str() == "/usr/bin/systemctl --user reset-failed WsScrcpyWeb.service"));
-        assert!(u.iter().any(|c| c.as_str() == "/usr/bin/systemctl --user daemon-reload"));
+        assert!(
+            u.iter()
+                .any(|c| c.as_str() == "/usr/bin/systemctl --user daemon-reload")
+        );
         // user unit file removed (HOME-relative; assert on the stable suffix).
         assert!(u.iter().any(|c| c.starts_with("/usr/bin/rm -f ")
             && c.ends_with("/.config/systemd/user/WsScrcpyWeb.service")));
@@ -633,46 +706,72 @@ mod tests {
         );
         let p = joined(&plan.privileged);
         // system service cascade (system prefix = empty, so NO --user).
-        assert!(p.iter().any(|c| c.as_str() == "/usr/bin/systemctl stop WsScrcpyWeb.service"));
+        assert!(
+            p.iter()
+                .any(|c| c.as_str() == "/usr/bin/systemctl stop WsScrcpyWeb.service")
+        );
         assert!(!p.iter().any(|c| c.contains("--user")));
         // /opt removed; /var/lib fully removed (bare rm -rf) because keep=false.
-        assert!(p.iter().any(|c| c.as_str() == "/usr/bin/rm -rf /opt/ws-scrcpy-web"));
-        assert!(p.iter().any(|c| c.as_str() == "/usr/bin/rm -rf /var/lib/ws-scrcpy-web"));
+        assert!(
+            p.iter()
+                .any(|c| c.as_str() == "/usr/bin/rm -rf /opt/ws-scrcpy-web")
+        );
+        assert!(
+            p.iter()
+                .any(|c| c.as_str() == "/usr/bin/rm -rf /var/lib/ws-scrcpy-web")
+        );
         // system menu entry, menu-cache refresh, icon.
-        assert!(p
-            .iter()
-            .any(|c| c.as_str() == "/usr/bin/rm -f /usr/share/applications/ws-scrcpy-web.desktop"));
-        assert!(p
-            .iter()
-            .any(|c| c.as_str() == "/usr/bin/update-desktop-database /usr/share/applications"));
-        assert!(p.iter().any(
-            |c| c.as_str() == "/usr/bin/rm -f /usr/share/icons/hicolor/256x256/apps/ws-scrcpy-web.png"
-        ));
+        assert!(
+            p.iter()
+                .any(|c| c.as_str()
+                    == "/usr/bin/rm -f /usr/share/applications/ws-scrcpy-web.desktop")
+        );
+        assert!(
+            p.iter()
+                .any(|c| c.as_str() == "/usr/bin/update-desktop-database /usr/share/applications")
+        );
+        assert!(p.iter().any(|c| c.as_str()
+            == "/usr/bin/rm -f /usr/share/icons/hicolor/256x256/apps/ws-scrcpy-web.png"));
         // SELinux fcontext: the /opt bin_t rule + the legacy /opt/.../data rule, via
         // sbin. NO /var/lib rule is removed — the state dir needs none (var_lib_t default).
-        assert!(p
-            .iter()
-            .any(|c| c.as_str() == "/usr/sbin/semanage fcontext -d /opt/ws-scrcpy-web(/.*)?"));
-        assert!(p
-            .iter()
-            .any(|c| c.as_str() == "/usr/sbin/semanage fcontext -d /opt/ws-scrcpy-web/data(/.*)?"));
+        assert!(
+            p.iter()
+                .any(|c| c.as_str() == "/usr/sbin/semanage fcontext -d /opt/ws-scrcpy-web(/.*)?")
+        );
+        assert!(
+            p.iter()
+                .any(|c| c.as_str()
+                    == "/usr/sbin/semanage fcontext -d /opt/ws-scrcpy-web/data(/.*)?")
+        );
         assert!(!p.iter().any(|c| c.contains("fcontext -d /var/lib")));
     }
 
     #[test]
     fn machine_wide_no_service() {
         // /opt install but NO service -> privileged runs (no systemctl); data root still wiped.
-        let plan =
-            app_uninstall_commands(None, true, false, "/usr/bin", DR_LOCAL, Some("/run/user/1000"));
+        let plan = app_uninstall_commands(
+            None,
+            true,
+            false,
+            "/usr/bin",
+            DR_LOCAL,
+            Some("/run/user/1000"),
+        );
         let p = joined(&plan.privileged);
         assert!(!plan.privileged.is_empty());
-        assert!(p.iter().any(|c| c.as_str() == "/usr/bin/rm -rf /opt/ws-scrcpy-web"));
-        assert!(p
-            .iter()
-            .any(|c| c.as_str() == "/usr/bin/rm -f /usr/share/applications/ws-scrcpy-web.desktop"));
-        assert!(p
-            .iter()
-            .any(|c| c.as_str() == "/usr/bin/update-desktop-database /usr/share/applications"));
+        assert!(
+            p.iter()
+                .any(|c| c.as_str() == "/usr/bin/rm -rf /opt/ws-scrcpy-web")
+        );
+        assert!(
+            p.iter()
+                .any(|c| c.as_str()
+                    == "/usr/bin/rm -f /usr/share/applications/ws-scrcpy-web.desktop")
+        );
+        assert!(
+            p.iter()
+                .any(|c| c.as_str() == "/usr/bin/update-desktop-database /usr/share/applications")
+        );
         assert!(p.iter().any(|c| c.contains("ws-scrcpy-web.png")));
         // no service installed -> no systemctl, and no system DATA-ROOT removal
         // (the /opt fcontext -d still runs as machine-wide cleanup; only the `rm` of
@@ -680,9 +779,11 @@ mod tests {
         assert!(!p.iter().any(|c| c.contains("systemctl")));
         assert!(!p.iter().any(|c| c.contains("rm -rf /var/lib")));
         // user_owned still wipes the (user) data root.
-        assert!(joined(&plan.user_owned)
-            .iter()
-            .any(|c| c.as_str() == "/usr/bin/rm -rf /home/u/.local/share/WsScrcpyWeb"));
+        assert!(
+            joined(&plan.user_owned)
+                .iter()
+                .any(|c| c.as_str() == "/usr/bin/rm -rf /home/u/.local/share/WsScrcpyWeb")
+        );
     }
 
     #[test]
@@ -693,7 +794,10 @@ mod tests {
         assert!(!u.iter().any(|c| c.contains("ws-scrcpy-web.lock")));
         // but the kill is still first and the data root is still wiped.
         assert!(u[0].starts_with("/usr/bin/pkill -KILL -f "));
-        assert!(u.iter().any(|c| c.as_str() == "/usr/bin/rm -rf /home/u/.local/share/WsScrcpyWeb"));
+        assert!(
+            u.iter()
+                .any(|c| c.as_str() == "/usr/bin/rm -rf /home/u/.local/share/WsScrcpyWeb")
+        );
     }
 
     #[test]
@@ -709,17 +813,24 @@ mod tests {
             Some("/run/user/1000"),
         );
         let u = joined(&plan.user_owned);
-        assert!(u.iter().any(|c| c.as_str() == "/usr/bin/systemctl --user stop WsScrcpyWeb.service"));
-        assert!(u
-            .iter()
-            .any(|c| c.as_str() == "/usr/bin/rm -rf /home/u/.local/share/WsScrcpyWeb/dependencies"));
-        assert!(u
-            .iter()
-            .any(|c| c.as_str() == "/usr/bin/rm -rf /home/u/.local/share/WsScrcpyWeb/control"));
+        assert!(
+            u.iter()
+                .any(|c| c.as_str() == "/usr/bin/systemctl --user stop WsScrcpyWeb.service")
+        );
+        assert!(
+            u.iter()
+                .any(|c| c.as_str()
+                    == "/usr/bin/rm -rf /home/u/.local/share/WsScrcpyWeb/dependencies")
+        );
+        assert!(
+            u.iter()
+                .any(|c| c.as_str() == "/usr/bin/rm -rf /home/u/.local/share/WsScrcpyWeb/control")
+        );
         // never a bare wipe; never the preserved paths.
-        assert!(!u
-            .iter()
-            .any(|c| c.as_str() == "/usr/bin/rm -rf /home/u/.local/share/WsScrcpyWeb"));
+        assert!(
+            !u.iter()
+                .any(|c| c.as_str() == "/usr/bin/rm -rf /home/u/.local/share/WsScrcpyWeb")
+        );
         assert!(!u.iter().any(|c| c.contains("config.json")));
         assert!(!u.iter().any(|c| c.contains("/logs")));
         assert!(plan.privileged.is_empty());
@@ -738,18 +849,35 @@ mod tests {
             None,
         );
         let p = joined(&plan.privileged);
-        assert!(p.iter().any(|c| c.as_str() == "/usr/bin/rm -rf /opt/ws-scrcpy-web"));
-        assert!(p
-            .iter()
-            .any(|c| c.as_str() == "/usr/bin/rm -rf /var/lib/ws-scrcpy-web/dependencies"));
-        assert!(p.iter().any(|c| c.as_str() == "/usr/bin/rm -rf /var/lib/ws-scrcpy-web/bin"));
-        assert!(p.iter().any(|c| c.as_str() == "/usr/bin/rm -rf /var/lib/ws-scrcpy-web/control"));
+        assert!(
+            p.iter()
+                .any(|c| c.as_str() == "/usr/bin/rm -rf /opt/ws-scrcpy-web")
+        );
+        assert!(
+            p.iter()
+                .any(|c| c.as_str() == "/usr/bin/rm -rf /var/lib/ws-scrcpy-web/dependencies")
+        );
+        assert!(
+            p.iter()
+                .any(|c| c.as_str() == "/usr/bin/rm -rf /var/lib/ws-scrcpy-web/bin")
+        );
+        assert!(
+            p.iter()
+                .any(|c| c.as_str() == "/usr/bin/rm -rf /var/lib/ws-scrcpy-web/control")
+        );
         // NO bare wipe of /var/lib (would delete the preserved config.json + logs).
-        assert!(!p.iter().any(|c| c.as_str() == "/usr/bin/rm -rf /var/lib/ws-scrcpy-web"));
+        assert!(
+            !p.iter()
+                .any(|c| c.as_str() == "/usr/bin/rm -rf /var/lib/ws-scrcpy-web")
+        );
         assert!(!p.iter().any(|c| c.contains("config.json")));
         assert!(!p.iter().any(|c| c.contains("/logs")));
         // data root handled ONCE, in privileged — user_owned must not touch /var/lib.
-        assert!(!joined(&plan.user_owned).iter().any(|c| c.contains("/var/lib")));
+        assert!(
+            !joined(&plan.user_owned)
+                .iter()
+                .any(|c| c.contains("/var/lib"))
+        );
     }
 
     // ── Task 2: pure arg-parsing. The run fns shell out (and aren't even compiled
@@ -884,7 +1012,10 @@ mod tests {
         // Arbitrary, traversal, flag-shaped, relative and empty values are
         // rejected — the elevated `rm -rf {data_root}` must never be retargeted (#14).
         assert_eq!(parse_args(&with_data_root("/etc")), None);
-        assert_eq!(parse_args(&with_data_root("/var/lib/ws-scrcpy-web/../../etc")), None);
+        assert_eq!(
+            parse_args(&with_data_root("/var/lib/ws-scrcpy-web/../../etc")),
+            None
+        );
         assert_eq!(parse_args(&with_data_root("--privileged")), None);
         assert_eq!(parse_args(&with_data_root("relative/WsScrcpyWeb")), None);
         assert_eq!(parse_args(&with_data_root("")), None);

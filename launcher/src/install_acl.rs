@@ -24,8 +24,8 @@
 // does reset DACLs get the one-time elevated icacls here on their first launch;
 // every later launch finds the root writable and skips it.
 
-use anyhow::{Context, Result, bail};
 use crate::win_util::to_wide;
+use anyhow::{Context, Result, bail};
 use std::path::Path;
 
 use windows::Win32::Foundation::CloseHandle;

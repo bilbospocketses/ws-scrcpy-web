@@ -44,7 +44,10 @@ pub fn data_root_for_linux(
         return PathBuf::from(xdg).join("WsScrcpyWeb");
     }
     match home {
-        Some(h) => PathBuf::from(h).join(".local").join("share").join("WsScrcpyWeb"),
+        Some(h) => PathBuf::from(h)
+            .join(".local")
+            .join("share")
+            .join("WsScrcpyWeb"),
         // #36: never silently fall back to ephemeral, world-writable /tmp. A
         // system service must set DATA_ROOT (ServiceApi system-scope install);
         // any other no-HOME context is a real misconfiguration — fail loudly so
@@ -69,7 +72,11 @@ pub fn data_root_from_env() -> Option<PathBuf> {
         let data_root = std::env::var("DATA_ROOT").ok();
         let xdg = std::env::var("XDG_DATA_HOME").ok();
         let home = std::env::var("HOME").ok();
-        Some(data_root_for_linux(data_root.as_deref(), xdg.as_deref(), home.as_deref()))
+        Some(data_root_for_linux(
+            data_root.as_deref(),
+            xdg.as_deref(),
+            home.as_deref(),
+        ))
     }
 }
 
@@ -282,7 +289,10 @@ mod tests {
     #[cfg(windows)]
     fn data_root_for_windows_honors_custom_programdata() {
         let result = data_root_for_windows(Some("D:\\Custom\\ProgramData"));
-        assert_eq!(result, PathBuf::from("D:\\Custom\\ProgramData\\WsScrcpyWeb"));
+        assert_eq!(
+            result,
+            PathBuf::from("D:\\Custom\\ProgramData\\WsScrcpyWeb")
+        );
     }
 
     #[test]

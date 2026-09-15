@@ -90,8 +90,8 @@ pub struct SpawnResult {
 fn enable_privilege(privilege: windows::core::PCWSTR, name_for_log: &str) -> Result<(), String> {
     use windows::Win32::Foundation::{CloseHandle, GetLastError, HANDLE, LUID};
     use windows::Win32::Security::{
-        AdjustTokenPrivileges, LookupPrivilegeValueW, LUID_AND_ATTRIBUTES,
-        SE_PRIVILEGE_ENABLED, TOKEN_ADJUST_PRIVILEGES, TOKEN_PRIVILEGES, TOKEN_QUERY,
+        AdjustTokenPrivileges, LUID_AND_ATTRIBUTES, LookupPrivilegeValueW, SE_PRIVILEGE_ENABLED,
+        TOKEN_ADJUST_PRIVILEGES, TOKEN_PRIVILEGES, TOKEN_QUERY,
     };
     use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
@@ -130,7 +130,9 @@ fn enable_privilege(privilege: windows::core::PCWSTR, name_for_log: &str) -> Res
         let _ = CloseHandle(token);
 
         if let Err(e) = adjust {
-            return Err(format!("AdjustTokenPrivileges({name_for_log}) failed: {e:?}"));
+            return Err(format!(
+                "AdjustTokenPrivileges({name_for_log}) failed: {e:?}"
+            ));
         }
         // 0x522 == ERROR_NOT_ALL_ASSIGNED
         if last.0 == 0x522 {
@@ -210,13 +212,11 @@ pub fn spawn_in_session(session_id: u32, args: &SpawnUserLauncherArgs) -> SpawnR
     use std::ffi::OsStr;
     use std::os::windows::ffi::OsStrExt;
     use windows::Win32::Foundation::{CloseHandle, HANDLE};
-    use windows::Win32::System::Environment::{
-        CreateEnvironmentBlock, DestroyEnvironmentBlock,
-    };
+    use windows::Win32::System::Environment::{CreateEnvironmentBlock, DestroyEnvironmentBlock};
     use windows::Win32::System::RemoteDesktop::WTSQueryUserToken;
     use windows::Win32::System::Threading::{
-        CREATE_NO_WINDOW, CreateProcessAsUserW, CREATE_UNICODE_ENVIRONMENT,
-        NORMAL_PRIORITY_CLASS, PROCESS_INFORMATION, STARTUPINFOW,
+        CREATE_NO_WINDOW, CREATE_UNICODE_ENVIRONMENT, CreateProcessAsUserW, NORMAL_PRIORITY_CLASS,
+        PROCESS_INFORMATION, STARTUPINFOW,
     };
     use windows::core::PWSTR;
 
@@ -243,7 +243,9 @@ pub fn spawn_in_session(session_id: u32, args: &SpawnUserLauncherArgs) -> SpawnR
     // remaining two privileges were the cause. See module-level docs.
     enable_cross_session_spawn_privileges();
 
-    log::info(&format!("spawn-user-launcher: targeting session id={session_id}"));
+    log::info(&format!(
+        "spawn-user-launcher: targeting session id={session_id}"
+    ));
 
     unsafe {
         let mut user_token: HANDLE = HANDLE::default();
@@ -296,7 +298,10 @@ pub fn spawn_in_session(session_id: u32, args: &SpawnUserLauncherArgs) -> SpawnR
             .parent()
             .and_then(|p| p.to_str());
         let cwd_wide: Option<Vec<u16>> = cwd.map(|s| {
-            OsStr::new(s).encode_wide().chain(std::iter::once(0)).collect()
+            OsStr::new(s)
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect()
         });
         // windows-rs 0.58 wants a concrete PCWSTR for lpCurrentDirectory,
         // not Option<PCWSTR>. PCWSTR::null() is the documented "no cwd"
@@ -480,6 +485,9 @@ mod tests {
         // runtime spawn failure (code 4 or 5). Either is acceptable — assert
         // it's non-zero non-2 (so we got past argv parsing).
         let code = result.unwrap();
-        assert!(code != 0 && code != 2, "expected runtime failure code (not argv error or success), got {code}");
+        assert!(
+            code != 0 && code != 2,
+            "expected runtime failure code (not argv error or success), got {code}"
+        );
     }
 }

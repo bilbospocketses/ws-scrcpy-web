@@ -47,5 +47,9 @@ fn print_active_session_outputs_a_number_or_empty() {
     // shouldn't appear because the canonical resolver maps the
     // WTSGetActiveConsoleSessionId 0xFFFFFFFF sentinel to None (which
     // would have produced empty stdout above).
-    assert_ne!(parsed, u32::MAX, "expected real session id, got u32::MAX sentinel");
+    assert_ne!(
+        parsed,
+        u32::MAX,
+        "expected real session id, got u32::MAX sentinel"
+    );
 }
