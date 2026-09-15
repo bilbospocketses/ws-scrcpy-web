@@ -23,6 +23,7 @@
 //     node_modules/        (production deps only)
 //     package.json
 //     package-lock.json
+//     THIRD-PARTY-NOTICES.md
 //     [seed/node/]
 //     [servy-cli.exe]
 
