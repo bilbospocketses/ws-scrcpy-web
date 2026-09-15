@@ -309,9 +309,13 @@
     gap: 8px;
 }
 
+/* .dep-btn's base ALREADY paints border and text in --accent-color, so recolouring
+   them here would leave the selected mode looking exactly like the unselected one.
+   The selected state has to be a fill. It is a tint of the accent rather than
+   --device-list-hover-color, which .dep-btn:hover already uses — otherwise
+   "selected" and "the pointer is over it" would be the same thing. */
 .dep-btn[data-pair-mode][aria-pressed="true"] {
-    border-color: var(--accent-color);
-    color: var(--accent-color);
+    background: rgba(var(--accent-rgb), 0.15);
 }
 
 /* The real payload encodes as a version-4 symbol: 33 modules, 41 across with the
@@ -381,7 +385,7 @@
 .discovery-pairing-status {
     font-size: 13px;
     color: var(--text-color);
-    word-break: break-word;
+    overflow-wrap: anywhere;
 }
 
 .discovery-pairing-status:empty {

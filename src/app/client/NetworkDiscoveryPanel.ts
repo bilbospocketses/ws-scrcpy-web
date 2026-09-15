@@ -71,7 +71,13 @@ export function pairingStatusText(status: PairingStatus): { text: string; action
         case 'connecting':
             return { text: 'Paired. Connecting…' };
         case 'paired':
-            return { text: 'Paired and connected.' };
+            // The "within a few seconds" is not padding. The server's
+            // ControlCenter discovers device-set changes by polling adb every
+            // 5000 ms, so the row can lag this message by up to ~5 s, and an
+            // empty list in that window reads as a failure unless it is named.
+            // (A client-side refresh cannot shorten it: the tracker only diffs
+            // descriptors it was pushed, so there is nothing local to re-fetch.)
+            return { text: 'Paired and connected. The device appears in the list within a few seconds.' };
         case 'paired-not-connected':
             // Deliberately NOT phrased as a failure, and deliberately not styled
             // as one either. The pairing is durable and survives; only the
@@ -113,7 +119,19 @@ interface PairingSession {
     cancelled: boolean;
     /** It reached a terminal state, so there is nothing left to cancel. */
     settled: boolean;
+    /** When the scan window shuts, for the QR mode; `null` when the server did not say. */
+    expiresAt: number | null;
+    /** Consecutive polls that never reached the server. Reset by any answer at all. */
+    transportFailures: number;
 }
+
+/**
+ * How many polls in a row may fail to reach the server before the session is
+ * given up on. A single dropped request is not evidence of anything — the server
+ * may be mid-`adb pair` and about to succeed — and abandoning the session there
+ * pushes the user into re-pairing a device that is about to pair itself.
+ */
+const MAX_POLL_TRANSPORT_FAILURES = 3;
 
 /**
  * Builds the "Pair a new device" section: a QR mode and a typed-pairing-code
@@ -203,6 +221,22 @@ export function renderPairingSection(deps: PairingSectionDeps): HTMLElement {
         }, PAIR_POLL_INTERVAL_MS);
     }
 
+    /**
+     * Reads a JSON body, or `null` when the response turns out not to be JSON.
+     *
+     * `res.json()` REJECTS on a non-JSON 200 — a proxy's HTML error page, a
+     * truncated body. Left unguarded inside a `void poll()` that is an unhandled
+     * rejection with no message and no re-arm, and the panel sits on "Scan this
+     * code…" forever. Every caller turns a `null` into the ordinary error path.
+     */
+    async function readJson<T>(res: Response): Promise<T | null> {
+        try {
+            return (await res.json()) as T;
+        } catch {
+            return null;
+        }
+    }
+
     /** The server's own wording for a rejection, which is written to be read by a user. */
     async function serverError(res: Response, fallback: string): Promise<string> {
         if (res.status === 403) {
@@ -226,8 +260,8 @@ export function renderPairingSection(deps: PairingSectionDeps): HTMLElement {
      * How long the code stays scannable, stated once rather than ticked down: a
      * poll surfaces `expired` within a second of it happening anyway.
      */
-    function validityNote(expiresAt: unknown): string {
-        if (typeof expiresAt !== 'number' || !Number.isFinite(expiresAt)) {
+    function validityNote(expiresAt: number | null): string {
+        if (expiresAt === null) {
             return '';
         }
         const seconds = Math.round((expiresAt - Date.now()) / 1000);
@@ -243,7 +277,11 @@ export function renderPairingSection(deps: PairingSectionDeps): HTMLElement {
         const { text, action } = pairingStatusText(status);
         // `paired-not-connected` is NOT styled as an error — see pairingStatusText.
         const kind = status.state === 'failed' ? 'error' : status.state === 'paired' ? 'success' : 'info';
-        setStatus(text, kind);
+        // Re-appended on every awaiting-scan render, not just the first: the
+        // status line is rewritten whole each poll, so a note written once at
+        // startQr would survive exactly one second.
+        const note = status.state === 'awaiting-scan' ? validityNote(current?.expiresAt ?? null) : '';
+        setStatus(text + note, kind);
         if (action) {
             showAction(action, status);
         } else {
@@ -266,25 +304,39 @@ export function renderPairingSection(deps: PairingSectionDeps): HTMLElement {
         try {
             res = await deps.fetchFn(`/api/devices/pair/status?sessionId=${encodeURIComponent(session.id)}`);
         } catch {
-            if (isCurrent(session)) {
-                setStatus('Lost contact with the server while pairing.', 'error');
-                showAction('restart', { state: 'failed' });
+            // A cancel cannot recall a request already in flight, so BOTH exits
+            // need this: without it an errored fetch overwrites "Pairing
+            // cancelled." with a red "Lost contact…" and a restart button.
+            if (session.cancelled || !isCurrent(session)) {
+                return;
             }
+            session.transportFailures++;
+            if (session.transportFailures < MAX_POLL_TRANSPORT_FAILURES) {
+                schedulePoll(session);
+                return;
+            }
+            setStatus('Lost contact with the server while pairing.', 'error');
+            showAction('restart', { state: 'failed' });
             return;
         }
 
+        // The whole point of the cancelled flag. `cancelSession` clears the
+        // timer but leaves `current` pointing here, so `isCurrent` still passes:
+        // without this line a poll already in flight renders over "Pairing
+        // cancelled." and — worse — schedules another, and since the cancel POST
+        // swallows a lost request, a session the user stopped could go on to
+        // announce "Paired and connected."
+        //
+        // It also covers the 404 that a cancel provokes: dropping the session
+        // server-side makes the next status read a miss, which is the
+        // confirmation it is gone rather than a failure. `cancelSession` has
+        // already written that copy synchronously.
+        if (session.cancelled) {
+            return;
+        }
+        session.transportFailures = 0;
+
         if (res.status === 404) {
-            // Cancelling drops the session server-side, so the very next status
-            // poll is a miss — for a session WE cancelled, this 404 is the
-            // confirmation that it is gone, not a failure. Telling the user
-            // pairing broke because they stopped it themselves is a bug.
-            if (session.cancelled) {
-                if (isCurrent(session)) {
-                    setStatus('Pairing cancelled.');
-                    hideAction();
-                }
-                return;
-            }
             if (isCurrent(session)) {
                 cancelBtn.hidden = true;
                 clearQr();
@@ -305,8 +357,15 @@ export function renderPairingSection(deps: PairingSectionDeps): HTMLElement {
             return;
         }
 
-        const status = (await res.json()) as PairingStatus;
+        const status = await readJson<PairingStatus>(res);
         if (!isCurrent(session)) {
+            return;
+        }
+        if (status === null) {
+            cancelBtn.hidden = true;
+            clearQr();
+            setStatus('The server sent a pairing status this page could not read.', 'error');
+            showAction('restart', { state: 'failed' });
             return;
         }
         render(status);
@@ -371,24 +430,36 @@ export function renderPairingSection(deps: PairingSectionDeps): HTMLElement {
             setStatus(await serverError(res, 'Could not start a pairing session.'), 'error');
             return;
         }
-        const body = (await res.json()) as { sessionId?: unknown; svg?: unknown; expiresAt?: unknown };
+        const body = await readJson<{ sessionId?: unknown; svg?: unknown; expiresAt?: unknown }>(res);
         if (gen !== generation) {
             return;
         }
-        const sessionId = typeof body.sessionId === 'string' ? body.sessionId : '';
-        const svg = typeof body.svg === 'string' ? body.svg : '';
+        const sessionId = typeof body?.sessionId === 'string' ? body.sessionId : '';
+        const svg = typeof body?.svg === 'string' ? body.svg : '';
         if (!sessionId || !svg) {
             setStatus('The server did not return a pairing code.', 'error');
             return;
         }
+        const expiresAt =
+            typeof body?.expiresAt === 'number' && Number.isFinite(body.expiresAt) ? body.expiresAt : null;
         // SAFE HERE, AND ONLY HERE: `svg` comes from our own `encodeQrSvg`, which
         // emits a <rect> and a <path> built from a numeric module matrix and
         // never interpolates the payload text into the markup. Do not copy this
         // to markup from a source you do not control.
         qrBox.innerHTML = svg;
         qrBox.hidden = false;
-        setStatus(pairingStatusText({ state: 'awaiting-scan' }).text + validityNote(body.expiresAt));
-        current = { id: sessionId, mode: 'qr', generation: gen, cancelled: false, settled: false };
+        current = {
+            id: sessionId,
+            mode: 'qr',
+            generation: gen,
+            cancelled: false,
+            settled: false,
+            expiresAt,
+            transportFailures: 0,
+        };
+        // Rendered through `render` rather than a bespoke setStatus, so the
+        // validity note comes from the one place that appends it.
+        render({ state: 'awaiting-scan' });
         cancelBtn.hidden = false;
         schedulePoll(current);
     }
@@ -441,11 +512,11 @@ export function renderPairingSection(deps: PairingSectionDeps): HTMLElement {
             syncSubmit();
             return;
         }
-        const body = (await res.json()) as { sessionId?: unknown };
+        const body = await readJson<{ sessionId?: unknown }>(res);
         if (gen !== generation) {
             return;
         }
-        const sessionId = typeof body.sessionId === 'string' ? body.sessionId : '';
+        const sessionId = typeof body?.sessionId === 'string' ? body.sessionId : '';
         if (!sessionId) {
             setStatus('The server did not start a pairing session.', 'error');
             syncSubmit();
@@ -455,7 +526,17 @@ export function renderPairingSection(deps: PairingSectionDeps): HTMLElement {
         // off the screen the moment it has been spent.
         codeInput.value = '';
         syncSubmit();
-        current = { id: sessionId, mode: 'code', generation: gen, cancelled: false, settled: false };
+        current = {
+            id: sessionId,
+            mode: 'code',
+            generation: gen,
+            cancelled: false,
+            settled: false,
+            // A typed code goes straight to `pairing`, which never expires:
+            // the TTL bounds the scan window, and there is no scan here.
+            expiresAt: null,
+            transportFailures: 0,
+        };
         cancelBtn.hidden = false;
         schedulePoll(current);
     }
