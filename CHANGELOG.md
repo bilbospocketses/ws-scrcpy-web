@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Rotating a connected device no longer distorts the picture or misplaces your taps.** scrcpy v4 announces a rotation or resize with a "session packet" on the video socket, and the server was detecting those packets only to throw them away — so the browser never learned the new geometry and kept rendering, and mapping touches, against the size the capture had at connect time. The picture stretched, and because the touch mapping is built from the same numbers, taps landed at the wrong coordinates on a screen that otherwise looked fine. Disconnecting and reconnecting was the only cure. Session packets now travel to the browser on their own channel, which resizes the canvas and rebuilds the touch mapping in place. Smoke rows **8.10** (the picture re-fits) and **8.11** (taps still land) cover it — two rows rather than one, because the picture and the touch mapping fail independently and a screen that looks correct while misplacing every tap is the half nobody would think to check.
+
 ## [0.1.30-beta.126] - 2026-09-15
 
 ### Fixed

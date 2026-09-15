@@ -121,7 +121,7 @@ src/
 │       ├── HttpServer.ts             # Static file server
 │       └── WebSocketServer.ts        # WS upgrade handler, routes to middleware
 ├── common/                            # Shared between server and browser
-│   ├── ChannelId.ts                  # Channel enum: VIDEO=0, AUDIO=1, CONTROL=2, DEVICE_MSG=3, METADATA=4
+│   ├── ChannelId.ts                  # Channel enum: VIDEO=0, AUDIO=1, CONTROL=2, DEVICE_MSG=3, METADATA=4, SESSION=5
 │   ├── ScrcpyCodec.ts               # Codec ID constants (4-byte magic values) and name lookup
 │   ├── Constants.ts                  # Server version, package name, device paths
 │   ├── Action.ts                     # WebSocket action identifiers (STREAM_SCRCPY, PROBE_DEVICE, etc.)
@@ -146,6 +146,7 @@ All communication between browser and server flows through a single WebSocket co
 | `CONTROL` | `2` | Browser -> Server | Touch, key, scroll, UHID commands |
 | `DEVICE_MSG` | `3` | Server -> Browser | Clipboard, ACK from device |
 | `METADATA` | `4` | Server -> Browser | Session metadata (sent once at start) |
+| `SESSION` | `5` | Server -> Browser | Capture-session change: the device rotated or the capture was resized (`{width, height}` JSON, sent on each change) |
 
 Wire format for every WebSocket message:
 
@@ -244,6 +245,8 @@ The connection lifecycle in `ScrcpyConnection.start()`:
 
 The `FrameReader` accumulates TCP chunks into an internal buffer and drains complete frames (12-byte header + payload). It emits typed `ScrcpyFrame` objects with `type: 'config' | 'keyframe' | 'frame'`.
 
+It also emits `ScrcpySessionChange` objects. scrcpy v4 interleaves **session packets** on the video socket whenever the capture session changes — a rotation or a resize — marked by the MSB of the first 8 bytes and carrying `{flags, width, height}` in 12 bytes with no payload following. `onSessionChange` reports them; `ScrcpyConnection` forwards each on channel 5. The width and height are scrcpy's own video size, which is the number the browser must size by — see §11.1.
+
 ### 3.2 Browser Side: Demuxer to Player
 
 `ScrcpyDemuxer` receives binary WebSocket messages, strips the channel byte, and dispatches:
@@ -254,7 +257,10 @@ WebSocket -> ScrcpyDemuxer.onMessage()
     -> channel 1 -> handleMediaFrame() -> audioCallback(data, pts, isConfig)
     -> channel 3 -> deviceMsgCallback(payload)
     -> channel 4 -> handleMetadata() -> metadataCallback(parsed JSON)
+    -> channel 5 -> handleSessionChange() -> sessionChangeCallback({width, height})
 ```
+
+Channel 5 is deliberately not a re-sent channel 4. `StreamClientScrcpy.onMetadata` constructs the `AudioPlayer`, so announcing a rotation by re-sending METADATA would build a fresh audio pipeline on every rotation.
 
 `StreamClientScrcpy` wires the callbacks:
 - `onVideoFrame` -> `WebCodecsPlayer.pushVideoFrame()`
@@ -891,6 +897,8 @@ const displayH = this.metadataHeight || result.height;
 this.scaleCanvas(displayW, displayH);                   // Canvas = display dims
 this.decoder.configure({ codec, codedWidth: codedW, codedHeight: codedH, ... });
 ```
+
+**`metadataWidth` is not fixed for the life of the session (item 24).** Because it is always truthy once set, it always wins that `||` — so while it held only the opening METADATA, a rotation could never change the display size: the device sent a fresh config packet with the new SPS, and the stale opening value beat it. The canvas and the touch mapping stayed in the pre-rotation orientation until the user reconnected. `WebCodecsPlayer.onSourceResize()` now replaces it from each channel-5 session packet, which is the only source that agrees with scrcpy's own video size — preferring the SPS instead would reintroduce exactly the padding bug this section exists to describe.
 
 ### 11.2 Edge H.265 Canvas Rendering
 
