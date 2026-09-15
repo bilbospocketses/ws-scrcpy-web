@@ -13,6 +13,7 @@ import { EmbedRequestApi } from './api/EmbedRequestApi';
 import { ServerShutdownApi } from './api/ServerShutdownApi';
 import { ServiceApi } from './api/ServiceApi';
 import { SettingsApi } from './api/SettingsApi';
+import { SettingsBatchApi } from './api/SettingsBatchApi';
 import { UpdatesApi } from './api/UpdatesApi';
 import { UsersApi } from './api/UsersApi';
 import { WhoamiApi } from './api/WhoamiApi';
@@ -20,6 +21,7 @@ import { AuthGate } from './auth/AuthGate';
 import { Config } from './Config';
 import { DependencyManager } from './DependencyManager';
 import { DeviceProbe } from './DeviceProbe';
+import { reconcilePendingSettings } from './db/reconcilePendingSettings';
 import { Logger } from './Logger';
 import { HostTracker } from './mw/HostTracker';
 import type { MwFactory } from './mw/Mw';
@@ -89,6 +91,11 @@ if (__ssArgs) {
     const runningServices: Service[] = [];
 
     const config = Config.getInstance();
+
+    // Boot-time reconciliation of the staged-settings write-ahead log: a row
+    // still 'pending' means a previous instance died mid-batch. Must run before
+    // any API handler can accept a new batch. See reconcilePendingSettings.ts.
+    reconcilePendingSettings(config.db);
 
     // Apply the operator-configured Host allowlist to the security layer before
     // any server starts accepting requests. Empty by default (localhost + IP
@@ -170,6 +177,9 @@ if (__ssArgs) {
 
     const settingsApi = new SettingsApi();
     HttpServer.addApiHandler(settingsApi);
+
+    const settingsBatchApi = new SettingsBatchApi();
+    HttpServer.addApiHandler(settingsBatchApi);
 
     const serviceApi = new ServiceApi();
     HttpServer.addApiHandler(serviceApi);

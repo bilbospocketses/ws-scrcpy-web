@@ -1,5 +1,5 @@
 import { type Browser, type BrowserContext, expect, request, test } from '@playwright/test';
-import { dismissPromptsFor, mintToken, newVisitorContext, openSettings, settingsSection } from './support/auth';
+import { dismissPromptsFor, mintToken, newVisitorContext, openSettings, openSettingsTab } from './support/auth';
 import {
     composeDown,
     composeRecreateKeepingVolume,
@@ -124,7 +124,7 @@ test.describe('container lifecycle (smoke §20.6, §20.11, §20.12)', () => {
             ctx = visitor.context;
 
             const settings = await openSettings(visitor.page);
-            const stopBtn = settingsSection(settings, 'Server').getByRole('button', {
+            const stopBtn = (await openSettingsTab(settings, 'Server')).getByRole('button', {
                 name: 'stop server & exit',
                 exact: true,
             });

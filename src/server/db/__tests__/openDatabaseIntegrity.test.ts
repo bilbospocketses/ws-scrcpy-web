@@ -20,8 +20,8 @@ describe('openDatabase integrity recovery', () => {
         const p = path.join(dir, 'wsscrcpy.db');
         fs.writeFileSync(p, 'this is not a sqlite database header at all');
         const db = openDatabase(p);
-        // Fresh DB is usable at v1 and the corrupt file was preserved with a .corrupt- suffix.
-        expect((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(1);
+        // Fresh DB is usable at v2 and the corrupt file was preserved with a .corrupt- suffix.
+        expect((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(2);
         const moved = fs.readdirSync(dir).filter((f) => f.startsWith('wsscrcpy.db.corrupt-'));
         expect(moved.length).toBe(1);
         db.close();

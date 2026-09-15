@@ -17,9 +17,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.125] - 2026-09-15
+
 ### Changed
 
 - **CI now runs the Rust test suite on Windows.** `main.rs` gates `windows_app_uninstall` behind `#[cfg(windows)]`, so on the ubuntu runner that module is not compiled at all — its 54 tests did not fail there, they did not exist there, and the same was true of every other Windows-only path. Nothing else covered them either: CodeQL's Windows job compiles the tree but runs no tests. They had only ever executed when someone typed `cargo test` on a Windows machine by hand. A new `windows-rust-checks` job runs `cargo test` and `clippy` on `windows-latest`.
+- **Settings is now a tabbed dialog, and changes are staged until you press Save.** Users, Embedding, Updates, Service, Dependencies and Server, each shown according to your role. Editing a value stages it rather than writing it, and one **save** button at the bottom of the dialog applies the whole set. Save always shows a review screen first, listing every pending change as `setting: old → new`, so nothing is applied that was not named. Switching tabs keeps your edits and never prompts; closing with unsaved changes asks whether to save, discard or go back, and going back returns you to the dialog with everything still staged. A change the server refuses leaves the dialog open with your edits intact and says which one it refused.
+- **Updates settings no longer save on the spot.** The update channel, automatic updates and the check interval each used to fire their own write the moment you touched them, so flipping one and closing the dialog saved it. They are now staged like the web port and applied by Save — closing without saving changes nothing. The GitHub-owner field is the exception and still writes as soon as you leave it. Buttons were never settings and are unchanged: installing the service, adding a user, installing a dependency and the rest all act immediately when clicked and never appear on the review screen.
+- **Dependencies moved into Settings.** The full panel is now a tab of its own. The home page keeps a small alert card that stays hidden unless something actually needs updating, and its button opens the dialog on the Dependencies tab.
+
+### Added
+
+- **A settings batch is recorded in the database before any of it is applied**, so a save interrupted halfway leaves a durable record instead of a half-applied guess. The web port is always applied last, because it is the only change that restarts the server and anything applied after it could be lost. A batch that never finished is reported at the next start and deliberately **not** re-applied — silently applying settings you may not remember confirming is worse than losing them, and the record still explains what happened.
 
 ## [0.1.30-beta.124] - 2026-09-13
 

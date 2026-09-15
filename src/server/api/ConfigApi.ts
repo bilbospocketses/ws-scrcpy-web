@@ -3,7 +3,7 @@ import type { AppConfigEnvelope, AppConfigPatchResponse } from '../../common/Con
 import { callerIsLocal, requireOperator, resolveAdminScope } from '../auth/requireOperator';
 import { Config, ConfigValidationError } from '../Config';
 import { Logger } from '../Logger';
-import { writeFileAtomicSync } from '../util/atomicFile';
+import { scheduleRestartForPortChange } from './restartRequest';
 import { BodyTooLargeError, readBodyCapped } from './utils';
 
 const log = Logger.for('ConfigApi');
@@ -77,22 +77,7 @@ export class ConfigApi {
                     // sent every off-box client to its own machine.)
                     if (result.restartRequired) {
                         response.redirectPort = result.config.webPort;
-                        const markerPath = cfg.restartMarkerPath;
-                        try {
-                            writeFileAtomicSync(markerPath, `restart-requested-${Date.now()}`);
-                        } catch (err) {
-                            log.warn(
-                                `could not write .restart marker (port change won't take effect until manual restart): ${(err as Error).message}`,
-                            );
-                        }
-                        // Schedule own exit AFTER responding. exit-75
-                        // is the supervisor's restart signal. Delay
-                        // long enough for the response body + headers
-                        // to fully flush over the socket.
-                        setTimeout(() => {
-                            log.info('port change committed; exiting with 75 to trigger restart');
-                            process.exit(75);
-                        }, 1000).unref();
+                        scheduleRestartForPortChange(cfg.restartMarkerPath, log);
                     }
 
                     res.writeHead(200);

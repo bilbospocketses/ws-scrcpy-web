@@ -36,6 +36,7 @@ import {
     mintToken,
     newVisitorContext,
     openSettings,
+    openSettingsTab,
     openUsersModal,
     PROBE_USERNAME,
     probeWs,
@@ -206,7 +207,10 @@ test.describe('auth / opt-in login (smoke §18)', () => {
                 user: { username: 'admin', role: 'admin' },
             });
 
-            const users = settingsSection(settings, 'Users');
+            // Explicitly, not by relying on Users being the first tab: the
+            // count-0 assertions below are role queries, which read zero inside a
+            // closed tab whether the control is absent or merely hidden.
+            const users = await openSettingsTab(settings, 'Users');
             await expect(users).toBeVisible();
             const enable = settingsRow(users, 'login').getByRole('button', { name: 'enable login', exact: true });
             await expect(enable).toBeVisible();
@@ -441,13 +445,35 @@ test.describe('auth / opt-in login (smoke §18)', () => {
         expect(adminRow?.lastLogin ?? 0).toBeGreaterThanOrEqual(t0);
 
         const settings = await openSettings(adminPage);
+        // The tab STRIP is what a user actually sees, and it is the list that
+        // grew: Dependencies contributes no `h3` (it wraps DependencyPanel,
+        // which brings its own <h2>), so the heading list below is the tab list
+        // minus that one. Asserting only the headings would have kept passing
+        // through a whole tab being added.
+        await expect(settings.getByRole('tab')).toHaveText([
+            'Users',
+            'Embedding',
+            'Updates',
+            'Service',
+            'Dependencies',
+            'Server',
+        ]);
         await expect(sectionHeadings(settings)).toHaveText(['Users', 'Embedding', 'Updates', 'Service', 'Server']);
+        // Users is the tab the dialog happens to open on for an admin, and the
+        // three assertions below are about controls that live in it. Opened
+        // explicitly so they stay true if the tab order ever changes — a role
+        // query reads zero inside a closed tab, which would make the count-0
+        // half pass for the wrong reason.
+        await openSettingsTab(settings, 'Users');
         // Rules out the fail-open path: 'disable login' renders only when a
         // SUCCESSFUL me() came back with authEnabled:true.
         await expect(settings.getByRole('button', { name: 'disable login (return to open mode)' })).toBeVisible();
         await expect(settings.getByRole('button', { name: 'enable login', exact: true })).toHaveCount(0);
         await expect(settings.getByRole('button', { name: 'manage users', exact: true })).toBeVisible();
-        const server = settingsSection(settings, 'Server');
+        // The three above live in the Users tab, which opens first. The rest are
+        // in Server, and a role query cannot see into a closed tab — hence the
+        // switch rather than a second locator.
+        const server = await openSettingsTab(settings, 'Server');
         await expect(settingsRow(server, 'web port').locator('input[type="number"]')).toHaveCount(1);
         await expect(settings.getByRole('button', { name: 'stop server & exit' })).toBeAttached();
         await expect(settings.locator('[data-action="change-password"]')).toHaveCount(1);
@@ -846,7 +872,12 @@ test.describe('auth / opt-in login (smoke §18)', () => {
             }
 
             const settings = await openSettings(user.page);
+            await expect(settings.getByRole('tab')).toHaveText(['Server']);
             await expect(sectionHeadings(settings)).toHaveText(['Server']);
+            // The one tab this role gets, opened explicitly: every assertion
+            // below is a role query, and inside a closed tab those read zero
+            // (absent) or miss (present) regardless of the truth.
+            await openSettingsTab(settings, 'Server');
             await expect(settings.getByRole('button', { name: 'manage users', exact: true })).toHaveCount(0);
             await expect(settings.getByRole('button', { name: 'disable login (return to open mode)' })).toHaveCount(0);
             await expect(settings.getByText('web port', { exact: true })).toHaveCount(0);
@@ -859,6 +890,14 @@ test.describe('auth / opt-in login (smoke §18)', () => {
             // meaningful only if the same selectors find things for an admin.
             await gotoHome(adminPage);
             const adminSettings = await openSettings(adminPage);
+            await expect(adminSettings.getByRole('tab')).toHaveText([
+                'Users',
+                'Embedding',
+                'Updates',
+                'Service',
+                'Dependencies',
+                'Server',
+            ]);
             await expect(sectionHeadings(adminSettings)).toHaveText([
                 'Users',
                 'Embedding',
@@ -866,6 +905,9 @@ test.describe('auth / opt-in login (smoke §18)', () => {
                 'Service',
                 'Server',
             ]);
+            // Same explicitness as the user side above: 'manage users' lives in
+            // the Users tab, so the contrast is only a contrast with it open.
+            await openSettingsTab(adminSettings, 'Users');
             await expect(adminSettings.getByRole('button', { name: 'manage users', exact: true })).toHaveCount(1);
             await closeTopModal(adminPage, adminSettings);
         } finally {
@@ -1061,7 +1103,8 @@ test.describe('auth / opt-in login (smoke §18)', () => {
             await gotoHome(adminPage);
             await expectAppShell(adminPage);
             const settings = await openSettings(adminPage);
-            const server = settingsSection(settings, 'Server');
+            // The session row is in the Server tab; Users opens first.
+            const server = await openSettingsTab(settings, 'Server');
             const logoutBtn = server.locator('button[data-action="logout"]');
             await expect(logoutBtn).toBeVisible();
             await expect(logoutBtn).toHaveText('log out');
@@ -1196,12 +1239,19 @@ test.describe('auth / opt-in login (smoke §18)', () => {
             await gotoHome(adminPage);
             await expectAppShell(adminPage);
             const settings = await openSettings(adminPage);
-            const users = settingsSection(settings, 'Users');
+            // Opened explicitly rather than trusting Users to be first: the
+            // count-0 on 'enable login' below is a role query.
+            const users = await openSettingsTab(settings, 'Users');
             const disableBtn = users.getByRole('button', { name: 'disable login (return to open mode)' });
             await expect(disableBtn).toBeVisible();
             await expect(users.getByRole('button', { name: 'enable login', exact: true })).toHaveCount(0);
+            // Both session controls live in the Server tab, so open it to see
+            // them — then come back to Users, where the disable button is.
+            await openSettingsTab(settings, 'Server');
             await expect(settings.getByRole('button', { name: 'log out', exact: true })).toBeVisible();
             await expect(settings.getByRole('button', { name: 'change password', exact: true })).toBeVisible();
+            await openSettingsTab(settings, 'Users');
+            await expect(disableBtn).toBeVisible();
 
             // A sentinel global survives a dialog close but not a real reload.
             await adminPage.evaluate(() => {
@@ -1248,14 +1298,21 @@ test.describe('auth / opt-in login (smoke §18)', () => {
 
             // UI after, admin and anonymous alike.
             const after = await openSettings(adminPage);
-            const usersAfter = settingsSection(after, 'Users');
+            // Explicit for the same reason as every other Users block here.
+            const usersAfter = await openSettingsTab(after, 'Users');
             await expect(usersAfter.getByRole('button', { name: 'enable login', exact: true })).toBeVisible();
             await expect(usersAfter.getByRole('button', { name: 'disable login (return to open mode)' })).toHaveCount(
                 0,
             );
+            await expect(after.locator('h3.settings-section-heading', { hasText: /^Users$/ })).toBeVisible();
+            // Both session controls are gone now that auth is back off. Asserted
+            // with the Server tab OPEN, because that is where they would render
+            // if they had survived. Counted from here — the Users tab — the zero
+            // would be the closed tab talking: a role query does not see into a
+            // `hidden` subtree, so it would read zero either way.
+            await openSettingsTab(after, 'Server');
             await expect(after.getByRole('button', { name: 'log out', exact: true })).toHaveCount(0);
             await expect(after.getByRole('button', { name: 'change password', exact: true })).toHaveCount(0);
-            await expect(after.locator('h3.settings-section-heading', { hasText: /^Users$/ })).toBeVisible();
             await closeTopModal(adminPage, after);
             const anonSettings = await openSettings(anon.page);
             await expect(anonSettings.locator('h3.settings-section-heading', { hasText: /^Users$/ })).toBeVisible();

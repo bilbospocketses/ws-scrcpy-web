@@ -9,6 +9,8 @@ import {
     me,
     mintToken,
     newVisitorContext,
+    openSettings,
+    openSettingsTab,
 } from './support/auth';
 import { gotoHome } from './support/consent';
 import { composeDown, composeUpFresh, dockerExecRoot, dockerLogs } from './support/dockerStack';
@@ -24,6 +26,12 @@ import {
 /**
  * Smoke rows 9.4, 9.5 and 1.9 — the dependencies panel, the shell-unavailable
  * reason, and the first-run bootstrap banner.
+ *
+ * The panel moved into Settings → Dependencies (the tabbed-settings work); the
+ * home page keeps only an alert card, which shows when a dependency has an
+ * update waiting. 9.4 therefore drives the dialog rather than the home page,
+ * and asserts on the home page only that nothing dependency-shaped is left
+ * there.
  *
  * 9.4's open-mode half runs on the shared server; its admin-gating half needs
  * locked mode and gets a spec-owned server so the shared one's auth state is
@@ -48,7 +56,7 @@ test.describe('dependencies (smoke §9.4, §9.5, §1.9)', () => {
         sharedBrowser = browser;
     });
 
-    test('9.4 the Dependencies panel lists every dependency with its installed version, check-for-updates fills Latest, and the whole surface is admin-only', async () => {
+    test('9.4 Settings → Dependencies lists every dependency with its installed version, check-for-updates fills Latest, and the whole surface is admin-only', async () => {
         test.setTimeout(240_000);
 
         // --- open mode, shared server: the table loads and the check populates Latest.
@@ -71,8 +79,39 @@ test.describe('dependencies (smoke §9.4, §9.5, §1.9)', () => {
             expect(deps.map((d) => d.name).sort()).toEqual(['adb', 'nodejs', 'scrcpy-server']);
 
             await gotoHome(visitor.page);
-            const panel = visitor.page.locator('#dependency-panel');
+            // Nothing dependency-shaped is left on the home page. This is the
+            // assertion that the move actually happened — it fails if the panel
+            // is still mounted here.
+            await expect(visitor.page.locator('#dependency-panel')).toHaveCount(0);
+
+            const settings = await openSettings(visitor.page);
+            const section = await openSettingsTab(settings, 'Dependencies');
+            const panel = section.locator('#dependency-panel');
+            // Auto-waits: the tab holds its read until the /api/config probe
+            // answers, so the panel mounts a beat after the tab is shown.
             await expect(panel).toBeVisible();
+
+            // It spans the whole tab, not the labels column. The section body is
+            // a two-column grid with a FIXED 20rem labels track (modal.css), so a
+            // child that does not span both columns renders a five-column table
+            // crushed into ~320px. Nothing else in either suite can see that:
+            // jsdom has no layout engine and toBeVisible() is true at any width.
+            //
+            // Geometry rather than toHaveCSS('grid-column'), deliberately: the
+            // edges stay true however the span is achieved, so moving the fix
+            // into a stylesheet later does not turn this red, while the 20rem
+            // track coming back by ANY route does. toBeVisible() has resolved
+            // above, so neither box can be null.
+            const panelBox = await panel.boundingBox();
+            const bodyBox = await section.locator('.settings-section-body').boundingBox();
+            expect(panelBox, 'panel bounding box').not.toBeNull();
+            expect(bodyBox, 'section body bounding box').not.toBeNull();
+            const left = Math.abs((panelBox?.x ?? 0) - (bodyBox?.x ?? 0));
+            const right = Math.abs(
+                (panelBox?.x ?? 0) + (panelBox?.width ?? 0) - ((bodyBox?.x ?? 0) + (bodyBox?.width ?? 0)),
+            );
+            expect(left, `panel left edge vs section body (panel ${panelBox?.width}px wide)`).toBeLessThanOrEqual(2);
+            expect(right, `panel right edge vs section body (panel ${panelBox?.width}px wide)`).toBeLessThanOrEqual(2);
             await expect(panel.locator('h2')).toHaveText('Dependencies');
             await expect(panel.locator('thead th')).toHaveText([
                 'Dependency',
@@ -158,13 +197,28 @@ test.describe('dependencies (smoke §9.4, §9.5, §1.9)', () => {
             const direct = await fetchFromPage(user.page, '/api/dependencies/adb/update', { method: 'POST' });
             expect(direct.status).toBe(403);
             expect(direct.body).toEqual({ error: 'forbidden' });
-            // The UI half: the panel is not mounted at all. It used to render
+            // The UI half: the section is not offered at all. It used to render
             // its failure state instead — "Failed to load dependencies" — so the
             // row's "doesn't see it" was the panel FAILING rather than the panel
             // being GATED. An authorization boundary that manifests as an error
             // message reads as a bug to the user and as coverage to the
             // checklist, which is register finding 9.6.
-            await expect(user.page.locator('#dependency-panel')).toHaveCount(0);
+            //
+            // Asserted where the section now LIVES. A bare `#dependency-panel`
+            // count of 0 on the home page would pass for every role now that
+            // nothing mounts there — true for a reason that has nothing to do
+            // with gating, which is not what this row is for. The admin block
+            // below is the other half: it opens the same dialog on the same
+            // server and DOES get the tab and the rows, so neither half can
+            // pass by accident.
+            const userSettings = await openSettings(user.page);
+            // Hand-rolled rather than openSettingsTab(): the point is that the
+            // tab is NOT there to open.
+            await expect(userSettings.getByRole('tab', { name: 'Dependencies', exact: true })).toHaveCount(0);
+            await expect(userSettings.locator('#dependency-panel')).toHaveCount(0);
+            // And it is absent rather than erroring — no failure text anywhere
+            // in the dialog or on the page behind it.
+            await expect(user.page.locator('.dep-error-msg')).toHaveCount(0);
 
             // Contrast: the admin on the same server gets the rows.
             const admin = await newVisitorContext(sharedBrowser, { baseURL: paths.baseURL });
@@ -177,8 +231,10 @@ test.describe('dependencies (smoke §9.4, §9.5, §1.9)', () => {
             });
             expect((await admin.context.request.get('/api/dependencies')).status()).toBe(200);
             await admin.page.goto('/');
-            await expect(admin.page.locator('#dependency-panel tbody tr.dep-row').first()).toBeVisible();
-            await expect(admin.page.locator('#dependency-panel td.dep-error-msg')).toHaveCount(0);
+            const adminSettings = await openSettings(admin.page);
+            const adminSection = await openSettingsTab(adminSettings, 'Dependencies');
+            await expect(adminSection.locator('#dependency-panel tbody tr.dep-row').first()).toBeVisible();
+            await expect(adminSection.locator('#dependency-panel td.dep-error-msg')).toHaveCount(0);
         } finally {
             if (userCtx) await userCtx.close();
             if (adminCtx) await adminCtx.close();
