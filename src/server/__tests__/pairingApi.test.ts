@@ -309,6 +309,19 @@ describe('PairingApi authorization', () => {
         const { api } = makeApi();
         expect((await post(api, '/api/devices/pair/qr')).res.statusCode).toBe(200);
     });
+
+    it('does not 403 a URL it does not own, even for a non-admin', async () => {
+        const { api } = makeApi();
+        const bob = Config.getInstance().db.users.create({ username: 'bob', role: 'user', passwordHash: 'x' });
+        // Pins the gate's PLACEMENT, not just its presence: it must sit after
+        // the ownership check. Move it above and this handler starts answering
+        // 403 for DeviceDiscoveryApi's routes. The open-mode ownership test
+        // above cannot catch that — requireAdmin passes there either way.
+        const r = makeReqRes('POST', '/api/devices/scan', {});
+        (r.req as unknown as IncomingMessageWithUser).user = { id: bob.id };
+        expect(await api.handle(r.req, r.res)).toBe(false);
+        expect(r.getStatus()).toBe(0); // nothing written at all
+    });
 });
 
 type IncomingMessageWithUser = { user?: { id: number } };

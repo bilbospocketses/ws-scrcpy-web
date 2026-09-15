@@ -97,9 +97,23 @@ export class PairingApi {
 
         res.setHeader('Content-Type', 'application/json');
 
-        // Pairing grants a new device a lasting trust relationship with this
-        // server, so it is admin-scoped. In open mode this passes: the acting
-        // user resolves to the implicit admin.
+        // Admin-scoped, and DELIBERATELY stricter than the neighbouring device
+        // routes — this asymmetry is the decision, not an oversight to be tidied
+        // away. Pairing establishes a PERSISTENT trust relationship with a NEW
+        // device, on behalf of the whole server; `/api/devices/connect` merely
+        // attaches to a device that is already trusted. That is a real
+        // difference in privilege.
+        //
+        // In open mode this passes: the acting user resolves to the implicit
+        // admin. It is deliberately NOT `requireOperator`, which also demands
+        // loopback — the ordinary way to use this feature is standing at the
+        // phone driving the UI from a laptop across the room, and requiring
+        // loopback would lock that out unless WS_SCRCPY_ALLOW_REMOTE_ADMIN=1.
+        //
+        // The gate sits here — after the ownership check, before the route
+        // table — so that a route added later cannot silently land ungated,
+        // while a URL this handler does not own still falls through with
+        // `false` instead of being answered with somebody else's 403.
         if (!requireAdmin(req, res)) {
             return true;
         }
