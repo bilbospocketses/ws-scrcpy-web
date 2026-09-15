@@ -28,9 +28,17 @@ const PW = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
 
 function pick(alphabet: string, len: number, random: () => Buffer): string {
     const bytes = random();
+    // Production cannot reach this -- randomBytes(64) always covers the longest
+    // draw. An injected `random` can, and a short buffer would not fail: index
+    // `len` past the end is undefined, `undefined % n` is NaN, and `alphabet[NaN]`
+    // is undefined again, so the secret would quietly come out as a run of the
+    // text "undefined". A malformed password must be loud, not subtle.
+    if (bytes.length < len) {
+        throw new RangeError(`random() returned ${bytes.length} bytes, need at least ${len}`);
+    }
     let out = '';
     for (let i = 0; i < len; i++) {
-        out += alphabet[bytes[i]! % alphabet.length]!;
+        out += alphabet[bytes[i]! % alphabet.length];
     }
     return out;
 }
@@ -97,32 +105,59 @@ export class PairingSession {
         return status;
     }
 
+    /*
+     * Every transition below is a no-op once the session is terminal, and that
+     * guard is symmetric on purpose. `cancel()` refusing to un-pair is the
+     * obvious half; the other half is the race that actually happens -- the user
+     * cancels mid-`adb pair`, the adb call then succeeds anyway, and the driver
+     * reports the success it was already committed to. Without the guard the
+     * session flips failed -> paired and a cancelled session comes back to life.
+     * Cancellation, replacement and expiry all make prior work inert, and this
+     * object enforces that rather than leaving it as an unwritten obligation on
+     * whoever drives it.
+     */
+
     markPairing(): void {
+        if (TERMINAL.has(this._state)) {
+            return;
+        }
         this._state = 'pairing';
     }
     /** `serial` is optional because the connect service may answer before it is parsed. */
     markConnecting(serial: string | undefined, address: string): void {
+        if (TERMINAL.has(this._state)) {
+            return;
+        }
         this._state = 'connecting';
         this._serial = serial;
         this._address = address;
     }
     markPaired(): void {
+        if (TERMINAL.has(this._state)) {
+            return;
+        }
         this._state = 'paired';
     }
     markPairedNotConnected(message: string): void {
+        if (TERMINAL.has(this._state)) {
+            return;
+        }
         this._state = 'paired-not-connected';
         this._message = message;
     }
     markFailed(message: string): void {
+        if (TERMINAL.has(this._state)) {
+            return;
+        }
         this._state = 'failed';
         this._message = message;
     }
-    /** No-op once terminal, so cancelling a session that just paired cannot un-pair it. */
     cancel(): void {
-        if (!TERMINAL.has(this._state)) {
-            this._state = 'failed';
-            this._message = 'cancelled';
+        if (TERMINAL.has(this._state)) {
+            return;
         }
+        this._state = 'failed';
+        this._message = 'cancelled';
     }
 }
 
