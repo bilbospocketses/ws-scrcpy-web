@@ -130,6 +130,18 @@ jobs:
 
 Two jobs: `build-windows` (windows-latest runner) and `build-linux` (ubuntu-latest runner). Both parallel after a shared `prepare` job that asserts version sync. After both complete, a `publish` job assembles all artifacts + uploads to GH Release.
 
+> **SUPERSEDED 2026-09-14 — the `vpk` install/invoke lines only (both jobs). Left in place as the
+> record of what was decided for SP3 P6.** The sketch below installs vpk with
+> `dotnet tool install -g vpk` and then invokes a bare `vpk`, which resolves through the system
+> **PATH**. That violates Local-Dependencies-Only, so **do not copy these two lines.** As shipped
+> (item 134), `scripts/vpk-path.mjs` is the single resolver: it installs with
+> `--tool-path <repo>/dependencies/vpk/v<version>/` and returns an absolute path that every call
+> site invokes — there is deliberately no PATH fallback. The version is not hardcoded either; it is
+> derived from the resolved `velopack` entry in `package-lock.json`, because the client library and
+> the packaging CLI must agree on the release-feed serialization. Every other line in this block
+> still reflects the intended shape. Authoritative: `.github/workflows/release.yml` and
+> `scripts/vpk-path.mjs`.
+
 ```yaml
 name: Release
 
