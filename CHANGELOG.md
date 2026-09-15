@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.126] - 2026-09-15
+
 ### Fixed
 
 - **The container Updates note no longer names a tag that does not exist.** It read *"update via `docker pull …:latest`"*, and `:latest` 404s: a beta is deliberately never promoted to `:latest`, so no such tag has been published and none will be until the first stable release. Naming `:beta` instead would have been wrong the other way round from that release onward. Both notes now say what is true in either era — in a container the app is updated by pulling a newer image, whichever tag you track.
