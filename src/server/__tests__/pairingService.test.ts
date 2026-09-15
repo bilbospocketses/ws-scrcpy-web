@@ -46,6 +46,27 @@ function currentSession(svc: PairingService): PairingSession | undefined {
     return (svc as unknown as { session: PairingSession | undefined }).session;
 }
 
+/**
+ * A setTimeout stub that collects the callbacks instead of running them, so a
+ * test can fire a discovery tick by hand and then count how many the service
+ * armed. The handle it hands back is 0 -- deliberately falsy, since a dedupe
+ * written as `if (this.timer) return` would pass against a Node handle and fail
+ * here.
+ */
+function stubTimer() {
+    const ticks: (() => void)[] = [];
+    const setTimeoutFn = ((fn: () => void) => {
+        ticks.push(fn);
+        return 0;
+    }) as unknown as typeof setTimeout;
+    return { ticks, setTimeoutFn };
+}
+
+/** Let an awaited continuation and its `finally` run. */
+function flush(): Promise<void> {
+    return new Promise((resolve) => setImmediate(resolve));
+}
+
 describe('PairingService', () => {
     it('builds the Android WIFI:T:ADB payload from the session', () => {
         const { svc } = makeService();
@@ -122,20 +143,70 @@ describe('PairingService', () => {
         // derived from the clock at read time, never written down -- so a
         // re-arm guard that only looked at the state would poll a QR nobody ever
         // scanned every second for the life of the process.
-        const ticks: (() => void)[] = [];
-        const setTimeoutFn = ((fn: () => void) => {
-            ticks.push(fn);
-            return 0;
-        }) as unknown as typeof setTimeout;
+        const { ticks, setTimeoutFn } = stubTimer();
         const { svc, advance } = makeService({ setTimeoutFn });
         svc.startQr();
         expect(ticks).toHaveLength(1);
 
         advance(180_001);
         ticks[0]!();
-        // The tick body is async; let its .finally(schedule) run.
-        await new Promise((resolve) => setImmediate(resolve));
+        await flush();
         expect(ticks).toHaveLength(1);
+    });
+
+    it('does not let a stale tick re-arm the timer on behalf of the session that replaced it', async () => {
+        // The tick belonging to session A resumes after A has been replaced by B.
+        // Its identity check correctly stops it doing any work -- but the re-arm
+        // in its `finally` runs against `this.session`, which is now B. Without
+        // an identity check there too, B ends up with two live poll loops (the
+        // one `replace` armed is orphaned, because `stop()` can only clear the
+        // single handle in `this.timer`), and one more with every further
+        // replacement mid-tick. It shows up in production as N spawns of
+        // `adb mdns services` a second.
+        const { ticks, setTimeoutFn } = stubTimer();
+        const { svc, adb } = makeService({ setTimeoutFn });
+        let release: () => void = () => {};
+        adb.mdnsServices.mockReturnValue(
+            new Promise((resolve) => {
+                release = () => resolve([]);
+            }),
+        );
+
+        svc.startQr();
+        expect(ticks).toHaveLength(1);
+        ticks[0]!(); // A's tick is now parked on mdnsServices
+        svc.startQr(); // replaces A with B, which arms its own tick
+        expect(ticks).toHaveLength(2);
+
+        release();
+        await flush();
+        expect(ticks).toHaveLength(2);
+    });
+
+    it('discards a hit that arrives after the deadline passed mid-tick', async () => {
+        // mdnsServices gets 8 s, so the deadline can pass while it is in flight.
+        // A status poll in that gap has already told the user 'expired'; walking
+        // the session expired -> pairing -> paired afterwards would be the one
+        // path on which 'expired' is not final. The late hit loses.
+        const { ticks, setTimeoutFn } = stubTimer();
+        const { svc, adb, advance } = makeService({ setTimeoutFn });
+        const { sessionId, payload } = svc.startQr();
+        const name = /S:([^;]+)/.exec(payload)![1]!;
+        let release: () => void = () => {};
+        adb.mdnsServices.mockReturnValue(
+            new Promise((resolve) => {
+                release = () => resolve([{ name, service: PAIR_SVC, address: '10.0.0.5', port: 41415 }]);
+            }),
+        );
+
+        ticks[0]!();
+        advance(180_001);
+        release();
+        await flush();
+
+        expect(adb.pair).not.toHaveBeenCalled();
+        expect(svc.status(sessionId)!.state).toBe('expired');
+        expect(currentSession(svc)?.password).toBe('');
     });
 
     it('blanks the pairing secret once the session is terminal, and stays pollable', async () => {

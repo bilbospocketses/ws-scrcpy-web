@@ -142,6 +142,15 @@ export class PairingService {
         if (this.session !== s) {
             return; // superseded while awaiting mDNS
         }
+        // The deadline can also pass DURING that call (mdnsServices gets 8 s). A
+        // status poll in the gap already reported 'expired', so honouring a hit
+        // found afterwards would walk the session expired -> pairing -> paired
+        // in front of the user. 'expired' is final; the late hit is discarded and
+        // the user rescans.
+        if (s.isExpired(this.deps.now())) {
+            this.expire(s);
+            return;
+        }
         // EXACT name match. Never "any _adb-tls-pairing._tcp on the network":
         // that is a neighbouring host's pairing session as often as it is ours,
         // and the name we generated is the only thing that correlates the two.
@@ -233,7 +242,22 @@ export class PairingService {
             return;
         }
         const setT = this.deps.setTimeoutFn ?? setTimeout;
-        const timer = setT(() => void this.pollOnce().finally(() => this.schedule()), POLL_INTERVAL_MS);
+        const timer = setT(() => {
+            // The re-arm needs the same identity check as every other
+            // continuation. A tick belonging to a session that has since been
+            // replaced would otherwise re-arm on behalf of its SUCCESSOR, and
+            // since `stop()` can only clear the one handle in `this.timer`, the
+            // timer that replacement already armed is orphaned while still live
+            // -- two poll loops for one session, and another with every further
+            // replacement mid-tick. (Deduping on `this.timer` instead does not
+            // work: an already-fired Node handle is still truthy, and a stub
+            // handle may be 0.)
+            void this.pollOnce().finally(() => {
+                if (this.session === s) {
+                    this.schedule();
+                }
+            });
+        }, POLL_INTERVAL_MS);
         // A discovery tick must not hold the process open on its own. Node's
         // timer has unref; an injected stub or a DOM timer handle may not.
         const unref = (timer as { unref?: () => void }).unref;
