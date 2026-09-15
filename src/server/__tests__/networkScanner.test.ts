@@ -182,7 +182,7 @@ describe('NetworkScanner — mdnsOnly mode', () => {
                 adbMdnsServices: async () => [
                     {
                         name: 'adb-SERIAL123-abcd._adb-tls-connect._tcp.local.',
-                        service: '_adb-tls-connect._tcp.',
+                        service: '_adb-tls-connect._tcp',
                         address: '192.168.1.50',
                         port: 41234,
                     },
@@ -218,7 +218,7 @@ describe('NetworkScanner — mdnsOnly mode', () => {
                 adbMdnsServices: async () => [
                     {
                         name: 'adb-XYZ._adb-tls-connect._tcp.local.',
-                        service: '_adb-tls-connect._tcp.',
+                        service: '_adb-tls-connect._tcp',
                         address: '10.0.0.5',
                         port: 5555,
                     },
@@ -412,7 +412,7 @@ describe('NetworkScanner — mDNS track', () => {
                 adbMdnsServices: async () => [
                     {
                         name: 'adb-49241HFAG07SUG-ABCDEF',
-                        service: '_adb-tls-connect._tcp.',
+                        service: '_adb-tls-connect._tcp',
                         address: '1.1.1.5',
                         port: 5555,
                     },
@@ -435,7 +435,7 @@ describe('NetworkScanner — mDNS track', () => {
         const scanner = new NetworkScanner(
             baseDeps({
                 adbMdnsServices: async () => [
-                    { name: 'adb-SERIAL1', service: '_adb._tcp.', address: '1.1.1.5', port: 5555 },
+                    { name: 'adb-SERIAL1', service: '_adb._tcp', address: '1.1.1.5', port: 5555 },
                 ],
                 labelFor: (_userId: number, k: string) => (k === 'SERIAL1' ? 'Living Room TV' : undefined),
             }),
@@ -450,7 +450,7 @@ describe('NetworkScanner — mDNS track', () => {
         const scanner = new NetworkScanner(
             baseDeps({
                 adbMdnsServices: async () => [
-                    { name: 'adb-SERIAL1', service: '_adb-tls-connect._tcp.', address: '1.1.1.5', port: 5555 },
+                    { name: 'adb-SERIAL1', service: '_adb-tls-connect._tcp', address: '1.1.1.5', port: 5555 },
                 ],
                 adbHandshakeProbe: async (h: string) =>
                     h === '1.1.1.5' ? { isAdb: true, model: 'Pixel' } : { isAdb: false },
@@ -474,8 +474,8 @@ describe('NetworkScanner — mDNS track', () => {
         const scanner = new NetworkScanner(
             baseDeps({
                 adbMdnsServices: async () => [
-                    { name: 'adb-NEW11-xx', service: '_adb-tls-connect._tcp.', address: '1.1.1.5', port: 43777 },
-                    { name: 'adb-OLD10', service: '_adb._tcp.', address: '1.1.1.6', port: 5555 },
+                    { name: 'adb-NEW11-xx', service: '_adb-tls-connect._tcp', address: '1.1.1.5', port: 43777 },
+                    { name: 'adb-OLD10', service: '_adb._tcp', address: '1.1.1.6', port: 5555 },
                 ],
                 progressInterval: 1,
                 concurrency: 2,
@@ -517,7 +517,7 @@ describe('NetworkScanner — mDNS track', () => {
             baseDeps({
                 adbDevices: async () => [{ serial: '1.1.1.5:5555', state: 'device' }],
                 adbMdnsServices: async () => [
-                    { name: 'adb-SERIAL1', service: '_adb-tls-connect._tcp.', address: '1.1.1.5', port: 5555 },
+                    { name: 'adb-SERIAL1', service: '_adb-tls-connect._tcp', address: '1.1.1.5', port: 5555 },
                 ],
                 progressInterval: 1,
                 concurrency: 2,

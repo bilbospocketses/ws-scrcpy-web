@@ -145,10 +145,17 @@ export class ControlCenter extends BaseControlCenter<GoogDeviceDescriptor> imple
      * failure.
      *
      * Safe at any time, and deliberately does not disturb the interval. It is
-     * the same idempotent poll the timer runs and swallows its own errors; a
-     * call that overlaps a scheduled run finds that run's bookkeeping already
-     * done, because each run mutates its maps synchronously after its single
-     * await. A no-op before `init`, when there is nothing to refresh.
+     * the same idempotent poll the timer runs, and it swallows its own errors.
+     *
+     * An overlapping call cannot interleave where it would matter. `pollDevices`
+     * awaits TWICE — once on `devices()`, once on the per-device checks — and
+     * every map mutation happens synchronously BETWEEN those two, so the later
+     * run observes the earlier run's bookkeeping already committed and finds
+     * nothing left to transition. What an overlap does cost is a second round of
+     * `checkScreenState` / `detectDeviceKind` per connected device: a few extra
+     * adb shells, on an event that happens once per successful pairing.
+     *
+     * A no-op before `init`, when there is nothing to refresh.
      */
     public async refreshNow(): Promise<void> {
         if (!this.initialized) {

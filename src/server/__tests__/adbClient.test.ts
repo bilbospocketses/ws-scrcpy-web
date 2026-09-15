@@ -16,8 +16,8 @@ describe('parseMdnsOutput', () => {
     it('parses mdns services output with IPs and ports', () => {
         const output = [
             'List of discovered mdns services',
-            'adb-SERIAL1\t_adb-tls-connect._tcp.\t192.168.86.43:5555',
-            'adb-SERIAL2\t_adb-tls-connect._tcp.\t192.168.86.44:5555',
+            'adb-SERIAL1\t_adb-tls-connect._tcp\t192.168.86.43:5555',
+            'adb-SERIAL2\t_adb-tls-connect._tcp\t192.168.86.44:5555',
         ].join('\n');
         const result = parseMdnsOutput(output);
         // The trailing DNS root dot is stripped: it is part of a fully qualified
@@ -44,7 +44,7 @@ describe('parseMdnsOutput', () => {
     it('handles _adb-tls-pairing service type', () => {
         const output = [
             'List of discovered mdns services',
-            'adb-SERIAL1\t_adb-tls-pairing._tcp.\t192.168.86.43:37485',
+            'adb-SERIAL1\t_adb-tls-pairing._tcp\t192.168.86.43:37485',
         ].join('\n');
         const result = parseMdnsOutput(output);
         expect(result[0]!.service).toBe('_adb-tls-pairing._tcp');
@@ -55,7 +55,7 @@ describe('parseMdnsOutput', () => {
         const output = [
             'List of discovered mdns services',
             'some garbage line',
-            'adb-SERIAL1\t_adb-tls-connect._tcp.\t192.168.86.43:5555',
+            'adb-SERIAL1\t_adb-tls-connect._tcp\t192.168.86.43:5555',
             '',
         ].join('\n');
         const result = parseMdnsOutput(output);

@@ -203,6 +203,11 @@ describe('PairingApi code mode', () => {
         const { api, adb } = makeApi();
         for (const address of [
             '-H evil', // option injection: adb parses a leading '-' as a flag
+            // ...and that one does NOT test the hyphen: it fails on the space
+            // and the missing port, so a pattern that allowed a leading hyphen
+            // still rejected it. This is the shape that actually tests it —
+            // well-formed in every other respect, and still an adb option.
+            '-Hevil.com:5555',
             '10.0.0.5', // no port
             '10.0.0.5:0', // port out of range
             '10.0.0.5:70000', // port out of range
