@@ -9,14 +9,17 @@ export type { PairingState, PairingStatus };
 export type PairingMode = 'qr' | 'code';
 
 /**
- * How long a session stays usable. Android's own pairing QR is short-lived, and
- * the secret below is only as good as the window it is exposed for.
+ * How long a session has to be SCANNED. Android's own pairing QR is short-lived,
+ * and the secret below is only as good as the window it is exposed for. The
+ * deadline stops mattering the moment the phone answers -- see `isExpired`.
  */
 export const PAIRING_TTL_MS = 180_000;
 
 /**
  * States past which nothing more happens. A session that reached one of these is
- * never re-reported as `expired`, however long ago the clock ran out.
+ * never re-reported as `expired`, however long ago the clock ran out. (Nor is one
+ * that got as far as `pairing` -- see `isExpired`; this set is the transition
+ * guard, not the expiry rule.)
  */
 const TERMINAL: ReadonlySet<PairingState> = new Set(['paired', 'paired-not-connected', 'failed', 'expired']);
 
@@ -109,8 +112,16 @@ export class PairingSession {
         return this._address;
     }
 
+    /**
+     * The deadline bounds the SCAN, not the pairing that follows it. A session
+     * that is already running `adb pair` is no longer waiting on a human, and
+     * every step past that point is independently bounded by its own adb timeout
+     * -- so nothing can sit in `pairing` or `connecting` forever, and stopping
+     * the clock there costs nothing. It also costs nothing in exposure: by the
+     * time `adb pair` runs, the phone has already consumed the secret.
+     */
     isExpired(now: number): boolean {
-        return !TERMINAL.has(this._state) && now >= this.expiresAt;
+        return this._state === 'awaiting-scan' && now >= this.expiresAt;
     }
 
     /** Never returns the password or the QR payload, in any state. */

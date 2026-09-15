@@ -22,6 +22,20 @@ describe('PairingSession', () => {
         expect(s.isExpired(T0 + 180_000)).toBe(true);
     });
 
+    it('stops expiring once the phone has answered', () => {
+        // The TTL bounds the SCAN -- the phone only advertises its pairing
+        // service while that screen is open. Past that point nothing is waiting
+        // on a human, and every remaining step has its own adb timeout, so a
+        // handshake that started in time is not cut off by the clock.
+        const s = newSession('qr', T0);
+        s.markPairing();
+        expect(s.isExpired(T0 + 200_000)).toBe(false);
+        expect(s.toStatus(T0 + 200_000).state).toBe('pairing');
+
+        // Same for a code-mode session, which never sees awaiting-scan at all.
+        expect(newSession('code', T0).isExpired(T0 + 200_000)).toBe(false);
+    });
+
     it('reports expired through toStatus without needing a timer', () => {
         const s = newSession('qr', T0);
         expect(s.toStatus(T0 + 200_000).state).toBe('expired');

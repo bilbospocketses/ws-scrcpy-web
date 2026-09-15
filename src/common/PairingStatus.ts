@@ -16,8 +16,10 @@
  * - `paired-not-connected` -- terminal, and NOT a failure. The device trusts us,
  *   but its connect port was never found, so the user must connect by hand.
  * - `failed` -- terminal. Also where a cancelled session lands.
- * - `expired` -- the TTL ran out before any terminal state was reached. It is
- *   derived from the clock at read time, never stored.
+ * - `expired` -- the TTL ran out before the QR was scanned. It is derived from
+ *   the clock at read time, never stored, and it can only befall a session still
+ *   in `awaiting-scan`: the deadline bounds the wait for a human, and once the
+ *   pairing handshake is running each remaining step has its own timeout.
  */
 export type PairingState =
     | 'awaiting-scan'
