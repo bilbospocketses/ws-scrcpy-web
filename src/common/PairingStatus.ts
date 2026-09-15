@@ -41,7 +41,12 @@ export interface PairingStatus {
     state: PairingState;
     /** Human-readable detail for a terminal state. Never carries the password. */
     message?: string;
-    /** Device serial, once known. */
+    /**
+     * Device serial, once known — the STRIPPED form the rest of the app keys
+     * devices by, not the raw mDNS instance name. `adb pair` reports a guid
+     * like `adb-5C061JEA327610-bo0E0q`; what lands here is `5C061JEA327610`,
+     * via the same `parseSerialFromMdnsName` the discovery path uses.
+     */
     serial?: string;
     /** 'IP:port' of the connect endpoint, once known. */
     address?: string;

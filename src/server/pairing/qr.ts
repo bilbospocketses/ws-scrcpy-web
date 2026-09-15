@@ -54,12 +54,15 @@ const PENALTY_N2 = 3;
 const PENALTY_N3 = 40;
 const PENALTY_N4 = 10;
 
-export interface QrSvgOptions {
-    /** Pixel size of one module. When given, the <svg> gets width/height attributes. */
-    moduleSize?: number;
-    /** Quiet-zone width in modules. Defaults to 4, the minimum the spec requires. */
-    margin?: number;
-}
+/**
+ * Quiet-zone width in modules — the minimum the spec requires, and the only
+ * value this encoder has ever emitted. Not a parameter: it had one, along with
+ * a `moduleSize`, and no caller ever passed either. Both guards were therefore
+ * unreachable branches whose only prospect was tests written to cover code
+ * nothing used. The SVG scales from its `viewBox`, so a pixel size is the
+ * caller's business anyway.
+ */
+const MARGIN = 4;
 
 /**
  * Encodes `text` as a QR Code (byte mode, ECC level M, version 1..10) and returns a
@@ -67,35 +70,26 @@ export interface QrSvgOptions {
  *
  * @throws Error if `text` is empty, or is too long to fit a version 10 symbol.
  */
-export function encodeQrSvg(text: string, opts: QrSvgOptions = {}): string {
+export function encodeQrSvg(text: string): string {
     if (!text) {
         throw new Error('encodeQrSvg: refusing to encode an empty payload');
     }
-    const margin = opts.margin ?? 4;
-    if (!Number.isInteger(margin) || margin < 0) {
-        throw new Error(`encodeQrSvg: margin must be a non-negative integer, got ${String(opts.margin)}`);
-    }
-    const moduleSize = opts.moduleSize;
-    if (moduleSize !== undefined && (!Number.isFinite(moduleSize) || moduleSize <= 0)) {
-        throw new Error(`encodeQrSvg: moduleSize must be a positive number, got ${String(moduleSize)}`);
-    }
 
     const modules = buildMatrix(text);
-    const n = modules.length + margin * 2;
+    const n = modules.length + MARGIN * 2;
 
     let path = '';
     for (let y = 0; y < modules.length; y++) {
         const row = modules[y]!;
         for (let x = 0; x < row.length; x++) {
             if (row[x]) {
-                path += `M${x + margin} ${y + margin}h1v1h-1z`;
+                path += `M${x + MARGIN} ${y + MARGIN}h1v1h-1z`;
             }
         }
     }
 
-    const size = moduleSize === undefined ? '' : ` width="${n * moduleSize}" height="${n * moduleSize}"`;
     return (
-        `<svg xmlns="http://www.w3.org/2000/svg"${size} viewBox="0 0 ${n} ${n}" shape-rendering="crispEdges">` +
+        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${n} ${n}" shape-rendering="crispEdges">` +
         `<rect width="${n}" height="${n}" fill="#fff"/>` +
         `<path d="${path}" fill="#000"/>` +
         '</svg>'

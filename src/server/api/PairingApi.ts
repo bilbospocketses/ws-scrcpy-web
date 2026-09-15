@@ -162,7 +162,13 @@ export class PairingApi {
                     return true;
                 }
                 res.writeHead(200);
-                res.end(JSON.stringify(svc.startCode(address, code)));
+                // Built explicitly rather than serialising the service's return
+                // value straight through. The response shape is a wire contract
+                // this route owns; passing the internal object through makes any
+                // field added to it for server-side reasons ship to the browser
+                // by accident, which for this service means the pairing secret.
+                const { sessionId } = svc.startCode(address, code);
+                res.end(JSON.stringify({ sessionId }));
                 return true;
             }
 

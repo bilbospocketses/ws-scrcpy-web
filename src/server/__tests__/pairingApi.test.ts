@@ -181,6 +181,24 @@ describe('PairingApi code mode', () => {
         expect((await post(api, '/api/devices/pair/code', { address: '  ', code: '  ' })).res.statusCode).toBe(400);
     });
 
+    it('returns only the sessionId, whatever else the service hands back', async () => {
+        // The route builds its response object explicitly rather than
+        // serialising the service's return value. That distinction is invisible
+        // today — `startCode` happens to return exactly `{ sessionId }` — so it
+        // is asserted against the hazard it exists for: a field added to that
+        // return for server-side reasons must not ship to the browser, and for
+        // THIS service the field that could be added is the pairing secret.
+        const { api, svc } = makeApi();
+        vi.spyOn(svc, 'startCode').mockReturnValue({
+            sessionId: 's1',
+            password: 'SUPERSECRET',
+        } as unknown as ReturnType<PairingService['startCode']>);
+
+        const { body } = await post(api, '/api/devices/pair/code', { address: '10.0.0.5:41415', code: '123456' });
+        expect(Object.keys(body)).toEqual(['sessionId']);
+        expect(JSON.stringify(body)).not.toContain('SUPERSECRET');
+    });
+
     it('rejects an address that is not IP:port, and never runs adb on it', async () => {
         const { api, adb } = makeApi();
         for (const address of [

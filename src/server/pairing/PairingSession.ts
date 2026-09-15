@@ -26,7 +26,18 @@ const TERMINAL: ReadonlySet<PairingState> = new Set(['paired', 'paired-not-conne
 /** RFC 4648 base32, lower-case: the character set mDNS service names tolerate. */
 const B32 = 'abcdefghijklmnopqrstuvwxyz234567';
 
-/** Password alphabet, minus the glyphs that misread when a user types the code by hand (I l 1 O 0). */
+/**
+ * Password alphabet: base62 minus the glyphs that misread as one another
+ * (I l 1 O 0).
+ *
+ * NOT because anyone types this one. In QR mode the phone's scanner reads it,
+ * and a typed-code session uses the code the PHONE generated — this password is
+ * never involved. The exclusions cost about a tenth of a bit per character
+ * (58 symbols rather than 62, so ~70 bits over 12 characters against ~71), which
+ * is far more than a 180 s window needs either way, and they leave the string
+ * safe to read aloud or transcribe if it ever has to be. They stay as a cheap
+ * property, not as a requirement anything depends on.
+ */
 const PW = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
 
 function pick(alphabet: string, len: number, random: () => Buffer): string {

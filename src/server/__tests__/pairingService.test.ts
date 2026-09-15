@@ -94,6 +94,35 @@ describe('PairingService', () => {
         expect(payload).toMatch(/^WIFI:T:ADB;S:wsscrcpy-[a-z2-7]{10};P:[A-Za-z0-9]{12};;$/);
     });
 
+    it('draws the password from the alphabet with the lookalike glyphs removed', () => {
+        // One sample proves nothing here: a 12-character draw misses any single
+        // banned glyph most of the time by chance. Two hundred sessions is 2,400
+        // characters, so an alphabet that had let `l` back in would show it with
+        // overwhelming probability rather than slipping through.
+        const { svc } = makeService();
+        let chars = '';
+        for (let i = 0; i < 200; i++) {
+            chars += /P:([^;]+)/.exec(svc.startQr().payload)![1]!;
+        }
+        expect(chars).toHaveLength(2_400);
+        expect(chars).not.toMatch(/[Il1O0]/);
+        // ...and it is still drawing from the rest, rather than having collapsed
+        // to a narrow subset that would trivially satisfy the line above.
+        expect(new Set(chars).size).toBeGreaterThan(50);
+    });
+
+    it('gives a code-mode session no service name, because it advertises nothing', () => {
+        // The QR flow finds its device by matching an advertised mDNS name
+        // against this field. A typed-code session was handed its address, so it
+        // never advertises and never polls -- an empty name is the honest value,
+        // and a non-empty one could only ever match something belonging to
+        // somebody else.
+        const { svc } = makeService();
+        svc.startCode('10.0.0.5:41415', '123456');
+        expect(currentSession(svc)!.serviceName).toBe('');
+        expect(currentSession(svc)!.state).toBe('pairing');
+    });
+
     it('ignores a pairing service advertised under a DIFFERENT name', async () => {
         const { svc, adb } = makeService();
         svc.startQr();
