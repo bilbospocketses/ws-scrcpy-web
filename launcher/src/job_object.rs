@@ -169,7 +169,10 @@ mod tests {
         adopt(&child).expect("adopt should succeed for fresh child");
 
         // First release: clears the flag. Should report Ok(true).
-        assert!(matches!(release(), Ok(true)), "first release returns Ok(true)");
+        assert!(
+            matches!(release(), Ok(true)),
+            "first release returns Ok(true)"
+        );
 
         // Second release: idempotent — Win32 SetInformationJobObject with
         // the same payload still succeeds, so we still see Ok(true).

@@ -15,20 +15,20 @@ mod supervisor;
 // the tray-supervisor (mod below) now spawns the standalone
 // ws-scrcpy-web-tray.exe in BOTH modes. `mod tray;` was deleted; the in-
 // process thread variant in tray.rs is gone.
-mod tray_supervisor;
-mod uac_requester;
-mod unzip_handler;
-mod operation_server;
+#[cfg(target_os = "linux")]
+mod linux_app_uninstall;
 #[cfg(target_os = "linux")]
 mod linux_apply;
 #[cfg(target_os = "linux")]
 mod linux_service;
 #[cfg(target_os = "linux")]
-mod linux_app_uninstall;
+mod linux_tray;
+mod operation_server;
 #[cfg(target_os = "linux")]
 mod system_service_cli;
-#[cfg(target_os = "linux")]
-mod linux_tray;
+mod tray_supervisor;
+mod uac_requester;
+mod unzip_handler;
 #[cfg(windows)]
 mod user_session_spawn;
 #[cfg(windows)]
@@ -145,7 +145,9 @@ fn main() {
     // verifies it stays up, and rolls back + relaunches local on failure.
     #[cfg(target_os = "linux")]
     if let Some(code) = linux_service::handle_install_handoff(&args) {
-        log::info(&format!("linux-service-install-handoff exiting with code {code}"));
+        log::info(&format!(
+            "linux-service-install-handoff exiting with code {code}"
+        ));
         std::process::exit(code);
     }
 
@@ -165,7 +167,9 @@ fn main() {
     // the privileged (root-owned) teardown group, then exits.
     #[cfg(target_os = "linux")]
     if let Some(code) = linux_app_uninstall::handle_elevated(&args) {
-        log::info(&format!("linux-app-uninstall-elevated exiting with code {code}"));
+        log::info(&format!(
+            "linux-app-uninstall-elevated exiting with code {code}"
+        ));
         std::process::exit(code);
     }
 
@@ -194,9 +198,14 @@ fn main() {
             let live = std::net::TcpStream::connect_timeout(
                 &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
                 std::time::Duration::from_millis(200),
-            ).is_ok();
-            if let Some(url) = linux_service::service_defer_url(Some(mode), Some(port), live, running_as_service) {
-                log::info(&format!("service-defer: active system service; opening {url}"));
+            )
+            .is_ok();
+            if let Some(url) =
+                linux_service::service_defer_url(Some(mode), Some(port), live, running_as_service)
+            {
+                log::info(&format!(
+                    "service-defer: active system service; opening {url}"
+                ));
                 let xdg = format!("{}/xdg-open", linux_service::tool_dir("xdg-open"));
                 let _ = std::process::Command::new(&xdg).arg(&url).status();
                 std::process::exit(0);
@@ -228,13 +237,17 @@ fn main() {
         );
         match action {
             linux_service::BootstrapAction::ExecOpt(target) => {
-                log::info(&format!("bootstrap: exec'ing machine-wide /opt binary {target:?}"));
+                log::info(&format!(
+                    "bootstrap: exec'ing machine-wide /opt binary {target:?}"
+                ));
                 let status = std::process::Command::new(&target).status();
                 let code = status.ok().and_then(|s| s.code()).unwrap_or(0);
                 std::process::exit(code);
             }
             linux_service::BootstrapAction::RunHomeOfferUpdate => {
-                log::info("bootstrap: home AppImage is newer than /opt; running in-place, flagging update offer");
+                log::info(
+                    "bootstrap: home AppImage is newer than /opt; running in-place, flagging update offer",
+                );
                 std::env::set_var("WS_SCRCPY_OPT_UPDATE_AVAILABLE", "1");
                 // fall through to normal launch
             }
@@ -293,7 +306,9 @@ fn main() {
     // with the Phase-1 --windows-app-uninstall match above.
     #[cfg(windows)]
     if let Some(code) = windows_app_uninstall::handle_run(&args) {
-        log::info(&format!("windows-app-uninstall-run exiting with code {code}"));
+        log::info(&format!(
+            "windows-app-uninstall-run exiting with code {code}"
+        ));
         std::process::exit(code);
     }
 
@@ -419,7 +434,9 @@ fn main() {
     // — same rationale as Gotcha 1 in feedback_velopack_permachine_lessons.md.
     // The defense is needed on BOTH SDKs because BOTH evaluate the same
     // pending-package check, independently.
-    velopack::VelopackApp::build().set_auto_apply_on_startup(false).run();
+    velopack::VelopackApp::build()
+        .set_auto_apply_on_startup(false)
+        .run();
 
     // Spawn the tray icon thread BEFORE the supervisor's blocking loop.
     // In service mode this is a no-op (separate tray helper handles UI).
@@ -504,7 +521,9 @@ fn main() {
         }
     }
 
-    log::info(&format!("ws-scrcpy-web-launcher exiting with code {exit_code}"));
+    log::info(&format!(
+        "ws-scrcpy-web-launcher exiting with code {exit_code}"
+    ));
     std::process::exit(exit_code);
 }
 

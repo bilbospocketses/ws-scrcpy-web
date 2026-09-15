@@ -37,8 +37,8 @@
 
 #[cfg(windows)]
 mod imp {
-    use anyhow::Result;
     use crate::win_util::to_wide;
+    use anyhow::Result;
 
     /// Returns true when the current process has an elevated token (i.e.
     /// "Run as administrator" was used). Internally queries the process
@@ -107,9 +107,7 @@ mod imp {
         use windows::core::PCWSTR;
 
         let wide = to_wide(name);
-        let handle = unsafe {
-            CreateMutexW(None, false, PCWSTR::from_raw(wide.as_ptr()))?
-        };
+        let handle = unsafe { CreateMutexW(None, false, PCWSTR::from_raw(wide.as_ptr()))? };
         // CreateMutexW returns a valid handle EVEN when the mutex
         // already existed; GetLastError tells us which case we're in.
         let last = unsafe { GetLastError() };
@@ -128,9 +126,9 @@ mod imp {
 #[cfg(not(windows))]
 mod imp {
     use anyhow::Result;
+    use rustix::fs::{FlockOperation, flock};
     use std::fs::{File, OpenOptions};
     use std::path::{Path, PathBuf};
-    use rustix::fs::{flock, FlockOperation};
 
     /// Holds the open file descriptor for the lock file.
     /// Drop closes the fd, which releases the flock automatically.
@@ -179,8 +177,7 @@ mod imp {
     /// Resolves the lock path from environment and acquires it.
     pub fn acquire(_name: &str) -> Result<Option<InstanceGuard>> {
         let xdg = std::env::var("XDG_RUNTIME_DIR").ok();
-        let dr = common::config::data_root_from_env()
-            .map(|p| p.to_string_lossy().into_owned());
+        let dr = common::config::data_root_from_env().map(|p| p.to_string_lossy().into_owned());
         acquire_at(&lock_path(xdg.as_deref(), dr.as_deref()))
     }
 
@@ -190,9 +187,9 @@ mod imp {
     }
 }
 
-pub use imp::acquire;
 #[allow(unused_imports)]
 pub use imp::InstanceGuard;
+pub use imp::acquire;
 
 const MUTEX_BASE: &str = r"Local\WsScrcpyWeb-SingleInstance";
 
@@ -215,7 +212,10 @@ mod linux_tests {
     #[test]
     fn lock_path_prefers_xdg_runtime_dir() {
         assert_eq!(
-            lock_path(Some("/run/user/1000"), Some("/home/u/.local/share/WsScrcpyWeb")),
+            lock_path(
+                Some("/run/user/1000"),
+                Some("/home/u/.local/share/WsScrcpyWeb")
+            ),
             PathBuf::from("/run/user/1000/ws-scrcpy-web.lock")
         );
         assert_eq!(
@@ -260,7 +260,10 @@ mod tests {
         let name = format!(r"Local\WsScrcpyWeb-Test-{}", uuid_like());
         let first = acquire(&name).unwrap().expect("first acquire");
         let second = acquire(&name).unwrap();
-        assert!(second.is_none(), "second acquire should see ERROR_ALREADY_EXISTS");
+        assert!(
+            second.is_none(),
+            "second acquire should see ERROR_ALREADY_EXISTS"
+        );
         drop(first);
     }
 

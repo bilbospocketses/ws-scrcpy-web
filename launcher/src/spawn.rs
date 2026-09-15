@@ -225,7 +225,9 @@ pub fn spawn_server(deps_path: &Path, data_root: &Path, open_browser: bool) -> R
     // is exactly what it did before, so say so and carry on.
     #[cfg(target_os = "linux")]
     if let Err(e) = raise_nofile_soft_limit() {
-        eprintln!("[launcher] could not raise the open-files limit for the server (continuing on the inherited one): {e:#}");
+        eprintln!(
+            "[launcher] could not raise the open-files limit for the server (continuing on the inherited one): {e:#}"
+        );
     }
 
     let mut cmd = Command::new(&node);
@@ -315,8 +317,7 @@ mod tests {
         // deps_path points to an empty directory — node binary not there yet.
         let bogus = dir.path().join("nope");
         fs::create_dir_all(&bogus).unwrap();
-        let resolved =
-            resolve_node_with(Some(bogus.to_str().unwrap()), &exe_dir).unwrap();
+        let resolved = resolve_node_with(Some(bogus.to_str().unwrap()), &exe_dir).unwrap();
         assert_eq!(resolved, seed);
     }
 
@@ -391,7 +392,11 @@ mod tests {
             after.current
         );
         raise_nofile_soft_limit().unwrap();
-        assert_eq!(getrlimit(Resource::Nofile).current, after.current, "second call must not move the limit");
+        assert_eq!(
+            getrlimit(Resource::Nofile).current,
+            after.current,
+            "second call must not move the limit"
+        );
     }
 
     #[test]
@@ -403,7 +408,9 @@ mod tests {
         // Write 10 MB + 1 so it's at/over threshold.
         fs::write(&server_log, vec![0u8; 10 * 1024 * 1024 + 1]).unwrap();
         let _f = open_server_log(dir.path());
-        assert!(logs.join("server.log.1").exists(), "oversized server.log rotated to .1");
+        assert!(
+            logs.join("server.log.1").exists(),
+            "oversized server.log rotated to .1"
+        );
     }
-
 }

@@ -21,6 +21,8 @@ dependencies/node-pty/
 dependencies/servy/
 dependencies/node-bootstrap/
 dependencies/scrcpy-server/
+# vpk (Velopack CLI) — fetched per-version by scripts/vpk-path.mjs, never vendored
+dependencies/vpk/
 dependencies/*.log
 .restart
 

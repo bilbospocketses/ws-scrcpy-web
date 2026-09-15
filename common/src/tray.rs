@@ -82,43 +82,42 @@ pub enum TrayAction {
 }
 
 #[cfg(windows)]
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 #[cfg(windows)]
 use std::cell::Cell;
 #[cfg(windows)]
 use std::sync::atomic::{AtomicU32, Ordering};
 
 #[cfg(windows)]
-use windows::core::PCWSTR;
+use windows::Win32::Foundation::POINT;
 #[cfg(windows)]
 use windows::Win32::Foundation::{GetLastError, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
 #[cfg(windows)]
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 #[cfg(windows)]
-use windows::Win32::UI::Shell::{
-    Shell_NotifyIconW, NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_TIP, NIIF_INFO, NIM_ADD, NIM_DELETE,
-    NIM_MODIFY, NOTIFYICONDATAW,
-};
-#[cfg(windows)]
-use windows::Win32::UI::WindowsAndMessaging::{
-    AppendMenuW, CreateIconFromResourceEx, CreatePopupMenu, CreateWindowExW, DefWindowProcW,
-    DestroyIcon, DestroyMenu, DestroyWindow, DispatchMessageW, GetCursorPos, GetMessageW,
-    ChangeWindowMessageFilterEx, GetWindowLongPtrW, KillTimer, MessageBoxW, PostQuitMessage,
-    RegisterClassW, RegisterWindowMessageW, SetForegroundWindow, SetTimer, SetWindowLongPtrW,
-    TrackPopupMenu, TranslateMessage, UnregisterClassW, GWLP_USERDATA, HICON, HMENU, IDYES,
-    LR_DEFAULTCOLOR, MB_ICONQUESTION, MB_YESNO, MF_SEPARATOR, MF_STRING, MSGFLT_ALLOW, MSG,
-    TPM_LEFTALIGN, TPM_RIGHTBUTTON, WINDOW_STYLE, WM_COMMAND, WM_DISPLAYCHANGE, WM_LBUTTONUP,
-    WM_POWERBROADCAST, WM_QUIT, WM_RBUTTONUP, WM_TIMER, WM_USER, WM_WTSSESSION_CHANGE, WNDCLASSW,
-    WS_EX_TOOLWINDOW,
-};
-#[cfg(windows)]
 use windows::Win32::System::RemoteDesktop::{
-    WTSRegisterSessionNotification, WTSUnRegisterSessionNotification, NOTIFY_FOR_THIS_SESSION,
+    NOTIFY_FOR_THIS_SESSION, WTSRegisterSessionNotification, WTSUnRegisterSessionNotification,
 };
 #[cfg(windows)]
 use windows::Win32::UI::Shell::ShellExecuteW;
 #[cfg(windows)]
-use windows::Win32::Foundation::POINT;
+use windows::Win32::UI::Shell::{
+    NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_TIP, NIIF_INFO, NIM_ADD, NIM_DELETE, NIM_MODIFY,
+    NOTIFYICONDATAW, Shell_NotifyIconW,
+};
+#[cfg(windows)]
+use windows::Win32::UI::WindowsAndMessaging::{
+    AppendMenuW, ChangeWindowMessageFilterEx, CreateIconFromResourceEx, CreatePopupMenu,
+    CreateWindowExW, DefWindowProcW, DestroyIcon, DestroyMenu, DestroyWindow, DispatchMessageW,
+    GWLP_USERDATA, GetCursorPos, GetMessageW, GetWindowLongPtrW, HICON, HMENU, IDYES, KillTimer,
+    LR_DEFAULTCOLOR, MB_ICONQUESTION, MB_YESNO, MF_SEPARATOR, MF_STRING, MSG, MSGFLT_ALLOW,
+    MessageBoxW, PostQuitMessage, RegisterClassW, RegisterWindowMessageW, SetForegroundWindow,
+    SetTimer, SetWindowLongPtrW, TPM_LEFTALIGN, TPM_RIGHTBUTTON, TrackPopupMenu, TranslateMessage,
+    UnregisterClassW, WINDOW_STYLE, WM_COMMAND, WM_DISPLAYCHANGE, WM_LBUTTONUP, WM_POWERBROADCAST,
+    WM_QUIT, WM_RBUTTONUP, WM_TIMER, WM_USER, WM_WTSSESSION_CHANGE, WNDCLASSW, WS_EX_TOOLWINDOW,
+};
+#[cfg(windows)]
+use windows::core::PCWSTR;
 
 /// Custom window message: tray icon callback. The Win32 docs use
 /// `WM_APP + N` or `WM_USER + N` interchangeably for app-defined messages.
@@ -304,17 +303,9 @@ pub fn run(
     // the slice. We pass `cxDesired = 0, cyDesired = 0` to use the image's
     // intrinsic size, and `LR_DEFAULTCOLOR` (no special flags). dwVer must
     // be 0x00030000 per the Win32 docs.
-    let hicon: HICON = unsafe {
-        CreateIconFromResourceEx(
-            &icon_payload,
-            true,
-            0x00030000,
-            0,
-            0,
-            LR_DEFAULTCOLOR,
-        )
-    }
-    .map_err(|e| anyhow!("CreateIconFromResourceEx: {e}"))?;
+    let hicon: HICON =
+        unsafe { CreateIconFromResourceEx(&icon_payload, true, 0x00030000, 0, 0, LR_DEFAULTCOLOR) }
+            .map_err(|e| anyhow!("CreateIconFromResourceEx: {e}"))?;
 
     // 2. Register the window class. RegisterClassW returns 0 on failure.
     let class_name_w = to_wide(WINDOW_CLASS_NAME);
@@ -402,7 +393,9 @@ pub fn run(
         // SAFETY: state_ptr is the raw pointer we just leaked from a Box.
         unsafe { drop(Box::from_raw(state_ptr)) };
         // SAFETY: DestroyIcon on a valid HICON; no-op-safe on failure.
-        unsafe { let _ = DestroyIcon(hicon); };
+        unsafe {
+            let _ = DestroyIcon(hicon);
+        };
         anyhow!("CreateWindowExW: {e}")
     })?;
 
@@ -426,9 +419,7 @@ pub fn run(
         let allowed = unsafe {
             ChangeWindowMessageFilterEx(hwnd, taskbar_created, MSGFLT_ALLOW, None).is_ok()
         };
-        crate::log::info(&format!(
-            "tray: TaskbarCreated UIPI filter allow={allowed}"
-        ));
+        crate::log::info(&format!("tray: TaskbarCreated UIPI filter allow={allowed}"));
     }
 
     // 4c. Ask for session-change notifications (lock/unlock, RDP connect and
@@ -437,7 +428,8 @@ pub fn run(
     //     Best-effort: without it the 30s heartbeat still recovers the icon,
     //     just later.
     // SAFETY: hwnd is valid; NOTIFY_FOR_THIS_SESSION is the documented flag.
-    let session_notify = unsafe { WTSRegisterSessionNotification(hwnd, NOTIFY_FOR_THIS_SESSION) }.is_ok();
+    let session_notify =
+        unsafe { WTSRegisterSessionNotification(hwnd, NOTIFY_FOR_THIS_SESSION) }.is_ok();
     if !session_notify {
         crate::log::info("tray: WTSRegisterSessionNotification failed; heartbeat still covers it");
     }
@@ -630,7 +622,11 @@ unsafe extern "system" fn tray_wnd_proc(
     // the lifetime of the window. Reading it here from any handler branch
     // is sound; null check guards the (unreachable in practice) racey case.
     let state_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut TrayState;
-    let state = if state_ptr.is_null() { None } else { Some(&*state_ptr) };
+    let state = if state_ptr.is_null() {
+        None
+    } else {
+        Some(&*state_ptr)
+    };
 
     // Explorer restarted and recreated Shell_TrayWnd, dropping every tray
     // icon including ours. Re-add it, or the process stays alive with no icon
@@ -669,7 +665,11 @@ unsafe extern "system" fn tray_wnd_proc(
     // Both only reach us because the window is now top-level — a message-only
     // window receives none of them, which is the same reason TaskbarCreated
     // could not arrive before.
-    if msg == WM_TIMER || msg == WM_DISPLAYCHANGE || msg == WM_POWERBROADCAST || msg == WM_WTSSESSION_CHANGE {
+    if msg == WM_TIMER
+        || msg == WM_DISPLAYCHANGE
+        || msg == WM_POWERBROADCAST
+        || msg == WM_WTSSESSION_CHANGE
+    {
         if let Some(s) = state {
             let reason = match msg {
                 WM_TIMER => "heartbeat",
@@ -1187,7 +1187,9 @@ pub fn run(
             return Ok(TrayAction::Cancelled);
         }
     };
-    crate::log::info(&format!("linux-tray: icon registered (tooltip {tooltip:?})"));
+    crate::log::info(&format!(
+        "linux-tray: icon registered (tooltip {tooltip:?})"
+    ));
 
     loop {
         match rx.recv() {
@@ -1226,8 +1228,15 @@ mod stub_tests {
 
     #[test]
     fn run_returns_cancelled_on_other_platforms() {
-        let action = run(b"", "tooltip", "title", "body", Box::new(|| "http://localhost:8000".to_string()), None)
-            .expect("stub must not error");
+        let action = run(
+            b"",
+            "tooltip",
+            "title",
+            "body",
+            Box::new(|| "http://localhost:8000".to_string()),
+            None,
+        )
+        .expect("stub must not error");
         assert_eq!(action, TrayAction::Cancelled);
     }
 }
@@ -1238,8 +1247,15 @@ mod linux_tests {
 
     #[test]
     fn a_wrong_sized_icon_is_an_error_before_any_dbus_work() {
-        let err = run(b"not a pixmap", "t", "title", "body", Box::new(String::new), None)
-            .expect_err("wrong length must be rejected");
+        let err = run(
+            b"not a pixmap",
+            "t",
+            "title",
+            "body",
+            Box::new(String::new),
+            None,
+        )
+        .expect_err("wrong length must be rejected");
         assert!(err.to_string().contains("ARGB32"));
     }
 }

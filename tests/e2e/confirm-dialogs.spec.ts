@@ -1,5 +1,5 @@
 import { expect, type Locator, type Page, test } from '@playwright/test';
-import { openSettings, settingsSection } from './support/auth';
+import { openSettings, openSettingsTab } from './support/auth';
 import { askToEmbed, gotoHome, readServerConfig, revokeAllOrigins, waitForPrompt } from './support/consent';
 
 /**
@@ -100,6 +100,9 @@ test.describe('confirm dialogs (smoke §4.5)', () => {
         // 1. The generic ConfirmModal, via Settings → Embedding → revoke.
         await approveOrigin(page, request);
         const settings = await openSettings(page);
+        // Each of the three dialogs below now hangs off a different tab, so each
+        // leg opens its own. Users is what the dialog opens on.
+        await openSettingsTab(settings, 'Embedding');
         await settings.getByRole('button', { name: 'revoke' }).click();
         const revoke = page.locator('dialog.confirm-modal');
         const revokeStyles = await expectSharedStyle(
@@ -115,7 +118,7 @@ test.describe('confirm dialogs (smoke §4.5)', () => {
         //     Until item 111 (2026-09-06) this one wore the Settings-row family
         //     (`settings-btn`, an accent-blue outline on "confirm reset"); the
         //     user ruled for uniformity, so it is asserted beside the others.
-        await settingsSection(settings, 'Server').getByRole('button', { name: 'reset', exact: true }).click();
+        await (await openSettingsTab(settings, 'Server')).getByRole('button', { name: 'reset', exact: true }).click();
         const reset = page.locator('dialog.reset-confirm-modal');
         const resetStyles = await expectSharedStyle(
             reset,
@@ -140,7 +143,11 @@ test.describe('confirm dialogs (smoke §4.5)', () => {
             supported: boolean;
             unsupportedReason?: string;
         };
-        const service = settingsSection(settings, 'Service');
+        // Opened, not merely located: with the tab closed the install button is
+        // outside the accessibility tree, `install.count()` reads 0, and the row
+        // would quietly annotate itself "install not offered" on every host —
+        // recording a skip it never actually established.
+        const service = await openSettingsTab(settings, 'Service');
         await expect(service.getByText('loading…')).toHaveCount(0);
         const install = service.getByRole('button', { name: /install/i }).first();
         // The section renders the install ENABLED for an instant and then

@@ -330,7 +330,11 @@ fn sha256_hex_of_file(path: &Path) -> std::io::Result<String> {
         }
         hasher.update(&buf[..n]);
     }
-    Ok(hasher.finalize().iter().map(|b| format!("{b:02x}")).collect())
+    Ok(hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect())
 }
 
 /// Verification manifest Node writes to `<data_root>/control/apply-update-verify.json`
@@ -440,8 +444,7 @@ fn find_and_extract_nupkg(
         "operation-server: verified + extracting {nupkg_path:?}"
     ));
 
-    let file =
-        std::fs::File::open(&nupkg_path).map_err(|e| format!("cannot open nupkg: {e}"))?;
+    let file = std::fs::File::open(&nupkg_path).map_err(|e| format!("cannot open nupkg: {e}"))?;
     let mut archive =
         zip::ZipArchive::new(file).map_err(|e| format!("cannot read nupkg as zip: {e}"))?;
 
@@ -479,8 +482,8 @@ fn find_and_extract_nupkg(
             if let Some(parent) = dest.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
-            let mut out = std::fs::File::create(&dest)
-                .map_err(|e| format!("cannot create {dest:?}: {e}"))?;
+            let mut out =
+                std::fs::File::create(&dest).map_err(|e| format!("cannot create {dest:?}: {e}"))?;
             std::io::copy(&mut entry, &mut out)
                 .map_err(|e| format!("cannot write {dest:?}: {e}"))?;
             extracted += 1;
@@ -507,7 +510,9 @@ fn run() -> i32 {
 
     let cfg = common::config::AppConfig::load(&data_root);
     let port = cfg.web_port.unwrap_or(8000);
-    log::info(&format!("operation-server: data_root={data_root:?} port={port}"));
+    log::info(&format!(
+        "operation-server: data_root={data_root:?} port={port}"
+    ));
 
     let control_dir = data_root.join("control");
     // Clean any stale markers (both canonical + legacy filenames) from a
@@ -542,9 +547,7 @@ fn run() -> i32 {
             ));
 
             if let Err(e) = write_port_file(&data_root, bound_port) {
-                log::error(&format!(
-                    "operation-server: failed to write port file: {e}"
-                ));
+                log::error(&format!("operation-server: failed to write port file: {e}"));
             }
 
             let bg_stop = Arc::new(AtomicBool::new(false));
@@ -559,15 +562,20 @@ fn run() -> i32 {
             let inflight_bg = inflight.clone();
             let _page_thread = thread::spawn(move || {
                 while !bg_stop2.load(Ordering::SeqCst) {
-                    accept_one(&bg_listener, &bg_redirect2, OperationVariant::ApplyUpdate, &inflight_bg);
+                    accept_one(
+                        &bg_listener,
+                        &bg_redirect2,
+                        OperationVariant::ApplyUpdate,
+                        &inflight_bg,
+                    );
                 }
             });
 
             log::info("operation-server: §40 killing tray");
             #[cfg(windows)]
             {
-                use std::os::windows::process::CommandExt;
                 use crate::win_util::CREATE_NO_WINDOW;
+                use std::os::windows::process::CommandExt;
                 let _ = std::process::Command::new(r"C:\Windows\System32\taskkill.exe")
                     .args(["/F", "/IM", "ws-scrcpy-web-tray.exe", "/T"])
                     .creation_flags(CREATE_NO_WINDOW)
@@ -611,8 +619,8 @@ fn run() -> i32 {
             #[cfg(windows)]
             {
                 let launcher_path = current_dir.join("ws-scrcpy-web-launcher.exe");
-                use std::os::windows::process::CommandExt;
                 use crate::win_util::{CREATE_NO_WINDOW, DETACHED_PROCESS};
+                use std::os::windows::process::CommandExt;
                 match std::process::Command::new(&launcher_path)
                     .current_dir(&install_root)
                     .creation_flags(DETACHED_PROCESS | CREATE_NO_WINDOW)
@@ -622,7 +630,8 @@ fn run() -> i32 {
                     .spawn()
                 {
                     Ok(child) => log::info(&format!(
-                        "operation-server: launched new launcher (pid {})", child.id()
+                        "operation-server: launched new launcher (pid {})",
+                        child.id()
                     )),
                     Err(e) => log::error(&format!(
                         "operation-server: failed to launch new launcher: {e}"
@@ -638,7 +647,12 @@ fn run() -> i32 {
 
             let started_at = Instant::now();
             while started_at.elapsed() < Duration::from_secs(MAX_LIFETIME_SECS) {
-                accept_one(&listener, &bg_redirect, OperationVariant::ApplyUpdate, &inflight);
+                accept_one(
+                    &listener,
+                    &bg_redirect,
+                    OperationVariant::ApplyUpdate,
+                    &inflight,
+                );
             }
 
             log::info("operation-server: §40 max lifetime elapsed, cleaning up");
@@ -730,7 +744,13 @@ fn run() -> i32 {
 /// (handles the case where Node lost the port race and auto-shifted to
 /// e.g. config_port+1), and keeps serving connections so the polling page
 /// can pick up the resulting redirect.
-fn wind_down(listener: TcpListener, redirect_state: Arc<Mutex<Option<String>>>, config_port: u16, variant: OperationVariant, inflight: Arc<AtomicUsize>) -> i32 {
+fn wind_down(
+    listener: TcpListener,
+    redirect_state: Arc<Mutex<Option<String>>>,
+    config_port: u16,
+    variant: OperationVariant,
+    inflight: Arc<AtomicUsize>,
+) -> i32 {
     let probe_state = redirect_state.clone();
     thread::spawn(move || {
         probe_for_real_node_and_publish(config_port, probe_state);
@@ -824,7 +844,9 @@ fn accept_one(
         Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
             // No pending connection. Sleep briefly, then re-check stop
             // conditions on the next iteration.
-            thread::sleep(Duration::from_millis(ACCEPT_TIMEOUT_MS.max(STOP_MARKER_POLL_MS)));
+            thread::sleep(Duration::from_millis(
+                ACCEPT_TIMEOUT_MS.max(STOP_MARKER_POLL_MS),
+            ));
         }
         Err(e) => {
             log::error(&format!("operation-server: accept error: {e}"));
@@ -847,7 +869,9 @@ fn probe_for_real_node_and_publish(config_port: u16, redirect_state: Arc<Mutex<O
     let probe_start = Instant::now();
     loop {
         if probe_start.elapsed() >= Duration::from_secs(WIND_DOWN_TOTAL_SECS) {
-            log::info("operation-server: probe gave up — no real Node found in any neighboring port within wind-down window");
+            log::info(
+                "operation-server: probe gave up — no real Node found in any neighboring port within wind-down window",
+            );
             return;
         }
         for offset in 0..=PROBE_MAX_OFFSET {
@@ -882,10 +906,11 @@ fn is_real_node_at_port(port: u16) -> bool {
         Ok(a) => a,
         Err(_) => return false,
     };
-    let mut stream = match TcpStream::connect_timeout(&addr, Duration::from_millis(PROBE_CONNECT_TIMEOUT_MS)) {
-        Ok(s) => s,
-        Err(_) => return false,
-    };
+    let mut stream =
+        match TcpStream::connect_timeout(&addr, Duration::from_millis(PROBE_CONNECT_TIMEOUT_MS)) {
+            Ok(s) => s,
+            Err(_) => return false,
+        };
     let _ = stream.set_read_timeout(Some(Duration::from_millis(PROBE_REQUEST_TIMEOUT_MS)));
     let _ = stream.set_write_timeout(Some(Duration::from_millis(PROBE_REQUEST_TIMEOUT_MS)));
     if stream
@@ -905,7 +930,11 @@ fn is_real_node_at_port(port: u16) -> bool {
     is_200 && !has_sentinel
 }
 
-fn handle_connection(mut stream: TcpStream, redirect_state: Arc<Mutex<Option<String>>>, variant: OperationVariant) {
+fn handle_connection(
+    mut stream: TcpStream,
+    redirect_state: Arc<Mutex<Option<String>>>,
+    variant: OperationVariant,
+) {
     // Read just the request line + headers (we don't need a body for GETs).
     // Set a short read timeout so a stalled client doesn't tie up a thread.
     let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
@@ -918,7 +947,9 @@ fn handle_connection(mut stream: TcpStream, redirect_state: Arc<Mutex<Option<Str
     let cloned = match stream.try_clone() {
         Ok(c) => c,
         Err(e) => {
-            log::error(&format!("operation-server: connection stream clone failed ({e})"));
+            log::error(&format!(
+                "operation-server: connection stream clone failed ({e})"
+            ));
             return;
         }
     };
@@ -945,10 +976,7 @@ fn handle_connection(mut stream: TcpStream, redirect_state: Arc<Mutex<Option<Str
     let _method = parts.next().unwrap_or("GET");
     let path = parts.next().unwrap_or("/");
 
-    let redirect = redirect_state
-        .lock()
-        .ok()
-        .and_then(|guard| guard.clone());
+    let redirect = redirect_state.lock().ok().and_then(|guard| guard.clone());
     let response = build_response(path, redirect.as_deref(), variant);
     let _ = stream.write_all(response.as_bytes());
     let _ = stream.flush();
@@ -1105,7 +1133,10 @@ pub fn refresh_helper_binary(data_root: &Path) -> std::io::Result<PathBuf> {
 /// supervisor refreshes at startup. Single source of truth for the helper
 /// layout.
 pub fn helper_path_for(data_root: &Path) -> PathBuf {
-    data_root.join("control").join("operation-server").join("ws-scrcpy-web-launcher.exe")
+    data_root
+        .join("control")
+        .join("operation-server")
+        .join("ws-scrcpy-web-launcher.exe")
 }
 
 /// Legacy helper path under `<dataRoot>/control/upgrade-server/`. Kept for ~2
@@ -1120,7 +1151,10 @@ pub fn helper_path_for(data_root: &Path) -> PathBuf {
 /// happy across the transitional window.
 #[allow(dead_code)]
 pub fn legacy_helper_path_for(data_root: &Path) -> PathBuf {
-    data_root.join("control").join("upgrade-server").join("ws-scrcpy-web-launcher.exe")
+    data_root
+        .join("control")
+        .join("upgrade-server")
+        .join("ws-scrcpy-web-launcher.exe")
 }
 
 /// §32 Part 5f — spawn the dataRoot upgrade-server helper as a detached
@@ -1141,7 +1175,9 @@ pub fn wait_for_port_free(port: u16, timeout: Duration) {
     let started = Instant::now();
     while started.elapsed() < timeout {
         match TcpStream::connect_timeout(
-            &format!("127.0.0.1:{port}").parse().expect("hardcoded sockaddr"),
+            &format!("127.0.0.1:{port}")
+                .parse()
+                .expect("hardcoded sockaddr"),
             Duration::from_millis(200),
         ) {
             Ok(_) => {
@@ -1213,10 +1249,22 @@ mod tests {
         // context that's the test runner. The Ok branch is the assertion-
         // bearing branch — we only verify dual-write on success.
         if super::refresh_helper_binary(data_root).is_ok() {
-            let new_path = data_root.join("control").join("operation-server").join("ws-scrcpy-web-launcher.exe");
-            let legacy_path = data_root.join("control").join("upgrade-server").join("ws-scrcpy-web-launcher.exe");
-            assert!(new_path.exists(), "operation-server/launcher.exe should be written");
-            assert!(legacy_path.exists(), "upgrade-server/launcher.exe should also be written (dual-write compat)");
+            let new_path = data_root
+                .join("control")
+                .join("operation-server")
+                .join("ws-scrcpy-web-launcher.exe");
+            let legacy_path = data_root
+                .join("control")
+                .join("upgrade-server")
+                .join("ws-scrcpy-web-launcher.exe");
+            assert!(
+                new_path.exists(),
+                "operation-server/launcher.exe should be written"
+            );
+            assert!(
+                legacy_path.exists(),
+                "upgrade-server/launcher.exe should also be written (dual-write compat)"
+            );
         }
     }
 
@@ -1260,7 +1308,10 @@ mod tests {
         let dir = tmp.path().join("control");
         std::fs::create_dir_all(&dir).expect("mkdir");
         std::fs::write(dir.join("apply-update-pending"), b"").expect("write");
-        assert_eq!(super::detect_operation_variant(tmp.path()), super::OperationVariant::ApplyUpdate);
+        assert_eq!(
+            super::detect_operation_variant(tmp.path()),
+            super::OperationVariant::ApplyUpdate
+        );
     }
 
     #[test]
@@ -1269,7 +1320,10 @@ mod tests {
         let dir = tmp.path().join("control");
         std::fs::create_dir_all(&dir).expect("mkdir");
         std::fs::write(dir.join("uninstall-pending"), b"").expect("write");
-        assert_eq!(super::detect_operation_variant(tmp.path()), super::OperationVariant::Uninstall);
+        assert_eq!(
+            super::detect_operation_variant(tmp.path()),
+            super::OperationVariant::Uninstall
+        );
     }
 
     #[test]
@@ -1279,21 +1333,36 @@ mod tests {
         // if both markers somehow present). Also preserves the pre-Phase-2
         // single-operation behavior for any code path that spawns the
         // operation-server without writing a marker.
-        assert_eq!(super::detect_operation_variant(tmp.path()), super::OperationVariant::ApplyUpdate);
+        assert_eq!(
+            super::detect_operation_variant(tmp.path()),
+            super::OperationVariant::ApplyUpdate
+        );
     }
 
     #[test]
     fn render_operation_page_substitutes_apply_update_text() {
         let html = super::render_operation_page(super::OperationVariant::ApplyUpdate);
-        assert!(html.contains("Updating app, please wait"), "apply-update title present: {html}");
-        assert!(!html.contains("__OPERATION_TITLE__"), "template token replaced");
+        assert!(
+            html.contains("Updating app, please wait"),
+            "apply-update title present: {html}"
+        );
+        assert!(
+            !html.contains("__OPERATION_TITLE__"),
+            "template token replaced"
+        );
     }
 
     #[test]
     fn render_operation_page_substitutes_uninstall_text() {
         let html = super::render_operation_page(super::OperationVariant::Uninstall);
-        assert!(html.contains("Uninstalling service, please wait"), "uninstall title present: {html}");
-        assert!(!html.contains("__OPERATION_TITLE__"), "template token replaced");
+        assert!(
+            html.contains("Uninstalling service, please wait"),
+            "uninstall title present: {html}"
+        );
+        assert!(
+            !html.contains("__OPERATION_TITLE__"),
+            "template token replaced"
+        );
     }
 
     #[test]
@@ -1324,18 +1393,17 @@ mod tests {
         // uses 127.0.0.1 to occupy the port on the same address.
         let blocker = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("bind blocker");
         let blocked_port = blocker.local_addr().expect("addr").port();
-        let result = super::bind_with_probe(
-            blocked_port,
-            5,
-            std::time::Duration::from_secs(1),
-        );
+        let result = super::bind_with_probe(blocked_port, 5, std::time::Duration::from_secs(1));
         match result {
             Ok((listener, port)) => {
                 assert!(port > blocked_port, "should have skipped to a higher port");
                 // #48: the operation-server must bind loopback only, never 0.0.0.0
                 // (which would expose the wait page + redirect to the LAN).
                 let ip = listener.local_addr().expect("addr").ip();
-                assert!(ip.is_loopback(), "bind_with_probe must bind loopback, got {ip}");
+                assert!(
+                    ip.is_loopback(),
+                    "bind_with_probe must bind loopback, got {ip}"
+                );
             }
             Err(_) => panic!("bind_with_probe should have found a free port"),
         }
@@ -1473,7 +1541,10 @@ mod tests {
                     found = true;
                 }
             }
-            assert!(found, "fixture: malicious '..' entry did not survive zip write");
+            assert!(
+                found,
+                "fixture: malicious '..' entry did not survive zip write"
+            );
         }
 
         let sha = super::sha256_hex_of_file(&nupkg).expect("hash");
@@ -1482,7 +1553,10 @@ mod tests {
         super::find_and_extract_nupkg(&packages, &current, &m).expect("extract");
         // The good file lands; the escape file must NOT be written anywhere
         // outside current/ (the insecure code wrote it to current/../escape.txt).
-        assert!(current.join("ok.txt").exists(), "normal entry should extract");
+        assert!(
+            current.join("ok.txt").exists(),
+            "normal entry should extract"
+        );
         assert!(
             !tmp.path().join("escape.txt").exists(),
             "zip-slip entry escaped current/ — traversal not blocked"
@@ -1542,7 +1616,10 @@ mod tests {
         std::fs::create_dir_all(&packages).expect("mkdir packages");
         std::fs::create_dir_all(&current).expect("mkdir current");
 
-        build_nupkg(&packages.join("real-1.0.0-full.nupkg"), &[("lib/app/index.js", b"x")]);
+        build_nupkg(
+            &packages.join("real-1.0.0-full.nupkg"),
+            &[("lib/app/index.js", b"x")],
+        );
         // A traversal-shaped file_name is refused even though a valid package exists.
         let m = manifest("../real-1.0.0-full.nupkg", &"0".repeat(64), "1.0.0");
 
@@ -1565,7 +1642,10 @@ mod tests {
         let max = 3usize;
         assert!(super::try_reserve_slot(&inflight, max), "1st admit");
         assert!(super::try_reserve_slot(&inflight, max), "2nd admit");
-        assert!(super::try_reserve_slot(&inflight, max), "3rd admit fills the cap");
+        assert!(
+            super::try_reserve_slot(&inflight, max),
+            "3rd admit fills the cap"
+        );
         assert!(!super::try_reserve_slot(&inflight, max), "refused at cap");
         assert!(!super::try_reserve_slot(&inflight, max), "still refused");
         assert_eq!(
@@ -1577,8 +1657,8 @@ mod tests {
 
     #[test]
     fn try_reserve_slot_never_exceeds_max_under_contention() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
         let inflight = Arc::new(AtomicUsize::new(0));
         let max = 8usize;
         let attempts = 256usize;
@@ -1597,7 +1677,11 @@ mod tests {
         for h in handles {
             h.join().expect("join");
         }
-        assert_eq!(granted.load(Ordering::SeqCst), max, "exactly max slots granted");
+        assert_eq!(
+            granted.load(Ordering::SeqCst),
+            max,
+            "exactly max slots granted"
+        );
         assert_eq!(
             inflight.load(Ordering::SeqCst),
             max,
@@ -1607,25 +1691,35 @@ mod tests {
 
     #[test]
     fn inflight_guard_releases_slot_on_drop() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
         let inflight = Arc::new(AtomicUsize::new(0));
         let max = 1usize;
-        assert!(super::try_reserve_slot(&inflight, max), "reserve the only slot");
+        assert!(
+            super::try_reserve_slot(&inflight, max),
+            "reserve the only slot"
+        );
         assert!(!super::try_reserve_slot(&inflight, max), "cap reached");
         {
             // The guard owns the matching release for the reserved slot.
             let _guard = super::InflightGuard::new(inflight.clone());
             assert_eq!(inflight.load(Ordering::SeqCst), 1, "slot held inside scope");
         }
-        assert_eq!(inflight.load(Ordering::SeqCst), 0, "guard releases the slot on drop");
-        assert!(super::try_reserve_slot(&inflight, max), "slot reusable after release");
+        assert_eq!(
+            inflight.load(Ordering::SeqCst),
+            0,
+            "guard releases the slot on drop"
+        );
+        assert!(
+            super::try_reserve_slot(&inflight, max),
+            "slot reusable after release"
+        );
     }
 
     #[test]
     fn inflight_guard_releases_slot_on_panic() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
         let inflight = Arc::new(AtomicUsize::new(0));
         assert!(super::try_reserve_slot(&inflight, 4), "reserve a slot");
         let inflight2 = inflight.clone();
@@ -1650,23 +1744,37 @@ mod tests {
     #[test]
     fn build_response_escapes_redirect_in_discover_ready_body() {
         let evil = r#"http://localhost:8000/a"b\c"#;
-        let resp = super::build_response("/api/discover", Some(evil), super::OperationVariant::ApplyUpdate);
+        let resp = super::build_response(
+            "/api/discover",
+            Some(evil),
+            super::OperationVariant::ApplyUpdate,
+        );
         let body = resp.split("\r\n\r\n").nth(1).expect("response body");
         let parsed: serde_json::Value =
             serde_json::from_str(body).expect("discover body must be valid JSON");
         assert_eq!(parsed["status"], "ready");
-        assert_eq!(parsed["redirect"], evil, "redirect must round-trip verbatim");
+        assert_eq!(
+            parsed["redirect"], evil,
+            "redirect must round-trip verbatim"
+        );
     }
 
     #[test]
     fn build_response_escapes_redirect_in_api_redirect_body() {
         let evil = r#"http://localhost:8000/a"b\c"#;
-        let resp = super::build_response("/api/config", Some(evil), super::OperationVariant::ApplyUpdate);
+        let resp = super::build_response(
+            "/api/config",
+            Some(evil),
+            super::OperationVariant::ApplyUpdate,
+        );
         let body = resp.split("\r\n\r\n").nth(1).expect("response body");
         let parsed: serde_json::Value =
             serde_json::from_str(body).expect("api redirect body must be valid JSON");
         assert!(parsed["error"].is_null());
-        assert_eq!(parsed["redirect"], evil, "redirect must round-trip verbatim");
+        assert_eq!(
+            parsed["redirect"], evil,
+            "redirect must round-trip verbatim"
+        );
     }
 
     // ----- §54: bind_with_probe must not retry permanent errors on the same
@@ -1680,15 +1788,33 @@ mod tests {
     fn classify_bind_failure_decision_table() {
         use super::BindAttempt;
         // AddrInUse + a higher port available → advance immediately.
-        assert!(matches!(super::classify_bind_failure(true, true, false), BindAttempt::NextPort));
+        assert!(matches!(
+            super::classify_bind_failure(true, true, false),
+            BindAttempt::NextPort
+        ));
         // AddrInUse on the last port, window still open → wait + retry same port.
-        assert!(matches!(super::classify_bind_failure(true, false, false), BindAttempt::RetrySamePort));
+        assert!(matches!(
+            super::classify_bind_failure(true, false, false),
+            BindAttempt::RetrySamePort
+        ));
         // AddrInUse on the last port, window elapsed → give up.
-        assert!(matches!(super::classify_bind_failure(true, false, true), BindAttempt::GiveUp));
+        assert!(matches!(
+            super::classify_bind_failure(true, false, true),
+            BindAttempt::GiveUp
+        ));
         // Permanent error with ports left → advance (FIX: was retry-same-port).
-        assert!(matches!(super::classify_bind_failure(false, true, false), BindAttempt::NextPort));
+        assert!(matches!(
+            super::classify_bind_failure(false, true, false),
+            BindAttempt::NextPort
+        ));
         // Permanent error on the last port → give up at once, no retry (FIX).
-        assert!(matches!(super::classify_bind_failure(false, false, false), BindAttempt::GiveUp));
-        assert!(matches!(super::classify_bind_failure(false, false, true), BindAttempt::GiveUp));
+        assert!(matches!(
+            super::classify_bind_failure(false, false, false),
+            BindAttempt::GiveUp
+        ));
+        assert!(matches!(
+            super::classify_bind_failure(false, false, true),
+            BindAttempt::GiveUp
+        ));
     }
 }

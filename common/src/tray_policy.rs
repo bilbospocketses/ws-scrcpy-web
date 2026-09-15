@@ -22,7 +22,10 @@ pub fn should_spawn_tray(install_mode: Option<&str>, session_bus_present: bool) 
 /// is set (non-blank), or `$XDG_RUNTIME_DIR/bus` exists (systemd's user
 /// manager puts the bus there even when a unit's environment lacks the
 /// variable — the caller then exports the address itself before spawning).
-pub fn session_bus_present(dbus_session_bus_address: Option<&str>, runtime_bus_socket_exists: bool) -> bool {
+pub fn session_bus_present(
+    dbus_session_bus_address: Option<&str>,
+    runtime_bus_socket_exists: bool,
+) -> bool {
     dbus_session_bus_address.is_some_and(|a| !a.trim().is_empty()) || runtime_bus_socket_exists
 }
 
@@ -117,7 +120,10 @@ mod tests {
 
     #[test]
     fn session_bus_is_detected_from_the_env_var_or_the_runtime_socket() {
-        assert!(session_bus_present(Some("unix:path=/run/user/1000/bus"), false));
+        assert!(session_bus_present(
+            Some("unix:path=/run/user/1000/bus"),
+            false
+        ));
         assert!(session_bus_present(None, true));
         assert!(!session_bus_present(None, false));
         // An empty or blank address is not an address.
@@ -141,7 +147,11 @@ mod tests {
         assert_eq!(service.balloon_title, "ws-scrcpy-web (service) tray");
         // The balloon body is identical in both modes on purpose (see tray/src/main.rs).
         assert_eq!(local.balloon_body, service.balloon_body);
-        assert!(local.balloon_body.contains("exit option from the tray menu"));
+        assert!(
+            local
+                .balloon_body
+                .contains("exit option from the tray menu")
+        );
     }
 
     #[test]
@@ -153,13 +163,25 @@ mod tests {
         // has fully transparent corners and an opaque green centre, so a byte
         // order that is NOT A,R,G,B shows up here as a tinted or opaque corner.
         let corner = &px[0..4];
-        assert_eq!(corner, &[0, 0, 0, 0], "top-left pixel must be fully transparent");
+        assert_eq!(
+            corner,
+            &[0, 0, 0, 0],
+            "top-left pixel must be fully transparent"
+        );
         let c = (11 * 22 + 11) * 4;
         let centre = &px[c..c + 4];
         assert_eq!(centre[0], 255, "centre pixel must be opaque (alpha first)");
-        assert_eq!(&centre[1..4], &[166, 221, 59], "centre pixel must be the icon's green (R,G,B)");
+        assert_eq!(
+            &centre[1..4],
+            &[166, 221, 59],
+            "centre pixel must be the icon's green (R,G,B)"
+        );
         let opaque = px.chunks(4).filter(|p| p[0] == 255).count();
         let transparent = px.chunks(4).filter(|p| p[0] == 0).count();
-        assert_eq!((opaque, transparent), (118, 158), "22x22 downscale of assets/tray-icon.png");
+        assert_eq!(
+            (opaque, transparent),
+            (118, 158),
+            "22x22 downscale of assets/tray-icon.png"
+        );
     }
 }

@@ -1,6 +1,6 @@
 {
   "name": "ws-scrcpy-web",
-  "version": "0.1.30-beta.124",
+  "version": "0.1.30-beta.126",
   "description": "Browser-based Android screen mirroring and control, powered by scrcpy",
   "license": "GPL-3.0-only",
   "author": "bilbospocketses",
@@ -42,7 +42,7 @@
     "version:check-blobs": "node scripts/assert-bump-blob-sync.mjs",
     "package:stage": "node scripts/stage-publish.mjs",
     "package:linux": "node scripts/package-linux.mjs",
-    "package:pack": "node -e \"if (process.platform !== 'win32') { console.log('package:pack is Windows-only; use package:linux for AppImage'); process.exit(0); } require('child_process').spawnSync('vpk', ['pack','--packId','WsScrcpyWeb','--packVersion',process.env.npm_package_version,'--packDir','publish','--mainExe','ws-scrcpy-web-launcher.exe','--packTitle','ws-scrcpy-web','--packAuthors','ws-scrcpy-web contributors','--channel','stable','-o','Releases'], {stdio:'inherit',shell:true});\"",
+    "package:pack": "node -e \"if (process.platform !== 'win32') { console.log('package:pack is Windows-only; use package:linux for AppImage'); process.exit(0); } import('./scripts/vpk-path.mjs').then(m => { const r = require('child_process').spawnSync(m.ensureVpk(), ['pack','--packId','WsScrcpyWeb','--packVersion',process.env.npm_package_version,'--packDir','publish','--mainExe','ws-scrcpy-web-launcher.exe','--packTitle','ws-scrcpy-web','--packAuthors','ws-scrcpy-web contributors','--channel','stable','-o','Releases'], {stdio:'inherit'}); process.exit(r.status ?? 1); });\"",
     "test:update-flow": "pwsh scripts/test-update-flow.ps1",
     "release-notes": "node scripts/extract-changelog.mjs $npm_package_version",
     "test:e2e": "playwright test",

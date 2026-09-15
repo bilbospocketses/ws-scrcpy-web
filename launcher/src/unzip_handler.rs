@@ -106,10 +106,7 @@ fn unzip_impl(src: &Path, dest: &Path) -> i32 {
 
         if entry.is_dir() {
             if let Err(e) = fs::create_dir_all(&out_path) {
-                log::error(&format!(
-                    "unzip: mkdir {} failed: {e}",
-                    out_path.display()
-                ));
+                log::error(&format!("unzip: mkdir {} failed: {e}", out_path.display()));
                 return 3;
             }
         } else {
@@ -125,18 +122,12 @@ fn unzip_impl(src: &Path, dest: &Path) -> i32 {
             let mut out_file = match File::create(&out_path) {
                 Ok(f) => f,
                 Err(e) => {
-                    log::error(&format!(
-                        "unzip: create {} failed: {e}",
-                        out_path.display()
-                    ));
+                    log::error(&format!("unzip: create {} failed: {e}", out_path.display()));
                     return 3;
                 }
             };
             if let Err(e) = io::copy(&mut entry, &mut out_file) {
-                log::error(&format!(
-                    "unzip: write {} failed: {e}",
-                    out_path.display()
-                ));
+                log::error(&format!("unzip: write {} failed: {e}", out_path.display()));
                 return 3;
             }
         }

@@ -7,7 +7,7 @@ import {
     mintToken,
     newVisitorContext,
     openSettings,
-    settingsSection,
+    openSettingsTab,
 } from './support/auth';
 import { E2E_PORT } from './support/paths';
 import {
@@ -59,7 +59,7 @@ test.describe('lifecycle (smoke §12)', () => {
             await expect(visitor.page).toHaveTitle(APP_TITLE);
 
             const settings = await openSettings(visitor.page);
-            const stopBtn = settingsSection(settings, 'Server').getByRole('button', {
+            const stopBtn = (await openSettingsTab(settings, 'Server')).getByRole('button', {
                 name: 'stop server & exit',
                 exact: true,
             });

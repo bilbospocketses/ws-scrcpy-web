@@ -40,8 +40,8 @@
 use std::fs::{self, OpenOptions};
 use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 static LOG_NAME: OnceLock<String> = OnceLock::new();
@@ -133,9 +133,7 @@ pub fn format_timestamp_utc(now: SystemTime) -> String {
     let second = (secs_of_day % 60) as u32;
 
     let (year, month, day) = civil_from_days(days);
-    format!(
-        "{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{second:02}.{millis:03}"
-    )
+    format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{second:02}.{millis:03}")
 }
 
 /// Howard Hinnant's algorithm: convert days-since-1970-01-01 to (year, month, day).
@@ -281,7 +279,10 @@ mod tests {
         std::fs::write(&f, vec![0u8; 11]).unwrap();
         super::rotate_by_rename_if_large(&f, 10);
         assert!(dir.path().join("launcher.log.1").exists());
-        assert!(!f.exists(), "original renamed away; next append recreates it");
+        assert!(
+            !f.exists(),
+            "original renamed away; next append recreates it"
+        );
     }
 
     #[test]
@@ -300,7 +301,12 @@ mod tests {
         let f = dir.path().join("service.log");
         std::fs::write(&f, vec![b'x'; 11]).unwrap();
         super::copy_truncate_if_large(&f, 10);
-        assert_eq!(std::fs::read(dir.path().join("service.log.1")).unwrap().len(), 11);
+        assert_eq!(
+            std::fs::read(dir.path().join("service.log.1"))
+                .unwrap()
+                .len(),
+            11
+        );
         assert_eq!(std::fs::metadata(&f).unwrap().len(), 0);
     }
 }

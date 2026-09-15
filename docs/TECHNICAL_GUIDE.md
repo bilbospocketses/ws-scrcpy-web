@@ -10,13 +10,18 @@ This document covers the internal architecture of ws-scrcpy-web -- a browser-bas
 
 ## Table of Contents
 
-> **On `§NN` in source comments.** This guide has sections **1-26**, and a comment citing one
-> in that range means this document. Comments citing **§27 and above** -- `§27`, `§30`, `§32`,
-> `§34`, `§36`, `§39`, `§40`, `§49` -- do **not**: they are historical references to numbered
-> items in the maintainer's internal planning file, which is not part of this repository, and
-> several of those numbers were reassigned or archived as that file evolved. They are left in
-> place because they still carry provenance for the maintainer, but do not go looking for a
-> section here that matches -- there has never been one.
+> **On `§NN` in source comments.** This guide has sections **1-27**, and a comment citing one
+> in that range means this document -- with the single exception noted below. Comments citing
+> **§28 and above** -- `§30`, `§32`, `§34`, `§36`, `§39`, `§40`, `§49` -- do **not**: they are
+> historical references to numbered items in the maintainer's internal planning file, which is
+> not part of this repository, and several of those numbers were reassigned or archived as that
+> file evolved. They are left in place because they still carry provenance for the maintainer,
+> but do not go looking for a section here that matches -- there has never been one.
+>
+> **The one exception is `§27` in `src/server/api/ServerShutdownApi.ts`**, which predates section
+> 27 below and refers to that planning file, not to this document. It is about the Settings
+> "stop server & exit" button; section 27 here is about the Settings dialog's tabs and staged
+> saves. Every other `§1`-`§27` citation in the tree means this guide.
 
 1. [Directory Structure](#1-directory-structure)
 2. [Communication Protocol](#2-communication-protocol)
@@ -44,6 +49,7 @@ This document covers the internal architecture of ws-scrcpy-web -- a browser-bas
 24. [Access Control & Request Gating](#24-access-control--request-gating)
 25. [Why the Screen Is Black](#25-why-the-screen-is-black)
 26. [Container Image (Docker)](#26-container-image-docker)
+27. [Settings: Tabs, Staged Saves and the Batch Write-Ahead Log](#27-settings-tabs-staged-saves-and-the-batch-write-ahead-log)
 
 ---
 
@@ -1303,7 +1309,9 @@ Useful when touching the probe path — kept in-tree for ADB-protocol debugging.
 
 ### 14.3 Dependencies
 
-The dependency updater panel (section 13) shows installed vs. latest versions for Node.js + node-pty, ADB, and scrcpy-server with update controls. See section 13 for full details.
+The dependency updater panel (section 13) now lives in **Settings → Dependencies** (section 27), not on the home page. It shows installed vs. latest versions for Node.js + node-pty, ADB, and scrcpy-server with update controls. See section 13 for full details.
+
+What is left on the home page is `DependencyAlertCard` — an alert, not a list. It stays hidden until something actually needs updating, says only which dependency that is, and its button opens the Settings dialog **on the Dependencies tab**. It polls `/api/dependencies` every 15 s, and mounts inert (no fetch, no interval) unless all three of its predicates hold: the caller's role may see the section, the admin API will answer this caller at all — polling regardless 403-spams a healthy app — and this is **not** a container, where the image owns the dependency set and the tab the card's button opens is itself replaced by a note (§26.5). All three are the card's own, read off one `/api/config` runtime envelope, so there is exactly one copy of the decision. Any non-OK response or error **hides** the card rather than replacing it with an error box.
 
 ---
 
@@ -1841,7 +1849,7 @@ The unit body (`renderUnitFile`) is `Type=simple`, `Restart=on-failure` / `Resta
 | `src/server/service/SystemdClient.ts` | Linux implementation (systemd; both scopes; `/opt` staging + SELinux labelling) |
 | `src/server/service/systemTools.ts` | Absolute-path resolver for OS tools (`systemctl`, `pkexec`, `semanage`, …) — Local-Dependencies-Only |
 | `src/app/client/ServiceOperationModal.ts` | Browser-side transition modal with polling |
-| `src/app/client/SettingsModal.ts` | Service install/uninstall controls + scope radios in the Settings panel |
+| `src/app/client/settings/tabs/ServiceTab.ts` | Service install/uninstall controls + scope radios (Settings → Service; moved out of `SettingsModal.ts`) |
 | `launcher/src/operation_server.rs` | Rust binary that serves the transition page during uninstall/update (Windows) |
 | `launcher/src/elevated_runner.rs` | Generates `post-stop.bat` with uninstall/update-apply logic (Windows) |
 | `launcher/src/linux_app_uninstall.rs` | (Linux, beta.49) Pure `app_uninstall_commands` builder + `--linux-app-uninstall` dispatch for the in-app complete uninstall (getuid-aware `pkexec` elevation) |
@@ -2125,7 +2133,7 @@ History: v0.1.10's `PortChangeModal` was a `<dialog>` opened with `showModal()` 
 | `src/app/client/bookmarkGate.ts` | Pure gate: global dismissal beats per-port dismissal beats show |
 | `src/app/client/WelcomeModal.ts` | First-run mode selection modal |
 | `src/app/client/BookmarkReminder.ts` | The reminder card (port and service wordings) |
-| `src/app/client/SettingsModal.ts` | "Reset welcome prompts" button |
+| `src/app/client/settings/tabs/ServerTab.ts` | The "reset all my settings" control, which also clears the prompt flags (Settings → Server; moved out of `SettingsModal.ts`) |
 
 ---
 
@@ -2520,11 +2528,28 @@ in `Config` (§23 has the modal side):
    outlive the flag and suppress the welcome modal on any host that later mounted
    that volume.
 2. **Exposes `docker: true`** on the `/api/config` runtime envelope and on
-   `/api/service/status`, so the UI gates without a second probe: Settings → Service
-   and → Updates are replaced by a one-line note each (*"update via `docker pull
-   …:latest`"*), the Linux "install for all users" and "uninstall" rows are hidden,
-   and the system-wide-install first-run modal never opens. **"stop server & exit" is
-   NOT gated** — it is the same teardown `docker stop` relies on (row 20.6).
+   `/api/service/status`, so the UI gates without a second probe: Settings → Service,
+   → Updates and → Dependencies are replaced by a one-line note each, the home page's
+   `DependencyAlertCard` mounts inert, the Linux "install for all users" and
+   "uninstall" rows are hidden, and the system-wide-install first-run modal never
+   opens. **"stop server & exit" is NOT gated** — it is the same teardown `docker
+   stop` relies on (row 20.6).
+
+   The three notes **name no image tag**, deliberately. The Updates note used to read
+   *"update via `docker pull …:latest`"* and was wrong for the whole pre-1.0 window:
+   `docker-publish.yml`'s `computeTags()` refuses to move `:latest` onto a beta (and
+   `scripts/__tests__/docker-tags.test.mjs` pins that refusal), so `:latest` 404s
+   today while `:beta` resolves. Naming `:beta` instead only moves the expiry date —
+   it becomes wrong at the first stable release. "pull a newer image to update" is
+   true in both eras and needs no second copy change at 1.0.
+
+   Ordering is load-bearing, not incidental. `applyDockerGating()` runs **before** the
+   Dependencies refresh in the `SettingsModal` constructor, because
+   `refreshDependencies()` mounts a `DependencyPanel` that polls every 15 s and
+   `TabStrip.replaceTabBody()` detaches the panel's element **without** stopping its
+   interval — starting it and then swapping the body would leak a poll for the life
+   of the page (§36). The unit assertion that no `/api/dependencies` request is made
+   in a container is what pins that order.
 
 ### 26.6 Networking
 
@@ -2567,3 +2592,251 @@ in `Config` (§23 has the modal side):
 | `src/server/Config.ts` | `dockerMode` — the `WS_SCRCPY_DOCKER` overlay and the `docker: true` envelope field |
 | `tests/docker/*.yml`, `tests/e2e/support/dockerStack.ts` | Spec-owned stacks and the docker helpers for the `@docker-host` rows |
 | `docs/specs/2026-06-09-sp4-docker-image-design.md` | The design, with §16's amendments (trixie, registry, arm64, adb's URL) |
+
+---
+
+## 27. Settings: Tabs, Staged Saves and the Batch Write-Ahead Log
+
+Settings was one long scrolling panel in which each control wrote as soon as you
+touched it. It is now a tabbed dialog in which most controls **stage** a value,
+and one dialog-level **Save** applies the whole set as a batch. Three layers
+carry that, and they are deliberately separate.
+
+### 27.1 The three layers
+
+| Layer | Where | What it owns |
+|---|---|---|
+| Staging | `src/app/client/settings/StagedSettingsStore.ts` | Registered fields, their baselines, and the change list. No DOM, no network. |
+| Transport | `src/app/client/settings/SaveRunner.ts` → `src/server/api/SettingsBatchApi.ts` | One `POST /api/settings/batch`. Apply order and the WAL transitions live server-side. |
+| Durability | `src/server/db/migrations/002_pending_settings.ts`, `PendingSettingsStore.ts`, `reconcilePendingSettings.ts` | The `pending_settings` write-ahead log and its boot-time reconciliation. |
+
+`SaveRunner` is a thin client on purpose. Doing the ordering in the browser
+would put the "`webPort` last" guarantee in browser JavaScript, and spreading
+the WAL transitions across separate round trips would make
+mark-completed-before-restart a race rather than a fact.
+
+### 27.2 The store, and what it refuses to know
+
+`StagedSettingsStore` holds a `StagedField` record per registered id (`id`,
+`label`, `initial`, an optional `format`) plus the current value.
+
+- `changes()` compares each current value against its baseline with `Object.is`
+  and emits `{ id, label, from, to }` for the ones that differ. Typing a value
+  back to its original therefore **removes** it from the list — the store
+  compares, it does not latch.
+- `register()` moves the baseline, so a tab that re-registers from its own
+  refresh re-baselines rather than staging a change. The Updates and Server tabs
+  both build with `null` initials and re-register once their `/api/updates/status`
+  and `/api/config` reads land; without that an untouched dialog would sit
+  permanently dirty at `null → …`.
+- `commit()` adopts the current values as the new baseline, which is what a
+  successful save calls so the dialog stops reporting an applied batch as staged.
+- `subscribe()` is a bare "something changed" signal, and it is what keeps the
+  Save button honest. There is no DOM event that reliably means "something was
+  staged": the Updates check-interval field commits from a 500 ms debounce timer,
+  so its `input` event fires well before the value reaches the store, and the
+  commit itself fires nothing at all.
+
+The important property is negative. `set()` on an unregistered id is **silently
+ignored**, so a field nobody registered can never appear in `changes()`. The
+action-only tabs (Users, Embedding, Service) register nothing, which makes
+"actions must not appear in the change summary" a structural fact rather than a
+rule someone has to remember — and a future action cannot leak into the summary
+by oversight.
+
+### 27.3 The tabs
+
+`TabStrip` (`src/app/client/settings/TabStrip.ts`) builds every tab body **once,
+eagerly, in the constructor**; `activate()` only toggles the `hidden` attribute
+and never rebuilds. Two consequences:
+
+- **Switching tabs keeps staged edits and never prompts.** Nothing is torn down,
+  so in-progress edits survive without the store re-hydrating the DOM. Prompting
+  between tabs of a single dialog trains people to click through prompts.
+- Every section is in the DOM from the start, which is what the pre-tabs
+  regression tests (and `SettingsModal`'s unconditional refresh calls) assume.
+
+Tabs, in order, each gated by `canSeeSection` on the caller's role except the
+last: **Users**, **Embedding**, **Updates**, **Service**, **Dependencies**,
+**Server** (always built — it carries the user-level reset row). A caller may ask
+for a starting tab (`new SettingsModal({ initialTab: 'dependencies' })`), which
+is what the home page's dependency alert uses; an id that was never built is a
+no-op and lands on the first tab.
+
+Container mode swaps the Updates and Service bodies for the locked copy through
+`TabStrip.replaceTabBody()`, not a direct `replaceWith` — a fresh node carries no
+`hidden` attribute, so a direct swap rendered visible beside whatever tab was
+actually active and orphaned the strip's cache.
+
+### 27.4 What stages, and what still writes immediately
+
+`SettingsBatchApi.STAGEABLE_IDS` is an **allowlist** — an id absent from it is
+refused outright with a 400 rather than passed to a writer that might accept it:
+
+```ts
+export const STAGEABLE_IDS: ReadonlySet<string> = new Set([
+    'webPort',
+    'channel',
+    'autoUpdate',
+    'updateCheckIntervalMinutes',
+    'githubOwner',
+]);
+```
+
+Two things the allowlist implies, both easy to state wrongly:
+
+- **`githubOwner` stages like the rest.** The Updates tab's GitHub-owner field
+  used to write immediately on blur via `PATCH /api/updates/config`; it now
+  registers with the store and rides the batch, so closing the dialog without
+  Save leaves it untouched. `PATCH /api/updates/config` still accepts the field —
+  nothing was removed from the endpoint — the tab simply no longer calls it.
+- **"check for updates now" and "apply update" are actions**, as are everything
+  on Users, Embedding and Service and the Server tab's reset / change password /
+  log out / install for all users / stop & exit / uninstall. They fire on click
+  and register nothing.
+
+**Every staged text/number field refuses bad input the same way**: the typed
+value stays on screen, an inline message says what is wrong, and nothing is
+staged. That covers `webPort` (`ServerTab`), the check interval and the GitHub
+owner (`UpdatesTab`). A refusal is a no-op on the store, never a rollback of it —
+so an earlier value that *did* pass the guard stays staged, and the field and the
+store can legitimately show different things until the entry is corrected. The
+guards exist because `Config.validateField` rejects by **throwing**, which the
+batch endpoint turns into a 400 for the whole batch at Save time.
+
+`PATCH /api/config` **still exists and still accepts `webPort`**, restart
+scheduling included (`src/server/api/ConfigApi.ts`). What the tabs work removed
+is the Server tab's own per-field Save button and the call it made; the endpoint
+underneath is unchanged.
+
+### 27.5 Save
+
+The dialog footer carries one Save for every tab. It starts disabled and
+`syncSaveButton()` keeps it at `this.saving || store.isDirty() !== true` — the
+in-flight guard is an equal partner with dirtiness, not a refinement, because the
+tabs stay interactive while a batch is in flight and the store's own subscription
+would otherwise re-enable Save mid-request.
+
+`performStagedSave` (`src/app/client/SettingsModal.ts`) is the whole flow, and
+the order of its calls is the behaviour:
+
+1. **The summary is not bypassable.** `confirm` is awaited before `save` is
+   reached on every path in, and a refusal sends nothing.
+   `SettingsSummaryModal` renders straight from the same `changes()` array that
+   is sent, one `label: from → to` line per change, so it cannot disagree with
+   what will be applied. A batch containing `webPort` also gets the restart
+   warning.
+2. **A failure leaves the store alone.** No `reset()` and — above all — no tab
+   refresh, since `refreshUpdates()` / `refreshServer()` re-register their fields
+   with server values and would silently discard every staged edit. A refused
+   batch leaves the dialog open, the changes staged, and the reason on the footer
+   status line, named by the change's **label** rather than its wire id.
+3. **A restart redirects.** On `restartRequired` with a numeric `redirectPort`,
+   the dialog says `restarting → redirecting…` and navigates
+   `RESTART_REDIRECT_DELAY_MS` (4000 ms) later to that port on **this browser's
+   own origin** — the server names only the port, because a server-built
+   `localhost` URL sends every off-box client to its own machine. The delay is
+   the supervisor's window to rebind; navigating immediately gets a connection
+   refused.
+
+### 27.6 Closing with unsaved changes
+
+`closeIntent(store)` is a pure function of the store: dirty → `prompt`, clean →
+`close`. Every dismissal route (Escape, the backdrop, the ×) goes through it.
+
+The prompt offers **save / discard / cancel**. `cancel` means cancel — back to
+the dialog with everything still staged — and every *ambiguous* dismissal of the
+prompt itself (Escape, backdrop, ×) resolves `cancel`, the only choice that
+cannot lose work. `save` runs the identical path the Save button does, summary
+included, so a refused batch leaves the dialog open instead of closing the
+changes away. A re-entrancy guard stops a second prompt stacking on the first,
+and a dismissal arriving while a batch is in flight is dropped: "what about your
+unsaved changes" has no honest answer while the save that would resolve it is
+still outstanding.
+
+### 27.7 The batch endpoint
+
+`POST /api/settings/batch`, gated by `requireOperator` (loopback, or a signed-in
+admin session, or the explicit remote-admin opt-out). The body is
+`{ changes: Change[] }`, read through `readBodyCapped` — an oversized body is
+413, malformed JSON is 400.
+
+**Order: `webPort` LAST, always.** `orderChanges()` partitions the list so every
+other change applies first. `webPort` is the only change that ends the process —
+`restartRequired` → the `.restart` marker → exit 75 → the supervisor restarts on
+the new port — so anything applied after it can be lost. Making it terminal is
+what guarantees nothing is stranded.
+
+Failure is one shape for both paths: mark the WAL row `failed` with
+`<id>: <message>`, answer 400 with `{ ok: false, applied, failed: { id, error } }`,
+and end the batch. Reaching a validation failure from the UI is now possible in a
+way it was not before, because the per-field Save that used to pre-screen the port
+is gone.
+
+A batch naming an id outside `STAGEABLE_IDS` is refused **before** the WAL row is
+written, so a rejected batch leaves no trace to reason about later.
+
+### 27.8 The write-ahead log
+
+Migration 002 adds `pending_settings`:
+
+```sql
+CREATE TABLE pending_settings (
+    id         INTEGER PRIMARY KEY,
+    user_id    INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+    status     TEXT    NOT NULL CHECK (status IN ('pending','completed','failed','abandoned')),
+    changes    TEXT    NOT NULL,
+    error      TEXT
+);
+```
+
+It lives in SQLite rather than browser storage because a `webPort` change moves
+the server to a new **port**, which is a different **origin** — `localStorage`
+from the old origin is unreadable after the redirect. The data root survives both
+the restart and the origin change.
+
+The four statuses, and the exactly-one-terminal-mark rule:
+
+| Status | Written | Means |
+|---|---|---|
+| `pending` | `create()`, before anything is applied | The batch was accepted and is being applied. |
+| `completed` | after the last successful apply | Everything in the batch was written. |
+| `failed` | on a rejected apply, with the error | One change was refused; the batch stopped there. |
+| `abandoned` | at boot, by `reconcilePendingSettings` | A previous instance died mid-batch. |
+
+**`completed` is marked after the config write but before the restart is
+scheduled.** Past the scheduled restart we may never get another instruction in,
+and the row would still read `pending` when the process dies. The harm of that is
+not a double-apply — boot never replays such a row (below) — it is an audit trail
+saying a change was *abandoned* when it had in fact already been written to
+`config.json`, which is precisely the record someone reads to explain why the
+port moved. A `completed` row written at that point is inert by comparison: it
+describes a write that did happen. Equally, a rejected port must not leave a
+`completed` row claiming a write that threw, which is why the mark sits after the
+`updateAppConfig` call and not before it.
+
+**A `pending` row at boot is abandoned, never re-applied.**
+`reconcilePendingSettings` runs in `src/server/index.ts` before any API handler
+can accept a new batch: it logs each stranded row, marks it `abandoned`, and
+stops. Silently applying settings a user may not remember confirming is worse
+than losing them, and the durable row still explains what happened. The same pass
+prunes **finished** rows older than the retention window (90 days) so the table
+stays bounded; `pending` rows are never pruned.
+
+### 27.9 Key files
+
+| File | Purpose |
+|---|---|
+| `src/app/client/settings/StagedSettingsStore.ts` | Registered fields, baselines, `changes()` / `commit()` / `reset()` |
+| `src/app/client/settings/TabStrip.ts` | Eager build, `activate()`, `replaceTabBody()` |
+| `src/app/client/settings/SettingsSummaryModal.ts` | The pre-save review list, rendered from `changes()` |
+| `src/app/client/settings/closeIntent.ts` | `prompt` vs `close`, as a pure function of the store |
+| `src/app/client/settings/SaveRunner.ts` | `runSave()` and the `res.ok` normalisation of a refused batch |
+| `src/app/client/settings/tabs/*.ts` | Users, Embedding, Updates, Service, Dependencies, Server |
+| `src/app/client/SettingsModal.ts` | Tab assembly + role gating, the footer Save, `performStagedSave`, `performDirtyClose`, the dirty-close prompt |
+| `src/app/client/DependencyAlertCard.ts` | The home page's remaining dependency notice |
+| `src/server/api/SettingsBatchApi.ts` | `STAGEABLE_IDS`, `orderChanges()`, the apply loop and the WAL marks |
+| `src/server/db/PendingSettingsStore.ts` | The WAL rows and their transitions |
+| `src/server/db/reconcilePendingSettings.ts` | Boot-time abandon + prune |
+| `src/server/db/migrations/002_pending_settings.ts` | The `pending_settings` table |

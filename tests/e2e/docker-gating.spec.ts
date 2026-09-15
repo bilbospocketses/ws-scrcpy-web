@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { openSettingsTab } from './support/auth';
 
 /**
  * The container tier (SP4 E4).
@@ -52,25 +53,121 @@ test.describe('container mode', () => {
         await expect(page.getByRole('button', { name: 'Open settings' })).toBeEnabled();
     });
 
-    test('@docker Settings replaces Service and Updates with the container copy', async ({ page }) => {
+    test('@docker Settings replaces Service, Updates and Dependencies with the container copy', async ({ page }) => {
         await page.goto('/');
         await page.getByRole('button', { name: 'Open settings' }).click();
         const settings = page.locator('dialog.settings-modal');
         await expect(settings).toBeVisible();
 
-        // The notes are present...
+        // Service, Updates and Dependencies are separate TABS now, and only one
+        // is ever visible, so the notes can no longer be asserted side by side —
+        // each is checked in its own tab, presence and absence together.
+        //
+        // The absence is the half this row turns on, and it is also the half the
+        // tabs put at risk: a role query does not see into a `hidden` subtree,
+        // so a button count taken from a closed tab reads 0 no matter what
+        // survived inside it. Every count therefore runs with ITS tab open,
+        // where 0 means the section really was replaced.
         const service = settings.locator('[data-docker-note="service"]');
         const updates = settings.locator('[data-docker-note="updates"]');
-        await expect(service).toBeVisible();
-        await expect(updates).toBeVisible();
-        await expect(service).toContainText('service install not applicable — this instance runs in a container.');
-        await expect(updates).toContainText('update via `docker pull bilbospocketses/ws-scrcpy-web:latest`.');
+        const dependencies = settings.locator('[data-docker-note="dependencies"]');
 
-        // ...and the real sections they replaced are not. Asserting the absence
-        // matters as much as the presence: a note rendered ALONGSIDE a working
-        // install button would satisfy the first half and still be wrong.
-        await expect(service.getByRole('button')).toHaveCount(0);
+        // Each note IS the tab body (`replaceTabBody` swaps the whole section),
+        // so the tab resolves whether or not the probe has landed yet, and the
+        // `data-docker-note` assertion below is what waits for the swap.
+        await openSettingsTab(settings, 'Updates');
+        await expect(updates).toBeVisible();
+        await expect(updates).toContainText(
+            'app updates not applicable — this instance runs in a container; pull a newer image to update.',
+        );
+        // No tag, in either direction: `:latest` 404s for the whole pre-1.0
+        // window and `:beta` stops being the right advice at 1.0, so the copy
+        // names neither (item 135). This is the assertion the old copy failed.
+        await expect(updates).not.toContainText(':latest');
+        await expect(updates).not.toContainText(':beta');
+        // ...and the real section it replaced is not.
         await expect(updates.getByRole('button')).toHaveCount(0);
+
+        await openSettingsTab(settings, 'Service');
+        await expect(service).toBeVisible();
+        await expect(service).toContainText('service install not applicable — this instance runs in a container.');
+        await expect(service.getByRole('button')).toHaveCount(0);
+
+        // Item 135: Dependencies is gated the same way. The tab stays in the
+        // strip — an admin who used it on the desktop and finds it simply gone
+        // learns nothing — so the assertion is that it OPENS and says why.
+        await openSettingsTab(settings, 'Dependencies');
+        await expect(dependencies).toBeVisible();
+        await expect(dependencies).toContainText(
+            'dependency updates not applicable — this instance runs in a container; pull a newer image to update.',
+        );
+        // The real panel carries "check for updates" plus an update button per
+        // dependency; 0 here is only meaningful because the tab is open (see the
+        // hidden-subtree note above).
+        await expect(dependencies.getByRole('button')).toHaveCount(0);
+        // And the real body is detached, not merely covered by the note. The
+        // note carries the SAME `data-settings-tab` hook — it has to, because
+        // Dependencies has no heading and `openSettingsTab` above resolves it by
+        // that hook alone — so this cannot be an absence check. Exactly one
+        // element answers to the hook, and it is the note: a surviving real panel
+        // would make it 2, and a swap that never fired would leave the single
+        // match without `data-docker-note`.
+        await expect(settings.locator('section[data-settings-tab="dependencies"]')).toHaveCount(1);
+        await expect(
+            settings.locator('section[data-settings-tab="dependencies"][data-docker-note="dependencies"]'),
+        ).toHaveCount(1);
+    });
+
+    test('@docker the home page raises no dependency-update alert', async ({ page }) => {
+        // Item 135, the other half of the Dependencies gate. The card polls
+        // /api/dependencies every 15 s and, when something is pending, says
+        // "adb has an update available" next to a button into the tab the test
+        // above just proved cannot act on it. In a container it must mount inert.
+        //
+        // The endpoint is STUBBED, and that is the whole design of this test
+        // rather than a convenience. A fresh container hydrates the newest of
+        // everything, so nothing is ever pending and the card is hidden whether
+        // or not the gate exists — an unstubbed assertion here would read the
+        // same in both states and prove nothing. The stub is what makes the two
+        // states differ: with the gate the card never asks and stays hidden;
+        // without it the card renders and becomes visible.
+        let hits = 0;
+        await page.route('**/api/dependencies', async (route) => {
+            hits += 1;
+            await route.fulfill({
+                status: 200,
+                contentType: 'application/json',
+                body: JSON.stringify([
+                    {
+                        name: 'adb',
+                        displayName: 'adb',
+                        installedVersion: '1.0.0',
+                        latestVersion: '9.9.9',
+                        status: 'update-available',
+                        description: '',
+                        requiresRestart: false,
+                        canUpdate: true,
+                    },
+                ]),
+            });
+        });
+
+        await page.goto('/');
+        // FirstRunBanner reads the SAME endpoint and is deliberately NOT
+        // docker-gated (a dependency that failed to download is worth reporting
+        // in a container too), so one hit is expected and is the signal that the
+        // page has got past its runtime probe. It also stops polling once
+        // nothing is pending — which the stub above satisfies — so one hit is
+        // also the ceiling, and any SECOND hit is the alert card.
+        await expect.poll(() => hits, { message: 'the page read /api/dependencies at least once' }).toBeGreaterThan(0);
+        // The card mounts a couple of round trips behind (authClient.me(), then
+        // /api/config), so give it room to be wrong before concluding it is not.
+        await page.waitForTimeout(5_000);
+
+        const alert = page.locator('.dependency-alert');
+        await expect(alert).toHaveCount(1); // mounted inert, not absent
+        await expect(alert).not.toBeVisible();
+        expect(hits, 'the alert card asked for dependencies in a container').toBe(1);
     });
 
     test('@docker first boot hydrates every dependency onto the volume, adb included', async ({ request }) => {

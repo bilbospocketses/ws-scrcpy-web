@@ -20,7 +20,10 @@ pub fn handle(args: &[String]) -> Option<i32> {
 }
 
 fn arg_value<'a>(args: &'a [String], key: &str) -> Option<&'a str> {
-    args.iter().position(|a| a == key).and_then(|i| args.get(i + 1)).map(|s| s.as_str())
+    args.iter()
+        .position(|a| a == key)
+        .and_then(|i| args.get(i + 1))
+        .map(|s| s.as_str())
 }
 
 fn run(args: &[String]) -> i32 {
@@ -60,7 +63,9 @@ fn run(args: &[String]) -> i32 {
     // copy — no swap, no staged cleanup. The relaunch must NOT be elevated, which
     // is why it runs here (as the user) rather than inside the pkexec script.
     if !should_swap(args) {
-        log::info(&format!("linux-apply(relaunch-only): target={target:?} wait_pid={wait_pid:?}"));
+        log::info(&format!(
+            "linux-apply(relaunch-only): target={target:?} wait_pid={wait_pid:?}"
+        ));
         if let Some(pid) = wait_pid {
             wait_for_pid_exit(pid, Duration::from_secs(60));
         }
@@ -73,7 +78,9 @@ fn run(args: &[String]) -> i32 {
     let staged = PathBuf::from(
         arg_value(args, "--staged").expect("should_swap() == true guarantees --staged present"),
     );
-    log::info(&format!("linux-apply(local): staged={staged:?} target={target:?} wait_pid={wait_pid:?}"));
+    log::info(&format!(
+        "linux-apply(local): staged={staged:?} target={target:?} wait_pid={wait_pid:?}"
+    ));
 
     if let Some(pid) = wait_pid {
         wait_for_pid_exit(pid, Duration::from_secs(60));
@@ -104,7 +111,13 @@ fn run(args: &[String]) -> i32 {
 /// app back. Runs from inside a `systemd-run` transient unit (own cgroup), so it
 /// survives stopping the service unit. Exec orchestration over the pure builders
 /// (those are unit-tested; this path is Fedora-verified per the Phase 2 spec).
-fn run_service_restart(staged: &Path, target: &Path, scope: Scope, unit: &str, relabel: bool) -> i32 {
+fn run_service_restart(
+    staged: &Path,
+    target: &Path,
+    scope: Scope,
+    unit: &str,
+    relabel: bool,
+) -> i32 {
     let bindir = linux_service::tool_dir("systemctl");
     log::info(&format!(
         "linux-apply(service): scope={scope:?} unit={unit} target={target:?} relabel={relabel}"
@@ -123,7 +136,9 @@ fn run_service_restart(staged: &Path, target: &Path, scope: Scope, unit: &str, r
             Ok(()) => break,
             Err(e) => {
                 if start.elapsed() >= Duration::from_secs(15) {
-                    log::error(&format!("linux-apply(service): swap failed after settle: {e}"));
+                    log::error(&format!(
+                        "linux-apply(service): swap failed after settle: {e}"
+                    ));
                     cleanup_apply_artifacts(staged);
                     // Do NOT start into a broken binary; swap_appimage left the old one in place.
                     return 1;
@@ -155,8 +170,15 @@ fn run_cmd(argv: &[String]) {
     };
     match std::process::Command::new(cmd).args(rest).status() {
         Ok(s) if s.success() => log::info(&format!("linux-apply(service) ok: {}", argv.join(" "))),
-        Ok(s) => log::error(&format!("linux-apply(service) non-zero ({:?}): {}", s.code(), argv.join(" "))),
-        Err(e) => log::error(&format!("linux-apply(service) spawn failed: {} ({e})", argv.join(" "))),
+        Ok(s) => log::error(&format!(
+            "linux-apply(service) non-zero ({:?}): {}",
+            s.code(),
+            argv.join(" ")
+        )),
+        Err(e) => log::error(&format!(
+            "linux-apply(service) spawn failed: {} ({e})",
+            argv.join(" ")
+        )),
     }
 }
 
@@ -172,15 +194,21 @@ pub fn backup_path(target: &Path) -> PathBuf {
 pub fn swap_appimage(staged: &Path, target: &Path) -> std::io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
     if !staged.exists() {
-        return Err(std::io::Error::new(std::io::ErrorKind::NotFound, "staged file missing"));
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "staged file missing",
+        ));
     }
     let backup = backup_path(target);
     if target.exists() {
         // rename within-fs; fall back to copy for cross-fs.
         std::fs::rename(target, &backup).or_else(|_| std::fs::copy(target, &backup).map(|_| ()))?;
     }
-    let moved = std::fs::rename(staged, target)
-        .or_else(|_| std::fs::copy(staged, target).and_then(|_| std::fs::remove_file(staged)).map(|_| ()));
+    let moved = std::fs::rename(staged, target).or_else(|_| {
+        std::fs::copy(staged, target)
+            .and_then(|_| std::fs::remove_file(staged))
+            .map(|_| ())
+    });
     if let Err(e) = moved {
         if backup.exists() {
             let _ = std::fs::rename(&backup, target);
@@ -200,7 +228,9 @@ fn wait_for_pid_exit(pid: u32, timeout: Duration) {
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-    log::error(&format!("linux-apply: pid {pid} still alive after {timeout:?}; proceeding anyway"));
+    log::error(&format!(
+        "linux-apply: pid {pid} still alive after {timeout:?}; proceeding anyway"
+    ));
 }
 
 /// Relaunch the new AppImage so it OUTLIVES this helper. When this helper itself
@@ -211,7 +241,10 @@ fn wait_for_pid_exit(pid: u32, timeout: Duration) {
 /// non-systemd host the helper is its own session leader, so a detached spawn
 /// survives. Argv built by `relaunch_command`.
 fn relaunch(target: &Path) {
-    let systemd_run = format!("{}/systemd-run", crate::linux_service::tool_dir("systemd-run"));
+    let systemd_run = format!(
+        "{}/systemd-run",
+        crate::linux_service::tool_dir("systemd-run")
+    );
     let use_systemd = under_systemd() && Path::new(&systemd_run).exists();
     let argv = relaunch_command(target, use_systemd, &systemd_run);
     let (cmd, rest) = argv.split_first().expect("non-empty argv");
@@ -234,15 +267,27 @@ fn relaunch(target: &Path) {
         // so it outlives us. Same pattern as linux_service.rs's teardown relaunch.
         match command.status() {
             Ok(s) => log::info(&format!(
-                "linux-apply: relaunched via `{}` (systemd-run exit {:?})", argv.join(" "), s.code()
+                "linux-apply: relaunched via `{}` (systemd-run exit {:?})",
+                argv.join(" "),
+                s.code()
             )),
-            Err(e) => log::error(&format!("linux-apply: relaunch failed (`{}`): {e}", argv.join(" "))),
+            Err(e) => log::error(&format!(
+                "linux-apply: relaunch failed (`{}`): {e}",
+                argv.join(" ")
+            )),
         }
     } else {
         // Non-systemd: we're a session leader; detached spawn, app reparents to init.
         match command.spawn() {
-            Ok(child) => log::info(&format!("linux-apply: relaunched `{}` (pid {})", argv.join(" "), child.id())),
-            Err(e) => log::error(&format!("linux-apply: relaunch failed (`{}`): {e}", argv.join(" "))),
+            Ok(child) => log::info(&format!(
+                "linux-apply: relaunched `{}` (pid {})",
+                argv.join(" "),
+                child.id()
+            )),
+            Err(e) => log::error(&format!(
+                "linux-apply: relaunch failed (`{}`): {e}",
+                argv.join(" ")
+            )),
         }
     }
 }
@@ -250,7 +295,9 @@ fn relaunch(target: &Path) {
 /// True when running inside a systemd unit — `systemd-run` sets `INVOCATION_ID`
 /// for the processes it starts. Drives the relaunch escape strategy.
 fn under_systemd() -> bool {
-    std::env::var("INVOCATION_ID").map(|v| !v.is_empty()).unwrap_or(false)
+    std::env::var("INVOCATION_ID")
+        .map(|v| !v.is_empty())
+        .unwrap_or(false)
 }
 
 /// argv for relaunching `target`. Under systemd → its OWN `systemd-run --user
@@ -262,7 +309,11 @@ pub fn relaunch_command(target: &Path, under_systemd: bool, systemd_run: &str) -
         // G1: suppress the browser-open on relaunch — the user already has a tab
         // that reconnects, so the relaunched instance must not pop a new one.
         // §71: shared user-relaunch builder (--user --collect [setenv] <target>).
-        crate::linux_service::user_relaunch_command(systemd_run, &["--setenv=WS_SCRCPY_NO_BROWSER=1"], &t)
+        crate::linux_service::user_relaunch_command(
+            systemd_run,
+            &["--setenv=WS_SCRCPY_NO_BROWSER=1"],
+            &t,
+        )
     } else {
         // Direct exec — relaunch() sets WS_SCRCPY_NO_BROWSER on the Command.
         vec![t]
@@ -274,7 +325,12 @@ pub fn relaunch_command(target: &Path, under_systemd: bool, systemd_run: &str) -
 pub fn service_unit_command(scope: Scope, action: &str, unit: &str, bindir: &str) -> Vec<String> {
     let systemctl = format!("{bindir}/systemctl");
     let pre = linux_service::scope_prefix(scope);
-    [vec![systemctl], pre, vec![action.to_string(), format!("{unit}.service")]].concat()
+    [
+        vec![systemctl],
+        pre,
+        vec![action.to_string(), format!("{unit}.service")],
+    ]
+    .concat()
 }
 
 /// Re-apply the `bin_t` SELinux label to the system-staged target after a swap,
@@ -354,7 +410,11 @@ mod tests {
         let staged = tmp.path().join("does-not-exist.new");
 
         assert!(swap_appimage(&staged, &target).is_err());
-        assert_eq!(std::fs::read(&target).unwrap(), b"OLD", "target untouched on error");
+        assert_eq!(
+            std::fs::read(&target).unwrap(),
+            b"OLD",
+            "target untouched on error"
+        );
     }
 
     #[test]
@@ -369,8 +429,18 @@ mod tests {
         // #27: under systemd the new app must run in its OWN --collect unit so it
         // survives this helper's exit (not in this helper's reaped cgroup).
         assert_eq!(
-            relaunch_command(Path::new("/home/u/App.AppImage"), true, "/usr/bin/systemd-run"),
-            vec!["/usr/bin/systemd-run", "--user", "--collect", "--setenv=WS_SCRCPY_NO_BROWSER=1", "/home/u/App.AppImage"]
+            relaunch_command(
+                Path::new("/home/u/App.AppImage"),
+                true,
+                "/usr/bin/systemd-run"
+            ),
+            vec![
+                "/usr/bin/systemd-run",
+                "--user",
+                "--collect",
+                "--setenv=WS_SCRCPY_NO_BROWSER=1",
+                "/home/u/App.AppImage"
+            ]
         );
     }
 
@@ -378,7 +448,11 @@ mod tests {
     fn relaunch_is_direct_when_not_under_systemd() {
         // Non-systemd host: helper is its own session leader, plain exec survives.
         assert_eq!(
-            relaunch_command(Path::new("/home/u/App.AppImage"), false, "/usr/bin/systemd-run"),
+            relaunch_command(
+                Path::new("/home/u/App.AppImage"),
+                false,
+                "/usr/bin/systemd-run"
+            ),
             vec!["/home/u/App.AppImage"]
         );
     }
@@ -394,19 +468,44 @@ mod tests {
     #[test]
     fn service_unit_command_user_scope() {
         assert_eq!(
-            service_unit_command(linux_service::Scope::User, "stop", "WsScrcpyWeb", "/usr/bin"),
-            vec!["/usr/bin/systemctl", "--user", "stop", "WsScrcpyWeb.service"]
+            service_unit_command(
+                linux_service::Scope::User,
+                "stop",
+                "WsScrcpyWeb",
+                "/usr/bin"
+            ),
+            vec![
+                "/usr/bin/systemctl",
+                "--user",
+                "stop",
+                "WsScrcpyWeb.service"
+            ]
         );
         assert_eq!(
-            service_unit_command(linux_service::Scope::User, "start", "WsScrcpyWeb", "/usr/bin"),
-            vec!["/usr/bin/systemctl", "--user", "start", "WsScrcpyWeb.service"]
+            service_unit_command(
+                linux_service::Scope::User,
+                "start",
+                "WsScrcpyWeb",
+                "/usr/bin"
+            ),
+            vec![
+                "/usr/bin/systemctl",
+                "--user",
+                "start",
+                "WsScrcpyWeb.service"
+            ]
         );
     }
 
     #[test]
     fn service_unit_command_system_scope_has_no_user_flag() {
         assert_eq!(
-            service_unit_command(linux_service::Scope::System, "stop", "WsScrcpyWeb", "/usr/bin"),
+            service_unit_command(
+                linux_service::Scope::System,
+                "stop",
+                "WsScrcpyWeb",
+                "/usr/bin"
+            ),
             vec!["/usr/bin/systemctl", "stop", "WsScrcpyWeb.service"]
         );
     }
@@ -415,27 +514,65 @@ mod tests {
     fn relabel_command_prefers_restorecon_then_chcon() {
         // restorecon present -> use it (re-applies the persistent fcontext rule).
         assert_eq!(
-            relabel_command(Path::new("/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"), "/usr/bin", true),
-            vec!["/usr/sbin/restorecon", "-v", "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"]
+            relabel_command(
+                Path::new("/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"),
+                "/usr/bin",
+                true
+            ),
+            vec![
+                "/usr/sbin/restorecon",
+                "-v",
+                "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"
+            ]
         );
         // restorecon absent -> chcon -t bin_t fallback (bin dir).
         assert_eq!(
-            relabel_command(Path::new("/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"), "/usr/bin", false),
-            vec!["/usr/bin/chcon", "-t", "bin_t", "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"]
+            relabel_command(
+                Path::new("/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"),
+                "/usr/bin",
+                false
+            ),
+            vec![
+                "/usr/bin/chcon",
+                "-t",
+                "bin_t",
+                "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"
+            ]
         );
     }
 
     #[test]
     fn parse_service_restart_reads_scope_unit_relabel() {
-        let args: Vec<String> = ["--linux-apply", "--service-restart", "system", "--unit", "WsScrcpyWeb", "--relabel"]
-            .iter().map(|s| s.to_string()).collect();
+        let args: Vec<String> = [
+            "--linux-apply",
+            "--service-restart",
+            "system",
+            "--unit",
+            "WsScrcpyWeb",
+            "--relabel",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
         assert_eq!(
             parse_service_restart(&args),
-            Some((linux_service::Scope::System, "WsScrcpyWeb".to_string(), true))
+            Some((
+                linux_service::Scope::System,
+                "WsScrcpyWeb".to_string(),
+                true
+            ))
         );
 
-        let user: Vec<String> = ["--linux-apply", "--service-restart", "user", "--unit", "WsScrcpyWeb"]
-            .iter().map(|s| s.to_string()).collect();
+        let user: Vec<String> = [
+            "--linux-apply",
+            "--service-restart",
+            "user",
+            "--unit",
+            "WsScrcpyWeb",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
         assert_eq!(
             parse_service_restart(&user),
             Some((linux_service::Scope::User, "WsScrcpyWeb".to_string(), false))
@@ -443,7 +580,9 @@ mod tests {
 
         // absent -> None (the local-mode path)
         let local: Vec<String> = ["--linux-apply", "--staged", "/a", "--target", "/b"]
-            .iter().map(|s| s.to_string()).collect();
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         assert_eq!(parse_service_restart(&local), None);
     }
 
@@ -453,15 +592,37 @@ mod tests {
         // (the elevated pkexec rename-swap of the /opt binary already ran in the
         // Node server). run() must then SKIP swap_appimage and only wait-for-pid +
         // relaunch the freshly-swapped /opt copy.
-        let relaunch_only: Vec<String> =
-            ["--linux-apply", "--target", "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage", "--wait-pid", "4321"]
-                .iter().map(|s| s.to_string()).collect();
-        assert!(!should_swap(&relaunch_only), "no --staged means relaunch-only (skip swap)");
+        let relaunch_only: Vec<String> = [
+            "--linux-apply",
+            "--target",
+            "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage",
+            "--wait-pid",
+            "4321",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert!(
+            !should_swap(&relaunch_only),
+            "no --staged means relaunch-only (skip swap)"
+        );
 
         // Local + service applies carry --staged and DO swap the binary in place.
-        let local: Vec<String> =
-            ["--linux-apply", "--staged", "/d/App.new", "--target", "/home/u/App.AppImage", "--wait-pid", "4321"]
-                .iter().map(|s| s.to_string()).collect();
-        assert!(should_swap(&local), "--staged present means swap then relaunch");
+        let local: Vec<String> = [
+            "--linux-apply",
+            "--staged",
+            "/d/App.new",
+            "--target",
+            "/home/u/App.AppImage",
+            "--wait-pid",
+            "4321",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert!(
+            should_swap(&local),
+            "--staged present means swap then relaunch"
+        );
     }
 }

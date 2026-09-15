@@ -67,7 +67,9 @@ pub fn delete(data_root: &Path) -> io::Result<()> {
 /// Used at tray helper startup to clear leftovers from a crashed previous
 /// session.
 pub fn cleanup_stale(data_root: &Path, now: DateTime<Utc>, max_age: Duration) {
-    let Ok(Some(marker)) = read(data_root) else { return };
+    let Ok(Some(marker)) = read(data_root) else {
+        return;
+    };
     let Ok(written) = DateTime::parse_from_rfc3339(&marker.written_at) else {
         // Unparseable timestamp -> treat as stale (overwrites a malformed marker).
         let _ = delete(data_root);
@@ -98,15 +100,13 @@ pub enum PollOutcome {
 ///
 /// `spawn` takes `(launcher_path, launcher_args)` and returns Ok(()) on
 /// successful spawn (the launcher started; we don't wait for it to bind).
-pub fn poll_once<F>(
-    data_root: &Path,
-    own_session: u32,
-    spawn: &mut F,
-) -> PollOutcome
+pub fn poll_once<F>(data_root: &Path, own_session: u32, spawn: &mut F) -> PollOutcome
 where
     F: FnMut(&Path, &[String]) -> io::Result<()>,
 {
-    let Ok(Some(marker)) = read(data_root) else { return PollOutcome::Idle };
+    let Ok(Some(marker)) = read(data_root) else {
+        return PollOutcome::Idle;
+    };
     // §33 beta.38 diagnostic logging — every non-Idle outcome (marker
     // present) is logged so we can correlate tray-side handoff decisions
     // with the service-Node's "marker written" and "did not become
@@ -152,7 +152,10 @@ pub fn poll_for_handoff(data_root: &Path, own_session: u32, cadence: Duration) {
     cleanup_stale(data_root, Utc::now(), Duration::from_secs(60));
     loop {
         let mut spawn = |path: &Path, args: &[String]| -> io::Result<()> {
-            std::process::Command::new(path).args(args).spawn().map(|_| ())
+            std::process::Command::new(path)
+                .args(args)
+                .spawn()
+                .map(|_| ())
         };
         let _ = poll_once(data_root, own_session, &mut spawn);
         std::thread::sleep(cadence);
@@ -168,7 +171,9 @@ mod tests {
         let m = Marker {
             verb: "uninstall-service".to_string(),
             target_session_id: Some(1),
-            launcher_path: PathBuf::from(r"C:\Program Files\WsScrcpyWeb\current\ws-scrcpy-web-launcher.exe"),
+            launcher_path: PathBuf::from(
+                r"C:\Program Files\WsScrcpyWeb\current\ws-scrcpy-web-launcher.exe",
+            ),
             launcher_args: vec!["--local-takeover".to_string()],
             written_at: "2026-04-29T23:30:00Z".to_string(),
         };
@@ -315,7 +320,10 @@ mod tests {
         write(tmp.path(), &bad).expect("write");
         let now = chrono::DateTime::parse_from_rfc3339("2026-04-29T23:30:00Z").unwrap();
         cleanup_stale(tmp.path(), now.into(), std::time::Duration::from_secs(60));
-        assert!(read(tmp.path()).expect("read").is_none(), "unparseable timestamp should be reaped");
+        assert!(
+            read(tmp.path()).expect("read").is_none(),
+            "unparseable timestamp should be reaped"
+        );
     }
 
     #[test]
@@ -335,19 +343,25 @@ mod tests {
         };
         write(tmp.path(), &m).expect("write");
 
-        let spawn_log = std::sync::Arc::new(std::sync::Mutex::new(Vec::<(PathBuf, Vec<String>)>::new()));
+        let spawn_log =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::<(PathBuf, Vec<String>)>::new()));
         let log_clone = spawn_log.clone();
-        let outcome = poll_once(
-            tmp.path(),
-            1,
-            &mut |path, args| { log_clone.lock().unwrap().push((path.to_path_buf(), args.to_vec())); Ok(()) },
-        );
+        let outcome = poll_once(tmp.path(), 1, &mut |path, args| {
+            log_clone
+                .lock()
+                .unwrap()
+                .push((path.to_path_buf(), args.to_vec()));
+            Ok(())
+        });
         assert_eq!(outcome, PollOutcome::Spawned);
         let log = spawn_log.lock().unwrap();
         assert_eq!(log.len(), 1);
         assert_eq!(log[0].0, target_exe);
         assert_eq!(log[0].1, vec!["--local-takeover"]);
-        assert!(read(tmp.path()).expect("read").is_none(), "marker deleted after spawn");
+        assert!(
+            read(tmp.path()).expect("read").is_none(),
+            "marker deleted after spawn"
+        );
     }
 
     #[test]
@@ -355,7 +369,7 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let m = Marker {
             verb: "uninstall-service".to_string(),
-            target_session_id: Some(2),  // for a different session
+            target_session_id: Some(2), // for a different session
             launcher_path: PathBuf::from("a.exe"),
             launcher_args: vec![],
             written_at: "2026-04-29T23:30:00Z".to_string(),
@@ -363,7 +377,10 @@ mod tests {
         write(tmp.path(), &m).expect("write");
         let outcome = poll_once(tmp.path(), 1, &mut |_, _| panic!("must not spawn"));
         assert_eq!(outcome, PollOutcome::WrongSession);
-        assert!(read(tmp.path()).expect("read").is_some(), "marker preserved for other tray helper");
+        assert!(
+            read(tmp.path()).expect("read").is_some(),
+            "marker preserved for other tray helper"
+        );
     }
 
     #[test]
@@ -385,7 +402,10 @@ mod tests {
         };
         write(tmp.path(), &m).expect("write");
         let mut spawned = false;
-        let outcome = poll_once(tmp.path(), 99, &mut |_, _| { spawned = true; Ok(()) });
+        let outcome = poll_once(tmp.path(), 99, &mut |_, _| {
+            spawned = true;
+            Ok(())
+        });
         assert_eq!(outcome, PollOutcome::Spawned);
         assert!(spawned);
     }
@@ -401,12 +421,13 @@ mod tests {
             written_at: "2026-04-29T23:30:00Z".to_string(),
         };
         write(tmp.path(), &m).expect("write");
-        let outcome = poll_once(
-            tmp.path(),
-            1,
-            &mut |_, _| Err(std::io::Error::other("boom")),
-        );
+        let outcome = poll_once(tmp.path(), 1, &mut |_, _| {
+            Err(std::io::Error::other("boom"))
+        });
         assert_eq!(outcome, PollOutcome::SpawnFailed);
-        assert!(read(tmp.path()).expect("read").is_some(), "marker preserved for retry");
+        assert!(
+            read(tmp.path()).expect("read").is_some(),
+            "marker preserved for retry"
+        );
     }
 }

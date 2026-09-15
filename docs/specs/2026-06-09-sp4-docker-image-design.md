@@ -107,6 +107,31 @@ VOLUME /data
 
 ## 8. Container-awareness UI gating (locked decision 4)
 
+> **Superseded in part, 2026-09-15 — the Updates copy, and a third gated section.** The locked copy
+> below is **two supersessions stale** and is kept only as the dated record of what was decided on
+> 2026-06-09. `src/app/client/SettingsModal.ts` is authoritative for the live strings; this section is
+> not. What changed:
+>
+> - **The Updates note names no image tag at all.** It now reads *"app updates not applicable — this
+>   instance runs in a container; pull a newer image to update."* The verbatim copy below told the user
+>   to pull `:latest`, which **404s**: `docker-publish.yml`'s `computeTags()` deliberately refuses to
+>   move `:latest` onto a beta (and `scripts/__tests__/docker-tags.test.mjs` asserts that refusal), so
+>   no such tag has been published and none will be before the first stable release. It had also been
+>   re-pointed from `jchapz30` to `bilbospocketses` on 2026-09-10 without becoming any more correct —
+>   the namespace was wrong *and* the tag was wrong. Naming `:beta` instead would only have moved the
+>   expiry date, since `:latest` starts resolving at 1.0 and becomes what a user should track. Naming
+>   no tag is true in both eras, so 1.0 needs no second copy change.
+> - **Settings → Dependencies is gated too, and so is the home page's `DependencyAlertCard`.** The
+>   image ships the dependency set it was built with, and a binary fetched into a container layer is
+>   discarded by the next `docker run`. The tab is replaced by *"dependency updates not applicable —
+>   this instance runs in a container; pull a newer image to update."* and the alert card mounts inert.
+>   The tab deliberately stays in the strip rather than disappearing, for the same reason Service and
+>   Updates are replaced rather than hidden.
+>
+> `todo_ws_scrcpy_web` item 135 is the decision record. Do not restore a tag-naming string from the
+> text below: a locked-copy record that has gone stale is the likeliest route for the wrong string to
+> come back, which is why this note sits beside it.
+
 `ENV WS_SCRCPY_DOCKER=1` → the server exposes `docker: true` on the config-runtime / service-status envelopes (so the frontend gates without a second probe):
 
 - **Settings → Service:** hidden; replaced with informational copy *"service install not applicable — this instance runs in a container."*

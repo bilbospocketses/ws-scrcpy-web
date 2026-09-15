@@ -453,6 +453,16 @@ publish/
 
 Trigger: tag push `v*` (stable) or `v*-beta.*` (beta).
 
+> **SUPERSEDED 2026-09-14 — the `dotnet tool install -g vpk` line only. Left in place as the record
+> of what was designed on 2026-04-26.** A `-g` install puts vpk on the system **PATH** and the
+> workflow then invokes it bare, which violates Local-Dependencies-Only; **do not copy that line.**
+> As shipped (item 134), vpk is installed with
+> `--tool-path <repo>/dependencies/vpk/v<version>/` by `scripts/vpk-path.mjs` — the single resolver
+> every call site goes through — and invoked by absolute path, with no PATH fallback. The version
+> is derived from the resolved `velopack` entry in `package-lock.json` rather than hardcoded.
+> The rest of this workflow sketch still describes the intended shape. Authoritative:
+> `.github/workflows/release.yml` and `scripts/vpk-path.mjs`.
+
 ```yaml
 # .github/workflows/release.yml
 on:

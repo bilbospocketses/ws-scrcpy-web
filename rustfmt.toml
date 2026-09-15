@@ -1,0 +1,18 @@
+# Formatting convention for the Rust workspace (launcher, tray, common).
+#
+# This repo has never run rustfmt, so there is no existing convention to
+# preserve — the tree is mixed-style, and inconsistently so *within* single
+# files. Side by side today:
+#
+#     launcher/src/install_acl.rs   use anyhow::{Context, Result, bail};   (2024 style)
+#     common/src/tray.rs:82         use anyhow::{anyhow, Context, Result};  (2015 style)
+#
+# So this is a forward-looking choice, not a description of the status quo.
+# 2024 is where rustfmt is heading, and pinning it also pins `version = "Two"`,
+# so a future change to rustfmt's default style edition cannot re-churn the
+# tree a second time.
+#
+# Note that `style_edition` is independent of the crates' `edition = "2021"`:
+# left unset, rustfmt falls back to style_edition 2015 / version "One", not to
+# the crate edition.
+style_edition = "2024"

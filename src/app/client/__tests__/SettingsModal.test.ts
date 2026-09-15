@@ -4,25 +4,27 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as AdminConfirmModalModule from '../AdminConfirmModal';
 import { authClient } from '../AuthClient';
 import * as ResetConfirmModalModule from '../ResetConfirmModal';
+import { SettingsModal } from '../SettingsModal';
+import * as SettingsServiceModule from '../SettingsService';
 import {
-    applySystemInstallGate,
     appSectionButtonsState,
     appUninstallStartedMessage,
     buildInstallAllUsersControl,
     buildResetControl,
-    buildServiceInfoRow,
     buildUninstallControl,
-    classifyInstallPoll,
-    lockScopeRadioControl,
     resetPromptSettingsPayload,
     resetPromptsPayload,
-    SettingsModal,
-    scopeRadioState,
     stopServerButtonState,
+} from '../settings/tabs/ServerTab';
+import {
+    applySystemInstallGate,
+    buildServiceInfoRow,
+    classifyInstallPoll,
+    lockScopeRadioControl,
+    scopeRadioState,
     systemServiceInstallGate,
     uninstallFollowupMessage,
-} from '../SettingsModal';
-import * as SettingsServiceModule from '../SettingsService';
+} from '../settings/tabs/ServiceTab';
 import * as UninstallConfirmModalModule from '../UninstallConfirmModal';
 
 /** Stub authClient.me to return an admin view — used in tests that construct SettingsModal
@@ -629,24 +631,6 @@ describe('Settings section restructure (beta.62)', () => {
         // Embedding sits beside Users because both answer "who may do what with this server".
         // No standalone App section (folded into Server in beta.62).
         expect(headings).toEqual(['Users', 'Embedding', 'Updates', 'Service', 'Server']);
-    });
-
-    it('places the web-port save button inline with the input in the same control cell', async () => {
-        document.body.replaceChildren();
-        stubMeAsAdmin();
-        vi.stubGlobal('fetch', vi.fn().mockReturnValue(new Promise(() => undefined)));
-        HTMLDialogElement.prototype.showModal = vi.fn();
-
-        new SettingsModal();
-        await flushMicrotasks();
-
-        const rows = Array.from(document.body.querySelectorAll<HTMLElement>('.settings-row'));
-        const portRow = rows.find((r) => r.querySelector('.settings-label')?.textContent === 'web port');
-        expect(portRow, 'web port row missing').toBeTruthy();
-        const control = portRow?.querySelector('.settings-control');
-        expect(control?.querySelector('input'), 'port input missing').toBeTruthy();
-        const inlineBtn = control?.querySelector('button');
-        expect(inlineBtn?.textContent, 'inline save button missing').toBe('save');
     });
 });
 
