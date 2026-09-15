@@ -1,6 +1,7 @@
 import type { PairingStatus } from '../../common/PairingStatus';
 import { AdbClient, PairingError, parsePairGuid, parseSerialFromMdnsName } from '../AdbClient';
 import { Config } from '../Config';
+import { ControlCenter } from '../goog-device/services/ControlCenter';
 import { Logger } from '../Logger';
 import { newSession, type PairingSession } from './PairingSession';
 
@@ -31,6 +32,12 @@ export interface PairingDeps {
     adb: Pick<AdbClient, 'pair' | 'mdnsServices' | 'connect'>;
     now: () => number;
     setTimeoutFn?: typeof setTimeout;
+    /**
+     * Called once a session has paired AND connected. Injected rather than
+     * imported so this service still knows nothing about device tracking, and
+     * so tests are not obliged to stand a tracker up.
+     */
+    onConnected?: () => void;
 }
 
 /**
@@ -64,6 +71,16 @@ export class PairingService {
             PairingService.instance = new PairingService({
                 adb: new AdbClient(Config.getInstance().adbPath),
                 now: () => Date.now(),
+                onConnected: () => {
+                    // `hasInstance`, never `getInstance`: standing a tracker up
+                    // here would start a 5 s adb poll as a side effect of
+                    // pairing, in a process that had deliberately not started
+                    // one. If nothing is tracking devices, there is no list to
+                    // refresh.
+                    if (ControlCenter.hasInstance()) {
+                        void ControlCenter.getInstance().refreshNow();
+                    }
+                },
             });
         }
         return PairingService.instance;
@@ -234,6 +251,22 @@ export class PairingService {
             if (/connected/i.test(res)) {
                 log.info(`session ${s.id} paired and connected ${address}`);
                 this.terminate(s, () => s.markPaired());
+                // The device set just changed and this process is the one that
+                // changed it, so say so rather than waiting to be rediscovered.
+                //
+                // Caught here so a throwing listener is LOGGED rather than
+                // swallowed. It is not what protects the reported state: this
+                // sits inside the outer try, and `markPaired()` above has
+                // already made the session terminal, so `PairingSession`'s
+                // terminal guard would turn the outer catch's
+                // `markPairedNotConnected` into a no-op anyway. Confirmed by
+                // mutation — removing this catch changes nothing a user sees,
+                // only what the log says.
+                try {
+                    this.deps.onConnected?.();
+                } catch (e) {
+                    log.warn(`session ${s.id} connected, but the device-list refresh threw: ${String(e)}`);
+                }
             } else {
                 this.terminate(s, () => s.markPairedNotConnected(`connect said: ${res.trim()}`));
             }

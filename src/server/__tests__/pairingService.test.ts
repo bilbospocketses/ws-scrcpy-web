@@ -161,6 +161,72 @@ describe('PairingService', () => {
         expect(adb.connect).toHaveBeenCalledWith('10.0.0.5:43777');
     });
 
+    it('announces a completed connect so the device list does not wait for the next poll', async () => {
+        // ControlCenter discovers device-set changes by polling adb every 5 s,
+        // so the row can lag the green "Paired and connected." by that long, and
+        // an empty list in the gap reads as a failure. This process made the
+        // change and knows it.
+        const onConnected = vi.fn();
+        const { svc, adb } = makeService({ onConnected });
+        const { payload } = svc.startQr();
+        const name = /S:([^;]+)/.exec(payload)![1]!;
+        adb.mdnsServices.mockResolvedValue([
+            { name, service: PAIR_SVC, address: '10.0.0.5', port: 41415 },
+            { name: 'adb-SER1-xx', service: CONNECT_SVC, address: '10.0.0.5', port: 43777 },
+        ]);
+        await svc.pollOnce();
+        expect(onConnected).toHaveBeenCalledTimes(1);
+    });
+
+    // All THREE paired-not-connected branches, not just the easy one. Covering
+    // only the no-connect-service case left the other two unguarded: mutation
+    // showed the announcement could be added to the `connect said:` branch
+    // without a single test noticing.
+    it.each([
+        ['no connect service was advertised', false, undefined],
+        ['connect answered without connecting', true, 'failed to connect to 10.0.0.5:43777'],
+        ['the connect attempt threw', true, new Error('boom')],
+    ])('does not announce a connect that never happened: %s', async (_case, hasConnectSvc, connectResult) => {
+        const onConnected = vi.fn();
+        const { svc, adb } = makeService({ onConnected });
+        const { sessionId, payload } = svc.startQr();
+        const name = /S:([^;]+)/.exec(payload)![1]!;
+        const mdns = [{ name, service: PAIR_SVC, address: '10.0.0.5', port: 41415 }];
+        if (hasConnectSvc) {
+            mdns.push({ name: 'adb-SER1-xx', service: CONNECT_SVC, address: '10.0.0.5', port: 43777 });
+            if (connectResult instanceof Error) {
+                adb.connect.mockRejectedValue(connectResult);
+            } else {
+                adb.connect.mockResolvedValue(connectResult as string);
+            }
+        }
+        adb.mdnsServices.mockResolvedValue(mdns);
+        await svc.pollOnce();
+
+        expect(svc.status(sessionId)!.state).toBe('paired-not-connected');
+        // Nothing attached, so there is nothing new for a device list to find
+        // and a refresh would only cost an adb round trip.
+        expect(onConnected).not.toHaveBeenCalled();
+    });
+
+    it('still reports a successful pairing when the device-list refresh throws', async () => {
+        // The listener reaches into a shared service. A failure there is not the
+        // user's pairing failing, and must not be reported as though it were.
+        const onConnected = vi.fn(() => {
+            throw new Error('tracker exploded');
+        });
+        const { svc, adb } = makeService({ onConnected });
+        const { sessionId, payload } = svc.startQr();
+        const name = /S:([^;]+)/.exec(payload)![1]!;
+        adb.mdnsServices.mockResolvedValue([
+            { name, service: PAIR_SVC, address: '10.0.0.5', port: 41415 },
+            { name: 'adb-SER1-xx', service: CONNECT_SVC, address: '10.0.0.5', port: 43777 },
+        ]);
+        await svc.pollOnce();
+        expect(onConnected).toHaveBeenCalled();
+        expect(svc.status(sessionId)!.state).toBe('paired');
+    });
+
     it('reports the STRIPPED device serial, not the raw mDNS guid', async () => {
         // `PairingStatus.serial` is documented as "Device serial", and the rest
         // of the app keys devices by the stripped form. The guid carries both
