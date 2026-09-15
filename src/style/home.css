@@ -274,6 +274,131 @@
     color: var(--success-color);
 }
 
+/* --- Pair a new device --------------------------------------------------- */
+
+.discovery-pairing {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+    margin-bottom: 12px;
+    padding: 12px;
+    border: 1px solid var(--device-border-color);
+    border-radius: 8px;
+    background: var(--device-list-default-color);
+}
+
+.discovery-pairing-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+}
+
+.discovery-pairing-title {
+    color: var(--text-color);
+    font-size: 14px;
+    font-weight: 600;
+    margin-right: auto;
+}
+
+.discovery-pairing-modes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.dep-btn[data-pair-mode][aria-pressed="true"] {
+    border-color: var(--accent-color);
+    color: var(--accent-color);
+}
+
+/* The real payload encodes as a version-4 symbol: 33 modules, 41 across with the
+   quiet zone. At 288px that is ~7px a module, which a phone reads at arm's
+   length; sizing this for a smaller symbol makes the code a struggle to scan.
+   The SVG carries no width/height of its own, only a viewBox, so this box is
+   what decides the rendered size. It also paints its own white ground (quiet
+   zone included), so it stays scannable in the dark theme. */
+.discovery-pairing-qr {
+    width: 288px;
+    max-width: 100%;
+    padding: 8px;
+    border-radius: 6px;
+    background: #fff;
+}
+
+.discovery-pairing-qr[hidden] {
+    display: none;
+}
+
+.discovery-pairing-qr svg {
+    display: block;
+    width: 100%;
+    height: auto;
+}
+
+.discovery-pairing-code {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
+.discovery-pairing-code[hidden] {
+    display: none;
+}
+
+.discovery-pairing-code input[type="text"] {
+    background: var(--stream-bg-color);
+    border: 1px solid var(--device-border-color);
+    border-radius: 6px;
+    color: var(--text-color);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    padding: 6px 10px;
+}
+
+.discovery-pairing-code input[type="text"]:focus {
+    outline: none;
+    border-color: var(--accent-color);
+}
+
+.discovery-pairing-code input[type="text"]::placeholder {
+    color: var(--text-color-light);
+}
+
+.discovery-pairing-code input[data-pair-address] {
+    flex: 1;
+    min-width: 180px;
+}
+
+.discovery-pairing-code input[data-pair-code] {
+    width: 110px;
+    letter-spacing: 2px;
+}
+
+.discovery-pairing-status {
+    font-size: 13px;
+    color: var(--text-color);
+    word-break: break-word;
+}
+
+.discovery-pairing-status:empty {
+    display: none;
+}
+
+/* Only a genuine failure turns red. `paired-not-connected` deliberately keeps
+   the default colour: the pairing survived, and colouring it as an error is how
+   a user is led to re-pair a device the server already trusts. */
+.discovery-pairing-status.error {
+    color: var(--danger-color);
+}
+
+.discovery-pairing-status.success {
+    color: var(--success-color);
+}
+
 /* Discovery action buttons recolor the .dep-btn base (blue) to success-green /
    danger-red. Qualified with the base class so they win by specificity rather
    than !important. (The unreferenced .dep-ok-btn rule that lived here was dead
