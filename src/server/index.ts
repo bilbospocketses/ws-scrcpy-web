@@ -10,6 +10,7 @@ import { ConfigApi } from './api/ConfigApi';
 import { DependencyApi } from './api/DependencyApi';
 import { DeviceDiscoveryApi } from './api/DeviceDiscoveryApi';
 import { EmbedRequestApi } from './api/EmbedRequestApi';
+import { PairingApi } from './api/PairingApi';
 import { ServerShutdownApi } from './api/ServerShutdownApi';
 import { ServiceApi } from './api/ServiceApi';
 import { SettingsApi } from './api/SettingsApi';
@@ -162,6 +163,14 @@ if (__ssArgs) {
     });
     const depApi = new DependencyApi(depManager);
     HttpServer.addApiHandler(depApi);
+
+    // MUST be registered BEFORE DeviceDiscoveryApi. addApiHandler appends, and
+    // the chain takes the first handler that returns true. DeviceDiscoveryApi
+    // claims ANY url starting `/api/devices` and answers 404 when none of its
+    // own routes match, so with the order reversed every `/api/devices/pair/*`
+    // route 404s with nothing in the log to explain it.
+    const pairingApi = new PairingApi();
+    HttpServer.addApiHandler(pairingApi);
 
     const discoveryApi = new DeviceDiscoveryApi();
     HttpServer.addApiHandler(discoveryApi);
