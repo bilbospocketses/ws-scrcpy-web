@@ -1174,6 +1174,8 @@ The subnet cheat sheet (`public/help/subnets.html`) is a standalone HTML page se
 
 Rendered by `DeviceTracker` via WebSocket updates from `ControlCenter`. The server polls `adb devices` every 5 seconds (`ControlCenter.POLL_INTERVAL`). Devices appear automatically when ADB detects them.
 
+**One caller does not wait for the next tick.** A completed pairing calls `ControlCenter.refreshNow()` (§14.2.7), because the poll interval is the difference between "Paired and connected." and the device row actually appearing — up to 5 seconds in which an empty list reads as failure. `refreshNow` is a no-op when no instance exists or tracking has been released, it cannot reject (`pollDevices` catches everything), and it neither resets nor re-arms the interval, so an overlap with a scheduled tick simply diffs to nothing.
+
 **Card layout:** CSS grid with `auto-fill` columns (minimum 340px). Active devices have a green left border accent; offline devices have red with reduced opacity. Tracker header shows "Connected Devices [hostname]".
 
 **Card structure:** Each device card contains three sections separated by subtle divider lines:
@@ -1342,6 +1344,17 @@ An Android 11+ device on a secure wireless-debugging port refuses an unpaired cl
 | `src/server/api/PairingApi.ts` | Four admin-gated routes under `/api/devices/pair` — `qr`, `code`, `status`, `cancel`. Registered **before** `DeviceDiscoveryApi`, which otherwise 404s anything under `/api/devices` that it doesn't own itself. |
 | `src/server/network/AdbHandshakeProbe.ts` | `parseCnxnReply`'s `STLS` branch — see above. **Still nothing reads `requiresPairing`, and nothing can:** the TCP probe only ever knocks on port 5555 (`NetworkScanner`), where an Android 11+ device answers `AUTH` or nothing at all, so the `STLS` branch is unreachable from the scan path. The flag a scan hit actually carries is `mayNeedPairing`, derived from the mDNS SERVICE TYPE instead — `_adb-tls-connect._tcp` *is* the statement that the device speaks the TLS transport. "May", not "does": the service type says nothing about whether this server has already paired, and an already-paired device advertises exactly the same thing. |
 | `src/app/client/NetworkDiscoveryPanel.ts` | The "Pair a new device" QR / pairing-code UI, in the **Available Network Devices** panel on Home, beside **scan network** and **manually add** — not a modal. |
+
+**Wire shapes**, because the guide named these routes without them and the `qr` response already changed once:
+
+| Route | Request | Response |
+|---|---|---|
+| `POST /api/devices/pair/qr` | — | `{ sessionId, svg, expiresInMs }` |
+| `POST /api/devices/pair/code` | `{ address, code }` | `{ sessionId }` |
+| `GET /api/devices/pair/status?sessionId=` | — | `PairingStatus`, or **404** once the session is no longer current |
+| `POST /api/devices/pair/cancel` | `{ sessionId }` | `{ ok: true }` |
+
+Two of those are easy to get wrong. **`expiresInMs` is a duration, deliberately not an `expiresAt` deadline** — the browser cannot read the server's clock, so an absolute deadline forced it to difference two unrelated clocks and any skew surfaced as a wrong "stops working in about N", or as no note at all. The client converts it against its own clock the instant it arrives. And **`status` answering 404 is the normal end of a cancelled session**, not an error: cancelling drops the session server-side, so a client that cancels and then polls gets a 404 and must read it as success. An unknown id must not be a way to read somebody else's session.
 
 ### 14.3 Dependencies
 
