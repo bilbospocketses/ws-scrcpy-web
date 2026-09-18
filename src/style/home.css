@@ -468,9 +468,17 @@
    glance without reading either — which is the whole point of moving this out
    of the bottom of the page. `--warning-color`, not danger: a dependency with a
    newer version is an invitation, not a fault. */
-.dependency-alert-badge {
-    display: flex;
-    align-items: center;
+/* Deliberately sets NO `display`. The card hides itself with the HTML `hidden`
+   attribute, which works through the UA stylesheet's `[hidden] { display: none }`
+   — and a class selector outranks that, so `.dependency-alert-badge {
+   display: flex }` silently defeated it and left the badge on screen with
+   `hidden` set. That is most of its life: it shows only when a dependency
+   actually has an update, and never at all in a container.
+   The wrapper is a flex ITEM of .top-bar-indicators, which centres it, so it
+   needs no display of its own. The rule below re-asserts the UA behaviour at
+   class specificity so that a future `display` here cannot resurrect the bug. */
+.dependency-alert-badge[hidden] {
+    display: none;
 }
 
 .dependency-alert-open {
