@@ -112,13 +112,70 @@ One module owning certificate lifecycle. Public surface:
 | `caRootPem()` | Reads the CA root for download |
 | `revoke()` | Deletes the leaf + key; leaves the CA alone |
 
-**Storage: the data root, not the install directory.** `<dataRoot>/tls/` for the leaf and key, and
-`CAROOT` is pointed at `<dataRoot>/tls/ca`. This is what makes the container case work — a `docker rm`
-must not destroy a CA that every client on the LAN has already trusted. It also means an app update
-cannot discard it.
+**Storage: the data root, not the install directory.** `<dataRoot>/tls/` for the leaf and key. This is
+what makes the container case work — a `docker rm` must not destroy a CA that every client on the LAN
+has already trusted — and it means an app update cannot discard it either.
 
-**File permissions:** the private key is written `0600` (POSIX) / owner-only ACL (Windows). It never
-leaves the machine and is never served.
+**⚠ `CAROOT` CANNOT simply be `<dataRoot>/tls/ca` on Windows, and this is a hard blocker for the naive
+version of this design.** The Windows data root is `C:\ProgramData\WsScrcpyWeb`, and its ACL was measured
+2026-09-18:
+
+```
+BUILTIN\Users   ReadAndExecute, Synchronize   (inherited)
+BUILTIN\Users   Write                         (inherited)
+```
+
+**`BUILTIN\Users` is every local account on the machine.** Combined with the finding above — mkcert's
+`0400` sets only the read-only attribute on Windows and no ACL — a `CAROOT` there means **the CA private
+key is readable by any user on the box.** Whoever reads it can mint a certificate for any name and have
+it trusted by every machine on which that CA was installed. That is a meaningfully worse outcome than the
+plain-HTTP problem this feature exists to solve.
+
+Resolution, and it must be decided before implementation rather than discovered:
+
+- **Windows:** `CAROOT` goes in a **per-user** location (`%LOCALAPPDATA%\WsScrcpyWeb\tls\ca`), *or*
+  `<dataRoot>/tls/ca` is created with an explicit restrictive ACL that breaks inheritance and grants only
+  the service account plus Administrators. The per-user path is simpler and harder to get wrong; the
+  explicit-ACL path is the only option if the server runs as a service under a different account than the
+  user clicking the button.
+- **POSIX:** `<dataRoot>/tls/ca` at `0700` is fine; the mode does what it says.
+- **Container:** fine as-is — `/data` is not shared with other users, which is the whole point of the
+  container boundary.
+
+**The leaf key has the same exposure** and needs the same treatment; it is less catastrophic (one name,
+expires in 822 days) but there is no reason to leave it readable.
+
+This is the one place where the container case is *safer* than the desktop case, which is the opposite of
+the usual direction and is why it was nearly missed.
+
+**File permissions — and the Windows reality, which is not what you would assume.** mkcert writes the CA
+key `0400`. On POSIX that means what it says. **On Windows it means almost nothing:** Go maps the file
+mode to the read-only *attribute* and sets no ACL at all. Measured in the fork review, 2026-09-18, the
+generated `rootCA-key.pem` grants the interactive user `FullControl` by inheritance from its parent
+directory.
+
+**So confidentiality of the CA key on Windows comes from the DIRECTORY, not the file mode.** `CAROOT`
+must be a **per-user** directory whose inherited ACL is already restrictive — never a shared or
+world-readable one, and never a path like `C:\ProgramData\...` that grants broad access by default. The
+leaf key we write ourselves gets the same treatment: an explicit restrictive ACL on Windows rather than
+a `0600` we assume is doing something.
+
+Neither key ever leaves the machine and neither is ever served.
+
+### 2b. How ws-scrcpy-web must invoke mkcert
+
+Four requirements, each from a measured finding in the fork's item-1 review (2026-09-18). These are not
+style preferences — three of the four fail **silently or with exit 0**, which is why they are pinned here
+rather than left to the implementer.
+
+| Requirement | Why |
+|---|---|
+| Pass `-cert-file` and `-key-file` as **absolute paths** | Leaf output defaults to the **process cwd**, not `CAROOT`. A spawned process inherits whatever cwd it was given, so relative paths scatter key material somewhere nobody looks. |
+| Point `CAROOT` at a **per-user** directory | `0400` on the CA key is a no-op for confidentiality on Windows (above). The directory's ACL is the only real control. |
+| Set `TRUST_STORES=none` in the spawn environment | A stray `JAVA_HOME` otherwise sends mkcert down the `keytool` path and **aborts generation** — a failure caused by an unrelated environment variable on the host. |
+| Validate the host/IP argument **before** spawning | A URL-shaped argument writes outside cwd **and still exits 0**. Validation is already required for other reasons (§6); this makes it load-bearing rather than tidy. |
+
+The fork's todo item 4 holds the same table as the producer-side contract, so the two repos agree.
 
 ### 3. HTTPS listener wiring
 
