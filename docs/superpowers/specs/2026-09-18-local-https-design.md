@@ -1,0 +1,286 @@
+# Local HTTPS — design
+
+**Date:** 2026-09-18
+**Status:** design, awaiting approval
+**Origin:** issue #691, and the secure-context wall every LAN user hits
+
+---
+
+## The problem
+
+Streaming needs a **secure context**. The browser exposes `VideoDecoder` (WebCodecs) only on
+`https://`, `http://localhost` or `http://127.0.0.1`. So `http://<lan-ip>:8000` lists devices and plays
+nothing, which is the single most common way this app disappoints someone.
+
+Today the only remedies are "browse on the serving machine" or "put a TLS reverse proxy in front of it".
+The second is correct and completely out of reach for the audience that just wants to watch their phone
+from the sofa.
+
+**The server already speaks HTTPS.** `HttpServer.start()` reads a `servers` array and calls
+`https.createServer(serverItem.options, …)`; `Config.parseServerItem` already accepts `certPath` /
+`keyPath`. Nothing in this design adds TLS support. What is missing is **getting a certificate and
+getting it trusted**, and a UI for both.
+
+---
+
+## What we are building
+
+A **Settings → Server → Local HTTPS** panel that:
+
+1. Generates a locally-trusted certificate with a vendored `mkcert`, for an **IP address** or a
+   **hostname** the user picks.
+2. Starts an HTTPS listener alongside the existing HTTP one.
+3. Offers the **CA root certificate** for download, with per-OS instructions for trusting it.
+4. Lets the user narrow plain HTTP afterwards — off, or redirecting — always reversibly.
+
+### Explicitly out of scope
+
+- Public CAs, ACME, Let's Encrypt, DNS challenges.
+- Automatic trust installation on client machines. We hand over a file and instructions; the user
+  installs it. Installing a root CA is a serious act and must stay a deliberate one.
+- Replacing the reverse-proxy path. A domain + real CA remains the right answer for anything beyond a
+  home LAN, and `allowedHosts` keeps serving it.
+
+---
+
+## Measured facts this design rests on
+
+Two things were measured rather than assumed, because the design changes shape if either is wrong.
+
+**1. A click-through cert warning IS a secure context.** Chrome 151, self-signed cert with an IP SAN,
+served on a LAN IP (deliberately not loopback, which is a secure context on its own and would have
+faked a pass), user path Advanced → Proceed:
+
+| | `http://192.168.86.3:8899` (control) | `https://192.168.86.3:8898` (subject) |
+|---|---|---|
+| `isSecureContext` | false | **true** |
+| `VideoDecoder` | absent | **present** |
+| H.264 `isConfigSupported` | — | **true** |
+| Opus `isConfigSupported` | — | **true** |
+
+Playwright refused the bad certificate rather than bypassing it, so this is the real interstitial path
+and not `ignoreHTTPSErrors`. `isConfigSupported` was checked because a decoder that exists but cannot
+configure would pass a `typeof` check.
+
+**Consequence:** trusting the CA is an *ergonomic* improvement, not a functional gate. A user who never
+installs it can still stream by clicking through. This is what makes the "HTTPS only" mode safe to offer.
+
+**2. `mkcert -install` is not needed on the server.** `-install` writes the CA into the *local* trust
+store. The server only has to *serve* a certificate; the **clients** are what must trust the CA.
+Generating a leaf certificate works without `-install` (it warns and proceeds). **So no elevation is
+required on the server**, which removes the UAC / service-account problem entirely.
+
+---
+
+## Components
+
+### 1. Vendored `mkcert` (dependency manager)
+
+Per Local-Dependencies-Only, `mkcert` resolves from `dependencies/mkcert/<version>/mkcert(.exe)` and
+**never** from PATH. It joins adb, scrcpy-server, node and node-pty in the existing dependency manager:
+same fetch-on-demand, same version pin, same Settings → Dependencies row.
+
+It is a single static binary with per-platform releases. **Its size is unmeasured** — check the release
+assets before pinning a version, since it lands in the same dependency budget as adb and scrcpy-server.
+It is fetched **on first use**, not at install, so a user who never enables HTTPS never downloads it.
+
+### 2. `CertService` (server)
+
+One module owning certificate lifecycle. Public surface:
+
+| Method | Does |
+|---|---|
+| `getState()` | `{ status, subject, kind, notAfter, caRootPath }` — what exists now |
+| `generate({ kind, value })` | Runs mkcert for an IP or hostname; writes leaf + key to the data root |
+| `caRootPem()` | Reads the CA root for download |
+| `revoke()` | Deletes the leaf + key; leaves the CA alone |
+
+**Storage: the data root, not the install directory.** `<dataRoot>/tls/` for the leaf and key, and
+`CAROOT` is pointed at `<dataRoot>/tls/ca`. This is what makes the container case work — a `docker rm`
+must not destroy a CA that every client on the LAN has already trusted. It also means an app update
+cannot discard it.
+
+**File permissions:** the private key is written `0600` (POSIX) / owner-only ACL (Windows). It never
+leaves the machine and is never served.
+
+### 3. HTTPS listener wiring
+
+`Config.servers` gains a second entry when a certificate exists:
+
+```jsonc
+[
+  { "secure": false, "port": 8000 },
+  { "secure": true,  "port": 8443,
+    "options": { "certPath": "<dataRoot>/tls/cert.pem", "keyPath": "<dataRoot>/tls/key.pem" } }
+]
+```
+
+This is existing machinery — `parseServerItem` already reads `certPath`/`keyPath`. Enabling HTTPS is a
+config write plus a restart, not new server code.
+
+**Restart:** enabling, regenerating or revoking a certificate requires a listener restart. This reuses
+the existing service-restart path; the UI states plainly that the server will restart and that in-flight
+streams will drop.
+
+### 4. Port model
+
+Two independent ports with independent defaults. **Changing one never moves the other.**
+
+| | Default | Notes |
+|---|---|---|
+| HTTP | `8000` (or whatever `webPort` already is) | unchanged by this feature |
+| HTTPS | `8443` | stays 8443 until explicitly set, even if HTTP is 80 |
+
+Setting HTTP to `80` does **not** imply HTTPS `443`. The user sets 443 explicitly or not at all.
+
+**Sub-1024 warning:** on Linux and macOS a non-root process cannot bind below 1024, so the server would
+fail to start. The port field warns inline when a value under 1024 is entered on those platforms; in a
+container it is fine, because published ports are mapped. This is a warning, not a block — a user who
+knows they have `CAP_NET_BIND_SERVICE` or a mapped container should not be stopped.
+
+### 5. HTTP exposure mode (the radio)
+
+Three states, freely interchangeable in any direction:
+
+| Mode | Behaviour |
+|---|---|
+| **Both open** *(default)* | HTTP and HTTPS both serve everyone. No action needed; this is what you get if you never touch the setting. |
+| **HTTPS only** | HTTP refuses non-loopback callers. **Loopback keeps working.** |
+| **Redirect to HTTPS** | HTTP 302s non-loopback callers to the HTTPS origin. **Loopback is exempt and is not redirected.** |
+
+**The loopback exemption is the load-bearing detail.** Both narrowed modes would otherwise remove the
+only way to reach Settings when the certificate goes bad — expired, IP moved under DHCP, CAROOT wiped by
+a container recreate — turning a GUI click into "hand-edit config.json and restart". The exemption also
+preserves `/api/whoami` for the Control Menu integration (todo item 15), which probes over loopback HTTP
+and would otherwise break the instant someone picked HTTPS-only.
+
+The setting is stored as `httpExposure: "open" | "httpsOnly" | "redirect"` in the database with the
+other app settings, and is reversible to `open` from either narrowed state.
+
+### 6. Certificate subject: IP or hostname
+
+A radio with two fields, because the trade-off is real and the user owns it:
+
+- **This machine's IP** *(recommended, prefilled)* — e.g. `192.168.86.3`. One click, nothing else to
+  configure, **no hosts-file editing anywhere**. Breaks if DHCP moves the server.
+- **A hostname I choose** — e.g. `devices.lan`. Survives an IP change; costs a hosts-file entry (or a
+  local DNS record) on **every** client that will connect.
+
+The IP field is prefilled with this machine's LAN address. **The helper for this does not exist yet and
+must be written** — `network/SubnetDetector.detectSubnet()` is the closest thing (gateway first, then
+interfaces) but it answers "what subnet should I scan", not "which of my addresses should a client dial",
+and the interface-ranking described in the technical guide §ranking is about the *device's* interfaces,
+not the host's.
+
+Picking well is not cosmetic: this machine currently has **nine** IPv4 addresses, including a VirtualBox
+host-only adapter, two 169.254 link-locals, a WSL vSwitch, a Docker vSwitch and two VPN adapters. Only
+one of them (`192.168.86.3`) is reachable from a phone on the LAN, and a prefill that guesses wrong
+issues a certificate nobody can use. Rules: RFC1918 only, exclude CGNAT (100.64/10 — shared by Tailscale
+and carriers), exclude link-local, prefer the interface holding the default route. The user can always
+override, and the field shows every candidate rather than only the winner.
+
+Both paths produce a certificate; only the hostname path needs the name-resolution guide.
+
+### 7. CA download and trust instructions
+
+A **download CA certificate** button serving `<dataRoot>/tls/ca/rootCA.pem`, plus a per-OS accordion:
+Windows (`certutil -addstore -user Root`), macOS (Keychain Access → System → Always Trust), Linux
+(`/usr/local/share/ca-certificates` + `update-ca-certificates`), Android, iOS. Firefox gets its own note
+because it keeps a private trust store and ignores the OS one.
+
+**The endpoint is admin-gated**, like every other admin route. Handing out a root CA is precisely the
+shape of a malware delivery step, and while this CA is only dangerous to someone who installs it, an
+unauthenticated download endpoint for one is not a thing this app should have. It is also rate-limited
+and logs each download, because a root CA leaving the machine is worth a log line.
+
+---
+
+## UI notifications — where each known mistake gets made
+
+Every notice below exists because someone can reasonably go wrong at exactly that point. Copy is
+lowercase per the app's motif.
+
+| # | Where | When | Says |
+|---|---|---|---|
+| 1 | Device card / stream area | Insecure origin, no cert configured | Existing secure-context notice, **extended** with a link into Settings → Local HTTPS instead of only naming the loopback URL |
+| 2 | Settings → Server, `allowedHosts` field | Always, inline | `allowedHosts` takes domain names only; raw IPs already pass, and it does not affect streaming |
+| 3 | Local HTTPS panel | Cert exists, browser is on an untrusted-CA origin | you are connected over https but this browser does not trust the certificate — install the CA below to remove the warning. **streaming already works** |
+| 4 | Local HTTPS panel | Cert subject is an IP that no longer matches any local interface | this certificate names `<ip>`, which is no longer an address of this machine — DHCP has probably moved it. regenerate, or switch to a hostname |
+| 5 | Port field | Value < 1024 on Linux/macOS | ports below 1024 need elevated privileges on this platform; the server may fail to start |
+| 6 | Exposure radio, on selecting a narrowed mode | Before confirm | plain http will stop answering other machines. **this machine keeps working over localhost**, so you cannot lock yourself out |
+| 7 | Exposure radio, on selecting a narrowed mode | Before confirm | the server will restart and any active streams will drop |
+| 8 | Hostname path, after generate | Cert is for a hostname | this name must resolve on every machine that connects — add it to their hosts file or your local DNS. `<guide>` |
+
+Notice **3** matters most and is the least obvious: a user who sees a browser warning will assume
+something is broken and stop. It must say, at that exact moment, that streaming already works and the CA
+is only there to silence the warning. That is the measured fact from above, surfaced where it changes
+behaviour.
+
+---
+
+## Data flow
+
+```
+Settings → Local HTTPS → [generate]
+  → POST /api/tls/generate { kind: "ip"|"hostname", value }
+      → validate value (reuse isConnectAddress shapes; reject wildcards, reject public IPs)
+      → ensure dependencies/mkcert present (fetch if not)
+      → CAROOT=<dataRoot>/tls/ca  mkcert -cert-file … -key-file … <value>
+      → write config: servers += { secure:true, port, certPath, keyPath }
+      → respond { status, subject, notAfter }
+  → UI prompts restart → service restart → HTTPS listener up
+
+Settings → Local HTTPS → [download CA]
+  → GET /api/tls/ca-root  (requireAdmin, rate-limited, logged)
+      → Content-Disposition: attachment; filename="ws-scrcpy-web-local-ca.pem"
+```
+
+---
+
+## Error handling
+
+| Failure | Behaviour |
+|---|---|
+| mkcert download fails | Panel reports it; no partial state written; retry button |
+| mkcert exits non-zero | stderr surfaced verbatim in the panel; nothing written to config |
+| Cert/key unreadable at boot | **HTTPS listener is skipped, HTTP still starts**, and the panel says why. The app must never fail to boot because of an optional certificate |
+| Port already in use | Startup reports the port and keeps HTTP alive |
+| CAROOT missing but leaf present | Panel offers regenerate; existing leaf keeps serving until then |
+
+The pattern throughout: **a broken certificate degrades to "remote streaming stopped", never to "the app
+is gone"**. That is also why loopback HTTP is never withdrawn.
+
+---
+
+## Testing
+
+**Unit** — `CertService` state machine against a stubbed mkcert; `httpExposure` decision function
+(`(mode, isLoopback) → serve | refuse | redirect`) exhaustively, since it is the lockout-critical logic;
+port-model defaults, including that setting HTTP to 80 leaves HTTPS at 8443; subject validation.
+
+**Integration** — generate against a **real vendored mkcert** into a temp data root, assert the leaf
+parses and carries the expected SAN, assert the emitted `servers` config is what `parseServerItem`
+accepts.
+
+**E2E (Playwright)** — the gap that matters, and the one no unit test can close: stand the server up with
+a generated cert on a **non-loopback** origin and assert `isSecureContext` and
+`VideoDecoder.isConfigSupported` in a real browser. jsdom applies no stylesheet and has no WebCodecs; a
+green unit suite proves nothing here. The measurement above is the manual version of this test and
+should become the automated one.
+
+**Smoke rows** — new rows for: generate-for-IP then stream from another machine; install the CA and
+confirm the warning disappears; each exposure mode including that loopback still answers; and the
+DHCP-moved-IP notice.
+
+---
+
+## Open questions
+
+1. **Renewal.** mkcert leaf certs default to ~2 years and 3 months. Do we warn on approaching expiry, or
+   silently regenerate? Recommendation: warn at 30 days in the panel, never regenerate silently — a new
+   leaf is fine, but silent changes to TLS material are a bad habit to build.
+2. **Should enabling HTTPS auto-add the subject to `allowedHosts`?** For a hostname it is required, and
+   forgetting it produces a refusal that looks like a TLS failure. Recommendation: yes, add it
+   automatically and say so in the panel.
+3. **Container CAROOT on a bind mount.** If `/data` is a bind mount with host-owned permissions, can the
+   container write `tls/ca`? Needs a check against the published image before implementation.
