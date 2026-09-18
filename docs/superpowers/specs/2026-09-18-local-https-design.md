@@ -80,9 +80,26 @@ Per Local-Dependencies-Only, `mkcert` resolves from `dependencies/mkcert/<versio
 **never** from PATH. It joins adb, scrcpy-server, node and node-pty in the existing dependency manager:
 same fetch-on-demand, same version pin, same Settings → Dependencies row.
 
-It is a single static binary with per-platform releases. **Its size is unmeasured** — check the release
-assets before pinning a version, since it lands in the same dependency budget as adb and scrcpy-server.
-It is fetched **on first use**, not at install, so a user who never enables HTTPS never downloads it.
+A single static binary. **Measured from the `FiloSottile/mkcert` v1.4.4 release assets, 2026-09-18:**
+
+| Platform | Size |
+|---|---|
+| windows-amd64 | 4.6 MB |
+| windows-arm64 | 4.4 MB |
+| linux-amd64 | 4.5 MB |
+| linux-arm64 | 4.4 MB |
+| darwin-amd64 | 5.0 MB |
+| darwin-arm64 | 4.9 MB |
+
+One per install, fetched **on first use** rather than at install time, so a user who never enables HTTPS
+never downloads it. Negligible beside platform-tools and scrcpy-server.
+
+**Version caveat, stated because it should be a decision and not a surprise: v1.4.4 was released in 2022
+and upstream has been dormant since.** It is a stable, self-contained tool with no network surface and a
+small job, so dormancy is not disqualifying — but it will not receive security updates, and pinning it
+means accepting that. Its only inputs are a subject string we validate and a `CAROOT` path we control.
+If that trade is unacceptable, the alternative is generating the CA and leaf in-process with `node:crypto`
+and dropping the binary entirely — more code, one fewer dependency, and no vendoring problem.
 
 ### 2. `CertService` (server)
 
