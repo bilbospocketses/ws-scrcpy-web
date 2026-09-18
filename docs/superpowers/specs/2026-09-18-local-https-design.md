@@ -1,7 +1,7 @@
 # Local HTTPS — design
 
 **Date:** 2026-09-18
-**Status:** design, awaiting approval
+**Status:** approved 2026-09-18; open questions resolved. Ready for implementation planning.
 **Origin:** issue #691, and the secure-context wall every LAN user hits
 
 ---
@@ -274,13 +274,29 @@ DHCP-moved-IP notice.
 
 ---
 
-## Open questions
+## Resolved decisions
 
-1. **Renewal.** mkcert leaf certs default to ~2 years and 3 months. Do we warn on approaching expiry, or
-   silently regenerate? Recommendation: warn at 30 days in the panel, never regenerate silently — a new
-   leaf is fine, but silent changes to TLS material are a bad habit to build.
-2. **Should enabling HTTPS auto-add the subject to `allowedHosts`?** For a hostname it is required, and
-   forgetting it produces a refusal that looks like a TLS failure. Recommendation: yes, add it
-   automatically and say so in the panel.
-3. **Container CAROOT on a bind mount.** If `/data` is a bind mount with host-owned permissions, can the
-   container write `tls/ca`? Needs a check against the published image before implementation.
+**1. Renewal — warn at 30 days, never regenerate silently.** mkcert leaf certs default to ~2 years
+3 months. The panel shows a notice from 30 days out and the existing dependency-alert badge is *not*
+reused for it — that badge means "a bundled tool has an update" and overloading it with "your TLS is
+expiring" makes both vaguer. Regeneration stays a button the user presses. Silent changes to TLS
+material are a bad habit to build, and an unexpected new leaf looks exactly like an attack to anyone
+checking fingerprints.
+
+**2. Enabling HTTPS auto-adds the subject to `allowedHosts`, and says so.** A hostname subject *needs*
+the entry or every request is refused as a possible DNS-rebinding attempt — a failure that surfaces as a
+connection refusal and reads as a TLS problem, which is the worst possible mis-signal. The panel states
+the edit plainly ("added `devices.lan` to allowedHosts so the server will answer to that name") rather
+than mutating config behind the user's back.
+
+For an **IP subject this is a no-op**, because raw IPs already pass the host check — and the code must
+*skip* the write rather than append a redundant entry. Appending it would recreate exactly the confusion
+issue #691 was about: a user later reading `allowedHosts: ["192.168.86.3"]` would reasonably conclude
+that IPs belong there and that the entry is what grants access.
+
+**3. Container CAROOT on a bind mount — assumed workable, validation required before build.** The
+expectation is that it works. It is still a **task in the implementation plan, not an assumption**:
+stand the published image up with a host bind mount, generate, and confirm `tls/ca` is written and
+survives `docker rm` + recreate. The failure mode if it does not — a CA regenerated on every container
+recreate, silently invalidating the trust every client installed — is bad enough to be worth ten minutes
+of proof. Check both a named volume and a host bind mount, since their ownership semantics differ.
