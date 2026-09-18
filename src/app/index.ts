@@ -355,7 +355,17 @@ window.onload = async (): Promise<void> => {
 
     document.body.appendChild(createSettingsHeader());
     document.body.appendChild(createThemeToggle());
-    document.body.appendChild(createUpdateButton());
+
+    // The two CONDITIONAL top-bar controls share one right-anchored flex row:
+    // the app-update pill, and the dependency badge appended below once its
+    // gate has been evaluated. The gear and theme toggle above keep their own
+    // fixed offsets because they are always there; these two each hide
+    // themselves, and a hidden element at a fixed `right` leaves a hole. See
+    // `.top-bar-indicators` in home.css.
+    const topBarIndicators = document.createElement('div');
+    topBarIndicators.className = 'top-bar-indicators';
+    topBarIndicators.appendChild(createUpdateButton());
+    document.body.appendChild(topBarIndicators);
 
     const pageContainer = document.createElement('div');
     pageContainer.className = 'page-container';
@@ -430,7 +440,16 @@ window.onload = async (): Promise<void> => {
         const runtime = await runtimeFetch;
         const card = await DependencyAlertCard.create(runtime ?? {}, role);
         dependencyAlertCard = card;
-        pageContainer.appendChild(card.getElement());
+        // Appended AFTER the update pill, so the badge sits nearest the gear and
+        // the pill grows leftward from it. The other order works too, but the
+        // pill's text changes on every poll ("checking…", "downloading 42%"), so
+        // whichever control is leftmost shifts as it does — and a badge that
+        // stays put is easier to find than one that slides around.
+        //
+        // §36 still holds: the teardown below calls destroy() on this card
+        // wherever it is mounted, so the 15s /api/dependencies poll is released
+        // on page teardown exactly as before.
+        topBarIndicators.appendChild(card.getElement());
     })();
 
     // §36: DependencyAlertCard + FirstRunBanner poll on intervals for the page

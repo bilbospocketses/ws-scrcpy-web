@@ -7,12 +7,39 @@ import { SettingsModal } from './SettingsModal';
 const POLL_INTERVAL_MS = 15_000;
 
 /**
- * The home page's dependency notice, all that is left there now the panel
- * itself lives in Settings → Dependencies.
+ * Hardcoded package icon (constant string, no user input), following the
+ * GEAR_SVG_MARKUP pattern in `SettingsHeader.ts` and SUN_SVG / MOON_SVG in
+ * `ThemeToggle.ts`. 24x24 viewBox, `currentColor` so it inherits the theme.
+ *
+ * A BOX rather than the download arrow an app update would suggest: these are
+ * the bundled tools the app ships around — adb, scrcpy, node-pty — not a new
+ * version of the app itself.
+ */
+const PACKAGE_SVG_MARKUP = [
+    '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" ',
+    'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ',
+    'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">',
+    '<path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8',
+    'a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/>',
+    '<polyline points="3.27 6.96 12 12.01 20.73 6.96"/>',
+    '<line x1="12" y1="22.08" x2="12" y2="12"/></svg>',
+].join('');
+
+/**
+ * The dependency-update indicator, all that is left on the home page now the
+ * panel itself lives in Settings → Dependencies.
  *
  * It is an ALERT, not a list: it stays hidden until something actually needs
  * updating, and says only which dependency that is plus a way to go and do it.
  * A permanent table of up-to-date versions is what the tab is for.
+ *
+ * It lives in the TOP BAR, beside the app-update pill, and is shaped unlike it
+ * on purpose — an icon circle against a text pill. It used to be a
+ * `home-section` card appended after the device list and the discovery panel,
+ * which put it at the bottom of the page while app updates announced themselves
+ * at the top, so a user watching the top bar never learned a dependency needed
+ * updating at all. The two kinds of update now sit together and still read as
+ * two different things.
  *
  * Modelled on `FirstRunBanner` — same admin gate, same poll interval, same
  * "an error hides the notice rather than replacing it with an error" posture.
@@ -24,36 +51,42 @@ export class DependencyAlertCard {
     private readonly text: HTMLElement;
     private pollHandle: ReturnType<typeof setInterval> | null = null;
 
+    private readonly button: HTMLButtonElement;
+
     constructor() {
         this.container = document.createElement('div');
-        this.container.className = 'home-section dependency-alert';
+        // NOT `home-section`: this is a top-bar indicator, sharing the fixed
+        // cluster with the theme toggle, the gear and the app-update pill. It
+        // kept a wrapper rather than becoming the button itself so `hidden`
+        // still belongs to one element the mount site can reason about.
+        this.container.className = 'dependency-alert-badge';
         this.container.hidden = true;
 
-        const heading = document.createElement('h2');
-        heading.textContent = 'Dependencies';
-        this.container.appendChild(heading);
+        this.button = document.createElement('button');
+        this.button.type = 'button';
+        this.button.className = 'dependency-alert-open';
+        // Safe: PACKAGE_SVG_MARKUP is a hardcoded constant with no
+        // interpolation — the same argument SettingsHeader makes for its gear.
+        this.button.innerHTML = PACKAGE_SVG_MARKUP;
 
-        const card = document.createElement('div');
-        card.className = 'section-card';
-
+        // The icon carries the meaning visually; this carries it for a screen
+        // reader and for `title`. It is visually hidden rather than absent
+        // because an icon-only control that says "dependencies need updating"
+        // to nobody is an accessibility regression, and because WHICH
+        // dependency is the only detail the badge has to give.
         this.text = document.createElement('span');
-        this.text.className = 'dependency-alert-text';
-        card.appendChild(this.text);
+        this.text.className = 'visually-hidden';
+        this.button.appendChild(this.text);
 
-        const openBtn = document.createElement('button');
-        openBtn.type = 'button';
-        openBtn.className = 'dep-btn dependency-alert-open';
-        openBtn.textContent = 'open dependencies';
         // Opens the dialog ON the Dependencies tab. Dropping the user on
         // whichever tab happens to be first and letting them hunt for the one
-        // the card just told them about is the whole difference between a link
+        // the badge just told them about is the whole difference between a link
         // and a signpost.
-        openBtn.addEventListener('click', () => {
+        this.button.addEventListener('click', () => {
             new SettingsModal({ initialTab: 'dependencies' });
         });
-        card.appendChild(openBtn);
 
-        this.container.appendChild(card);
+        this.container.appendChild(this.button);
     }
 
     /**
@@ -68,9 +101,9 @@ export class DependencyAlertCard {
      *
      * `runtime.docker` is the third (item 135), and it is not an admin question
      * at all: in a container the image owns the dependency set, so Settings ->
-     * Dependencies is replaced by a note saying so. An alert card offering to
+     * Dependencies is replaced by a note saying so. An indicator offering to
      * open a tab that cannot act would be a signpost to a dead end, and its
-     * "open dependencies" button lands on exactly that note.
+     * button lands on exactly that note.
      *
      * Kept here rather than at the mount site in index.ts so there is still
      * exactly ONE copy of the decision (finding 9.6's whole point), and read off
@@ -152,9 +185,17 @@ export class DependencyAlertCard {
             return;
         }
         const names = pending.map((d) => d.displayName).join(', ');
-        // textContent, never innerHTML: displayName is server-supplied.
-        this.text.textContent =
-            pending.length === 1 ? `${names} has an update available. ` : `${names} have updates available. `;
+        const label = pending.length === 1 ? `${names} has an update available` : `${names} have updates available`;
+        // textContent and setAttribute, never innerHTML: displayName is
+        // server-supplied. (The icon above is the only markup here, and it is a
+        // constant.)
+        this.text.textContent = label;
+        // `title` for the pointer, `aria-label` for assistive tech. Both name
+        // the dependency: an indicator that only says "something needs
+        // updating" makes the user open the dialog to find out what, which is
+        // the click this badge exists to make unnecessary.
+        this.button.title = label;
+        this.button.setAttribute('aria-label', label);
         this.container.hidden = false;
     }
 }

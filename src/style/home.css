@@ -437,16 +437,80 @@
     background: var(--danger-hover-bg);
 }
 
-/* ── Update button (top-right, third from edge) ──
-   Layout: [update-button] ← [settings-header] ← [theme-toggle] ← right edge.
-   Theme toggle sits at right:12px (36px wide), settings-header at right:56px
-   (36px wide + 8px gap), so update-button starts at right:100px and grows
-   leftward (it's a pill, not a circle). Mirrors their glassmorphism. */
-.update-button-container {
+/* ── Top-bar indicators (the two CONDITIONAL controls) ──
+   Layout: [dependency-badge][update-button] ← [settings-header] ← [theme-toggle] ← right edge.
+
+   The gear and the theme toggle are always present, so they keep their own
+   hardcoded right offsets (12px and 56px). The other two are not: each hides
+   itself when it has nothing to say. Giving THEM hardcoded offsets too is what
+   the old layout did, and it only worked while exactly one of them was
+   conditional — a hidden element at a fixed `right` leaves a hole, so a hidden
+   dependency badge would have stranded the update pill 44px from the gear with
+   a visible gap between them.
+
+   One right-anchored flex row instead: it grows leftward as either child
+   appears and collapses the 8px gap when either hides, so there is no
+   arrangement of the two that leaves a hole. */
+.top-bar-indicators {
     position: fixed;
     top: 12px;
     right: 100px;
     z-index: 100;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* ── Dependency-update badge ──
+   Deliberately NOT shaped like the app-update pill beside it. That one is a
+   text pill that says what it is doing; this is a 36px icon circle matching the
+   gear and the theme toggle, so the two kinds of update are told apart at a
+   glance without reading either — which is the whole point of moving this out
+   of the bottom of the page. `--warning-color`, not danger: a dependency with a
+   newer version is an invitation, not a fault. */
+.dependency-alert-badge {
+    display: flex;
+    align-items: center;
+}
+
+.dependency-alert-open {
+    background: var(--device-list-default-color);
+    border: 1px solid var(--warning-color);
+    border-radius: 50%;
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    color: var(--warning-color);
+    padding: 0;
+    transition: background-color 0.15s;
+}
+
+.dependency-alert-open:hover {
+    background: var(--device-list-hover-color);
+}
+
+/* Available to assistive tech and to `textContent`, absent from the layout.
+   The badge is an icon control, so without this the name of the dependency
+   that needs updating would reach nobody who cannot see the tooltip. */
+.visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+/* ── Update button ──
+   Positioning now comes from .top-bar-indicators above; what remains here is
+   the pill's own appearance. Mirrors the glassmorphism of the circles. */
+.update-button-container {
     display: flex;
     align-items: center;
     gap: 6px;

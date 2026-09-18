@@ -175,6 +175,47 @@ describe('DependencyAlertCard teardown', () => {
     });
 });
 
+// The alert used to be a `home-section` card appended after the device list and
+// the discovery panel, so it sat at the BOTTOM of the page while app updates
+// announced themselves in the top bar. A user watching the top bar for "something
+// needs updating" never saw dependency updates at all. It is now a top-bar
+// indicator, and deliberately not the same SHAPE as the app-update pill: an icon
+// badge against a text pill, so the two are told apart without opening either.
+describe('DependencyAlertCard as a top-bar indicator', () => {
+    const showing = async () => {
+        vi.stubGlobal(
+            'fetch',
+            vi.fn().mockResolvedValue({ ok: true, json: async () => [dep({ name: 'adb', displayName: 'adb' })] }),
+        );
+        return DependencyAlertCard.create({ adminScope: 'local', callerIsLocal: true }, 'admin');
+    };
+
+    it('is no longer a home-page section', async () => {
+        const card = await showing();
+        expect(card.getElement().className).not.toContain('home-section');
+        card.destroy();
+    });
+
+    it('carries an icon, which is what distinguishes it from the app-update indicator', async () => {
+        const card = await showing();
+        expect(card.getElement().querySelector('svg')).not.toBeNull();
+        card.destroy();
+    });
+
+    it('names what needs updating in the accessible label, not only in the icon', async () => {
+        const card = await showing();
+        const btn = card.getElement().querySelector('button')!;
+        expect(btn.getAttribute('aria-label')).toContain('adb');
+        card.destroy();
+    });
+
+    it('drops the heading a top-bar indicator has no room for', async () => {
+        const card = await showing();
+        expect(card.getElement().querySelector('h2')).toBeNull();
+        card.destroy();
+    });
+});
+
 describe('DependencyAlertCard link', () => {
     /** Flush one macrotask tick — the modal fills its body behind `await me()`. */
     const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
