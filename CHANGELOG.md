@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.129] - 2026-09-18
+
 ### Changed
 
 - **Dependency updates are announced in the top bar now, next to app updates.** The notice used to be a card appended below the device list and the discovery panel, so it sat at the bottom of the page while app updates announced themselves at the top — someone watching the top bar for "something needs updating" never saw a dependency update at all. It is now a small icon button in the same cluster as the theme toggle, the settings gear and the app-update pill, and it is deliberately shaped unlike that pill: an icon circle rather than a text badge, so the two kinds of update are told apart without opening either. Hovering it, or reading it with a screen reader, names the dependency that needs updating; clicking still opens Settings → Dependencies on the right tab. It stays hidden until something actually needs updating, and it remains invisible in a container and to anyone who could not act on it anyway.
