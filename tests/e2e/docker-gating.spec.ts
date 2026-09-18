@@ -164,7 +164,12 @@ test.describe('container mode', () => {
         // /api/config), so give it room to be wrong before concluding it is not.
         await page.waitForTimeout(5_000);
 
-        const alert = page.locator('.dependency-alert');
+        // `.dependency-alert-badge`: the alert moved from a home-page card to a
+        // top-bar icon badge and its class moved with it. What this test asserts
+        // is unchanged, because the GATE is unchanged — in a container the card
+        // is still constructed and still appended, just never refreshed and
+        // never polled, so it is present and hidden exactly as before.
+        const alert = page.locator('.dependency-alert-badge');
         await expect(alert).toHaveCount(1); // mounted inert, not absent
         await expect(alert).not.toBeVisible();
         expect(hits, 'the alert card asked for dependencies in a container').toBe(1);
