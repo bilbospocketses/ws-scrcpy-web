@@ -17,7 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.1.30-beta.127] - 2026-09-16
+### Fixed
+
+- **Connecting and disconnecting a device now check the address before handing it to adb.** Both routes accepted any non-empty string and passed it straight through as a command-line argument, where adb reads a leading `-` as an option — `-H` points it at an entirely different adb server. Neither is reachable without getting a request past the app in the first place, so this is a hardening fix rather than a reported break, and nothing about the addresses people actually type changes: a bare host, a `host:port`, and an IPv6 literal all still work, because `adb connect` documents all three. The pairing routes added in beta.127 already validated their input; these were the neighbours that did not. A rejected address is never echoed back in the error.
+- **A pairing attempt you replace by starting another one now says so.** Starting a second pairing attempt drops the first, and the first attempt's page was left polling an id the server no longer recognised — so it reported "That pairing session is no longer available.", which describes a failed lookup rather than what happened. It now reports that it was replaced, and points at the attempt that replaced it. Cancelling is unchanged and still ends an attempt outright.
 
 ### Added
 

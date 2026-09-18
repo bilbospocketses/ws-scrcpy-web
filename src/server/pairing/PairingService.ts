@@ -14,6 +14,14 @@ export type { PairingStatus };
 const log = Logger.for('PairingService');
 
 /**
+ * What a displaced session tells its own client. A DETAIL CLAUSE is not wanted
+ * here — `pairingStatusText` renders a 'failed' message as the whole sentence —
+ * so this is a sentence, and it says what to do next, because the user who
+ * caused it is standing in front of the session that replaced this one.
+ */
+const SUPERSEDED_MESSAGE = 'This pairing attempt was replaced by a newer one. Continue in the new attempt.';
+
+/**
  * mDNS service types Android advertises while pairing and once paired.
  *
  * Exported so tests can pin them against what `parseMdnsOutput` actually
@@ -57,6 +65,24 @@ export class PairingService {
 
     private session: PairingSession | undefined;
     private timer: ReturnType<typeof setTimeout> | undefined;
+
+    /**
+     * The status of the session most recently displaced by a new one, kept so
+     * its client can be told WHAT HAPPENED.
+     *
+     * Starting a second session drops the first without cancelling it — the
+     * implicit-cancel seam. `status` used to answer `undefined` for the dropped
+     * id, the API turned that into a 404, and the browser rendered "That
+     * pairing session is no longer available.": a sentence about a failed
+     * lookup, in a situation where the server knows exactly what became of the
+     * session. One slot, not a list — only the displaced session has a client
+     * still polling it, and an unbounded map here would be a memory leak driven
+     * by an unauthenticated-ish route.
+     *
+     * It holds a `PairingStatus`, never the session: `toStatus` cannot carry the
+     * password, so nothing secret survives in this field by construction.
+     */
+    private superseded: { id: string; status: PairingStatus } | undefined;
 
     /**
      * Public on purpose: tests build their own with stub deps rather than
@@ -125,13 +151,22 @@ export class PairingService {
         return { sessionId: s.id };
     }
 
-    /** `undefined` for any id that is not the current session. */
+    /**
+     * `undefined` for any id this service has no account of.
+     *
+     * The live session is checked FIRST: an id can only be in one of the two
+     * places, but reading the retained slot first would be a shadowing bug
+     * waiting for the day that stops being true.
+     */
     status(sessionId: string): PairingStatus | undefined {
         const s = this.session;
-        if (!s || s.id !== sessionId) {
-            return undefined;
+        if (s && s.id === sessionId) {
+            return s.toStatus(this.deps.now());
         }
-        return s.toStatus(this.deps.now());
+        if (this.superseded?.id === sessionId) {
+            return this.superseded.status;
+        }
+        return undefined;
     }
 
     cancel(sessionId: string): void {
@@ -281,6 +316,18 @@ export class PairingService {
         // Replacement makes prior work inert: the old session object is dropped,
         // and every continuation above re-checks identity, so a late mDNS hit or
         // a late adb result belonging to it can no longer mutate anything.
+        //
+        // Before dropping it, give it a terminal status its client can still
+        // read — see `superseded`. `markFailed` is a no-op on a session that is
+        // ALREADY terminal, which is the behaviour wanted rather than a case to
+        // special-case: a session that reached 'paired' before being displaced
+        // keeps saying 'paired', and its client learns the true outcome.
+        const outgoing = this.session;
+        if (outgoing) {
+            log.info(`session ${outgoing.id} superseded by ${s.id}`);
+            this.terminate(outgoing, () => outgoing.markFailed(SUPERSEDED_MESSAGE));
+            this.superseded = { id: outgoing.id, status: outgoing.toStatus(this.deps.now()) };
+        }
         this.stop();
         this.session = s;
         this.schedule();

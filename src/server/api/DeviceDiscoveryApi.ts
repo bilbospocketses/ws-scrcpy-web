@@ -6,7 +6,7 @@ import { parseScreenState, SCREEN_STATE_COMMAND } from '../deviceScreenState';
 import { Logger } from '../Logger';
 import { resolveMac } from '../network/MacResolver';
 import { detectSubnet } from '../network/SubnetDetector';
-import { assertDeletablePaths, shArg } from '../security/deviceInput';
+import { assertDeletablePaths, isConnectAddress, shArg } from '../security/deviceInput';
 import { upsertObservedDevices } from './deviceObserved';
 import { BodyTooLargeError, InvalidJsonError, readJsonBodyStrict, sendInternalError } from './utils';
 
@@ -102,6 +102,27 @@ export class DeviceDiscoveryApi {
                     res.end(JSON.stringify({ error: 'address is required' }));
                     return true;
                 }
+                // `address` reaches adb as an argv element of `adb connect`, and
+                // below as the device selector for `adb shell <address>`. Until
+                // this check existed the presence test above was the only gate,
+                // so a leading '-' went straight through — `-H` points adb at
+                // another server entirely. The message deliberately does not
+                // echo the input: it is attacker-controlled and would land in
+                // the caller's DOM.
+                //
+                // THE ADMIN GATE, decided rather than overlooked (2026-09-18):
+                // this route stays UNGATED while the neighbouring
+                // `/api/devices/pair/*` routes sit behind `requireAdmin`. The
+                // asymmetry IS the decision. Pairing establishes a PERSISTENT
+                // trust relationship with a NEW device on behalf of the whole
+                // server; connect only attaches to a device the server already
+                // trusts, which is ordinary day-to-day use. See the matching
+                // note in `PairingApi.handle` — one story, told from both sides.
+                if (!isConnectAddress(address)) {
+                    res.writeHead(400);
+                    res.end(JSON.stringify({ error: 'address must be a host or host:port' }));
+                    return true;
+                }
                 const db = Config.getInstance().db;
                 const userId = resolveUserId(req);
                 // mDNS path: serial is known upfront, save the label before connecting.
@@ -146,6 +167,15 @@ export class DeviceDiscoveryApi {
                 if (!address) {
                     res.writeHead(400);
                     res.end(JSON.stringify({ error: 'address is required' }));
+                    return true;
+                }
+                // Same hazard as `/connect` above, same shape: this value is an
+                // argv element of `adb disconnect`. Validated here too rather
+                // than left as the one unguarded neighbour of the route that
+                // prompted the check.
+                if (!isConnectAddress(address)) {
+                    res.writeHead(400);
+                    res.end(JSON.stringify({ error: 'address must be a host or host:port' }));
                     return true;
                 }
                 const result = await this.adbClient.disconnect(address);

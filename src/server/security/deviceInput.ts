@@ -179,6 +179,57 @@ export function isPairingAddress(value: string): boolean {
     return port >= 1 && port <= 65535;
 }
 
+// ---------------------------------------------------------------------------
+// Network connect (`adb connect <address>`)
+// ---------------------------------------------------------------------------
+
+/**
+ * `address` reaches adb as an argv element of `adb connect <address>`, and then
+ * again as the device selector for `adb shell <address> getprop ro.serialno`
+ * on the label-persisting path. Until this existed the route checked only that
+ * the value was non-empty, so a leading `-` went straight to adb — `-H` points
+ * it at another adb server entirely.
+ *
+ * DELIBERATELY WIDER THAN `isPairingAddress`, which is why it is a separate
+ * function rather than a reuse: `adb connect` documents `HOST[:PORT]`, so the
+ * port is optional, and it accepts a bracketed IPv6 literal. Pairing refuses
+ * both — the first because the phone always shows a port, the second because
+ * `PairingService.startCode` cannot derive a fallback IP from one. Neither
+ * reason applies here, and narrowing this route to the pairing shape would
+ * reject addresses that work today.
+ *
+ * execFile means there is no shell to inject into, so what is being excluded is
+ * option injection and values that are not endpoints at all. Control characters
+ * fall out for free: the pattern is an ALLOWLIST, so a NUL or a newline is not
+ * a character it can match.
+ *
+ * It ends `(?![\s\S])` rather than `$`, which is load-bearing and not style: a
+ * JS `$` without the `m` flag still matches BEFORE a single trailing newline, so
+ * `$` here would have accepted `10.0.0.5\n` — the allowlist would have been
+ * right and the anchor would have let it through anyway. `(?![\s\S])` is a true
+ * end-of-input assertion; `isConnectAddress('10.0.0.5\n')` pins it.
+ */
+const CONNECT_ADDRESS_RE =
+    /^(?:\[[0-9A-Fa-f:.]{2,45}\]|[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*)(?::(\d{1,5}))?(?![\s\S])/;
+
+export function isConnectAddress(value: string): boolean {
+    if (value.length === 0 || value.length > 300) {
+        return false;
+    }
+    const match = CONNECT_ADDRESS_RE.exec(value);
+    if (!match) {
+        return false;
+    }
+    // The port is optional here, unlike pairing — absent is valid, present must
+    // be a real port. `\d{1,5}` alone would accept `:0` and `:70000`.
+    const port = match[1];
+    if (port === undefined) {
+        return true;
+    }
+    const parsed = Number(port);
+    return parsed >= 1 && parsed <= 65535;
+}
+
 /**
  * Android's wireless-debugging pairing code is six digits. Accepting digits
  * only — with a little slack on the length rather than a hard six, in case a

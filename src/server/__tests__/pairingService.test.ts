@@ -336,7 +336,11 @@ describe('PairingService', () => {
         const { svc, adb } = makeService();
         const first = svc.startQr();
         const second = svc.startQr(); // replaces the first
-        expect(svc.status(first.sessionId)).toBeUndefined();
+        // The displaced session is INERT, which is what this test is about —
+        // but it is no longer SILENT: it reports a terminal status so its client
+        // learns it was replaced instead of reading a 404. Inertness is what
+        // `adb.pair` below proves.
+        expect(svc.status(first.sessionId)?.state).toBe('failed');
         expect(svc.status(second.sessionId)).toBeDefined();
         expect(adb.pair).not.toHaveBeenCalled();
     });
@@ -458,9 +462,14 @@ describe('PairingService', () => {
 
         const replaced = svc.startQr();
         const stale = currentSession(svc);
+        const stalePassword = stale?.password;
+        expect(stalePassword).toBeTruthy(); // or the next assertion proves nothing
         svc.startQr();
         expect(stale?.password).toBe('');
-        expect(svc.status(replaced.sessionId)).toBeUndefined();
+        // The displaced session's status is now RETAINED so its client can read
+        // it, which makes this the assertion that matters: retaining a status
+        // must not retain the secret with it.
+        expect(JSON.stringify(svc.status(replaced.sessionId))).not.toContain(stalePassword!);
     });
 
     it('never surfaces adb detail past the PairingError redaction boundary', async () => {
@@ -478,5 +487,70 @@ describe('PairingService', () => {
         expect(status.state).toBe('failed');
         expect(status.message).toBe('pairing failed');
         expect(JSON.stringify(status)).not.toContain(password);
+    });
+
+    // THE IMPLICIT-CANCEL SEAM. Starting a second session drops the first
+    // without cancelling it, and `status` answered `undefined` for the dropped
+    // id — which the API turns into a 404 and the browser renders as "That
+    // pairing session is no longer available.", a message that describes the
+    // lookup rather than what happened. The server knows exactly what happened;
+    // it should say so.
+    describe('a session superseded by a newer one', () => {
+        it('reports a terminal status for the dropped id instead of nothing', () => {
+            const { svc } = makeService();
+            const first = svc.startQr();
+
+            svc.startQr();
+
+            const status = svc.status(first.sessionId);
+            expect(status).toBeDefined();
+            expect(status?.state).toBe('failed');
+        });
+
+        it('says it was replaced, rather than that the id is unknown', () => {
+            const { svc } = makeService();
+            const first = svc.startQr();
+
+            svc.startQr();
+
+            expect(svc.status(first.sessionId)?.message).toMatch(/replaced|newer/i);
+        });
+
+        it('never carries the superseded session password in the retained status', () => {
+            const { svc } = makeService();
+            const first = svc.startQr();
+            const password = currentSession(svc)?.password;
+            expect(password).toBeTruthy();
+
+            svc.startQr();
+
+            expect(JSON.stringify(svc.status(first.sessionId))).not.toContain(password!);
+        });
+
+        it('retains only the most recent supersession, not a growing list', () => {
+            const { svc } = makeService();
+            const first = svc.startQr();
+            const second = svc.startQr();
+
+            svc.startQr();
+
+            expect(svc.status(second.sessionId)?.state).toBe('failed');
+            expect(svc.status(first.sessionId)).toBeUndefined();
+        });
+
+        it('still answers undefined for an id that never existed', () => {
+            const { svc } = makeService();
+            svc.startQr();
+
+            expect(svc.status('not-a-session')).toBeUndefined();
+        });
+
+        it('does not let the retained status shadow the live session', () => {
+            const { svc } = makeService();
+            svc.startQr();
+            const second = svc.startQr();
+
+            expect(svc.status(second.sessionId)?.state).toBe('awaiting-scan');
+        });
     });
 });

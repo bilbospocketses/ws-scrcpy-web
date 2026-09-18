@@ -3,6 +3,7 @@ import {
     assertDeletablePaths,
     assertSafeRemotePath,
     assertSerial,
+    isConnectAddress,
     isPairingAddress,
     isPairingCode,
     isSafeEncoderName,
@@ -201,6 +202,64 @@ describe('deviceInput', () => {
             // `address.split(':')[0]`, which here yields '[' — so an IPv6
             // pairing could only ever finish paired-not-connected.
             expect(isPairingAddress('[fe80::1]:5555')).toBe(false);
+        });
+    });
+
+    // `adb connect` documents HOST[:PORT] and accepts an IPv6 literal, so this
+    // is a DIFFERENT shape from `isPairingAddress` rather than a relaxation of
+    // it — the two refusals pinned directly above are exactly what must NOT
+    // carry over. The hazard it does share is option injection: the value
+    // reaches adb as an argv element of `adb connect <address>`, and then as a
+    // serial for `adb shell <address> getprop`.
+    describe('isConnectAddress', () => {
+        it('accepts a bare host, which is the half adb connect allows and pairing does not', () => {
+            expect(isConnectAddress('192.168.86.190')).toBe(true);
+            expect(isConnectAddress('qa-android')).toBe(true);
+            expect(isConnectAddress('phone.local')).toBe(true);
+        });
+
+        it('accepts the host:port shape as well', () => {
+            expect(isConnectAddress('192.168.86.190:5555')).toBe(true);
+            expect(isConnectAddress('phone.local:5555')).toBe(true);
+        });
+
+        it('accepts a bracketed IPv6 literal, with and without a port', () => {
+            expect(isConnectAddress('[fe80::1]:5555')).toBe(true);
+            expect(isConnectAddress('[::1]')).toBe(true);
+            expect(isConnectAddress('[2001:db8::dead:beef]:5555')).toBe(true);
+        });
+
+        it('refuses option injection', () => {
+            // adb reads a leading '-' as a flag: `-H` redirects it to another
+            // adb server entirely. Each of these is well-formed in every OTHER
+            // respect, so a pattern that allowed a leading hyphen would still
+            // pass them — the same mutation check isPairingAddress documents.
+            expect(isConnectAddress('-Hevil.com:5555')).toBe(false);
+            expect(isConnectAddress('-h:5555')).toBe(false);
+            expect(isConnectAddress('-Hevil.com')).toBe(false);
+            expect(isConnectAddress('evil-:5555')).toBe(false);
+            expect(isConnectAddress('a.-b')).toBe(false);
+        });
+
+        it('refuses anything that is not an endpoint', () => {
+            expect(isConnectAddress('')).toBe(false);
+            expect(isConnectAddress('10.0.0.5:5555 extra')).toBe(false);
+            expect(isConnectAddress('10.0.0.5:5555;whoami')).toBe(false);
+            expect(isConnectAddress('10.0.0.5\n')).toBe(false);
+            expect(isConnectAddress('10.0.0.5\0')).toBe(false);
+            expect(isConnectAddress('a'.repeat(301))).toBe(false);
+        });
+
+        it('checks the port numerically, which the pattern alone cannot', () => {
+            expect(isConnectAddress('10.0.0.5:0')).toBe(false);
+            expect(isConnectAddress('10.0.0.5:70000')).toBe(false);
+            expect(isConnectAddress('10.0.0.5:65535')).toBe(true);
+            expect(isConnectAddress('[fe80::1]:0')).toBe(false);
+        });
+
+        it('refuses a bare colon with no port, which adb would read as an empty port', () => {
+            expect(isConnectAddress('10.0.0.5:')).toBe(false);
+            expect(isConnectAddress('[fe80::1]:')).toBe(false);
         });
     });
 

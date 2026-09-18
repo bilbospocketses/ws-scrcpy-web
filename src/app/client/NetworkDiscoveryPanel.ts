@@ -122,6 +122,22 @@ export function pairingStatusText(status: PairingStatus): { text: string; action
     }
 }
 
+/**
+ * A `failed` status the CLIENT invented, as against one the server reported.
+ *
+ * Four sites used to build this shape inline — a lost transport, a 404, an
+ * unreadable body, a non-OK response — and being spelled out each time made
+ * them indistinguishable at a glance from a `PairingStatus` that actually came
+ * off the wire. They are not the same thing: the server's failures carry a
+ * reason the server knows, these are this page's account of why it stopped
+ * being able to ask. Routing them through one constructor is what makes that
+ * readable, and it is the only shape allowed to enter `render` without having
+ * been polled.
+ */
+function localFailure(message: string): PairingStatus {
+    return { state: 'failed', message };
+}
+
 export interface PairingSectionDeps {
     fetchFn: typeof fetch;
     /** A session reached `paired`. The device tracker picks the device up over its own socket; this is for the surrounding UI. */
@@ -385,7 +401,7 @@ export function renderPairingSection(deps: PairingSectionDeps): HTMLElement {
                 schedulePoll(session);
                 return;
             }
-            render({ state: 'failed', message: 'Lost contact with the server while pairing.' });
+            render(localFailure('Lost contact with the server while pairing.'));
             return;
         }
 
@@ -408,7 +424,7 @@ export function renderPairingSection(deps: PairingSectionDeps): HTMLElement {
         if (res.status === 404) {
             // No await between the check above and here, so the session cannot
             // have changed underneath: this is the same liveness, not a re-ask.
-            render({ state: 'failed', message: 'That pairing session is no longer available.' });
+            render(localFailure('That pairing session is no longer available.'));
             return;
         }
 
@@ -419,7 +435,7 @@ export function renderPairingSection(deps: PairingSectionDeps): HTMLElement {
             if (!sessionIsLive(session)) {
                 return;
             }
-            render({ state: 'failed', message });
+            render(localFailure(message));
             return;
         }
 
@@ -444,7 +460,7 @@ export function renderPairingSection(deps: PairingSectionDeps): HTMLElement {
             return;
         }
         if (status === null) {
-            render({ state: 'failed', message: 'The server sent a pairing status this page could not read.' });
+            render(localFailure('The server sent a pairing status this page could not read.'));
             return;
         }
         render(status);

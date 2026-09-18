@@ -282,6 +282,24 @@ describe('PairingApi cancel', () => {
         expect(after.body).toEqual({ error: 'no such pairing session' });
     });
 
+    // The other half of the same boundary: a session the user CANCELLED is
+    // gone and 404s (above), but a session the user DISPLACED by starting a
+    // new one still has a client polling it, and that client gets a real
+    // status. Both behaviours live here so a future change cannot quietly
+    // collapse them into one answer.
+    it('a superseded session reports why it ended, instead of 404ing like a cancel', async () => {
+        const { api } = makeApi();
+        const first = await post(api, '/api/devices/pair/qr');
+        const firstId = String(first.body['sessionId']);
+
+        await post(api, '/api/devices/pair/qr'); // displaces the first, no cancel
+
+        const after = await get(api, `/api/devices/pair/status?sessionId=${firstId}`);
+        expect(after.res.statusCode).toBe(200);
+        expect(after.body['state']).toBe('failed');
+        expect(String(after.body['message'])).toMatch(/replaced/i);
+    });
+
     it('is idempotent: an unknown or missing sessionId still answers ok', async () => {
         const { api } = makeApi();
         expect((await post(api, '/api/devices/pair/cancel', { sessionId: 'nope' })).body).toEqual({ ok: true });
