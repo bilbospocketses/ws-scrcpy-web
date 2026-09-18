@@ -1233,8 +1233,8 @@ A **manually add** button sits next to **scan network** and opens an inline form
 |--------|------|---------|
 | POST | `/api/devices/scan` | **Legacy.** Kept as a REST compatibility shim returning mDNS-only results with the pre-rewrite behavior. External consumers that pre-date `/ws-scan` still work. |
 | GET | `/api/devices/scan/subnet` | Returns the auto-detected gateway subnet as `{ cidr, hostCount }`, or `null` if detection failed. Called by `ScanNetworkModal` on open. |
-| POST | `/api/devices/connect` | JSON body `{ address, serial?, label? }`. On success, label is persisted keyed by both `ro.serialno` AND MAC (see 14.2.3). |
-| POST | `/api/devices/disconnect` | JSON body `{ address }`. |
+| POST | `/api/devices/connect` | JSON body `{ address, serial?, label? }`. `address` is validated by `isConnectAddress` (HOST / HOST:PORT / bracketed IPv6 — the shapes `adb connect` documents) and a malformed one is a 400 that does not echo the input. On success, label is persisted keyed by both `ro.serialno` AND MAC (see 14.2.3). |
+| POST | `/api/devices/disconnect` | JSON body `{ address }`, validated by the same `isConnectAddress`. |
 | GET | `/api/devices/labels` | All labels as `{ key: label }` where key is serial or MAC. |
 | PUT | `/api/devices/labels` | `{ serial, label }`. Empty label deletes. |
 | GET | `/api/devices/screen-state` | `?udid=ip:port` -> `{ awake, locked }` from one shell round trip (`dumpsys power > mWakefulness` + `dumpsys window > isKeyguardShowing`, both grepped on-device). `locked` drives the stream window's lock banner — Android will not capture the keyguard, so a locked device is otherwise indistinguishable from a broken stream (§25.1). Parser: `src/server/deviceScreenState.ts`. |
@@ -1351,16 +1351,18 @@ An Android 11+ device on a secure wireless-debugging port refuses an unpaired cl
 |---|---|---|
 | `POST /api/devices/pair/qr` | — | `{ sessionId, svg, expiresInMs }` |
 | `POST /api/devices/pair/code` | `{ address, code }` | `{ sessionId }` |
-| `GET /api/devices/pair/status?sessionId=` | — | `PairingStatus`, or **404** once the session is no longer current |
+| `GET /api/devices/pair/status?sessionId=` | — | `PairingStatus`; **404** for an id the service has no account of. A session **displaced by a newer one** still answers 200 — see below. |
 | `POST /api/devices/pair/cancel` | `{ sessionId }` | `{ ok: true }` |
 
 Two of those are easy to get wrong. **`expiresInMs` is a duration, deliberately not an `expiresAt` deadline** — the browser cannot read the server's clock, so an absolute deadline forced it to difference two unrelated clocks and any skew surfaced as a wrong "stops working in about N", or as no note at all. The client converts it against its own clock the instant it arrives. And **`status` answering 404 is the normal end of a cancelled session**, not an error: cancelling drops the session server-side, so a client that cancels and then polls gets a 404 and must read it as success. An unknown id must not be a way to read somebody else's session.
+
+**A session the user REPLACED is not the same case as one they cancelled, and no longer 404s.** Starting a second session drops the first without cancelling it — the implicit-cancel seam. That used to leave the first session's client polling an id the service had forgotten, so it got a 404 and rendered it as "That pairing session is no longer available.": a sentence about a failed lookup, in the one situation where the server knows exactly what happened. `PairingService` now keeps the displaced session's terminal status in a **single slot** (`superseded`) and answers it, so that client is told it was replaced and where to continue. One slot rather than a map, because only the displaced session has a client still polling — an unbounded map keyed by request would be a memory leak. It holds a `PairingStatus`, never the session, so the pairing password cannot survive in it by construction. Cancel is unchanged and still 404s; both behaviours are pinned by tests so a later change cannot quietly collapse them into one answer.
 
 ### 14.3 Dependencies
 
 The dependency updater panel (section 13) now lives in **Settings → Dependencies** (section 27), not on the home page. It shows installed vs. latest versions for Node.js + node-pty, ADB, and scrcpy-server with update controls. See section 13 for full details.
 
-What is left on the home page is `DependencyAlertCard` — an alert, not a list. It stays hidden until something actually needs updating, says only which dependency that is, and its button opens the Settings dialog **on the Dependencies tab**. It polls `/api/dependencies` every 15 s, and mounts inert (no fetch, no interval) unless all three of its predicates hold: the caller's role may see the section, the admin API will answer this caller at all — polling regardless 403-spams a healthy app — and this is **not** a container, where the image owns the dependency set and the tab the card's button opens is itself replaced by a note (§26.5). All three are the card's own, read off one `/api/config` runtime envelope, so there is exactly one copy of the decision. Any non-OK response or error **hides** the card rather than replacing it with an error box.
+What is left is `DependencyAlertCard` — an alert, not a list. It stays hidden until something actually needs updating, says only which dependency that is, and its button opens the Settings dialog **on the Dependencies tab**. It lives in the **top bar**, in the same fixed cluster as the theme toggle, the settings gear and the app-update pill, and is deliberately shaped unlike that pill — a 36 px icon circle in `--warning-color` against a text badge — so the two kinds of update are told apart without opening either. It was a `home-section` card appended after the device list until 2026-09-18, which put it at the bottom of the page while app updates announced themselves at the top, so a user watching the top bar never learned a dependency needed updating at all. The name of the dependency is carried in a visually-hidden span plus `title`/`aria-label`, because an icon-only control would otherwise throw away the one detail the alert exists to give. Its wrapper deliberately sets **no `display`** — a class rule outranks the UA stylesheet's `[hidden] { display: none }`, and a `display: flex` there silently defeated the `hidden` attribute the card hides itself with. It polls `/api/dependencies` every 15 s, and mounts inert (no fetch, no interval) unless all three of its predicates hold: the caller's role may see the section, the admin API will answer this caller at all — polling regardless 403-spams a healthy app — and this is **not** a container, where the image owns the dependency set and the tab the card's button opens is itself replaced by a note (§26.5). All three are the card's own, read off one `/api/config` runtime envelope, so there is exactly one copy of the decision. Any non-OK response or error **hides** the card rather than replacing it with an error box.
 
 ---
 
@@ -2578,7 +2580,7 @@ in `Config` (§23 has the modal side):
    that volume.
 2. **Exposes `docker: true`** on the `/api/config` runtime envelope and on
    `/api/service/status`, so the UI gates without a second probe: Settings → Service,
-   → Updates and → Dependencies are replaced by a one-line note each, the home page's
+   → Updates and → Dependencies are replaced by a one-line note each, the top bar's
    `DependencyAlertCard` mounts inert, the Linux "install for all users" and
    "uninstall" rows are hidden, and the system-wide-install first-run modal never
    opens. **"stop server & exit" is NOT gated** — it is the same teardown `docker
@@ -2884,7 +2886,7 @@ stays bounded; `pending` rows are never pruned.
 | `src/app/client/settings/SaveRunner.ts` | `runSave()` and the `res.ok` normalisation of a refused batch |
 | `src/app/client/settings/tabs/*.ts` | Users, Embedding, Updates, Service, Dependencies, Server |
 | `src/app/client/SettingsModal.ts` | Tab assembly + role gating, the footer Save, `performStagedSave`, `performDirtyClose`, the dirty-close prompt |
-| `src/app/client/DependencyAlertCard.ts` | The home page's remaining dependency notice |
+| `src/app/client/DependencyAlertCard.ts` | The top-bar dependency-update indicator (§14.3) |
 | `src/server/api/SettingsBatchApi.ts` | `STAGEABLE_IDS`, `orderChanges()`, the apply loop and the WAL marks |
 | `src/server/db/PendingSettingsStore.ts` | The WAL rows and their transitions |
 | `src/server/db/reconcilePendingSettings.ts` | Boot-time abandon + prune |
