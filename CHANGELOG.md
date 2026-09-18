@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The README now says outright that `allowedHosts` takes domain names only, and that access and streaming are two different gates.** Both came out of issue #691, where someone trying to use the app from another machine put that machine's network address into `allowedHosts` and still could not stream. Neither half of that was their mistake to make: raw IP addresses already pass the host check, so the edit did nothing and nothing said so — the page still loaded, which looks like confirmation the setting worked. And the Access-control section explained thoroughly who the server will answer, without ever mentioning that whether the *browser* will play video is decided separately, by the browser, from the address bar alone. So signing in — which genuinely does grant full admin from another machine over plain HTTP — produces a working device list, working settings, working pairing, and no video, with nothing in that section hinting the two might come apart. Both points are now stated where each mistake gets made, and the access section points at the secure-context requirement and the reverse-proxy setup.
+
 ## [0.1.30-beta.129] - 2026-09-18
 
 ### Changed
