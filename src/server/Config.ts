@@ -1,7 +1,7 @@
-import { createPrivateKey, X509Certificate } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as process from 'process';
+import { createSecureContext } from 'tls';
 import {
     APP_CONFIG_DEFAULTS,
     type AppConfig,
@@ -268,21 +268,25 @@ export interface CertMaterial {
  *    before the app has any listener at all. A readable cert with an
  *    unreadable key fails in exactly the same place, so both are read.
  *
- *  - READABLE BUT INVALID (review fix round 2, C1/C2). A zero-byte or
- *    whitespace-only file reads successfully as an empty string, which
- *    Node's `https` module treats as "no cert" and BINDS the listener
- *    anyway -- every handshake then fails silently, which is worse than a
- *    crash because the app would report HTTPS as up. And non-empty garbage
- *    (a half-written mkcert output, a truncated or corrupted file) also
- *    reads successfully, but handed straight to `https.createServer` throws
- *    SYNCHRONOUSLY and UNCAUGHT (`ERR_OSSL_PEM_NO_START_LINE` /
- *    `ERR_OSSL_PEM_BAD_END_LINE`, measured on Node v24.19.0), taking the
- *    whole app down, plain HTTP included. Both are caught here by parsing
- *    with Node's own builtins (`X509Certificate`, `createPrivateKey`) BEFORE
- *    the content is ever embedded into a `ServerItem` -- the same parse
- *    `https.createServer` would do anyway, just early enough that a failure
- *    degrades to HTTP-only instead of an unhandled boot crash or a
- *    silently-dead HTTPS listener.
+ *  - READABLE BUT INVALID (review fix round 2, C1/C2; round 3 corrected the
+ *    C1 check). A zero-byte or whitespace-only file reads successfully as an
+ *    empty string, which `createSecureContext` (below) ACCEPTS -- so that
+ *    case is rejected separately, first, by an explicit trim-length check.
+ *    Garbage, truncated, mismatched, or otherwise unusable content reads
+ *    successfully too, but handed straight to `https.createServer` throws
+ *    SYNCHRONOUSLY and UNCAUGHT (measured on Node v24.19.0), taking the
+ *    whole app down, plain HTTP included.
+ *
+ *    Round 2 validated the cert and the key SEPARATELY (`X509Certificate`,
+ *    `createPrivateKey`) -- that is NOT the same check. It missed a valid
+ *    cert paired with a valid but MISMATCHED key
+ *    (`ERR_OSSL_X509_KEY_VALUES_MISMATCH`, since nothing checked they
+ *    belonged together) and a cert followed by a truncated second PEM block
+ *    (`X509Certificate` reads only the first block and returns happily;
+ *    `ERR_OSSL_PEM_BAD_END_LINE` only surfaces once TLS actually tries to use
+ *    it). Both are caught by validating with `tls.createSecureContext({
+ *    cert, key })` instead -- the same secure-context construction
+ *    `https.createServer` performs internally, so it cannot disagree with it.
  *
  * `buildServerList` embeds the content directly rather than ever routing this
  * generated entry through `parseServerItem`'s untried read.
@@ -304,15 +308,16 @@ export function readCertMaterial(
         const cert = readFile(certFile);
         const key = readFile(keyFile);
         // Zero-byte / whitespace-only content reads as truthy but is not a
-        // certificate (C2) -- reject before it ever reaches https.createServer,
-        // which would otherwise bind with no key material and fail every
-        // handshake silently.
+        // certificate (C2) -- reject before createSecureContext, which
+        // ACCEPTS empty strings and would otherwise let a dead listener bind
+        // with no key material and fail every handshake silently.
         if (cert.trim().length === 0 || key.trim().length === 0) return null;
-        // Garbage / truncated / half-written content (C1) -- parse with the
-        // same builtins https.createServer relies on, so an unusable file is
-        // caught here instead of crashing the boot.
-        new X509Certificate(cert);
-        createPrivateKey(key);
+        // Garbage, truncated, or mismatched content (C1) -- validate with the
+        // same secure-context construction https.createServer performs
+        // internally, so an unusable pair is caught here instead of crashing
+        // the boot. Parsing the cert and the key separately is NOT
+        // equivalent: see the doc comment above.
+        createSecureContext({ cert, key });
         return { cert, key };
     } catch {
         return null;
@@ -662,6 +667,7 @@ export class Config {
         // above, which already take `env` explicitly rather than reaching
         // into `process.env` deep inside a branch.
         env: NodeJS.ProcessEnv = process.env,
+        warn: (msg: string) => void = () => {},
     ): ServerItem[] {
         // Env var PORT takes highest priority
         const envPort = env['PORT'];
@@ -696,6 +702,21 @@ export class Config {
             }
         }
 
+        // N3 (review fix round 3): HTTP and HTTPS colliding on the same port
+        // means only one of them can actually bind. It must be HTTP -- that
+        // is the listener this whole feature promises must never stop the
+        // app starting, and the HTTPS one could not have bound anyway. Skip
+        // the HTTPS entry rather than let two listeners silently fight over
+        // one port; httpsPort is the first user-settable way to reach this
+        // (webPort and httpsPort are otherwise resolved independently).
+        if (certMaterial && port === httpsPort) {
+            warn(
+                `config.json: httpsPort (${httpsPort}) collides with the http port (${port}); ` +
+                    'HTTPS is disabled for this boot -- set httpsPort to a different port to enable it',
+            );
+            certMaterial = null;
+        }
+
         return buildServerList({ httpPort: port, httpsPort, certMaterial });
     }
 
@@ -706,15 +727,21 @@ export class Config {
      * redirects LOCALAPPDATA/HOME/USERPROFILE for the whole suite, which pins
      * the ambient env to "no certificate" and makes the branch otherwise
      * unreachable from a test (review fix round 2, I1/M1).
+     *
+     * Takes `fileConfig.httpsPort` through the SAME `sanitizeHttpsPort` the
+     * real boot path uses (review fix round 3, N2) rather than a raw
+     * `httpsPort` argument -- a test-only door into production code must not
+     * accept input the real path would reject.
      */
     public static _buildServersForTest(
         fileConfig: FlatConfig,
         webPort: number,
         dataRoot: string | null,
-        httpsPort: number,
         env: NodeJS.ProcessEnv,
+        warn: (msg: string) => void = () => {},
     ): ServerItem[] {
-        return Config.buildServers(fileConfig, webPort, dataRoot, httpsPort, env);
+        const httpsPort = sanitizeHttpsPort(fileConfig.httpsPort, warn);
+        return Config.buildServers(fileConfig, webPort, dataRoot, httpsPort, env, warn);
     }
 
     private static parseServerItem(config: Partial<ServerItem> = {}): ServerItem {
@@ -815,7 +842,7 @@ export class Config {
             const firstRunExplicit = fileConfig.firstRunComplete !== undefined;
 
             const httpsPort = sanitizeHttpsPort(fileConfig.httpsPort, warn);
-            const servers = Config.buildServers(fileConfig, appConfig.webPort, dataRoot, httpsPort, process.env);
+            const servers = Config.buildServers(fileConfig, appConfig.webPort, dataRoot, httpsPort, process.env, warn);
 
             // An app_settings override of dependenciesPath/adbPath is overlaid for
             // downstream consumers (the adb spawn path) AFTER the DB opens — it
