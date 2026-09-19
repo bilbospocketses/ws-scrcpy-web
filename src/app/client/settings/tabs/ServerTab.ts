@@ -582,6 +582,19 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
     const hostnameGuideNotice = buildNoticeRow();
     hostnameGuideNotice.setAttribute('data-tls-hostname-notice', '');
     body.appendChild(hostnameGuideNotice);
+    // I9: the allowedHosts write (Resolved Decision 2) is a STANDING fact
+    // about the current cert, not a one-time event -- the transient alert
+    // below confirms the edit happened at generate time, but a user who
+    // reopens Settings later needs to see it too, the same reasoning that
+    // put notifications 2/3/4/9 in-panel rather than in a toast. Neutral
+    // tone (plain `.settings-status`, not `-warning`): this confirms an
+    // expected, working state, not a mistake to fix.
+    const allowedHostPersistentNotice = document.createElement('p');
+    allowedHostPersistentNotice.className = 'settings-status';
+    allowedHostPersistentNotice.style.gridColumn = '1 / -1';
+    allowedHostPersistentNotice.setAttribute('data-tls-allowed-host-notice', '');
+    allowedHostPersistentNotice.hidden = true;
+    body.appendChild(allowedHostPersistentNotice);
     const expiryNotice = buildNoticeRow();
     expiryNotice.setAttribute('data-tls-expiry-notice', '');
     body.appendChild(expiryNotice);
@@ -619,6 +632,8 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
             setNotice(hostnameGuideNotice, null);
             setNotice(expiryNotice, null);
             setNotice(caRestoreNotice, null);
+            allowedHostPersistentNotice.textContent = '';
+            allowedHostPersistentNotice.hidden = true;
             return;
         }
 
@@ -660,6 +675,26 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
                 : null,
         );
         setNotice(expiryNotice, certExpiryNotice(state, new Date()));
+
+        // I9: a STANDING fact, not the one-time confirmation the transient
+        // alert already gives at generate time -- a hostname-kind cert
+        // NECESSARILY has its subject in allowedHosts (Resolved Decision 2),
+        // whether that happened just now or in an earlier session, so this
+        // reflects the CURRENT state every time, not just right after a
+        // generate. Text-node + span, same pattern as `certSummary`'s
+        // subject -- `state.subject` is round-tripped user input.
+        allowedHostPersistentNotice.textContent = '';
+        if (state.kind === 'hostname' && state.subject) {
+            const hostSpan = document.createElement('span');
+            hostSpan.textContent = state.subject;
+            allowedHostPersistentNotice.appendChild(hostSpan);
+            allowedHostPersistentNotice.appendChild(
+                document.createTextNode(' is registered in allowedHosts, so this server answers to that name.'),
+            );
+            allowedHostPersistentNotice.hidden = false;
+        } else {
+            allowedHostPersistentNotice.hidden = true;
+        }
     }
 
     // One shared bottom-of-panel alert for every transient outcome (generate
@@ -849,9 +884,19 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
                     ? 'plain http will stop answering other machines. this machine keeps working over localhost, so you cannot lock yourself out.'
                     : null,
             );
+            // Corrected (review addendum): this is NOT the port field's
+            // restart notice. `HttpServer.ts`'s `readHttpExposure()` re-reads
+            // `HTTP_EXPOSURE_KEY` fresh on every plain-HTTP request -- there
+            // is no listener to rebind and nothing to restart, so a save here
+            // takes effect for the very next connection attempt. An ALREADY
+            // established stream (its socket already past the HTTP request
+            // that started it) is untouched -- only new connection attempts
+            // see the new mode.
             setNotice(
                 exposureRestartNotice,
-                narrowed ? 'the server will restart and any active streams will drop.' : null,
+                narrowed
+                    ? 'this takes effect immediately for new connections. streams already running are not affected.'
+                    : null,
             );
         });
     }
@@ -861,10 +906,9 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
             const mode = exposureRadios.find((r) => r.checked)?.value ?? 'open';
             okBtn.disabled = true;
             try {
-                // NOT WIRED (see the class doc): no task in this plan adds this
-                // route. Calling it anyway means a build that DOES add it later
-                // works with no further changes here, and one that doesn't yet
-                // gets a clear, non-crashing message instead of a dead button.
+                // Wired since task 11 (`POST /api/tls/exposure`, commit
+                // 5e8be349). The 404 branch below predates that route and is
+                // now just cheap insurance against an older server.
                 const res = await deps.fetchFn('/api/tls/exposure', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -890,6 +934,20 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
 
     // Bottom-of-panel: appended LAST so it always sits below every control,
     // per this repo's convention for transient outcomes (see the class doc).
+    //
+    // M5: appended DIRECTLY into `body`, never through `buildRow()` --
+    // deliberately, not by accident. `modal.css`'s
+    // `.settings-row:has(.settings-status-error) { display: flex; ... }`
+    // targets `.settings-row`, and `transientAlert` toggles
+    // `.settings-status-error` on itself (see `showTransientAlert`). Wrapping
+    // this element in a `.settings-row` the way every other control here is
+    // wrapped would make that rule match it on an error, overriding this
+    // row's normal `display: contents` and changing its layout -- a
+    // near-miss on the same "a rule silently starts matching an element it
+    // wasn't written for" class of bug the `[hidden]` reassertion above
+    // guards against. If a future change wraps this in a row, that CSS rule
+    // needs handling at the same time, not discovered by an unexplained
+    // layout shift the next time an error fires.
     body.appendChild(transientAlert);
 
     renderCertState(initialState);
