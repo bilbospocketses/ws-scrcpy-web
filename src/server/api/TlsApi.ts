@@ -125,6 +125,16 @@ export interface HttpsListenerField {
  * other (both mean "no secure entry exists in Config.servers", for mutually
  * exclusive reasons), but EITHER can co-occur with `bind-failed`, which is
  * why the ordering matters and is tested against exactly that input below.
+ *
+ * MAINTENANCE NOTE (N3, re-review): if you add a reason or reorder this
+ * chain, add a CO-OCCURRENCE test pairing the new/moved condition against the
+ * one immediately above it in precedence -- not just a test that it alone
+ * returns its own value. A priority chain tested one branch at a time passes
+ * under almost any permutation (each test only proves its own branch works,
+ * never that it outranks anything); only an input where two conditions are
+ * simultaneously true can actually distinguish one ordering from another.
+ * That is exactly the input that caught this function's own wrong ordering
+ * (`tlsApi.test.ts`'s "the co-occurrence case" test).
  */
 export function buildHttpsListenerField(
     listenerStatus: { listening: boolean; boundPort?: number; bindFailed: boolean },
