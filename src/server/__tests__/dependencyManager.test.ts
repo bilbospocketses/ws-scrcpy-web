@@ -9,7 +9,7 @@ describe('DependencyManager', () => {
     it('initializes with all dependencies in unknown state', async () => {
         const mgr = new DependencyManager('/tmp/test-deps');
         const deps = await mgr.getAll();
-        expect(deps.length).toBe(3);
+        expect(deps.length).toBe(4);
         expect(deps.every((d) => d.status === DependencyStatus.Unknown)).toBe(true);
     });
 

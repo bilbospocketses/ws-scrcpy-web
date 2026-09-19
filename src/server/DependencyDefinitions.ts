@@ -21,6 +21,25 @@ export function getArch(): 'x64' | 'arm64' {
     return os.arch() === 'arm64' ? 'arm64' : 'x64';
 }
 
+/** The release we vendor. Bump deliberately: it is trust material. */
+export const MKCERT_VERSION = 'v1.4.4-bt.2';
+
+export function mkcertExeName(): string {
+    return os.platform() === 'win32' ? 'mkcert.exe' : 'mkcert';
+}
+
+/**
+ * Asset naming in bilbospocketses/mkcert releases. Darwin is included because
+ * the matrix publishes it, even though ws-scrcpy-web does not ship macOS yet.
+ */
+export function mkcertAssetName(version: string): string {
+    const plat = os.platform();
+    const arch = os.arch() === 'arm64' ? 'arm64' : 'amd64';
+    if (plat === 'win32') return `mkcert-${version}-windows-${arch}.exe`;
+    if (plat === 'darwin') return `mkcert-${version}-darwin-${arch}`;
+    return `mkcert-${version}-linux-${arch}`;
+}
+
 /**
  * Node major version → ABI number (`process.versions.modules`).
  * ABI is stable within a major; it changes only across majors.
@@ -208,6 +227,34 @@ export function getDependencyDefinitions(depsPath: string): DependencyDefinition
             getDownloadUrl: (version) => {
                 return `https://github.com/Genymobile/scrcpy/releases/download/v${version}/scrcpy-server-v${version}`;
             },
+        },
+        {
+            name: 'mkcert',
+            displayName: 'mkcert',
+            description: 'Issues the local certificate that lets browsers stream over HTTPS on a LAN',
+            requiresRestart: false,
+            // Our own hardened fork, NOT FiloSottile/mkcert. Upstream has been dormant
+            // since 2024-08 and its last release is from 2022; the fork carries five
+            // dependency bumps, 28 tests where upstream has none, and fixes for four
+            // review findings including an argument-controlled path escape that wrote
+            // outside the working directory and still exited 0.
+            fallbackVersion: MKCERT_VERSION,
+            checkInstalled: async (depsPath) => {
+                const exe = path.join(depsPath, 'mkcert', mkcertExeName());
+                if (!fs.existsSync(exe)) return null;
+                return runVersionCommand(exe, ['-version'], /v?([\d.]+(?:-bt\.\d+)?)/);
+            },
+            checkLatest: async () => {
+                const res = await fetchOkWithRetry(
+                    'https://api.github.com/repos/bilbospocketses/mkcert/releases/latest',
+                    VERSION_CHECK_POLICY,
+                );
+                if (!res) return null;
+                const body = (await res.json()) as { tag_name?: string };
+                return body.tag_name ?? null;
+            },
+            getDownloadUrl: (version) =>
+                `https://github.com/bilbospocketses/mkcert/releases/download/${version}/${mkcertAssetName(version)}`,
         },
     ];
 }
