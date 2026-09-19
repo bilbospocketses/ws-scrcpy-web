@@ -42,6 +42,12 @@ The first-run dependency manager and the in-app updater fetch standalone runtime
 - `https://dl.google.com/android/repository/` -- ADB platform-tools.
 - `https://github.com/Genymobile/scrcpy/releases/...` -- scrcpy-server binary.
 - `https://github.com/<owner>/ws-scrcpy-web/releases/...` -- our own node-pty prebuilts.
+- `https://api.github.com/repos/bilbospocketses/mkcert/releases/latest` and
+  `https://github.com/bilbospocketses/mkcert/releases/download/...` -- our `mkcert` fork: the checksum
+  manifest and the platform binary. **Unlike the four above, these are not fetched on first run.**
+  Nothing is requested until you open Settings → Server → Local HTTPS and generate a certificate, so a
+  deployment that never uses that feature never contacts them. The certificate itself is then minted
+  entirely on your machine -- the binary runs locally and sends nothing anywhere.
 
 These are standard HTTPS GETs. The operators see your IP and User-Agent, like any other HTTP fetch. You can pre-populate `dependencies/` from another machine and the manager will skip the downloads.
 

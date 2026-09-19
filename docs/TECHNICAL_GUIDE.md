@@ -3172,7 +3172,8 @@ one rather than a single generic "may require a restart":
   and `HttpServer.ts` re-reads that key fresh on every plain-HTTP request — there is no cache to
   invalidate and no listener to rebind. A mode change takes effect on the very next request.
 - **Enabling HTTPS for the first time, regenerating the certificate, and changing the HTTPS port
-  (`POST /api/tls/https-port`) all DO need a restart.** The listener set (`Config.buildServerList`) is
+  (`POST /api/tls/https-port`) all DO need a restart.** The listener set (the module-level `buildServerList()` in `Config.ts`, deliberately NOT the private
+  static `Config.buildServers` that calls it) is
   built once at boot with no in-process rebind, so a certificate that did not exist at boot, or a port
   that has changed, is simply not reflected until the process restarts. `https-port` schedules a
   restart through the same exit-75 marker path `webPort` already uses.
@@ -3185,8 +3186,8 @@ one rather than a single generic "may require a restart":
   stays `true` — a bound-but-stale listener is treated the same as any other case this table already
   covers, not as a fifth, silent state.
 
-The two HTTP/HTTPS ports are independent, with independent defaults (`Config.DEFAULT_HTTPS_PORT =
-8443`): setting the HTTP port to `80` never moves HTTPS, and setting the HTTPS port never moves HTTP.
+The two HTTP/HTTPS ports are independent, with independent defaults (the module-level `DEFAULT_HTTPS_PORT = 8443`
+in `Config.ts`): setting the HTTP port to `80` never moves HTTPS, and setting the HTTPS port never moves HTTP.
 If the two are ever set to the same value, `Config.buildServers` skips the HTTPS entry for that boot
 rather than erroring.
 
