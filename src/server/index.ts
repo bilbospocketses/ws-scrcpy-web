@@ -15,6 +15,7 @@ import { ServerShutdownApi } from './api/ServerShutdownApi';
 import { ServiceApi } from './api/ServiceApi';
 import { SettingsApi } from './api/SettingsApi';
 import { SettingsBatchApi } from './api/SettingsBatchApi';
+import { TlsApi } from './api/TlsApi';
 import { UpdatesApi } from './api/UpdatesApi';
 import { UsersApi } from './api/UsersApi';
 import { WhoamiApi } from './api/WhoamiApi';
@@ -43,6 +44,7 @@ import type { Service, ServiceClass } from './services/Service';
 import { WebSocketServer } from './services/WebSocketServer';
 import { reapStrayAdbOnWindows } from './shutdownHelpers';
 import { isServiceInstance, isSiblingInstance } from './siblingInstance';
+import { getCertService } from './tls/createCertService';
 import { UpdateService } from './UpdateService';
 import { forceBlockingStdio } from './util/forceBlockingStdio';
 
@@ -174,6 +176,9 @@ if (__ssArgs) {
 
     const discoveryApi = new DeviceDiscoveryApi();
     HttpServer.addApiHandler(discoveryApi);
+
+    const tlsApi = new TlsApi(() => getCertService());
+    HttpServer.addApiHandler(tlsApi);
 
     const capabilitiesApi = new CapabilitiesApi();
     HttpServer.addApiHandler(capabilitiesApi);

@@ -19,6 +19,7 @@ import { EnvName } from './EnvName';
 import { clampScanConcurrency, DEFAULT_SCAN_CONCURRENCY } from './fdBudget';
 import { Logger } from './Logger';
 import { parseFrameAncestorOrigin, setFrameAncestors } from './security/frameGuard';
+import { setAllowedHosts } from './security/originGuard';
 import { writeFileAtomicSync } from './util/atomicFile';
 
 // DEFAULT_SCAN_CONCURRENCY lives in fdBudget.ts, beside the cap it is tuned against.
@@ -798,6 +799,32 @@ export class Config {
     }
 
     /**
+     * Grant an extra Host hostname (config.json `allowedHosts`), applying it to
+     * the running server immediately and persisting it to config.json. Mirrors
+     * `addFrameAncestor` above.
+     *
+     * Used by `POST /api/tls/generate` for a **hostname** certificate subject
+     * only -- a raw IP subject already passes `isHostAllowed()` (it accepts any
+     * IP literal), so appending one here would recreate the exact confusion
+     * issue #691 was about: a user reading `allowedHosts: ["192.168.86.3"]`
+     * reasonably concludes IPs belong there. See TlsApi.
+     *
+     * Returns false for a value that is not a usable hostname once trimmed and
+     * lowercased (i.e. empty); a duplicate grant is a no-op that still returns
+     * true.
+     */
+    public addAllowedHost(hostname: string): boolean {
+        const normalized = hostname.trim().toLowerCase();
+        if (!normalized) return false;
+
+        if (!this._allowedHosts.includes(normalized)) {
+            this._allowedHosts.push(normalized);
+        }
+        this.applyAndPersistAllowedHosts();
+        return true;
+    }
+
+    /**
      * Operator-configured origins allowed to embed the app in a frame
      * (config.json `frameAncestors`), beyond its own origin. Read once at boot
      * and applied to the security layer via setFrameAncestors(); never
@@ -862,6 +889,30 @@ export class Config {
             /* no existing file / unparseable — write a fresh one below */
         }
         existing['frameAncestors'] = this._frameAncestors;
+
+        const dir = path.dirname(this._configFilePath);
+        if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+        }
+        writeFileAtomicSync(this._configFilePath, `${JSON.stringify(existing, null, 2)}\n`);
+    }
+
+    /**
+     * Apply the current allowedHosts list to the running server, then write it
+     * to config.json. Mirrors `applyAndPersistFrameAncestors` above: apply
+     * first, so a write failure never leaves the caller told "added" while the
+     * server is still refusing the hostname.
+     */
+    private applyAndPersistAllowedHosts(): void {
+        setAllowedHosts(this._allowedHosts);
+
+        const existing: Record<string, unknown> = {};
+        try {
+            Object.assign(existing, JSON.parse(fs.readFileSync(this._configFilePath, 'utf-8')));
+        } catch {
+            /* no existing file / unparseable — write a fresh one below */
+        }
+        existing['allowedHosts'] = this._allowedHosts;
 
         const dir = path.dirname(this._configFilePath);
         if (!fs.existsSync(dir)) {

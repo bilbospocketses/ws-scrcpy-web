@@ -119,6 +119,57 @@ describe('Config frame-ancestor grant and revoke', () => {
     });
 });
 
+describe('Config allowedHost grant (TlsApi generate, amendment c)', () => {
+    it('persists a granted hostname without disturbing the other keys', () => {
+        const configPath = setup({ ...BOOT, frameAncestors: ['http://localhost:5159'] });
+
+        expect(Config.getInstance().addAllowedHost('devices.lan')).toBe(true);
+
+        const written = readConfig(configPath);
+        expect(written['allowedHosts']).toEqual(['devices.lan']);
+        expect(written['frameAncestors']).toEqual(['http://localhost:5159']);
+        expect(written['webPort']).toBe(8200);
+        expect(written['installMode']).toBe('user');
+        expect(written['firstRunComplete']).toBe(true);
+    });
+
+    it('applies the grant to the running Host allowlist immediately, and normalises case', () => {
+        setup(BOOT);
+
+        Config.getInstance().addAllowedHost('DEVICES.LAN');
+
+        expect(Config.getInstance().allowedHosts).toEqual(['devices.lan']);
+    });
+
+    it('does not duplicate a hostname granted twice', () => {
+        setup(BOOT);
+        const config = Config.getInstance();
+
+        config.addAllowedHost('devices.lan');
+        config.addAllowedHost('devices.lan');
+
+        expect(config.allowedHosts).toEqual(['devices.lan']);
+    });
+
+    it('refuses an empty (or whitespace-only) hostname', () => {
+        setup(BOOT);
+        const config = Config.getInstance();
+
+        expect(config.addAllowedHost('')).toBe(false);
+        expect(config.addAllowedHost('   ')).toBe(false);
+        expect(config.allowedHosts).toEqual([]);
+    });
+
+    it('appends to an existing allowedHosts list rather than replacing it', () => {
+        const configPath = setup({ ...BOOT, allowedHosts: ['proxy.example.com'] });
+
+        Config.getInstance().addAllowedHost('devices.lan');
+
+        expect(Config.getInstance().allowedHosts.sort()).toEqual(['devices.lan', 'proxy.example.com'].sort());
+        expect(readConfig(configPath)['allowedHosts']).toEqual(['proxy.example.com', 'devices.lan']);
+    });
+});
+
 describe('getFirstRunStatus carries frameAncestors (finding 83)', () => {
     it('reports the configured origins, so the client can scope its theme listener', () => {
         setup({ webPort: 8000, frameAncestors: ['http://localhost:5159'] });
