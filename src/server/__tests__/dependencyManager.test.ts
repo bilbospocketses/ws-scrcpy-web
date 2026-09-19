@@ -1,9 +1,11 @@
+import { createHash } from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DependencyStatus } from '../../common/DependencyTypes';
-import { DependencyManager } from '../DependencyManager';
+import { mkcertAssetName, mkcertExeName } from '../DependencyDefinitions';
+import { DependencyManager, getDependencyManager } from '../DependencyManager';
 
 describe('DependencyManager', () => {
     it('initializes with all dependencies in unknown state', async () => {
@@ -124,6 +126,115 @@ describe('DependencyManager.requestRestart', () => {
         }
         const body = fs.readFileSync(path.join(tmpDir, '.restart'), 'utf-8');
         expect(body).toMatch(/^restart-requested-\d+$/);
+    });
+});
+
+describe('DependencyManager.update("mkcert") — checksum verification (I8)', () => {
+    let fetchSpy: ReturnType<typeof vi.spyOn>;
+    let tmpDepsDir: string;
+    const version = 'v1.4.4-bt.2';
+    const FAKE_BINARY = 'not-a-real-mkcert-binary-but-deterministic-bytes';
+    const assetName = mkcertAssetName(version);
+
+    beforeEach(() => {
+        tmpDepsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-dm-mkcert-'));
+    });
+
+    afterEach(() => {
+        fetchSpy?.mockRestore();
+        fs.rmSync(tmpDepsDir, { recursive: true, force: true });
+    });
+
+    function mockFetch(checksumManifest: string) {
+        fetchSpy = vi.spyOn(global, 'fetch').mockImplementation(async (input: string | URL | Request) => {
+            const url = String(input instanceof Request ? input.url : input);
+            if (url.endsWith('SHA256SUMS.txt')) {
+                return new Response(checksumManifest, { status: 200 });
+            }
+            return new Response(FAKE_BINARY, { status: 200 });
+        });
+    }
+
+    it('installs on a matching hash, and refuses (leaving nothing installed) on a mismatch — contrast pair', async () => {
+        const correctHash = createHash('sha256').update(FAKE_BINARY).digest('hex');
+        const destFile = path.join(tmpDepsDir, 'mkcert', mkcertExeName());
+        const mgr = new DependencyManager(tmpDepsDir);
+
+        // --- matching checksum: installs ---
+        mockFetch(`${correctHash}  ${assetName}\n`);
+        mgr.getByName('mkcert')!.latestVersion = version;
+        const okResult = await mgr.update('mkcert');
+        expect(okResult.success).toBe(true);
+        expect(fs.existsSync(destFile)).toBe(true);
+        expect(fs.readFileSync(destFile, 'utf-8')).toBe(FAKE_BINARY);
+
+        // --- mismatching checksum: refuses, and does NOT leave the old
+        // (verified) install in place tampered -- re-download a WRONG
+        // binary under a manifest that still claims the correct hash.
+        fs.rmSync(destFile, { force: true });
+        const wrongHash = '0'.repeat(64);
+        mockFetch(`${wrongHash}  ${assetName}\n`);
+        mgr.getByName('mkcert')!.latestVersion = version;
+        const badResult = await mgr.update('mkcert');
+        expect(badResult.success).toBe(false);
+        expect(badResult.errorMessage).toMatch(/checksum mismatch/i);
+        expect(fs.existsSync(destFile)).toBe(false);
+    });
+
+    it('refuses when the manifest does not list the downloaded asset at all', async () => {
+        mockFetch(`${'a'.repeat(64)}  some-other-platform-asset\n`);
+        const mgr = new DependencyManager(tmpDepsDir);
+        mgr.getByName('mkcert')!.latestVersion = version;
+        const result = await mgr.update('mkcert');
+        expect(result.success).toBe(false);
+        expect(result.errorMessage).toMatch(/does not list/i);
+        expect(fs.existsSync(path.join(tmpDepsDir, 'mkcert', mkcertExeName()))).toBe(false);
+    });
+
+    it('refuses when the checksum manifest itself cannot be fetched', async () => {
+        fetchSpy = vi.spyOn(global, 'fetch').mockImplementation(async (input: string | URL | Request) => {
+            const url = String(input instanceof Request ? input.url : input);
+            if (url.endsWith('SHA256SUMS.txt')) {
+                return new Response('not found', { status: 404 });
+            }
+            return new Response(FAKE_BINARY, { status: 200 });
+        });
+        const mgr = new DependencyManager(tmpDepsDir);
+        mgr.getByName('mkcert')!.latestVersion = version;
+        const result = await mgr.update('mkcert');
+        expect(result.success).toBe(false);
+        expect(result.errorMessage).toMatch(/checksum manifest fetch failed/i);
+    });
+});
+
+describe('DependencyManager.autoInstallMissing — mkcert defers to first use (M2)', () => {
+    it('installs adb (a normal boot-time dependency) but SKIPS mkcert even though both equally qualify', async () => {
+        // Contrast pair: both entries start with installedVersion: null and a
+        // known latestVersion, so both would normally be installed. Only
+        // mkcert's `deferInstall` should hold it back -- a mutation that
+        // removes the skip, or applies it to the wrong dependency, fails one
+        // half of this assertion or the other.
+        const mgr = new DependencyManager('/tmp/test-deps-autoinstall-defer');
+        mgr.getByName('adb')!.latestVersion = '34.0.0';
+        mgr.getByName('mkcert')!.latestVersion = 'v1.4.4-bt.2';
+
+        const updateSpy = vi
+            .spyOn(mgr, 'update')
+            .mockResolvedValue({ success: true, newVersion: 'x', requiresRestart: false });
+
+        await mgr.autoInstallMissing();
+
+        expect(updateSpy).toHaveBeenCalledWith('adb');
+        expect(updateSpy).not.toHaveBeenCalledWith('mkcert');
+        updateSpy.mockRestore();
+    });
+});
+
+describe('getDependencyManager (composition-root singleton)', () => {
+    it('returns the SAME instance across calls, so boot and an on-demand mkcert install share one state', () => {
+        const a = getDependencyManager({ dependenciesPath: '/tmp/test-deps-singleton' });
+        const b = getDependencyManager({ dependenciesPath: '/tmp/a-different-path-does-not-matter-once-memoized' });
+        expect(b).toBe(a);
     });
 });
 

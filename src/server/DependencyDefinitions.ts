@@ -41,6 +41,20 @@ export function mkcertAssetName(version: string): string {
 }
 
 /**
+ * I8: the fork's release workflow (`.github/workflows/release.yml`) runs
+ * `sha256sum mkcert-*` over every platform asset and publishes the result as
+ * a single manifest per release, named exactly this. One line per asset:
+ * `<64-hex-digest>  <asset filename>`.
+ */
+export function mkcertChecksumsAssetName(version: string): string {
+    return `mkcert-${version}-SHA256SUMS.txt`;
+}
+
+export function mkcertChecksumsUrl(version: string): string {
+    return `https://github.com/bilbospocketses/mkcert/releases/download/${version}/${mkcertChecksumsAssetName(version)}`;
+}
+
+/**
  * Node major version → ABI number (`process.versions.modules`).
  * ABI is stable within a major; it changes only across majors.
  * Keys are Node major numbers; values are string-form ABI numbers
@@ -85,6 +99,18 @@ export interface DependencyDefinition {
      * back genuinely works while the lookup is refused.
      */
     fallbackVersion?: string;
+    /**
+     * M2: skip this dependency in `autoInstallMissing()`'s boot-time loop.
+     * The spec is deliberate for mkcert specifically — "fetched on first use
+     * rather than at install time, so a user who never enables HTTPS never
+     * downloads it" — a ~4.5 MB fetch on every fresh boot for a feature the
+     * user may never turn on is a cost with no consent. `checkInstalled` /
+     * `checkLatest` still run at boot (so the dependency panel shows accurate
+     * status); only the DOWNLOAD is deferred. `update(name)` remains directly
+     * callable on demand — see `createCertService.ts`'s lazy-install wrapper
+     * around `run`, which is what actually triggers it on first use.
+     */
+    deferInstall?: boolean;
 }
 
 async function runVersionCommand(exe: string, args: string[], pattern: RegExp): Promise<string | null> {
@@ -239,6 +265,12 @@ export function getDependencyDefinitions(depsPath: string): DependencyDefinition
             // review findings including an argument-controlled path escape that wrote
             // outside the working directory and still exited 0.
             fallbackVersion: MKCERT_VERSION,
+            // M2: fetched on first use (see the field's own doc comment), not at
+            // boot -- this is the highest-consequence binary the app fetches
+            // (it mints a CA the user installs into their OS and phone trust
+            // stores), so a download nobody asked for yet is a cost with no
+            // consent, unlike the other three which the app needs unconditionally.
+            deferInstall: true,
             checkInstalled: async (depsPath) => {
                 const exe = path.join(depsPath, 'mkcert', mkcertExeName());
                 if (!fs.existsSync(exe)) return null;

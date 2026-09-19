@@ -8,12 +8,20 @@ import { promisify } from 'util';
 import type { DependencyInfo, UpdateResult } from '../common/DependencyTypes';
 import { compareVersions, DependencyStatus } from '../common/DependencyTypes';
 import type { DependencyDefinition } from './DependencyDefinitions';
-import { getDependencyDefinitions, getPlatform } from './DependencyDefinitions';
+import {
+    getDependencyDefinitions,
+    getPlatform,
+    mkcertAssetName,
+    mkcertChecksumsUrl,
+    mkcertExeName,
+} from './DependencyDefinitions';
 import { Logger } from './Logger';
+import { parseSha256Sums } from './linuxUpdateAssets';
 import { writeInstalledScrcpyServerVersion } from './scrcpyServerVersion';
 import { resolveSystemTool } from './service/systemTools';
 import { copyFileAtomic, copyFileAtomicSync, writeFileAtomicSync } from './util/atomicFile';
-import { fetchWithRetry, HttpStatusError } from './util/fetchWithRetry';
+import { fetchWithRetry, HttpStatusError, VERSION_CHECK_POLICY } from './util/fetchWithRetry';
+import { verifySha256 } from './verifySha256';
 import { extractZipTo } from './zipExtract';
 
 const log = Logger.for('DependencyManager');
@@ -288,10 +296,22 @@ export class DependencyManager {
             // retry budget while the status reads `Updating` — which is what
             // smoke 1.9 asserts is `error`.
             const def = this.definitions.find((d) => d.name === info.name);
+            // M2: mkcert opts out of the boot-time download entirely (see
+            // `deferInstall`'s own doc comment on the definition) -- it is
+            // fetched on first use instead, from `createCertService.ts`'s
+            // lazy-install wrapper around `run`. checkInstalled/checkLatest
+            // above already ran for it, so the panel still shows accurate
+            // status; only the network fetch of the ~4.5 MB binary is skipped
+            // here.
+            if (def?.deferInstall) {
+                continue;
+            }
             const mayFallBack = def?.fallbackVersion !== undefined && this.lookupRefused.has(info.name);
             const target = info.latestVersion ?? (mayFallBack ? def!.fallbackVersion! : null);
             if (info.installedVersion === null && target != null) {
-                // Nothing is skipped here any more. Node and adb used to be, on
+                // Nothing UNCONDITIONAL is skipped here any more (mkcert's
+                // skip just above is a deliberate opt-out, not a launcher gate
+                // — see its own comment). Node and adb used to be skipped, on
                 // every platform, whenever the packaged launcher was absent —
                 // which is every source checkout. On Windows that was invisible
                 // (dev and MSI share %PROGRAMDATA%\WsScrcpyWeb\dependencies\, so
@@ -411,8 +431,94 @@ export class DependencyManager {
             case 'scrcpy-server':
                 await this.installScrcpyServer(downloadPath, version);
                 break;
+            case 'mkcert':
+                await this.installMkcert(downloadPath, version);
+                break;
             default:
                 throw new Error(`No install handler for: ${name}`);
+        }
+    }
+
+    /**
+     * I8: mkcert mints a CA the user then installs into their OS and phone
+     * trust stores, so a tampered download does not just break the app -- it
+     * becomes a trusted signing authority on every device the user set up.
+     * That is the highest-consequence binary this app fetches, which is why
+     * it is the one singled out for verification among the FOUR dependencies
+     * this class manages: nodejs/adb/scrcpy-server check no hash at all today.
+     * (`UpdateService`'s Linux self-update AppImage does, via the same
+     * `parseSha256Sums`/`verifySha256` pair reused below -- that is a
+     * different subsystem, but it is the existing pattern this follows
+     * rather than inventing a second one.) Verification runs BEFORE the file
+     * is copied anywhere `resolveMkcertExe` would find it; a mismatch
+     * throws, `update()`'s catch records the failure, and the
+     * `using`-scoped tmpDir cleanup in `update()` removes the unverified
+     * download. Nothing partially-verified is ever installed.
+     */
+    private async installMkcert(downloadPath: string, version: string): Promise<void> {
+        await this.verifyMkcertChecksum(downloadPath, version);
+
+        const destDir = path.join(this.depsPath, 'mkcert');
+        fs.mkdirSync(destDir, { recursive: true });
+        const destFile = path.join(destDir, mkcertExeName());
+        copyFileAtomicSync(downloadPath, destFile);
+        if (getPlatform() !== 'win32') {
+            await fs.promises.chmod(destFile, 0o755);
+        }
+    }
+
+    /**
+     * Fetches the release's SHA256SUMS manifest and checks the just-downloaded
+     * asset against it. Throws on ANY failure to verify -- a missing manifest,
+     * an asset the manifest does not list, or a hash mismatch -- because a
+     * binary that fails verification must never be executed. This is
+     * deliberately fail-closed: there is no "warn and continue" path.
+     *
+     * NOT a build-provenance/attestation check. The spec asks for one, but the
+     * fork's own release workflow (`.github/workflows/release.yml`) gates
+     * `actions/attest-build-provenance` on the repository being public --
+     * GitHub does not offer attestations for a private user-owned repo
+     * (measured on release v1.4.4-bt.1: "Feature not available for
+     * user-owned private repositories") -- and this project's repo is
+     * deliberately kept private. So there is currently no attestation
+     * published for this binary to verify; the workflow's own comment records
+     * that "integrity for a fetched binary rests on the SHA256SUMS file...
+     * signing it is tracked separately." Checksum verification is therefore
+     * the complete, currently-available control, not a partial one -- and
+     * implementing a hand-rolled Sigstore/attestation verifier here (there is
+     * no Node builtin for it, and `gh attestation verify` is a PATH-resolved
+     * binary that Local-Dependencies-Only forbids) would add real risk
+     * (a home-grown verifier that is subtly wrong is worse than none) for a
+     * check that has nothing to verify against yet.
+     */
+    private async verifyMkcertChecksum(downloadPath: string, version: string): Promise<void> {
+        const assetName = mkcertAssetName(version);
+        const checksumsUrl = mkcertChecksumsUrl(version);
+        const res = await fetchWithRetry(checksumsUrl, {
+            ...VERSION_CHECK_POLICY,
+            onRetry: (n) => log.warn(`mkcert checksum manifest fetch ${n.attempt}/${n.attempts}: ${n.reason}`),
+        });
+        if (!res.ok) {
+            throw new Error(`mkcert checksum manifest fetch failed: HTTP ${res.status} from ${checksumsUrl}`);
+        }
+        const manifest = await res.text();
+        // Reused from linuxUpdateAssets.ts / verifySha256.ts, the pair
+        // UpdateService already uses to verify the Linux self-update
+        // AppImage against its own SHA256SUMS -- the one existing pattern in
+        // this codebase for "check a downloaded asset's hash before trusting
+        // it", so this does not invent a second one.
+        const expected = parseSha256Sums(manifest, assetName);
+        if (!expected) {
+            throw new Error(
+                `mkcert checksum manifest does not list ${assetName} -- refusing to install an unverified binary`,
+            );
+        }
+        const ok = await verifySha256(downloadPath, expected);
+        if (!ok) {
+            throw new Error(
+                `mkcert checksum mismatch for ${assetName} (expected ${expected}) -- refusing to install a binary ` +
+                    'that mints trust material without a verified hash',
+            );
         }
     }
 
@@ -596,4 +702,29 @@ export class DependencyManager {
             }
         }
     }
+}
+
+let depManagerInstance: DependencyManager | undefined;
+
+/**
+ * Composition-root singleton, mirroring `createCertService.ts`'s
+ * `getCertService()`. `index.ts`'s boot sequence and mkcert's on-demand,
+ * first-use install (M2 — `createCertService.ts`'s lazy-install wrapper
+ * around `run`) must share the SAME manager instance and the SAME in-memory
+ * `state`/`lookupRefused`: a second, independently-constructed
+ * `DependencyManager` would track mkcert's install status separately from
+ * the one `DependencyApi` and the dependency panel read, so a lazy install
+ * triggered by a certificate generate() click would leave the panel showing
+ * "not installed" forever after.
+ */
+export function getDependencyManager(opts: {
+    dependenciesPath: string;
+    restartMarkerPath?: string;
+}): DependencyManager {
+    if (!depManagerInstance) {
+        depManagerInstance = new DependencyManager(opts.dependenciesPath, {
+            ...(opts.restartMarkerPath !== undefined ? { restartMarkerPath: opts.restartMarkerPath } : {}),
+        });
+    }
+    return depManagerInstance;
 }

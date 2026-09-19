@@ -3,20 +3,43 @@ import * as os from 'os';
 import * as path from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { getDependencyDefinitions, mkcertExeName } from '../../DependencyDefinitions';
-import { removeCaRootFiles, removeLeafFiles, resolveMkcertExe } from '../createCertService';
 
-// Partial mock (N3 drift-guard test only): existsSync becomes spy-able while
-// still delegating to the real implementation, so it behaves identically for
-// every other test in this file (which use the real fs.mkdtempSync /
-// writeFileSync / unlinkSync / rmSync against real temp directories).
+vi.mock('../../Config', () => ({
+    Config: { getInstance: vi.fn() },
+}));
+
+vi.mock('../../DependencyManager', () => ({
+    getDependencyManager: vi.fn(),
+}));
+
+import { Config } from '../../Config';
+import { getDependencyManager } from '../../DependencyManager';
+import {
+    ensureCaRootDirSync,
+    ensureMkcertInstalled,
+    removeCaRootFiles,
+    removeLeafFiles,
+    resolveMkcertExe,
+} from '../createCertService';
+
+// Partial mock: existsSync/chmodSync become spy-able while still delegating
+// to the real implementation, so every other test in this file (which use
+// the real fs.mkdtempSync / writeFileSync / unlinkSync / rmSync against real
+// temp directories) behaves identically to before.
 vi.mock('fs', async (importOriginal) => {
     const actual = await importOriginal<typeof import('fs')>();
     const existsSync = vi.fn(actual.existsSync);
+    const chmodSync = vi.fn(actual.chmodSync);
     // Both forms are patched: this file's own `import * as fs` (named-export
     // lookup) AND DependencyDefinitions.ts's `import fs from 'fs'` (default
-    // import) must see the SAME spy, or the drift-guard test below silently
-    // watches a different existsSync than the one checkInstalled actually calls.
-    return { ...actual, existsSync, default: { ...actual, existsSync } };
+    // import) must see the SAME spies, or a test below silently watches a
+    // different fs call than the one production code actually makes.
+    return {
+        ...actual,
+        existsSync,
+        chmodSync,
+        default: { ...actual, existsSync, chmodSync },
+    };
 });
 
 describe('resolveMkcertExe (Local-Dependencies-Only)', () => {
@@ -135,5 +158,110 @@ describe('removeCaRootFiles / removeLeafFiles -- destructive deletes, proven exa
         // a missing-file no-op, because it is not the missing-file case at all.
         expect(() => removeLeafFiles({ certFile, keyFile })).toThrow();
         expect(fs.existsSync(certFile)).toBe(true);
+    });
+});
+
+describe('ensureCaRootDirSync (M3)', () => {
+    const dirs: string[] = [];
+
+    function tmpDir(): string {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-caroot-'));
+        dirs.push(dir);
+        return dir;
+    }
+
+    afterEach(() => {
+        vi.mocked(fs.chmodSync).mockClear();
+        while (dirs.length) fs.rmSync(dirs.pop()!, { recursive: true, force: true });
+    });
+
+    it('creates a missing directory (and any missing parent)', () => {
+        const base = tmpDir();
+        const caRoot = path.join(base, 'nested', 'ca');
+        expect(fs.existsSync(caRoot)).toBe(false);
+
+        ensureCaRootDirSync(caRoot);
+
+        expect(fs.existsSync(caRoot)).toBe(true);
+    });
+
+    it('chmods to 0700 even when the directory already existed at a looser mode -- the retro-fix case', () => {
+        // mkdirSync's `mode` option only takes effect for a directory it
+        // actually CREATES (Go's os.MkdirAll behaves the same way, which is
+        // exactly the gap M3 is about: mkcert's own MkdirAll(CAROOT, 0755)
+        // never re-tightens a directory it finds already there). Simulating
+        // that by pre-creating the directory looser is what makes this test
+        // prove the explicit chmodSync call matters, not just the mkdirSync.
+        const base = tmpDir();
+        const caRoot = path.join(base, 'ca');
+        fs.mkdirSync(caRoot, { recursive: true, mode: 0o755 });
+
+        ensureCaRootDirSync(caRoot);
+
+        // Asserted as a call, not just a filesystem read-back: real POSIX
+        // mode bits are only meaningful on a POSIX host (this repo's own
+        // precedent for the leaf-key chmod test, CertService.test.ts, notes
+        // reading a mode back "cannot work on this box" on Windows), but the
+        // call itself is provable on every platform this suite runs on.
+        expect(vi.mocked(fs.chmodSync)).toHaveBeenCalledWith(caRoot, 0o700);
+        if (process.platform !== 'win32') {
+            const mode = fs.statSync(caRoot).mode & 0o777;
+            expect(mode).toBe(0o700);
+        }
+    });
+});
+
+describe('ensureMkcertInstalled (M2 -- fetched on first use)', () => {
+    function mockConfig() {
+        vi.mocked(Config.getInstance).mockReturnValue({
+            dependenciesPath: '/fake/deps',
+            restartMarkerPath: '/fake/deps/.restart',
+        } as never);
+    }
+
+    afterEach(() => {
+        vi.mocked(getDependencyManager).mockReset();
+        vi.mocked(Config.getInstance).mockReset();
+    });
+
+    it('does nothing -- no Config/DependencyManager lookup at all -- when the binary already exists', async () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-mkcert-exists-'));
+        const exe = path.join(dir, 'mkcert.exe');
+        fs.writeFileSync(exe, 'already here');
+        try {
+            await expect(ensureMkcertInstalled(exe)).resolves.toBeUndefined();
+            expect(Config.getInstance).not.toHaveBeenCalled();
+            expect(getDependencyManager).not.toHaveBeenCalled();
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it('installs through the getDependencyManager() singleton when the binary is missing, and resolves on success', async () => {
+        const missingExe = path.join(os.tmpdir(), 'ws-mkcert-missing-', 'mkcert.exe');
+        mockConfig();
+        const update = vi.fn().mockResolvedValue({ success: true, newVersion: 'v1.4.4-bt.2', requiresRestart: false });
+        vi.mocked(getDependencyManager).mockReturnValue({ update } as never);
+
+        await expect(ensureMkcertInstalled(missingExe)).resolves.toBeUndefined();
+
+        expect(getDependencyManager).toHaveBeenCalledWith({
+            dependenciesPath: '/fake/deps',
+            restartMarkerPath: '/fake/deps/.restart',
+        });
+        expect(update).toHaveBeenCalledWith('mkcert');
+    });
+
+    it('throws (surfacing the real reason) when the on-demand install fails -- never a silent spawn of a missing binary', async () => {
+        const missingExe = path.join(os.tmpdir(), 'ws-mkcert-missing-2-', 'mkcert.exe');
+        mockConfig();
+        const update = vi.fn().mockResolvedValue({
+            success: false,
+            errorMessage: 'checksum mismatch for mkcert-v1.4.4-bt.2-windows-amd64.exe',
+            requiresRestart: false,
+        });
+        vi.mocked(getDependencyManager).mockReturnValue({ update } as never);
+
+        await expect(ensureMkcertInstalled(missingExe)).rejects.toThrow(/checksum mismatch/);
     });
 });

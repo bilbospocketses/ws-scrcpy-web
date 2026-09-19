@@ -21,7 +21,7 @@ import { UsersApi } from './api/UsersApi';
 import { WhoamiApi } from './api/WhoamiApi';
 import { AuthGate } from './auth/AuthGate';
 import { Config } from './Config';
-import { DependencyManager } from './DependencyManager';
+import { getDependencyManager } from './DependencyManager';
 import { DeviceProbe } from './DeviceProbe';
 import { reconcilePendingSettings } from './db/reconcilePendingSettings';
 import { Logger } from './Logger';
@@ -160,7 +160,14 @@ if (__ssArgs) {
     HttpServer.addApiHandler(new AuthApi());
     HttpServer.addApiHandler(new UsersApi());
 
-    const depManager = new DependencyManager(config.dependenciesPath, {
+    // getDependencyManager(), not `new DependencyManager(...)` directly: mkcert's
+    // on-demand first-use install (M2) calls the same singleton from
+    // createCertService.ts's lazy-install wrapper, and it must share this
+    // exact instance's `state`/`lookupRefused` -- a second, independently
+    // constructed manager would track mkcert's install status separately from
+    // what this API and the dependency panel read.
+    const depManager = getDependencyManager({
+        dependenciesPath: config.dependenciesPath,
         restartMarkerPath: config.restartMarkerPath,
     });
     const depApi = new DependencyApi(depManager);
