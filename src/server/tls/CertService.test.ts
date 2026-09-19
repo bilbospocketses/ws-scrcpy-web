@@ -263,6 +263,19 @@ describe('CertService.generate', () => {
             const { svc } = makeService({ run });
             await expect(svc.generate('ip', '192.168.86.3')).rejects.toThrow(/half-constrained/i);
         });
+
+        it('still chmods the leaf key on POSIX before rejecting a half-constrained result (N4)', async () => {
+            // The leaf key is already written by mkcert at this point regardless
+            // of what the warning says, so the defence-in-depth chmod must not
+            // be skipped just because generate() goes on to reject the result.
+            const run = vi.fn().mockResolvedValue({
+                code: 0,
+                stderr: 'Warning: these name constraints cover DNS names only, so this CA can still sign ANY IP address',
+            });
+            const { svc, chmod } = makeService({ run, platform: 'linux' });
+            await expect(svc.generate('ip', '192.168.86.3')).rejects.toThrow(/half-constrained/i);
+            expect(chmod).toHaveBeenCalledWith('C:\\ProgramData\\WsScrcpyWeb\\tls\\key.pem', 0o600);
+        });
     });
 
     describe('F9: kind must match the actual shape of value', () => {
@@ -276,6 +289,29 @@ describe('CertService.generate', () => {
             const { svc, run } = makeService();
             await expect(svc.generate('ip', 'devices.lan')).rejects.toThrow(/invalid/i);
             expect(run).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('N1: a bracketed subject on the hostname path must not reach mkcert', () => {
+        // Re-review finding: stripBrackets was only applied for kind === 'ip',
+        // so the hostname branch's isIP/isAcceptableHostnameSubject checks ran
+        // against the BRACKETED string, which isIP reports as "not an IP" and
+        // which split('.') sees as an ordinary (accepted) two-label name. The
+        // value would then reach mkcert, which refuses it -- but only AFTER
+        // removeCaRoot() had already destroyed a working CA. Asserting
+        // removeCaRoot was never called is the point, not just the rejection.
+        it('rejects a bracketed IPv4 literal before removeCaRoot runs', async () => {
+            const { svc, run, removeCaRoot } = makeService();
+            await expect(svc.generate('hostname', '[1.2.3.4]')).rejects.toThrow(/invalid/i);
+            expect(run).not.toHaveBeenCalled();
+            expect(removeCaRoot).not.toHaveBeenCalled();
+        });
+
+        it('rejects a bracketed IPv4-mapped IPv6 literal before removeCaRoot runs', async () => {
+            const { svc, run, removeCaRoot } = makeService();
+            await expect(svc.generate('hostname', '[::ffff:1.2.3.4]')).rejects.toThrow(/invalid/i);
+            expect(run).not.toHaveBeenCalled();
+            expect(removeCaRoot).not.toHaveBeenCalled();
         });
     });
 });

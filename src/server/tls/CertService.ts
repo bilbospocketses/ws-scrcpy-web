@@ -220,7 +220,15 @@ export class CertService {
         // outside the constraints we built for the OTHER type -- silently:
         // "ready", and a browser NAME_CONSTRAINT_VIOLATION with nothing in
         // this stack having reported a problem.
-        const bareValue = kind === 'ip' ? stripBrackets(value) : value;
+        //
+        // N1: brackets are stripped UNCONDITIONALLY, before the cross-check --
+        // not just for kind 'ip'. A bracketed literal like "[1.2.3.4]" or
+        // "[::ffff:1.2.3.4]" is neither a real hostname nor something
+        // isIP(value) (bracketed) recognises as an IP, so the un-stripped
+        // check let it slip past both guards on the hostname path and reach
+        // mkcert, which refused it at main.go:176 -- but only AFTER
+        // removeCaRoot() below had already destroyed a working CA.
+        const bareValue = stripBrackets(value);
         if (kind === 'ip') {
             if (isIP(bareValue) === 0) {
                 throw new Error(
@@ -228,12 +236,12 @@ export class CertService {
                 );
             }
         } else {
-            if (isIP(value) !== 0) {
+            if (isIP(bareValue) !== 0) {
                 throw new Error(
                     `invalid certificate subject: kind 'hostname' but ${JSON.stringify(value)} is an IP address`,
                 );
             }
-            if (!isAcceptableHostnameSubject(value)) {
+            if (!isAcceptableHostnameSubject(bareValue)) {
                 throw new Error(
                     `invalid certificate subject: ${JSON.stringify(value)} is too short, or a public suffix, to safely constrain a CA to`,
                 );
@@ -271,6 +279,25 @@ export class CertService {
         if (code !== 0) {
             throw new Error(`mkcert failed (exit ${code}): ${stderr.trim()}`);
         }
+
+        // Leaf key permissions -- applied BEFORE the F8 half-constrained check
+        // below (N4): mkcert has already written the leaf key at this point
+        // regardless of what the constraints turned out to cover, so a
+        // rejection on the next line must not skip the chmod and leave that
+        // key without the defence-in-depth mode. mkcert already writes the
+        // key 0600 on this fork (cert.go: os.WriteFile(keyFile, privPEM,
+        // 0600)), so on POSIX this chmod is defence in depth, not the only
+        // thing protecting the key -- it costs nothing and stops being
+        // redundant the moment this points at a different mkcert build, the
+        // same argument the file already makes about isConnectAddress. On
+        // Windows it is skipped: the leaf lives in the per-user directory
+        // Task 2 resolved (AppData\Local), whose inherited ACL is the real
+        // control there, because Go maps a Unix mode to the read-only
+        // ATTRIBUTE on Windows and sets no ACL (measured 2026-09-18).
+        if (this.deps.platform !== 'win32') {
+            this.deps.chmod(keyFile, 0o600);
+        }
+
         // F8: mkcert warns rather than fails when a name-constrained CA ends
         // up covering only one name TYPE (cert.go:383-390) -- exit 0, so the
         // check above lets it through. That is the spec's worst case (a CA
@@ -280,20 +307,6 @@ export class CertService {
         // and it is the one condition worth spending them on.
         if (/^Warning:/m.test(stderr)) {
             throw new Error(`mkcert produced a half-constrained CA, refusing to report ready: ${stderr.trim()}`);
-        }
-
-        // Leaf key permissions. mkcert already writes the key 0600 on this
-        // fork (cert.go: os.WriteFile(keyFile, privPEM, 0600)), so on POSIX
-        // this chmod is defence in depth, not the only thing protecting the
-        // key -- it costs nothing and stops being redundant the moment this
-        // points at a different mkcert build, the same argument the file
-        // already makes about isConnectAddress. On Windows it is skipped: the
-        // leaf lives in the per-user directory Task 2 resolved
-        // (AppData\Local), whose inherited ACL is the real control there,
-        // because Go maps a Unix mode to the read-only ATTRIBUTE on Windows
-        // and sets no ACL (measured 2026-09-18).
-        if (this.deps.platform !== 'win32') {
-            this.deps.chmod(keyFile, 0o600);
         }
 
         this.state = { status: 'ready', subject: bareValue, kind };
