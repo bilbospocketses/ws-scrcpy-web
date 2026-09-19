@@ -243,46 +243,54 @@ function isInteger(n: unknown): n is number {
     return typeof n === 'number' && Number.isInteger(n);
 }
 
+export interface CertMaterial {
+    cert: string;
+    key: string;
+}
+
 /**
- * Probes whether BOTH the cert and the key can actually be opened, rather than
- * merely exist. `Config.parseServerItem` reads `options.certPath`/`keyPath`
- * with no try, during Config construction -- so a file that EXISTS but cannot
- * be READ (a wrong ACL after a profile move, a half-written file mid-generation,
- * a bind mount that lost its permissions) would otherwise throw before the app
- * has any listener at all. A readable cert with an unreadable key fails in
- * exactly the same place, so both are probed.
+ * Reads BOTH the cert and the key and returns their PEM content, rather than
+ * merely checking that they exist. `Config.parseServerItem` reads
+ * `options.certPath`/`keyPath` with no try, during Config construction -- so a
+ * file that EXISTS but cannot be READ (a wrong ACL after a profile move, a
+ * half-written file mid-generation, a bind mount that lost its permissions)
+ * would otherwise throw before the app has any listener at all. A readable
+ * cert with an unreadable key fails in exactly the same place, so both are
+ * read here, and `buildServerList` embeds the content directly rather than
+ * ever routing this generated entry through `parseServerItem`'s untried read.
+ *
+ * One read each, not a probe-then-read pair: avoids a TOCTOU window between
+ * checking readability and reading, and there is no second syscall to save by
+ * splitting them.
  *
  * Never throws: an optional feature (HTTPS) must never be able to stop the app
  * starting. `readFile` is injectable so tests don't need a real unreadable
  * file, which is not portably creatable on Windows.
  */
-export function probeCertReadable(
+export function readCertMaterial(
     certFile: string,
     keyFile: string,
     readFile: (p: string) => string = (p) => fs.readFileSync(p, 'utf-8'),
-): boolean {
+): CertMaterial | null {
     try {
-        readFile(certFile);
-        readFile(keyFile);
-        return true;
+        const cert = readFile(certFile);
+        const key = readFile(keyFile);
+        return { cert, key };
     } catch {
-        return false;
+        return null;
     }
 }
 
 export interface BuildServerListOpts {
     httpPort: number;
     httpsPort: number;
-    /** Whether both certFile and keyFile were confirmed READABLE (see probeCertReadable) -- not merely present. */
-    certExists: boolean;
-    certFile: string;
-    keyFile: string;
+    /** The cert/key PEM content (see readCertMaterial), or null when no readable certificate exists. */
+    certMaterial: CertMaterial | null;
 }
 
 /**
  * The listener set. HTTP is always present -- the HTTPS entry is added only
- * when a certificate actually exists on disk (and, per `certExists`'s
- * contract, is readable).
+ * when a readable certificate exists on disk.
  *
  * The two ports are INDEPENDENT. Setting HTTP to 80 does not imply HTTPS 443;
  * HTTPS stays on its own default (DEFAULT_HTTPS_PORT) until the user sets it
@@ -291,18 +299,28 @@ export interface BuildServerListOpts {
  * A missing or unreadable certificate yields HTTP alone rather than a boot
  * failure: an optional feature must never be able to stop the app starting.
  *
+ * The HTTPS entry's `options` carry the actual `cert`/`key` PEM content, NOT
+ * `certPath`/`keyPath`. The spec's own config.json snippet shows certPath/
+ * keyPath, but that illustrates a USER-AUTHORED advanced `server` array, which
+ * goes through `Config.parseServerItem` -- the right place for that form. This
+ * entry is machine-generated and never passes through `parseServerItem`
+ * (which would also throw `Can't use "cert" and "certPath" together` if both
+ * were present), so embedding the content directly here means the untried
+ * `fs.readFileSync` in `parseServerItem` is never reached for it, keeping
+ * amendment B's no-boot-crash guarantee intact end to end.
+ *
  * Named `buildServerList` rather than `buildServers` -- the private static
  * `Config.buildServers` below already owns that name in this file.
  */
 export function buildServerList(opts: BuildServerListOpts): ServerItem[] {
     const http: ServerItem = { secure: false, port: opts.httpPort };
-    if (!opts.certExists) return [http];
+    if (!opts.certMaterial) return [http];
     return [
         http,
         {
             secure: true,
             port: opts.httpsPort,
-            options: { certPath: opts.certFile, keyPath: opts.keyFile },
+            options: { cert: opts.certMaterial.cert, key: opts.certMaterial.key },
         },
     ];
 }
@@ -572,9 +590,19 @@ export class Config {
         }
     }
 
-    private static buildServers(fileConfig: FlatConfig, webPort: number, dataRoot: string | null): ServerItem[] {
+    private static buildServers(
+        fileConfig: FlatConfig,
+        webPort: number,
+        dataRoot: string | null,
+        // Injectable so no test needs to touch this developer's real per-user
+        // profile just to exercise Config.getInstance() -- matches the
+        // resolveDataRoot/resolveDependenciesPath/resolveConfigPath pattern
+        // above, which already take `env` explicitly rather than reaching
+        // into `process.env` deep inside a branch.
+        env: NodeJS.ProcessEnv = process.env,
+    ): ServerItem[] {
         // Env var PORT takes highest priority
-        const envPort = process.env['PORT'];
+        const envPort = env['PORT'];
         const port = envPort ? Number.parseInt(envPort, 10) : webPort;
 
         if (fileConfig.server && fileConfig.server.length > 0) {
@@ -591,26 +619,22 @@ export class Config {
         // host with neither DATA_ROOT/XDG_DATA_HOME/HOME set -- HTTPS is
         // optional, so that just means no usable per-user TLS directory and
         // HTTP alone, same as resolveCertPaths throwing for any other reason.
-        let certExists = false;
-        let certFile = '';
-        let keyFile = '';
+        let certMaterial: CertMaterial | null = null;
         if (dataRoot) {
             try {
                 const paths = resolveCertPaths({
                     platform: process.platform,
                     dataRoot,
-                    localAppData: process.env['LOCALAPPDATA'],
-                    home: process.env['HOME'] || process.env['USERPROFILE'],
+                    localAppData: env['LOCALAPPDATA'],
+                    home: env['HOME'] || env['USERPROFILE'],
                 });
-                certFile = paths.certFile;
-                keyFile = paths.keyFile;
-                certExists = probeCertReadable(certFile, keyFile);
+                certMaterial = readCertMaterial(paths.certFile, paths.keyFile);
             } catch {
                 // No usable per-user TLS directory -- fall through to HTTP alone.
             }
         }
 
-        return buildServerList({ httpPort: port, httpsPort: DEFAULT_HTTPS_PORT, certExists, certFile, keyFile });
+        return buildServerList({ httpPort: port, httpsPort: DEFAULT_HTTPS_PORT, certMaterial });
     }
 
     private static parseServerItem(config: Partial<ServerItem> = {}): ServerItem {
@@ -710,7 +734,7 @@ export class Config {
             // false — and the overlay must defer to a user who wrote one.
             const firstRunExplicit = fileConfig.firstRunComplete !== undefined;
 
-            const servers = Config.buildServers(fileConfig, appConfig.webPort, dataRoot);
+            const servers = Config.buildServers(fileConfig, appConfig.webPort, dataRoot, process.env);
 
             // An app_settings override of dependenciesPath/adbPath is overlaid for
             // downstream consumers (the adb spawn path) AFTER the DB opens — it
