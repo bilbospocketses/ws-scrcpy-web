@@ -268,6 +268,32 @@ export class CertService {
     }
 
     /**
+     * The SHA-256 fingerprint of the leaf CURRENTLY on disk (NF-1,
+     * whole-branch re-review): `bound: true` on `/api/tls/state`'s
+     * `httpsListener` no longer means "serving the current certificate" --
+     * the HTTPS listener is created once, at boot, with whatever leaf
+     * content `Config.servers` held then, and a later `generate()` replaces
+     * this file underneath it. TlsApi compares this against the fingerprint
+     * `HttpServer` captured at bind time to detect that mismatch.
+     *
+     * Deliberately NOT part of `CertState`/`getState()`: this is a
+     * comparison artifact for that ONE check, not something the panel needs
+     * in its JSON response. Same no-throw contract as `getState()` -- a
+     * missing, unreadable, or unparseable leaf answers `undefined`, never a
+     * thrown error that would turn a plain GET into a 500.
+     */
+    currentLeafFingerprint(): string | undefined {
+        try {
+            if (!this.deps.exists(this.deps.paths.certFile)) return undefined;
+            const pem = this.deps.readFile(this.deps.paths.certFile);
+            if (!pem) return undefined;
+            return new X509Certificate(pem).fingerprint256;
+        } catch {
+            return undefined;
+        }
+    }
+
+    /**
      * Reads the leaf's actual validity AND subject/kind out of the
      * certificate itself, via Node's builtin `X509Certificate` -- never a
      * hand-rolled DER parse, and never `fs` directly (the injected

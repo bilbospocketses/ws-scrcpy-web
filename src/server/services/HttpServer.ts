@@ -1,3 +1,4 @@
+import { X509Certificate } from 'crypto';
 import type { IncomingMessage, ServerResponse } from 'http';
 import * as http from 'http';
 import * as https from 'https';
@@ -208,6 +209,14 @@ export interface HttpsListenerStatus {
      * (alone) would fix.
      */
     bindFailed: boolean;
+    /**
+     * Fingerprint of the leaf THIS listener was created with -- present only
+     * when `listening` is true AND the cert content was parseable (NF-1).
+     * `bound: true` does not by itself mean "serving the CURRENT
+     * certificate"; compare this against `CertService.currentLeafFingerprint()`
+     * to find out.
+     */
+    leafFingerprint?: string;
 }
 
 /**
@@ -235,7 +244,10 @@ export function getHttpsListenerStatus(): HttpsListenerStatus {
         const entry = Config.getInstance().servers.find((s) => s.secure);
         if (!entry) return { listening: false, bindFailed: false };
         if (failedSecurePorts.has(entry.port)) return { listening: false, bindFailed: true };
-        return { listening: true, boundPort: boundSecurePorts.get(entry.port) ?? entry.port, bindFailed: false };
+        const boundPort = boundSecurePorts.get(entry.port) ?? entry.port;
+        return boundLeafFingerprint === undefined
+            ? { listening: true, boundPort, bindFailed: false }
+            : { listening: true, boundPort, bindFailed: false, leafFingerprint: boundLeafFingerprint };
     } catch {
         return { listening: false, bindFailed: false };
     }
@@ -270,6 +282,28 @@ function findHttpsPort(): number | undefined {
  * not reachable from any in-tree config.
  */
 const boundSecurePorts = new Map<number, number>();
+
+/**
+ * Fingerprint (SHA-256, `X509Certificate.fingerprint256`) of the leaf cert
+ * content this listener was actually created with -- captured once the bind
+ * succeeds, from the SAME PEM string passed to `https.createServer` (NF-1,
+ * whole-branch re-review).
+ *
+ * WHY: the listener is created ONCE, at boot, from whatever `Config.servers`
+ * held then. `generate()` later replaces the leaf FILE on disk, but this
+ * listener keeps serving the OLD, in-memory material until a restart -- so
+ * `bound: true` alone no longer means "serving the current certificate".
+ * `getHttpsListenerStatus()` exposes this so a caller (TlsApi's
+ * `buildHttpsListenerField`) can compare it against the CURRENT leaf's
+ * fingerprint (`CertService.currentLeafFingerprint()`) and report
+ * `restart-required` even while genuinely bound.
+ *
+ * `undefined` until a secure listener has bound at least once, or if the
+ * cert content wasn't parseable (caught, never thrown -- a status/diagnostic
+ * export must not be able to crash the caller). No reset seam, same as
+ * `boundSecurePorts`/`failedSecurePorts` above -- no in-process re-listen.
+ */
+let boundLeafFingerprint: string | undefined;
 
 /**
  * Attaches the 'error' listener a bind failure needs, before `.listen()` is
@@ -531,6 +565,22 @@ export class HttpServer extends TypedEmitter<HttpServerEvents> implements Servic
                     const address = server.address();
                     if (address && typeof address === 'object') {
                         boundSecurePorts.set(port, address.port);
+                    }
+                    // NF-1: record the fingerprint of the leaf THIS listener
+                    // was just created with -- `serverItem.options.cert` is
+                    // the exact PEM handed to `https.createServer` above. A
+                    // later generate() replaces the file on disk, but this
+                    // in-memory material (and its fingerprint) is what keeps
+                    // getting served until a restart. Caught, never thrown:
+                    // this is diagnostic bookkeeping, not allowed to affect
+                    // whether the listener itself came up.
+                    try {
+                        const cert = serverItem.options?.cert;
+                        if (typeof cert === 'string') {
+                            boundLeafFingerprint = new X509Certificate(cert).fingerprint256;
+                        }
+                    } catch {
+                        boundLeafFingerprint = undefined;
                     }
                 }
             });
