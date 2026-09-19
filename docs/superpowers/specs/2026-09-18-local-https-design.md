@@ -76,9 +76,26 @@ required on the server**, which removes the UAC / service-account problem entire
 
 ### 1. Vendored `mkcert` (dependency manager)
 
-Per Local-Dependencies-Only, `mkcert` resolves from `dependencies/mkcert/<version>/mkcert(.exe)` and
+**Source: `bilbospocketses/mkcert`, release `v1.4.4-bt.2` — our own hardened fork, not upstream.**
+Public, 8 assets (7 platform binaries + `SHA256SUMS.txt`), with **sigstore build-provenance
+attestation**. Asset names are predictable: `mkcert-v1.4.4-bt.2-windows-amd64.exe`,
+`mkcert-v1.4.4-bt.2-linux-amd64`, and so on.
+
+Per Local-Dependencies-Only, it resolves from `dependencies/mkcert/<version>/mkcert(.exe)` and
 **never** from PATH. It joins adb, scrcpy-server, node and node-pty in the existing dependency manager:
 same fetch-on-demand, same version pin, same Settings → Dependencies row.
+
+**Verify the attestation on fetch, not just the checksum.** `gh attestation verify` was measured to
+exit 0 on a real asset and 1 on an unattested file, so provenance is checkable rather than claimed. A
+checksum proves the bytes match the manifest we downloaded from the same place; attestation proves which
+workflow built them. For a binary that mints trust material this is worth the extra step, and it is the
+reason the fork is public at all — **GitHub refuses build-provenance attestation on user-owned private
+repositories**, so attested artefacts and a private repo were mutually exclusive.
+
+**Why a fork rather than upstream v1.4.4:** upstream has been dormant since 2024-08. The fork carries
+five stale dependency bumps, a Go floor of 1.26.0, **28 tests where upstream has none**, and fixes for
+four findings from a full code review — including `F3`, an argument-controlled path escape that wrote
+outside the working directory and still exited 0.
 
 A single static binary. **Measured from the `FiloSottile/mkcert` v1.4.4 release assets, 2026-09-18:**
 
@@ -164,18 +181,52 @@ Neither key ever leaves the machine and neither is ever served.
 
 ### 2b. How ws-scrcpy-web must invoke mkcert
 
-Four requirements, each from a measured finding in the fork's item-1 review (2026-09-18). These are not
-style preferences — three of the four fail **silently or with exit 0**, which is why they are pinned here
-rather than left to the implementer.
+Four requirements from the fork's item-1 review (2026-09-18). **Two are load-bearing and two are now
+defence in depth**, because the fork fixed its half — and the distinction matters, since it tells a
+future reader which ones they must not drop.
 
-| Requirement | Why |
-|---|---|
-| Pass `-cert-file` and `-key-file` as **absolute paths** | Leaf output defaults to the **process cwd**, not `CAROOT`. A spawned process inherits whatever cwd it was given, so relative paths scatter key material somewhere nobody looks. |
-| Point `CAROOT` at a **per-user** directory | `0400` on the CA key is a no-op for confidentiality on Windows (above). The directory's ACL is the only real control. |
-| Set `TRUST_STORES=none` in the spawn environment | A stray `JAVA_HOME` otherwise sends mkcert down the `keytool` path and **aborts generation** — a failure caused by an unrelated environment variable on the host. |
-| Validate the host/IP argument **before** spawning | A URL-shaped argument writes outside cwd **and still exits 0**. Validation is already required for other reasons (§6); this makes it load-bearing rather than tidy. |
+| Requirement | Status | Why |
+|---|---|---|
+| Pass `-cert-file` / `-key-file` as **absolute paths** | **LOAD-BEARING** | Leaf output defaults to the **process cwd**, not `CAROOT`. Consumer-side by nature — the fork cannot fix where we tell it to write. A spawned process inherits whatever cwd it was given. |
+| Point `CAROOT` at a **per-user** directory | **LOAD-BEARING** | `0400` on the CA key is a no-op for confidentiality on Windows (above). Also consumer-side: the directory is our choice, and its ACL is the only real control. |
+| Validate the host/IP argument **before** spawning | defence in depth | `F3` — a URL-shaped argument escaped cwd and still exited 0. **Fixed in the fork** (PR #2). We validate anyway, for the reasons in §6; it is no longer the only thing standing between argv and an arbitrary write. |
+| Set `TRUST_STORES=none` in the spawn environment | defence in depth | `F5` — a stray `JAVA_HOME` made every run exec `keytool` and die on its failure. **Fixed in the fork** (PR #2). Setting it costs nothing and removes a host-environment dependency entirely. |
+
+**Do not let the two "defence in depth" rows decay into "optional".** They are belt-and-braces *only
+while we vendor our own fork*. If this ever falls back to an upstream binary, both revert to
+load-bearing immediately, and `F3` in particular is an arbitrary-write primitive gated solely by our
+validation.
 
 The fork's todo item 4 holds the same table as the producer-side contract, so the two repos agree.
+
+### 2c. Flags the fork added that this design should use
+
+`v1.4.4-bt.2` adopts three flags from upstream's open backlog that upstream never merged. All three are
+directly useful here and two change decisions made earlier in this spec.
+
+**`-name-constraints` — use it, and it materially shrinks the CAROOT blast radius.** It constrains what
+names the CA is permitted to vouch for, so a stolen CA key can no longer mint a certificate for
+`yourbank.com` — only for the names we constrained it to. Given §2's finding that the CA key's
+confidentiality on Windows rests entirely on directory ACLs, this is the difference between "a local
+user can impersonate anything" and "a local user can impersonate the LAN address they could already
+reach".
+
+**Use the fork's implementation, not upstream's PR #657, and understand why.** X.509 applies name
+constraints **per name type**: constraining DNS names leaves IP addresses *entirely unconstrained*.
+Upstream's PR sets `PermittedDNSDomains` alone — measured, a CA constrained that way still happily signs
+`8.8.8.8`. **Our subject is usually a LAN IP**, so DNS-only constraints would be pure theatre for this
+feature's main path. The fork sets `PermittedIPRanges` too, marks the extension critical, and warns when
+only one name type is covered — because a half-constrained CA is more dangerous than an unconstrained
+one: it looks protected.
+
+**`-ca-name` — use it.** The CA appears in the user's OS trust store under a name they will read when
+deciding whether to keep trusting it, and possibly years later when wondering what it is. "ws-scrcpy-web
+local CA (`<hostname>`)" is a better answer than mkcert's generic default.
+
+**`-days` — available, and the 30-day renewal warning stands.** The fork keeps the default unchanged at
+~2y3m (deliberately; upstream's PR moved it to 810 days, which is a behaviour change a flag does not need
+to make). We do not need to shorten it — but the flag exists if a shorter, auto-renewed lifetime is ever
+wanted, and the decision to warn rather than silently regenerate is unaffected.
 
 ### 3. HTTPS listener wiring
 
