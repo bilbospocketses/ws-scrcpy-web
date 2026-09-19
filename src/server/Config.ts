@@ -1018,7 +1018,7 @@ export class Config {
         private readonly _dataRoot: string | null,
         private readonly _allowedHosts: string[],
         private readonly _frameAncestors: string[],
-        private readonly _httpsPort: number,
+        private _httpsPort: number,
         private readonly _usesAdvancedServerConfig: boolean,
         private readonly _db: Db,
         private readonly _dockerMode: boolean = false,
@@ -1132,15 +1132,24 @@ export class Config {
     }
 
     /**
-     * The target HTTPS port resolved at boot (see `sanitizeHttpsPort`) --
-     * ALWAYS a number, even when `usesAdvancedServerConfig` is true (an
-     * advanced `server` array may hold several secure entries or none, so
-     * `Config.buildServers` never consults this value in that mode, but the
-     * value itself is still resolved and reported: team-lead's exact
+     * The target HTTPS port -- the CONFIGURED value (post-`sanitizeHttpsPort`),
+     * not the bound one. ALWAYS a number, even when `usesAdvancedServerConfig`
+     * is true (an advanced `server` array may hold several secure entries or
+     * none, so `Config.buildServers` never consults this value in that mode,
+     * but the value itself is still resolved and reported: team-lead's exact
      * `/api/tls/state` contract for C1/I2 wants `httpsPort` unconditionally
-     * present, post-`sanitizeHttpsPort`, so the panel's port field can prefill
-     * the real configured value regardless of mode). Resolved ONCE at boot,
-     * like `servers` itself -- does not re-read config.json on every call.
+     * present, so the panel's port field can prefill the real configured
+     * value regardless of mode).
+     *
+     * Resolved at boot like `servers`, but -- unlike `servers` -- kept
+     * current by `setHttpsPort()` (N8, re-review): a save updates this
+     * getter's answer immediately, in this same process, even though the
+     * LISTENER itself does not rebind until a restart. Those are two
+     * different facts and this getter only owns one of them; `httpsListener`
+     * on `/api/tls/state` is what tells the panel whether the new port is
+     * actually live yet. Without this, a caller polling `/state` between a
+     * port save and the restart a second later (or indefinitely under a
+     * non-supervised run) would see the OLD configured value.
      */
     public get httpsPort(): number {
         return this._httpsPort;
@@ -1251,11 +1260,17 @@ export class Config {
      * readable certificate exists (see buildServerList).
      *
      * Unlike `applyAndPersistAllowedHosts`/`applyAndPersistFrameAncestors`
-     * above, there is no live "apply" half: the listener set is built exactly
-     * once, at boot (`Config.buildServers`), and nothing in this class rebinds
-     * it in-process. A caller MUST restart the process for a new port to take
-     * effect -- see TlsApi's `https-port` route, which schedules that restart
-     * the same way SettingsBatchApi does for `webPort`. Takes an
+     * above, there is no live "apply" half for the LISTENER: the listener set
+     * is built exactly once, at boot (`Config.buildServers`), and nothing in
+     * this class rebinds it in-process. A caller MUST restart the process for
+     * a new port to actually SERVE -- see TlsApi's `https-port` route, which
+     * schedules that restart the same way SettingsBatchApi does for
+     * `webPort`.
+     *
+     * The `httpsPort` GETTER, however, is updated here immediately (N8,
+     * re-review) -- it reports config INTENT, not listener reality, and
+     * there is no reason for a caller in this same process to see a stale
+     * value between this write and the restart a second later. Takes an
      * already-validated port (see `validateHttpsPortInput`); like its
      * allowedHosts/frameAncestors siblings, this method does not itself
      * validate.
@@ -1274,6 +1289,7 @@ export class Config {
             fs.mkdirSync(dir, { recursive: true });
         }
         writeFileAtomicSync(this._configFilePath, `${JSON.stringify(existing, null, 2)}\n`);
+        this._httpsPort = port;
     }
 
     /**

@@ -341,49 +341,67 @@ describe('TlsApi', () => {
             ).toEqual({ bound: true, port: 8443 });
         });
 
-        // Precedence (team-lead's explicit ordering): config-override beats
-        // port-collision beats bind-failed beats restart-required. Rationale:
-        // report the condition a restart will NOT fix first, since that is
-        // where the user's next action differs most -- config-override and
-        // port-collision need a config.json edit no restart will ever fix;
-        // bind-failed MIGHT clear on a restart if whatever held the port is
-        // gone by then; restart-required WILL be fixed by one, deterministically.
+        // Precedence, REVERTED to the original ordering after N3 (re-review):
+        // bind-failed beats config-override beats port-collision beats
+        // restart-required. Team-lead's intermediate ruling ("report the
+        // condition a restart will not fix first") was wrong, and the
+        // re-review found the case that proves it: an advanced `server`
+        // array whose OWN secure entry fails to bind was reported as
+        // 'config-override' under that ordering -- true but misleading, since
+        // the actionable fact is the bind failure, not the array's mere
+        // presence. The correct principle: an OBSERVED bind failure is a
+        // fact; the other three are INFERENCES about why no entry exists (or,
+        // for advancedConfig specifically, why one that DOES exist might
+        // still not be live). A fact outranks an inference.
         //
-        // Note for a future reader: in the real implementation bind-failed
-        // and {config-override, port-collision} cannot co-occur -- a bind
-        // failure presupposes Config.servers HAS a secure entry, while both
-        // of the other two mean no such entry was ever added. The inputs
-        // below are deliberately contrived (all three "true" at once) to pin
-        // the precedence unambiguously anyway, exactly because a defensive
-        // ordering exists for the case reality never produces.
-        it('config-override takes priority over port-collision and bind-failed', () => {
+        // Also corrects the prior "these cannot co-occur" comment, which was
+        // wrong: a user's own advanced array CAN contain a secure entry, and
+        // that entry CAN fail to bind -- see the co-occurrence test below,
+        // which is the one input that actually distinguishes the two
+        // orderings (every other test here would pass under either).
+        it('bind-failed takes priority over config-override and port-collision', () => {
             expect(
                 buildHttpsListenerField(
                     { listening: false, bindFailed: true },
                     { advancedConfig: true, portCollision: true },
                     true,
                 ),
-            ).toEqual({ bound: false, reason: 'config-override' });
+            ).toEqual({ bound: false, reason: 'bind-failed' });
         });
 
-        it('port-collision takes priority over bind-failed', () => {
+        // THE distinguishing input (N3): advancedConfig true AND bindFailed
+        // true, together -- a real, reachable state (the user's own advanced
+        // array contains a secure entry that fails to bind), not a contrived
+        // "all three true" input. Reporting 'config-override' here would be
+        // misdiagnosing an observed fact as a mere inference.
+        it('an advanced-config secure entry that fails to bind reports bind-failed, not config-override (N3, the co-occurrence case)', () => {
             expect(
                 buildHttpsListenerField(
                     { listening: false, bindFailed: true },
+                    { advancedConfig: true, portCollision: false },
+                    true,
+                ),
+            ).toEqual({ bound: false, reason: 'bind-failed' });
+        });
+
+        it('config-override takes priority over port-collision', () => {
+            expect(
+                buildHttpsListenerField(
+                    { listening: false, bindFailed: false },
+                    { advancedConfig: true, portCollision: true },
+                    true,
+                ),
+            ).toEqual({ bound: false, reason: 'config-override' });
+        });
+
+        it('port-collision applies when neither bind-failed nor config-override do', () => {
+            expect(
+                buildHttpsListenerField(
+                    { listening: false, bindFailed: false },
                     { advancedConfig: false, portCollision: true },
                     true,
                 ),
             ).toEqual({ bound: false, reason: 'port-collision' });
-        });
-
-        it('bind-failed applies when neither config-override nor port-collision do', () => {
-            expect(
-                buildHttpsListenerField(
-                    { listening: false, bindFailed: true },
-                    { advancedConfig: false, portCollision: false },
-                    true,
-                ),
-            ).toEqual({ bound: false, reason: 'bind-failed' });
         });
 
         // restart-required is the LOWEST-priority reason, and only applies
@@ -585,6 +603,114 @@ describe('TlsApi', () => {
             await stale.api.handle(rStale.req, rStale.res);
             const staleJson = rStale.getJson() as { subject: string; candidateIps: string[] };
             expect(staleJson.candidateIps.includes(staleJson.subject)).toBe(false);
+        });
+    });
+
+    // --- C1 (Critical, re-review): the same seam C3 found on candidateIps --
+    // a field the panel branches on landed on /state and not on /generate.
+    // The panel never re-fetches /state after a generate (its only read is at
+    // build time), so httpsListener was undefined in exactly the first-run
+    // journey the Critical was filed about: generate succeeds, no restart is
+    // ever triggered or mentioned, and the panel kept saying "streaming
+    // already works either way" with no restart prompt. RULE: any field the
+    // panel branches on must be present on every response that could change
+    // what it should show -- a generate changes listener state, so a
+    // response reporting one must carry it, same as /state does. ---
+
+    describe('httpsListener on POST /api/tls/generate (C1)', () => {
+        it('wires a bound listener straight through, and NOT bound when nothing is bound -- the core contrast, mirroring /state', async () => {
+            vi.mocked(getHttpsListenerStatus).mockReturnValueOnce({
+                listening: true,
+                boundPort: 8443,
+                bindFailed: false,
+            });
+            const { api } = makeApi();
+            const rBound = makeReqRes('POST', '/api/tls/generate', { kind: 'ip', value: '192.168.86.3' });
+            await api.handle(rBound.req, rBound.res);
+            expect((rBound.getJson() as { httpsListener: unknown }).httpsListener).toEqual({
+                bound: true,
+                port: 8443,
+            });
+
+            // Same route, nothing bound this time -- a hardcoded
+            // `{ bound: true }` would pass the case above and fail this one.
+            vi.mocked(getHttpsListenerStatus).mockReturnValueOnce({ listening: false, bindFailed: false });
+            const { api: api2 } = makeApi();
+            const rNotBound = makeReqRes('POST', '/api/tls/generate', { kind: 'ip', value: '192.168.86.3' });
+            await api2.handle(rNotBound.req, rNotBound.res);
+            expect((rNotBound.getJson() as { httpsListener: { bound: boolean } }).httpsListener.bound).toBe(false);
+        });
+
+        // THE headline scenario the whole review started with: a successful
+        // generate, no restart triggered, listener not yet live. The panel
+        // needs `reason: 'restart-required'` on THIS response -- the one it
+        // actually reads after clicking generate -- not just on a /state it
+        // never re-fetches.
+        it('reports restart-required on a successful generate when nothing is bound yet, ordinary config, no collision', async () => {
+            vi.mocked(getHttpsListenerStatus).mockReturnValueOnce({ listening: false, bindFailed: false });
+            vi.mocked(Config.getInstance).mockReturnValue({
+                usesAdvancedServerConfig: false,
+                httpsPort: 8443,
+                servers: [{ secure: false, port: 8000 }],
+                addAllowedHost: vi.fn(() => true),
+            } as never);
+            const { api } = makeApi();
+            const r = makeReqRes('POST', '/api/tls/generate', { kind: 'ip', value: '192.168.86.3' });
+            await api.handle(r.req, r.res);
+            expect(r.getStatus()).toBe(200);
+            expect((r.getJson() as { httpsListener: unknown }).httpsListener).toEqual({
+                bound: false,
+                reason: 'restart-required',
+            });
+        });
+
+        it('wires config-override and bind-failed through generate too, not only /state', async () => {
+            vi.mocked(getHttpsListenerStatus).mockReturnValueOnce({ listening: false, bindFailed: false });
+            vi.mocked(Config.getInstance).mockReturnValue({
+                usesAdvancedServerConfig: true,
+                httpsPort: 9443,
+                servers: [{ secure: false, port: 8000 }],
+            } as never);
+            const { api } = makeApi();
+            const advanced = makeReqRes('POST', '/api/tls/generate', { kind: 'ip', value: '192.168.86.3' });
+            await api.handle(advanced.req, advanced.res);
+            expect((advanced.getJson() as { httpsListener: unknown }).httpsListener).toEqual({
+                bound: false,
+                reason: 'config-override',
+            });
+
+            vi.mocked(getHttpsListenerStatus).mockReturnValueOnce({ listening: false, bindFailed: true });
+            const { api: api2 } = makeApi();
+            const failed = makeReqRes('POST', '/api/tls/generate', { kind: 'ip', value: '192.168.86.3' });
+            await api2.handle(failed.req, failed.res);
+            expect((failed.getJson() as { httpsListener: unknown }).httpsListener).toEqual({
+                bound: false,
+                reason: 'bind-failed',
+            });
+        });
+
+        it('does not lose candidateIps, allowedHostAdded, or the cert state fields alongside httpsListener', async () => {
+            vi.mocked(getHttpsListenerStatus).mockReturnValueOnce({ listening: false, bindFailed: false });
+            // Explicit, not inherited: Config.getInstance's mock is NOT
+            // reset between tests in this file (see the other `it`s in this
+            // describe block, which all set it explicitly for the same
+            // reason) -- an ordinary, non-advanced, non-colliding config is
+            // what makes 'restart-required' the correct expectation below.
+            vi.mocked(Config.getInstance).mockReturnValue({
+                usesAdvancedServerConfig: false,
+                httpsPort: 8443,
+                servers: [{ secure: false, port: 8000 }],
+                addAllowedHost: vi.fn(() => true),
+            } as never);
+            const generate = vi.fn(async () => ({ status: 'ready', subject: '192.168.86.3', kind: 'ip' }));
+            const { api } = makeApi({ generate }, ['192.168.86.3']);
+            const r = makeReqRes('POST', '/api/tls/generate', { kind: 'ip', value: '192.168.86.3' });
+            await api.handle(r.req, r.res);
+            const json = r.getJson() as Record<string, unknown>;
+            expect(json['status']).toBe('ready');
+            expect(json['candidateIps']).toEqual(['192.168.86.3']);
+            expect(json['allowedHostAdded']).toBe(false);
+            expect(json['httpsListener']).toEqual({ bound: false, reason: 'restart-required' });
         });
     });
 
