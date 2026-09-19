@@ -1,4 +1,5 @@
 import { execFile } from 'child_process';
+import { randomUUID } from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -26,6 +27,22 @@ import { extractZipTo } from './zipExtract';
 
 const log = Logger.for('DependencyManager');
 const execFileAsync = promisify(execFile);
+
+/**
+ * A per-call unique scratch directory for `update(name)`. Exported for
+ * direct unit testing (N7): this was keyed on `Date.now()` alone, so two
+ * concurrent `update()` calls for the SAME name -- e.g. a double-click on
+ * "generate" both finding mkcert missing and racing into
+ * `ensureMkcertInstalled` -- could produce it identically, since Node's
+ * clock resolution is coarser than its event loop. Two calls sharing a
+ * tmpDir means one's download/verify can race the other's `using`-scoped
+ * cleanup, and the failure that produces is indistinguishable from a
+ * genuine checksum mismatch -- the one error message that should mean
+ * tampering. `randomUUID()` has no such collision window.
+ */
+export function makeUpdateTmpDir(name: string): string {
+    return path.join(os.tmpdir(), 'ws-scrcpy-web', `update-${name}-${randomUUID()}`);
+}
 
 export class DependencyManager {
     private readonly definitions: DependencyDefinition[];
@@ -185,7 +202,7 @@ export class DependencyManager {
         }
         info.status = DependencyStatus.Updating;
         const fromVersion = info.installedVersion ?? 'not installed';
-        const tmpDir = path.join(os.tmpdir(), 'ws-scrcpy-web', `update-${name}-${Date.now()}`);
+        const tmpDir = makeUpdateTmpDir(name);
         // §25 — TS6 using-declaration replaces the prior try/finally cleanup.
         // The dispose fires on every scope exit (return / throw / fall-through)
         // and rmSync with force:true is safe even if mkdirSync below never ran.
@@ -705,6 +722,7 @@ export class DependencyManager {
 }
 
 let depManagerInstance: DependencyManager | undefined;
+let depManagerOpts: { dependenciesPath: string; restartMarkerPath?: string } | undefined;
 
 /**
  * Composition-root singleton, mirroring `createCertService.ts`'s
@@ -716,15 +734,34 @@ let depManagerInstance: DependencyManager | undefined;
  * the one `DependencyApi` and the dependency panel read, so a lazy install
  * triggered by a certificate generate() click would leave the panel showing
  * "not installed" forever after.
+ *
+ * N6: a second call with DIFFERENT options used to be silently ignored —
+ * the caller got back a manager configured for whoever called first, with
+ * no way to notice. Safe only because boot always precedes any request,
+ * which is an accident of ordering, not a guarantee. A mismatched second
+ * call now throws instead of returning a manager quietly configured
+ * differently from what that caller asked for.
  */
 export function getDependencyManager(opts: {
     dependenciesPath: string;
     restartMarkerPath?: string;
 }): DependencyManager {
     if (!depManagerInstance) {
+        depManagerOpts = opts;
         depManagerInstance = new DependencyManager(opts.dependenciesPath, {
             ...(opts.restartMarkerPath !== undefined ? { restartMarkerPath: opts.restartMarkerPath } : {}),
         });
+        return depManagerInstance;
+    }
+    if (
+        opts.dependenciesPath !== depManagerOpts!.dependenciesPath ||
+        opts.restartMarkerPath !== depManagerOpts!.restartMarkerPath
+    ) {
+        throw new Error(
+            'getDependencyManager() was already initialized with a different configuration ' +
+                `(dependenciesPath: ${depManagerOpts!.dependenciesPath}); ` +
+                `refusing to silently hand a caller expecting ${opts.dependenciesPath} a manager it did not ask for`,
+        );
     }
     return depManagerInstance;
 }
