@@ -203,15 +203,14 @@ interface TlsCertState {
      */
     httpExposure?: 'open' | 'httpsOnly' | 'redirect';
     /**
-     * NOT yet returned by `GET /api/tls/state` (checked against the current
-     * `TlsApi.ts` while fixing I2) -- same shape as `httpExposure` before
-     * `861a5902`. Read defensively below (`?? 8443`, the same
-     * `DEFAULT_HTTPS_PORT` `Config.ts` itself falls back to) so the port
-     * field starts showing the real configured value the moment this field
-     * is added, with zero further client changes, and degrades to the
-     * server's own default in the meantime rather than crashing. Flagged to
-     * team-lead as a second field the same server-side change already
-     * touching this route should add alongside C1's listener-truth field.
+     * Returned by `GET /api/tls/state` as `httpsSnapshot.configuredPort`
+     * (`TlsApi.ts`, I2/C1's server half) -- the CONFIGURED port, always a
+     * number even in advanced-config mode, independent of
+     * `httpsListener.port` (the actually-BOUND port, present only when
+     * `httpsListener.bound` is true and potentially different). Read
+     * defensively below (`?? 8443`, the same `DEFAULT_HTTPS_PORT` `Config.ts`
+     * itself falls back to) so an older server or a genuinely missing field
+     * degrades to the server's own default rather than crashing.
      */
     httpsPort?: number;
     /**
@@ -1012,10 +1011,30 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
                 // C1: the review's headline case -- a fresh certificate with
                 // no restart yet has no HTTPS listener bound, and this used
                 // to be the moment the panel started claiming streaming
-                // already worked. `listenerStatusNoticeEl` (just rendered by
-                // `renderCertState` above) carries the persistent, detailed
-                // version; this mirrors the port field's own pattern of also
-                // naming the restart in the immediate transient confirmation.
+                // already worked. `renderCertState(currentState)` just above
+                // already re-evaluates `listenerStatusNoticeEl` and the
+                // CA-trust suppression generically from whatever
+                // `data.httpsListener` holds -- correct for ALL four
+                // down-cases the moment the server sends this field on THIS
+                // route, not just at page load. This branch additionally
+                // names the restart in the immediate transient confirmation,
+                // mirroring the port field's own pattern, for the one case
+                // (`restart-required`) where "restart" is the complete
+                // remedy; the other three (`config-override`,
+                // `port-collision`, `bind-failed`) get their fuller,
+                // reason-specific explanation from the persistent notice
+                // instead of a toast-length one.
+                //
+                // VERIFIED (re-review): as of this commit, `POST
+                // /api/tls/generate` (`TlsApi.ts`) does NOT yet include
+                // `httpsListener` in its response -- only `GET /api/tls/state`
+                // does. The test below therefore currently proves the CLIENT
+                // reacts correctly to this shape; it does not yet prove the
+                // end-to-end claim, because the server doesn't send it on
+                // this route today. That server-side change is in progress
+                // (team-lead, re-review pass); no client change is needed
+                // once it lands -- `data` is already typed as `TlsCertState`,
+                // which this field is already part of.
                 if (data.httpsListener?.bound === false && data.httpsListener.reason === 'restart-required') {
                     showTransientAlert(
                         'success',
@@ -1170,15 +1189,25 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
      * hoisted function so the ordering there doesn't matter.
      */
     function updateExposureAvailability(): void {
+        // N2 (re-review): gated on `status === 'ready'` alone, a certificate
+        // that exists but has no BOUND listener (any of C1's four down-cases
+        // -- most commonly right after `generate`, before a restart) still
+        // let the user narrow plain HTTP toward an HTTPS listener that isn't
+        // running. Gate on the listener itself, which `httpsListener.bound`
+        // now reports directly -- the same "the panel must not infer
+        // listener state" rule C1 is about, not composed from `status` here.
         const hasCert = currentState.status === 'ready';
+        const listenerBound = currentState.httpsListener?.bound === true;
         for (const radio of exposureRadios) {
-            if (radio.value !== 'open') radio.disabled = !hasCert;
+            if (radio.value !== 'open') radio.disabled = !listenerBound;
         }
         setNotice(
             exposureUnavailableNotice,
-            hasCert
+            listenerBound
                 ? null
-                : 'generate a certificate first — https only and redirect only take effect once an https listener can exist.',
+                : hasCert
+                  ? 'restart the server first — https only and redirect only take effect once the https listener is actually running.'
+                  : 'generate a certificate first — https only and redirect only take effect once an https listener can exist.',
         );
     }
 
@@ -1215,15 +1244,19 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
     okBtn.addEventListener('click', () => {
         void (async () => {
             const mode = exposureRadios.find((r) => r.checked)?.value ?? 'open';
-            // I11, defense in depth: the disabled radios already prevent
-            // SELECTING a narrowed mode with no certificate, but a stale
+            // I11/N2, defense in depth: the disabled radios already prevent
+            // SELECTING a narrowed mode without a bound listener, but a stale
             // click queued before `renderCertState` last ran (or a radio
             // pre-selected 'httpsOnly'/'redirect' from the server before the
-            // cert was known to be gone) must not still submit it.
-            if (mode !== 'open' && currentState.status !== 'ready') {
+            // listener's absence was known) must not still submit it. Gated
+            // on the listener itself, not `status`, for the same reason
+            // `updateExposureAvailability` above is.
+            if (mode !== 'open' && currentState.httpsListener?.bound !== true) {
                 showTransientAlert(
                     'error',
-                    'generate a certificate first — this mode has no https listener to apply to.',
+                    currentState.status === 'ready'
+                        ? 'restart the server first — this mode has no https listener to apply to yet.'
+                        : 'generate a certificate first — this mode has no https listener to apply to.',
                 );
                 return;
             }
