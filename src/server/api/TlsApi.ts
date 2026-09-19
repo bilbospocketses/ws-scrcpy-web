@@ -27,6 +27,33 @@ const PREFIX = '/api/tls';
 const CA_ROOT_RATE_LIMIT = 10;
 const CA_ROOT_RATE_WINDOW_MS = 60_000;
 
+/**
+ * Read the persisted exposure mode for `GET /api/tls/state`'s response.
+ *
+ * DELIBERATELY MIRRORS `HttpServer.ts`'s own `readHttpExposure()` -- same
+ * narrowing (`'httpsOnly' | 'redirect'`, everything else including an
+ * unset/hand-edited/newer-version value collapses to `'open'`) and the same
+ * try/catch-to-'open' on an unreachable store ("a database that will not
+ * answer must not be able to refuse requests", HttpServer.ts's own words).
+ * That symmetry is the point: the panel reads this field to decide what its
+ * exposure radios are ALREADY set to, and `HttpServer.ts` reads the same key
+ * to decide what to actually do with a plain-HTTP request -- if the two ever
+ * disagreed about what "no setting" means, the panel could show one mode
+ * while the server enforces another.
+ *
+ * Duplicated rather than imported: `HttpServer.ts`'s version is private to
+ * that module and out of scope for this file to touch. If the two are ever
+ * unified into one shared export, this is the second copy to update.
+ */
+function readHttpExposureForState(): HttpExposure {
+    try {
+        const v = Config.getInstance().db.appSettings.get(HTTP_EXPOSURE_KEY);
+        return v === 'httpsOnly' || v === 'redirect' ? v : 'open';
+    } catch {
+        return 'open';
+    }
+}
+
 export class TlsApi {
     /** Timestamps (ms) of recent CA-root downloads, oldest first. */
     private readonly caRootDownloads: number[] = [];
@@ -72,7 +99,13 @@ export class TlsApi {
             if (req.method === 'GET' && pathname === `${PREFIX}/state`) {
                 res.setHeader('Content-Type', 'application/json');
                 res.writeHead(200);
-                res.end(JSON.stringify({ ...svc.getState(), candidateIps: this.getCandidateIps() }));
+                res.end(
+                    JSON.stringify({
+                        ...svc.getState(),
+                        candidateIps: this.getCandidateIps(),
+                        httpExposure: readHttpExposureForState(),
+                    }),
+                );
                 return true;
             }
 

@@ -164,6 +164,70 @@ describe('TlsApi', () => {
         });
     });
 
+    // --- httpExposure on GET /api/tls/state (Critical: the panel pre-selects
+    // its exposure radios from this field, and with none present it always
+    // falls back to 'open' -- so a user who set httpsOnly, reopens Settings
+    // for something unrelated, and clicks the exposure "ok" button silently
+    // widens their own exposure back to 'open', with a SUCCESS confirmation.
+    // Mirrors HttpServer.ts's readHttpExposure() narrowing and 'open' default
+    // exactly, so the panel and the request-handling path can never disagree
+    // about what "no setting" means. ---
+
+    describe('httpExposure on GET /api/tls/state', () => {
+        it('reports the real narrowed value when set, and falls back to "open" for anything unrecognised', async () => {
+            const narrowed = makeApi();
+            vi.mocked(Config.getInstance).mockReturnValue({
+                db: { appSettings: { get: vi.fn(() => 'httpsOnly') } },
+            } as never);
+            const rNarrowed = makeReqRes('GET', '/api/tls/state');
+            await narrowed.api.handle(rNarrowed.req, rNarrowed.res);
+            expect((rNarrowed.getJson() as { httpExposure: string }).httpExposure).toBe('httpsOnly');
+
+            // Same test, second half: an unrecognised stored value must NOT
+            // echo through as-is (a hand-edited or newer-version row must
+            // never brick the panel's read either) -- it has to collapse to
+            // 'open', the identical default readHttpExposure() uses. A
+            // hardcoded 'open' would pass this half and fail the one above;
+            // a passthrough-with-no-narrowing would pass the one above and
+            // fail this one.
+            const unrecognised = makeApi();
+            vi.mocked(Config.getInstance).mockReturnValue({
+                db: { appSettings: { get: vi.fn(() => 'bogus-value-from-a-newer-build') } },
+            } as never);
+            const rUnrecognised = makeReqRes('GET', '/api/tls/state');
+            await unrecognised.api.handle(rUnrecognised.req, rUnrecognised.res);
+            expect((rUnrecognised.getJson() as { httpExposure: string }).httpExposure).toBe('open');
+        });
+
+        it('answers 200 with "open", not 500, when the store is unreachable', async () => {
+            // "A database that will not answer must not be able to refuse
+            // requests" -- HttpServer.ts's own comment on readHttpExposure,
+            // and the reason this mirrors its try/catch rather than letting
+            // Config.getInstance() throw straight into this route's 500.
+            vi.mocked(Config.getInstance).mockImplementation(() => {
+                throw new Error('ENOENT: no such file or directory');
+            });
+            const { api } = makeApi();
+            const r = makeReqRes('GET', '/api/tls/state');
+            await api.handle(r.req, r.res);
+            expect(r.getStatus()).toBe(200);
+            expect((r.getJson() as { httpExposure: string }).httpExposure).toBe('open');
+        });
+
+        it('is "open" by default in every other GET /state test in this file, without those tests configuring it', async () => {
+            // Every OTHER test in this file calls makeApi() without touching
+            // Config.getInstance, so the module-level mock's un-configured
+            // vi.fn() returns undefined and `.db` on it would throw if this
+            // route did not catch it -- this pins that every existing /state
+            // test keeps working unmodified, which the fix must not break.
+            const { api } = makeApi();
+            const r = makeReqRes('GET', '/api/tls/state');
+            await api.handle(r.req, r.res);
+            expect(r.getStatus()).toBe(200);
+            expect((r.getJson() as { httpExposure: string }).httpExposure).toBe('open');
+        });
+    });
+
     // --- C3 (Task 8 review, task 11 addendum): POST /api/tls/generate must
     // also return candidateIps, from the SAME source GET /api/tls/state uses.
     // Without it, the panel defaults to [] and its notification-4 mismatch
