@@ -242,12 +242,20 @@ interface TlsCertState {
      * `undefined` (an older server, or before this field lands) is treated
      * as UNKNOWN, never as bound -- read `listenerStatusNotice`'s own doc
      * comment for why that default direction is the safe one.
+     *
+     * NF-1 (re-review): `reason` is NOT exclusive to `bound: false` -- it can
+     * accompany `bound: true` too, when the socket is genuinely accepting
+     * connections but is still serving the OLD leaf from before the last
+     * regenerate (nothing rebinds it in-process). `bound` is a literal fact
+     * about the socket; `reason`, when present, is why it is nonetheless not
+     * fully usable, checked independently of `bound`'s value everywhere this
+     * field is read.
      */
     httpsListener?: {
         bound: boolean;
         /** Present only when `bound` is true. */
         port?: number;
-        /** Present only when `bound` is false and a certificate exists. */
+        /** Present when the listener isn't fully usable -- see this field's own doc comment for why that is independent of `bound`. */
         reason?: 'restart-required' | 'config-override' | 'port-collision' | 'bind-failed';
     };
 }
@@ -390,8 +398,22 @@ export function subPrivilegedPortNotice(port: number, platform: NodeJS.Platform 
  */
 export function listenerStatusNotice(state: TlsCertState): string | null {
     if (state.status !== 'ready') return null;
-    if (state.httpsListener === undefined || state.httpsListener.bound) return null;
-    switch (state.httpsListener.reason) {
+    const listener = state.httpsListener;
+    // NF-1: `reason` is the thing to check, not `bound`. A listener can be
+    // genuinely bound (accepting connections) while still serving the OLD
+    // leaf -- the socket was handed that PEM at boot and nothing rebinds it
+    // in-process, so a regenerate leaves it serving a certificate signed by
+    // the CA that regenerate just deleted. `bound` alone cannot see that;
+    // `reason` carries it regardless of `bound`'s value. `reason === undefined`
+    // (whether or not `bound` is true) means no basis for any claim --
+    // fail-safe, matching how an unparseable certificate already behaves --
+    // so this returns null, not a false "all good".
+    if (listener === undefined || listener.reason === undefined) return null;
+    if (listener.bound) {
+        // The only reason that can accompany `bound: true` today.
+        return 'the https listener is running, but it is still serving the certificate from before your last regenerate — including a ca that no longer exists. restart the server so it serves the new one; until then, a device using the new ca will not match what is actually being served.';
+    }
+    switch (listener.reason) {
         case 'restart-required':
             return 'certificate ready, but the https listener has not started yet. restart the server to begin serving https — regenerating will not help, and destroys any ca a device has already installed.';
         case 'config-override':
@@ -400,8 +422,6 @@ export function listenerStatusNotice(state: TlsCertState): string | null {
             return 'the https port is the same as the plain http port, so https could not start. change the https port below to a different value, then restart.';
         case 'bind-failed':
             return 'the https listener failed to start, possibly because its port is already in use. check the server logs, free the port if needed, and restart.';
-        default:
-            return 'certificate ready, but the https listener is not currently running. check the server logs, and restart the server.';
     }
 }
 
@@ -899,18 +919,22 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
         // ... yet"), so it stays true whether or not the CA happens to
         // already be installed.
         //
-        // C1: this whole notice -- including "streaming already works
-        // either way" -- presumes an HTTPS listener exists to click through
-        // to. Confirmed NOT bound (`state.httpsListener.bound === false`)
-        // suppresses it entirely; `listenerStatusNoticeEl` above already
-        // carries the accurate, more specific message for that case. Unknown
-        // (`httpsListener === undefined`, an older server or before C1's
-        // field lands) or confirmed bound both keep the original claim,
-        // which is the measured, true one whenever a listener does exist.
-        const listenerConfirmedDown = state.httpsListener?.bound === false;
+        // C1/NF-1: this whole notice -- including "streaming already works
+        // either way" -- presumes an HTTPS listener exists AND is actually
+        // serving the current certificate. Suppressed whenever
+        // `listenerStatusNoticeEl` above has anything to say
+        // (`httpsListener.reason` present, regardless of `bound` -- NF-1: a
+        // listener can be bound and still serving a stale leaf from before
+        // the last regenerate), since that element already carries the
+        // accurate, more specific message for every one of those cases.
+        // Genuinely unknown (`httpsListener === undefined`, an older server)
+        // or confirmed bound with NO reason keep the original claim, which
+        // is the measured, true one whenever a listener both exists and
+        // matches the certificate just generated.
+        const listenerHasKnownProblem = state.httpsListener?.reason !== undefined;
         setNotice(
             untrustedCaNotice,
-            caPresent && !listenerConfirmedDown
+            caPresent && !listenerHasKnownProblem
                 ? 'browsers will not trust this certificate until the ca is installed. install it below to remove the warning — streaming already works either way.'
                 : null,
         );
@@ -1011,7 +1035,18 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
                     showTransientAlert('error', data?.error ?? 'that address could not be used for a certificate.');
                     return;
                 }
-                currentState = data;
+                // NF-3: MERGE, don't replace. `POST /api/tls/generate`'s
+                // response doesn't carry every field `GET /api/tls/state`
+                // does (no `httpsPort`/`httpExposure` today) -- a wholesale
+                // `currentState = data` would silently drop whatever the
+                // initial `/state` fetch populated. Harmless today only
+                // because nothing currently re-reads those two fields off
+                // `currentState` after build time; the standing rule (stated
+                // on both server routes: any field the panel branches on
+                // must be present on every response that could change what
+                // it should show) only holds on THIS side if the panel
+                // doesn't discard fields it already has.
+                currentState = { ...currentState, ...data };
                 renderCertState(currentState);
                 // Resolved Decision 2: state the allowedHosts edit plainly
                 // rather than mutate it silently. This is a one-time outcome
@@ -1025,25 +1060,23 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
                               ' to allowedHosts so the server will answer to that name.',
                           ]
                         : [];
-                // C1: the review's headline case -- a fresh certificate with
-                // no restart yet has no HTTPS listener bound, and this used
-                // to be the moment the panel started claiming streaming
-                // already worked. `renderCertState(currentState)` just above
-                // already re-evaluates `listenerStatusNoticeEl` and the
-                // CA-trust suppression generically from whatever
-                // `data.httpsListener` holds -- correct for ALL four
-                // down-cases, PROVIDED this route's response carries the
-                // field (this code makes no assumption about which routes
-                // do; it only reads `data.httpsListener` if present, and
-                // treats its absence as unknown, never as bound -- see
-                // `TlsCertState.httpsListener`'s own doc comment). This
-                // branch additionally names the restart in the immediate
-                // transient confirmation, mirroring the port field's own
-                // pattern, for the one case (`restart-required`) where
-                // "restart" is the complete remedy; the other three
-                // (`config-override`, `port-collision`, `bind-failed`) get
-                // their fuller, reason-specific explanation from the
-                // persistent notice instead of a toast-length one.
+                // C1/NF-1: the review's headline case -- a fresh certificate
+                // with no restart yet has no HTTPS listener genuinely
+                // serving it, and this used to be the moment the panel
+                // started claiming streaming already worked.
+                // `renderCertState(currentState)` just above already
+                // re-evaluates `listenerStatusNoticeEl` and the CA-trust
+                // suppression generically from whatever `data.httpsListener`
+                // holds, keyed on `reason` rather than `bound` (NF-1: the
+                // MOST common real case right after a generate is a listener
+                // that was already bound from before, still serving the
+                // stale leaf -- `bound: true` alongside
+                // `reason: 'restart-required'`, not `bound: false`). This
+                // branch mirrors that same check for the immediate transient
+                // confirmation, wording it differently depending on whether
+                // HTTPS was never up at all or is up but stale, since
+                // "restart to START serving https" is the wrong sentence for
+                // the second case.
                 //
                 // The test pinning this branch
                 // ("mentions the restart in the SAME transient alert...")
@@ -1052,10 +1085,12 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
                 // it, which is `tlsApi.test.ts`'s own job, not this
                 // comment's. Read that file, not this one, for whether
                 // `POST /api/tls/generate` currently includes the field.
-                if (data.httpsListener?.bound === false && data.httpsListener.reason === 'restart-required') {
+                if (data.httpsListener?.reason === 'restart-required') {
                     showTransientAlert(
                         'success',
-                        'certificate generated. restart the server to start serving https.',
+                        data.httpsListener.bound
+                            ? 'certificate generated. restart the server so it serves the new certificate.'
+                            : 'certificate generated. restart the server to start serving https.',
                         ...allowedHostSuffix,
                     );
                 } else {
@@ -1094,7 +1129,22 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
                     revokeBtn.disabled = false;
                     return;
                 }
-                currentState = { status: 'none' };
+                // NF-3: preserve `httpsPort`/`httpExposure`/`candidateIps` --
+                // revoke doesn't touch the port or the exposure mode, only
+                // the cert lifecycle. A wholesale `{ status: 'none' }` would
+                // discard them from `currentState`, same latent issue as the
+                // generate handler above. Destructured OUT (not set to
+                // `undefined`) so `exactOptionalPropertyTypes` is satisfied --
+                // these become genuinely absent, not explicitly undefined.
+                const {
+                    subject: _subject,
+                    kind: _kind,
+                    notAfter: _notAfter,
+                    caPresent: _caPresent,
+                    httpsListener: _httpsListener,
+                    ...preserved
+                } = currentState;
+                currentState = { ...preserved, status: 'none' };
                 renderCertState(currentState);
                 showTransientAlert(
                     'success',
