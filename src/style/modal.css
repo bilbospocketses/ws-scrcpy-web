@@ -843,15 +843,25 @@ dialog.settings-modal .settings-status-ready {
  * `hidden` attribute (see ServerTab.ts's buildNoticeRow/setNotice), and this
  * repo already found the bug where a class rule setting `display` outranks
  * the UA stylesheet's `[hidden] { display: none }` and leaves a "hidden"
- * element on screen (.dependency-alert-badge, above). The rule below
- * re-asserts the UA behaviour at class specificity so a future `display`
- * added here cannot resurrect that bug.
+ * element on screen (.dependency-alert-badge, above).
  */
 dialog.settings-modal .settings-status-warning {
     color: var(--warning-color);
 }
 
-dialog.settings-modal .settings-status-warning[hidden] {
+/*
+ * M3: re-asserted on the BASE `.settings-status` class, not just the
+ * `-warning` variant above -- every conditionally-hidden element in this
+ * dialog (the Local HTTPS panel's notices AND its bottom-of-panel transient
+ * alert, which toggles `.settings-status-error`/`-ready` on top of this same
+ * base class, plus every plain `.settings-status` status line elsewhere in
+ * Settings) carries `.settings-status`, so one rule here at (0,2,0)
+ * specificity (class + attribute) outranks a hypothetical future `display`
+ * added to ANY of `.settings-status-error`/`-ready`/`-warning` at (0,1,0),
+ * regardless of source order. A rule scoped to only one variant would have
+ * left every other variant exposed to the exact bug this guards against.
+ */
+dialog.settings-modal .settings-status[hidden] {
     display: none;
 }
 

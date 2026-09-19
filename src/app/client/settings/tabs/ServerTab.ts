@@ -192,6 +192,16 @@ interface TlsCertState {
     caPresent?: boolean;
     /** Present on GET /api/tls/state; absent on POST /api/tls/generate's response. */
     candidateIps?: string[];
+    /**
+     * NOT yet returned by `GET /api/tls/state` (verified 2026-09-19: the route
+     * only spreads `svc.getState()` + `candidateIps`) -- task 11 added the
+     * WRITE side (`POST /api/tls/exposure`) but not this read side. Declared
+     * here, and read defensively below (`?? 'open'`, matching the server's
+     * own `readHttpExposure()` default), so the exposure radios start
+     * reflecting reality the moment the field is added, with zero further
+     * client changes. Flagged to team-lead as the remaining piece of I5.
+     */
+    httpExposure?: 'open' | 'httpsOnly' | 'redirect';
 }
 
 export interface LocalHttpsPanelDeps {
@@ -204,17 +214,26 @@ export interface LocalHttpsPanelDeps {
      * (Task 5's amendment (b)), so this is effectively test-only there.
      */
     candidateIps: string[];
-    platform: NodeJS.Platform;
     /**
-     * Whether the browser's current origin already trusts the served
-     * certificate's CA. There is no JS-observable signal for this -- a
-     * click-through self-signed warning and a genuinely trusted CA both
-     * report `isSecureContext: true` with nothing else distinguishing them
-     * (the design doc's own measurement had to be done manually in a real
-     * browser). So this is caller-supplied, and left `undefined` (never
-     * shown) rather than guessed -- showing "this browser does not trust the
-     * certificate" when it actually does would be a false claim, which is
-     * worse than the notice never firing. Defaults to trusted (no notice).
+     * `undefined` when not yet known (M2 -- the caller learns this from
+     * `/api/service/status`, which resolves after this tab is already built)
+     * OR genuinely unrecognised. Every platform-gated notice below (5, and
+     * `trustInstructionsFor`) treats "don't know" as "say nothing" rather
+     * than guessing a specific OS: a hardcoded fallback here previously
+     * defaulted to `'linux'`, which fired notification 5's sub-1024 warning
+     * on Windows whenever the real platform hadn't arrived yet.
+     */
+    platform: NodeJS.Platform | undefined;
+    /**
+     * Vestigial (I6): notification 3 no longer branches on this -- there is
+     * no JS-observable signal for "does this browser actually trust the
+     * served CA" (a click-through self-signed warning and a genuinely
+     * trusted CA both report `isSecureContext: true` with nothing else
+     * distinguishing them; the design doc's own measurement had to be done
+     * manually in a real browser). Reworded the notice to an unconditional
+     * line instead of trying to detect trust. Field kept, and still accepted,
+     * only so the brief's fixed test (which passes `caTrusted: false`)
+     * type-checks; nothing reads it any more.
      */
     caTrusted?: boolean;
 }
@@ -230,32 +249,80 @@ const EXPIRY_WARNING_DAYS = 30;
 const TRANSIENT_ALERT_SUCCESS_MS = 5_000;
 const TRANSIENT_ALERT_ERROR_MS = 10_000;
 
-/** Notification 4: the cert's IP subject no longer matches any local interface. */
+/**
+ * `candidateLanIps()` (the source of `candidateIps`, via TlsApi's
+ * `getCandidateIps`) enumerates ONLY RFC1918 IPv4 addresses. It can positively
+ * confirm "not present" for an address in that same range, but says nothing
+ * about loopback, IPv6, CGNAT/Tailscale (100.64.0.0/10) or a public IP --
+ * those are never in the list even when they ARE still bound to this
+ * machine. Gates `certSubjectMismatchNotice` below (I4): only an RFC1918
+ * subject enters the comparison at all.
+ */
+function isRfc1918Ipv4(value: string): boolean {
+    const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(value);
+    if (!m) return false;
+    const octets = m.slice(1, 5).map(Number);
+    if (octets.some((o) => o < 0 || o > 255)) return false;
+    const [a, b] = octets as [number, number, number, number];
+    if (a === 10) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && b === 168) return true;
+    return false;
+}
+
+/**
+ * Notification 4: the cert's IP subject no longer matches any local
+ * interface -- but ONLY when the oracle (`candidateIps`, RFC1918-IPv4-only)
+ * can actually answer that question. A subject outside that range (loopback,
+ * IPv6, CGNAT/Tailscale, public) is NEVER in the candidate list even when it
+ * IS still a real address of this machine, so firing here for one would be a
+ * permanent false positive (I4). When the oracle can't answer, say nothing --
+ * the same rule notification 3 already follows for `caTrusted`.
+ */
 export function certSubjectMismatchNotice(state: TlsCertState, candidateIps: string[]): string | null {
     if (state.status !== 'ready' || state.kind !== 'ip' || !state.subject) return null;
+    if (!isRfc1918Ipv4(state.subject)) return null;
     if (candidateIps.includes(state.subject)) return null;
     return `this certificate names ${state.subject}, which is no longer an address of this machine. regenerate, or switch to a hostname.`;
 }
 
-/** Notification 9: warn inside 30 days of expiry; never regenerate silently (Resolved Decision 1). */
+/**
+ * Notification 9: warn inside 30 days of expiry; never regenerate silently
+ * (Resolved Decision 1). M1: an already-expired cert gets its own past-tense
+ * copy -- "expires on <date>. regenerate before then" reads backwards once
+ * that date is in the past, since there is no "before then" left.
+ */
 export function certExpiryNotice(state: TlsCertState, now: Date): string | null {
     if (state.status !== 'ready' || !state.notAfter) return null;
     const expires = new Date(state.notAfter);
     if (Number.isNaN(expires.getTime())) return null;
     const daysLeft = (expires.getTime() - now.getTime()) / MS_PER_DAY;
     if (daysLeft > EXPIRY_WARNING_DAYS) return null;
+    if (daysLeft <= 0) {
+        return `this certificate expired on ${expires.toLocaleDateString()}. regenerate it, or streaming has stopped working from other machines.`;
+    }
     return `this certificate expires on ${expires.toLocaleDateString()}. regenerate before then, or streaming stops working from other machines.`;
 }
 
-/** Notification 5: a sub-1024 port needs elevated privileges outside win32. */
-export function subPrivilegedPortNotice(port: number, platform: NodeJS.Platform | string): string | null {
-    if (platform === 'win32') return null;
+/**
+ * Notification 5: a sub-1024 port needs elevated privileges outside win32.
+ * M2: an ALLOWLIST (only linux/darwin fire), not a win32-denylist -- an
+ * unknown/undefined platform (the caller hasn't learned it yet, or it is
+ * genuinely unrecognised) must not fire this, the same "don't know, don't
+ * claim" rule applied elsewhere in this file. The previous denylist shape
+ * fired for anything that WASN'T literally `'win32'`, which included
+ * `undefined` -- exactly the case `buildServerTab`'s wiring hit before this
+ * fix, since a hardcoded `?? 'linux'` fallback there manufactured a platform
+ * that was never actually known.
+ */
+export function subPrivilegedPortNotice(port: number, platform: NodeJS.Platform | string | undefined): string | null {
+    if (platform !== 'linux' && platform !== 'darwin') return null;
     if (!Number.isFinite(port) || port <= 0 || port >= 1024) return null;
     return 'ports below 1024 need elevated privileges on this platform; the server may fail to start.';
 }
 
 /** Per-OS trust instructions for the accordion. Pure/exported so its text is unit-testable. */
-export function trustInstructionsFor(platform: NodeJS.Platform | string): string {
+export function trustInstructionsFor(platform: NodeJS.Platform | string | undefined): string {
     switch (platform) {
         case 'win32':
             return (
@@ -441,6 +508,7 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
     body.appendChild(buildRow('https port', portFrag));
 
     const portNotice = buildNoticeRow();
+    portNotice.setAttribute('data-tls-port-notice', '');
     body.appendChild(portNotice);
     portInput.addEventListener('input', () => {
         setNotice(portNotice, subPrivilegedPortNotice(Number(portInput.value), deps.platform));
@@ -454,6 +522,7 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
     const portRestartNotice = document.createElement('p');
     portRestartNotice.className = 'settings-status';
     portRestartNotice.style.gridColumn = '1 / -1';
+    portRestartNotice.setAttribute('data-tls-port-restart-note', '');
     portRestartNotice.textContent = 'changing this restarts the server; any active streams will drop.';
     body.appendChild(portRestartNotice);
 
@@ -505,14 +574,19 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
     body.appendChild(certSummary);
 
     const untrustedCaNotice = buildNoticeRow();
+    untrustedCaNotice.setAttribute('data-tls-ca-trust-notice', '');
     body.appendChild(untrustedCaNotice);
     const mismatchNotice = buildNoticeRow();
+    mismatchNotice.setAttribute('data-tls-mismatch-notice', '');
     body.appendChild(mismatchNotice);
     const hostnameGuideNotice = buildNoticeRow();
+    hostnameGuideNotice.setAttribute('data-tls-hostname-notice', '');
     body.appendChild(hostnameGuideNotice);
     const expiryNotice = buildNoticeRow();
+    expiryNotice.setAttribute('data-tls-expiry-notice', '');
     body.appendChild(expiryNotice);
     const caRestoreNotice = buildNoticeRow();
+    caRestoreNotice.setAttribute('data-tls-ca-restore-notice', '');
     body.appendChild(caRestoreNotice);
 
     // ---- download CA + per-OS trust instructions ----
@@ -554,15 +628,28 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
         certSummary.textContent = '';
         certSummary.appendChild(document.createTextNode('current certificate: '));
         const subjectSpan = document.createElement('span');
+        subjectSpan.setAttribute('data-tls-current-subject', '');
         subjectSpan.textContent = state.subject ?? '(unknown)';
         certSummary.appendChild(subjectSpan);
 
-        downloadBtn.disabled = state.caPresent === false;
-        setNotice(caRestoreNotice, state.caPresent === false ? 'regenerate to restore the ca download.' : null);
+        const caPresent = state.caPresent !== false;
+        downloadBtn.disabled = !caPresent;
+        // Mutually exclusive (M4): a failed-regenerate leaf (caPresent false)
+        // gets the restore note, never "install the ca below" -- that call to
+        // action is meaningless while the download button it points at is
+        // disabled.
+        setNotice(caRestoreNotice, !caPresent ? 'regenerate to restore the ca download.' : null);
+        // I6: unconditional whenever the CA is actually downloadable, rather
+        // than trying to detect whether THIS browser already trusts it --
+        // there is no signal for that (see caTrusted's doc comment on
+        // LocalHttpsPanelDeps). Worded as forward-looking guidance ("will not
+        // trust ... until") instead of a live status claim ("does not trust
+        // ... yet"), so it stays true whether or not the CA happens to
+        // already be installed.
         setNotice(
             untrustedCaNotice,
-            deps.caTrusted === false
-                ? 'this browser does not trust the certificate yet. install the ca below to remove the warning — streaming already works.'
+            caPresent
+                ? 'browsers will not trust this certificate until the ca is installed. install it below to remove the warning — streaming already works either way.'
                 : null,
         );
         setNotice(mismatchNotice, certSubjectMismatchNotice(state, candidateIps));
@@ -681,16 +768,17 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
                     );
                     return;
                 }
+                // I7: matches this repo's own precedent exactly
+                // (ListFilesModal.ts's finishFileDownload) -- create the
+                // anchor, set its blob-URL href, click, revoke. No
+                // try/finally around the click: the precedent doesn't have
+                // one either, and none of the three calls here can throw.
                 const blob = await res.blob();
-                const url = URL.createObjectURL(blob);
-                try {
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = 'ws-scrcpy-web-local-ca.pem';
-                    a.click();
-                } finally {
-                    URL.revokeObjectURL(url);
-                }
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = 'ws-scrcpy-web-local-ca.pem';
+                a.click();
+                URL.revokeObjectURL(a.href);
                 showTransientAlert('success', 'ca certificate downloaded.');
             } catch {
                 showTransientAlert('error', 'could not reach the server.');
@@ -700,14 +788,24 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
         })();
     });
 
-    // ---- plain-HTTP exposure (local preview only -- see the class doc's
-    //      "NOT WIRED" note) ----
+    // ---- plain-HTTP exposure -- POSTs to POST /api/tls/exposure (task 11) ----
     const exposureFrag = document.createDocumentFragment();
     const exposureModes: Array<{ value: 'open' | 'httpsOnly' | 'redirect'; label: string }> = [
         { value: 'open', label: 'open (plain http answers every machine)' },
         { value: 'httpsOnly', label: 'https only' },
         { value: 'redirect', label: 'redirect http to https' },
     ];
+    // I5: pre-select the radio matching the SERVER's current mode, not a
+    // hardcoded 'open'. Without this, a user who opens the panel to change
+    // something else and clicks "ok" would silently widen their exposure
+    // back to 'open' -- whatever they actually had gets overwritten by
+    // whatever the radios happened to default to. `httpExposure` isn't on
+    // `GET /api/tls/state` yet (see the field's own doc comment above); this
+    // reads it defensively so the panel starts reflecting reality the moment
+    // the server adds it, with 'open' as the fallback -- the same default
+    // `HttpServer.ts`'s `readHttpExposure()` uses when the key is absent, so
+    // "don't know yet" and "the server's own default" agree.
+    const initialExposureMode = initialState.httpExposure ?? 'open';
     const exposureRadios: HTMLInputElement[] = [];
     for (const mode of exposureModes) {
         const label = document.createElement('label');
@@ -717,7 +815,7 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
         radio.name = 'tls-exposure';
         radio.value = mode.value;
         radio.setAttribute('data-exposure', mode.value);
-        radio.checked = mode.value === 'open';
+        radio.checked = mode.value === initialExposureMode;
         label.appendChild(radio);
         label.appendChild(document.createTextNode(mode.label));
         exposureFrag.appendChild(label);
@@ -732,8 +830,10 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
     body.appendChild(buildRow('plain http exposure', exposureFrag));
 
     const exposureLockoutNotice = buildNoticeRow();
+    exposureLockoutNotice.setAttribute('data-exposure-lockout-notice', '');
     body.appendChild(exposureLockoutNotice);
     const exposureRestartNotice = buildNoticeRow();
+    exposureRestartNotice.setAttribute('data-exposure-restart-notice', '');
     body.appendChild(exposureRestartNotice);
 
     for (const radio of exposureRadios) {
@@ -1392,9 +1492,20 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
         // is mid-typing in the subject/port fields.
         if (localHttpsContainer && !localHttpsBuilt) {
             localHttpsBuilt = true;
-            const platform: NodeJS.Platform = (resp.platform as NodeJS.Platform | undefined) ?? 'linux';
+            // M2: no guessed fallback. `resp.platform` SHOULD be populated by
+            // a real /api/service/status response, but if it somehow isn't,
+            // `undefined` is passed straight through -- every platform-gated
+            // notice already treats "don't know" as "say nothing"
+            // (subPrivilegedPortNotice, trustInstructionsFor). The previous
+            // `?? 'linux'` fabricated a platform that was never actually
+            // observed, and fired notification 5's sub-1024 warning on
+            // Windows whenever this ran before the real value arrived.
+            const platform = resp.platform as NodeJS.Platform | undefined;
             void buildLocalHttpsPanel({
-                fetchFn: fetch,
+                // C1: wrapped, not passed by reference -- an unbound `fetch`
+                // throws "Illegal invocation" in Chrome (same precedent as
+                // NetworkDiscoveryPanel.ts's renderPairingSection call).
+                fetchFn: (...args: Parameters<typeof fetch>) => fetch(...args),
                 // Always [] in production: GET /api/tls/state itself returns
                 // the real candidateIps (Task 5's amendment (b)), which
                 // buildLocalHttpsPanel prefers over this fallback.
