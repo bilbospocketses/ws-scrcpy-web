@@ -644,6 +644,25 @@ export function sanitizeHttpsPort(raw: unknown, warn: (msg: string) => void): nu
     return raw;
 }
 
+/**
+ * Validate a `port` field for `POST /api/tls/https-port` (task 11).
+ *
+ * Deliberately NOT `sanitizeHttpsPort`: that function backs config.json's
+ * "never throw on load" contract (Contract 1) by falling back to
+ * DEFAULT_HTTPS_PORT with a warning. A live API request has a caller waiting
+ * for an answer, so silently coercing a typo'd port to 8443 would persist the
+ * WRONG value without telling anyone -- this rejects outright instead,
+ * mirroring TlsApi's `kind` validation (amendment C). Same bounds as
+ * sanitizeHttpsPort (1-65535): httpsPort is not held to webPort's 1024 floor
+ * (buildServerList's doc comment -- the two ports are independent).
+ */
+export function validateHttpsPortInput(raw: unknown): ValidationResult<number> {
+    if (!isInteger(raw) || raw < 1 || raw > 65535) {
+        return { ok: false, error: 'port must be an integer between 1 and 65535' };
+    }
+    return { ok: true, value: raw };
+}
+
 export class Config {
     private static instance?: Config | undefined;
 
@@ -1172,6 +1191,37 @@ export class Config {
             /* no existing file / unparseable — write a fresh one below */
         }
         existing['allowedHosts'] = this._allowedHosts;
+
+        const dir = path.dirname(this._configFilePath);
+        if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+        }
+        writeFileAtomicSync(this._configFilePath, `${JSON.stringify(existing, null, 2)}\n`);
+    }
+
+    /**
+     * Persist a validated `httpsPort` to config.json (task 11's
+     * `POST /api/tls/https-port`) -- the port the HTTPS listener binds when a
+     * readable certificate exists (see buildServerList).
+     *
+     * Unlike `applyAndPersistAllowedHosts`/`applyAndPersistFrameAncestors`
+     * above, there is no live "apply" half: the listener set is built exactly
+     * once, at boot (`Config.buildServers`), and nothing in this class rebinds
+     * it in-process. A caller MUST restart the process for a new port to take
+     * effect -- see TlsApi's `https-port` route, which schedules that restart
+     * the same way SettingsBatchApi does for `webPort`. Takes an
+     * already-validated port (see `validateHttpsPortInput`); like its
+     * allowedHosts/frameAncestors siblings, this method does not itself
+     * validate.
+     */
+    public setHttpsPort(port: number): void {
+        const existing: Record<string, unknown> = {};
+        try {
+            Object.assign(existing, JSON.parse(fs.readFileSync(this._configFilePath, 'utf-8')));
+        } catch {
+            /* no existing file / unparseable — write a fresh one below */
+        }
+        existing['httpsPort'] = port;
 
         const dir = path.dirname(this._configFilePath);
         if (!fs.existsSync(dir)) {

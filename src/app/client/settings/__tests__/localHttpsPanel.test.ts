@@ -188,6 +188,86 @@ describe('local https panel — transient alert convention', () => {
         expect(el.textContent).toMatch(/does not support saving this setting yet/i);
     });
 
+    it('tells the user changing the https port restarts the server -- distinct from exposure, which does not', async () => {
+        const el = await buildLocalHttpsPanel({
+            fetchFn: vi.fn(async () => new Response(JSON.stringify(state()))),
+            candidateIps: ['192.168.86.3'],
+            platform: 'win32',
+        });
+        // Standing condition, visible at rest (no click needed) -- unlike the
+        // exposure notice above, which only appears once a narrowed mode is
+        // selected. Distinguishing the two matters: a write to
+        // HTTP_EXPOSURE_KEY takes effect for the very next request with no
+        // restart, but the https port is bound once at boot and always needs
+        // one.
+        expect(el.textContent).toMatch(/restart/i);
+    });
+
+    it('rejects an out-of-range https port locally, without calling the network', async () => {
+        const fetchFn = vi.fn(async () => new Response(JSON.stringify(state())));
+        const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'], platform: 'win32' });
+        const port = el.querySelector<HTMLInputElement>('[data-tls-port]')!;
+        port.value = '99999';
+        el.querySelector<HTMLButtonElement>('[data-tls-port-ok]')!.click();
+        await new Promise((r) => setTimeout(r, 0));
+        const alert = el.querySelector<HTMLElement>('[data-tls-alert]')!;
+        expect(alert.textContent).toMatch(/port must be/i);
+        expect(fetchFn).not.toHaveBeenCalledWith('/api/tls/https-port', expect.anything());
+    });
+
+    it('saves a valid https port and confirms the restart in the same alert', async () => {
+        const fetchFn = vi.fn(async (url: RequestInfo | URL) => {
+            if (url === '/api/tls/https-port') {
+                return new Response(JSON.stringify({ ok: true, port: 9443, restartRequired: true }));
+            }
+            return new Response(JSON.stringify(state()));
+        });
+        const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'], platform: 'win32' });
+        const port = el.querySelector<HTMLInputElement>('[data-tls-port]')!;
+        port.value = '9443';
+        el.querySelector<HTMLButtonElement>('[data-tls-port-ok]')!.click();
+        await new Promise((r) => setTimeout(r, 0));
+        expect(fetchFn).toHaveBeenCalledWith(
+            '/api/tls/https-port',
+            expect.objectContaining({ method: 'POST', body: JSON.stringify({ port: 9443 }) }),
+        );
+        const alert = el.querySelector<HTMLElement>('[data-tls-alert]')!;
+        expect(alert.textContent).toMatch(/restart/i);
+    });
+
+    it('shows the server-provided error text on a rejected port, rather than a generic message', async () => {
+        const fetchFn = vi.fn(async (url: RequestInfo | URL) => {
+            if (url === '/api/tls/https-port') {
+                return new Response(JSON.stringify({ error: 'port must be an integer between 1 and 65535' }), {
+                    status: 400,
+                });
+            }
+            return new Response(JSON.stringify(state()));
+        });
+        const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'], platform: 'win32' });
+        const port = el.querySelector<HTMLInputElement>('[data-tls-port]')!;
+        port.value = '9443';
+        el.querySelector<HTMLButtonElement>('[data-tls-port-ok]')!.click();
+        await new Promise((r) => setTimeout(r, 0));
+        const alert = el.querySelector<HTMLElement>('[data-tls-alert]')!;
+        expect(alert.textContent).toMatch(/port must be an integer between 1 and 65535/i);
+    });
+
+    it('reports a network failure distinctly, without claiming the port was saved', async () => {
+        const fetchFn = vi.fn(async (url: RequestInfo | URL) => {
+            if (url === '/api/tls/https-port') throw new Error('network down');
+            return new Response(JSON.stringify(state()));
+        });
+        const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'], platform: 'win32' });
+        const port = el.querySelector<HTMLInputElement>('[data-tls-port]')!;
+        port.value = '9443';
+        el.querySelector<HTMLButtonElement>('[data-tls-port-ok]')!.click();
+        await new Promise((r) => setTimeout(r, 0));
+        const alert = el.querySelector<HTMLElement>('[data-tls-alert]')!;
+        expect(alert.textContent).toMatch(/could not reach the server/i);
+        expect(alert.textContent).not.toMatch(/restart/i);
+    });
+
     it('keeps a persistent condition (notification 4) visible well past the transient alert’s 10s window', async () => {
         vi.useFakeTimers();
         try {
