@@ -3040,9 +3040,8 @@ caches the redirect past the user turning the mode back off) with `Cache-Control
 `GET /api/tls/state` reports the same listener truth the request handler acts on, through a small
 `httpsListener: { bound, port?, reason? }` field (`TlsApi.ts`'s `buildHttpsListenerField`, a pure
 function over `getHttpsListenerStatus()` plus two `Config` facts) — rather than only "does a
-certificate exist on disk." **Reality always wins:** `bound: true` reports the actually-bound port and
-no `reason` at all, regardless of what config or certificate state would otherwise imply. When nothing
-is bound, exactly one of four reasons explains why, in this priority order:
+certificate exist on disk." When nothing is bound, exactly one of four reasons explains why, in this
+priority order:
 
 | `reason` | Means | Priority |
 |---|---|---|
@@ -3051,10 +3050,27 @@ is bound, exactly one of four reasons explains why, in this priority order:
 | `port-collision` | `httpsPort` equals the plain-HTTP port, so `Config.buildServers` skipped the entry | |
 | `restart-required` | A usable certificate exists on disk; nothing else explains the gap — the listener set is built once at boot and simply has not picked it up yet | Lowest — the ordinary case |
 
-No `reason` at all means no certificate exists and none of the above applies. `/state` also always
-returns a separate top-level `httpsPort` — the **configured** port, post-`sanitizeHttpsPort`, used for
-the panel's port-field prefill — which is independent of `httpsListener.port` (present only when
-actually bound, and can differ for an ephemeral `port: 0` entry).
+No `reason` at all (and `bound: false`) means no certificate exists and none of the above applies.
+`/state` also always returns a separate top-level `httpsPort` — the **configured** port,
+post-`sanitizeHttpsPort`, used for the panel's port-field prefill — which is independent of
+`httpsListener.port` (present only when actually bound, and can differ for an ephemeral `port: 0`
+entry).
+
+**`reason: 'restart-required'` can also appear ALONGSIDE `bound: true` — `bound` is a fact about the
+socket, not a claim that it is serving the current certificate.** The HTTPS listener is created once,
+at boot, from whatever leaf `Config.servers` held then; `generate()` later replaces the leaf **file** on
+disk, but the already-bound listener keeps serving the **old, in-memory** material until a restart.
+Without this, a regenerate looked identical to success: the socket was genuinely `bound: true`, so the
+panel reported "streaming already works" while the listener kept serving the old leaf — signed by the
+CA `generate()` had just deleted. The fix compares two independently-captured fingerprints
+(`X509Certificate#fingerprint256`): `HttpServer` records the fingerprint of the PEM content it actually
+handed to `https.createServer` at bind time (`getHttpsListenerStatus().leafFingerprint`), and
+`CertService.currentLeafFingerprint()` re-reads whatever leaf is on disk **right now**. A mismatch adds
+`reason: 'restart-required'` without flipping `bound` to `false`. **Deliberately not part of
+`CertState`** — it exists only as a comparison input for this one check, not a field the panel's JSON
+otherwise carries. With either fingerprint unavailable (a listener from before this fix, or an
+unparseable leaf), nothing is claimed either way — fail-safe, the same direction every other unknown in
+this feature defaults to.
 
 **`POST /api/tls/generate` returns the identical `httpsListener` field, built the same way, on
 success.** The panel never re-fetches `/state` after a generate, so this is the only response it reads
@@ -3076,7 +3092,7 @@ an HTTPS listener that is not actually running yet, which would be a lockout wit
 back to. The save handler re-checks the same condition rather than trusting the disabled attribute
 alone, in case a stale click was queued before the panel's last state refresh.
 
-### 28.4 Installing mkcert: on-demand fetch and the SHA-256 gate
+### 28.4 Installing mkcert: on-demand fetch and the pinned-manifest gate
 
 mkcert is fetched **on first use**, not at boot: its `DependencyDefinition`
 (`src/server/DependencyDefinitions.ts`) carries `deferInstall: true`, which
@@ -3088,22 +3104,41 @@ what actually causes the install, and the only cost on every call after the firs
 instance `index.ts`'s boot sequence and `DependencyApi` use — so an on-demand install here is visible
 to the Dependencies tab immediately, rather than tracked by a second manager the panel never sees.
 
-**`DependencyManager.installMkcert()` verifies the downloaded asset's SHA-256 against the release's
-`SHA256SUMS.txt` manifest before copying it anywhere `resolveMkcertExe` would find it.** A missing
-manifest entry, a failed manifest fetch, or a hash mismatch all refuse the install outright — there is
-no warn-and-continue path, and nothing partially-verified is ever placed where it would be executed.
-This is the one dependency among the four this class manages (Node.js, ADB, scrcpy-server, mkcert)
-that gets this check: mkcert is singled out because it mints a CA the user then installs into their
-own OS and phone trust stores, so a tampered download does not just break the app — it becomes a
-trusted signing authority on every device they set up afterward. The verification reuses the existing
-`parseSha256Sums`/`verifySha256` pair already used by `UpdateService`'s Linux self-update path, rather
-than inventing a second implementation of the same check.
+**The install verifies in two stages, in this order, because checking the binary against a manifest
+from the same release never proved authenticity — only that the download was not corrupted in
+transit.** A tampered GitHub release could alter the binary and its manifest together, so:
 
-**Not implemented: build-provenance attestation verification.** Checksum verification against the
-published manifest is the control that exists today; verifying the release's Sigstore attestation
-(mentioned in the design spec's §1) is not. Treat that as "not yet built," not as a statement about
-whether it could be — the fork's public/private status is not this section's business to track, and
-has already changed once since this feature was designed.
+1. **Fetch `SHA256SUMS.txt` and verify the manifest itself against `MKCERT_SHA256SUMS_PIN`** — a SHA-256
+   constant committed in `DependencyDefinitions.ts`, next to `MKCERT_VERSION` — **before the platform
+   binary is downloaded at all.** This is what moves the trust anchor into this app's own source: an
+   attacker would have to alter the pinned constant too, and that shows up in a diff, where altering a
+   GitHub release does not.
+2. **Only once the manifest passes that check, download the platform binary and verify it against the
+   now-trusted manifest.**
+
+**The two failure messages are deliberately worded differently, and that difference is the point.**
+"The manifest does not match its pin" means the release changed underneath this pin, or the pin is
+stale after a version bump — a maintenance signal, not necessarily an attack. "The binary does not
+match the manifest" means a bad download, or a same-release tamper — the case the original
+same-release checksum design could already catch. Collapsing the two into one generic message would
+make a forgotten pin update after a version bump look identical to an active attack. Both are
+fail-closed: a missing manifest entry, a failed fetch, or either mismatch refuse the install outright,
+with no warn-and-continue path, before anything is placed where `resolveMkcertExe` would find it.
+
+**`MKCERT_SHA256SUMS_PIN` must be updated by hand, deliberately, whenever `MKCERT_VERSION` bumps** —
+never guessed or copied from a chat message or a PR description. Its own doc comment records the
+procedure: fetch the new release's `SHA256SUMS.txt`, compute its SHA-256 independently
+(`sha256sum` against the real asset), and cross-check that value against the fork's own Sigstore
+build-provenance attestation for that exact tag (`gh attestation verify`) before trusting it. A future
+version bump should follow that same two-source procedure rather than trusting either alone.
+
+**Runtime attestation verification is not implemented, by user decision — not because it is
+impossible.** The published SLSA/Sigstore provenance is what `MKCERT_SHA256SUMS_PIN` was independently
+cross-checked against when the pin was set (above), so attestation is already part of how this app's
+trust in mkcert was established — it is used **out-of-band, by whoever updates the pin**, not
+**at runtime, by the app itself**. A hand-rolled Sigstore verifier has no Node builtin to build on, and
+`gh attestation verify` is a PATH-resolved binary that Local-Dependencies-Only forbids reaching for at
+runtime; the pinned-manifest checksum is the control the app actually runs.
 
 ### 28.5 The four mkcert invocation requirements
 
@@ -3142,6 +3177,14 @@ one rather than a single generic "may require a restart":
   that has changed, is simply not reflected until the process restarts. `https-port` schedules a
   restart through the same exit-75 marker path `webPort` already uses.
 
+  **This claim is now enforced, not merely stated (NF-1).** A regenerate used to look identical to
+  success: the bound listener is a genuinely live socket, so `httpsListener.bound` stayed `true` while
+  it quietly kept serving the **old** leaf on disk — signed by the CA `generate()` had just deleted, and
+  invisible to anyone reading `bound` alone. `HttpServer` and `CertService` now each independently
+  fingerprint the leaf they see (§28.3), and a mismatch reports `restart-required` even while `bound`
+  stays `true` — a bound-but-stale listener is treated the same as any other case this table already
+  covers, not as a fifth, silent state.
+
 The two HTTP/HTTPS ports are independent, with independent defaults (`Config.DEFAULT_HTTPS_PORT =
 8443`): setting the HTTP port to `80` never moves HTTPS, and setting the HTTPS port never moves HTTP.
 If the two are ever set to the same value, `Config.buildServers` skips the HTTPS entry for that boot
@@ -3159,15 +3202,15 @@ degrades to HTTP-only, logged, never a crash.
 
 | File | Purpose |
 |---|---|
-| `src/server/tls/CertService.ts` | Certificate lifecycle (`generate`, `getState`, `caRootPem`, `revoke`); subject validation, name-constraint construction, leaf-subject hydration, the POSIX `ensureCaRootDir`/`chmod` defence-in-depth pair |
+| `src/server/tls/CertService.ts` | Certificate lifecycle (`generate`, `getState`, `caRootPem`, `revoke`); subject validation, name-constraint construction, leaf-subject hydration, the POSIX `ensureCaRootDir`/`chmod` defence-in-depth pair, `currentLeafFingerprint()` |
 | `src/server/tls/certPaths.ts` | `resolveCertPaths` — POSIX vs. per-user-Windows CAROOT/leaf placement, the containment guard |
 | `src/server/tls/createCertService.ts` | The composition root: binds `CertServiceDeps` to real `fs`/`child_process`; memoized `getCertService()`; `ensureMkcertInstalled()`'s on-demand-fetch trigger |
 | `src/server/tls/httpExposure.ts` | `HttpExposure`, `HTTP_EXPOSURE_KEY`, the pure `decideHttpRequest` decision function |
-| `src/server/api/TlsApi.ts` | Admin-gated `/api/tls/*` routes; CA-root rate limiting; the hostname-only `allowedHosts` auto-add (issue #691); `buildHttpsListenerField`'s `httpsListener` contract on `/state` and `/generate` |
+| `src/server/api/TlsApi.ts` | Admin-gated `/api/tls/*` routes; CA-root rate limiting; the hostname-only `allowedHosts` auto-add (issue #691); `buildHttpsListenerField`'s `httpsListener` contract on `/state` and `/generate`, including the stale-leaf `restart-required` case |
 | `src/server/network/candidateLanIps.ts` | RFC1918 LAN-IP candidates for the subject picker, excluding CGNAT (`100.64.0.0/10`) and link-local |
-| `src/server/services/HttpServer.ts` | Exposure enforcement on the plain-HTTP listener, the listen-error handler, `getHttpsListenerStatus` |
+| `src/server/services/HttpServer.ts` | Exposure enforcement on the plain-HTTP listener, the listen-error handler, `getHttpsListenerStatus`, the bound leaf's `leafFingerprint` capture |
 | `src/server/Config.ts` | `buildServerList`, `readCertMaterial`, `sanitizeHttpsPort` / `validateHttpsPortInput` / `setHttpsPort`, `DEFAULT_HTTPS_PORT` |
-| `src/server/DependencyDefinitions.ts` | The `mkcert` dependency definition (`bilbospocketses/mkcert` fork, `deferInstall: true`); `mkcertExeName` / `mkcertAssetName` / `mkcertChecksumsUrl` |
-| `src/server/DependencyManager.ts` | `installMkcert()` — the install handler and its SHA-256 verification against `SHA256SUMS.txt`, reusing `parseSha256Sums`/`verifySha256` |
+| `src/server/DependencyDefinitions.ts` | The `mkcert` dependency definition (`bilbospocketses/mkcert` fork, `deferInstall: true`); `mkcertExeName` / `mkcertAssetName` / `mkcertChecksumsUrl`; `MKCERT_VERSION` / `MKCERT_SHA256SUMS_PIN` |
+| `src/server/DependencyManager.ts` | `installMkcert()` — the install handler; `fetchPinnedMkcertManifest()` (manifest-vs-pin) and `verifyMkcertBinaryAgainstManifest()` (binary-vs-manifest), reusing `parseSha256Sums`/`verifySha256` |
 | `src/app/client/settings/tabs/ServerTab.ts` | The Settings → Server → Local HTTPS panel; `listenerStatusNotice()`; the exposure-radio gate on `httpsListener.bound` |
 | `docs/superpowers/specs/2026-09-18-local-https-design.md` | The full design: measured facts, rejected alternatives, the UI notification table |
