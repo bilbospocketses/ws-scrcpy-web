@@ -104,14 +104,26 @@ export interface HttpsListenerField {
  * The pure priority logic behind `httpsListener`. Reality (`listenerStatus`,
  * from `HttpServer.getHttpsListenerStatus()`) always wins: `bound: true`
  * reports the real port and no reason at all, regardless of what config or
- * cert state would otherwise imply. Among the not-bound cases, priority is
- * deliberate: `bind-failed` (a secure entry WAS configured and broke) outranks
- * `config-override` and `port-collision` (no secure entry was ever going to
- * exist), which in turn outrank `restart-required` (the ordinary case -- a
- * usable certificate exists, nothing else explains the gap, a restart is the
- * honest and sufficient remedy). No certificate and nothing else applicable
- * reports no reason at all -- "regenerate" is the wrong remedy for every one
- * of these, which is the whole point of this field existing.
+ * cert state would otherwise imply.
+ *
+ * Among the not-bound cases, precedence (team-lead's explicit ordering) is
+ * `config-override` > `port-collision` > `bind-failed` > `restart-required`:
+ * report the condition a restart will NOT fix first, since that is where the
+ * user's next action differs most -- `config-override` and `port-collision`
+ * need a config.json edit no restart will ever fix; `bind-failed` MIGHT clear
+ * on its own if whatever held the port is gone by the next restart;
+ * `restart-required` (the ordinary case -- a usable certificate exists,
+ * nothing else explains the gap) WILL be fixed by one, deterministically. No
+ * certificate and nothing else applicable reports no reason at all --
+ * "regenerate" is the wrong remedy for every one of these, which is the whole
+ * point of this field existing.
+ *
+ * Note: in the real implementation `bind-failed` and
+ * {`config-override`, `port-collision`} cannot co-occur -- a bind failure
+ * presupposes `Config.servers` HAS a secure entry, while both of the other
+ * two mean no such entry was ever added. The precedence above is exercised
+ * (correctly) only by contrived test inputs; it exists for the case reality
+ * never produces, not because reality needs it.
  */
 export function buildHttpsListenerField(
     listenerStatus: { listening: boolean; boundPort?: number; bindFailed: boolean },
@@ -123,9 +135,9 @@ export function buildHttpsListenerField(
             ? { bound: true }
             : { bound: true, port: listenerStatus.boundPort };
     }
-    if (listenerStatus.bindFailed) return { bound: false, reason: 'bind-failed' };
     if (configSnapshot.advancedConfig) return { bound: false, reason: 'config-override' };
     if (configSnapshot.portCollision) return { bound: false, reason: 'port-collision' };
+    if (listenerStatus.bindFailed) return { bound: false, reason: 'bind-failed' };
     if (certReady) return { bound: false, reason: 'restart-required' };
     return { bound: false };
 }

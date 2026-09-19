@@ -341,38 +341,49 @@ describe('TlsApi', () => {
             ).toEqual({ bound: true, port: 8443 });
         });
 
-        // bind-failed outranks config-override and port-collision: a
-        // configured-but-broken listener is a DIFFERENT actionable fact than
-        // "config.json overrides this" or "the ports collide", even if both
-        // happen to also be true in a contrived input.
-        it('bind-failed takes priority over config-override and port-collision', () => {
+        // Precedence (team-lead's explicit ordering): config-override beats
+        // port-collision beats bind-failed beats restart-required. Rationale:
+        // report the condition a restart will NOT fix first, since that is
+        // where the user's next action differs most -- config-override and
+        // port-collision need a config.json edit no restart will ever fix;
+        // bind-failed MIGHT clear on a restart if whatever held the port is
+        // gone by then; restart-required WILL be fixed by one, deterministically.
+        //
+        // Note for a future reader: in the real implementation bind-failed
+        // and {config-override, port-collision} cannot co-occur -- a bind
+        // failure presupposes Config.servers HAS a secure entry, while both
+        // of the other two mean no such entry was ever added. The inputs
+        // below are deliberately contrived (all three "true" at once) to pin
+        // the precedence unambiguously anyway, exactly because a defensive
+        // ordering exists for the case reality never produces.
+        it('config-override takes priority over port-collision and bind-failed', () => {
             expect(
                 buildHttpsListenerField(
                     { listening: false, bindFailed: true },
                     { advancedConfig: true, portCollision: true },
                     true,
                 ),
-            ).toEqual({ bound: false, reason: 'bind-failed' });
-        });
-
-        it('config-override takes priority over port-collision', () => {
-            expect(
-                buildHttpsListenerField(
-                    { listening: false, bindFailed: false },
-                    { advancedConfig: true, portCollision: true },
-                    true,
-                ),
             ).toEqual({ bound: false, reason: 'config-override' });
         });
 
-        it('port-collision applies when neither bind-failed nor config-override do', () => {
+        it('port-collision takes priority over bind-failed', () => {
             expect(
                 buildHttpsListenerField(
-                    { listening: false, bindFailed: false },
+                    { listening: false, bindFailed: true },
                     { advancedConfig: false, portCollision: true },
                     true,
                 ),
             ).toEqual({ bound: false, reason: 'port-collision' });
+        });
+
+        it('bind-failed applies when neither config-override nor port-collision do', () => {
+            expect(
+                buildHttpsListenerField(
+                    { listening: false, bindFailed: true },
+                    { advancedConfig: false, portCollision: false },
+                    true,
+                ),
+            ).toEqual({ bound: false, reason: 'bind-failed' });
         });
 
         // restart-required is the LOWEST-priority reason, and only applies
