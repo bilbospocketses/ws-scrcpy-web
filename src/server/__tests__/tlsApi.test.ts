@@ -374,6 +374,17 @@ describe('TlsApi', () => {
         // array contains a secure entry that fails to bind), not a contrived
         // "all three true" input. Reporting 'config-override' here would be
         // misdiagnosing an observed fact as a mere inference.
+        //
+        // GENERAL RULE for this describe block, learned the hard way (a wrong
+        // precedence shipped and passed every test here before this one
+        // existed): a priority chain tested ONE LEVEL AT A TIME passes under
+        // almost any permutation of that chain -- each test only proves its
+        // own branch returns its own value, never that it OUTRANKS anything.
+        // Only an input where two conditions are simultaneously true can
+        // distinguish one ordering from another. If a reason is ever added
+        // to or reordered in `buildHttpsListenerField`, add a co-occurrence
+        // test pairing it against the condition immediately above it in
+        // precedence -- not just another single-condition case.
         it('an advanced-config secure entry that fails to bind reports bind-failed, not config-override (N3, the co-occurrence case)', () => {
             expect(
                 buildHttpsListenerField(
