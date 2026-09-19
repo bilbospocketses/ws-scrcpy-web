@@ -1,3 +1,4 @@
+import { createPrivateKey, X509Certificate } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as process from 'process';
@@ -80,6 +81,13 @@ export interface FlatConfig {
     // allowedHosts, deliberately NOT part of AppConfig, so it is never exposed
     // or mutable via the frontend-facing GET/PATCH /api/config surface.
     frameAncestors?: string[];
+
+    // TLS: the port the HTTPS listener binds when a readable, valid certificate
+    // exists (see buildServerList). Defaults to DEFAULT_HTTPS_PORT and is
+    // INDEPENDENT of webPort -- setting webPort does not move this. Server-only
+    // and read at boot, like allowedHosts/frameAncestors above: not part of
+    // AppConfig, so it is never exposed or mutable via GET/PATCH /api/config.
+    httpsPort?: number;
 }
 
 /**
@@ -249,15 +257,35 @@ export interface CertMaterial {
 }
 
 /**
- * Reads BOTH the cert and the key and returns their PEM content, rather than
- * merely checking that they exist. `Config.parseServerItem` reads
- * `options.certPath`/`keyPath` with no try, during Config construction -- so a
- * file that EXISTS but cannot be READ (a wrong ACL after a profile move, a
- * half-written file mid-generation, a bind mount that lost its permissions)
- * would otherwise throw before the app has any listener at all. A readable
- * cert with an unreadable key fails in exactly the same place, so both are
- * read here, and `buildServerList` embeds the content directly rather than
- * ever routing this generated entry through `parseServerItem`'s untried read.
+ * Reads BOTH the cert and the key and returns their PEM content -- but only
+ * once each is validated as USABLE, not merely readable. Two distinct failure
+ * classes both fall through to the same "no certificate, HTTP only":
+ *
+ *  - UNREADABLE (amendment B). `Config.parseServerItem` reads
+ *    `options.certPath`/`keyPath` with no try, during Config construction --
+ *    so a file that EXISTS but cannot be READ (a wrong ACL after a profile
+ *    move, a bind mount that lost its permissions) would otherwise throw
+ *    before the app has any listener at all. A readable cert with an
+ *    unreadable key fails in exactly the same place, so both are read.
+ *
+ *  - READABLE BUT INVALID (review fix round 2, C1/C2). A zero-byte or
+ *    whitespace-only file reads successfully as an empty string, which
+ *    Node's `https` module treats as "no cert" and BINDS the listener
+ *    anyway -- every handshake then fails silently, which is worse than a
+ *    crash because the app would report HTTPS as up. And non-empty garbage
+ *    (a half-written mkcert output, a truncated or corrupted file) also
+ *    reads successfully, but handed straight to `https.createServer` throws
+ *    SYNCHRONOUSLY and UNCAUGHT (`ERR_OSSL_PEM_NO_START_LINE` /
+ *    `ERR_OSSL_PEM_BAD_END_LINE`, measured on Node v24.19.0), taking the
+ *    whole app down, plain HTTP included. Both are caught here by parsing
+ *    with Node's own builtins (`X509Certificate`, `createPrivateKey`) BEFORE
+ *    the content is ever embedded into a `ServerItem` -- the same parse
+ *    `https.createServer` would do anyway, just early enough that a failure
+ *    degrades to HTTP-only instead of an unhandled boot crash or a
+ *    silently-dead HTTPS listener.
+ *
+ * `buildServerList` embeds the content directly rather than ever routing this
+ * generated entry through `parseServerItem`'s untried read.
  *
  * One read each, not a probe-then-read pair: avoids a TOCTOU window between
  * checking readability and reading, and there is no second syscall to save by
@@ -275,6 +303,16 @@ export function readCertMaterial(
     try {
         const cert = readFile(certFile);
         const key = readFile(keyFile);
+        // Zero-byte / whitespace-only content reads as truthy but is not a
+        // certificate (C2) -- reject before it ever reaches https.createServer,
+        // which would otherwise bind with no key material and fail every
+        // handshake silently.
+        if (cert.trim().length === 0 || key.trim().length === 0) return null;
+        // Garbage / truncated / half-written content (C1) -- parse with the
+        // same builtins https.createServer relies on, so an unusable file is
+        // caught here instead of crashing the boot.
+        new X509Certificate(cert);
+        createPrivateKey(key);
         return { cert, key };
     } catch {
         return null;
@@ -294,7 +332,8 @@ export interface BuildServerListOpts {
  *
  * The two ports are INDEPENDENT. Setting HTTP to 80 does not imply HTTPS 443;
  * HTTPS stays on its own default (DEFAULT_HTTPS_PORT) until the user sets it
- * explicitly. Coupling them would move a port the user never touched.
+ * explicitly via config.json's `httpsPort` (see `sanitizeHttpsPort`, M3).
+ * Coupling them would move a port the user never touched.
  *
  * A missing or unreadable certificate yields HTTP alone rather than a boot
  * failure: an optional feature must never be able to stop the app starting.
@@ -556,6 +595,25 @@ export function sanitizeFrameAncestors(raw: unknown, warn: (msg: string) => void
     return out;
 }
 
+/**
+ * Validate the optional `httpsPort` escape-hatch from config.json (M3, review
+ * fix round 2). Like sanitizeAllowedHosts/sanitizeFrameAncestors this never
+ * throws (Contract 1) and falls back to the default with a warning on
+ * anything invalid, rather than letting a bad value reach `buildServerList`.
+ *
+ * This is what makes the spec's "HTTPS stays on its own default until the
+ * user sets it explicitly" sentence actually true -- without this, there was
+ * no way to set it at all, explicitly or otherwise.
+ */
+export function sanitizeHttpsPort(raw: unknown, warn: (msg: string) => void): number {
+    if (raw === undefined) return DEFAULT_HTTPS_PORT;
+    if (!isInteger(raw) || raw < 1 || raw > 65535) {
+        warn(`config.json: httpsPort must be an integer between 1 and 65535; using default ${DEFAULT_HTTPS_PORT}`);
+        return DEFAULT_HTTPS_PORT;
+    }
+    return raw;
+}
+
 export class Config {
     private static instance?: Config | undefined;
 
@@ -594,6 +652,10 @@ export class Config {
         fileConfig: FlatConfig,
         webPort: number,
         dataRoot: string | null,
+        // Resolved by the caller via sanitizeHttpsPort -- validated once,
+        // there, alongside allowedHosts/frameAncestors' identical pattern,
+        // rather than re-validated here on every call.
+        httpsPort: number,
         // Injectable so no test needs to touch this developer's real per-user
         // profile just to exercise Config.getInstance() -- matches the
         // resolveDataRoot/resolveDependenciesPath/resolveConfigPath pattern
@@ -634,7 +696,25 @@ export class Config {
             }
         }
 
-        return buildServerList({ httpPort: port, httpsPort: DEFAULT_HTTPS_PORT, certMaterial });
+        return buildServerList({ httpPort: port, httpsPort, certMaterial });
+    }
+
+    /**
+     * Test-only: exercises the private `buildServers` directly with an
+     * injected `env`, so a certificate-branch test can drive it without
+     * mutating this developer's real environment -- `vitest.setup.ts`
+     * redirects LOCALAPPDATA/HOME/USERPROFILE for the whole suite, which pins
+     * the ambient env to "no certificate" and makes the branch otherwise
+     * unreachable from a test (review fix round 2, I1/M1).
+     */
+    public static _buildServersForTest(
+        fileConfig: FlatConfig,
+        webPort: number,
+        dataRoot: string | null,
+        httpsPort: number,
+        env: NodeJS.ProcessEnv,
+    ): ServerItem[] {
+        return Config.buildServers(fileConfig, webPort, dataRoot, httpsPort, env);
     }
 
     private static parseServerItem(config: Partial<ServerItem> = {}): ServerItem {
@@ -734,7 +814,8 @@ export class Config {
             // false — and the overlay must defer to a user who wrote one.
             const firstRunExplicit = fileConfig.firstRunComplete !== undefined;
 
-            const servers = Config.buildServers(fileConfig, appConfig.webPort, dataRoot, process.env);
+            const httpsPort = sanitizeHttpsPort(fileConfig.httpsPort, warn);
+            const servers = Config.buildServers(fileConfig, appConfig.webPort, dataRoot, httpsPort, process.env);
 
             // An app_settings override of dependenciesPath/adbPath is overlaid for
             // downstream consumers (the adb spawn path) AFTER the DB opens — it
@@ -1215,13 +1296,13 @@ export class Config {
      */
     public saveToDisk(): void {
         // config.json holds ONLY the boot trio now. Preserve the server-only boot
-        // fields (`server` SSL array, `allowedHosts`, `frameAncestors`) that live
-        // in the file but aren't part of AppConfig — re-read them so a save never
-        // drops them.
+        // fields (`server` SSL array, `allowedHosts`, `frameAncestors`, `httpsPort`)
+        // that live in the file but aren't part of AppConfig — re-read them so a
+        // save never drops them.
         const preserved: Record<string, unknown> = {};
         try {
             const existing = JSON.parse(fs.readFileSync(this._configFilePath, 'utf-8')) as Record<string, unknown>;
-            for (const k of ['server', 'allowedHosts', 'frameAncestors']) {
+            for (const k of ['server', 'allowedHosts', 'frameAncestors', 'httpsPort']) {
                 if (existing[k] !== undefined) preserved[k] = existing[k];
             }
         } catch {
