@@ -3026,15 +3026,30 @@ independently written one — which is what closes a spoofed-`Host` open redirec
 and the Host policy can never quietly disagree. The response is `302` (not `301`, so a browser never
 caches the redirect past the user turning the mode back off) with `Cache-Control: no-store`.
 
-`GET /api/tls/state` reports the same listener truth the request handler acts on —
-`httpsListening`/`httpsBoundPort`/`httpsBindFailed`, from `getHttpsListenerStatus()` — rather than
-only "does a certificate exist on disk". Those two facts can disagree in at least four ways: right
-after `generate()` (the listener set is built once at boot, so a brand-new certificate has no
-listener until a restart); an advanced `config.json` `server` array in use (the generated HTTPS entry
-is never added, restart or not); `httpsPort` colliding with the HTTP port (`Config.buildServers`
-skips the HTTPS entry for that boot); and a genuine bind failure, tracked by a listen-error handler
-attached to every HTTPS listener. Without that distinction the panel could report "streaming already
-works" in a state where nothing is actually bound to the port.
+`GET /api/tls/state` reports the same listener truth the request handler acts on, through a small
+`httpsListener: { bound, port?, reason? }` field (`TlsApi.ts`'s `buildHttpsListenerField`, a pure
+function over `getHttpsListenerStatus()` plus two `Config` facts) — rather than only "does a
+certificate exist on disk." **Reality always wins:** `bound: true` reports the actually-bound port and
+no `reason` at all, regardless of what config or certificate state would otherwise imply. When nothing
+is bound, exactly one of four reasons explains why, in this priority order:
+
+| `reason` | Means | Priority |
+|---|---|---|
+| `bind-failed` | A secure entry was configured and the listener broke (port already in use, etc.) | Highest — a secure entry genuinely *was* going to exist |
+| `config-override` | An advanced `server` array in `config.json` bypasses the generated entry entirely | |
+| `port-collision` | `httpsPort` equals the plain-HTTP port, so `Config.buildServers` skipped the entry | |
+| `restart-required` | A usable certificate exists on disk; nothing else explains the gap — the listener set is built once at boot and simply has not picked it up yet | Lowest — the ordinary case |
+
+No `reason` at all means no certificate exists and none of the above applies. `/state` also always
+returns a separate top-level `httpsPort` — the **configured** port, post-`sanitizeHttpsPort`, used for
+the panel's port-field prefill — which is independent of `httpsListener.port` (present only when
+actually bound, and can differ for an ephemeral `port: 0` entry).
+
+`src/app/client/settings/tabs/ServerTab.ts`'s `listenerStatusNotice()` renders exactly these four
+reasons as four distinct messages, replacing an earlier unconditional "streaming already works" the
+moment a certificate existed on disk — which was false in all four of these states, and whose only
+offered remedy at the time (regenerate) is actively harmful there: it deletes a CA that may already be
+installed on other devices, and the certificate was never the actual problem in any of the four.
 
 ### 28.4 The four mkcert invocation requirements
 
