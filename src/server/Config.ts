@@ -20,7 +20,14 @@ import { clampScanConcurrency, DEFAULT_SCAN_CONCURRENCY } from './fdBudget';
 import { Logger } from './Logger';
 import { parseFrameAncestorOrigin, setFrameAncestors } from './security/frameGuard';
 import { setAllowedHosts } from './security/originGuard';
+import { resolveCertPaths } from './tls/certPaths';
 import { writeFileAtomicSync } from './util/atomicFile';
+
+/**
+ * HTTPS default. Deliberately not derived from the HTTP port -- the two ports
+ * are independent (see buildServerList's doc comment).
+ */
+export const DEFAULT_HTTPS_PORT = 8443;
 
 // DEFAULT_SCAN_CONCURRENCY lives in fdBudget.ts, beside the cap it is tuned against.
 const DEFAULT_SCAN_TCP_TIMEOUT_MS = 300;
@@ -234,6 +241,70 @@ export function resolveConfigPath(
 
 function isInteger(n: unknown): n is number {
     return typeof n === 'number' && Number.isInteger(n);
+}
+
+/**
+ * Probes whether BOTH the cert and the key can actually be opened, rather than
+ * merely exist. `Config.parseServerItem` reads `options.certPath`/`keyPath`
+ * with no try, during Config construction -- so a file that EXISTS but cannot
+ * be READ (a wrong ACL after a profile move, a half-written file mid-generation,
+ * a bind mount that lost its permissions) would otherwise throw before the app
+ * has any listener at all. A readable cert with an unreadable key fails in
+ * exactly the same place, so both are probed.
+ *
+ * Never throws: an optional feature (HTTPS) must never be able to stop the app
+ * starting. `readFile` is injectable so tests don't need a real unreadable
+ * file, which is not portably creatable on Windows.
+ */
+export function probeCertReadable(
+    certFile: string,
+    keyFile: string,
+    readFile: (p: string) => string = (p) => fs.readFileSync(p, 'utf-8'),
+): boolean {
+    try {
+        readFile(certFile);
+        readFile(keyFile);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+export interface BuildServerListOpts {
+    httpPort: number;
+    httpsPort: number;
+    /** Whether both certFile and keyFile were confirmed READABLE (see probeCertReadable) -- not merely present. */
+    certExists: boolean;
+    certFile: string;
+    keyFile: string;
+}
+
+/**
+ * The listener set. HTTP is always present -- the HTTPS entry is added only
+ * when a certificate actually exists on disk (and, per `certExists`'s
+ * contract, is readable).
+ *
+ * The two ports are INDEPENDENT. Setting HTTP to 80 does not imply HTTPS 443;
+ * HTTPS stays on its own default (DEFAULT_HTTPS_PORT) until the user sets it
+ * explicitly. Coupling them would move a port the user never touched.
+ *
+ * A missing or unreadable certificate yields HTTP alone rather than a boot
+ * failure: an optional feature must never be able to stop the app starting.
+ *
+ * Named `buildServerList` rather than `buildServers` -- the private static
+ * `Config.buildServers` below already owns that name in this file.
+ */
+export function buildServerList(opts: BuildServerListOpts): ServerItem[] {
+    const http: ServerItem = { secure: false, port: opts.httpPort };
+    if (!opts.certExists) return [http];
+    return [
+        http,
+        {
+            secure: true,
+            port: opts.httpsPort,
+            options: { certPath: opts.certFile, keyPath: opts.keyFile },
+        },
+    ];
 }
 
 /**
@@ -501,7 +572,7 @@ export class Config {
         }
     }
 
-    private static buildServers(fileConfig: FlatConfig, webPort: number): ServerItem[] {
+    private static buildServers(fileConfig: FlatConfig, webPort: number, dataRoot: string | null): ServerItem[] {
         // Env var PORT takes highest priority
         const envPort = process.env['PORT'];
         const port = envPort ? Number.parseInt(envPort, 10) : webPort;
@@ -515,8 +586,31 @@ export class Config {
             return servers;
         }
 
-        // Simple flat config: single HTTP server
-        return [{ secure: false, port }];
+        // Simple flat config: HTTP always; HTTPS joins it once a readable
+        // certificate exists on disk. `dataRoot` can be null on a non-Windows
+        // host with neither DATA_ROOT/XDG_DATA_HOME/HOME set -- HTTPS is
+        // optional, so that just means no usable per-user TLS directory and
+        // HTTP alone, same as resolveCertPaths throwing for any other reason.
+        let certExists = false;
+        let certFile = '';
+        let keyFile = '';
+        if (dataRoot) {
+            try {
+                const paths = resolveCertPaths({
+                    platform: process.platform,
+                    dataRoot,
+                    localAppData: process.env['LOCALAPPDATA'],
+                    home: process.env['HOME'] || process.env['USERPROFILE'],
+                });
+                certFile = paths.certFile;
+                keyFile = paths.keyFile;
+                certExists = probeCertReadable(certFile, keyFile);
+            } catch {
+                // No usable per-user TLS directory -- fall through to HTTP alone.
+            }
+        }
+
+        return buildServerList({ httpPort: port, httpsPort: DEFAULT_HTTPS_PORT, certExists, certFile, keyFile });
     }
 
     private static parseServerItem(config: Partial<ServerItem> = {}): ServerItem {
@@ -616,7 +710,7 @@ export class Config {
             // false — and the overlay must defer to a user who wrote one.
             const firstRunExplicit = fileConfig.firstRunComplete !== undefined;
 
-            const servers = Config.buildServers(fileConfig, appConfig.webPort);
+            const servers = Config.buildServers(fileConfig, appConfig.webPort, dataRoot);
 
             // An app_settings override of dependenciesPath/adbPath is overlaid for
             // downstream consumers (the adb spawn path) AFTER the DB opens — it
