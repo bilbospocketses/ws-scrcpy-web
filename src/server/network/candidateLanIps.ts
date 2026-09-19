@@ -47,6 +47,18 @@ import type { NetworkInterfaceInfo } from 'os';
  * result is identical to calling this with no preference at all. Every
  * candidate is still returned either way -- this reorders, it never drops
  * (spec §6's "the field shows every candidate", not just the winner).
+ *
+ * UNUSED IN PRODUCTION TODAY (team-lead's ruling, whole-branch review): the
+ * one real default-route detector in this repo, `SubnetDetector.detectSubnet()`,
+ * spawns `route print`/`ip route` per call with a 3s timeout -- wiring that
+ * into `/api/tls/state`/`/generate`'s synchronous response path would trade
+ * this branch's solved problem (a slow, honest truth) for a new one (a
+ * fast, occasionally-timing-out lie), and endpoint AV sitting in the
+ * process-creation path on this machine makes "cheap spawn" not actually
+ * cheap. Spec §6 is satisfied without it: the panel already renders every
+ * candidate and the user picks. Do not delete this parameter as dead code,
+ * and do not wire it in without a caching + async design pass first -- it
+ * is a capability kept ready, not an oversight.
  */
 export function candidateLanIps(interfaces: NodeJS.Dict<NetworkInterfaceInfo[]>, preferredAddress?: string): string[] {
     const out = new Set<string>();
