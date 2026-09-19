@@ -3,6 +3,7 @@ import {
     getArch,
     getDependencyDefinitions,
     getPlatform,
+    MKCERT_SHA256SUMS_PIN,
     mkcertChecksumsAssetName,
     mkcertChecksumsUrl,
     NODE_LTS_ABI,
@@ -318,5 +319,15 @@ describe('mkcertChecksumsAssetName / mkcertChecksumsUrl (I8)', () => {
         expect(url).toBe(
             'https://github.com/bilbospocketses/mkcert/releases/download/v1.4.4-bt.2/mkcert-v1.4.4-bt.2-SHA256SUMS.txt',
         );
+    });
+});
+
+describe('MKCERT_SHA256SUMS_PIN', () => {
+    it("is shaped like a lowercase SHA-256 hex digest, matching what createHash('sha256').digest('hex') produces", () => {
+        // Shape only, not the exact value: the value legitimately changes on
+        // every MKCERT_VERSION bump, and a test pinning it to itself would
+        // be a change-detector that breaks the moment the pin is updated
+        // for a real reason, proving nothing about correctness.
+        expect(MKCERT_SHA256SUMS_PIN).toMatch(/^[0-9a-f]{64}$/);
     });
 });
