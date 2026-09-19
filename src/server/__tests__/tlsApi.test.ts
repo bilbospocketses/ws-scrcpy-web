@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { TlsApi } from '../api/TlsApi';
 import { Config } from '../Config';
+import { Logger } from '../Logger';
 import { HTTP_EXPOSURE_KEY } from '../tls/httpExposure';
 import { makeReqRes } from './helpers/httpMock';
 
@@ -16,6 +17,17 @@ vi.mock('../Config', async (importOriginal) => {
     const actual = await importOriginal<typeof import('../Config')>();
     return { ...actual, Config: { getInstance: vi.fn() } };
 });
+
+// C1 (whole-branch review): TlsApi now reads listener truth from HttpServer's
+// getHttpsListenerStatus(). Defaults to "nothing bound" so every EXISTING
+// /state test below, which never configures this, keeps behaving exactly as
+// the real function does when nothing is listening -- only the tests that
+// care about it override the return value per case.
+vi.mock('../services/HttpServer', () => ({
+    getHttpsListenerStatus: vi.fn(() => ({ listening: false, bindFailed: false })),
+}));
+
+import { getHttpsListenerStatus } from '../services/HttpServer';
 
 function makeApi(over: Record<string, unknown> = {}, candidateIps: string[] = ['192.168.86.3']) {
     const svc = {
@@ -126,6 +138,77 @@ describe('TlsApi', () => {
         expect(JSON.stringify(r.getJson())).not.toContain('evil.com');
     });
 
+    // --- I3 (Important, whole-branch review): every generate failure used to
+    // collapse into one 400 blaming the user's address, with NO server log --
+    // a bad subject, a missing mkcert binary, a crash, a full disk and a
+    // permissions error were all indistinguishable, and mkcert's stderr
+    // (which CertService puts into the thrown message) was discarded at both
+    // ends. Distinguish a REJECTED SUBJECT (400, the user can act on it) from
+    // an EXECUTION FAILURE (500, it is not their fault), and log the real
+    // cause server-side either way -- the no-echo-to-the-client constraint is
+    // unchanged (asserted above and again below). ---
+
+    describe('generate failure classification and server-side logging (I3)', () => {
+        it('a rejected-subject-shaped message is still a 400 -- the original contract, unaffected -- AND is now logged server-side', async () => {
+            const generate = vi.fn().mockRejectedValue(new Error('invalid certificate subject: "-Hevil.com"'));
+            const { api } = makeApi({ generate });
+            const warnSpy = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+            const errorSpy = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+            const r = makeReqRes('POST', '/api/tls/generate', { kind: 'ip', value: '-Hevil.com' });
+            await api.handle(r.req, r.res);
+
+            expect(r.getStatus()).toBe(400);
+            expect(JSON.stringify(r.getJson())).not.toContain('evil.com');
+            // Logged (server-side only -- never sent to the client): the
+            // real cause exists SOMEWHERE now, closing "an admin whose
+            // generate fails has no diagnostic anywhere".
+            expect(warnSpy.mock.calls.flat().join(' ')).toContain('invalid certificate subject');
+            expect(errorSpy).not.toHaveBeenCalled();
+        });
+
+        // Paired with the test above: a DIFFERENT message shape -- the exact
+        // kind mkcert's own non-zero exit, a missing binary, or a crash
+        // produces -- must come out as 500, not 400, and log.error (not
+        // log.warn). A version that always answered 400 for every generate
+        // failure would pass the test above and fail this one.
+        it('any other failure (mkcert exit, missing binary, crash, disk, permissions) is a 500, logged via log.error with the real cause', async () => {
+            const generate = vi.fn().mockRejectedValue(new Error('mkcert failed (exit 1): permission denied'));
+            const { api } = makeApi({ generate });
+            const warnSpy = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+            const errorSpy = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+            const r = makeReqRes('POST', '/api/tls/generate', { kind: 'ip', value: '192.168.86.3' });
+            await api.handle(r.req, r.res);
+
+            expect(r.getStatus()).toBe(500);
+            expect(errorSpy.mock.calls.flat().join(' ')).toContain('permission denied');
+            expect(warnSpy).not.toHaveBeenCalled();
+        });
+
+        it('never echoes the caller-supplied value into the client response body, even for a 500', async () => {
+            const generate = vi.fn().mockRejectedValue(new Error('mkcert failed (exit 1): stderr mentions -Hevil.com'));
+            const { api } = makeApi({ generate });
+            vi.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+            const r = makeReqRes('POST', '/api/tls/generate', { kind: 'ip', value: '-Hevil.com' });
+            await api.handle(r.req, r.res);
+
+            expect(r.getStatus()).toBe(500);
+            expect(JSON.stringify(r.getJson())).not.toContain('evil.com');
+        });
+
+        it('an ENOENT-shaped spawn failure (missing mkcert binary) is a 500, not a 400', async () => {
+            const generate = vi
+                .fn()
+                .mockRejectedValue(Object.assign(new Error('spawn mkcert.exe ENOENT'), { code: 'ENOENT' }));
+            const { api } = makeApi({ generate });
+            const errorSpy = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+            const r = makeReqRes('POST', '/api/tls/generate', { kind: 'ip', value: '192.168.86.3' });
+            await api.handle(r.req, r.res);
+
+            expect(r.getStatus()).toBe(500);
+            expect(errorSpy.mock.calls.flat().join(' ')).toContain('ENOENT');
+        });
+    });
+
     it('returns the new state on a successful generate', async () => {
         const { api } = makeApi();
         const r = makeReqRes('POST', '/api/tls/generate', { kind: 'ip', value: '192.168.86.3' });
@@ -225,6 +308,113 @@ describe('TlsApi', () => {
             await api.handle(r.req, r.res);
             expect(r.getStatus()).toBe(200);
             expect((r.getJson() as { httpExposure: string }).httpExposure).toBe('open');
+        });
+    });
+
+    // --- C1 (Critical, whole-branch review): GET /api/tls/state must report
+    // LISTENER truth, not just certificate-on-disk truth. Without this, the
+    // panel claimed "streaming already works" in four states where nothing
+    // was bound to the HTTPS port -- most importantly, immediately after a
+    // successful generate, whose only offered remedy (regenerate) destroys
+    // the CA the user may have just installed on their phone. ---
+
+    describe('listener truth on GET /api/tls/state (C1)', () => {
+        type StateJson = {
+            httpsListening: boolean;
+            httpsBoundPort?: number;
+            httpsBindFailed: boolean;
+            httpsAdvancedConfig: boolean;
+            httpsConfiguredPort?: number;
+            httpsPortCollision: boolean;
+        };
+
+        async function stateJson(): Promise<StateJson> {
+            const { api } = makeApi();
+            const r = makeReqRes('GET', '/api/tls/state');
+            await api.handle(r.req, r.res);
+            expect(r.getStatus()).toBe(200);
+            return r.getJson() as StateJson;
+        }
+
+        it('reports genuinely listening with the real bound port, and NOT listening when nothing is bound -- the core contrast', async () => {
+            vi.mocked(getHttpsListenerStatus).mockReturnValueOnce({
+                listening: true,
+                boundPort: 8443,
+                bindFailed: false,
+            });
+            const listening = await stateJson();
+            expect(listening.httpsListening).toBe(true);
+            expect(listening.httpsBoundPort).toBe(8443);
+
+            // Same route, no certificate change, nothing bound this time --
+            // a hardcoded `httpsListening: true` would pass the case above
+            // and fail this one.
+            vi.mocked(getHttpsListenerStatus).mockReturnValueOnce({ listening: false, bindFailed: false });
+            const notListening = await stateJson();
+            expect(notListening.httpsListening).toBe(false);
+            expect(notListening.httpsBoundPort).toBeUndefined();
+        });
+
+        it('distinguishes "configured but failed to bind" from "never configured at all" -- case 4 vs cases 1-3', async () => {
+            vi.mocked(getHttpsListenerStatus).mockReturnValueOnce({ listening: false, bindFailed: true });
+            const failed = await stateJson();
+            expect(failed.httpsBindFailed).toBe(true);
+
+            vi.mocked(getHttpsListenerStatus).mockReturnValueOnce({ listening: false, bindFailed: false });
+            const neverConfigured = await stateJson();
+            expect(neverConfigured.httpsBindFailed).toBe(false);
+        });
+
+        it('reports httpsAdvancedConfig from Config, true vs false -- case 2 (config.json overrides this, no restart will help)', async () => {
+            vi.mocked(Config.getInstance).mockReturnValue({
+                usesAdvancedServerConfig: true,
+                httpsPort: undefined,
+                servers: [{ secure: false, port: 8000 }],
+            } as never);
+            const advanced = await stateJson();
+            expect(advanced.httpsAdvancedConfig).toBe(true);
+            expect(advanced.httpsConfiguredPort).toBeUndefined();
+
+            vi.mocked(Config.getInstance).mockReturnValue({
+                usesAdvancedServerConfig: false,
+                httpsPort: 8443,
+                servers: [{ secure: false, port: 8000 }],
+            } as never);
+            const ordinary = await stateJson();
+            expect(ordinary.httpsAdvancedConfig).toBe(false);
+            expect(ordinary.httpsConfiguredPort).toBe(8443);
+        });
+
+        it('reports httpsPortCollision true only when the configured httpsPort equals the actual http port -- case 3', async () => {
+            vi.mocked(Config.getInstance).mockReturnValue({
+                usesAdvancedServerConfig: false,
+                httpsPort: 8000,
+                servers: [{ secure: false, port: 8000 }],
+            } as never);
+            const colliding = await stateJson();
+            expect(colliding.httpsPortCollision).toBe(true);
+
+            // Same shape, DIFFERENT httpsPort -- a hardcoded `true` (or a
+            // check that only looked at whether httpsPort was SET, never
+            // comparing it to the http port) would pass the case above and
+            // fail this one.
+            vi.mocked(Config.getInstance).mockReturnValue({
+                usesAdvancedServerConfig: false,
+                httpsPort: 8443,
+                servers: [{ secure: false, port: 8000 }],
+            } as never);
+            const notColliding = await stateJson();
+            expect(notColliding.httpsPortCollision).toBe(false);
+        });
+
+        it('is safe by default (not listening, no collision) when Config.getInstance() itself throws -- matches every other /state test in this file', async () => {
+            vi.mocked(Config.getInstance).mockImplementation(() => {
+                throw new Error('ENOENT: config.json');
+            });
+            const json = await stateJson();
+            expect(json.httpsAdvancedConfig).toBe(false);
+            expect(json.httpsConfiguredPort).toBeUndefined();
+            expect(json.httpsPortCollision).toBe(false);
         });
     });
 

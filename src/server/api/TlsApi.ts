@@ -4,6 +4,7 @@ import { requireAdmin } from '../auth/requireAdmin';
 import { Config, validateHttpsPortInput } from '../Config';
 import { Logger } from '../Logger';
 import { candidateLanIps } from '../network/candidateLanIps';
+import { getHttpsListenerStatus } from '../services/HttpServer';
 import type { CertService, CertState, CertSubjectKind } from '../tls/CertService';
 import type { HttpExposure } from '../tls/httpExposure';
 import { HTTP_EXPOSURE_KEY } from '../tls/httpExposure';
@@ -54,6 +55,41 @@ function readHttpExposureForState(): HttpExposure {
     }
 }
 
+/** The config-derived half of `GET /api/tls/state`'s listener-truth fields (C1). */
+interface HttpsConfigSnapshot {
+    /** True when config.json's advanced `server` array is in use -- no restart, ever, adds a generated HTTPS entry in this mode (case 2). */
+    advancedConfig: boolean;
+    /** The target httpsPort Config resolved at boot (`Config.httpsPort`), undefined when `advancedConfig` is true. */
+    configuredPort?: number | undefined;
+    /** True when `configuredPort` equals the effective http port -- `Config.buildServers`'s collision guard skips the HTTPS entry in this case (case 3). */
+    portCollision: boolean;
+}
+
+/**
+ * Reads `Config.getInstance()`'s server-only fields for `/state`'s
+ * listener-truth response -- deliberately safe-by-default (same shape
+ * `readHttpExposureForState` above uses) so a mocked or unreachable Config in
+ * a test that doesn't care about these fields never turns this route into a
+ * 500.
+ */
+function readHttpsConfigSnapshot(): HttpsConfigSnapshot {
+    try {
+        const cfg = Config.getInstance();
+        if (cfg.usesAdvancedServerConfig) {
+            return { advancedConfig: true, portCollision: false };
+        }
+        const httpPort = cfg.servers.find((s) => !s.secure)?.port;
+        const configuredPort = cfg.httpsPort;
+        return {
+            advancedConfig: false,
+            configuredPort,
+            portCollision: configuredPort !== undefined && httpPort !== undefined && httpPort === configuredPort,
+        };
+    } catch {
+        return { advancedConfig: false, portCollision: false };
+    }
+}
+
 export class TlsApi {
     /** Timestamps (ms) of recent CA-root downloads, oldest first. */
     private readonly caRootDownloads: number[] = [];
@@ -97,6 +133,19 @@ export class TlsApi {
             const svc = this.getService();
 
             if (req.method === 'GET' && pathname === `${PREFIX}/state`) {
+                // C1 (whole-branch review): listener truth, not just
+                // certificate-on-disk truth. `svc.getState()` alone let the
+                // panel claim "streaming already works" right after a
+                // generate with no listener bound yet, under an advanced
+                // `server` array that never gets one, when httpsPort collides
+                // with the http port, and after a bind failure -- four states
+                // where nothing is serving HTTPS. `getHttpsListenerStatus()`
+                // reads REALITY (HttpServer's bound/failed-port bookkeeping);
+                // `readHttpsConfigSnapshot()` reads the two Config facts that
+                // tell "restart required" apart from "config.json overrides
+                // this" apart from "the two ports collide".
+                const httpsStatus = getHttpsListenerStatus();
+                const httpsSnapshot = readHttpsConfigSnapshot();
                 res.setHeader('Content-Type', 'application/json');
                 res.writeHead(200);
                 res.end(
@@ -104,6 +153,12 @@ export class TlsApi {
                         ...svc.getState(),
                         candidateIps: this.getCandidateIps(),
                         httpExposure: readHttpExposureForState(),
+                        httpsListening: httpsStatus.listening,
+                        httpsBoundPort: httpsStatus.boundPort,
+                        httpsBindFailed: httpsStatus.bindFailed,
+                        httpsAdvancedConfig: httpsSnapshot.advancedConfig,
+                        httpsConfiguredPort: httpsSnapshot.configuredPort,
+                        httpsPortCollision: httpsSnapshot.portCollision,
                     }),
                 );
                 return true;
@@ -167,11 +222,39 @@ export class TlsApi {
                 let state: CertState;
                 try {
                     state = await svc.generate(kind, value);
-                } catch {
-                    // Deliberately does NOT echo the message: it can contain the
-                    // caller's own input, which would land in their DOM.
-                    res.writeHead(400);
-                    res.end(JSON.stringify({ error: 'that address could not be used for a certificate' }));
+                } catch (err) {
+                    // I3 (Important, whole-branch review): a bad subject, a
+                    // missing mkcert binary, a crash, a full disk and a
+                    // permissions error used to collapse into this one 400,
+                    // with NO log -- mkcert's stderr, which CertService puts
+                    // into the thrown message, was discarded at both ends.
+                    //
+                    // CertService's own pre-spawn validation is the only
+                    // thing that throws this exact message shape (see its
+                    // four `invalid certificate subject: ...` throw sites) --
+                    // everything else (a non-zero mkcert exit, the
+                    // half-constrained-CA guard, a spawn ENOENT/crash, an fs
+                    // failure from removeCaRoot/chmod) is an EXECUTION
+                    // failure, not the caller's fault, and answers 500.
+                    const message = err instanceof Error ? err.message : String(err);
+                    if (message.startsWith('invalid certificate subject')) {
+                        // Deliberately does NOT echo the message to the CLIENT:
+                        // it can contain the caller's own input, which would
+                        // land in their DOM. The server log below is a
+                        // DIFFERENT, first-party-only sink -- logging it there
+                        // is what makes a rejected subject diagnosable at all.
+                        log.warn(`generate refused: ${message}`);
+                        res.writeHead(400);
+                        res.end(JSON.stringify({ error: 'that address could not be used for a certificate' }));
+                        return true;
+                    }
+                    // Same no-echo constraint as the 400 branch above: mkcert's
+                    // stderr can itself contain the caller's subject.
+                    log.error(`generate failed: ${message}`);
+                    res.writeHead(500);
+                    res.end(
+                        JSON.stringify({ error: 'certificate generation failed; see the server logs for the cause' }),
+                    );
                     return true;
                 }
 

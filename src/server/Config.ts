@@ -893,6 +893,14 @@ export class Config {
             // false — and the overlay must defer to a user who wrote one.
             const firstRunExplicit = fileConfig.firstRunComplete !== undefined;
 
+            // C1 (whole-branch review): whether an advanced `server` array is
+            // in use -- mirrors the EXACT condition `Config.buildServers`
+            // branches on below, so the two can never disagree about what
+            // "advanced" means. When true, `buildServers` returns the array
+            // verbatim and NEVER adds a generated HTTPS entry for a
+            // certificate this app manages, restart or not -- `/api/tls/state`
+            // needs this to tell that apart from "restart required".
+            const usesAdvancedServerConfig = Boolean(fileConfig.server && fileConfig.server.length > 0);
             const httpsPort = sanitizeHttpsPort(fileConfig.httpsPort, warn);
             const servers = Config.buildServers(fileConfig, appConfig.webPort, dataRoot, httpsPort, process.env, warn);
 
@@ -974,6 +982,12 @@ export class Config {
                 dataRoot,
                 allowedHosts,
                 frameAncestors,
+                // Advanced config never gets a single "target httpsPort" --
+                // there may be several entries, or none at all, and
+                // Config.buildServers never consults this value in that mode.
+                // undefined here is what makes that true for a caller (C1).
+                usesAdvancedServerConfig ? undefined : httpsPort,
+                usesAdvancedServerConfig,
                 db,
                 dockerMode,
                 firstRunExplicit,
@@ -1001,6 +1015,8 @@ export class Config {
         private readonly _dataRoot: string | null,
         private readonly _allowedHosts: string[],
         private readonly _frameAncestors: string[],
+        private readonly _httpsPort: number | undefined,
+        private readonly _usesAdvancedServerConfig: boolean,
         private readonly _db: Db,
         private readonly _dockerMode: boolean = false,
         firstRunExplicit: boolean = false,
@@ -1110,6 +1126,30 @@ export class Config {
      */
     public get frameAncestors(): string[] {
         return this._frameAncestors;
+    }
+
+    /**
+     * The target HTTPS port resolved at boot (see `sanitizeHttpsPort`), or
+     * `undefined` when `usesAdvancedServerConfig` is true -- an advanced
+     * `server` array may hold several secure entries or none, so there is no
+     * single "the" httpsPort to report in that mode (C1, whole-branch
+     * review). Resolved ONCE at boot, like `servers` itself -- does not
+     * re-read config.json on every call.
+     */
+    public get httpsPort(): number | undefined {
+        return this._httpsPort;
+    }
+
+    /**
+     * True when config.json's advanced `server` array is in use. Mirrors the
+     * exact condition `Config.buildServers` branches on, so the two can never
+     * disagree about what "advanced" means -- in that mode `buildServers`
+     * returns the array verbatim and NEVER adds a generated HTTPS entry for a
+     * certificate this app manages, restart or not. `/api/tls/state` needs
+     * this to tell that apart from "restart required" (C1).
+     */
+    public get usesAdvancedServerConfig(): boolean {
+        return this._usesAdvancedServerConfig;
     }
 
     /**
