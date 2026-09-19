@@ -185,7 +185,7 @@ Required for building from source. See [Self-Contained Deployment](#self-contain
 - **Node.js** 24 LTS or later
 - **ADB** — nothing to install. The dependency manager downloads ADB into the app's own `dependencies/` folder on first run and invokes it by absolute path; **`PATH` is deliberately never consulted**, so putting ADB on `PATH` will not make the app find it (see [CONTRIBUTING](CONTRIBUTING.md))
 - **Android device** with USB debugging or wireless debugging enabled
-- **A secure browsing context for streaming** — `https://`, or `http://localhost` / `http://127.0.0.1`. The video decoder the player uses (WebCodecs) is exposed only in a secure context, so reaching the app at `http://<lan-ip>:8000` lists devices but offers no connect link; the device card explains this and names the loopback URL to open instead. Browser flags do not work around it — Chromium's `--unsafely-treat-insecure-origin-as-secure` was measured not to restore `VideoDecoder`. Put the app behind a TLS reverse proxy to stream from another machine.
+- **A secure browsing context for streaming** — `https://`, or `http://localhost` / `http://127.0.0.1`. The video decoder the player uses (WebCodecs) is exposed only in a secure context, so reaching the app at `http://<lan-ip>:8000` lists devices but offers no connect link; the device card explains this and names the loopback URL to open instead. Browser flags do not work around it — Chromium's `--unsafely-treat-insecure-origin-as-secure` was measured not to restore `VideoDecoder`. To stream from another machine, turn on **Local HTTPS** (Settings → Server → Local HTTPS) for the quickest fix on your own LAN, or put the app behind a real TLS reverse proxy for anything beyond one.
 
 ## Quick Start (Developer Mode)
 
