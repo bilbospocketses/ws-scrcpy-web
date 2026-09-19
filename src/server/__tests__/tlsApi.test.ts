@@ -35,6 +35,11 @@ function makeApi(over: Record<string, unknown> = {}, candidateIps: string[] = ['
         generate: vi.fn(async () => ({ status: 'ready', subject: '192.168.86.3', kind: 'ip' })),
         caRootPem: vi.fn(() => '-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n'),
         revoke: vi.fn(),
+        // NF-1: undefined by default (no basis for a staleness comparison),
+        // same fail-safe default buildHttpsListenerField itself falls back
+        // to -- existing /state and /generate tests that don't care about
+        // this stay unaffected.
+        currentLeafFingerprint: vi.fn((): string | undefined => undefined),
         ...over,
     };
     return {
@@ -341,6 +346,67 @@ describe('TlsApi', () => {
             ).toEqual({ bound: true, port: 8443 });
         });
 
+        // NF-1 (Critical, re-review): THE REGENERATE JOURNEY, as a state
+        // transition, not a unit -- the previous C1 attempt passed because it
+        // never exercised this. A listener bound with leaf A's fingerprint;
+        // the CURRENT leaf (what CertService reads off disk right now) is
+        // B's. `bound: true` alone used to mean "working"; it no longer does
+        // -- the socket is live, but it is still serving the CA-signed leaf
+        // that `generate()` just replaced on disk, and every device trusting
+        // the NEW CA gets a certificate that matches nothing being served.
+        describe('leaf staleness -- bound can be true while restart-required also applies', () => {
+            it('bound stays true, but reason becomes restart-required, when the bound leaf differs from the current one', () => {
+                expect(
+                    buildHttpsListenerField(
+                        { listening: true, boundPort: 8443, bindFailed: false, leafFingerprint: 'AAAA' },
+                        { advancedConfig: false, portCollision: false },
+                        true,
+                        'BBBB',
+                    ),
+                ).toEqual({ bound: true, port: 8443, reason: 'restart-required' });
+            });
+
+            // Paired with the test above: the SAME bound leaf as the CURRENT
+            // one must NOT report a reason -- a version that always attached
+            // restart-required once fingerprints existed at all (rather than
+            // genuinely comparing them) would pass the case above and fail
+            // this one.
+            it('no reason at all when the bound leaf matches the current one', () => {
+                expect(
+                    buildHttpsListenerField(
+                        { listening: true, boundPort: 8443, bindFailed: false, leafFingerprint: 'AAAA' },
+                        { advancedConfig: false, portCollision: false },
+                        true,
+                        'AAAA',
+                    ),
+                ).toEqual({ bound: true, port: 8443 });
+            });
+
+            // Fail-safe: with no basis for comparison (either side unknown),
+            // do not claim staleness -- that would be a NEW false claim in
+            // the opposite direction, and this is exactly today's untouched
+            // behaviour for a listener whose cert content wasn't parseable.
+            it('does not claim staleness when either fingerprint is unavailable', () => {
+                expect(
+                    buildHttpsListenerField(
+                        { listening: true, boundPort: 8443, bindFailed: false, leafFingerprint: undefined },
+                        { advancedConfig: false, portCollision: false },
+                        true,
+                        'BBBB',
+                    ),
+                ).toEqual({ bound: true, port: 8443 });
+
+                expect(
+                    buildHttpsListenerField(
+                        { listening: true, boundPort: 8443, bindFailed: false, leafFingerprint: 'AAAA' },
+                        { advancedConfig: false, portCollision: false },
+                        true,
+                        undefined,
+                    ),
+                ).toEqual({ bound: true, port: 8443 });
+            });
+        });
+
         // Precedence, REVERTED to the original ordering after N3 (re-review):
         // bind-failed beats config-override beats port-collision beats
         // restart-required. Team-lead's intermediate ruling ("report the
@@ -538,6 +604,47 @@ describe('TlsApi', () => {
             expect(json.httpsListener.bound).toBe(false);
             expect(typeof json.httpsPort).toBe('number');
         });
+
+        // NF-1 (Critical, re-review), wired end to end through the real
+        // route: the regenerate journey as a state transition. A listener
+        // bound with one leaf's fingerprint; CertService now reads a
+        // DIFFERENT leaf off disk (a regenerate just replaced it). bound
+        // stays true (the socket really is live) but reason must say
+        // restart-required -- this is what stops "streaming already works
+        // either way" from being shown while the server serves a CA-signed
+        // leaf the user's freshly-installed CA does not match.
+        it('reports restart-required (with bound still true) when the bound leaf differs from what CertService reads now', async () => {
+            vi.mocked(getHttpsListenerStatus).mockReturnValueOnce({
+                listening: true,
+                boundPort: 8443,
+                bindFailed: false,
+                leafFingerprint: 'AA:BB:CC',
+            });
+            const { api, svc } = makeApi({ currentLeafFingerprint: vi.fn(() => 'DD:EE:FF') });
+            const r = makeReqRes('GET', '/api/tls/state');
+            await api.handle(r.req, r.res);
+            expect(svc.currentLeafFingerprint).toHaveBeenCalled();
+            const json = r.getJson() as { httpsListener: { bound: boolean; reason?: string } };
+            expect(json.httpsListener).toEqual({ bound: true, port: 8443, reason: 'restart-required' });
+        });
+
+        // Paired: the SAME bound leaf as what CertService reads now must NOT
+        // report a reason -- a version that always attached restart-required
+        // once both fingerprints existed would pass the case above and fail
+        // this one.
+        it('reports bound with no reason when the bound leaf matches what CertService reads now', async () => {
+            vi.mocked(getHttpsListenerStatus).mockReturnValueOnce({
+                listening: true,
+                boundPort: 8443,
+                bindFailed: false,
+                leafFingerprint: 'AA:BB:CC',
+            });
+            const { api } = makeApi({ currentLeafFingerprint: vi.fn(() => 'AA:BB:CC') });
+            const r = makeReqRes('GET', '/api/tls/state');
+            await api.handle(r.req, r.res);
+            const json = r.getJson() as { httpsListener: { bound: boolean; reason?: string } };
+            expect(json.httpsListener).toEqual({ bound: true, port: 8443 });
+        });
     });
 
     // --- C3 (Task 8 review, task 11 addendum): POST /api/tls/generate must
@@ -722,6 +829,32 @@ describe('TlsApi', () => {
             expect(json['candidateIps']).toEqual(['192.168.86.3']);
             expect(json['allowedHostAdded']).toBe(false);
             expect(json['httpsListener']).toEqual({ bound: false, reason: 'restart-required' });
+        });
+
+        // NF-1 (Critical, re-review): THE REGENERATE JOURNEY, through the
+        // real /generate route. A listener already bound (an earlier
+        // certificate is live); this generate call just wrote a NEW leaf to
+        // disk (CertService.currentLeafFingerprint() now reads the new one).
+        // The panel reads THIS response, not a re-fetched /state -- it must
+        // see restart-required here, with bound still true, or it tells the
+        // user streaming already works while serving the CA-signed leaf
+        // that was just replaced.
+        it('reports restart-required (bound still true) after a regenerate replaces an already-bound leaf', async () => {
+            vi.mocked(getHttpsListenerStatus).mockReturnValueOnce({
+                listening: true,
+                boundPort: 8443,
+                bindFailed: false,
+                leafFingerprint: 'OLD:LEAF',
+            });
+            const generate = vi.fn(async () => ({ status: 'ready', subject: '192.168.86.3', kind: 'ip' }));
+            const { api, svc } = makeApi({ generate, currentLeafFingerprint: vi.fn(() => 'NEW:LEAF') }, [
+                '192.168.86.3',
+            ]);
+            const r = makeReqRes('POST', '/api/tls/generate', { kind: 'ip', value: '192.168.86.3' });
+            await api.handle(r.req, r.res);
+            expect(svc.currentLeafFingerprint).toHaveBeenCalled();
+            const json = r.getJson() as { httpsListener: { bound: boolean; port?: number; reason?: string } };
+            expect(json.httpsListener).toEqual({ bound: true, port: 8443, reason: 'restart-required' });
         });
     });
 

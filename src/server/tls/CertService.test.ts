@@ -514,6 +514,57 @@ describe('CertService.getState', () => {
     });
 });
 
+// NF-1 (Critical, re-review): the HTTPS listener is created ONCE at boot
+// with whatever leaf content Config.servers held then; a later generate()
+// replaces the file on disk, but the listener keeps serving the OLD leaf
+// until a restart -- `bound: true` on its own no longer means "serving the
+// CURRENT certificate". `currentLeafFingerprint()` is the CertService half
+// of detecting that: TlsApi compares this against the fingerprint
+// HttpServer captured at bind time (see httpsListenerStatus.test.ts and
+// buildHttpsListenerField's own tests for the other two halves of this).
+// Deliberately kept OUT of CertState/getState() -- a comparison artifact,
+// not something the panel needs to see in the JSON response.
+describe('CertService.currentLeafFingerprint (NF-1)', () => {
+    it('returns the real fingerprint of a readable, valid leaf', () => {
+        const { svc } = makeService({ exists: () => true, readFile: () => FIXTURE_LEAF_IP_PEM });
+        const fp = svc.currentLeafFingerprint();
+        expect(typeof fp).toBe('string');
+        expect(fp!.length).toBeGreaterThan(0);
+    });
+
+    // Paired: DIFFERENT cert content must produce a DIFFERENT fingerprint --
+    // a hardcoded or memoized-wrong value would pass a single "returns a
+    // string" assertion but fail this contrast.
+    it('a different leaf produces a DIFFERENT fingerprint', () => {
+        const { svc: svcA } = makeService({ exists: () => true, readFile: () => FIXTURE_LEAF_IP_PEM });
+        const { svc: svcB } = makeService({ exists: () => true, readFile: () => FIXTURE_LEAF_HOST_PEM });
+        expect(svcA.currentLeafFingerprint()).not.toBe(svcB.currentLeafFingerprint());
+    });
+
+    it('is stable for the SAME leaf content (not e.g. time-based)', () => {
+        const { svc } = makeService({ exists: () => true, readFile: () => FIXTURE_LEAF_IP_PEM });
+        expect(svc.currentLeafFingerprint()).toBe(svc.currentLeafFingerprint());
+    });
+
+    it('returns undefined, not a throw, when the leaf does not exist', () => {
+        const { svc } = makeService({ exists: () => false, readFile: () => FIXTURE_LEAF_IP_PEM });
+        expect(svc.currentLeafFingerprint()).toBeUndefined();
+    });
+
+    it('returns undefined, not a throw, when the leaf is unreadable or garbage', () => {
+        const { svc } = makeService({
+            exists: () => true,
+            readFile: () => {
+                throw new Error('EACCES');
+            },
+        });
+        expect(svc.currentLeafFingerprint()).toBeUndefined();
+
+        const { svc: svc2 } = makeService({ exists: () => true, readFile: () => 'not a certificate' });
+        expect(svc2.currentLeafFingerprint()).toBeUndefined();
+    });
+});
+
 describe('CertService.caRootPem', () => {
     it('returns the CA pem content when present', () => {
         const readFile = vi.fn((p: string) => {

@@ -92,7 +92,17 @@ function readHttpsConfigSnapshot(): HttpsConfigSnapshot {
     }
 }
 
-/** `GET /api/tls/state`'s `httpsListener` field -- the exact shape team-lead specified for C1 (sent identically to the panel's implementer). */
+/**
+ * `GET /api/tls/state`'s `httpsListener` field -- the exact shape team-lead
+ * specified for C1 (sent identically to the panel's implementer).
+ *
+ * `reason` was originally "present only when `bound` is false", but NF-1
+ * (re-review) widened that: `reason: 'restart-required'` can now appear
+ * ALONGSIDE `bound: true`, when the listener is genuinely live but serving a
+ * stale leaf (see `buildHttpsListenerField`'s NF-1 doc). `bound` stays a
+ * literal fact about the socket either way; `reason`, when present, is why
+ * the socket is nonetheless not fully usable.
+ */
 export type HttpsListenerReason = 'restart-required' | 'config-override' | 'port-collision' | 'bind-failed';
 export interface HttpsListenerField {
     bound: boolean;
@@ -135,16 +145,40 @@ export interface HttpsListenerField {
  * simultaneously true can actually distinguish one ordering from another.
  * That is exactly the input that caught this function's own wrong ordering
  * (`tlsApi.test.ts`'s "the co-occurrence case" test).
+ *
+ * NF-1 (Critical, re-review): `bound: true` no longer means "done" on its
+ * own. The regenerate journey -- a listener already bound, the user
+ * regenerates -- used to short-circuit here and never reach `restart-required`
+ * at all, so the panel reported "streaming already works" while the socket
+ * kept serving the OLD leaf, signed by the CA `generate()` just deleted.
+ * `currentLeafFingerprint` (from `CertService.currentLeafFingerprint()`) is
+ * compared against `listenerStatus.leafFingerprint` (captured by
+ * `HttpServer` at bind time); a mismatch adds `reason: 'restart-required'`
+ * WITHOUT flipping `bound` to false -- `bound` stays a literal fact about the
+ * socket, `reason` carries why it is nonetheless not usable. With either
+ * fingerprint unavailable there is no basis for the comparison, so nothing is
+ * claimed either way (fail-safe, matches today's behaviour for a listener
+ * whose cert content wasn't parseable).
  */
 export function buildHttpsListenerField(
-    listenerStatus: { listening: boolean; boundPort?: number; bindFailed: boolean },
+    listenerStatus: {
+        listening: boolean;
+        boundPort?: number;
+        bindFailed: boolean;
+        leafFingerprint?: string | undefined;
+    },
     configSnapshot: { advancedConfig: boolean; portCollision: boolean },
     certReady: boolean,
+    currentLeafFingerprint?: string,
 ): HttpsListenerField {
     if (listenerStatus.listening) {
-        return listenerStatus.boundPort === undefined
-            ? { bound: true }
-            : { bound: true, port: listenerStatus.boundPort };
+        const stale =
+            listenerStatus.leafFingerprint !== undefined &&
+            currentLeafFingerprint !== undefined &&
+            listenerStatus.leafFingerprint !== currentLeafFingerprint;
+        const base: HttpsListenerField =
+            listenerStatus.boundPort === undefined ? { bound: true } : { bound: true, port: listenerStatus.boundPort };
+        return stale ? { ...base, reason: 'restart-required' } : base;
     }
     if (listenerStatus.bindFailed) return { bound: false, reason: 'bind-failed' };
     if (configSnapshot.advancedConfig) return { bound: false, reason: 'config-override' };
@@ -218,7 +252,12 @@ export class TlsApi {
                 const certState = svc.getState();
                 const httpsStatus = getHttpsListenerStatus();
                 const httpsSnapshot = readHttpsConfigSnapshot();
-                const httpsListener = buildHttpsListenerField(httpsStatus, httpsSnapshot, certState.status === 'ready');
+                const httpsListener = buildHttpsListenerField(
+                    httpsStatus,
+                    httpsSnapshot,
+                    certState.status === 'ready',
+                    svc.currentLeafFingerprint(),
+                );
                 res.setHeader('Content-Type', 'application/json');
                 res.writeHead(200);
                 res.end(
@@ -384,6 +423,7 @@ export class TlsApi {
                             getHttpsListenerStatus(),
                             readHttpsConfigSnapshot(),
                             state.status === 'ready',
+                            svc.currentLeafFingerprint(),
                         ),
                     }),
                 );
