@@ -177,9 +177,10 @@ export function appSectionButtonsState(resp: {
 // `{ ...CertState, candidateIps }`, and `ca-root` answers 404/429 with a JSON
 // `{ error }` body read verbatim rather than assumed.
 //
-// NOT wired to a save/persist path for the port field or the exposure radios
-// -- see the two "NOT WIRED" comments below for why, and the task-8 report for
-// the follow-up this leaves for a later task.
+// The port field and the exposure radios each save through their OWN route
+// (`POST /api/tls/https-port`, `POST /api/tls/exposure` -- task 11), not
+// through `StagedSettingsStore`; see `buildLocalHttpsPanel`'s own doc comment
+// below for why.
 // ---------------------------------------------------------------------------
 
 /** The subset of CertState (+ the two additions layered on by Task 4/5) this panel reads. */
@@ -193,15 +194,52 @@ interface TlsCertState {
     /** Present on GET /api/tls/state; absent on POST /api/tls/generate's response. */
     candidateIps?: string[];
     /**
-     * NOT yet returned by `GET /api/tls/state` (verified 2026-09-19: the route
-     * only spreads `svc.getState()` + `candidateIps`) -- task 11 added the
-     * WRITE side (`POST /api/tls/exposure`) but not this read side. Declared
-     * here, and read defensively below (`?? 'open'`, matching the server's
-     * own `readHttpExposure()` default), so the exposure radios start
-     * reflecting reality the moment the field is added, with zero further
-     * client changes. Flagged to team-lead as the remaining piece of I5.
+     * Returned by `GET /api/tls/state` since commit `861a5902` (the read side
+     * of I5 -- task 11 had wired the write, `POST /api/tls/exposure`, first).
+     * Read defensively below (`?? 'open'`, matching the server's own
+     * `readHttpExposure()` default) so a server older than that commit still
+     * degrades to the same default the server itself uses for an unset key,
+     * rather than crashing on a missing field.
      */
     httpExposure?: 'open' | 'httpsOnly' | 'redirect';
+    /**
+     * NOT yet returned by `GET /api/tls/state` (checked against the current
+     * `TlsApi.ts` while fixing I2) -- same shape as `httpExposure` before
+     * `861a5902`. Read defensively below (`?? 8443`, the same
+     * `DEFAULT_HTTPS_PORT` `Config.ts` itself falls back to) so the port
+     * field starts showing the real configured value the moment this field
+     * is added, with zero further client changes, and degrades to the
+     * server's own default in the meantime rather than crashing. Flagged to
+     * team-lead as a second field the same server-side change already
+     * touching this route should add alongside C1's listener-truth field.
+     */
+    httpsPort?: number;
+    /**
+     * C1's server half, landing separately in `TlsApi.ts` (coordinating
+     * through team-lead per instruction, not editing that file myself) --
+     * this exact nested shape is pinned by that file's own in-progress test
+     * (`tlsApi.test.ts`'s "httpsListener + httpsPort on GET /api/tls/state
+     * (C1, exact contract)"), read directly rather than guessed a second
+     * time after an earlier flat-field version of this comment turned out to
+     * not match. Whether an HTTPS listener is actually BOUND right now,
+     * distinct from whether a certificate merely exists on disk -- they
+     * diverge in at least four real states (right after `generate`, before a
+     * restart; an advanced `server` array in config.json overriding the
+     * generated entry; `httpsPort === webPort`; a bind failure), and in
+     * every one, `status: 'ready'` was previously enough for this panel to
+     * claim "streaming already works", which was false in all four.
+     *
+     * `undefined` (an older server, or before this field lands) is treated
+     * as UNKNOWN, never as bound -- read `listenerStatusNotice`'s own doc
+     * comment for why that default direction is the safe one.
+     */
+    httpsListener?: {
+        bound: boolean;
+        /** Present only when `bound` is true. */
+        port?: number;
+        /** Present only when `bound` is false and a certificate exists. */
+        reason?: 'restart-required' | 'config-override' | 'port-collision' | 'bind-failed';
+    };
 }
 
 export interface LocalHttpsPanelDeps {
@@ -321,8 +359,61 @@ export function subPrivilegedPortNotice(port: number, platform: NodeJS.Platform 
     return 'ports below 1024 need elevated privileges on this platform; the server may fail to start.';
 }
 
-/** Per-OS trust instructions for the accordion. Pure/exported so its text is unit-testable. */
-export function trustInstructionsFor(platform: NodeJS.Platform | string | undefined): string {
+/**
+ * C1: the honest listener-state message, replacing the panel's previous
+ * unconditional "streaming already works" the moment a certificate exists on
+ * disk. `status: 'ready'` says a certificate was minted; it says nothing
+ * about whether an HTTPS listener is actually bound -- those diverge right
+ * after a fresh `generate` (no restart has happened), under an advanced
+ * `server` array in config.json, on a `httpsPort`/`webPort` collision, and
+ * after a bind failure. In every one of those, the previous copy was false,
+ * and the only remedy the panel offered was `regenerate`, which destroys the
+ * CA a device may have already installed -- never the right fix for any of
+ * these, because the certificate was never the problem.
+ *
+ * `httpsListener === undefined` (the field hasn't landed on the server yet,
+ * or is genuinely unknown) returns `null` -- SAY NOTHING rather than guess
+ * either way, the same rule notification 3/4 already apply to their own
+ * unknowns. This is the direction that cannot make the false claim this
+ * finding is about: a wrongly-silent notice is a missed opportunity, a
+ * wrongly-positive one is the bug being fixed.
+ */
+export function listenerStatusNotice(state: TlsCertState): string | null {
+    if (state.status !== 'ready') return null;
+    if (state.httpsListener === undefined || state.httpsListener.bound) return null;
+    switch (state.httpsListener.reason) {
+        case 'restart-required':
+            return 'certificate ready, but the https listener has not started yet. restart the server to begin serving https — regenerating will not help, and destroys any ca a device has already installed.';
+        case 'config-override':
+            return "this certificate exists, but an advanced server configuration in config.json is overriding it. https will not start until that configuration changes — regenerating won't help.";
+        case 'port-collision':
+            return 'the https port is the same as the plain http port, so https could not start. change the https port below to a different value, then restart.';
+        case 'bind-failed':
+            return 'the https listener failed to start, possibly because its port is already in use. check the server logs, free the port if needed, and restart.';
+        default:
+            return 'certificate ready, but the https listener is not currently running. check the server logs, and restart the server.';
+    }
+}
+
+/** A device the trust-instructions accordion (I5) covers. Not `NodeJS.Platform` -- a phone is never the Node process's own platform. */
+export type TrustDevicePlatform = NodeJS.Platform | 'android' | 'ios';
+
+/**
+ * Per-device trust instructions for the accordion. Pure/exported so its text
+ * is unit-testable.
+ *
+ * I5: this used to be called ONCE, with `deps.platform` -- the SERVER's
+ * platform, from `/api/service/status`. The accordion's own summary promises
+ * instructions for "this device", and the device that needs the CA installed
+ * is whichever one is BROWSING the panel, which has no relationship to what
+ * the server happens to run on (a Linux server browsed from a Windows
+ * laptop printed Linux instructions). The phone is the device this whole
+ * feature exists to serve, and it was never covered at all. Fixed by not
+ * gating on any single platform: the caller now renders every entry in
+ * `TRUST_DEVICE_PLATFORMS` unconditionally, and this function stays a pure
+ * per-key lookup so each entry's text is independently testable.
+ */
+export function trustInstructionsFor(platform: TrustDevicePlatform | string | undefined): string {
     switch (platform) {
         case 'win32':
             return (
@@ -340,9 +431,51 @@ export function trustInstructionsFor(platform: NodeJS.Platform | string | undefi
                 'copy the downloaded file into /usr/local/share/ca-certificates/ (renamed to end in .crt) ' +
                 'and run "sudo update-ca-certificates", or import it into your browser\'s certificate settings directly.'
             );
+        case 'android':
+            return (
+                'copy the downloaded file to the device (or open it directly if you downloaded it there), ' +
+                'then settings → security → encryption & credentials → install a certificate → ca certificate, ' +
+                'and confirm the warning. some android versions require a screen lock (pin/pattern/password) ' +
+                'to be set before this option appears.'
+            );
+        case 'ios':
+            return (
+                'airdrop or email the downloaded file to the device and open it to install the profile ' +
+                '(settings → general → vpn & device management), then go to settings → general → about → ' +
+                'certificate trust settings and enable full trust for the new root certificate -- ios does ' +
+                'not trust a manually installed ca until this second step.'
+            );
         default:
             return "import the downloaded certificate into your browser or operating system's trusted root store.";
     }
+}
+
+/**
+ * The fixed device list the accordion renders, in order. `key` feeds
+ * `trustInstructionsFor`; `label` is the lowercase heading shown above it.
+ * Exported so the panel-building code and any future test iterate the same
+ * list rather than risking two hand-kept copies drifting apart.
+ */
+export const TRUST_DEVICE_PLATFORMS: ReadonlyArray<{ key: TrustDevicePlatform; label: string }> = [
+    { key: 'win32', label: 'windows' },
+    { key: 'darwin', label: 'macos' },
+    { key: 'linux', label: 'linux' },
+    { key: 'android', label: 'android' },
+    { key: 'ios', label: 'ios / ipados' },
+];
+
+/**
+ * Firefox keeps its own certificate store on every OS and does not consult
+ * the one the steps above install into -- spec §7 requires this as its own
+ * note, not folded into any one platform's steps, because it applies
+ * regardless of which OS entry above a Firefox user just followed.
+ */
+export function firefoxTrustNote(): string {
+    return (
+        "using firefox? firefox keeps its own certificate store and ignores the operating system's -- " +
+        "install the ca separately via firefox's settings → privacy & security → certificates → " +
+        'view certificates → import, instead of (or in addition to) the steps above.'
+    );
 }
 
 /** Local copy of the notice-row shape every other tab already uses for a status line. */
@@ -449,6 +582,40 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
     hostRadio.checked = initialKind === 'hostname';
     subjectInput.value = initialState.subject ?? (initialKind === 'ip' ? (initialCandidateIps[0] ?? '') : '');
 
+    // I7: show EVERY candidate, not an arbitrary single guess. This machine
+    // can have far more than one IPv4 address (VPN, Docker, WSL, VirtualBox
+    // adapters all show up here too), and only one is reachable from the
+    // phone that needs the certificate -- prefilling `[0]` with no way to
+    // see or pick another issues a cert nobody on the LAN can use, exactly
+    // the failure spec §6 warns about. Selecting an option here only fills
+    // `subjectInput`, which stays the single source of truth for
+    // generate/validation/notification 4, so nothing downstream changes.
+    // RANKING which candidate is the default-route interface is
+    // `candidateLanIps.ts` (server-side, unordered today) and NOT fixed by
+    // this change -- this fixes the client half: every candidate is now at
+    // least visible and pickable, none was before.
+    const candidateSelect = document.createElement('select');
+    candidateSelect.className = 'settings-input';
+    candidateSelect.setAttribute('data-tls-candidate-select', '');
+    for (const ip of initialCandidateIps) {
+        const opt = document.createElement('option');
+        opt.value = ip;
+        opt.textContent = ip;
+        candidateSelect.appendChild(opt);
+    }
+    if (initialCandidateIps.includes(subjectInput.value)) {
+        candidateSelect.value = subjectInput.value;
+    }
+    candidateSelect.addEventListener('change', () => {
+        subjectInput.value = candidateSelect.value;
+        lastIpValue = candidateSelect.value;
+    });
+
+    function updateCandidateSelectVisibility(): void {
+        candidateSelect.hidden = !ipRadio.checked || initialCandidateIps.length === 0;
+    }
+    updateCandidateSelectVisibility();
+
     // Remembers each mode's last value across a radio flip, so switching kind
     // and back doesn't lose what was typed.
     let lastIpValue = initialKind === 'ip' ? subjectInput.value : (initialCandidateIps[0] ?? '');
@@ -463,17 +630,20 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
         if (!ipRadio.checked) return;
         lastHostValue = subjectInput.value;
         subjectInput.value = lastIpValue;
+        updateCandidateSelectVisibility();
     });
     hostRadio.addEventListener('click', () => {
         if (!hostRadio.checked) return;
         lastIpValue = subjectInput.value;
         subjectInput.value = lastHostValue;
+        updateCandidateSelectVisibility();
     });
 
     const subjectFrag = document.createDocumentFragment();
     subjectFrag.appendChild(ipLabel);
     subjectFrag.appendChild(hostLabel);
     subjectFrag.appendChild(subjectInput);
+    subjectFrag.appendChild(candidateSelect);
     body.appendChild(buildRow('certificate subject', subjectFrag));
 
     // Notification 2 — ALWAYS shown, beside the subject controls (not
@@ -494,7 +664,13 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
     portInput.className = 'settings-input';
     portInput.style.maxWidth = '120px';
     portInput.setAttribute('data-tls-port', '');
-    portInput.value = '8443';
+    // I2: read the SERVER's configured port, not a hardcoded guess -- a user
+    // who set 9443 previously opened this panel to a lying "8443" display,
+    // and one click on this field's own "ok" button would have reset their
+    // port AND restarted the server. Falls back to the app's own
+    // DEFAULT_HTTPS_PORT only when the field is missing (older server) or
+    // genuinely unset.
+    portInput.value = String(initialState.httpsPort ?? 8443);
 
     const portOkBtn = document.createElement('button');
     portOkBtn.type = 'button';
@@ -559,19 +735,42 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
         })();
     });
 
-    // ---- generate ----
+    // ---- generate / revoke ----
     const generateBtn = document.createElement('button');
     generateBtn.type = 'button';
     generateBtn.className = 'settings-btn settings-btn-primary';
     generateBtn.textContent = 'generate';
     generateBtn.setAttribute('data-tls-generate', '');
-    body.appendChild(buildRow('certificate', generateBtn));
+
+    // I1: enabling local HTTPS was previously one-way from this panel --
+    // `POST /api/tls/revoke` existed and was admin-gated, but nothing in the
+    // client ever called it. Disabled until a certificate exists (nothing to
+    // revoke otherwise); `renderCertState` below is what flips this.
+    const revokeBtn = document.createElement('button');
+    revokeBtn.type = 'button';
+    revokeBtn.className = 'settings-btn settings-btn-danger';
+    revokeBtn.textContent = 'revoke…';
+    revokeBtn.setAttribute('data-tls-revoke', '');
+    revokeBtn.disabled = true;
+
+    const certActionsFrag = document.createDocumentFragment();
+    certActionsFrag.appendChild(generateBtn);
+    certActionsFrag.appendChild(revokeBtn);
+    body.appendChild(buildRow('certificate', certActionsFrag));
 
     // ---- current-certificate summary + notifications 3, 4, 8, 9 ----
     const certSummary = document.createElement('p');
     certSummary.className = 'settings-status';
     certSummary.style.gridColumn = '1 / -1';
     body.appendChild(certSummary);
+
+    // C1: listener truth, ahead of everything else about the certificate --
+    // this is the thing that was silently wrong. See listenerStatusNotice's
+    // own doc comment for the four cases it covers and why 'unknown' says
+    // nothing rather than guessing.
+    const listenerStatusNoticeEl = buildNoticeRow();
+    listenerStatusNoticeEl.setAttribute('data-tls-listener-notice', '');
+    body.appendChild(listenerStatusNoticeEl);
 
     const untrustedCaNotice = buildNoticeRow();
     untrustedCaNotice.setAttribute('data-tls-ca-trust-notice', '');
@@ -610,14 +809,28 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
     downloadBtn.setAttribute('data-tls-download', '');
     body.appendChild(buildRow('root ca', downloadBtn));
 
+    // I5: every device this feature exists to serve gets its own entry --
+    // not just whichever platform the server happens to run on. The phone
+    // installing the CA is never the server, so gating this on
+    // `deps.platform` (the server's OS) was wrong regardless of which value
+    // it held.
     const details = document.createElement('details');
     const summary = document.createElement('summary');
-    summary.textContent = 'how to trust this certificate on this device';
+    summary.textContent = 'how to trust this certificate on your device';
     details.appendChild(summary);
-    const instructions = document.createElement('p');
-    instructions.className = 'settings-status';
-    instructions.textContent = trustInstructionsFor(deps.platform);
-    details.appendChild(instructions);
+    for (const { key, label } of TRUST_DEVICE_PLATFORMS) {
+        const entry = document.createElement('p');
+        entry.className = 'settings-status';
+        const labelStrong = document.createElement('strong');
+        labelStrong.textContent = `${label}: `;
+        entry.appendChild(labelStrong);
+        entry.appendChild(document.createTextNode(trustInstructionsFor(key)));
+        details.appendChild(entry);
+    }
+    const firefoxNote = document.createElement('p');
+    firefoxNote.className = 'settings-status';
+    firefoxNote.textContent = firefoxTrustNote();
+    details.appendChild(firefoxNote);
     const detailsRow = buildRow('trust the ca', details);
     detailsRow.style.gridColumn = '1 / -1';
     body.appendChild(detailsRow);
@@ -627,6 +840,8 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
         if (state.status !== 'ready') {
             certSummary.textContent = 'no certificate yet.';
             downloadBtn.disabled = true;
+            revokeBtn.disabled = true;
+            setNotice(listenerStatusNoticeEl, null);
             setNotice(untrustedCaNotice, null);
             setNotice(mismatchNotice, null);
             setNotice(hostnameGuideNotice, null);
@@ -634,6 +849,7 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
             setNotice(caRestoreNotice, null);
             allowedHostPersistentNotice.textContent = '';
             allowedHostPersistentNotice.hidden = true;
+            updateExposureAvailability();
             return;
         }
 
@@ -647,6 +863,7 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
         subjectSpan.textContent = state.subject ?? '(unknown)';
         certSummary.appendChild(subjectSpan);
 
+        revokeBtn.disabled = false;
         const caPresent = state.caPresent !== false;
         downloadBtn.disabled = !caPresent;
         // Mutually exclusive (M4): a failed-regenerate leaf (caPresent false)
@@ -654,6 +871,10 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
         // action is meaningless while the download button it points at is
         // disabled.
         setNotice(caRestoreNotice, !caPresent ? 'regenerate to restore the ca download.' : null);
+
+        // C1: the listener-truth notice, ahead of the CA-trust claim below.
+        setNotice(listenerStatusNoticeEl, listenerStatusNotice(state));
+
         // I6: unconditional whenever the CA is actually downloadable, rather
         // than trying to detect whether THIS browser already trusts it --
         // there is no signal for that (see caTrusted's doc comment on
@@ -661,9 +882,19 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
         // trust ... until") instead of a live status claim ("does not trust
         // ... yet"), so it stays true whether or not the CA happens to
         // already be installed.
+        //
+        // C1: this whole notice -- including "streaming already works
+        // either way" -- presumes an HTTPS listener exists to click through
+        // to. Confirmed NOT bound (`state.httpsListener.bound === false`)
+        // suppresses it entirely; `listenerStatusNoticeEl` above already
+        // carries the accurate, more specific message for that case. Unknown
+        // (`httpsListener === undefined`, an older server or before C1's
+        // field lands) or confirmed bound both keep the original claim,
+        // which is the measured, true one whenever a listener does exist.
+        const listenerConfirmedDown = state.httpsListener?.bound === false;
         setNotice(
             untrustedCaNotice,
-            caPresent
+            caPresent && !listenerConfirmedDown
                 ? 'browsers will not trust this certificate until the ca is installed. install it below to remove the warning — streaming already works either way.'
                 : null,
         );
@@ -695,6 +926,8 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
         } else {
             allowedHostPersistentNotice.hidden = true;
         }
+
+        updateExposureAvailability();
     }
 
     // One shared bottom-of-panel alert for every transient outcome (generate
@@ -768,21 +1001,72 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
                 // rather than mutate it silently. This is a one-time outcome
                 // of THIS generate, not a standing condition, so it belongs in
                 // the transient alert, not a persistent in-panel notice.
-                if (data.allowedHostAdded && data.subject) {
+                const allowedHostSuffix: Array<string | { echo: string }> =
+                    data.allowedHostAdded && data.subject
+                        ? [
+                              ' added ',
+                              { echo: data.subject },
+                              ' to allowedHosts so the server will answer to that name.',
+                          ]
+                        : [];
+                // C1: the review's headline case -- a fresh certificate with
+                // no restart yet has no HTTPS listener bound, and this used
+                // to be the moment the panel started claiming streaming
+                // already worked. `listenerStatusNoticeEl` (just rendered by
+                // `renderCertState` above) carries the persistent, detailed
+                // version; this mirrors the port field's own pattern of also
+                // naming the restart in the immediate transient confirmation.
+                if (data.httpsListener?.bound === false && data.httpsListener.reason === 'restart-required') {
                     showTransientAlert(
                         'success',
-                        'certificate generated. added ',
-                        { echo: data.subject },
-                        ' to allowedHosts so the server will answer to that name.',
+                        'certificate generated. restart the server to start serving https.',
+                        ...allowedHostSuffix,
                     );
                 } else {
-                    showTransientAlert('success', 'certificate generated.');
+                    showTransientAlert('success', 'certificate generated.', ...allowedHostSuffix);
                 }
             } catch {
                 showTransientAlert('error', 'could not reach the server.');
             } finally {
                 generateBtn.disabled = false;
                 generateBtn.textContent = prevText;
+            }
+        })();
+    });
+
+    // I1: the only way back. `POST /api/tls/revoke` already existed and was
+    // admin-gated (`TlsApi.ts`); nothing in the client ever called it, so
+    // enabling local HTTPS was one-way from this panel. The confirmation
+    // states plainly what it destroys -- the CA every device on the LAN was
+    // asked to trust -- rather than a generic "are you sure?".
+    revokeBtn.addEventListener('click', () => {
+        void (async () => {
+            const confirmed = await ConfirmModal.confirm({
+                title: 'revoke the local https certificate?',
+                message:
+                    'this deletes the certificate AND the ca. every device that installed the ca to trust ' +
+                    'this server will see a warning again, and streaming from other machines stops until you ' +
+                    'generate a new certificate and they install the new ca. the running server keeps ' +
+                    'answering https with the old material from memory until it restarts. continue?',
+            });
+            if (!confirmed) return;
+            revokeBtn.disabled = true;
+            try {
+                const res = await deps.fetchFn('/api/tls/revoke', { method: 'POST' });
+                if (!res.ok) {
+                    showTransientAlert('error', `could not revoke the certificate (${res.status}).`);
+                    revokeBtn.disabled = false;
+                    return;
+                }
+                currentState = { status: 'none' };
+                renderCertState(currentState);
+                showTransientAlert(
+                    'success',
+                    'certificate and ca revoked. restart the server to fully stop the https listener.',
+                );
+            } catch {
+                showTransientAlert('error', 'could not reach the server.');
+                revokeBtn.disabled = false;
             }
         })();
     });
@@ -830,16 +1114,14 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
         { value: 'httpsOnly', label: 'https only' },
         { value: 'redirect', label: 'redirect http to https' },
     ];
-    // I5: pre-select the radio matching the SERVER's current mode, not a
+    // I5: pre-select the radio matching the SERVER's current mode (read from
+    // `GET /api/tls/state`'s `httpExposure`, commit `861a5902`), not a
     // hardcoded 'open'. Without this, a user who opens the panel to change
     // something else and clicks "ok" would silently widen their exposure
     // back to 'open' -- whatever they actually had gets overwritten by
-    // whatever the radios happened to default to. `httpExposure` isn't on
-    // `GET /api/tls/state` yet (see the field's own doc comment above); this
-    // reads it defensively so the panel starts reflecting reality the moment
-    // the server adds it, with 'open' as the fallback -- the same default
-    // `HttpServer.ts`'s `readHttpExposure()` uses when the key is absent, so
-    // "don't know yet" and "the server's own default" agree.
+    // whatever the radios happened to default to. Falls back to 'open' only
+    // for an older server / a missing field, matching `HttpServer.ts`'s own
+    // `readHttpExposure()` default for an unset key.
     const initialExposureMode = initialState.httpExposure ?? 'open';
     const exposureRadios: HTMLInputElement[] = [];
     for (const mode of exposureModes) {
@@ -870,6 +1152,35 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
     const exposureRestartNotice = buildNoticeRow();
     exposureRestartNotice.setAttribute('data-exposure-restart-notice', '');
     body.appendChild(exposureRestartNotice);
+    // I11: narrowing plain HTTP toward an HTTPS listener that does not exist
+    // yet does nothing at runtime (`findHttpsPort()` returns `undefined` and
+    // every mode fails open -- the correct, deliberate lockout guarantee,
+    // ruling E2) -- but the panel still told the user their server WAS now
+    // HTTPS-only. `updateExposureAvailability` below disables httpsOnly/
+    // redirect (never 'open', which is always safe) until a certificate
+    // exists, and this note explains why.
+    const exposureUnavailableNotice = buildNoticeRow();
+    exposureUnavailableNotice.setAttribute('data-exposure-unavailable-notice', '');
+    body.appendChild(exposureUnavailableNotice);
+
+    /**
+     * I11: disable the narrowing exposure modes (not 'open', which is always
+     * safe with or without a certificate) until a certificate actually
+     * exists to serve HTTPS. Called from `renderCertState` -- defined as a
+     * hoisted function so the ordering there doesn't matter.
+     */
+    function updateExposureAvailability(): void {
+        const hasCert = currentState.status === 'ready';
+        for (const radio of exposureRadios) {
+            if (radio.value !== 'open') radio.disabled = !hasCert;
+        }
+        setNotice(
+            exposureUnavailableNotice,
+            hasCert
+                ? null
+                : 'generate a certificate first — https only and redirect only take effect once an https listener can exist.',
+        );
+    }
 
     for (const radio of exposureRadios) {
         // 'click', not 'change' -- see the subject radios' listeners above for why.
@@ -904,6 +1215,18 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
     okBtn.addEventListener('click', () => {
         void (async () => {
             const mode = exposureRadios.find((r) => r.checked)?.value ?? 'open';
+            // I11, defense in depth: the disabled radios already prevent
+            // SELECTING a narrowed mode with no certificate, but a stale
+            // click queued before `renderCertState` last ran (or a radio
+            // pre-selected 'httpsOnly'/'redirect' from the server before the
+            // cert was known to be gone) must not still submit it.
+            if (mode !== 'open' && currentState.status !== 'ready') {
+                showTransientAlert(
+                    'error',
+                    'generate a certificate first — this mode has no https listener to apply to.',
+                );
+                return;
+            }
             okBtn.disabled = true;
             try {
                 // Wired since task 11 (`POST /api/tls/exposure`, commit

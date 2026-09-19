@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
 // src/app/client/settings/__tests__/localHttpsPanel.test.ts
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     buildLocalHttpsPanel,
     certExpiryNotice,
     certSubjectMismatchNotice,
+    firefoxTrustNote,
+    listenerStatusNotice,
     subPrivilegedPortNotice,
     trustInstructionsFor,
 } from '../tabs/ServerTab';
@@ -683,5 +685,298 @@ describe('local https panel — transient alert convention', () => {
         } finally {
             vi.useRealTimers();
         }
+    });
+});
+
+describe('local https panel — final review fixes (C1, I1, I2, I5, I7, I11)', () => {
+    beforeEach(() => {
+        // ConfirmModal (I1's revoke confirmation) uses <dialog>.showModal/close,
+        // which jsdom doesn't implement -- same stub this repo's own
+        // ConfirmModal.test.ts uses.
+        HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) {
+            this.setAttribute('open', '');
+        });
+        HTMLDialogElement.prototype.close = vi.fn(function (this: HTMLDialogElement) {
+            this.removeAttribute('open');
+        });
+    });
+    afterEach(() => {
+        document.body.replaceChildren();
+        vi.restoreAllMocks();
+    });
+
+    function modalButton(label: string): HTMLButtonElement {
+        const btn = (Array.from(document.querySelectorAll('button')) as HTMLButtonElement[]).find(
+            (b) => b.textContent?.trim().toLowerCase() === label.toLowerCase(),
+        );
+        expect(btn, `button "${label}"`).toBeTruthy();
+        return btn!;
+    }
+
+    // ---- I1: revoke ----
+
+    it('revoke is disabled with no certificate, enabled once one exists (I1)', async () => {
+        const elNone = await buildLocalHttpsPanel({
+            fetchFn: vi.fn(async () => new Response(JSON.stringify(state()))),
+            candidateIps: ['192.168.86.3'],
+            platform: 'win32',
+        });
+        expect(elNone.querySelector<HTMLButtonElement>('[data-tls-revoke]')!.disabled).toBe(true);
+
+        const elReady = await buildLocalHttpsPanel({
+            fetchFn: vi.fn(async () => new Response(JSON.stringify(state({ status: 'ready' })))),
+            candidateIps: ['192.168.86.3'],
+            platform: 'win32',
+        });
+        expect(elReady.querySelector<HTMLButtonElement>('[data-tls-revoke]')!.disabled).toBe(false);
+    });
+
+    // Split into two tests rather than one cancel-then-confirm sequence:
+    // `Modal.close()` removes its <dialog> from the DOM on a REAL 250ms
+    // fallback timer (jsdom fires no `transitionend`), so a second modal
+    // opened moments later shares the document with the first one's
+    // now-inert leftover buttons -- `modalButton()`'s global
+    // `querySelectorAll` would find whichever came first. One modal per
+    // test sidesteps that rather than waiting out a real 250ms per case.
+
+    it('cancelling the revoke confirmation makes no network call and leaves the certificate alone (I1)', async () => {
+        const fetchFn = vi.fn(async (url: RequestInfo | URL) => {
+            if (url === '/api/tls/revoke') return new Response(JSON.stringify({ ok: true }));
+            return new Response(JSON.stringify(state({ status: 'ready', kind: 'ip', subject: '192.168.86.3' })));
+        });
+        const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'], platform: 'win32' });
+        el.querySelector<HTMLButtonElement>('[data-tls-revoke]')!.click();
+        await new Promise((r) => setTimeout(r, 0));
+        modalButton('cancel').click();
+        await new Promise((r) => setTimeout(r, 0));
+        expect(fetchFn).not.toHaveBeenCalledWith('/api/tls/revoke', expect.anything());
+        expect(el.querySelector('[data-tls-current-subject]')).not.toBeNull();
+    });
+
+    it('confirming revoke calls POST /api/tls/revoke and clears the certificate (I1)', async () => {
+        const fetchFn = vi.fn(async (url: RequestInfo | URL) => {
+            if (url === '/api/tls/revoke') return new Response(JSON.stringify({ ok: true }));
+            return new Response(JSON.stringify(state({ status: 'ready', kind: 'ip', subject: '192.168.86.3' })));
+        });
+        const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'], platform: 'win32' });
+        const revokeBtn = el.querySelector<HTMLButtonElement>('[data-tls-revoke]')!;
+        revokeBtn.click();
+        await new Promise((r) => setTimeout(r, 0));
+        modalButton('ok').click();
+        await new Promise((r) => setTimeout(r, 0));
+        expect(fetchFn).toHaveBeenCalledWith('/api/tls/revoke', expect.objectContaining({ method: 'POST' }));
+        expect(el.querySelector('[data-tls-current-subject]')).toBeNull();
+        expect(revokeBtn.disabled).toBe(true);
+    });
+
+    // ---- I2: https port prefill ----
+
+    it('prefills the https port from the server, not a hardcoded 8443 (I2)', async () => {
+        const el = await buildLocalHttpsPanel({
+            fetchFn: vi.fn(async () => new Response(JSON.stringify(state({ status: 'ready', httpsPort: 9443 })))),
+            candidateIps: ['192.168.86.3'],
+            platform: 'win32',
+        });
+        expect(el.querySelector<HTMLInputElement>('[data-tls-port]')!.value).toBe('9443');
+    });
+
+    it('falls back to 8443 only when the server has not reported a port (I2)', async () => {
+        const el = await buildLocalHttpsPanel({
+            fetchFn: vi.fn(async () => new Response(JSON.stringify(state()))),
+            candidateIps: ['192.168.86.3'],
+            platform: 'win32',
+        });
+        expect(el.querySelector<HTMLInputElement>('[data-tls-port]')!.value).toBe('8443');
+    });
+
+    // ---- I5: every device, not just the server's OS ----
+
+    it('trustInstructionsFor covers android and ios distinctly (I5)', () => {
+        const android = trustInstructionsFor('android');
+        const ios = trustInstructionsFor('ios');
+        expect(android).toMatch(/install a certificate/i);
+        expect(ios).toMatch(/certificate trust settings/i);
+        expect(android).not.toBe(ios);
+    });
+
+    it('firefoxTrustNote names its own private trust store', () => {
+        expect(firefoxTrustNote()).toMatch(/firefox keeps its own certificate store/i);
+    });
+
+    it('the accordion shows every device platform plus a firefox note, regardless of the SERVER platform (I5)', async () => {
+        const el = await buildLocalHttpsPanel({
+            fetchFn: vi.fn(async () => new Response(JSON.stringify(state()))),
+            candidateIps: ['192.168.86.3'],
+            platform: 'linux', // the server's OS -- must not gate which entries render
+        });
+        expect(el.textContent).toMatch(/windows/i);
+        expect(el.textContent).toMatch(/macos/i);
+        expect(el.textContent).toMatch(/\blinux\b/i);
+        expect(el.textContent).toMatch(/android/i);
+        expect(el.textContent).toMatch(/ios/i);
+        expect(el.textContent).toMatch(/firefox keeps its own certificate store/i);
+    });
+
+    // ---- I7: every candidate IP, not an arbitrary one ----
+
+    it('lists every candidate ip in a picker, not just one (I7)', async () => {
+        const el = await buildLocalHttpsPanel({
+            fetchFn: vi.fn(async () => new Response(JSON.stringify(state()))),
+            candidateIps: ['192.168.86.3', '10.0.0.5', '172.16.4.9'],
+            platform: 'win32',
+        });
+        const select = el.querySelector<HTMLSelectElement>('[data-tls-candidate-select]')!;
+        const optionValues = Array.from(select.options).map((o) => o.value);
+        expect(optionValues).toEqual(['192.168.86.3', '10.0.0.5', '172.16.4.9']);
+        expect(select.hidden).toBe(false); // ip mode is the default
+    });
+
+    it('selecting a candidate fills the subject field, and the picker hides in hostname mode (I7)', async () => {
+        const el = await buildLocalHttpsPanel({
+            fetchFn: vi.fn(async () => new Response(JSON.stringify(state()))),
+            candidateIps: ['192.168.86.3', '10.0.0.5'],
+            platform: 'win32',
+        });
+        const select = el.querySelector<HTMLSelectElement>('[data-tls-candidate-select]')!;
+        const subjectInput = el.querySelector<HTMLInputElement>('[data-tls-subject]')!;
+
+        select.value = '10.0.0.5';
+        select.dispatchEvent(new Event('change'));
+        expect(subjectInput.value).toBe('10.0.0.5');
+
+        el.querySelector<HTMLInputElement>('input[name="tls-subject-kind"][value="hostname"]')!.click();
+        expect(select.hidden).toBe(true);
+
+        el.querySelector<HTMLInputElement>('input[name="tls-subject-kind"][value="ip"]')!.click();
+        expect(select.hidden).toBe(false);
+    });
+
+    // ---- I11: narrowed exposure needs a certificate to mean anything ----
+
+    it('disables the narrowed exposure modes with no certificate, and enables them once one exists (I11)', async () => {
+        const elNone = await buildLocalHttpsPanel({
+            fetchFn: vi.fn(async () => new Response(JSON.stringify(state()))),
+            candidateIps: ['192.168.86.3'],
+            platform: 'win32',
+        });
+        expect(elNone.querySelector<HTMLInputElement>('[data-exposure="httpsOnly"]')!.disabled).toBe(true);
+        expect(elNone.querySelector<HTMLInputElement>('[data-exposure="redirect"]')!.disabled).toBe(true);
+        expect(elNone.querySelector<HTMLInputElement>('[data-exposure="open"]')!.disabled).toBe(false);
+        const notice = elNone.querySelector<HTMLElement>('[data-exposure-unavailable-notice]')!;
+        expect(notice.hidden).toBe(false);
+        expect(notice.textContent).toMatch(/generate a certificate first/i);
+
+        const elReady = await buildLocalHttpsPanel({
+            fetchFn: vi.fn(async () => new Response(JSON.stringify(state({ status: 'ready' })))),
+            candidateIps: ['192.168.86.3'],
+            platform: 'win32',
+        });
+        expect(elReady.querySelector<HTMLInputElement>('[data-exposure="httpsOnly"]')!.disabled).toBe(false);
+        expect(elReady.querySelector<HTMLElement>('[data-exposure-unavailable-notice]')!.hidden).toBe(true);
+    });
+
+    it('a successful generate re-enables the narrowed exposure modes (I11)', async () => {
+        const fetchFn = vi.fn(async (url: RequestInfo | URL) => {
+            if (url === '/api/tls/generate') {
+                return new Response(JSON.stringify({ status: 'ready', kind: 'ip', subject: '192.168.86.3' }));
+            }
+            return new Response(JSON.stringify(state()));
+        });
+        const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'], platform: 'win32' });
+        const httpsOnlyRadio = el.querySelector<HTMLInputElement>('[data-exposure="httpsOnly"]')!;
+        expect(httpsOnlyRadio.disabled).toBe(true);
+
+        el.querySelector<HTMLButtonElement>('[data-tls-generate]')!.click();
+        await new Promise((r) => setTimeout(r, 0));
+        expect(httpsOnlyRadio.disabled).toBe(false);
+    });
+
+    // ---- C1: listener truth, not certificate existence ----
+
+    it('says nothing about the listener when the server has not reported it, and the CA-trust claim still holds (C1)', async () => {
+        const el = await buildLocalHttpsPanel({
+            fetchFn: vi.fn(async () => new Response(JSON.stringify(state({ status: 'ready' })))),
+            candidateIps: ['192.168.86.3'],
+            platform: 'win32',
+        });
+        expect(el.querySelector<HTMLElement>('[data-tls-listener-notice]')!.hidden).toBe(true);
+        expect(el.querySelector<HTMLElement>('[data-tls-ca-trust-notice]')!.hidden).toBe(false);
+    });
+
+    it('says nothing about the listener once it is confirmed up (C1)', async () => {
+        const el = await buildLocalHttpsPanel({
+            fetchFn: vi.fn(
+                async () =>
+                    new Response(
+                        JSON.stringify(state({ status: 'ready', httpsListener: { bound: true, port: 8443 } })),
+                    ),
+            ),
+            candidateIps: ['192.168.86.3'],
+            platform: 'win32',
+        });
+        expect(el.querySelector<HTMLElement>('[data-tls-listener-notice]')!.hidden).toBe(true);
+        expect(el.querySelector<HTMLElement>('[data-tls-ca-trust-notice]')!.hidden).toBe(false);
+    });
+
+    it('reports each listener-down case distinctly, and never claims streaming already works (C1)', async () => {
+        const cases: Array<[string, RegExp]> = [
+            ['restart-required', /restart the server to begin serving https/i],
+            ['config-override', /advanced server configuration/i],
+            ['port-collision', /same as the plain http port/i],
+            ['bind-failed', /failed to start/i],
+        ];
+        for (const [reason, expectedText] of cases) {
+            const el = await buildLocalHttpsPanel({
+                fetchFn: vi.fn(
+                    async () =>
+                        new Response(
+                            JSON.stringify(
+                                state({
+                                    status: 'ready',
+                                    kind: 'ip',
+                                    subject: '192.168.86.3',
+                                    httpsListener: { bound: false, reason },
+                                }),
+                            ),
+                        ),
+                ),
+                candidateIps: ['192.168.86.3'],
+                platform: 'win32',
+            });
+            const listenerNotice = el.querySelector<HTMLElement>('[data-tls-listener-notice]')!;
+            expect(listenerNotice.hidden, reason).toBe(false);
+            expect(listenerNotice.textContent, reason).toMatch(expectedText);
+            // The exact false claim this finding is about must never appear
+            // once the listener is confirmed down, regardless of reason.
+            expect(el.querySelector<HTMLElement>('[data-tls-ca-trust-notice]')!.hidden, reason).toBe(true);
+            expect(el.textContent, reason).not.toMatch(/streaming already works/i);
+        }
+    });
+
+    it('mentions the restart in the SAME transient alert right after a generate that needs one (C1)', async () => {
+        const fetchFn = vi.fn(async (url: RequestInfo | URL) => {
+            if (url === '/api/tls/generate') {
+                return new Response(
+                    JSON.stringify({
+                        status: 'ready',
+                        kind: 'ip',
+                        subject: '192.168.86.3',
+                        httpsListener: { bound: false, reason: 'restart-required' },
+                    }),
+                );
+            }
+            return new Response(JSON.stringify(state()));
+        });
+        const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'], platform: 'win32' });
+        el.querySelector<HTMLButtonElement>('[data-tls-generate]')!.click();
+        await new Promise((r) => setTimeout(r, 0));
+        const alert = el.querySelector<HTMLElement>('[data-tls-alert]')!;
+        expect(alert.textContent).toMatch(/certificate generated\. restart the server to start serving https/i);
+    });
+
+    it('listenerStatusNotice is null for a non-ready cert or a confirmed-bound listener', () => {
+        expect(listenerStatusNotice({ status: 'none' })).toBeNull();
+        expect(listenerStatusNotice({ status: 'ready', httpsListener: { bound: true, port: 8443 } })).toBeNull();
+        expect(listenerStatusNotice({ status: 'ready' })).toBeNull(); // unknown -- say nothing
     });
 });
