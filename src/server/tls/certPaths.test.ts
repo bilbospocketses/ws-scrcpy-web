@@ -13,7 +13,7 @@ describe('resolveCertPaths', () => {
         // caRoot must not be under dataRoot
         const normalized = p.caRoot.toLowerCase();
         const normalizedData = 'c:\\programdata\\wsscrcpyweb'.toLowerCase();
-        expect(normalized.startsWith(normalizedData + '\\')).toBe(false);
+        expect(normalized.startsWith(`${normalizedData}\\`)).toBe(false);
     });
 
     it('rejects malicious input where localAppData is under dataRoot', () => {
@@ -22,7 +22,7 @@ describe('resolveCertPaths', () => {
                 platform: 'win32',
                 dataRoot: 'C:\\ProgramData\\WsScrcpyWeb',
                 localAppData: 'C:\\ProgramData\\WsScrcpyWeb\\evil',
-            })
+            }),
         ).toThrow(/caRoot must not resolve under dataRoot/);
     });
 
@@ -32,7 +32,7 @@ describe('resolveCertPaths', () => {
                 platform: 'win32',
                 dataRoot: 'C:\\ProgramData\\WsScrcpyWeb',
                 home: 'C:\\ProgramData\\WsScrcpyWeb\\evil',
-            })
+            }),
         ).toThrow(/caRoot must not resolve under dataRoot/);
     });
 
@@ -44,7 +44,11 @@ describe('resolveCertPaths', () => {
     it('always returns absolute paths — mkcert writes leaves to the process cwd otherwise', () => {
         for (const opts of [
             { platform: 'linux' as const, dataRoot: '/data' },
-            { platform: 'win32' as const, dataRoot: 'C:\\ProgramData\\WsScrcpyWeb', localAppData: 'C:\\Users\\jane\\AppData\\Local' },
+            {
+                platform: 'win32' as const,
+                dataRoot: 'C:\\ProgramData\\WsScrcpyWeb',
+                localAppData: 'C:\\Users\\jane\\AppData\\Local',
+            },
         ]) {
             const p = resolveCertPaths(opts);
             for (const v of [p.caRoot, p.certFile, p.keyFile]) {
@@ -54,9 +58,9 @@ describe('resolveCertPaths', () => {
     });
 
     it('rejects relative dataRoot', () => {
-        expect(() =>
-            resolveCertPaths({ platform: 'linux', dataRoot: 'relative/path' })
-        ).toThrow(/dataRoot must be absolute/);
+        expect(() => resolveCertPaths({ platform: 'linux', dataRoot: 'relative/path' })).toThrow(
+            /dataRoot must be absolute/,
+        );
     });
 
     it('rejects relative localAppData on Windows', () => {
@@ -65,7 +69,7 @@ describe('resolveCertPaths', () => {
                 platform: 'win32',
                 dataRoot: 'C:\\Data',
                 localAppData: 'relative\\path',
-            })
+            }),
         ).toThrow(/LOCALAPPDATA or HOME\\AppData\\Local must be absolute/);
     });
 
@@ -94,7 +98,7 @@ describe('resolveCertPaths', () => {
         // Leaf must also be out of dataRoot on Windows
         const normalized = p.certFile.toLowerCase();
         const normalizedData = 'c:\\programdata\\wsscrcpyweb'.toLowerCase();
-        expect(normalized.startsWith(normalizedData + '\\')).toBe(false);
+        expect(normalized.startsWith(`${normalizedData}\\`)).toBe(false);
         // And must be in the per-user directory
         expect(p.certFile.toLowerCase()).toContain('appdata\\local');
         expect(p.keyFile.toLowerCase()).toContain('appdata\\local');
@@ -113,7 +117,7 @@ describe('resolveCertPaths', () => {
         // And all must be out of dataRoot
         const normalizedData = 'c:\\programdata\\wsscrcpyweb'.toLowerCase();
         for (const v of [p.caRoot, p.certFile, p.keyFile]) {
-            expect(v.toLowerCase().startsWith(normalizedData + '\\')).toBe(false);
+            expect(v.toLowerCase().startsWith(`${normalizedData}\\`)).toBe(false);
         }
     });
 
@@ -122,7 +126,7 @@ describe('resolveCertPaths', () => {
             resolveCertPaths({
                 platform: 'win32',
                 dataRoot: 'C:\\ProgramData\\WsScrcpyWeb',
-            })
+            }),
         ).toThrow(/cannot resolve a per-user TLS directory on Windows/);
     });
 });
