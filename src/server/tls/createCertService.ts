@@ -5,6 +5,7 @@ import * as process from 'process';
 import { promisify } from 'util';
 import { Config, resolveDataRoot } from '../Config';
 import { mkcertExeName } from '../DependencyDefinitions';
+import { getDependencyManager } from '../DependencyManager';
 import { CertService, type CertServiceDeps } from './CertService';
 import { resolveCertPaths } from './certPaths';
 
@@ -66,6 +67,49 @@ export function removeLeafFiles(leafPaths: { certFile: string; keyFile: string }
 }
 
 /**
+ * M3: bound to `CertServiceDeps.ensureCaRootDir` — see that field's own doc
+ * comment for why `CertService.generate()` calls this unconditionally (POSIX
+ * only) before every mkcert spawn, rather than relying on mkcert's own
+ * `os.MkdirAll(CAROOT, 0755)`. `mkdirSync`'s `mode` only takes effect for a
+ * directory it actually creates, so the explicit `chmodSync` afterward is
+ * what also retro-fixes one that already existed at a looser mode (created
+ * by an earlier mkcert run, before this fix).
+ */
+export function ensureCaRootDirSync(caRoot: string): void {
+    fs.mkdirSync(caRoot, { recursive: true, mode: 0o700 });
+    fs.chmodSync(caRoot, 0o700);
+}
+
+/**
+ * M2: mkcert is fetched "on first use" rather than at boot — see
+ * `deferInstall`'s doc comment on the mkcert `DependencyDefinition` and
+ * `DependencyManager.autoInstallMissing`'s skip for it. This IS that first
+ * use: called from `run` (below) right before every spawn, so a certificate
+ * generate() click is what actually triggers the download, and only when
+ * the binary genuinely isn't there yet (`fs.existsSync` is the entire cost
+ * on every call after the first).
+ *
+ * Goes through `getDependencyManager()`'s singleton — the SAME instance
+ * `index.ts`'s boot sequence and `DependencyApi` use — so an on-demand
+ * install here updates the one `DependencyInfo` the dependency panel reads,
+ * rather than a second, independently-tracked manager the panel never sees.
+ */
+export async function ensureMkcertInstalled(exe: string): Promise<void> {
+    if (fs.existsSync(exe)) return;
+    const config = Config.getInstance();
+    const depManager = getDependencyManager({
+        dependenciesPath: config.dependenciesPath,
+        restartMarkerPath: config.restartMarkerPath,
+    });
+    const result = await depManager.update('mkcert');
+    if (!result.success) {
+        throw new Error(
+            `mkcert is not installed and the on-demand install failed: ${result.errorMessage ?? 'unknown error'}`,
+        );
+    }
+}
+
+/**
  * Spawn mkcert and resolve `{ code, stderr }` rather than throwing on a
  * non-zero exit — `CertService.generate()` reads `code`/`stderr` itself to
  * decide success vs. failure and to surface mkcert's own message. No shell is
@@ -113,16 +157,22 @@ function buildCertService(): CertService {
         home: process.env['HOME'] || process.env['USERPROFILE'],
     });
 
+    const mkcertExe = resolveMkcertExe(config.dependenciesPath);
+
     const deps: CertServiceDeps = {
         paths,
-        mkcertExe: resolveMkcertExe(config.dependenciesPath),
+        mkcertExe,
         platform,
-        run: runMkcert,
+        run: async (exe, args, env) => {
+            await ensureMkcertInstalled(exe);
+            return runMkcert(exe, args, env);
+        },
         exists: (p) => fs.existsSync(p),
         readFile: (p) => fs.readFileSync(p, 'utf-8'),
         chmod: (p, mode) => fs.chmodSync(p, mode),
         removeCaRoot: () => removeCaRootFiles(paths.caRoot),
         removeLeaf: () => removeLeafFiles(paths),
+        ensureCaRootDir: () => ensureCaRootDirSync(paths.caRoot),
     };
 
     return new CertService(deps);

@@ -39,6 +39,18 @@ export interface CertServiceDeps {
     removeCaRoot: () => void;
     /** Deletes certFile and keyFile from paths. */
     removeLeaf: () => void;
+    /**
+     * POSIX only (see `generate()`'s call site): creates/re-chmods
+     * `paths.caRoot` at `0700`. mkcert's own `os.MkdirAll(CAROOT, 0755)`
+     * creates the directory if we don't get there first, and Go's
+     * `MkdirAll` leaves an ALREADY-EXISTING directory's mode untouched — so
+     * without this, a directory created by an earlier run (or by mkcert
+     * itself) stays `0755` forever, and `rootCA-key.pem`'s confidentiality
+     * rests entirely on mkcert's own `0400` file write with nothing in our
+     * code behind it (M3). Called unconditionally on every generate() so it
+     * also retro-fixes a directory that predates this.
+     */
+    ensureCaRootDir: () => void;
 }
 
 // A small, explicit denylist of common public suffixes -- NOT a Public Suffix
@@ -334,6 +346,21 @@ export class CertService {
         // The cost is a fresh CA (and a re-download) on every regenerate;
         // that is already the flow, and it is visible rather than silent.
         this.deps.removeCaRoot();
+
+        // M3: on Windows, caRoot already resolves to the per-user directory
+        // Task 2 built (see certPaths.ts) -- that directory's inherited ACL
+        // is the real control, and mkcert's own directory creation there is
+        // harmless because Windows ignores the Unix mode entirely. POSIX has
+        // no equivalent inherited control: mkcert creates caRoot at 0755
+        // (os.MkdirAll(CAROOT, 0755)), and confidentiality of rootCA-key.pem
+        // would otherwise rest ENTIRELY on mkcert's own 0400 file write, with
+        // nothing in our code behind it -- the leaf key gets an explicit
+        // defence-in-depth chmod a few lines below; the CA key deserves the
+        // same reasoning applied consciously rather than an unexamined
+        // default (M3).
+        if (this.deps.platform !== 'win32') {
+            this.deps.ensureCaRootDir();
+        }
 
         const { caRoot, certFile, keyFile } = this.deps.paths;
         const args = [

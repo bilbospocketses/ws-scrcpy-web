@@ -74,6 +74,7 @@ function makeService(over: Partial<CertServiceDeps> = {}) {
     const chmod = vi.fn();
     const removeCaRoot = vi.fn();
     const removeLeaf = vi.fn();
+    const ensureCaRootDir = vi.fn();
     const deps: CertServiceDeps = {
         paths: {
             caRoot: 'C:\\Users\\jane\\AppData\\Local\\WsScrcpyWeb\\tls\\ca',
@@ -88,9 +89,10 @@ function makeService(over: Partial<CertServiceDeps> = {}) {
         chmod,
         removeCaRoot,
         removeLeaf,
+        ensureCaRootDir,
         ...over,
     };
-    return { svc: new CertService(deps), run, chmod, removeCaRoot, removeLeaf };
+    return { svc: new CertService(deps), run, chmod, removeCaRoot, removeLeaf, ensureCaRootDir };
 }
 
 // A minimal in-memory "filesystem": exists()/readFile() consult a Set that
@@ -138,6 +140,7 @@ function makeStatefulService(runImpl?: CertServiceDeps['run']) {
         chmod,
         removeCaRoot,
         removeLeaf,
+        ensureCaRootDir: vi.fn(),
     };
     return { svc: new CertService(deps), run, removeCaRoot, removeLeaf, existing, paths, caRootPemPath };
 }
@@ -358,6 +361,25 @@ describe('CertService.generate', () => {
             await expect(svc.generate('hostname', '[::ffff:1.2.3.4]')).rejects.toThrow(/invalid/i);
             expect(run).not.toHaveBeenCalled();
             expect(removeCaRoot).not.toHaveBeenCalled();
+        });
+    });
+
+    describe("M3: the CA directory gets an explicit POSIX mode, not just mkcert's own default", () => {
+        // Contrast pair in one test: platform is the only thing that differs,
+        // so a mutation that deletes the `platform !== 'win32'` gate (calling
+        // ensureCaRootDir on BOTH platforms, or on NEITHER) fails one half or
+        // the other, not just one isolated assertion.
+        it('calls ensureCaRootDir on POSIX but NOT on win32, and before removeCaRoot/run', async () => {
+            const posix = makeService({ platform: 'linux' });
+            await posix.svc.generate('ip', '192.168.86.3');
+            expect(posix.ensureCaRootDir).toHaveBeenCalledTimes(1);
+            expect(posix.ensureCaRootDir.mock.invocationCallOrder[0]!).toBeLessThan(
+                posix.run.mock.invocationCallOrder[0]!,
+            );
+
+            const windows = makeService({ platform: 'win32' });
+            await windows.svc.generate('ip', '192.168.86.3');
+            expect(windows.ensureCaRootDir).not.toHaveBeenCalled();
         });
     });
 });
