@@ -24,8 +24,14 @@ export function requiresOriginCheck(method: string | undefined, pathname: string
 /**
  * Parse the hostname out of a Host header value (strips the port and any IPv6
  * brackets). Returns null if the value cannot be parsed.
+ *
+ * Exported so a redirect target (HttpServer.ts's 'redirect' exposure mode)
+ * parses a Host header the same way this file's own allowlist check does --
+ * two independent Host parsers is how a caller-controlled Location header
+ * that passes "looks like a hostname" but fails "is a host this app would
+ * actually serve" gets built in the first place.
  */
-function hostnameOf(host: string): string | null {
+export function hostnameOf(host: string): string | null {
     try {
         const hostname = new URL(`http://${host}`).hostname.toLowerCase();
         // WHATWG URL returns IPv6 hostnames bracketed (e.g. "[::1]"); strip the

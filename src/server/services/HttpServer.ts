@@ -12,6 +12,7 @@ import { createStaticHandler } from '../StaticFileServer';
 import { isRequestSecure } from '../security/forwardedProto';
 import { securityHeaders } from '../security/frameGuard';
 import { isLoopback } from '../security/loopback';
+import { hostnameOf, isHostAllowed } from '../security/originGuard';
 import { evaluateHttpRequest } from '../security/requestGate';
 import type { HttpExposure } from '../tls/httpExposure';
 import { decideHttpRequest, HTTP_EXPOSURE_KEY } from '../tls/httpExposure';
@@ -76,6 +77,12 @@ export function createHttpRequestHandler(
                 if (decision === 'refuse') {
                     // 421 Misdirected Request: the right name on the wrong listener.
                     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+                    // Belt-and-braces against a non-conforming intermediary
+                    // holding this response past the user turning the
+                    // setting back off (amendment D's cache concern, applied
+                    // here too even though a 421 is not heuristically
+                    // cacheable either).
+                    res.setHeader('Cache-Control', 'no-store');
                     res.writeHead(421);
                     res.end(
                         'this server is configured for https only. open it over https, or browse from the machine itself.',
@@ -87,15 +94,20 @@ export function createHttpRequestHandler(
                     if (target) {
                         // 302, not 301: a permanent redirect is cached by
                         // browsers indefinitely and would outlive the user
-                        // turning this setting back off.
+                        // turning this setting back off. Cache-Control:
+                        // no-store closes the same gap against an
+                        // intermediary that doesn't honour the status-code
+                        // default (amendment D's stated concern).
                         res.setHeader('Location', target);
+                        res.setHeader('Cache-Control', 'no-store');
                         res.writeHead(302);
                         res.end();
                         return;
                     }
-                    // The Host header didn't survive the hostname check --
-                    // fall through and serve rather than emit a Location we
-                    // did not construct ourselves (host-header injection).
+                    // The Host header isn't one this app would ever agree to
+                    // serve -- fall through and serve plain HTTP rather than
+                    // emit a Location built from it (host-header injection /
+                    // open redirect).
                 }
             }
         }
@@ -161,12 +173,23 @@ function readHttpExposure(): HttpExposure {
 }
 
 /**
- * Ports whose HTTPS listener was configured but failed to bind at runtime
- * (EADDRINUSE, EACCES, ...) -- see attachListenErrorHandler. findHttpsPort()
- * treats one of these exactly like "no secure entry exists": a configured
- * port that nothing is actually listening on is worse than no port at all,
- * because 'redirect' would send a caller at a dead end and 'httpsOnly' would
- * 421 the only listener still standing.
+ * Ports whose HTTPS listener was configured but failed to BIND (as opposed
+ * to a later runtime error on an already-live listener -- see
+ * attachListenErrorHandler's `!server.listening` guard) -- see also M3/M5
+ * below. findHttpsPort() treats one of these exactly like "no secure entry
+ * exists": a configured port that nothing is actually listening on is worse
+ * than no port at all, because 'redirect' would send a caller at a dead end
+ * and 'httpsOnly' would 421 the only listener still standing.
+ *
+ * No reset seam (M5): nothing removes a port from this Set, including a
+ * later successful bind (there is none -- see attachListenErrorHandler) or
+ * `HttpServer.release()`. Not a leak in production (the process exits and
+ * restarts fresh rather than re-listening in place -- see
+ * restartRequest.ts), but a test file that emits an 'error' on a shared
+ * module instance and adds more cases afterward without its own
+ * `vi.resetModules()` would see every subsequent case treated as
+ * HTTPS-failed. `httpServerListenErrors.test.ts` resets per test for this
+ * reason.
  */
 const failedSecurePorts = new Set<number>();
 
@@ -178,16 +201,28 @@ const failedSecurePorts = new Set<number>();
  * `undefined` case to skip 'refuse' and 'redirect' altogether, because a mode
  * that can only be undone through a listener that doesn't exist is a
  * lockout, not a feature.
+ *
+ * Prefers the actually-BOUND port (boundSecurePorts, set from
+ * `server.address()` once `.listen()` succeeds) over the configured one
+ * (M7): with an ephemeral `port: 0` entry, the configured value is 0 and a
+ * redirect built from it would be `https://host:0/`.
  */
 function findHttpsPort(): number | undefined {
     try {
         const entry = Config.getInstance().servers.find((s) => s.secure);
         if (!entry || failedSecurePorts.has(entry.port)) return undefined;
-        return entry.port;
+        return boundSecurePorts.get(entry.port) ?? entry.port;
     } catch {
         return undefined;
     }
 }
+
+/**
+ * Configured secure port -> the port actually bound (see the `.listen()`
+ * callback in `start()`). Only ever differs from the configured port when
+ * that port is `0` (ephemeral, OS-assigned) -- see M7 / findHttpsPort.
+ */
+const boundSecurePorts = new Map<number, number>();
 
 /**
  * Attaches the 'error' listener a bind failure needs, before `.listen()` is
@@ -197,24 +232,41 @@ function findHttpsPort(): number | undefined {
  * which is how one busy port used to take the whole process down with it --
  * HTTPS and HTTP alike, even though HTTP may have bound fine.
  *
- * HTTPS is optional (see M4 above): its bind failure degrades. Log the port
+ * HTTPS is optional (see M4 above): a BIND failure degrades. Log the port
  * and cause, record it in failedSecurePorts so the exposure-mode logic above
- * stops treating it as live, and keep running on whatever else came up.
+ * stops treating it as live, and keep running on whatever else came up. The
+ * `!server.listening` guard is load-bearing, not decoration: `'error'` on an
+ * http/https Server fires for any runtime socket error, not only a failed
+ * bind, and `server.listening` is only false before a successful bind (or
+ * after `.close()`). Without the guard, a transient error on an
+ * already-serving HTTPS listener (e.g. EMFILE under load) would mark the
+ * port "failed to bind" -- a false log line -- and silently disable both
+ * narrowed exposure modes for the rest of the process's life on a listener
+ * that is still up.
  *
  * Plain HTTP is not optional -- there is no server at all without it -- so
  * its bind failure stays fatal, exactly as it was before this handler
  * existed (no listener meant Node itself threw the error as an
  * uncaughtException). This logs the specific port and cause first, then lets
- * the same failure surface the same way; it does not swallow it.
+ * the same failure surface the same way; it does not swallow it. (This is
+ * unconditional on `server.listening`, unlike the secure branch: an HTTP
+ * bind failure and a later HTTP runtime error are both already fatal today,
+ * so there is no false-log-line failure mode to guard against here.)
  */
 function attachListenErrorHandler(server: http.Server | https.Server, port: number, secure: boolean): void {
     server.on('error', (err: NodeJS.ErrnoException) => {
         const cause = err.code ?? err.message;
         if (secure) {
-            failedSecurePorts.add(port);
-            Logger.for('HttpServer').error(
-                `HTTPS listener on port ${port} failed to bind (${cause}); continuing without HTTPS.`,
-            );
+            if (!server.listening) {
+                failedSecurePorts.add(port);
+                Logger.for('HttpServer').error(
+                    `HTTPS listener on port ${port} failed to bind (${cause}); continuing without HTTPS.`,
+                );
+            } else {
+                Logger.for('HttpServer').error(
+                    `HTTPS listener on port ${port} reported a runtime error (${cause}); it may be degraded.`,
+                );
+            }
             return;
         }
         Logger.for('HttpServer').error(`HTTP listener on port ${port} failed to bind (${cause})`);
@@ -223,32 +275,66 @@ function attachListenErrorHandler(server: http.Server | https.Server, port: numb
 }
 
 /**
- * The hostname portion of a Host header, with any `:port` stripped, or
- * `undefined` if what's left isn't a plain host token. Host is
- * caller-controlled, so this is deliberately conservative: letters, digits,
- * dots and hyphens only. Anything else (control characters, slashes, stray
- * colons from a malformed header) is rejected rather than guessed at, since
- * the caller uses the result to build a redirect Location header and a
- * poisoned one is a cache-able open redirect / header injection.
+ * The hostname to redirect to, or `undefined` when the Host header isn't one
+ * this app would ever agree to serve. Reuses `isHostAllowed` -- the app's
+ * OWN Host allowlist (`localhost` / IP literals / operator `allowedHosts`),
+ * consulted three statements later in this same handler for the request
+ * gate -- rather than a second, independent notion of "looks like a
+ * hostname". A plain DNS name like `evil.com` matches a charset check but
+ * fails `isHostAllowed`, so it can't reach here: redirecting toward a host
+ * this app refuses to serve is exactly the open redirect a caller-controlled
+ * `Location` header would otherwise be. One allowlist, so the two can never
+ * drift apart.
+ *
+ * `hostnameOf` is the same WHATWG-URL parse `isHostAllowed` uses internally,
+ * imported rather than reimplemented so a `user:pass@host` userinfo prefix or
+ * a bracketed IPv6 literal parses identically in both places. It strips
+ * IPv6 brackets for `isIP()`'s sake; they're re-added here when composing a
+ * URL authority.
  */
-function extractHostname(hostHeader: string | undefined): string | undefined {
-    const hostname = (hostHeader ?? '').split(':')[0] ?? '';
-    return /^[a-zA-Z0-9.-]+$/.test(hostname) ? hostname : undefined;
+function redirectHostname(hostHeader: string | undefined): string | undefined {
+    if (!isHostAllowed(hostHeader)) return undefined;
+    const hostname = hostnameOf(hostHeader ?? '');
+    if (!hostname) return undefined;
+    return hostname.includes(':') ? `[${hostname}]` : hostname;
+}
+
+/**
+ * The request path to redirect to. Only an origin-form request-target
+ * (starting with `/`, the normal case for a browser navigation) is safe to
+ * carry into a `Location` header verbatim -- an absolute-form target (what a
+ * proxy sends, e.g. `GET http://evil.com/x HTTP/1.1` -> `req.url ===
+ * 'http://evil.com/x'`) or asterisk-form (`OPTIONS *` -> `req.url === '*'`)
+ * would otherwise land as-is, producing a malformed authority
+ * (`https://host:port*` or a scheme-doubled URL). Falls back to `/` rather
+ * than reject the whole redirect over an edge-case request line.
+ */
+function safeRedirectPath(url: string | undefined): string {
+    return url?.startsWith('/') ? url : '/';
 }
 
 /**
  * The redirect target for the 'redirect' exposure mode, or `undefined` when
  * the Host header can't be trusted enough to build one from. Never falls
  * back to emitting a Location built from unvalidated input.
+ *
+ * Exported (like createHttpRequestHandler above) so the open-redirect defense
+ * can be pinned directly: driven only through the full request handler, a
+ * disallowed Host is independently rejected by the downstream request gate
+ * (same `isHostAllowed` policy, by design -- that's the whole point of C1),
+ * so a test asserting the FINAL response status there cannot tell "the
+ * redirect branch correctly refused to build a Location" apart from "the
+ * whole exposure block was deleted and the request gate caught it anyway".
+ * Testing this function directly closes that gap.
  */
-function buildRedirectTarget(
+export function buildRedirectTarget(
     hostHeader: string | undefined,
     url: string | undefined,
     securePort: number,
 ): string | undefined {
-    const hostname = extractHostname(hostHeader);
+    const hostname = redirectHostname(hostHeader);
     if (!hostname) return undefined;
-    return `https://${hostname}:${securePort}${url ?? '/'}`;
+    return `https://${hostname}:${securePort}${safeRedirectPath(url)}`;
 }
 
 const DEFAULT_STATIC_DIR = path.join(__dirname, './public');
@@ -374,6 +460,14 @@ export class HttpServer extends TypedEmitter<HttpServerEvents> implements Servic
                 }
                 server = http.createServer(options, handler);
             }
+            // M3: pushed unconditionally, before the bind is even attempted --
+            // an entry whose HTTPS bind later fails (see
+            // attachListenErrorHandler) is NOT removed from `this.servers`,
+            // so `getServers()` can report a secure entry that isn't
+            // actually listening. Harmless today (the only consumer,
+            // WebSocketServer.start(), attaches to a socket that will never
+            // accept); a future status/capabilities endpoint reading this to
+            // answer "is HTTPS up" would need `failedSecurePorts` too.
             this.servers.push({ server, port });
             // Attached before `.listen()`, on EVERY server (not only the
             // secure one) -- see attachListenErrorHandler for why a bind
@@ -382,6 +476,16 @@ export class HttpServer extends TypedEmitter<HttpServerEvents> implements Servic
             attachListenErrorHandler(server, port, secure);
             server.listen(port, () => {
                 Utils.printListeningMsg(proto, port, PATHNAME);
+                if (secure) {
+                    // Record the port actually bound, not just the
+                    // configured one (M7): with an ephemeral `port: 0` entry
+                    // they differ, and findHttpsPort() needs the real one to
+                    // build a working redirect target.
+                    const address = server.address();
+                    if (address && typeof address === 'object') {
+                        boundSecurePorts.set(port, address.port);
+                    }
+                }
             });
         });
         this.started = true;
