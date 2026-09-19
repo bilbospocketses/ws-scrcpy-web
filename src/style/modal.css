@@ -836,6 +836,36 @@ dialog.settings-modal .settings-status-ready {
     color: var(--success-color);
 }
 
+/*
+ * Local HTTPS panel notices (notifications 3-9): a warning-toned variant of
+ * .settings-status, layered the same way .settings-status-error is above.
+ * Deliberately sets NO `display` -- these rows are shown/hidden via the HTML
+ * `hidden` attribute (see ServerTab.ts's buildNoticeRow/setNotice), and this
+ * repo already found the bug where a class rule setting `display` outranks
+ * the UA stylesheet's `[hidden] { display: none }` and leaves a "hidden"
+ * element on screen (.dependency-alert-badge, above). The rule below
+ * re-asserts the UA behaviour at class specificity so a future `display`
+ * added here cannot resurrect that bug.
+ */
+dialog.settings-modal .settings-status-warning {
+    color: var(--warning-color);
+}
+
+dialog.settings-modal .settings-status-warning[hidden] {
+    display: none;
+}
+
+/* Local HTTPS panel's per-OS trust-instructions accordion. */
+dialog.settings-modal .settings-control details {
+    width: 100%;
+}
+
+dialog.settings-modal .settings-control details summary {
+    cursor: pointer;
+    color: var(--text-color, #ddd);
+    font-size: 13px;
+}
+
 dialog.settings-modal .settings-stub-note {
     margin: 0;
     padding-left: 1.25rem;

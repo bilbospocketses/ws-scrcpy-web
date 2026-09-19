@@ -10,6 +10,10 @@ export const ADMIN_ONLY_SECTIONS = new Set<string>([
     'users',
     'webPort',
     'serverControls',
+    // `/api/tls/*` is admin-gated server-side (TlsApi.ts) -- an ungated panel
+    // here would 403 on every read for a non-admin, same "reads as a bug"
+    // anti-pattern the `dependencies` entry below documents (finding 9.6).
+    'localHttps',
     // Who may frame this app is a security decision; the server enforces the same
     // via requireLocalAdmin on /api/embed-origins.
     'embedOrigins',
