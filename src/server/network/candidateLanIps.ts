@@ -17,48 +17,40 @@ import type { NetworkInterfaceInfo } from 'os';
  * Excluded:
  *   - internal / non-IPv4 entries (loopback, IPv6) -- not a routable LAN v4
  *     address at all.
- *   - 169.254.0.0/16 (link-local / APIPA) -- a NIC with no DHCP lease, never
- *     reachable from another machine.
- *   - 100.64.0.0/10 (CGNAT) -- Tailscale and carrier-grade NAT both live here;
- *     it routes, but not to a LAN a phone shares with this machine.
+ *   - anything outside the RFC1918 ranges below. That alone already excludes
+ *     169.254.0.0/16 (link-local / APIPA -- a NIC with no DHCP lease) and
+ *     100.64.0.0/10 (CGNAT -- Tailscale and carrier-grade NAT both live here;
+ *     it routes, but not to a LAN a phone shares with this machine), since
+ *     neither range is RFC1918. (N5: this file used to also run explicit
+ *     isCgnat/isLinkLocal early-exits for those two ranges; they were
+ *     unreachable dead code -- isRfc1918 already returns false for both, so
+ *     removing them changed nothing observable. See candidateLanIps.test.ts
+ *     for the boundary tests that prove the exclusion at the top level.)
  *
  * Included: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 -- the RFC1918 ranges,
  * with no further narrowing. A VPN adapter handing out a 10.x address looks
  * identical to a real LAN NIC from here; the panel showing every candidate
  * (rather than one silently-wrong guess) is the point.
+ *
+ * De-duplicated (N15): a multi-homed NIC or a teamed adapter can expose the
+ * same address on more than one `os.networkInterfaces()` entry, which would
+ * otherwise render as a duplicate row in the panel.
  */
 export function candidateLanIps(interfaces: NodeJS.Dict<NetworkInterfaceInfo[]>): string[] {
-    const out: string[] = [];
+    const out = new Set<string>();
     for (const entries of Object.values(interfaces)) {
         for (const entry of entries ?? []) {
             if (entry.family !== 'IPv4' || entry.internal) continue;
-            if (isLinkLocal(entry.address) || isCgnat(entry.address)) continue;
-            if (isRfc1918(entry.address)) out.push(entry.address);
+            if (isRfc1918(entry.address)) out.add(entry.address);
         }
     }
-    return out;
-}
-
-function octets(ip: string): number[] {
-    return ip.split('.').map((p) => Number.parseInt(p, 10));
+    return [...out];
 }
 
 function isRfc1918(ip: string): boolean {
-    const [a, b] = octets(ip);
+    const [a, b] = ip.split('.').map((p) => Number.parseInt(p, 10));
     if (a === 10) return true;
     if (a === 172 && b !== undefined && b >= 16 && b <= 31) return true;
     if (a === 192 && b === 168) return true;
     return false;
-}
-
-/** 100.64.0.0/10: second octet 64-127. */
-function isCgnat(ip: string): boolean {
-    const [a, b] = octets(ip);
-    return a === 100 && b !== undefined && b >= 64 && b <= 127;
-}
-
-/** 169.254.0.0/16. */
-function isLinkLocal(ip: string): boolean {
-    const [a, b] = octets(ip);
-    return a === 169 && b === 254;
 }

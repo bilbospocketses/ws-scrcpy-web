@@ -41,6 +41,58 @@ describe('TlsApi', () => {
         expect(svc.caRootPem).not.toHaveBeenCalled();
     });
 
+    // --- N4: the admin gate is asserted for ca-root above; pin it for every
+    // other route too, since "placed BEFORE the route table so a route added
+    // later cannot land ungated" is exactly the invariant a test should check,
+    // not just inspection. `denyAdmin` mirrors requireAdmin's own real
+    // behaviour (writes 403, returns false) so the status assertion is honest.
+
+    describe('the admin gate covers every route, not just ca-root (N4)', () => {
+        function denyAdmin() {
+            vi.mocked(requireAdmin).mockImplementationOnce((_req, res) => {
+                res.writeHead(403, { 'content-type': 'application/json' });
+                res.end(JSON.stringify({ error: 'forbidden' }));
+                return false;
+            });
+        }
+
+        it('GET /api/tls/state is gated', async () => {
+            denyAdmin();
+            const { api, svc } = makeApi();
+            const r = makeReqRes('GET', '/api/tls/state');
+            expect(await api.handle(r.req, r.res)).toBe(true);
+            expect(r.getStatus()).toBe(403);
+            expect(svc.getState).not.toHaveBeenCalled();
+        });
+
+        it('POST /api/tls/generate is gated', async () => {
+            denyAdmin();
+            const { api, svc } = makeApi();
+            const r = makeReqRes('POST', '/api/tls/generate', { kind: 'ip', value: '192.168.86.3' });
+            expect(await api.handle(r.req, r.res)).toBe(true);
+            expect(r.getStatus()).toBe(403);
+            expect(svc.generate).not.toHaveBeenCalled();
+        });
+
+        it('POST /api/tls/revoke is gated', async () => {
+            denyAdmin();
+            const { api, svc } = makeApi();
+            const r = makeReqRes('POST', '/api/tls/revoke', {});
+            expect(await api.handle(r.req, r.res)).toBe(true);
+            expect(r.getStatus()).toBe(403);
+            expect(svc.revoke).not.toHaveBeenCalled();
+        });
+
+        it('an unmatched /api/tls/* path is gated BEFORE the unknown-route 404', async () => {
+            denyAdmin();
+            const { api } = makeApi();
+            const r = makeReqRes('GET', '/api/tls/nonexistent-route');
+            expect(await api.handle(r.req, r.res)).toBe(true);
+            // Not 404 -- the gate runs before the route table sees this path at all.
+            expect(r.getStatus()).toBe(403);
+        });
+    });
+
     it('serves the CA as a download, not inline', async () => {
         const { api } = makeApi();
         const r = makeReqRes('GET', '/api/tls/ca-root');
@@ -107,11 +159,13 @@ describe('TlsApi', () => {
     // --- amendment (a): rate-limit GET /api/tls/ca-root ---
 
     describe('ca-root rate limiting (amendment a)', () => {
-        it('refuses a burst after the limit, per-process (same instance) rather than per-connection', async () => {
-            const { api, svc } = makeApi();
+        it('refuses a burst after the limit, per-instance (same api object) rather than per-connection (N7)', async () => {
+            const { api } = makeApi();
             const results: number[] = [];
             // Each call gets its own req/res -- a fresh "connection" -- but the
-            // same `api` instance, which is what "per-process" means here.
+            // same `api` instance, which is what "per-instance" means here (in
+            // production exactly one TlsApi is registered, so this coincides
+            // with "per process" — see the class-level doc comment).
             for (let i = 0; i < 20; i++) {
                 const r = makeReqRes('GET', '/api/tls/ca-root');
                 await api.handle(r.req, r.res);
@@ -119,10 +173,15 @@ describe('TlsApi', () => {
             }
             expect(results.some((s) => s === 200)).toBe(true);
             expect(results.some((s) => s === 429)).toBe(true);
-            // Once refused, the service must not have been asked for the PEM.
             const refusedIndex = results.indexOf(429);
             expect(refusedIndex).toBeGreaterThan(-1);
-            expect(svc.caRootPem.mock.calls.length).toBeLessThan(20);
+            // NOTE (post-N8): svc.caRootPem() is now called on every request,
+            // blocked or not -- the handler must read it before it can even
+            // know there is material to rate-limit at all (see the 404-before-
+            // rate-limit test above). The old assertion here ("the service must
+            // not be asked for the PEM once refused") no longer holds and would
+            // be false under the corrected behaviour; it is intentionally not
+            // repeated.
         });
 
         it('a fresh TlsApi instance starts with its own unspent limit', async () => {
@@ -146,6 +205,26 @@ describe('TlsApi', () => {
         const r = makeReqRes('GET', '/api/tls/ca-root');
         await api.handle(r.req, r.res);
         expect(r.getStatus()).toBe(404);
+    });
+
+    it('a 404 (no cert generated yet) does not consume a rate-limit slot (N8)', async () => {
+        const caRootPem = vi.fn((): string | undefined => undefined);
+        const { api } = makeApi({ caRootPem });
+
+        // Far more than the limit -- every one of these must 404, never 429,
+        // because nothing has ever left the process yet.
+        for (let i = 0; i < 50; i++) {
+            const r = makeReqRes('GET', '/api/tls/ca-root');
+            await api.handle(r.req, r.res);
+            expect(r.getStatus()).toBe(404);
+        }
+
+        // Now that a certificate exists, the budget must be untouched by the
+        // 50 prior 404s -- the very first real download still succeeds.
+        caRootPem.mockReturnValue('-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n');
+        const r = makeReqRes('GET', '/api/tls/ca-root');
+        await api.handle(r.req, r.res);
+        expect(r.getStatus()).toBe(200);
     });
 
     // --- amendment (C): kind must be a literal, never defaulted ---
@@ -206,6 +285,56 @@ describe('TlsApi', () => {
 
             expect(addAllowedHost).not.toHaveBeenCalled();
             expect((r.getJson() as { allowedHostAdded: boolean }).allowedHostAdded).toBe(false);
+        });
+    });
+
+    // --- N1: a config.json write failure must not be reported as "address rejected" ---
+
+    describe('allowedHosts write failure after a successful generate (N1)', () => {
+        it('still reports 200 with the real state when Config.getInstance() itself throws', async () => {
+            vi.mocked(Config.getInstance).mockImplementation(() => {
+                throw new Error('ENOSPC: no space left on device');
+            });
+            const generate = vi.fn(async () => ({ status: 'ready', subject: 'devices.lan', kind: 'hostname' }));
+            const { api } = makeApi({ generate });
+
+            const r = makeReqRes('POST', '/api/tls/generate', { kind: 'hostname', value: 'devices.lan' });
+            await api.handle(r.req, r.res);
+
+            // The certificate WAS issued -- svc.generate resolved. Reporting
+            // "that address could not be used for a certificate" here would be a
+            // lie: mkcert ran, the CA was replaced, and the leaf is on disk.
+            expect(r.getStatus()).toBe(200);
+            const json = r.getJson() as Record<string, unknown>;
+            expect(json['status']).toBe('ready');
+            expect(json['subject']).toBe('devices.lan');
+            expect(json['allowedHostAdded']).toBe(false);
+        });
+
+        it('still reports 200 with the real state when addAllowedHost() itself throws', async () => {
+            const addAllowedHost = vi.fn(() => {
+                throw new Error('EACCES: config.json');
+            });
+            vi.mocked(Config.getInstance).mockReturnValue({ addAllowedHost } as never);
+            const generate = vi.fn(async () => ({ status: 'ready', subject: 'devices.lan', kind: 'hostname' }));
+            const { api } = makeApi({ generate });
+
+            const r = makeReqRes('POST', '/api/tls/generate', { kind: 'hostname', value: 'devices.lan' });
+            await api.handle(r.req, r.res);
+
+            expect(r.getStatus()).toBe(200);
+            const json = r.getJson() as Record<string, unknown>;
+            expect(json['status']).toBe('ready');
+            expect(json['allowedHostAdded']).toBe(false);
+        });
+
+        it('a genuine svc.generate() failure is still reported as 400 (the original contract, unaffected)', async () => {
+            const generate = vi.fn().mockRejectedValue(new Error('invalid certificate subject'));
+            const { api, svc } = makeApi({ generate });
+            const r = makeReqRes('POST', '/api/tls/generate', { kind: 'hostname', value: 'not-a-real-host' });
+            await api.handle(r.req, r.res);
+            expect(r.getStatus()).toBe(400);
+            expect(svc.generate).toHaveBeenCalled();
         });
     });
 });

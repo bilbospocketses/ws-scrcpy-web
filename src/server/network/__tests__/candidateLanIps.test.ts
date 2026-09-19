@@ -72,6 +72,31 @@ describe('candidateLanIps', () => {
         expect(candidateLanIps({ eth: [v4('172.32.0.1')] })).toEqual([]);
     });
 
+    it('de-duplicates the same address seen on two interfaces (multi-homed NIC / teaming) (N15)', () => {
+        const interfaces = {
+            Ethernet: [v4('192.168.86.3')],
+            'Ethernet (team member)': [v4('192.168.86.3')],
+        };
+        expect(candidateLanIps(interfaces)).toEqual(['192.168.86.3']);
+    });
+
+    // --- N6: inclusive CIDR edges, so an off-by-one cannot silently pass ---
+
+    it('includes the inclusive 172.16.0.0/12 edges: 172.16.0.0 and 172.31.255.255', () => {
+        expect(candidateLanIps({ eth: [v4('172.16.0.0')] })).toEqual(['172.16.0.0']);
+        expect(candidateLanIps({ eth: [v4('172.31.255.255')] })).toEqual(['172.31.255.255']);
+    });
+
+    it('excludes just past the 172.16.0.0/12 edges: 172.15.255.255 and 172.32.0.0', () => {
+        expect(candidateLanIps({ eth: [v4('172.15.255.255')] })).toEqual([]);
+        expect(candidateLanIps({ eth: [v4('172.32.0.0')] })).toEqual([]);
+    });
+
+    it('excludes the inclusive 100.64.0.0/10 (CGNAT) edges: 100.64.0.0 and 100.127.255.255', () => {
+        expect(candidateLanIps({ eth: [v4('100.64.0.0')] })).toEqual([]);
+        expect(candidateLanIps({ eth: [v4('100.127.255.255')] })).toEqual([]);
+    });
+
     it('returns ALL candidates, not a single winner -- the panel shows them and the user picks', () => {
         const interfaces = {
             Ethernet: [v4('192.168.86.3')],

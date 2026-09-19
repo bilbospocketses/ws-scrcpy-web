@@ -143,8 +143,3 @@ export function getCertService(): CertService {
     }
     return instance;
 }
-
-/** Test-only: clears the memoized instance so a test can force a rebuild against a freshly-configured Config. */
-export function _resetCertServiceForTest(): void {
-    instance = undefined;
-}

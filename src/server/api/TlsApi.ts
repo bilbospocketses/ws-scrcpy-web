@@ -4,7 +4,7 @@ import { requireAdmin } from '../auth/requireAdmin';
 import { Config } from '../Config';
 import { Logger } from '../Logger';
 import { candidateLanIps } from '../network/candidateLanIps';
-import type { CertService, CertSubjectKind } from '../tls/CertService';
+import type { CertService, CertState, CertSubjectKind } from '../tls/CertService';
 import { BodyTooLargeError, InvalidJsonError, readJsonBodyStrict, sendInternalError } from './utils';
 
 const log = Logger.for('TlsApi');
@@ -15,9 +15,11 @@ const PREFIX = '/api/tls';
  * browser's trust store — spec §7 requires it "admin-gated ... also
  * rate-limited and logs each download". This is one operator clicking a
  * button, not a public API, so a small in-memory counter is enough; it is
- * intentionally per-PROCESS (one counter for the whole running server), not
- * per-connection, so a caller cannot dodge the limit by opening a new socket
- * per request.
+ * scoped to this `TlsApi` INSTANCE (not per-connection: a fresh `req`/`res`
+ * per request does not reset it), so a caller cannot dodge the limit by
+ * opening a new socket per request. The composition root (`index.ts`)
+ * registers exactly one `TlsApi`, which is what makes "per instance" and
+ * "per process" coincide in production — the mechanism itself is per-instance.
  */
 const CA_ROOT_RATE_LIMIT = 10;
 const CA_ROOT_RATE_WINDOW_MS = 60_000;
@@ -47,8 +49,14 @@ export class TlsApi {
         // installs it.
         if (!requireAdmin(req, res)) return true;
 
-        const svc = this.getService();
         try {
+            // Inside the try (N11): getService() can throw on first use (e.g.
+            // getCertService() finding no resolvable data root), and that
+            // failure deserves the same log.error + generic 500 every other
+            // failure in this handler gets, rather than escaping to
+            // HttpServer's last-resort guard silently.
+            const svc = this.getService();
+
             if (req.method === 'GET' && pathname === `${PREFIX}/state`) {
                 res.setHeader('Content-Type', 'application/json');
                 res.writeHead(200);
@@ -58,19 +66,25 @@ export class TlsApi {
 
             if (req.method === 'GET' && pathname === `${PREFIX}/ca-root`) {
                 res.setHeader('Content-Type', 'application/json');
-                if (this.isCaRootRateLimited()) {
-                    res.writeHead(429);
-                    res.end(JSON.stringify({ error: 'too many CA downloads; wait a moment and try again' }));
-                    return true;
-                }
 
                 const pem = svc.caRootPem();
                 if (pem === undefined) {
                     // No CA on disk yet — an ordinary state (first run, or a
                     // failed regenerate that deleted it — see CertService.generate's
-                    // doc comment), never a 500.
+                    // doc comment), never a 500. Checked BEFORE the rate limit
+                    // (N8): the limit tracks actual CA material leaving the
+                    // process, so a 404 must never spend a slot — otherwise an
+                    // operator clicking "download" on a machine with no
+                    // certificate yet locks themselves out of downloads that
+                    // never happened.
                     res.writeHead(404);
                     res.end(JSON.stringify({ error: 'no certificate has been generated yet' }));
+                    return true;
+                }
+
+                if (this.isCaRootRateLimited()) {
+                    res.writeHead(429);
+                    res.end(JSON.stringify({ error: 'too many CA downloads; wait a moment and try again' }));
                     return true;
                 }
 
@@ -105,28 +119,44 @@ export class TlsApi {
                     return true;
                 }
 
+                let state: CertState;
                 try {
-                    const state = await svc.generate(kind, value);
-
-                    // A hostname subject needs allowedHosts or requests are
-                    // refused as DNS-rebinding (see security/originGuard). A raw
-                    // IP already passes that check, so writing one here would
-                    // recreate the confusion issue #691 was about: a user reading
-                    // `allowedHosts: ["192.168.86.3"]` reasonably concludes IPs
-                    // belong there. Skip the write for kind 'ip' (amendment c).
-                    let allowedHostAdded = false;
-                    if (kind === 'hostname' && state.subject) {
-                        allowedHostAdded = Config.getInstance().addAllowedHost(state.subject);
-                    }
-
-                    res.writeHead(200);
-                    res.end(JSON.stringify({ ...state, allowedHostAdded }));
+                    state = await svc.generate(kind, value);
                 } catch {
                     // Deliberately does NOT echo the message: it can contain the
                     // caller's own input, which would land in their DOM.
                     res.writeHead(400);
                     res.end(JSON.stringify({ error: 'that address could not be used for a certificate' }));
+                    return true;
                 }
+
+                // The certificate now genuinely EXISTS -- mkcert ran, the CA was
+                // replaced, and the leaf is on disk. Everything past this point
+                // is a DIFFERENT failure mode (N1): a config.json write failing
+                // here must never be reported as "that address could not be
+                // used for a certificate", because it was used, successfully.
+                //
+                // A hostname subject needs allowedHosts or requests are
+                // refused as DNS-rebinding (see security/originGuard). A raw
+                // IP already passes that check, so writing one here would
+                // recreate the confusion issue #691 was about: a user reading
+                // `allowedHosts: ["192.168.86.3"]` reasonably concludes IPs
+                // belong there. Skip the write for kind 'ip' (amendment c).
+                let allowedHostAdded = false;
+                if (kind === 'hostname' && state.subject) {
+                    try {
+                        allowedHostAdded = Config.getInstance().addAllowedHost(state.subject);
+                    } catch (err) {
+                        log.error(
+                            `certificate issued for "${state.subject}" but allowedHosts could not be updated: ${(err as Error)?.message ?? String(err)}`,
+                        );
+                        // allowedHostAdded stays false; the response below still
+                        // reports the real, successful certificate state.
+                    }
+                }
+
+                res.writeHead(200);
+                res.end(JSON.stringify({ ...state, allowedHostAdded }));
                 return true;
             }
 
