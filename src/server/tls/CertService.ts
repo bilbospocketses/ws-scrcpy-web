@@ -1,3 +1,4 @@
+import { X509Certificate } from 'node:crypto';
 import { isConnectAddress } from '../security/deviceInput';
 import type { CertPaths } from './certPaths';
 
@@ -75,9 +76,32 @@ export class CertService {
     constructor(private readonly deps: CertServiceDeps) {}
 
     getState(): CertState {
-        if (this.state.status === 'ready') return this.state;
-        if (this.deps.exists(this.deps.paths.certFile)) return { ...this.state, status: 'ready' };
-        return { status: 'none' };
+        if (!this.deps.exists(this.deps.paths.certFile)) {
+            return { status: 'none' };
+        }
+        const base: CertState = this.state.status === 'ready' ? this.state : { status: 'ready' };
+        const notAfter = this.readNotAfter();
+        return notAfter === undefined ? base : { ...base, notAfter };
+    }
+
+    /**
+     * Reads the leaf's actual validity out of the certificate itself, via
+     * Node's builtin `X509Certificate` -- never a hand-rolled DER parse, and
+     * never `fs` directly (the injected `readFile` is what keeps this class
+     * disk-free under test).
+     *
+     * `getState()` runs on a plain GET route, so a missing, empty or
+     * unparseable leaf is an ordinary state (no `notAfter`), never a thrown
+     * error that would turn into a 500.
+     */
+    private readNotAfter(): string | undefined {
+        try {
+            const pem = this.deps.readFile(this.deps.paths.certFile);
+            if (!pem) return undefined;
+            return new X509Certificate(pem).validTo;
+        } catch {
+            return undefined;
+        }
     }
 
     async generate(kind: CertSubjectKind, value: string): Promise<CertState> {

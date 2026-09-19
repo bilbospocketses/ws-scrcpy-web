@@ -127,10 +127,51 @@ describe('CertService.revoke', () => {
     });
 });
 
+// A real self-signed EC cert (CN=ws-scrcpy-web-test-fixture, generated with
+// `openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -days
+// 3650 -nodes`, valid to 2036-09-16). A fixed constant is deliberate: this
+// test is about PARSING a leaf's validity, not about mkcert's issuance, so it
+// needs no spawn and no network.
+const FIXTURE_CERT_PEM = `-----BEGIN CERTIFICATE-----
+MIIBnjCCAUWgAwIBAgIUStcQ9sXF0laSR8mIe3nM+b8iAMMwCgYIKoZIzj0EAwIw
+JTEjMCEGA1UEAwwad3Mtc2NyY3B5LXdlYi10ZXN0LWZpeHR1cmUwHhcNMjYwOTE5
+MDYwNTU0WhcNMzYwOTE2MDYwNTU0WjAlMSMwIQYDVQQDDBp3cy1zY3JjcHktd2Vi
+LXRlc3QtZml4dHVyZTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABOojfkBVrVov
+8C0nGPk08xRgIC0wKoWgDOKpXacP1Io0bpdODVGq5pf3bnYiDboBR2lHJUvTGjBk
+9mTt2c8O+syjUzBRMB0GA1UdDgQWBBRg97TQ+jJsYsCfdwtgsNRdqqKWfTAfBgNV
+HSMEGDAWgBRg97TQ+jJsYsCfdwtgsNRdqqKWfTAPBgNVHRMBAf8EBTADAQH/MAoG
+CCqGSM49BAMCA0cAMEQCIEQHGds7zLREgAAuBlm6SRc3oMpo4cKCxwuTVv968g9c
+AiAZewr91yqhMGc6X57yf91MI5HvQEkCssGJkWvSUNjtAg==
+-----END CERTIFICATE-----
+`;
+
 describe('CertService.getState', () => {
     it('reports none when no leaf exists', () => {
         const { svc } = makeService();
         expect(svc.getState().status).toBe('none');
+    });
+
+    it("populates notAfter from the leaf certificate's actual validity", () => {
+        const { svc } = makeService({
+            exists: () => true,
+            readFile: () => FIXTURE_CERT_PEM,
+        });
+        const state = svc.getState();
+        expect(state.status).toBe('ready');
+        expect(state.notAfter).toBeDefined();
+        expect(Number.isNaN(new Date(state.notAfter as string).getTime())).toBe(false);
+    });
+
+    it('never throws on an unparseable leaf -- an ordinary state, not a 500', () => {
+        const { svc } = makeService({
+            exists: () => true,
+            readFile: () => 'not a certificate',
+        });
+        expect(() => svc.getState()).not.toThrow();
+        const state = svc.getState();
+        // Either reading is acceptable: the file exists but cannot be parsed.
+        // What matters is that no notAfter is fabricated and nothing throws.
+        expect(state.notAfter).toBeUndefined();
     });
 });
 
