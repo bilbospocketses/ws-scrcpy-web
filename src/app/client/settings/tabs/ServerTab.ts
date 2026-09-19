@@ -170,12 +170,16 @@ export function appSectionButtonsState(resp: {
 // ---------------------------------------------------------------------------
 // Local HTTPS panel (Settings → Server → Local HTTPS).
 //
-// Consumes GET /api/tls/state, POST /api/tls/generate and GET /api/tls/ca-root
-// exactly as Task 5's TlsApi.ts implements them (see the response-shape
-// contract appended to this task's brief, dated 2026-09-19): `generate`
-// answers `{ ...CertState, allowedHostAdded }`, `state` answers
-// `{ ...CertState, candidateIps }`, and `ca-root` answers 404/429 with a JSON
-// `{ error }` body read verbatim rather than assumed.
+// Consumes GET /api/tls/state, POST /api/tls/generate, GET /api/tls/ca-root,
+// POST /api/tls/revoke, POST /api/tls/https-port and POST /api/tls/exposure,
+// all implemented in `src/server/api/TlsApi.ts` -- read THAT file for the
+// authoritative response shape of each, rather than a summary here that
+// would drift the moment that file's contract changes without this comment
+// changing too (an already-repeated finding on this branch). Every field
+// this panel reads from a response is declared as optional on
+// `TlsCertState` below and handled defensively when absent -- that
+// interface, not a paragraph here, is the up-to-date contract this code
+// actually depends on.
 //
 // The port field and the exposure radios each save through their OWN route
 // (`POST /api/tls/https-port`, `POST /api/tls/exposure` -- task 11), not
@@ -191,7 +195,13 @@ interface TlsCertState {
     /** ISO 8601. */
     notAfter?: string;
     caPresent?: boolean;
-    /** Present on GET /api/tls/state; absent on POST /api/tls/generate's response. */
+    /**
+     * Not every response this panel reads is guaranteed to carry this --
+     * `candidateIpsFor()` below falls back to `deps.candidateIps` whenever
+     * it's absent, so a response that omits it degrades to the build-time
+     * fallback rather than losing the mismatch check (notification 4) or
+     * the subject picker's (I7) option list.
+     */
     candidateIps?: string[];
     /**
      * Returned by `GET /api/tls/state` since commit `861a5902` (the read side
@@ -214,13 +224,14 @@ interface TlsCertState {
      */
     httpsPort?: number;
     /**
-     * C1's server half, landing separately in `TlsApi.ts` (coordinating
-     * through team-lead per instruction, not editing that file myself) --
-     * this exact nested shape is pinned by that file's own in-progress test
-     * (`tlsApi.test.ts`'s "httpsListener + httpsPort on GET /api/tls/state
-     * (C1, exact contract)"), read directly rather than guessed a second
-     * time after an earlier flat-field version of this comment turned out to
-     * not match. Whether an HTTPS listener is actually BOUND right now,
+     * C1's server half, in `TlsApi.ts` (coordinating through team-lead per
+     * instruction, not editing that file myself) -- this exact nested shape
+     * is pinned by that file's own test suite (`tlsApi.test.ts`'s
+     * "httpsListener + httpsPort on GET /api/tls/state (C1, exact
+     * contract)"), the source to re-check if this ever looks wrong, read
+     * directly rather than guessed a second time after an earlier flat-field
+     * version of this comment turned out to not match. Whether an HTTPS
+     * listener is actually BOUND right now,
      * distinct from whether a certificate merely exists on disk -- they
      * diverge in at least four real states (right after `generate`, before a
      * restart; an advanced `server` array in config.json overriding the
@@ -581,18 +592,24 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
     hostRadio.checked = initialKind === 'hostname';
     subjectInput.value = initialState.subject ?? (initialKind === 'ip' ? (initialCandidateIps[0] ?? '') : '');
 
-    // I7: show EVERY candidate, not an arbitrary single guess. This machine
-    // can have far more than one IPv4 address (VPN, Docker, WSL, VirtualBox
-    // adapters all show up here too), and only one is reachable from the
-    // phone that needs the certificate -- prefilling `[0]` with no way to
-    // see or pick another issues a cert nobody on the LAN can use, exactly
-    // the failure spec §6 warns about. Selecting an option here only fills
-    // `subjectInput`, which stays the single source of truth for
-    // generate/validation/notification 4, so nothing downstream changes.
-    // RANKING which candidate is the default-route interface is
-    // `candidateLanIps.ts` (server-side, unordered today) and NOT fixed by
-    // this change -- this fixes the client half: every candidate is now at
-    // least visible and pickable, none was before.
+    // I7 (client half): show EVERY candidate, not an arbitrary single guess.
+    // This machine can have far more than one IPv4 address (VPN, Docker,
+    // WSL, VirtualBox adapters all show up here too), and only one is
+    // reachable from the phone that needs the certificate -- prefilling
+    // `[0]` with no way to see or pick another issues a cert nobody on the
+    // LAN can use, exactly the failure spec §6 warns about. Selecting an
+    // option here only fills `subjectInput`, which stays the single source
+    // of truth for generate/validation/notification 4, so nothing
+    // downstream changes.
+    //
+    // This code makes NO assumption about the ORDER `candidateIps` arrives
+    // in -- it renders whatever order it receives and defaults to the first
+    // entry (matching the existing pre-I7 prefill behaviour). Which
+    // candidate is preferred (spec §6: the default-route interface) is
+    // decided server-side, wherever `candidateIps` is actually resolved for
+    // the response this panel reads (see `TlsCertState.candidateIps`'s own
+    // doc comment) -- that can change its ordering with zero changes needed
+    // here.
     const candidateSelect = document.createElement('select');
     candidateSelect.className = 'settings-input';
     candidateSelect.setAttribute('data-tls-candidate-select', '');
@@ -1015,26 +1032,26 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
                 // already re-evaluates `listenerStatusNoticeEl` and the
                 // CA-trust suppression generically from whatever
                 // `data.httpsListener` holds -- correct for ALL four
-                // down-cases the moment the server sends this field on THIS
-                // route, not just at page load. This branch additionally
-                // names the restart in the immediate transient confirmation,
-                // mirroring the port field's own pattern, for the one case
-                // (`restart-required`) where "restart" is the complete
-                // remedy; the other three (`config-override`,
-                // `port-collision`, `bind-failed`) get their fuller,
-                // reason-specific explanation from the persistent notice
-                // instead of a toast-length one.
+                // down-cases, PROVIDED this route's response carries the
+                // field (this code makes no assumption about which routes
+                // do; it only reads `data.httpsListener` if present, and
+                // treats its absence as unknown, never as bound -- see
+                // `TlsCertState.httpsListener`'s own doc comment). This
+                // branch additionally names the restart in the immediate
+                // transient confirmation, mirroring the port field's own
+                // pattern, for the one case (`restart-required`) where
+                // "restart" is the complete remedy; the other three
+                // (`config-override`, `port-collision`, `bind-failed`) get
+                // their fuller, reason-specific explanation from the
+                // persistent notice instead of a toast-length one.
                 //
-                // VERIFIED (re-review): as of this commit, `POST
-                // /api/tls/generate` (`TlsApi.ts`) does NOT yet include
-                // `httpsListener` in its response -- only `GET /api/tls/state`
-                // does. The test below therefore currently proves the CLIENT
-                // reacts correctly to this shape; it does not yet prove the
-                // end-to-end claim, because the server doesn't send it on
-                // this route today. That server-side change is in progress
-                // (team-lead, re-review pass); no client change is needed
-                // once it lands -- `data` is already typed as `TlsCertState`,
-                // which this field is already part of.
+                // The test pinning this branch
+                // ("mentions the restart in the SAME transient alert...")
+                // proves the CLIENT's reaction to a mocked response of this
+                // shape -- it cannot prove the server route actually sends
+                // it, which is `tlsApi.test.ts`'s own job, not this
+                // comment's. Read that file, not this one, for whether
+                // `POST /api/tls/generate` currently includes the field.
                 if (data.httpsListener?.bound === false && data.httpsListener.reason === 'restart-required') {
                     showTransientAlert(
                         'success',

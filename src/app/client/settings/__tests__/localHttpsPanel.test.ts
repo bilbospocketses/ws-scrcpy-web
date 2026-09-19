@@ -920,10 +920,10 @@ describe('local https panel — final review fixes (C1, I1, I2, I5, I7, I11)', (
                 return new Response(JSON.stringify(state()));
             });
 
-        // Today's real server does not send `httpsListener` on this route at
-        // all (see the NOTE above the C1 restart test) -- this case pins that
-        // the panel does NOT wrongly enable narrowing just because a
-        // generate happened.
+        // A generate response with no `httpsListener` at all (an older
+        // server, or one that omits it on this route) must not be read as
+        // "bound" by default -- this pins that a generate happening at all
+        // does NOT wrongly enable narrowing on its own.
         const stillNotBound = await buildLocalHttpsPanel({
             fetchFn: responseFor(undefined),
             candidateIps: ['192.168.86.3'],
@@ -1007,19 +1007,12 @@ describe('local https panel — final review fixes (C1, I1, I2, I5, I7, I11)', (
         }
     });
 
-    // NOTE (re-review, C1): as of this commit, `POST /api/tls/generate`
-    // (`TlsApi.ts`) does NOT actually include `httpsListener` in its
-    // response yet -- only `GET /api/tls/state` does; verified by reading
-    // the route's `res.end(JSON.stringify({ ...state, allowedHostAdded,
-    // candidateIps }))`, which has no such field. The server-side change to
-    // add it is in progress. This test therefore proves the CLIENT reacts
-    // correctly to the shape once sent (`data` is already typed as
-    // `TlsCertState`, so no client change is needed when it lands) -- it
-    // does NOT yet prove the end-to-end claim, because the real server
-    // doesn't send this on this route today. The contrast pair below (bound
-    // vs. not) is what makes this a real proof of the CLIENT's behaviour
-    // rather than a tautology: only the "not bound" case should ever mention
-    // a restart.
+    // NOTE: this mocks `POST /api/tls/generate`'s response, so it proves the
+    // CLIENT's reaction to a given `httpsListener` shape -- it does NOT
+    // prove the real route sends that shape; that is `tlsApi.test.ts`'s job.
+    // The contrast pair below (bound vs. not) is what makes this a real
+    // proof of the CLIENT's behaviour rather than a tautology: only the
+    // "not bound" case should ever mention a restart.
     it('mentions the restart in the SAME transient alert right after a generate that needs one, and only then (C1)', async () => {
         const responseFor = (httpsListener: { bound: boolean; reason?: string }) =>
             vi.fn(async (url: RequestInfo | URL) => {
