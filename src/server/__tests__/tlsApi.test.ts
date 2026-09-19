@@ -215,6 +215,30 @@ describe('TlsApi', () => {
             expect(json['allowedHostAdded']).toBe(true);
             expect(json['candidateIps']).toEqual(['192.168.86.3']);
         });
+
+        // The exact check the panel performs (ServerTab.ts's
+        // certSubjectMismatchNotice): `candidateIps.includes(subject)`. Both
+        // outcomes come from generate calls against the same injected
+        // candidate list, in the same test, so the response has to carry
+        // BOTH the true subject and the true candidate list for this to
+        // distinguish them -- a hardcoded or dropped candidateIps collapses
+        // to one outcome and fails half of this.
+        it('lets the panel distinguish a matching subject from a stale one, the way notification 4 depends on', async () => {
+            const matching = makeApi({}, ['192.168.86.3']);
+            const rMatch = makeReqRes('POST', '/api/tls/generate', { kind: 'ip', value: '192.168.86.3' });
+            await matching.api.handle(rMatch.req, rMatch.res);
+            const matchJson = rMatch.getJson() as { subject: string; candidateIps: string[] };
+            expect(matchJson.candidateIps.includes(matchJson.subject)).toBe(true);
+
+            const stale = makeApi(
+                { generate: vi.fn(async () => ({ status: 'ready', subject: '10.0.0.9', kind: 'ip' })) },
+                ['192.168.86.3'],
+            );
+            const rStale = makeReqRes('POST', '/api/tls/generate', { kind: 'ip', value: '10.0.0.9' });
+            await stale.api.handle(rStale.req, rStale.res);
+            const staleJson = rStale.getJson() as { subject: string; candidateIps: string[] };
+            expect(staleJson.candidateIps.includes(staleJson.subject)).toBe(false);
+        });
     });
 
     // --- amendment (a): rate-limit GET /api/tls/ca-root ---
