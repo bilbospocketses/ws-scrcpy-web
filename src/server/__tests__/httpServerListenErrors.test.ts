@@ -218,17 +218,24 @@ describe('HttpServer listen-error handling', () => {
         expect(r.getHeader('location')).toBe('https://192.168.86.50:8443/');
     });
 
-    // M6 (Minor, from review): attachListenErrorHandler branches on `secure`
-    // before touching failedSecurePorts at all -- an unconditional
-    // `failedSecurePorts.add(port)` (dropping that branch) would pass every
-    // other test in this file, since none of them drives an HTTP failure
-    // and then checks HTTPS-mode behaviour afterward. This one does.
+    // M6 (Minor, from review round 1 -- NOT actually pinned; fixed here per
+    // re-review). The original version of this test used the default 8000 /
+    // 8443 ports, so an unconditional `failedSecurePorts.add(port)` recorded
+    // 8000 -- which cannot affect `failedSecurePorts.has(8443)` at all. The
+    // mutation the comment claimed to catch passed clean; only the I2 test
+    // caught it, for an unrelated reason. Fixed by configuring the secure
+    // entry at the SAME port as the HTTP entry (8000): purely synthetic --
+    // two real listeners can't share a port -- but it makes the two Sets'
+    // keys collide, so an unconditional add is directly observable through
+    // `findHttpsPort()`'s behaviour rather than needing a peek at the Set
+    // itself.
     it('an HTTP bind failure does not mark the (unrelated) secure port as failed (M6)', async () => {
         vi.resetModules();
         let httpServer: FakeServer | undefined;
         vi.doMock('http', () => ({ createServer: vi.fn(() => (httpServer = makeFakeServer())) }));
-        vi.doMock('https', () => ({ createServer: vi.fn(() => makeFakeServer()) }));
-        mockConfigModule('redirect');
+        vi.doMock('https', () => ({ createServer: vi.fn(() => makeFakeServer(8000)) }));
+        // Both entries configured at port 8000 -- see the comment above.
+        mockConfigModule('redirect', 8000);
 
         const { HttpServer, createHttpRequestHandler } = await import('../services/HttpServer');
         const { Logger } = await import('../Logger');
@@ -239,6 +246,10 @@ describe('HttpServer listen-error handling', () => {
 
         // The HTTP failure is fatal and re-throws -- caught here so the test
         // can go on to check the (should-be-unrelated) HTTPS/redirect state.
+        // A buggy unconditional `failedSecurePorts.add(port)` would record
+        // 8000 here, which -- because the secure entry is ALSO configured at
+        // 8000 in this test -- would make `findHttpsPort()` treat the secure
+        // entry as failed too.
         expect(() => {
             httpServer?.emit('error', Object.assign(new Error('address in use'), { code: 'EADDRINUSE' }));
         }).toThrow();
@@ -248,8 +259,13 @@ describe('HttpServer listen-error handling', () => {
         const r = makeReqRes('GET', '/', undefined, { host: '192.168.86.50:8000' }, { remoteAddress: '192.168.86.50' });
         await handler(r.req, r.res);
 
+        // Still redirects -- the HTTP failure never touched the secure
+        // entry's standing. A buggy unconditional add would instead serve
+        // here (findHttpsPort() returning undefined because 8000 is now
+        // "failed"), the same wrong outcome the no-`server.listening`-guard
+        // case (I2) produces, but from the opposite direction.
         expect(r.getStatus()).toBe(302);
-        expect(r.getHeader('location')).toBe('https://192.168.86.50:8443/');
+        expect(r.getHeader('location')).toBe('https://192.168.86.50:8000/');
     });
 
     // M7 (Minor, from review): with an ephemeral `port: 0` secure entry, the
