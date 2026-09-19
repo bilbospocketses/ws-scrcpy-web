@@ -8,6 +8,10 @@ export type CertSubjectKind = 'ip' | 'hostname';
 
 export interface CertState {
     status: 'none' | 'ready';
+    /**
+     * The IP or hostname the leaf was issued for. Bare -- an IPv6 value here
+     * is "::1", never "[::1]", consistent with how `generate()` stores it.
+     */
     subject?: string;
     kind?: CertSubjectKind;
     /** ISO 8601, e.g. "2036-09-16T06:05:54.000Z" -- from the leaf's own validity. */
@@ -96,6 +100,54 @@ function stripBrackets(value: string): string {
 }
 
 /**
+ * `X509Certificate.subjectAltName` renders an IPv6 SAN fully EXPANDED (e.g.
+ * "0:0:0:0:0:0:0:1"), never compressed. `generate()` stores an IPv6 subject
+ * bare AND compressed ("::1" -- see `stripBrackets` at its call site), so a
+ * naive round-trip would silently change the stored form on every restart,
+ * which breaks any string comparison against it (Task 8's expiry/mismatch
+ * notifications compare `subject` against the machine's own addresses).
+ *
+ * Re-parse and re-render through the WHATWG URL host-parsing algorithm --
+ * a Node builtin (`URL`), not a new dependency -- which implements the same
+ * canonical IPv6 compression as RFC 5952, then strip the brackets that form
+ * adds. IPv4 has nothing to normalize and is returned unchanged.
+ */
+function normalizeIpLiteral(raw: string): string {
+    if (!raw.includes(':')) return raw;
+    try {
+        return stripBrackets(new URL(`http://[${raw}]/`).hostname);
+    } catch {
+        return raw;
+    }
+}
+
+/**
+ * Derives `subject`/`kind` from a leaf certificate's own `subjectAltName` --
+ * e.g. `"IP Address:192.168.86.3"` or `"DNS:devices.lan"` -- rather than from
+ * a sidecar record that could disagree with the certificate it describes
+ * (C2). `generate()` only ever requests a single SAN, so the first
+ * recognised entry wins; an absent, empty, or unrecognised SAN yields
+ * `undefined` rather than a guess.
+ */
+export function parseLeafSubject(
+    subjectAltName: string | undefined,
+): { subject: string; kind: CertSubjectKind } | undefined {
+    if (!subjectAltName) return undefined;
+    for (const rawEntry of subjectAltName.split(',')) {
+        const entry = rawEntry.trim();
+        const ipMatch = /^IP Address:(.+)$/.exec(entry);
+        if (ipMatch) {
+            return { subject: normalizeIpLiteral(ipMatch[1]!), kind: 'ip' };
+        }
+        const dnsMatch = /^DNS:(.+)$/.exec(entry);
+        if (dnsMatch) {
+            return { subject: dnsMatch[1]!, kind: 'hostname' };
+        }
+    }
+    return undefined;
+}
+
+/**
  * `-name-constraints` value for a single-subject local CA. `value` MUST
  * already be bare (no surrounding brackets) -- see `stripBrackets` at the
  * call site.
@@ -167,13 +219,34 @@ export class CertService {
         if (!this.deps.exists(this.deps.paths.certFile)) {
             return { status: 'none' };
         }
-        const base: CertState = this.state.status === 'ready' ? this.state : { status: 'ready' };
         const caPresent = this.deps.exists(this.caRootPemPath());
-        const notAfter = this.readNotAfter();
+        const leaf = this.readLeafInfo();
+        if (this.state.status === 'ready') {
+            // C2: `this.state` is in-memory only, populated by a `generate()`
+            // THIS process ran -- trust it for subject/kind (it is exactly
+            // what got minted). `notAfter` still comes fresh off the file
+            // every call, same as before this change.
+            return {
+                ...this.state,
+                caPresent,
+                ...(leaf.notAfter !== undefined ? { notAfter: leaf.notAfter } : {}),
+            };
+        }
+        // C2: no in-memory state -- e.g. a fresh process after a restart,
+        // which has never seen a generate() call even though the leaf is
+        // right here on disk. Without this, subject/kind come back
+        // `undefined` forever after every restart: the panel shows the
+        // subject as unknown, Task 8's notifications that need it (does the
+        // subject still match the machine's addresses? does a hostname
+        // subject need to resolve?) can never fire, and a "regenerate" click
+        // has no remembered `kind` to default to -- silently switching a
+        // hostname certificate to an IP one. Hydrate from the leaf
+        // certificate's OWN subjectAltName rather than a sidecar file that
+        // could disagree with the certificate it describes.
         return {
-            ...base,
+            status: 'ready',
             caPresent,
-            ...(notAfter !== undefined ? { notAfter } : {}),
+            ...leaf,
         };
     }
 
@@ -183,26 +256,30 @@ export class CertService {
     }
 
     /**
-     * Reads the leaf's actual validity out of the certificate itself, via
-     * Node's builtin `X509Certificate` -- never a hand-rolled DER parse, and
-     * never `fs` directly (the injected `readFile` is what keeps this class
-     * disk-free under test).
+     * Reads the leaf's actual validity AND subject/kind out of the
+     * certificate itself, via Node's builtin `X509Certificate` -- never a
+     * hand-rolled DER parse, and never `fs` directly (the injected
+     * `readFile` is what keeps this class disk-free under test).
      *
      * `getState()` runs on a plain GET route, so a missing, empty or
-     * unparseable leaf is an ordinary state (no `notAfter`), never a thrown
-     * error that would turn into a 500.
+     * unparseable leaf is an ordinary state (nothing populated), never a
+     * thrown error that would turn into a 500.
      */
-    private readNotAfter(): string | undefined {
+    private readLeafInfo(): { notAfter?: string; subject?: string; kind?: CertSubjectKind } {
         try {
             const pem = this.deps.readFile(this.deps.paths.certFile);
-            if (!pem) return undefined;
-            // .validTo is OpenSSL's ASN1_TIME rendering (e.g. "Sep 16
-            // 06:05:54 2036 GMT") -- not ISO 8601, not a format any other
-            // consumer should be expected to parse, and an odd thing to put
-            // on a JSON API. .validToDate is a Date on this runtime.
-            return new X509Certificate(pem).validToDate.toISOString();
+            if (!pem) return {};
+            const cert = new X509Certificate(pem);
+            return {
+                // .validTo is OpenSSL's ASN1_TIME rendering (e.g. "Sep 16
+                // 06:05:54 2036 GMT") -- not ISO 8601, not a format any other
+                // consumer should be expected to parse, and an odd thing to
+                // put on a JSON API. .validToDate is a Date on this runtime.
+                notAfter: cert.validToDate.toISOString(),
+                ...(parseLeafSubject(cert.subjectAltName) ?? {}),
+            };
         } catch {
-            return undefined;
+            return {};
         }
     }
 

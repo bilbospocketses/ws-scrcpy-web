@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { CertService, type CertServiceDeps, nameConstraintsFor } from './CertService';
+import { CertService, type CertServiceDeps, nameConstraintsFor, parseLeafSubject } from './CertService';
 
 // A real self-signed EC cert (CN=ws-scrcpy-web-test-fixture, generated with
 // `openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -days
@@ -20,6 +20,52 @@ LXRlc3QtZml4dHVyZTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABOojfkBVrVov
 HSMEGDAWgBRg97TQ+jJsYsCfdwtgsNRdqqKWfTAPBgNVHRMBAf8EBTADAQH/MAoG
 CCqGSM49BAMCA0cAMEQCIEQHGds7zLREgAAuBlm6SRc3oMpo4cKCxwuTVv968g9c
 AiAZewr91yqhMGc6X57yf91MI5HvQEkCssGJkWvSUNjtAg==
+-----END CERTIFICATE-----
+`;
+
+// Two real leaf-shaped certs (CN plus a matching subjectAltName), generated
+// with `openssl req -x509 -newkey ec ... -addext "subjectAltName=IP:..."` /
+// "DNS:...". Fixed constants for the same reason as FIXTURE_CERT_PEM above --
+// SAN parsing is what's under test, not issuance.
+const FIXTURE_LEAF_IP_PEM = `-----BEGIN CERTIFICATE-----
+MIIBlDCCATqgAwIBAgIUWRyRFrRP38lFQsYUWl0VEB9kOFowCgYIKoZIzj0EAwIw
+FzEVMBMGA1UEAwwMMTkyLjE2OC44Ni4zMB4XDTI2MDkxOTA5MDgwM1oXDTM2MDkx
+NjA5MDgwM1owFzEVMBMGA1UEAwwMMTkyLjE2OC44Ni4zMFkwEwYHKoZIzj0CAQYI
+KoZIzj0DAQcDQgAEZzLReChxB1VkXdyFqWceOKv0X0CVCE3TfldHl23TaRzAvX8W
+OZ2YWf8TlZz19drOeLg1JEMAogNMkc2Hr+Ghc6NkMGIwHQYDVR0OBBYEFISi43dH
+QjLuf0Ggt6+vu5zEJzSWMB8GA1UdIwQYMBaAFISi43dHQjLuf0Ggt6+vu5zEJzSW
+MA8GA1UdEwEB/wQFMAMBAf8wDwYDVR0RBAgwBocEwKhWAzAKBggqhkjOPQQDAgNI
+ADBFAiBtorg9KaDh2fIaga0F4THSFIwFCyZeGgOZJRj9JU6Y0gIhAPNhpzV8fHWQ
+mUpCOJ+/e5QDCmF8xK2hDkgMkq0Bfx6C
+-----END CERTIFICATE-----
+`;
+
+const FIXTURE_LEAF_HOST_PEM = `-----BEGIN CERTIFICATE-----
+MIIBmTCCAT+gAwIBAgIUYR161+lq+9CIxZUfmG2DSFhkXHUwCgYIKoZIzj0EAwIw
+FjEUMBIGA1UEAwwLZGV2aWNlcy5sYW4wHhcNMjYwOTE5MDkwODAzWhcNMzYwOTE2
+MDkwODAzWjAWMRQwEgYDVQQDDAtkZXZpY2VzLmxhbjBZMBMGByqGSM49AgEGCCqG
+SM49AwEHA0IABCtsnmxV3S0lEcPlxMDpcel8Rsz4htyqNckzbNYxUotomMmTQ671
+VsX9OuAaJCqz4YJjeaAEXKBi9lUwfdWhpX2jazBpMB0GA1UdDgQWBBQ++j/I3XDn
+XF6R3A9VfT7WyLo8AjAfBgNVHSMEGDAWgBQ++j/I3XDnXF6R3A9VfT7WyLo8AjAP
+BgNVHRMBAf8EBTADAQH/MBYGA1UdEQQPMA2CC2RldmljZXMubGFuMAoGCCqGSM49
+BAMCA0gAMEUCIQD/TKnjXc8X3oArqm2ECn1gxR5h3kwmltfm1IoDFD4bBgIgC71q
+AWEbfuHbWLd/3KtdjuZOh4+CQq/oD+3jp2wnQ3o=
+-----END CERTIFICATE-----
+`;
+
+// Same as FIXTURE_LEAF_IP_PEM but IPv6 (CN=::1). X509Certificate renders its
+// SAN fully expanded ("IP Address:0:0:0:0:0:0:0:1") -- this fixture is what
+// pins parseLeafSubject's compression back to "::1".
+const FIXTURE_LEAF_IPV6_PEM = `-----BEGIN CERTIFICATE-----
+MIIBjTCCATSgAwIBAgIUWBf1/eIyqAFo5oUXEO7o/T6fsUYwCgYIKoZIzj0EAwIw
+DjEMMAoGA1UEAwwDOjoxMB4XDTI2MDkxOTA5MDgwM1oXDTM2MDkxNjA5MDgwM1ow
+DjEMMAoGA1UEAwwDOjoxMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEjE3wBIBp
+guzPjDzJGEAL1zKrR/ts5Z24FkmEzOx0s7lvGsRKuc4eR30GF0Z6V9FC0CK5mrJi
+M3x5rloILGeVUKNwMG4wHQYDVR0OBBYEFJMm7j15WlX97Zb4nvTmHAnWgGznMB8G
+A1UdIwQYMBaAFJMm7j15WlX97Zb4nvTmHAnWgGznMA8GA1UdEwEB/wQFMAMBAf8w
+GwYDVR0RBBQwEocQAAAAAAAAAAAAAAAAAAAAATAKBggqhkjOPQQDAgNHADBEAiA7
+Bsf7knwRr7nBtX4SAq632sSm02V8WN0xBVHyEKZhogIgVTdbtKZOrR1foYarbnNO
+FxFIrJ2jrQBMK1w/ECyJ6Hg=
 -----END CERTIFICATE-----
 `;
 
@@ -356,8 +402,10 @@ describe('CertService.getState', () => {
         expect(() => svc.getState()).not.toThrow();
         const state = svc.getState();
         // Either reading is acceptable: the file exists but cannot be parsed.
-        // What matters is that no notAfter is fabricated and nothing throws.
+        // What matters is that nothing is fabricated and nothing throws.
         expect(state.notAfter).toBeUndefined();
+        expect(state.subject).toBeUndefined();
+        expect(state.kind).toBeUndefined();
     });
 
     it('reflects subject and kind after generate (F10)', async () => {
@@ -366,6 +414,58 @@ describe('CertService.getState', () => {
         const state = svc.getState();
         expect(state.subject).toBe('devices.lan');
         expect(state.kind).toBe('hostname');
+    });
+
+    describe('C2: hydrating subject/kind from the leaf when there is no in-memory state (e.g. after a restart)', () => {
+        // What production change would make this test fail: deleting the
+        // hydration branch in getState() (the one this finding is about)
+        // makes BOTH assertions fail identically -- subject/kind stay
+        // undefined for either leaf. A contrast pair inside one test catches
+        // that a lot more honestly than two separate tests each asserting
+        // one kind, which could both pass by coincidence if the branch
+        // always returned, say, the IP case.
+        it('an IP leaf and a hostname leaf hydrate to DIFFERENT kinds -- neither is a fresh generate() in this process', () => {
+            const ipState = makeService({ exists: () => true, readFile: () => FIXTURE_LEAF_IP_PEM }).svc.getState();
+            const hostState = makeService({
+                exists: () => true,
+                readFile: () => FIXTURE_LEAF_HOST_PEM,
+            }).svc.getState();
+
+            expect(ipState.status).toBe('ready');
+            expect(ipState.subject).toBe('192.168.86.3');
+            expect(ipState.kind).toBe('ip');
+
+            expect(hostState.status).toBe('ready');
+            expect(hostState.subject).toBe('devices.lan');
+            expect(hostState.kind).toBe('hostname');
+
+            expect(ipState.kind).not.toBe(hostState.kind);
+            expect(ipState.subject).not.toBe(hostState.subject);
+        });
+
+        it('normalizes an IPv6 SAN to the bare, compressed form generate() itself would have stored', () => {
+            const { svc } = makeService({ exists: () => true, readFile: () => FIXTURE_LEAF_IPV6_PEM });
+            const state = svc.getState();
+            expect(state.kind).toBe('ip');
+            // X509Certificate's own rendering is fully expanded
+            // ("0:0:0:0:0:0:0:1") -- if this test read that back unchanged,
+            // Task 8's subject-vs-machine-address comparison would silently
+            // stop matching after every restart.
+            expect(state.subject).toBe('::1');
+        });
+
+        it('prefers in-memory subject/kind over the leaf on disk once generate() has run in this process', async () => {
+            // The leaf on disk (a hostname cert) and the in-memory state
+            // (from generate('ip', ...) below) deliberately disagree here,
+            // so the assertion actually distinguishes "read from memory"
+            // from "read from disk" rather than the two paths happening to
+            // agree.
+            const { svc } = makeService({ exists: () => true, readFile: () => FIXTURE_LEAF_HOST_PEM });
+            await svc.generate('ip', '10.0.0.1');
+            const state = svc.getState();
+            expect(state.subject).toBe('10.0.0.1');
+            expect(state.kind).toBe('ip');
+        });
     });
 
     it('reports caPresent: true when the CA and leaf both exist', () => {
@@ -410,6 +510,32 @@ describe('CertService.caRootPem', () => {
         });
         expect(() => svc.caRootPem()).not.toThrow();
         expect(svc.caRootPem()).toBeUndefined();
+    });
+});
+
+describe('parseLeafSubject', () => {
+    it('derives kind from the SAN prefix -- an IP entry and a DNS entry produce DIFFERENT kinds', () => {
+        // A contrast pair inside one test: a broken parser that always
+        // returned 'ip' (or always 'hostname') would still pass a test that
+        // only checked one entry in isolation.
+        const ip = parseLeafSubject('IP Address:192.168.86.3');
+        const host = parseLeafSubject('DNS:devices.lan');
+        expect(ip).toEqual({ subject: '192.168.86.3', kind: 'ip' });
+        expect(host).toEqual({ subject: 'devices.lan', kind: 'hostname' });
+        expect(ip!.kind).not.toBe(host!.kind);
+    });
+
+    it('normalizes a fully-expanded IPv6 SAN to the bare, compressed literal', () => {
+        // X509Certificate.subjectAltName renders IPv6 expanded, never
+        // compressed -- this is the one thing standing between that and the
+        // "::1" the rest of this feature stores and compares against.
+        expect(parseLeafSubject('IP Address:0:0:0:0:0:0:0:1')).toEqual({ subject: '::1', kind: 'ip' });
+    });
+
+    it('returns undefined for an absent, empty, or unrecognised SAN -- never a guess', () => {
+        expect(parseLeafSubject(undefined)).toBeUndefined();
+        expect(parseLeafSubject('')).toBeUndefined();
+        expect(parseLeafSubject('something else entirely')).toBeUndefined();
     });
 });
 
