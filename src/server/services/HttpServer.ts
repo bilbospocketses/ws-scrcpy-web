@@ -7,6 +7,7 @@ import { TypedEmitter } from '../../common/TypedEmitter';
 import { sendInternalError } from '../api/utils';
 import { Config } from '../Config';
 import { EnvName } from '../EnvName';
+import { Logger } from '../Logger';
 import { createStaticHandler } from '../StaticFileServer';
 import { isRequestSecure } from '../security/forwardedProto';
 import { securityHeaders } from '../security/frameGuard';
@@ -49,6 +50,14 @@ export function createHttpRequestHandler(
         // Plain-HTTP exposure. Runs BEFORE the request gate and the API chain
         // so a narrowed mode applies to every route uniformly, including
         // static assets.
+        //
+        // M4: the exposure modes govern the PLAIN-HTTP listener only -- this
+        // whole block is gated on `!serverIsTls` and stays that way on
+        // purpose. Applying 'httpsOnly' or 'redirect' to the HTTPS listener
+        // itself would be meaningless (a TLS caller already has HTTPS; there
+        // is nothing to redirect it to) or a lockout (421-ing the one
+        // listener a client reached over the right protocol). Do not "fix"
+        // this by widening the condition.
         //
         // Loopback is exempt in every mode; see decideHttpRequest. Without
         // that, a certificate that goes bad removes the only route to the
@@ -152,18 +161,65 @@ function readHttpExposure(): HttpExposure {
 }
 
 /**
+ * Ports whose HTTPS listener was configured but failed to bind at runtime
+ * (EADDRINUSE, EACCES, ...) -- see attachListenErrorHandler. findHttpsPort()
+ * treats one of these exactly like "no secure entry exists": a configured
+ * port that nothing is actually listening on is worse than no port at all,
+ * because 'redirect' would send a caller at a dead end and 'httpsOnly' would
+ * 421 the only listener still standing.
+ */
+const failedSecurePorts = new Set<number>();
+
+/**
  * The port the HTTPS listener runs on, or `undefined` when no secure server
- * entry exists (no certificate). Deliberately does NOT fall back to a
- * default port: the caller uses the `undefined` case to skip 'refuse' and
- * 'redirect' altogether, because a mode that can only be undone through a
- * listener that doesn't exist is a lockout, not a feature.
+ * entry exists (no certificate) OR the configured one failed to bind (see
+ * failedSecurePorts) -- this reads runtime reality, not just configuration.
+ * Deliberately does NOT fall back to a default port: the caller uses the
+ * `undefined` case to skip 'refuse' and 'redirect' altogether, because a mode
+ * that can only be undone through a listener that doesn't exist is a
+ * lockout, not a feature.
  */
 function findHttpsPort(): number | undefined {
     try {
-        return Config.getInstance().servers.find((s) => s.secure)?.port;
+        const entry = Config.getInstance().servers.find((s) => s.secure);
+        if (!entry || failedSecurePorts.has(entry.port)) return undefined;
+        return entry.port;
     } catch {
         return undefined;
     }
+}
+
+/**
+ * Attaches the 'error' listener a bind failure needs, before `.listen()` is
+ * called. Node's http/https Server emits 'error' asynchronously when a port
+ * can't be bound (EADDRINUSE, EACCES on ports < 1024, ...); an EventEmitter
+ * with no 'error' listener re-throws that error as an uncaught exception,
+ * which is how one busy port used to take the whole process down with it --
+ * HTTPS and HTTP alike, even though HTTP may have bound fine.
+ *
+ * HTTPS is optional (see M4 above): its bind failure degrades. Log the port
+ * and cause, record it in failedSecurePorts so the exposure-mode logic above
+ * stops treating it as live, and keep running on whatever else came up.
+ *
+ * Plain HTTP is not optional -- there is no server at all without it -- so
+ * its bind failure stays fatal, exactly as it was before this handler
+ * existed (no listener meant Node itself threw the error as an
+ * uncaughtException). This logs the specific port and cause first, then lets
+ * the same failure surface the same way; it does not swallow it.
+ */
+function attachListenErrorHandler(server: http.Server | https.Server, port: number, secure: boolean): void {
+    server.on('error', (err: NodeJS.ErrnoException) => {
+        const cause = err.code ?? err.message;
+        if (secure) {
+            failedSecurePorts.add(port);
+            Logger.for('HttpServer').error(
+                `HTTPS listener on port ${port} failed to bind (${cause}); continuing without HTTPS.`,
+            );
+            return;
+        }
+        Logger.for('HttpServer').error(`HTTP listener on port ${port} failed to bind (${cause})`);
+        throw err;
+    });
 }
 
 /**
@@ -319,6 +375,11 @@ export class HttpServer extends TypedEmitter<HttpServerEvents> implements Servic
                 server = http.createServer(options, handler);
             }
             this.servers.push({ server, port });
+            // Attached before `.listen()`, on EVERY server (not only the
+            // secure one) -- see attachListenErrorHandler for why a bind
+            // failure on one listener must not be able to take the other
+            // down with it.
+            attachListenErrorHandler(server, port, secure);
             server.listen(port, () => {
                 Utils.printListeningMsg(proto, port, PATHNAME);
             });
