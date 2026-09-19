@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { APP_CONFIG_DEFAULTS } from '../../common/ConfigEvents';
 import { buildServerList, Config, DEFAULT_HTTPS_PORT, readCertMaterial, sanitizeHttpsPort } from '../Config';
 import { resolveCertPaths } from '../tls/certPaths';
 
@@ -44,6 +45,16 @@ const UNRELATED_KEY_PEM = generateKeyPairSync('ec', {
     namedCurve: 'prime256v1',
     publicKeyEncoding: { type: 'spki', format: 'pem' },
     privateKeyEncoding: { type: 'sec1', format: 'pem' },
+}).privateKey as string;
+
+// A CROSS-ALGORITHM key (RSA, vs. MATCHED_CERT_PEM's EC), generated fresh at
+// load time. Used only for the round-4 C1 residue regression: measured,
+// `tls.createSecureContext` does NOT throw on this pair -- it only
+// cross-checks a cert and key of the SAME algorithm.
+const CROSS_ALGORITHM_RSA_KEY_PEM = generateKeyPairSync('rsa', {
+    modulusLength: 2048,
+    publicKeyEncoding: { type: 'spki', format: 'pem' },
+    privateKeyEncoding: { type: 'pkcs1', format: 'pem' },
 }).privateKey as string;
 
 // AMENDMENT A: the plan's brief named this `buildServers`, which collides with the
@@ -172,7 +183,14 @@ describe('readCertMaterial', () => {
         expect(readCertMaterial('/data/tls/cert.pem', '/data/tls/key.pem', readFile)).toBeNull();
     });
 
-    it('C2: returns null when the key content is whitespace-only', () => {
+    // NF-2 (review fix round 4): this is NOT a C2/trim-guard test. Measured:
+    // createSecureContext throws ERR_OSSL_PEM_NO_START_LINE on whitespace-only
+    // content by itself, so deleting the .trim() guard would NOT make this
+    // fail -- only a TRULY empty string exercises that guard (see the
+    // dedicated empty-string tests above). Retargeted to state what it
+    // actually pins rather than leave an assertion whose stated subject
+    // (the guard) is not what makes it pass.
+    it('rejects whitespace-only key content via createSecureContext itself, not the trim guard', () => {
         const readFile = (p: string) => (p === '/data/tls/key.pem' ? '   \n\t  ' : MATCHED_CERT_PEM);
         expect(readCertMaterial('/data/tls/cert.pem', '/data/tls/key.pem', readFile)).toBeNull();
     });
@@ -210,6 +228,17 @@ describe('readCertMaterial', () => {
         // surfaces once TLS actually tries to use the content.
         const truncatedCert = `${MATCHED_CERT_PEM}\n-----BEGIN CERTIFICATE-----\nMIIB truncated garbage\n`;
         const readFile = (p: string) => (p === '/data/tls/cert.pem' ? truncatedCert : MATCHED_KEY_PEM);
+        expect(() => readCertMaterial('/data/tls/cert.pem', '/data/tls/key.pem', readFile)).not.toThrow();
+        expect(readCertMaterial('/data/tls/cert.pem', '/data/tls/key.pem', readFile)).toBeNull();
+    });
+
+    it('C1 residue (round 4): returns null when the cert and key are individually valid but from DIFFERENT algorithms', () => {
+        // Measured: tls.createSecureContext does NOT throw on an EC cert
+        // paired with an RSA key -- it only cross-checks a cert and key of
+        // the SAME algorithm. The pair would BIND and fail every handshake
+        // silently (ERR_SSL_.../TLS_ALERT_HANDSHAKE_FAILURE) -- the same
+        // user-visible outcome as C2. Caught by X509Certificate.checkPrivateKey.
+        const readFile = (p: string) => (p === '/data/tls/cert.pem' ? MATCHED_CERT_PEM : CROSS_ALGORITHM_RSA_KEY_PEM);
         expect(() => readCertMaterial('/data/tls/cert.pem', '/data/tls/key.pem', readFile)).not.toThrow();
         expect(readCertMaterial('/data/tls/cert.pem', '/data/tls/key.pem', readFile)).toBeNull();
     });
@@ -336,6 +365,13 @@ describe('Config.buildServers (exercised via _buildServersForTest)', () => {
         expect(servers[0]!.secure).toBe(false);
     });
 
+    it('C1 residue (round 4): falls back to HTTP-only when the cert and key are cross-algorithm mismatched', () => {
+        const { dataRoot, env } = setupCertFiles(MATCHED_CERT_PEM, CROSS_ALGORITHM_RSA_KEY_PEM);
+        const servers = Config._buildServersForTest({}, 8000, dataRoot, env);
+        expect(servers).toHaveLength(1);
+        expect(servers[0]!.secure).toBe(false);
+    });
+
     it('C2: falls back to HTTP-only when the cert file is zero-byte', () => {
         const { dataRoot, env } = setupCertFiles('', MATCHED_KEY_PEM);
         const servers = Config._buildServersForTest({}, 8000, dataRoot, env);
@@ -365,10 +401,22 @@ describe('Config.buildServers (exercised via _buildServersForTest)', () => {
         // The old test only drove buildServerList directly with hand-picked
         // httpPort/httpsPort literals -- a coupling bug introduced in
         // Config.buildServers itself (the caller) would never reach it.
+        //
+        // NF-3 (review fix round 4): webPort here must be a value the real
+        // path could actually produce -- 3000 (in webPort's validated
+        // 1024-65535 range, not the 8000 default, not 8443) -- not 80, which
+        // _buildServersForTest now clamps to APP_CONFIG_DEFAULTS.webPort
+        // exactly as validateField('webPort', ...) would in production.
+        const { dataRoot, env } = setupCertFiles(MATCHED_CERT_PEM, MATCHED_KEY_PEM);
+        const servers = Config._buildServersForTest({}, 3000, dataRoot, env);
+        expect(servers[0]!.port).toBe(3000);
+        expect(servers[1]!.port).toBe(DEFAULT_HTTPS_PORT);
+    });
+
+    it('NF-3: an out-of-range webPort is clamped to the default, mirroring validateField exactly', () => {
         const { dataRoot, env } = setupCertFiles(MATCHED_CERT_PEM, MATCHED_KEY_PEM);
         const servers = Config._buildServersForTest({}, 80, dataRoot, env);
-        expect(servers[0]!.port).toBe(80);
-        expect(servers[1]!.port).toBe(DEFAULT_HTTPS_PORT);
+        expect(servers[0]!.port).toBe(APP_CONFIG_DEFAULTS.webPort);
     });
 
     it('M3: a custom httpsPort from fileConfig is what the HTTPS entry actually binds', () => {

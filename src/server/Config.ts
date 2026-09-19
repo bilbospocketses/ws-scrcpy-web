@@ -1,3 +1,4 @@
+import { createPrivateKey, X509Certificate } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as process from 'process';
@@ -269,13 +270,16 @@ export interface CertMaterial {
  *    unreadable key fails in exactly the same place, so both are read.
  *
  *  - READABLE BUT INVALID (review fix round 2, C1/C2; round 3 corrected the
- *    C1 check). A zero-byte or whitespace-only file reads successfully as an
- *    empty string, which `createSecureContext` (below) ACCEPTS -- so that
- *    case is rejected separately, first, by an explicit trim-length check.
- *    Garbage, truncated, mismatched, or otherwise unusable content reads
- *    successfully too, but handed straight to `https.createServer` throws
- *    SYNCHRONOUSLY and UNCAUGHT (measured on Node v24.19.0), taking the
- *    whole app down, plain HTTP included.
+ *    C1 check; round 4 closed a residue in round 3's fix). A TRULY empty
+ *    string reads as truthy but is not a certificate, and `createSecureContext`
+ *    (below) ACCEPTS it -- so that exact case is rejected separately, first,
+ *    by an explicit trim-length check. (Whitespace-only content does NOT need
+ *    this check: measured, `createSecureContext` already throws
+ *    `ERR_OSSL_PEM_NO_START_LINE` on it by itself -- the guard's job is the
+ *    empty string specifically.) Garbage, truncated, mismatched, or otherwise
+ *    unusable content reads successfully too, but handed straight to
+ *    `https.createServer` throws SYNCHRONOUSLY and UNCAUGHT (measured on
+ *    Node v24.19.0), taking the whole app down, plain HTTP included.
  *
  *    Round 2 validated the cert and the key SEPARATELY (`X509Certificate`,
  *    `createPrivateKey`) -- that is NOT the same check. It missed a valid
@@ -284,9 +288,23 @@ export interface CertMaterial {
  *    belonged together) and a cert followed by a truncated second PEM block
  *    (`X509Certificate` reads only the first block and returns happily;
  *    `ERR_OSSL_PEM_BAD_END_LINE` only surfaces once TLS actually tries to use
- *    it). Both are caught by validating with `tls.createSecureContext({
+ *    it). Round 3 caught both by validating with `tls.createSecureContext({
  *    cert, key })` instead -- the same secure-context construction
  *    `https.createServer` performs internally, so it cannot disagree with it.
+ *
+ *    Round 4: `createSecureContext` itself has a residue -- it only
+ *    cross-checks a cert and key of the SAME algorithm. A cross-algorithm
+ *    mismatched pair (an RSA key paired with an EC cert, or the reverse)
+ *    passes it and then BINDS, with every handshake failing silently
+ *    (`ERR_SSL_SSL/TLS_ALERT_HANDSHAKE_FAILURE`) -- the same user-visible
+ *    outcome as C2: a listener that is up while the feature does not work,
+ *    reported as working. Closed by also checking
+ *    `new X509Certificate(cert).checkPrivateKey(createPrivateKey(key))`,
+ *    which returns `false` (not a throw) for a mismatch of any kind,
+ *    including cross-algorithm -- measured to reject both cross-algorithm
+ *    directions and accept every legitimate input tried (chain, BOM, CRLF,
+ *    PKCS#1). `createSecureContext` is kept as well; the two checks cover
+ *    different things.
  *
  * `buildServerList` embeds the content directly rather than ever routing this
  * generated entry through `parseServerItem`'s untried read.
@@ -307,17 +325,24 @@ export function readCertMaterial(
     try {
         const cert = readFile(certFile);
         const key = readFile(keyFile);
-        // Zero-byte / whitespace-only content reads as truthy but is not a
-        // certificate (C2) -- reject before createSecureContext, which
-        // ACCEPTS empty strings and would otherwise let a dead listener bind
-        // with no key material and fail every handshake silently.
+        // Truly-empty content reads as truthy but is not a certificate (C2)
+        // -- reject before createSecureContext, which ACCEPTS an empty string
+        // and would otherwise let a dead listener bind with no key material
+        // and fail every handshake silently. Whitespace-only content needs no
+        // separate check here: createSecureContext already rejects it below.
         if (cert.trim().length === 0 || key.trim().length === 0) return null;
-        // Garbage, truncated, or mismatched content (C1) -- validate with the
-        // same secure-context construction https.createServer performs
-        // internally, so an unusable pair is caught here instead of crashing
-        // the boot. Parsing the cert and the key separately is NOT
-        // equivalent: see the doc comment above.
+        // Garbage, truncated, or same-algorithm mismatched content (C1) --
+        // validate with the same secure-context construction
+        // https.createServer performs internally, so an unusable pair is
+        // caught here instead of crashing the boot. Parsing the cert and the
+        // key separately is NOT equivalent: see the doc comment above.
         createSecureContext({ cert, key });
+        // Cross-algorithm mismatch (round 4): createSecureContext does not
+        // catch an RSA key paired with an EC cert (or the reverse). This
+        // returns a boolean, not a throw, so the check is explicit.
+        if (!new X509Certificate(cert).checkPrivateKey(createPrivateKey(key))) {
+            return null;
+        }
         return { cert, key };
     } catch {
         return null;
@@ -729,17 +754,25 @@ export class Config {
      * unreachable from a test (review fix round 2, I1/M1).
      *
      * Takes `fileConfig.httpsPort` through the SAME `sanitizeHttpsPort` the
-     * real boot path uses (review fix round 3, N2) rather than a raw
-     * `httpsPort` argument -- a test-only door into production code must not
-     * accept input the real path would reject.
+     * real boot path uses (review fix round 3, N2), and `webPortRaw` through
+     * the SAME `validateField('webPort', ...)` + `APP_CONFIG_DEFAULTS`
+     * fallback `sanitizeAppConfig` uses, rather than raw arguments -- a
+     * test-only door into production code must not accept input the real
+     * path would reject (round 4, N3: the real `webPort` this class ever
+     * sees is `appConfig.webPort`, already validated by the time
+     * `getInstance()` calls `buildServers`; this door took an unvalidated
+     * number directly, so a test could hand it a port the real path can
+     * never produce, e.g. 80).
      */
     public static _buildServersForTest(
         fileConfig: FlatConfig,
-        webPort: number,
+        webPortRaw: unknown,
         dataRoot: string | null,
         env: NodeJS.ProcessEnv,
         warn: (msg: string) => void = () => {},
     ): ServerItem[] {
+        const webPortResult = validateField('webPort', webPortRaw);
+        const webPort = webPortResult.ok ? webPortResult.value : APP_CONFIG_DEFAULTS.webPort;
         const httpsPort = sanitizeHttpsPort(fileConfig.httpsPort, warn);
         return Config.buildServers(fileConfig, webPort, dataRoot, httpsPort, env, warn);
     }
