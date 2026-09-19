@@ -1047,9 +1047,94 @@ describe('local https panel — final review fixes (C1, I1, I2, I5, I7, I11)', (
         expect(boundAlert.textContent).not.toMatch(/restart/i);
     });
 
-    it('listenerStatusNotice is null for a non-ready cert or a confirmed-bound listener', () => {
+    it('listenerStatusNotice is null for a non-ready cert or a confirmed-bound listener with no reason', () => {
         expect(listenerStatusNotice({ status: 'none' })).toBeNull();
         expect(listenerStatusNotice({ status: 'ready', httpsListener: { bound: true, port: 8443 } })).toBeNull();
         expect(listenerStatusNotice({ status: 'ready' })).toBeNull(); // unknown -- say nothing
+    });
+
+    // NF-1 (Critical, re-review): `reason` can accompany `bound: true` -- a
+    // regenerate leaves the ALREADY-bound socket serving the OLD leaf, since
+    // nothing rebinds it in-process. Checking `bound` alone (the pre-NF-1
+    // bug) would treat this exact case as "all good".
+    it('warns about a stale leaf even when the listener IS bound, with wording distinct from "not started yet" (NF-1)', () => {
+        const staleWhileBound = listenerStatusNotice({
+            status: 'ready',
+            httpsListener: { bound: true, port: 8443, reason: 'restart-required' },
+        });
+        const neverBound = listenerStatusNotice({
+            status: 'ready',
+            httpsListener: { bound: false, reason: 'restart-required' },
+        });
+        expect(staleWhileBound).not.toBeNull();
+        expect(neverBound).not.toBeNull();
+        // Distinct copy: one says the listener IS running (stale content),
+        // the other says it has not started -- swapping them would tell a
+        // user with a live-but-stale listener to wait for something that
+        // already happened, or tell a user with nothing running that it's
+        // "still" running the old cert.
+        expect(staleWhileBound).not.toBe(neverBound);
+        expect(staleWhileBound).toMatch(/is running/i);
+        expect(staleWhileBound).toMatch(/no longer exists|old ca|before your last regenerate/i);
+        expect(neverBound).toMatch(/has not started/i);
+    });
+
+    it('suppresses "streaming already works" for a stale-but-bound listener, and shows it for a genuinely clean one (NF-1)', async () => {
+        const stale = await buildLocalHttpsPanel({
+            fetchFn: vi.fn(
+                async () =>
+                    new Response(
+                        JSON.stringify(
+                            state({
+                                status: 'ready',
+                                httpsListener: { bound: true, port: 8443, reason: 'restart-required' },
+                            }),
+                        ),
+                    ),
+            ),
+            candidateIps: ['192.168.86.3'],
+            platform: 'win32',
+        });
+        expect(stale.querySelector<HTMLElement>('[data-tls-ca-trust-notice]')!.hidden).toBe(true);
+        expect(stale.querySelector<HTMLElement>('[data-tls-listener-notice]')!.hidden).toBe(false);
+        expect(stale.textContent).not.toMatch(/streaming already works/i);
+
+        const clean = await buildLocalHttpsPanel({
+            fetchFn: vi.fn(
+                async () =>
+                    new Response(
+                        JSON.stringify(state({ status: 'ready', httpsListener: { bound: true, port: 8443 } })),
+                    ),
+            ),
+            candidateIps: ['192.168.86.3'],
+            platform: 'win32',
+        });
+        expect(clean.querySelector<HTMLElement>('[data-tls-ca-trust-notice]')!.hidden).toBe(false);
+        expect(clean.querySelector<HTMLElement>('[data-tls-listener-notice]')!.hidden).toBe(true);
+        expect(clean.textContent).toMatch(/streaming already works/i);
+    });
+
+    it('a generate that leaves the OLD leaf bound says "serves the new certificate", not "start serving https" (NF-1)', async () => {
+        const fetchFn = vi.fn(async (url: RequestInfo | URL) => {
+            if (url === '/api/tls/generate') {
+                return new Response(
+                    JSON.stringify({
+                        status: 'ready',
+                        kind: 'ip',
+                        subject: '192.168.86.3',
+                        httpsListener: { bound: true, port: 8443, reason: 'restart-required' },
+                    }),
+                );
+            }
+            return new Response(JSON.stringify(state()));
+        });
+        const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'], platform: 'win32' });
+        el.querySelector<HTMLButtonElement>('[data-tls-generate]')!.click();
+        await new Promise((r) => setTimeout(r, 0));
+        const alert = el.querySelector<HTMLElement>('[data-tls-alert]')!;
+        expect(alert.textContent).toMatch(
+            /certificate generated\. restart the server so it serves the new certificate/i,
+        );
+        expect(alert.textContent).not.toMatch(/start serving https/i);
     });
 });
