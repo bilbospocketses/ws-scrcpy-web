@@ -134,4 +134,64 @@ describe('candidateLanIps', () => {
             ['10.8.0.2', '172.17.0.1', '172.29.144.1', '192.168.56.1', '192.168.86.3'].sort(),
         );
     });
+
+    // --- I7 (Important, whole-branch review): spec §6 asks to PREFER the
+    // interface holding the default route, not just list every candidate
+    // unordered -- a wrong prefill issues a certificate nobody on the LAN can
+    // use. `preferredAddress` is an optional hint the CALLER resolves (this
+    // function stays pure over `os.networkInterfaces()`-shaped input, per
+    // team-lead's instruction, so it never itself touches a socket or a
+    // routing table). ---
+
+    describe('preferredAddress ranking (I7)', () => {
+        it('moves the preferred address to the front, without dropping any other candidate', () => {
+            const interfaces = {
+                Ethernet: [v4('192.168.86.3')],
+                'VirtualBox Host-Only Network': [v4('192.168.56.1')],
+                OpenVPN: [v4('10.8.0.2')],
+            };
+            const result = candidateLanIps(interfaces, '10.8.0.2');
+            expect(result[0]).toBe('10.8.0.2');
+            expect(result.sort()).toEqual(['10.8.0.2', '192.168.56.1', '192.168.86.3'].sort());
+        });
+
+        // Paired with the test above: SAME interfaces, DIFFERENT preference,
+        // producing a DIFFERENT front element -- proves this is a genuine
+        // reorder driven by the argument, not a coincidental fixed order.
+        it('the front element changes when the preference changes, same candidate set', () => {
+            const interfaces = {
+                Ethernet: [v4('192.168.86.3')],
+                'VirtualBox Host-Only Network': [v4('192.168.56.1')],
+                OpenVPN: [v4('10.8.0.2')],
+            };
+            expect(candidateLanIps(interfaces, '192.168.86.3')[0]).toBe('192.168.86.3');
+            expect(candidateLanIps(interfaces, '192.168.56.1')[0]).toBe('192.168.56.1');
+        });
+
+        it('is a no-op (order unchanged from the no-argument call) when the preferred address is not among the candidates', () => {
+            const interfaces = {
+                Ethernet: [v4('192.168.86.3')],
+                OpenVPN: [v4('10.8.0.2')],
+            };
+            const withoutPreference = candidateLanIps(interfaces);
+            // Not on this machine at all -- e.g. a stale/racy route detection.
+            const withUnmatchedPreference = candidateLanIps(interfaces, '203.0.113.9');
+            expect(withUnmatchedPreference).toEqual(withoutPreference);
+        });
+
+        it('is a no-op when no preference is given at all -- the existing unordered contract is unchanged for every other caller', () => {
+            const interfaces = { Ethernet: [v4('192.168.86.3')], OpenVPN: [v4('10.8.0.2')] };
+            expect(candidateLanIps(interfaces)).toEqual(candidateLanIps(interfaces, undefined));
+        });
+
+        it('still returns every candidate, not a single winner, even WITH a preference (mirrors the "not a single winner" invariant above)', () => {
+            const interfaces = {
+                Ethernet: [v4('192.168.86.3')],
+                'VirtualBox Host-Only Network': [v4('192.168.56.1')],
+            };
+            const result = candidateLanIps(interfaces, '192.168.86.3');
+            expect(result).toHaveLength(2);
+            expect(result).toContain('192.168.56.1');
+        });
+    });
 });

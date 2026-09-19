@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { TlsApi } from '../api/TlsApi';
+import { buildHttpsListenerField, TlsApi } from '../api/TlsApi';
 import { Config } from '../Config';
 import { Logger } from '../Logger';
 import { HTTP_EXPOSURE_KEY } from '../tls/httpExposure';
@@ -312,109 +312,191 @@ describe('TlsApi', () => {
     });
 
     // --- C1 (Critical, whole-branch review): GET /api/tls/state must report
-    // LISTENER truth, not just certificate-on-disk truth. Without this, the
-    // panel claimed "streaming already works" in four states where nothing
-    // was bound to the HTTPS port -- most importantly, immediately after a
-    // successful generate, whose only offered remedy (regenerate) destroys
-    // the CA the user may have just installed on their phone. ---
+    // LISTENER truth, not just certificate-on-disk truth, to the EXACT
+    // contract team-lead specified (sent identically to the panel's
+    // implementer, so neither side can diverge):
+    //
+    //   httpsListener: { bound: boolean; port?: number; reason?: 'restart-required'
+    //                     | 'config-override' | 'port-collision' | 'bind-failed' }
+    //   httpsPort: number   // the CONFIGURED port, for the panel's prefill (I2)
+    //
+    // Without this, the panel claimed "streaming already works" in four
+    // states where nothing was bound to the HTTPS port -- most importantly,
+    // immediately after a successful generate, whose only offered remedy
+    // (regenerate) destroys the CA the user may have just installed on their
+    // phone. ---
 
-    describe('listener truth on GET /api/tls/state (C1)', () => {
+    // buildHttpsListenerField is the pure priority logic behind the route --
+    // tested directly here (contrast pairs across EVERY branch, since the
+    // four reasons are mutually exclusive by priority and each needs its own
+    // proof) and again through the real route below for wiring.
+    describe('buildHttpsListenerField priority logic (C1)', () => {
+        it('bound true reports the real port and no reason, regardless of what config/cert would otherwise imply', () => {
+            expect(
+                buildHttpsListenerField(
+                    { listening: true, boundPort: 8443, bindFailed: false },
+                    { advancedConfig: true, portCollision: true },
+                    true,
+                ),
+            ).toEqual({ bound: true, port: 8443 });
+        });
+
+        // bind-failed outranks config-override and port-collision: a
+        // configured-but-broken listener is a DIFFERENT actionable fact than
+        // "config.json overrides this" or "the ports collide", even if both
+        // happen to also be true in a contrived input.
+        it('bind-failed takes priority over config-override and port-collision', () => {
+            expect(
+                buildHttpsListenerField(
+                    { listening: false, bindFailed: true },
+                    { advancedConfig: true, portCollision: true },
+                    true,
+                ),
+            ).toEqual({ bound: false, reason: 'bind-failed' });
+        });
+
+        it('config-override takes priority over port-collision', () => {
+            expect(
+                buildHttpsListenerField(
+                    { listening: false, bindFailed: false },
+                    { advancedConfig: true, portCollision: true },
+                    true,
+                ),
+            ).toEqual({ bound: false, reason: 'config-override' });
+        });
+
+        it('port-collision applies when neither bind-failed nor config-override do', () => {
+            expect(
+                buildHttpsListenerField(
+                    { listening: false, bindFailed: false },
+                    { advancedConfig: false, portCollision: true },
+                    true,
+                ),
+            ).toEqual({ bound: false, reason: 'port-collision' });
+        });
+
+        // restart-required is the LOWEST-priority reason, and only applies
+        // when a certificate genuinely exists -- paired against the "no
+        // certificate at all" case immediately below, since a version that
+        // ignored certReady entirely would pass this test and fail that one.
+        it('restart-required applies only when a certificate exists and nothing else matched', () => {
+            expect(
+                buildHttpsListenerField(
+                    { listening: false, bindFailed: false },
+                    { advancedConfig: false, portCollision: false },
+                    true,
+                ),
+            ).toEqual({ bound: false, reason: 'restart-required' });
+        });
+
+        it('reports no reason at all when nothing is bound, nothing else matched, and there is no certificate to restart into', () => {
+            expect(
+                buildHttpsListenerField(
+                    { listening: false, bindFailed: false },
+                    { advancedConfig: false, portCollision: false },
+                    false,
+                ),
+            ).toEqual({ bound: false });
+        });
+    });
+
+    describe('httpsListener + httpsPort on GET /api/tls/state (C1, exact contract)', () => {
         type StateJson = {
-            httpsListening: boolean;
-            httpsBoundPort?: number;
-            httpsBindFailed: boolean;
-            httpsAdvancedConfig: boolean;
-            httpsConfiguredPort?: number;
-            httpsPortCollision: boolean;
+            httpsListener: { bound: boolean; port?: number; reason?: string };
+            httpsPort: number;
         };
 
-        async function stateJson(): Promise<StateJson> {
-            const { api } = makeApi();
+        async function stateJson(over: Record<string, unknown> = {}): Promise<StateJson> {
+            const { api } = makeApi(over);
             const r = makeReqRes('GET', '/api/tls/state');
             await api.handle(r.req, r.res);
             expect(r.getStatus()).toBe(200);
             return r.getJson() as StateJson;
         }
 
-        it('reports genuinely listening with the real bound port, and NOT listening when nothing is bound -- the core contrast', async () => {
+        it('wires a bound listener straight through to httpsListener.port, and reports httpsPort from Config -- the core contrast', async () => {
             vi.mocked(getHttpsListenerStatus).mockReturnValueOnce({
                 listening: true,
                 boundPort: 8443,
                 bindFailed: false,
             });
-            const listening = await stateJson();
-            expect(listening.httpsListening).toBe(true);
-            expect(listening.httpsBoundPort).toBe(8443);
-
-            // Same route, no certificate change, nothing bound this time --
-            // a hardcoded `httpsListening: true` would pass the case above
-            // and fail this one.
-            vi.mocked(getHttpsListenerStatus).mockReturnValueOnce({ listening: false, bindFailed: false });
-            const notListening = await stateJson();
-            expect(notListening.httpsListening).toBe(false);
-            expect(notListening.httpsBoundPort).toBeUndefined();
-        });
-
-        it('distinguishes "configured but failed to bind" from "never configured at all" -- case 4 vs cases 1-3', async () => {
-            vi.mocked(getHttpsListenerStatus).mockReturnValueOnce({ listening: false, bindFailed: true });
-            const failed = await stateJson();
-            expect(failed.httpsBindFailed).toBe(true);
-
-            vi.mocked(getHttpsListenerStatus).mockReturnValueOnce({ listening: false, bindFailed: false });
-            const neverConfigured = await stateJson();
-            expect(neverConfigured.httpsBindFailed).toBe(false);
-        });
-
-        it('reports httpsAdvancedConfig from Config, true vs false -- case 2 (config.json overrides this, no restart will help)', async () => {
-            vi.mocked(Config.getInstance).mockReturnValue({
-                usesAdvancedServerConfig: true,
-                httpsPort: undefined,
-                servers: [{ secure: false, port: 8000 }],
-            } as never);
-            const advanced = await stateJson();
-            expect(advanced.httpsAdvancedConfig).toBe(true);
-            expect(advanced.httpsConfiguredPort).toBeUndefined();
-
             vi.mocked(Config.getInstance).mockReturnValue({
                 usesAdvancedServerConfig: false,
                 httpsPort: 8443,
                 servers: [{ secure: false, port: 8000 }],
             } as never);
-            const ordinary = await stateJson();
-            expect(ordinary.httpsAdvancedConfig).toBe(false);
-            expect(ordinary.httpsConfiguredPort).toBe(8443);
+            const bound = await stateJson();
+            expect(bound.httpsListener).toEqual({ bound: true, port: 8443 });
+            expect(bound.httpsPort).toBe(8443);
+
+            // Same route, nothing bound this time -- a hardcoded
+            // `{ bound: true }` would pass the case above and fail this one.
+            vi.mocked(getHttpsListenerStatus).mockReturnValueOnce({ listening: false, bindFailed: false });
+            const notBound = await stateJson();
+            expect(notBound.httpsListener.bound).toBe(false);
+            expect(notBound.httpsListener.port).toBeUndefined();
         });
 
-        it('reports httpsPortCollision true only when the configured httpsPort equals the actual http port -- case 3', async () => {
+        it('wires bind-failed through end to end', async () => {
+            vi.mocked(getHttpsListenerStatus).mockReturnValueOnce({ listening: false, bindFailed: true });
+            const json = await stateJson();
+            expect(json.httpsListener).toEqual({ bound: false, reason: 'bind-failed' });
+        });
+
+        it('wires config-override through end to end, and httpsPort is STILL reported (I2 -- the panel needs it even in this mode)', async () => {
+            vi.mocked(Config.getInstance).mockReturnValue({
+                usesAdvancedServerConfig: true,
+                httpsPort: 9443,
+                servers: [{ secure: false, port: 8000 }],
+            } as never);
+            const json = await stateJson();
+            expect(json.httpsListener).toEqual({ bound: false, reason: 'config-override' });
+            expect(json.httpsPort).toBe(9443);
+        });
+
+        it('wires port-collision through end to end, computed from Config.httpsPort vs the real http port', async () => {
             vi.mocked(Config.getInstance).mockReturnValue({
                 usesAdvancedServerConfig: false,
                 httpsPort: 8000,
                 servers: [{ secure: false, port: 8000 }],
             } as never);
             const colliding = await stateJson();
-            expect(colliding.httpsPortCollision).toBe(true);
+            expect(colliding.httpsListener).toEqual({ bound: false, reason: 'port-collision' });
 
-            // Same shape, DIFFERENT httpsPort -- a hardcoded `true` (or a
-            // check that only looked at whether httpsPort was SET, never
-            // comparing it to the http port) would pass the case above and
-            // fail this one.
+            // Same shape, DIFFERENT httpsPort -- proves this is a genuine
+            // comparison, not a check that only looked at whether httpsPort
+            // was configured at all. A certificate is supplied here so the
+            // "no reason" default (no cert to restart into) doesn't mask a
+            // broken collision check the same way it would with makeApi()'s
+            // default `status: 'none'`.
             vi.mocked(Config.getInstance).mockReturnValue({
                 usesAdvancedServerConfig: false,
                 httpsPort: 8443,
                 servers: [{ secure: false, port: 8000 }],
             } as never);
-            const notColliding = await stateJson();
-            expect(notColliding.httpsPortCollision).toBe(false);
+            const getState = vi.fn(() => ({ status: 'ready', subject: '192.168.86.3', kind: 'ip' }));
+            const notColliding = await stateJson({ getState });
+            expect(notColliding.httpsListener).toEqual({ bound: false, reason: 'restart-required' });
         });
 
-        it('is safe by default (not listening, no collision) when Config.getInstance() itself throws -- matches every other /state test in this file', async () => {
+        it('wires restart-required through end to end, gated on the certificate genuinely being ready', async () => {
+            const getState = vi.fn(() => ({ status: 'ready', subject: '192.168.86.3', kind: 'ip' }));
+            const withCert = await stateJson({ getState });
+            expect(withCert.httpsListener).toEqual({ bound: false, reason: 'restart-required' });
+
+            // Same everything else, no certificate -- proves certReady is
+            // actually consulted, not a constant true.
+            const noCert = await stateJson();
+            expect(noCert.httpsListener).toEqual({ bound: false });
+        });
+
+        it('is safe by default when Config.getInstance() itself throws -- matches every other /state test in this file', async () => {
             vi.mocked(Config.getInstance).mockImplementation(() => {
                 throw new Error('ENOENT: config.json');
             });
             const json = await stateJson();
-            expect(json.httpsAdvancedConfig).toBe(false);
-            expect(json.httpsConfiguredPort).toBeUndefined();
-            expect(json.httpsPortCollision).toBe(false);
+            expect(json.httpsListener.bound).toBe(false);
+            expect(typeof json.httpsPort).toBe('number');
         });
     });
 

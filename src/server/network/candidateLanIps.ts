@@ -35,8 +35,20 @@ import type { NetworkInterfaceInfo } from 'os';
  * De-duplicated (N15): a multi-homed NIC or a teamed adapter can expose the
  * same address on more than one `os.networkInterfaces()` entry, which would
  * otherwise render as a duplicate row in the panel.
+ *
+ * `preferredAddress` (I7, whole-branch review): spec §6 asks to PREFER the
+ * interface holding the default route -- a dev box with nine RFC1918
+ * addresses has exactly one that a phone on the LAN can actually reach, and
+ * an unordered list left the panel prefilling `[0]`, whichever adapter
+ * `os.networkInterfaces()` happened to enumerate first. This function stays
+ * PURE and network-free (the caller resolves the actual preferred address,
+ * e.g. via the default route, and passes it in here): when the given
+ * address IS one of the candidates, it moves to the front; otherwise the
+ * result is identical to calling this with no preference at all. Every
+ * candidate is still returned either way -- this reorders, it never drops
+ * (spec §6's "the field shows every candidate", not just the winner).
  */
-export function candidateLanIps(interfaces: NodeJS.Dict<NetworkInterfaceInfo[]>): string[] {
+export function candidateLanIps(interfaces: NodeJS.Dict<NetworkInterfaceInfo[]>, preferredAddress?: string): string[] {
     const out = new Set<string>();
     for (const entries of Object.values(interfaces)) {
         for (const entry of entries ?? []) {
@@ -44,7 +56,11 @@ export function candidateLanIps(interfaces: NodeJS.Dict<NetworkInterfaceInfo[]>)
             if (isRfc1918(entry.address)) out.add(entry.address);
         }
     }
-    return [...out];
+    const candidates = [...out];
+    if (preferredAddress !== undefined && out.has(preferredAddress)) {
+        return [preferredAddress, ...candidates.filter((ip) => ip !== preferredAddress)];
+    }
+    return candidates;
 }
 
 function isRfc1918(ip: string): boolean {
