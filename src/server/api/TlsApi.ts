@@ -1,10 +1,13 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { networkInterfaces } from 'os';
 import { requireAdmin } from '../auth/requireAdmin';
-import { Config } from '../Config';
+import { Config, validateHttpsPortInput } from '../Config';
 import { Logger } from '../Logger';
 import { candidateLanIps } from '../network/candidateLanIps';
 import type { CertService, CertState, CertSubjectKind } from '../tls/CertService';
+import type { HttpExposure } from '../tls/httpExposure';
+import { HTTP_EXPOSURE_KEY } from '../tls/httpExposure';
+import { scheduleRestartForPortChange } from './restartRequest';
 import { BodyTooLargeError, InvalidJsonError, readJsonBodyStrict, sendInternalError } from './utils';
 
 const log = Logger.for('TlsApi');
@@ -31,6 +34,15 @@ export class TlsApi {
     constructor(
         private readonly getService: () => CertService,
         private readonly getCandidateIps: () => string[] = () => candidateLanIps(networkInterfaces()),
+        // Test seams for the https-port restart (task 11), mirroring
+        // SettingsBatchApiOptions -- production leaves both undefined and gets
+        // the real setTimeout/process.exit; tests inject both so an
+        // https-port case never actually schedules a real timer or kills the
+        // vitest worker.
+        private readonly seams: {
+            schedule?: (cb: () => void, ms: number) => unknown;
+            exit?: (code: number) => void;
+        } = {},
     ) {}
 
     async handle(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
@@ -165,6 +177,71 @@ export class TlsApi {
                 res.setHeader('Content-Type', 'application/json');
                 res.writeHead(200);
                 res.end(JSON.stringify({ ok: true }));
+                return true;
+            }
+
+            if (req.method === 'POST' && pathname === `${PREFIX}/exposure`) {
+                const body = await readJsonBodyStrict<{ mode?: unknown }>(req);
+                res.setHeader('Content-Type', 'application/json');
+
+                // `mode` must be one of the three literals -- defaulting a missing
+                // or misspelled mode to 'open' would silently widen exposure
+                // instead of applying whatever the caller actually asked for
+                // (amendment C's precedent for `kind`, above).
+                if (body.mode !== 'open' && body.mode !== 'httpsOnly' && body.mode !== 'redirect') {
+                    res.writeHead(400);
+                    res.end(JSON.stringify({ error: 'mode must be "open", "httpsOnly", or "redirect"' }));
+                    return true;
+                }
+                const mode: HttpExposure = body.mode;
+
+                try {
+                    // HttpServer.ts reads this key FRESH on every plain-HTTP
+                    // request (readHttpExposure) -- there is no cache to
+                    // invalidate and no listener to rebind, so this write takes
+                    // effect for the very next request, with no restart.
+                    Config.getInstance().db.appSettings.set(HTTP_EXPOSURE_KEY, mode);
+                } catch (err) {
+                    log.error(`could not persist http exposure mode: ${(err as Error)?.message ?? String(err)}`);
+                    res.writeHead(500);
+                    res.end(JSON.stringify({ error: 'could not save the exposure setting' }));
+                    return true;
+                }
+
+                res.writeHead(200);
+                res.end(JSON.stringify({ ok: true, mode }));
+                return true;
+            }
+
+            if (req.method === 'POST' && pathname === `${PREFIX}/https-port`) {
+                const body = await readJsonBodyStrict<{ port?: unknown }>(req);
+                res.setHeader('Content-Type', 'application/json');
+
+                const validated = validateHttpsPortInput(body.port);
+                if (!validated.ok) {
+                    res.writeHead(400);
+                    res.end(JSON.stringify({ error: validated.error }));
+                    return true;
+                }
+
+                const cfg = Config.getInstance();
+                try {
+                    cfg.setHttpsPort(validated.value);
+                } catch (err) {
+                    log.error(`could not persist https port: ${(err as Error)?.message ?? String(err)}`);
+                    res.writeHead(500);
+                    res.end(JSON.stringify({ error: 'could not save the https port' }));
+                    return true;
+                }
+
+                // Unlike exposure above: the listener set is built once at boot
+                // (Config.buildServers) and nothing rebinds it in-process, so
+                // this ALWAYS needs a restart. Mirrors SettingsBatchApi's
+                // webPort handling exactly (same helper, same exit-75 signal).
+                scheduleRestartForPortChange(cfg.restartMarkerPath, log, this.seams);
+
+                res.writeHead(200);
+                res.end(JSON.stringify({ ok: true, port: validated.value, restartRequired: true }));
                 return true;
             }
 

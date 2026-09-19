@@ -4,7 +4,14 @@ import * as os from 'os';
 import * as path from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { APP_CONFIG_DEFAULTS } from '../../common/ConfigEvents';
-import { buildServerList, Config, DEFAULT_HTTPS_PORT, readCertMaterial, sanitizeHttpsPort } from '../Config';
+import {
+    buildServerList,
+    Config,
+    DEFAULT_HTTPS_PORT,
+    readCertMaterial,
+    sanitizeHttpsPort,
+    validateHttpsPortInput,
+} from '../Config';
 import { resolveCertPaths } from '../tls/certPaths';
 
 // A real self-signed EC cert/key pair, GENUINELY MATCHING -- generated together
@@ -281,6 +288,40 @@ describe('sanitizeHttpsPort', () => {
         const warn = vi.fn();
         expect(sanitizeHttpsPort('9443', warn)).toBe(DEFAULT_HTTPS_PORT);
         expect(warn).toHaveBeenCalledOnce();
+    });
+});
+
+// Task 11 (POST /api/tls/https-port): unlike sanitizeHttpsPort's "never throw,
+// fall back to the default with a warning" contract for config.json (Contract
+// 1), a live API request has a caller waiting for an answer -- silently
+// coercing a typo'd port to 8443 would save the WRONG value without telling
+// anyone. This mirrors TlsApi's `kind` validation (amendment C): reject
+// outright, never default.
+describe('validateHttpsPortInput (task 11)', () => {
+    it('accepts a valid port', () => {
+        expect(validateHttpsPortInput(9443)).toEqual({ ok: true, value: 9443 });
+    });
+
+    it("accepts 80 -- the https port is not held to webPort's 1024 floor", () => {
+        // Pairs against reusing validateField('webPort', ...)'s bounds by
+        // mistake: that would reject 80, which is a legal httpsPort.
+        expect(validateHttpsPortInput(80)).toEqual({ ok: true, value: 80 });
+    });
+
+    it('rejects an out-of-range port by name, without also handing back a usable value', () => {
+        const result = validateHttpsPortInput(70000);
+        expect(result.ok).toBe(false);
+        expect((result as { error: string }).error).toMatch(/port/i);
+        expect((result as { value?: number }).value).toBeUndefined();
+    });
+
+    it('rejects zero', () => {
+        expect(validateHttpsPortInput(0).ok).toBe(false);
+    });
+
+    it('rejects a non-integer value, unlike sanitizeHttpsPort which would default it silently', () => {
+        expect(validateHttpsPortInput('9443').ok).toBe(false);
+        expect(validateHttpsPortInput(9443.5).ok).toBe(false);
     });
 });
 

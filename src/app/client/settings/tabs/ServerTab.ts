@@ -311,23 +311,29 @@ async function fetchTlsState(fetchFn: typeof fetch): Promise<TlsCertState> {
  *
  * Deliberately does NOT touch `StagedSettingsStore`. Two controls here look
  * like they should stage into the dialog's batch Save the way `webPort` does,
- * and both are NOT wired that way on purpose:
+ * and NEITHER is wired that way -- each has its OWN dedicated "ok" button and
+ * route instead (task 11), for the same underlying reason: `httpsPort` and
+ * the exposure mode are both deliberately kept OUT of `AppConfig` (see
+ * Config.ts's `FlatConfig` doc comment), so `SettingsBatchApi.STAGEABLE_IDS`
+ * (an ALLOWLIST backed by `updateAppConfig`) is the wrong path for either --
+ * routing them through it would mean either exposing them via
+ * GET/PATCH /api/config (the thing that comment says never to do) or teaching
+ * the batch endpoint two fields it cannot validate the same way as everything
+ * else there.
  *
- * - The port field: `SettingsBatchApi.STAGEABLE_IDS` (an ALLOWLIST) has no
- *   `httpsPort` entry, and `POST /api/tls/generate` itself accepts only
- *   `{ kind, value }` -- no port. Registering it with `store` anyway would
- *   make an UNRELATED save fail: the batch endpoint rejects the whole batch
- *   on any single unknown id, so editing this field would silently break a
- *   legitimate `webPort` change bundled in the same Save. It is local-preview
- *   only (notification 5) until a real endpoint exists.
- * - The exposure "ok" button: Task 8's own Interfaces line lists exactly three
- *   consumed routes (`state`, `generate`, `ca-root`) -- no exposure-writing
- *   endpoint is in scope anywhere in this plan (verified: `TlsApi.ts` has no
- *   route for it, and `HTTP_EXPOSURE_KEY` is read-only today, in
- *   `HttpServer.ts`). The button still calls `POST /api/tls/exposure` on the
- *   chance a later task adds it, and renders whatever comes back (including a
- *   graceful "not supported yet" for the 404 every build without that route
- *   returns) rather than silently doing nothing on click.
+ * - The port field's "ok" button POSTs `{ port }` to `POST /api/tls/https-port`
+ *   (validated by `validateHttpsPortInput`, Config.ts). The listener set is
+ *   built once at boot (`Config.buildServers`) and nothing rebinds it
+ *   in-process, so a save ALWAYS schedules a restart (`scheduleRestartForPortChange`,
+ *   the same helper and exit-75 signal `SettingsBatchApi` uses for `webPort`)
+ *   -- see the always-visible restart notice beside it.
+ * - The exposure "ok" button POSTs `{ mode }` to `POST /api/tls/exposure`,
+ *   which writes `HTTP_EXPOSURE_KEY` straight to `app_settings`.
+ *   `HttpServer.ts`'s `readHttpExposure()` reads that key FRESH on every
+ *   plain-HTTP request, so this takes effect for the very next request --
+ *   no restart, unlike the port field above. (It still handles a 404
+ *   gracefully below, from before this route existed -- harmless now, and
+ *   cheap insurance against a client talking to an older server.)
  *
  * Every notice in here is one of two kinds, and each renders differently
  * (this repo's convention -- see TRANSIENT_ALERT_*_MS above):
@@ -413,19 +419,75 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
         'allowedHosts takes domain names only. raw ip addresses already work, and it does not affect streaming.';
     body.appendChild(allowedHostsNotice);
 
-    // ---- port (local preview only -- see the class doc's "NOT WIRED" note) ----
+    // ---- port -- POSTs to POST /api/tls/https-port (task 11); see the class
+    //      doc's port-field paragraph for why this is its own route rather
+    //      than a staged webPort-style field ----
     const portInput = document.createElement('input');
     portInput.type = 'number';
     portInput.className = 'settings-input';
     portInput.style.maxWidth = '120px';
     portInput.setAttribute('data-tls-port', '');
     portInput.value = '8443';
-    body.appendChild(buildRow('https port', portInput));
+
+    const portOkBtn = document.createElement('button');
+    portOkBtn.type = 'button';
+    portOkBtn.className = 'settings-btn settings-btn-primary';
+    portOkBtn.textContent = 'ok';
+    portOkBtn.setAttribute('data-tls-port-ok', '');
+
+    const portFrag = document.createDocumentFragment();
+    portFrag.appendChild(portInput);
+    portFrag.appendChild(portOkBtn);
+    body.appendChild(buildRow('https port', portFrag));
 
     const portNotice = buildNoticeRow();
     body.appendChild(portNotice);
     portInput.addEventListener('input', () => {
         setNotice(portNotice, subPrivilegedPortNotice(Number(portInput.value), deps.platform));
+    });
+
+    // Always visible, unlike the exposure notices below (which appear only
+    // once a narrowed mode is picked): there is no in-process rebind for the
+    // HTTPS listener (see Config.setHttpsPort's doc comment), so EVERY save
+    // here restarts the server -- unlike the exposure mode, which
+    // HttpServer.ts re-reads fresh on every request and needs no restart.
+    const portRestartNotice = document.createElement('p');
+    portRestartNotice.className = 'settings-status';
+    portRestartNotice.style.gridColumn = '1 / -1';
+    portRestartNotice.textContent = 'changing this restarts the server; any active streams will drop.';
+    body.appendChild(portRestartNotice);
+
+    portOkBtn.addEventListener('click', () => {
+        void (async () => {
+            const port = Number(portInput.value);
+            // Same bounds as validateHttpsPortInput (Config.ts) -- checked
+            // here so an obviously-bad value never reaches the network.
+            if (!Number.isInteger(port) || port < 1 || port > 65535) {
+                showTransientAlert('error', 'port must be an integer between 1 and 65535.');
+                return;
+            }
+            portOkBtn.disabled = true;
+            try {
+                const res = await deps.fetchFn('/api/tls/https-port', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ port }),
+                });
+                const data = (await res.json().catch(() => null)) as { error?: string } | null;
+                if (!res.ok) {
+                    showTransientAlert('error', data?.error ?? `could not save the https port (${res.status}).`);
+                    return;
+                }
+                showTransientAlert(
+                    'success',
+                    'https port saved. the server is restarting for the change to take effect.',
+                );
+            } catch {
+                showTransientAlert('error', 'could not reach the server.');
+            } finally {
+                portOkBtn.disabled = false;
+            }
+        })();
     });
 
     // ---- generate ----

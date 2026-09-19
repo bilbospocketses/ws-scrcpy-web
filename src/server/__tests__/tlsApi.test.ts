@@ -1,13 +1,21 @@
 import { describe, expect, it, vi } from 'vitest';
 import { TlsApi } from '../api/TlsApi';
 import { Config } from '../Config';
+import { HTTP_EXPOSURE_KEY } from '../tls/httpExposure';
 import { makeReqRes } from './helpers/httpMock';
 
 vi.mock('../auth/requireAdmin', () => ({ requireAdmin: vi.fn(() => true) }));
 
 import { requireAdmin } from '../auth/requireAdmin';
 
-vi.mock('../Config', () => ({ Config: { getInstance: vi.fn() } }));
+vi.mock('../Config', async (importOriginal) => {
+    // Only Config.getInstance() is mocked (per-test, via vi.mocked(...).mockReturnValue).
+    // validateHttpsPortInput (task 11) is a pure function TlsApi imports from the
+    // same module -- it must stay the REAL implementation, or every https-port
+    // test below would be exercising a mock instead of the actual validator.
+    const actual = await importOriginal<typeof import('../Config')>();
+    return { ...actual, Config: { getInstance: vi.fn() } };
+});
 
 function makeApi(over: Record<string, unknown> = {}, candidateIps: string[] = ['192.168.86.3']) {
     const svc = {
@@ -335,6 +343,204 @@ describe('TlsApi', () => {
             await api.handle(r.req, r.res);
             expect(r.getStatus()).toBe(400);
             expect(svc.generate).toHaveBeenCalled();
+        });
+    });
+
+    // --- task 11: POST /api/tls/exposure -- persists HTTP_EXPOSURE_KEY ---
+
+    describe('POST /api/tls/exposure (task 11)', () => {
+        it('rejects an unrecognised mode with 400 naming the field, without touching app_settings', async () => {
+            const set = vi.fn();
+            vi.mocked(Config.getInstance).mockReturnValue({ db: { appSettings: { set } } } as never);
+            const { api } = makeApi();
+            const r = makeReqRes('POST', '/api/tls/exposure', { mode: 'bogus' });
+            await api.handle(r.req, r.res);
+            expect(r.getStatus()).toBe(400);
+            expect(JSON.stringify(r.getJson())).toMatch(/mode/);
+            expect(set).not.toHaveBeenCalled();
+        });
+
+        it('rejects a missing mode, rather than defaulting to "open"', async () => {
+            const set = vi.fn();
+            vi.mocked(Config.getInstance).mockReturnValue({ db: { appSettings: { set } } } as never);
+            const { api } = makeApi();
+            const r = makeReqRes('POST', '/api/tls/exposure', {});
+            await api.handle(r.req, r.res);
+            expect(r.getStatus()).toBe(400);
+            expect(set).not.toHaveBeenCalled();
+        });
+
+        it('persists a narrowed mode to app_settings under HTTP_EXPOSURE_KEY', async () => {
+            const set = vi.fn();
+            vi.mocked(Config.getInstance).mockReturnValue({ db: { appSettings: { set } } } as never);
+            const { api } = makeApi();
+            const r = makeReqRes('POST', '/api/tls/exposure', { mode: 'redirect' });
+            await api.handle(r.req, r.res);
+            expect(r.getStatus()).toBe(200);
+            expect(set).toHaveBeenCalledWith(HTTP_EXPOSURE_KEY, 'redirect');
+        });
+
+        it('accepts "open" too, not just the two narrowed modes', async () => {
+            const set = vi.fn();
+            vi.mocked(Config.getInstance).mockReturnValue({ db: { appSettings: { set } } } as never);
+            const { api } = makeApi();
+            const r = makeReqRes('POST', '/api/tls/exposure', { mode: 'open' });
+            await api.handle(r.req, r.res);
+            expect(r.getStatus()).toBe(200);
+            expect(set).toHaveBeenCalledWith(HTTP_EXPOSURE_KEY, 'open');
+        });
+
+        it('answers 500, not a thrown exception, when the database write fails', async () => {
+            const set = vi.fn(() => {
+                throw new Error('EACCES: app.db');
+            });
+            vi.mocked(Config.getInstance).mockReturnValue({ db: { appSettings: { set } } } as never);
+            const { api } = makeApi();
+            const r = makeReqRes('POST', '/api/tls/exposure', { mode: 'httpsOnly' });
+            await api.handle(r.req, r.res);
+            expect(r.getStatus()).toBe(500);
+        });
+
+        it('is gated by requireAdmin like every other tls route', async () => {
+            vi.mocked(requireAdmin).mockImplementationOnce((_req, res) => {
+                res.writeHead(403, { 'content-type': 'application/json' });
+                res.end(JSON.stringify({ error: 'forbidden' }));
+                return false;
+            });
+            const set = vi.fn();
+            vi.mocked(Config.getInstance).mockReturnValue({ db: { appSettings: { set } } } as never);
+            const { api } = makeApi();
+            const r = makeReqRes('POST', '/api/tls/exposure', { mode: 'httpsOnly' });
+            await api.handle(r.req, r.res);
+            expect(r.getStatus()).toBe(403);
+            expect(set).not.toHaveBeenCalled();
+        });
+    });
+
+    // --- task 11: POST /api/tls/https-port -- persists httpsPort + restarts ---
+
+    describe('POST /api/tls/https-port (task 11)', () => {
+        function makeSeamsApi() {
+            const schedule = vi.fn();
+            const exit = vi.fn();
+            const svc = {
+                getState: vi.fn(() => ({ status: 'none' })),
+                generate: vi.fn(),
+                caRootPem: vi.fn(),
+                revoke: vi.fn(),
+            };
+            const api = new TlsApi(
+                () => svc as never,
+                () => [],
+                { schedule, exit },
+            );
+            return { api, schedule, exit };
+        }
+
+        it('rejects an out-of-range port with 400 naming the field, persisting nothing and scheduling nothing', async () => {
+            const setHttpsPort = vi.fn();
+            vi.mocked(Config.getInstance).mockReturnValue({
+                setHttpsPort,
+                restartMarkerPath: '/tmp/.restart',
+            } as never);
+            const { api, schedule } = makeSeamsApi();
+            const r = makeReqRes('POST', '/api/tls/https-port', { port: 70000 });
+            await api.handle(r.req, r.res);
+            expect(r.getStatus()).toBe(400);
+            expect(JSON.stringify(r.getJson())).toMatch(/port/i);
+            expect(setHttpsPort).not.toHaveBeenCalled();
+            expect(schedule).not.toHaveBeenCalled();
+        });
+
+        it('rejects a non-integer port, without persisting', async () => {
+            const setHttpsPort = vi.fn();
+            vi.mocked(Config.getInstance).mockReturnValue({
+                setHttpsPort,
+                restartMarkerPath: '/tmp/.restart',
+            } as never);
+            const { api } = makeSeamsApi();
+            const r = makeReqRes('POST', '/api/tls/https-port', { port: '9443' });
+            await api.handle(r.req, r.res);
+            expect(r.getStatus()).toBe(400);
+            expect(setHttpsPort).not.toHaveBeenCalled();
+        });
+
+        it("accepts 80 -- httpsPort is not held to webPort's 1024 floor (independence, mirrors Task 7)", async () => {
+            const setHttpsPort = vi.fn();
+            vi.mocked(Config.getInstance).mockReturnValue({
+                setHttpsPort,
+                restartMarkerPath: '/tmp/.restart',
+            } as never);
+            const { api } = makeSeamsApi();
+            const r = makeReqRes('POST', '/api/tls/https-port', { port: 80 });
+            await api.handle(r.req, r.res);
+            expect(r.getStatus()).toBe(200);
+            expect(setHttpsPort).toHaveBeenCalledWith(80);
+        });
+
+        it('persists a valid port and schedules a restart without firing it yet', async () => {
+            const setHttpsPort = vi.fn();
+            vi.mocked(Config.getInstance).mockReturnValue({
+                setHttpsPort,
+                restartMarkerPath: '/tmp/.restart',
+            } as never);
+            const { api, schedule, exit } = makeSeamsApi();
+            const r = makeReqRes('POST', '/api/tls/https-port', { port: 9443 });
+            await api.handle(r.req, r.res);
+            expect(r.getStatus()).toBe(200);
+            expect(setHttpsPort).toHaveBeenCalledWith(9443);
+            expect(schedule).toHaveBeenCalledTimes(1);
+            expect(exit).not.toHaveBeenCalled();
+            const body = r.getJson() as { restartRequired: boolean };
+            expect(body.restartRequired).toBe(true);
+        });
+
+        it('firing the scheduled callback calls exit(75) -- the supervisor restart signal', async () => {
+            const setHttpsPort = vi.fn();
+            vi.mocked(Config.getInstance).mockReturnValue({
+                setHttpsPort,
+                restartMarkerPath: '/tmp/.restart',
+            } as never);
+            const { api, schedule, exit } = makeSeamsApi();
+            const r = makeReqRes('POST', '/api/tls/https-port', { port: 9443 });
+            await api.handle(r.req, r.res);
+            const [cb] = schedule.mock.calls[0]!;
+            (cb as () => void)();
+            expect(exit).toHaveBeenCalledWith(75);
+        });
+
+        it('answers 500, not a thrown exception, when persisting to config.json fails', async () => {
+            const setHttpsPort = vi.fn(() => {
+                throw new Error('ENOSPC: no space left on device');
+            });
+            vi.mocked(Config.getInstance).mockReturnValue({
+                setHttpsPort,
+                restartMarkerPath: '/tmp/.restart',
+            } as never);
+            const { api, schedule } = makeSeamsApi();
+            const r = makeReqRes('POST', '/api/tls/https-port', { port: 9443 });
+            await api.handle(r.req, r.res);
+            expect(r.getStatus()).toBe(500);
+            expect(schedule).not.toHaveBeenCalled();
+        });
+
+        it('is gated by requireAdmin like every other tls route', async () => {
+            vi.mocked(requireAdmin).mockImplementationOnce((_req, res) => {
+                res.writeHead(403, { 'content-type': 'application/json' });
+                res.end(JSON.stringify({ error: 'forbidden' }));
+                return false;
+            });
+            const setHttpsPort = vi.fn();
+            vi.mocked(Config.getInstance).mockReturnValue({
+                setHttpsPort,
+                restartMarkerPath: '/tmp/.restart',
+            } as never);
+            const { api, schedule } = makeSeamsApi();
+            const r = makeReqRes('POST', '/api/tls/https-port', { port: 9443 });
+            await api.handle(r.req, r.res);
+            expect(r.getStatus()).toBe(403);
+            expect(setHttpsPort).not.toHaveBeenCalled();
+            expect(schedule).not.toHaveBeenCalled();
         });
     });
 });
