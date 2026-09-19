@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import os from 'os';
+import { describe, expect, it, vi } from 'vitest';
+import { mkcertAssetName } from '../DependencyDefinitions';
 import { getDependencyDefinitions } from '../DependencyDefinitions';
 
 describe('mkcert dependency definition', () => {
@@ -35,5 +37,35 @@ describe('mkcert dependency definition', () => {
 
     it('does not require a restart — nothing is loaded from it in-process', () => {
         expect(def().requiresRestart).toBe(false);
+    });
+});
+
+describe('mkcertAssetName produces correct asset names for all platform/arch combinations', () => {
+    const testCases: Array<{
+        platform: NodeJS.Platform;
+        arch: string;
+        expected: string;
+    }> = [
+        { platform: 'win32', arch: 'x64', expected: 'mkcert-v1.4.4-bt.2-windows-amd64.exe' },
+        { platform: 'win32', arch: 'arm64', expected: 'mkcert-v1.4.4-bt.2-windows-arm64.exe' },
+        { platform: 'linux', arch: 'x64', expected: 'mkcert-v1.4.4-bt.2-linux-amd64' },
+        { platform: 'linux', arch: 'arm64', expected: 'mkcert-v1.4.4-bt.2-linux-arm64' },
+        { platform: 'darwin', arch: 'x64', expected: 'mkcert-v1.4.4-bt.2-darwin-amd64' },
+        { platform: 'darwin', arch: 'arm64', expected: 'mkcert-v1.4.4-bt.2-darwin-arm64' },
+    ];
+
+    testCases.forEach(({ platform, arch, expected }) => {
+        it(`${platform} + ${arch} → ${expected}`, () => {
+            const platformSpy = vi.spyOn(os, 'platform').mockReturnValue(platform as NodeJS.Platform);
+            const archSpy = vi.spyOn(os, 'arch').mockReturnValue(arch);
+
+            try {
+                const result = mkcertAssetName('v1.4.4-bt.2');
+                expect(result).toBe(expected);
+            } finally {
+                platformSpy.mockRestore();
+                archSpy.mockRestore();
+            }
+        });
     });
 });

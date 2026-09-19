@@ -274,6 +274,11 @@ describe('checkLatest rejects a non-OK response instead of returning null (item 
         await expect(defFor('nodejs').checkLatest()).rejects.toThrow(/HTTP 403/);
     });
 
+    it('mkcert: a 403 throws', async () => {
+        fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValue(new Response('nope', { status: 403 }));
+        await expect(defFor('mkcert').checkLatest()).rejects.toThrow(/HTTP 403/);
+    });
+
     it('the thrown message names the URL, so the recorded errorMessage is actionable', async () => {
         fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValue(new Response('nope', { status: 403 }));
         await expect(defFor('scrcpy-server').checkLatest()).rejects.toThrow(/api\.github\.com/);
