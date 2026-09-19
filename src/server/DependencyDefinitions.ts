@@ -247,11 +247,14 @@ export function getDependencyDefinitions(depsPath: string): DependencyDefinition
             checkLatest: async () => {
                 const res = await fetchOkWithRetry(
                     'https://api.github.com/repos/bilbospocketses/mkcert/releases/latest',
-                    VERSION_CHECK_POLICY,
+                    {
+                        init: { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'ws-scrcpy-web' } },
+                        ...VERSION_CHECK_POLICY,
+                        onRetry: (n) => log.warn(`mkcert latest check ${n.attempt}/${n.attempts}: ${n.reason}`),
+                    },
                 );
-                if (!res) return null;
-                const body = (await res.json()) as { tag_name?: string };
-                return body.tag_name ?? null;
+                const data = (await res.json()) as { tag_name?: string };
+                return data.tag_name ?? null;
             },
             getDownloadUrl: (version) =>
                 `https://github.com/bilbospocketses/mkcert/releases/download/${version}/${mkcertAssetName(version)}`,
