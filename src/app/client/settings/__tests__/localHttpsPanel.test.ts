@@ -73,7 +73,12 @@ describe('local https panel', () => {
 
     it('promises no lockout when a narrowed mode is selected, and says nothing for open', async () => {
         const el = await buildLocalHttpsPanel({
-            fetchFn: vi.fn(async () => new Response(JSON.stringify(state({ status: 'ready' })))),
+            // A bound listener (N2) -- otherwise the narrowed radios are
+            // disabled and clicking them is a no-op, which isn't what this
+            // test is about.
+            fetchFn: vi.fn(
+                async () => new Response(JSON.stringify(state({ status: 'ready', httpsListener: { bound: true } }))),
+            ),
             candidateIps: ['192.168.86.3'],
             platform: 'win32',
         });
@@ -853,7 +858,7 @@ describe('local https panel — final review fixes (C1, I1, I2, I5, I7, I11)', (
 
     // ---- I11: narrowed exposure needs a certificate to mean anything ----
 
-    it('disables the narrowed exposure modes with no certificate, and enables them once one exists (I11)', async () => {
+    it('disables the narrowed exposure modes with no certificate, and enables them once the listener is bound (I11)', async () => {
         const elNone = await buildLocalHttpsPanel({
             fetchFn: vi.fn(async () => new Response(JSON.stringify(state()))),
             candidateIps: ['192.168.86.3'],
@@ -867,7 +872,12 @@ describe('local https panel — final review fixes (C1, I1, I2, I5, I7, I11)', (
         expect(notice.textContent).toMatch(/generate a certificate first/i);
 
         const elReady = await buildLocalHttpsPanel({
-            fetchFn: vi.fn(async () => new Response(JSON.stringify(state({ status: 'ready' })))),
+            fetchFn: vi.fn(
+                async () =>
+                    new Response(
+                        JSON.stringify(state({ status: 'ready', httpsListener: { bound: true, port: 8443 } })),
+                    ),
+            ),
             candidateIps: ['192.168.86.3'],
             platform: 'win32',
         });
@@ -875,18 +885,62 @@ describe('local https panel — final review fixes (C1, I1, I2, I5, I7, I11)', (
         expect(elReady.querySelector<HTMLElement>('[data-exposure-unavailable-notice]')!.hidden).toBe(true);
     });
 
-    it('a successful generate re-enables the narrowed exposure modes (I11)', async () => {
-        const fetchFn = vi.fn(async (url: RequestInfo | URL) => {
-            if (url === '/api/tls/generate') {
-                return new Response(JSON.stringify({ status: 'ready', kind: 'ip', subject: '192.168.86.3' }));
-            }
-            return new Response(JSON.stringify(state()));
+    it('keeps the narrowed exposure modes disabled with a certificate but NO bound listener (N2)', async () => {
+        // The exact gap the re-review named: a certificate can exist while
+        // C1's four down-cases mean nothing is actually listening (most
+        // commonly right after generate, before a restart). Gating on
+        // `status === 'ready'` alone let a user narrow plain HTTP toward an
+        // HTTPS listener that wasn't running.
+        const el = await buildLocalHttpsPanel({
+            fetchFn: vi.fn(
+                async () =>
+                    new Response(
+                        JSON.stringify(
+                            state({ status: 'ready', httpsListener: { bound: false, reason: 'restart-required' } }),
+                        ),
+                    ),
+            ),
+            candidateIps: ['192.168.86.3'],
+            platform: 'win32',
         });
-        const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'], platform: 'win32' });
-        const httpsOnlyRadio = el.querySelector<HTMLInputElement>('[data-exposure="httpsOnly"]')!;
-        expect(httpsOnlyRadio.disabled).toBe(true);
+        expect(el.querySelector<HTMLInputElement>('[data-exposure="httpsOnly"]')!.disabled).toBe(true);
+        const notice = el.querySelector<HTMLElement>('[data-exposure-unavailable-notice]')!;
+        expect(notice.hidden).toBe(false);
+        expect(notice.textContent).toMatch(/restart the server first/i);
+    });
 
-        el.querySelector<HTMLButtonElement>('[data-tls-generate]')!.click();
+    it('a generate response with a bound listener re-enables the narrowed exposure modes; one without keeps them disabled (I11/N2)', async () => {
+        const responseFor = (httpsListener?: { bound: boolean; reason?: string }) =>
+            vi.fn(async (url: RequestInfo | URL) => {
+                if (url === '/api/tls/generate') {
+                    return new Response(
+                        JSON.stringify({ status: 'ready', kind: 'ip', subject: '192.168.86.3', httpsListener }),
+                    );
+                }
+                return new Response(JSON.stringify(state()));
+            });
+
+        // Today's real server does not send `httpsListener` on this route at
+        // all (see the NOTE above the C1 restart test) -- this case pins that
+        // the panel does NOT wrongly enable narrowing just because a
+        // generate happened.
+        const stillNotBound = await buildLocalHttpsPanel({
+            fetchFn: responseFor(undefined),
+            candidateIps: ['192.168.86.3'],
+            platform: 'win32',
+        });
+        stillNotBound.querySelector<HTMLButtonElement>('[data-tls-generate]')!.click();
+        await new Promise((r) => setTimeout(r, 0));
+        expect(stillNotBound.querySelector<HTMLInputElement>('[data-exposure="httpsOnly"]')!.disabled).toBe(true);
+
+        const nowBound = await buildLocalHttpsPanel({
+            fetchFn: responseFor({ bound: true }),
+            candidateIps: ['192.168.86.3'],
+            platform: 'win32',
+        });
+        const httpsOnlyRadio = nowBound.querySelector<HTMLInputElement>('[data-exposure="httpsOnly"]')!;
+        expect(httpsOnlyRadio.disabled).toBe(true);
+        nowBound.querySelector<HTMLButtonElement>('[data-tls-generate]')!.click();
         await new Promise((r) => setTimeout(r, 0));
         expect(httpsOnlyRadio.disabled).toBe(false);
     });
@@ -953,25 +1007,51 @@ describe('local https panel — final review fixes (C1, I1, I2, I5, I7, I11)', (
         }
     });
 
-    it('mentions the restart in the SAME transient alert right after a generate that needs one (C1)', async () => {
-        const fetchFn = vi.fn(async (url: RequestInfo | URL) => {
-            if (url === '/api/tls/generate') {
-                return new Response(
-                    JSON.stringify({
-                        status: 'ready',
-                        kind: 'ip',
-                        subject: '192.168.86.3',
-                        httpsListener: { bound: false, reason: 'restart-required' },
-                    }),
-                );
-            }
-            return new Response(JSON.stringify(state()));
+    // NOTE (re-review, C1): as of this commit, `POST /api/tls/generate`
+    // (`TlsApi.ts`) does NOT actually include `httpsListener` in its
+    // response yet -- only `GET /api/tls/state` does; verified by reading
+    // the route's `res.end(JSON.stringify({ ...state, allowedHostAdded,
+    // candidateIps }))`, which has no such field. The server-side change to
+    // add it is in progress. This test therefore proves the CLIENT reacts
+    // correctly to the shape once sent (`data` is already typed as
+    // `TlsCertState`, so no client change is needed when it lands) -- it
+    // does NOT yet prove the end-to-end claim, because the real server
+    // doesn't send this on this route today. The contrast pair below (bound
+    // vs. not) is what makes this a real proof of the CLIENT's behaviour
+    // rather than a tautology: only the "not bound" case should ever mention
+    // a restart.
+    it('mentions the restart in the SAME transient alert right after a generate that needs one, and only then (C1)', async () => {
+        const responseFor = (httpsListener: { bound: boolean; reason?: string }) =>
+            vi.fn(async (url: RequestInfo | URL) => {
+                if (url === '/api/tls/generate') {
+                    return new Response(
+                        JSON.stringify({ status: 'ready', kind: 'ip', subject: '192.168.86.3', httpsListener }),
+                    );
+                }
+                return new Response(JSON.stringify(state()));
+            });
+
+        const needsRestart = await buildLocalHttpsPanel({
+            fetchFn: responseFor({ bound: false, reason: 'restart-required' }),
+            candidateIps: ['192.168.86.3'],
+            platform: 'win32',
         });
-        const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'], platform: 'win32' });
-        el.querySelector<HTMLButtonElement>('[data-tls-generate]')!.click();
+        needsRestart.querySelector<HTMLButtonElement>('[data-tls-generate]')!.click();
         await new Promise((r) => setTimeout(r, 0));
-        const alert = el.querySelector<HTMLElement>('[data-tls-alert]')!;
-        expect(alert.textContent).toMatch(/certificate generated\. restart the server to start serving https/i);
+        expect(needsRestart.querySelector<HTMLElement>('[data-tls-alert]')!.textContent).toMatch(
+            /certificate generated\. restart the server to start serving https/i,
+        );
+
+        const alreadyBound = await buildLocalHttpsPanel({
+            fetchFn: responseFor({ bound: true }),
+            candidateIps: ['192.168.86.3'],
+            platform: 'win32',
+        });
+        alreadyBound.querySelector<HTMLButtonElement>('[data-tls-generate]')!.click();
+        await new Promise((r) => setTimeout(r, 0));
+        const boundAlert = alreadyBound.querySelector<HTMLElement>('[data-tls-alert]')!;
+        expect(boundAlert.textContent).toMatch(/certificate generated\./i);
+        expect(boundAlert.textContent).not.toMatch(/restart/i);
     });
 
     it('listenerStatusNotice is null for a non-ready cert or a confirmed-bound listener', () => {
