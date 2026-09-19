@@ -167,8 +167,15 @@ export class TlsApi {
                     }
                 }
 
+                // C3 (Task 8 review): candidateIps from the SAME source
+                // GET /api/tls/state uses. Without this, the panel defaults
+                // to [] and fires its "certificate names an address this
+                // machine no longer has" warning immediately after a
+                // SUCCESSFUL generate for the user's own current LAN IP --
+                // whose suggested remedy (regenerate) deletes the CA every
+                // device on the network already trusts.
                 res.writeHead(200);
-                res.end(JSON.stringify({ ...state, allowedHostAdded }));
+                res.end(JSON.stringify({ ...state, allowedHostAdded, candidateIps: this.getCandidateIps() }));
                 return true;
             }
 

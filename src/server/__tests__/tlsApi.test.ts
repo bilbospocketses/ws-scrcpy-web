@@ -164,6 +164,59 @@ describe('TlsApi', () => {
         });
     });
 
+    // --- C3 (Task 8 review, task 11 addendum): POST /api/tls/generate must
+    // also return candidateIps, from the SAME source GET /api/tls/state uses.
+    // Without it, the panel defaults to [] and its notification-4 mismatch
+    // check fires immediately after a SUCCESSFUL generate for the user's own
+    // LAN IP, urging them to regenerate -- which deletes the CA every device
+    // on the network already trusts. A false alarm whose suggested fix is
+    // destructive.
+
+    describe('candidateIps on POST /api/tls/generate (C3)', () => {
+        it('includes every candidate the injected LAN-IP source reports, same as GET /api/tls/state', async () => {
+            const { api } = makeApi({}, ['192.168.86.3', '172.29.144.1']);
+            const r = makeReqRes('POST', '/api/tls/generate', { kind: 'ip', value: '192.168.86.3' });
+            await api.handle(r.req, r.res);
+            expect(r.getStatus()).toBe(200);
+            expect((r.getJson() as { candidateIps: string[] }).candidateIps).toEqual(['192.168.86.3', '172.29.144.1']);
+        });
+
+        // Paired with the test above: a version hardcoding
+        // `candidateIps: ['192.168.86.3', '172.29.144.1']` would pass that one
+        // but fail this one, and a version hardcoding `candidateIps: []` would
+        // pass this one but fail that one. Only a genuine pass-through of the
+        // injected source satisfies both.
+        it('is an empty array, not a missing field, when nothing is a candidate', async () => {
+            const { api } = makeApi({}, []);
+            const r = makeReqRes('POST', '/api/tls/generate', { kind: 'ip', value: '192.168.86.3' });
+            await api.handle(r.req, r.res);
+            expect(r.getStatus()).toBe(200);
+            expect((r.getJson() as { candidateIps: string[] }).candidateIps).toEqual([]);
+        });
+
+        it('does not lose allowedHostAdded or the cert state fields alongside candidateIps', async () => {
+            const generate = vi.fn(async () => ({
+                status: 'ready',
+                subject: 'devices.lan',
+                kind: 'hostname',
+                notAfter: '2030-01-01T00:00:00.000Z',
+                caPresent: true,
+            }));
+            vi.mocked(Config.getInstance).mockReturnValue({ addAllowedHost: vi.fn(() => true) } as never);
+            const { api } = makeApi({ generate }, ['192.168.86.3']);
+            const r = makeReqRes('POST', '/api/tls/generate', { kind: 'hostname', value: 'devices.lan' });
+            await api.handle(r.req, r.res);
+            const json = r.getJson() as Record<string, unknown>;
+            expect(json['status']).toBe('ready');
+            expect(json['subject']).toBe('devices.lan');
+            expect(json['kind']).toBe('hostname');
+            expect(json['notAfter']).toBe('2030-01-01T00:00:00.000Z');
+            expect(json['caPresent']).toBe(true);
+            expect(json['allowedHostAdded']).toBe(true);
+            expect(json['candidateIps']).toEqual(['192.168.86.3']);
+        });
+    });
+
     // --- amendment (a): rate-limit GET /api/tls/ca-root ---
 
     describe('ca-root rate limiting (amendment a)', () => {
