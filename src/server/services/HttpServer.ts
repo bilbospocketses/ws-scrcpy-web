@@ -10,7 +10,10 @@ import { EnvName } from '../EnvName';
 import { createStaticHandler } from '../StaticFileServer';
 import { isRequestSecure } from '../security/forwardedProto';
 import { securityHeaders } from '../security/frameGuard';
+import { isLoopback } from '../security/loopback';
 import { evaluateHttpRequest } from '../security/requestGate';
+import type { HttpExposure } from '../tls/httpExposure';
+import { decideHttpRequest, HTTP_EXPOSURE_KEY } from '../tls/httpExposure';
 import { Utils } from '../Utils';
 import type { Service } from './Service';
 
@@ -41,6 +44,51 @@ export function createHttpRequestHandler(
         // so a handler that spreads securityHeaders() itself is unaffected.
         for (const [name, value] of Object.entries(securityHeaders())) {
             res.setHeader(name, value);
+        }
+
+        // Plain-HTTP exposure. Runs BEFORE the request gate and the API chain
+        // so a narrowed mode applies to every route uniformly, including
+        // static assets.
+        //
+        // Loopback is exempt in every mode; see decideHttpRequest. Without
+        // that, a certificate that goes bad removes the only route to the
+        // Settings page that could turn the mode back off.
+        if (!serverIsTls) {
+            // No secure server entry means no HTTPS listener exists at all --
+            // 'refuse' would 421 the only listener that exists, and
+            // 'redirect' would point at a certificate that isn't there.
+            // Either locks the user out of the server that hosts the very
+            // setting which caused it, so this is the same fail-open the
+            // unrecognised-mode default already takes.
+            const httpsPort = findHttpsPort();
+            if (httpsPort !== undefined) {
+                const mode = readHttpExposure();
+                const decision = decideHttpRequest(mode, isLoopback(req.socket?.remoteAddress ?? ''));
+                if (decision === 'refuse') {
+                    // 421 Misdirected Request: the right name on the wrong listener.
+                    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+                    res.writeHead(421);
+                    res.end(
+                        'this server is configured for https only. open it over https, or browse from the machine itself.',
+                    );
+                    return;
+                }
+                if (decision === 'redirect') {
+                    const target = buildRedirectTarget(req.headers.host, req.url, httpsPort);
+                    if (target) {
+                        // 302, not 301: a permanent redirect is cached by
+                        // browsers indefinitely and would outlive the user
+                        // turning this setting back off.
+                        res.setHeader('Location', target);
+                        res.writeHead(302);
+                        res.end();
+                        return;
+                    }
+                    // The Host header didn't survive the hostname check --
+                    // fall through and serve rather than emit a Location we
+                    // did not construct ourselves (host-header injection).
+                }
+            }
         }
 
         let pathname = '/';
@@ -87,6 +135,64 @@ export function createHttpRequestHandler(
             sendInternalError(res);
         });
     };
+}
+
+/**
+ * The persisted exposure mode. Defaults to 'open', so a fresh install and a
+ * database that has never seen this key both behave exactly as today.
+ */
+function readHttpExposure(): HttpExposure {
+    try {
+        const v = Config.getInstance().db.appSettings.get(HTTP_EXPOSURE_KEY);
+        return v === 'httpsOnly' || v === 'redirect' ? v : 'open';
+    } catch {
+        // A database that will not answer must not be able to refuse requests.
+        return 'open';
+    }
+}
+
+/**
+ * The port the HTTPS listener runs on, or `undefined` when no secure server
+ * entry exists (no certificate). Deliberately does NOT fall back to a
+ * default port: the caller uses the `undefined` case to skip 'refuse' and
+ * 'redirect' altogether, because a mode that can only be undone through a
+ * listener that doesn't exist is a lockout, not a feature.
+ */
+function findHttpsPort(): number | undefined {
+    try {
+        return Config.getInstance().servers.find((s) => s.secure)?.port;
+    } catch {
+        return undefined;
+    }
+}
+
+/**
+ * The hostname portion of a Host header, with any `:port` stripped, or
+ * `undefined` if what's left isn't a plain host token. Host is
+ * caller-controlled, so this is deliberately conservative: letters, digits,
+ * dots and hyphens only. Anything else (control characters, slashes, stray
+ * colons from a malformed header) is rejected rather than guessed at, since
+ * the caller uses the result to build a redirect Location header and a
+ * poisoned one is a cache-able open redirect / header injection.
+ */
+function extractHostname(hostHeader: string | undefined): string | undefined {
+    const hostname = (hostHeader ?? '').split(':')[0] ?? '';
+    return /^[a-zA-Z0-9.-]+$/.test(hostname) ? hostname : undefined;
+}
+
+/**
+ * The redirect target for the 'redirect' exposure mode, or `undefined` when
+ * the Host header can't be trusted enough to build one from. Never falls
+ * back to emitting a Location built from unvalidated input.
+ */
+function buildRedirectTarget(
+    hostHeader: string | undefined,
+    url: string | undefined,
+    securePort: number,
+): string | undefined {
+    const hostname = extractHostname(hostHeader);
+    if (!hostname) return undefined;
+    return `https://${hostname}:${securePort}${url ?? '/'}`;
 }
 
 const DEFAULT_STATIC_DIR = path.join(__dirname, './public');
