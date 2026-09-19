@@ -41,13 +41,22 @@ export function loopbackEquivalent(location: LocationParts): string {
 /**
  * The message to show when the browser will not give us a decoder, or `null`
  * when it will. Lowercase, per the app's text motif.
+ *
+ * I4 (final review): this is the feature's entire discovery path. A LAN user
+ * hits exactly this message, and until this fix it only named the loopback
+ * workaround and a generic "serve this app over https" — no mention of the
+ * Local HTTPS panel this branch built for precisely this problem. Both
+ * remedies stay: Local HTTPS is the quick fix for a home LAN, and a real
+ * reverse-proxy deployment is still the right answer beyond one.
  */
 export function insecureOriginNotice(win: SecureContextWindow): string | null {
     if (win.isSecureContext) return null;
     return (
         'this address is not a secure origin, so the browser will not expose the video decoder ' +
-        'and no stream can start. open ' +
+        'and no stream can start. turn on local https in settings → server → local https for the ' +
+        'quickest fix on your own network, open ' +
         loopbackEquivalent(win.location) +
-        ' on the machine running ws-scrcpy-web, or serve this app over https from a trusted origin.'
+        ' on the machine running ws-scrcpy-web, or serve this app over https from a trusted origin ' +
+        'for anything beyond a home lan.'
     );
 }
