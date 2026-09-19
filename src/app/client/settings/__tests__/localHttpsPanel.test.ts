@@ -76,21 +76,27 @@ describe('local https panel', () => {
             platform: 'win32',
         });
         const lockout = el.querySelector<HTMLElement>('[data-exposure-lockout-notice]')!;
-        const restart = el.querySelector<HTMLElement>('[data-exposure-restart-notice]')!;
+        // Element name predates the review addendum's correction: exposure
+        // takes effect on the next request with no restart (HttpServer.ts
+        // re-reads HTTP_EXPOSURE_KEY fresh every time) -- unlike the https
+        // port, which always restarts. "restart" here now names the DOM
+        // hook, not the content.
+        const effectNotice = el.querySelector<HTMLElement>('[data-exposure-restart-notice]')!;
         expect(lockout.hidden).toBe(true);
-        expect(restart.hidden).toBe(true);
+        expect(effectNotice.hidden).toBe(true);
 
         el.querySelector<HTMLInputElement>('[data-exposure="httpsOnly"]')!.click();
         expect(lockout.hidden).toBe(false);
-        expect(restart.hidden).toBe(false);
+        expect(effectNotice.hidden).toBe(false);
         expect(lockout.textContent).toMatch(/cannot lock yourself out/i);
-        expect(restart.textContent).toMatch(/server will restart/i);
+        expect(effectNotice.textContent).toMatch(/takes effect immediately for new connections/i);
+        expect(effectNotice.textContent).toMatch(/already running are not affected/i);
 
         // Back to open: both notices withdraw -- proves they track the
         // CURRENT selection, not a one-way "has ever been narrowed" flag.
         el.querySelector<HTMLInputElement>('[data-exposure="open"]')!.click();
         expect(lockout.hidden).toBe(true);
-        expect(restart.hidden).toBe(true);
+        expect(effectNotice.hidden).toBe(true);
     });
 
     it('tells the user streaming already works, once a downloadable certificate exists', async () => {
@@ -158,6 +164,37 @@ describe('local https panel', () => {
         const notice = elHost.querySelector<HTMLElement>('[data-tls-hostname-notice]')!;
         expect(notice.hidden).toBe(false);
         expect(notice.textContent).toMatch(/must resolve on every machine/i);
+    });
+
+    it('shows a persistent allowedHosts note for the current hostname cert, not just at generate time (I9)', async () => {
+        // Unlike the transient "added X to allowedHosts" alert (which fires
+        // once, at generate time), this reflects the STANDING fact that a
+        // hostname-kind cert's subject is registered -- true on every load,
+        // not only right after a generate.
+        const elIp = await buildLocalHttpsPanel({
+            fetchFn: vi.fn(
+                async () =>
+                    new Response(JSON.stringify(state({ status: 'ready', kind: 'ip', subject: '192.168.86.3' }))),
+            ),
+            candidateIps: ['192.168.86.3'],
+            platform: 'win32',
+        });
+        expect(elIp.querySelector<HTMLElement>('[data-tls-allowed-host-notice]')!.hidden).toBe(true);
+
+        const payload = '<img src=x onerror=alert(1)>';
+        const elHost = await buildLocalHttpsPanel({
+            fetchFn: vi.fn(
+                async () =>
+                    new Response(JSON.stringify(state({ status: 'ready', kind: 'hostname', subject: payload }))),
+            ),
+            candidateIps: ['192.168.86.3'],
+            platform: 'win32',
+        });
+        const notice = elHost.querySelector<HTMLElement>('[data-tls-allowed-host-notice]')!;
+        expect(notice.hidden).toBe(false);
+        expect(notice.textContent).toContain(payload);
+        expect(notice.textContent).toMatch(/registered in allowedHosts/i);
+        expect(notice.querySelector('img')).toBeNull();
     });
 
     it('uses textContent for the subject — it is user input echoed back, not silently dropped', async () => {
@@ -382,14 +419,19 @@ describe('local https panel — transient alert convention', () => {
         }
     });
 
-    it('names the allowedHosts edit in the same alert, echoing the subject via textContent', async () => {
+    it('names the allowedHosts edit in the same alert, echoing the subject via textContent (I11)', async () => {
+        // A real markup-shaped payload, not `devices.lan` -- a plain hostname
+        // contains no markup, so a version that swapped this composition's
+        // `textContent` for `innerHTML` would pass against it just as well.
+        // Only a payload with actual markup can tell the two apart.
+        const payload = '<img src=x onerror=alert(1)>';
         const fetchFn = vi.fn(async (url: RequestInfo | URL) => {
             if (url === '/api/tls/generate') {
                 return new Response(
                     JSON.stringify({
                         status: 'ready',
                         kind: 'hostname',
-                        subject: 'devices.lan',
+                        subject: payload,
                         allowedHostAdded: true,
                     }),
                 );
@@ -400,7 +442,11 @@ describe('local https panel — transient alert convention', () => {
         el.querySelector<HTMLButtonElement>('[data-tls-generate]')!.click();
         await new Promise((r) => setTimeout(r, 0));
         const alert = el.querySelector<HTMLElement>('[data-tls-alert]')!;
-        expect(alert.textContent).toMatch(/added devices\.lan to allowedhosts/i);
+        // Paired: the payload was actually rendered as text (ruling out the
+        // trivial pass where it is dropped entirely)...
+        expect(alert.textContent).toContain(payload);
+        expect(alert.textContent).toMatch(/added .* to allowedhosts/i);
+        // ...AND it never became markup.
         expect(alert.querySelector('img')).toBeNull();
     });
 
@@ -447,7 +493,12 @@ describe('local https panel — transient alert convention', () => {
         const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'], platform: 'win32' });
         el.querySelector<HTMLButtonElement>('[data-exposure-ok]')!.click();
         await new Promise((r) => setTimeout(r, 0));
-        expect(el.textContent).toMatch(/does not support saving this setting yet/i);
+        // Scoped to the alert element and its visibility, not whole-panel
+        // textContent -- mechanical rule: if the thing under test can be
+        // hidden, assert `hidden`, not text.
+        const alert = el.querySelector<HTMLElement>('[data-tls-alert]')!;
+        expect(alert.hidden).toBe(false);
+        expect(alert.textContent).toMatch(/does not support saving this setting yet/i);
     });
 
     it('tells the user changing the https port restarts the server -- distinct from exposure, which does not', async () => {
@@ -531,21 +582,104 @@ describe('local https panel — transient alert convention', () => {
         expect(alert.textContent).not.toMatch(/restart/i);
     });
 
-    it('keeps a persistent condition (notification 4) visible well past the transient alert’s 10s window', async () => {
+    it('keeps a persistent condition (notification 4) visible after the transient alert times out and hides (I10)', async () => {
+        // The original version of this test built the panel, advanced fake
+        // timers by 15s, and re-checked textContent -- but nothing ever
+        // showed a transient alert, so no timer was ever armed, and
+        // textContent still matches a HIDDEN element in jsdom. Neither half
+        // of that was actually exercising persistence. This version drives a
+        // real transient alert through its own window and asserts `.hidden`
+        // on both elements, so it fails if the persistent notice were ever
+        // wired through the SAME timer as the transient one.
         vi.useFakeTimers();
         try {
+            const fetchFn = vi.fn(async (url: RequestInfo | URL) => {
+                if (url === '/api/tls/ca-root') {
+                    return new Response(JSON.stringify({ error: 'no certificate has been generated yet' }), {
+                        status: 404,
+                    });
+                }
+                return new Response(JSON.stringify(state({ status: 'ready', kind: 'ip', subject: '10.0.0.9' })));
+            });
             const el = await buildLocalHttpsPanel({
-                fetchFn: vi.fn(
-                    async () =>
-                        new Response(JSON.stringify(state({ status: 'ready', kind: 'ip', subject: '10.0.0.9' }))),
-                ),
+                fetchFn,
                 // Deliberately excludes 10.0.0.9, so the mismatch notice (4) fires.
                 candidateIps: ['192.168.86.3'],
                 platform: 'win32',
             });
-            expect(el.textContent).toMatch(/no longer an address of this machine/i);
-            await vi.advanceTimersByTimeAsync(15_000);
-            expect(el.textContent).toMatch(/no longer an address of this machine/i);
+            const mismatch = el.querySelector<HTMLElement>('[data-tls-mismatch-notice]')!;
+            const alert = el.querySelector<HTMLElement>('[data-tls-alert]')!;
+
+            expect(mismatch.hidden).toBe(false);
+            expect(alert.hidden).toBe(true); // nothing transient has happened yet
+
+            el.querySelector<HTMLButtonElement>('[data-tls-download]')!.click();
+            await vi.advanceTimersByTimeAsync(0);
+            expect(alert.hidden).toBe(false);
+
+            // Past the transient alert's own 10s (error) window: IT hides...
+            await vi.advanceTimersByTimeAsync(10_001);
+            expect(alert.hidden).toBe(true);
+            // ...but the persistent condition is untouched by that timer.
+            expect(mismatch.hidden).toBe(false);
+            expect(mismatch.textContent).toMatch(/no longer an address of this machine/i);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('supersedes a pending timer when a new alert fires before the old one hides (M6)', async () => {
+        // Without the `clearTimeout` in `showTransientAlert`, the FIRST
+        // alert's timer would still fire on schedule and hide whatever is
+        // currently showing -- even if a second, still-active alert (with
+        // its own, later deadline) has since replaced it. This drives that
+        // exact sequence: a 5s success alert, superseded almost immediately
+        // by a 10s error alert, and checks the panel is still showing the
+        // SECOND alert at the moment the FIRST alert's stale timer would
+        // have fired.
+        vi.useFakeTimers();
+        try {
+            const fetchFn = vi.fn(async (url: RequestInfo | URL) => {
+                if (url === '/api/tls/generate') {
+                    return new Response(JSON.stringify({ status: 'ready', kind: 'ip', subject: '192.168.86.3' }));
+                }
+                if (url === '/api/tls/ca-root') {
+                    return new Response(
+                        JSON.stringify({ error: 'too many CA downloads; wait a moment and try again' }),
+                        { status: 429 },
+                    );
+                }
+                return new Response(JSON.stringify(state()));
+            });
+            const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'], platform: 'win32' });
+            const alert = el.querySelector<HTMLElement>('[data-tls-alert]')!;
+
+            // t=0: success alert, 5s window (would expire at t=5000 if
+            // nothing superseded it).
+            el.querySelector<HTMLButtonElement>('[data-tls-generate]')!.click();
+            await vi.advanceTimersByTimeAsync(0);
+            expect(alert.textContent).toMatch(/certificate generated/i);
+
+            // t=1000: a SECOND alert fires -- the longer-lived error window
+            // (10s from here, i.e. expiring at t=11000) -- well before the
+            // first alert's own deadline.
+            await vi.advanceTimersByTimeAsync(1_000);
+            el.querySelector<HTMLButtonElement>('[data-tls-download]')!.click();
+            await vi.advanceTimersByTimeAsync(0);
+            expect(alert.textContent).toMatch(/too many ca downloads/i);
+
+            // t=5001: past where the FIRST (now-stale) 5s timer would have
+            // fired. Without supersession, THIS is where the alert would go
+            // hidden despite the second alert still being well within its
+            // own window.
+            await vi.advanceTimersByTimeAsync(4_001);
+            expect(alert.hidden).toBe(false);
+            expect(alert.textContent).toMatch(/too many ca downloads/i);
+
+            // t=11001: past the SECOND alert's own 10s deadline (measured
+            // from ITS start at t=1000) -- now it hides.
+            await vi.advanceTimersByTimeAsync(6_000);
+            expect(alert.hidden).toBe(true);
         } finally {
             vi.useRealTimers();
         }
