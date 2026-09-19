@@ -194,6 +194,53 @@ function readHttpExposure(): HttpExposure {
  */
 const failedSecurePorts = new Set<number>();
 
+/** The shape `getHttpsListenerStatus()` (below) answers with. */
+export interface HttpsListenerStatus {
+    /** True when an HTTPS listener is actually bound and serving right now. */
+    listening: boolean;
+    /** The actually-bound port -- present only when `listening` is true. */
+    boundPort?: number;
+    /**
+     * True when `Config.servers` configured a secure entry for this boot but
+     * it failed to bind. Distinct from "no secure entry configured at all"
+     * (both leave `listening: false`) -- only this one means "was supposed to
+     * work and didn't"; the other means there is nothing here a restart
+     * (alone) would fix.
+     */
+    bindFailed: boolean;
+}
+
+/**
+ * Whether HTTPS is actually being served right now, and on what port --
+ * reality, not configuration (C1, whole-branch review). `GET /api/tls/state`
+ * reports only files on disk (`CertService.getState()`), so the panel could
+ * claim "streaming already works" in at least four states where nothing was
+ * bound to the port: right after `generate` (the listener set is built once
+ * at boot, so a fresh certificate has no listener until a restart); an
+ * advanced `server` array in `config.json` (the generated HTTPS entry is
+ * never added, restart or not); `httpsPort === webPort` (the collision guard
+ * in `Config.buildServers` skips the entry); and a bind failure recorded
+ * here in `failedSecurePorts`. This is the export that lets a caller outside
+ * this module tell those apart from "genuinely serving".
+ *
+ * Prefers the actually-BOUND port (`boundSecurePorts`, set from
+ * `server.address()` once `.listen()` succeeds) over the configured one
+ * (M7): with an ephemeral `port: 0` entry, the configured value is 0 and a
+ * redirect built from it would be `https://host:0/`. Same precedence
+ * `findHttpsPort()` below now delegates to this for -- one interpretation of
+ * these two facts, not two that could drift apart.
+ */
+export function getHttpsListenerStatus(): HttpsListenerStatus {
+    try {
+        const entry = Config.getInstance().servers.find((s) => s.secure);
+        if (!entry) return { listening: false, bindFailed: false };
+        if (failedSecurePorts.has(entry.port)) return { listening: false, bindFailed: true };
+        return { listening: true, boundPort: boundSecurePorts.get(entry.port) ?? entry.port, bindFailed: false };
+    } catch {
+        return { listening: false, bindFailed: false };
+    }
+}
+
 /**
  * The port the HTTPS listener runs on, or `undefined` when no secure server
  * entry exists (no certificate) OR the configured one failed to bind (see
@@ -202,20 +249,10 @@ const failedSecurePorts = new Set<number>();
  * `undefined` case to skip 'refuse' and 'redirect' altogether, because a mode
  * that can only be undone through a listener that doesn't exist is a
  * lockout, not a feature.
- *
- * Prefers the actually-BOUND port (boundSecurePorts, set from
- * `server.address()` once `.listen()` succeeds) over the configured one
- * (M7): with an ephemeral `port: 0` entry, the configured value is 0 and a
- * redirect built from it would be `https://host:0/`.
  */
 function findHttpsPort(): number | undefined {
-    try {
-        const entry = Config.getInstance().servers.find((s) => s.secure);
-        if (!entry || failedSecurePorts.has(entry.port)) return undefined;
-        return boundSecurePorts.get(entry.port) ?? entry.port;
-    } catch {
-        return undefined;
-    }
+    const status = getHttpsListenerStatus();
+    return status.listening ? status.boundPort : undefined;
 }
 
 /**

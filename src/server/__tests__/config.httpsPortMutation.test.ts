@@ -86,3 +86,44 @@ describe('Config.setHttpsPort (task 11)', () => {
         expect(readConfig(configPath)['httpsPort']).toBe(9999);
     });
 });
+
+// C1 (Critical, whole-branch review): /api/tls/state needs enough to tell
+// "restart required" apart from "your config.json overrides this" apart from
+// "httpsPort collides with the http port" -- these two getters are the Config
+// half of that. Both are resolved once at boot, exactly like `servers`
+// itself, and deliberately do NOT re-read config.json on every call.
+describe('Config.httpsPort / usesAdvancedServerConfig getters (C1)', () => {
+    it('reports the resolved target httpsPort on the ordinary (flat) config path', () => {
+        setup({ ...BOOT, httpsPort: 9443 });
+        expect(Config.getInstance().httpsPort).toBe(9443);
+        expect(Config.getInstance().usesAdvancedServerConfig).toBe(false);
+    });
+
+    it('reports the default target port when httpsPort is unset', () => {
+        setup(BOOT);
+        expect(Config.getInstance().httpsPort).toBe(8443);
+    });
+
+    // Paired: an advanced `server` array in use must report BOTH that it's in
+    // use AND `httpsPort: undefined` -- a version that flipped only the
+    // boolean and left a stale/default number behind would tell the panel
+    // "restart to get HTTPS on port 8443", which is false for this
+    // configuration (Config.buildServers never adds a generated HTTPS entry
+    // here, restart or not).
+    it('reports usesAdvancedServerConfig true and httpsPort undefined when an advanced server array is configured', () => {
+        setup({
+            ...BOOT,
+            server: [{ secure: false, port: 8200 }],
+        });
+        const cfg = Config.getInstance();
+        expect(cfg.usesAdvancedServerConfig).toBe(true);
+        expect(cfg.httpsPort).toBeUndefined();
+    });
+
+    it("is false for an EMPTY server array -- only a non-empty advanced array counts (mirrors Config.buildServers' own condition)", () => {
+        setup({ ...BOOT, server: [], httpsPort: 9443 });
+        const cfg = Config.getInstance();
+        expect(cfg.usesAdvancedServerConfig).toBe(false);
+        expect(cfg.httpsPort).toBe(9443);
+    });
+});
