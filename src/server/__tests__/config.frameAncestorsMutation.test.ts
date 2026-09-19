@@ -151,13 +151,18 @@ describe('Config allowedHost grant (TlsApi generate, amendment c)', () => {
         expect(config.allowedHosts).toEqual(['devices.lan']);
     });
 
-    it('refuses an empty (or whitespace-only) hostname', () => {
+    it('refuses an empty (or whitespace-only) hostname, without disturbing a real grant', () => {
         setup(BOOT);
         const config = Config.getInstance();
 
+        // A stub that always returns false would pass the two rejections below
+        // vacuously; asserting a genuine grant alongside them (and that it
+        // survives the rejections untouched) proves the method actually does
+        // something rather than merely never accepting anything.
+        expect(config.addAllowedHost('devices.lan')).toBe(true);
         expect(config.addAllowedHost('')).toBe(false);
         expect(config.addAllowedHost('   ')).toBe(false);
-        expect(config.allowedHosts).toEqual([]);
+        expect(config.allowedHosts).toEqual(['devices.lan']);
     });
 
     it('appends to an existing allowedHosts list rather than replacing it', () => {
