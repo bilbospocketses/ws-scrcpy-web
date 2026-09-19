@@ -462,6 +462,24 @@ git -C "C:/Users/jscha/source/repos/ws-scrcpy-web" commit -m "feat(tls): http ex
 
 Dependencies are injected so tests never spawn a real binary. `run` is the only process boundary.
 
+> **AMENDED 2026-09-19 (controller), after a spec-vs-plan pass: the leaf key's permissions are nobody's
+> job in this plan, and they must be this task's.**
+>
+> Spec §2 says the leaf key *"gets the same treatment: an explicit restrictive ACL on Windows rather
+> than a `0600` we assume is doing something."* **No task in this plan sets any permission on any key.**
+> Task 2 has since moved the Windows leaf into the per-user directory (controller ruling), so Windows is
+> handled by directory inheritance — but **POSIX is still unaddressed**: whatever mode mkcert happens to
+> choose is all that protects it, and this plan never established what that is.
+>
+> After a successful generate, this task must make the leaf key owner-only on POSIX
+> (`fs.chmodSync(keyFile, 0o600)` via an injected dep so it stays testable), and assert it with a test
+> that reads the mode back — skipped on win32.
+>
+> **Do not write a mode on Windows and assume it did something.** That is the precise mistake the spec
+> exists to warn about: Go maps a Unix mode to the read-only attribute there and sets no ACL. On Windows
+> the per-user directory is the control, and the test should say so in a comment rather than silently
+> skipping.
+
 - [ ] **Step 1: Write the failing test**
 
 ```typescript
@@ -669,6 +687,32 @@ git -C "C:/Users/jscha/source/repos/ws-scrcpy-web" commit -m "feat(tls): CertSer
 - Produces: `export class TlsApi { constructor(getService: () => CertService); handle(req, res): Promise<boolean> }` — matching the `ApiHandler` interface at `src/server/services/HttpServer.ts:17`.
 
 Routes: `GET /api/tls/state`, `POST /api/tls/generate`, `GET /api/tls/ca-root`, `POST /api/tls/revoke`.
+
+> **AMENDED 2026-09-19 (controller), after a spec-vs-plan pass.** Three spec requirements this task
+> originally dropped. Each is in the spec and was missing here, so the brief was the defect.
+>
+> **(a) Rate-limit `GET /api/tls/ca-root`.** Spec §7: the endpoint is "admin-gated … also rate-limited
+> and logs each download". The task logs but never limits. A root CA leaving the machine is worth both.
+> A small in-memory counter is enough — this is one operator clicking a button, not a public API.
+> Add a test that a burst of requests is refused after the limit, and that the limit is per-process
+> rather than per-connection.
+>
+> **(b) `GET /api/tls/state` must also return `candidateIps: string[]`.** Task 8's panel consumes
+> `candidateIps` in every one of its tests, and **no task produces it** — the plan simply never assigned
+> the work. Spec §6 is explicit that the helper "does not exist yet and must be written", and that
+> picking well is not cosmetic: this machine has **nine** IPv4 addresses (VirtualBox, two link-locals,
+> WSL, Docker, two VPN adapters) and exactly one is reachable from a phone. Write it as a pure function
+> taking `os.networkInterfaces()`-shaped input so it is testable without a network: RFC1918 only,
+> exclude CGNAT `100.64/10` (Tailscale and carriers share it), exclude link-local `169.254/16`, and
+> return **all** candidates rather than only a winner — the panel shows them and the user overrides.
+> Test it against a fixture containing this machine's actual nine-address shape.
+>
+> **(c) The generate route must skip the `allowedHosts` write for an IP subject.** Spec Resolved
+> Decision 2: a hostname subject needs the entry or requests are refused as DNS-rebinding, but a raw IP
+> **already passes** the host check, and appending one would recreate exactly the confusion issue #691
+> was about — a user reading `allowedHosts: ["192.168.86.3"]` reasonably concludes IPs belong there.
+> Add the write for `kind === 'hostname'` only, say so in the response so the panel can tell the user,
+> and test that an IP subject writes nothing.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1083,6 +1127,12 @@ export interface BuildServersOpts {
  * The two ports are INDEPENDENT. Setting HTTP to 80 does not imply HTTPS 443;
  * HTTPS stays on its own default until the user sets it explicitly. Coupling
  * them would move a port the user never touched.
+ *
+ * AMENDED 2026-09-19: `certExists` must mean READABLE, not merely present. Spec's error table
+ * requires "cert/key unreadable at boot -> HTTPS listener is skipped, HTTP still starts", and a
+ * file that exists but cannot be opened (wrong ACL after a profile move, a half-written file) would
+ * otherwise pass an existence check and then crash `https.createServer` at boot. The caller must
+ * probe readability, not `fs.existsSync`.
  *
  * A missing or unreadable certificate yields HTTP alone rather than a boot
  * failure: an optional feature must never be able to stop the app starting.
