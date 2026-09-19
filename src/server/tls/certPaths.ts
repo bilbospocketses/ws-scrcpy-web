@@ -84,7 +84,7 @@ export function resolveCertPaths(opts: CertPathOpts): CertPaths {
 function resolvesUnder(
     childPath: string,
     parentPath: string,
-    pathModule: typeof path.win32 | typeof path.posix
+    pathModule: typeof path.win32 | typeof path.posix,
 ): boolean {
     const normalize = (p: string) => pathModule.normalize(p);
     const sep = pathModule.sep;
@@ -94,10 +94,6 @@ function resolvesUnder(
 
     // Add separator to parent to ensure segment boundary check
     const parentWithSep = normalizedParent.endsWith(sep) ? normalizedParent : normalizedParent + sep;
-
-    // Case-insensitive comparison on Windows, case-sensitive on POSIX
-    const compare = (a: string, b: string) =>
-        pathModule === path.win32 ? a.toLowerCase() === b.toLowerCase() : a === b;
 
     const normalizedLower = pathModule === path.win32 ? normalized.toLowerCase() : normalized;
     const parentWithSepLower = pathModule === path.win32 ? parentWithSep.toLowerCase() : parentWithSep;

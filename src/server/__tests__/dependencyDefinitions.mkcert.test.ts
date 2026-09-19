@@ -1,7 +1,6 @@
 import os from 'os';
 import { describe, expect, it, vi } from 'vitest';
-import { mkcertAssetName } from '../DependencyDefinitions';
-import { getDependencyDefinitions } from '../DependencyDefinitions';
+import { getDependencyDefinitions, mkcertAssetName } from '../DependencyDefinitions';
 
 describe('mkcert dependency definition', () => {
     const def = () => getDependencyDefinitions('').find((d) => d.name === 'mkcert')!;
@@ -43,7 +42,7 @@ describe('mkcert dependency definition', () => {
 describe('mkcertAssetName produces correct asset names for all platform/arch combinations', () => {
     const testCases: Array<{
         platform: NodeJS.Platform;
-        arch: string;
+        arch: NodeJS.Architecture;
         expected: string;
     }> = [
         { platform: 'win32', arch: 'x64', expected: 'mkcert-v1.4.4-bt.2-windows-amd64.exe' },
