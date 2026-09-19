@@ -982,11 +982,14 @@ export class Config {
                 dataRoot,
                 allowedHosts,
                 frameAncestors,
-                // Advanced config never gets a single "target httpsPort" --
-                // there may be several entries, or none at all, and
-                // Config.buildServers never consults this value in that mode.
-                // undefined here is what makes that true for a caller (C1).
-                usesAdvancedServerConfig ? undefined : httpsPort,
+                // Always the sanitized value, even in advanced-config mode --
+                // team-lead's exact /api/tls/state contract (C1) wants
+                // `httpsPort` unconditionally present as "the configured
+                // value, post-sanitizeHttpsPort", for the panel's prefill
+                // (I2). `Config.buildServers` simply never CONSULTS it in
+                // that mode; `usesAdvancedServerConfig` is the separate
+                // signal for "and it won't take effect either way".
+                httpsPort,
                 usesAdvancedServerConfig,
                 db,
                 dockerMode,
@@ -1015,7 +1018,7 @@ export class Config {
         private readonly _dataRoot: string | null,
         private readonly _allowedHosts: string[],
         private readonly _frameAncestors: string[],
-        private readonly _httpsPort: number | undefined,
+        private readonly _httpsPort: number,
         private readonly _usesAdvancedServerConfig: boolean,
         private readonly _db: Db,
         private readonly _dockerMode: boolean = false,
@@ -1129,14 +1132,17 @@ export class Config {
     }
 
     /**
-     * The target HTTPS port resolved at boot (see `sanitizeHttpsPort`), or
-     * `undefined` when `usesAdvancedServerConfig` is true -- an advanced
-     * `server` array may hold several secure entries or none, so there is no
-     * single "the" httpsPort to report in that mode (C1, whole-branch
-     * review). Resolved ONCE at boot, like `servers` itself -- does not
-     * re-read config.json on every call.
+     * The target HTTPS port resolved at boot (see `sanitizeHttpsPort`) --
+     * ALWAYS a number, even when `usesAdvancedServerConfig` is true (an
+     * advanced `server` array may hold several secure entries or none, so
+     * `Config.buildServers` never consults this value in that mode, but the
+     * value itself is still resolved and reported: team-lead's exact
+     * `/api/tls/state` contract for C1/I2 wants `httpsPort` unconditionally
+     * present, post-`sanitizeHttpsPort`, so the panel's port field can prefill
+     * the real configured value regardless of mode). Resolved ONCE at boot,
+     * like `servers` itself -- does not re-read config.json on every call.
      */
-    public get httpsPort(): number | undefined {
+    public get httpsPort(): number {
         return this._httpsPort;
     }
 

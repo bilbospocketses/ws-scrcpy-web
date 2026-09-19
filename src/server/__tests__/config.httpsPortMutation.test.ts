@@ -104,20 +104,22 @@ describe('Config.httpsPort / usesAdvancedServerConfig getters (C1)', () => {
         expect(Config.getInstance().httpsPort).toBe(8443);
     });
 
-    // Paired: an advanced `server` array in use must report BOTH that it's in
-    // use AND `httpsPort: undefined` -- a version that flipped only the
-    // boolean and left a stale/default number behind would tell the panel
-    // "restart to get HTTPS on port 8443", which is false for this
-    // configuration (Config.buildServers never adds a generated HTTPS entry
-    // here, restart or not).
-    it('reports usesAdvancedServerConfig true and httpsPort undefined when an advanced server array is configured', () => {
+    // Paired: an advanced `server` array in use must report BOTH the
+    // boolean AND that `httpsPort` is STILL the real resolved value -- team-
+    // lead's exact contract wants `httpsPort` unconditionally present (post-
+    // sanitizeHttpsPort) for the panel's prefill, regardless of mode, even
+    // though `Config.buildServers` never consults it in this mode. A version
+    // that zeroed/undefined'd it here would silently break that prefill for
+    // anyone on an advanced config.
+    it('reports usesAdvancedServerConfig true, with httpsPort still resolved even though buildServers ignores it in this mode', () => {
         setup({
             ...BOOT,
             server: [{ secure: false, port: 8200 }],
+            httpsPort: 9443,
         });
         const cfg = Config.getInstance();
         expect(cfg.usesAdvancedServerConfig).toBe(true);
-        expect(cfg.httpsPort).toBeUndefined();
+        expect(cfg.httpsPort).toBe(9443);
     });
 
     it("is false for an EMPTY server array -- only a non-empty advanced array counts (mirrors Config.buildServers' own condition)", () => {

@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { networkInterfaces } from 'os';
 import { requireAdmin } from '../auth/requireAdmin';
-import { Config, validateHttpsPortInput } from '../Config';
+import { Config, DEFAULT_HTTPS_PORT, validateHttpsPortInput } from '../Config';
 import { Logger } from '../Logger';
 import { candidateLanIps } from '../network/candidateLanIps';
 import { getHttpsListenerStatus } from '../services/HttpServer';
@@ -59,8 +59,8 @@ function readHttpExposureForState(): HttpExposure {
 interface HttpsConfigSnapshot {
     /** True when config.json's advanced `server` array is in use -- no restart, ever, adds a generated HTTPS entry in this mode (case 2). */
     advancedConfig: boolean;
-    /** The target httpsPort Config resolved at boot (`Config.httpsPort`), undefined when `advancedConfig` is true. */
-    configuredPort?: number | undefined;
+    /** The configured httpsPort (`Config.httpsPort`, post-`sanitizeHttpsPort`) -- ALWAYS a number, even in advanced-config mode (team-lead's exact contract: the panel's port-field prefill, I2, needs this regardless of mode). */
+    configuredPort: number;
     /** True when `configuredPort` equals the effective http port -- `Config.buildServers`'s collision guard skips the HTTPS entry in this case (case 3). */
     portCollision: boolean;
 }
@@ -70,24 +70,64 @@ interface HttpsConfigSnapshot {
  * listener-truth response -- deliberately safe-by-default (same shape
  * `readHttpExposureForState` above uses) so a mocked or unreachable Config in
  * a test that doesn't care about these fields never turns this route into a
- * 500.
+ * 500. `DEFAULT_HTTPS_PORT` is what `sanitizeHttpsPort` itself falls back to,
+ * so the safe default here can never disagree with a real, unreachable-config
+ * boot.
  */
 function readHttpsConfigSnapshot(): HttpsConfigSnapshot {
     try {
         const cfg = Config.getInstance();
+        const configuredPort = cfg.httpsPort;
         if (cfg.usesAdvancedServerConfig) {
-            return { advancedConfig: true, portCollision: false };
+            return { advancedConfig: true, configuredPort, portCollision: false };
         }
         const httpPort = cfg.servers.find((s) => !s.secure)?.port;
-        const configuredPort = cfg.httpsPort;
         return {
             advancedConfig: false,
             configuredPort,
-            portCollision: configuredPort !== undefined && httpPort !== undefined && httpPort === configuredPort,
+            portCollision: httpPort !== undefined && httpPort === configuredPort,
         };
     } catch {
-        return { advancedConfig: false, portCollision: false };
+        return { advancedConfig: false, configuredPort: DEFAULT_HTTPS_PORT, portCollision: false };
     }
+}
+
+/** `GET /api/tls/state`'s `httpsListener` field -- the exact shape team-lead specified for C1 (sent identically to the panel's implementer). */
+export type HttpsListenerReason = 'restart-required' | 'config-override' | 'port-collision' | 'bind-failed';
+export interface HttpsListenerField {
+    bound: boolean;
+    port?: number;
+    reason?: HttpsListenerReason;
+}
+
+/**
+ * The pure priority logic behind `httpsListener`. Reality (`listenerStatus`,
+ * from `HttpServer.getHttpsListenerStatus()`) always wins: `bound: true`
+ * reports the real port and no reason at all, regardless of what config or
+ * cert state would otherwise imply. Among the not-bound cases, priority is
+ * deliberate: `bind-failed` (a secure entry WAS configured and broke) outranks
+ * `config-override` and `port-collision` (no secure entry was ever going to
+ * exist), which in turn outrank `restart-required` (the ordinary case -- a
+ * usable certificate exists, nothing else explains the gap, a restart is the
+ * honest and sufficient remedy). No certificate and nothing else applicable
+ * reports no reason at all -- "regenerate" is the wrong remedy for every one
+ * of these, which is the whole point of this field existing.
+ */
+export function buildHttpsListenerField(
+    listenerStatus: { listening: boolean; boundPort?: number; bindFailed: boolean },
+    configSnapshot: { advancedConfig: boolean; portCollision: boolean },
+    certReady: boolean,
+): HttpsListenerField {
+    if (listenerStatus.listening) {
+        return listenerStatus.boundPort === undefined
+            ? { bound: true }
+            : { bound: true, port: listenerStatus.boundPort };
+    }
+    if (listenerStatus.bindFailed) return { bound: false, reason: 'bind-failed' };
+    if (configSnapshot.advancedConfig) return { bound: false, reason: 'config-override' };
+    if (configSnapshot.portCollision) return { bound: false, reason: 'port-collision' };
+    if (certReady) return { bound: false, reason: 'restart-required' };
+    return { bound: false };
 }
 
 export class TlsApi {
@@ -139,26 +179,31 @@ export class TlsApi {
                 // generate with no listener bound yet, under an advanced
                 // `server` array that never gets one, when httpsPort collides
                 // with the http port, and after a bind failure -- four states
-                // where nothing is serving HTTPS. `getHttpsListenerStatus()`
-                // reads REALITY (HttpServer's bound/failed-port bookkeeping);
+                // where nothing is serving HTTPS, and "regenerate" (the
+                // panel's only offered remedy) is the wrong fix for every one
+                // of them. `getHttpsListenerStatus()` reads REALITY
+                // (HttpServer's bound/failed-port bookkeeping);
                 // `readHttpsConfigSnapshot()` reads the two Config facts that
-                // tell "restart required" apart from "config.json overrides
-                // this" apart from "the two ports collide".
+                // tell the four states apart; `buildHttpsListenerField`
+                // combines them into the exact contract below.
+                const certState = svc.getState();
                 const httpsStatus = getHttpsListenerStatus();
                 const httpsSnapshot = readHttpsConfigSnapshot();
+                const httpsListener = buildHttpsListenerField(httpsStatus, httpsSnapshot, certState.status === 'ready');
                 res.setHeader('Content-Type', 'application/json');
                 res.writeHead(200);
                 res.end(
                     JSON.stringify({
-                        ...svc.getState(),
+                        ...certState,
                         candidateIps: this.getCandidateIps(),
                         httpExposure: readHttpExposureForState(),
-                        httpsListening: httpsStatus.listening,
-                        httpsBoundPort: httpsStatus.boundPort,
-                        httpsBindFailed: httpsStatus.bindFailed,
-                        httpsAdvancedConfig: httpsSnapshot.advancedConfig,
-                        httpsConfiguredPort: httpsSnapshot.configuredPort,
-                        httpsPortCollision: httpsSnapshot.portCollision,
+                        httpsListener,
+                        // The CONFIGURED port (post-sanitizeHttpsPort), for
+                        // the panel's port-field prefill (I2) -- independent
+                        // of httpsListener.port, which is only present when
+                        // actually bound and can differ (an ephemeral `port:
+                        // 0` entry, or simply "not bound yet").
+                        httpsPort: httpsSnapshot.configuredPort,
                     }),
                 );
                 return true;
