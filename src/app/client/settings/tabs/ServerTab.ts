@@ -167,6 +167,528 @@ export function appSectionButtonsState(resp: {
     };
 }
 
+// ---------------------------------------------------------------------------
+// Local HTTPS panel (Settings → Server → Local HTTPS).
+//
+// Consumes GET /api/tls/state, POST /api/tls/generate and GET /api/tls/ca-root
+// exactly as Task 5's TlsApi.ts implements them (see the response-shape
+// contract appended to this task's brief, dated 2026-09-19): `generate`
+// answers `{ ...CertState, allowedHostAdded }`, `state` answers
+// `{ ...CertState, candidateIps }`, and `ca-root` answers 404/429 with a JSON
+// `{ error }` body read verbatim rather than assumed.
+//
+// NOT wired to a save/persist path for the port field or the exposure radios
+// -- see the two "NOT WIRED" comments below for why, and the task-8 report for
+// the follow-up this leaves for a later task.
+// ---------------------------------------------------------------------------
+
+/** The subset of CertState (+ the two additions layered on by Task 4/5) this panel reads. */
+interface TlsCertState {
+    status: 'none' | 'ready';
+    subject?: string;
+    kind?: 'ip' | 'hostname';
+    /** ISO 8601. */
+    notAfter?: string;
+    caPresent?: boolean;
+    /** Present on GET /api/tls/state; absent on POST /api/tls/generate's response. */
+    candidateIps?: string[];
+}
+
+export interface LocalHttpsPanelDeps {
+    /** Injected so the panel is testable without a real network stack. */
+    fetchFn: typeof fetch;
+    /**
+     * Fallback candidate IPs, used only when the fetched state carries none
+     * (e.g. a test stub that never set `candidateIps` on its response body).
+     * Production always gets a real list back from `GET /api/tls/state`
+     * (Task 5's amendment (b)), so this is effectively test-only there.
+     */
+    candidateIps: string[];
+    platform: NodeJS.Platform;
+    /**
+     * Whether the browser's current origin already trusts the served
+     * certificate's CA. There is no JS-observable signal for this -- a
+     * click-through self-signed warning and a genuinely trusted CA both
+     * report `isSecureContext: true` with nothing else distinguishing them
+     * (the design doc's own measurement had to be done manually in a real
+     * browser). So this is caller-supplied, and left `undefined` (never
+     * shown) rather than guessed -- showing "this browser does not trust the
+     * certificate" when it actually does would be a false claim, which is
+     * worse than the notice never firing. Defaults to trusted (no notice).
+     */
+    caTrusted?: boolean;
+}
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const EXPIRY_WARNING_DAYS = 30;
+
+/** Notification 4: the cert's IP subject no longer matches any local interface. */
+export function certSubjectMismatchNotice(state: TlsCertState, candidateIps: string[]): string | null {
+    if (state.status !== 'ready' || state.kind !== 'ip' || !state.subject) return null;
+    if (candidateIps.includes(state.subject)) return null;
+    return `this certificate names ${state.subject}, which is no longer an address of this machine. regenerate, or switch to a hostname.`;
+}
+
+/** Notification 9: warn inside 30 days of expiry; never regenerate silently (Resolved Decision 1). */
+export function certExpiryNotice(state: TlsCertState, now: Date): string | null {
+    if (state.status !== 'ready' || !state.notAfter) return null;
+    const expires = new Date(state.notAfter);
+    if (Number.isNaN(expires.getTime())) return null;
+    const daysLeft = (expires.getTime() - now.getTime()) / MS_PER_DAY;
+    if (daysLeft > EXPIRY_WARNING_DAYS) return null;
+    return `this certificate expires on ${expires.toLocaleDateString()}. regenerate before then, or streaming stops working from other machines.`;
+}
+
+/** Notification 5: a sub-1024 port needs elevated privileges outside win32. */
+export function subPrivilegedPortNotice(port: number, platform: NodeJS.Platform | string): string | null {
+    if (platform === 'win32') return null;
+    if (!Number.isFinite(port) || port <= 0 || port >= 1024) return null;
+    return 'ports below 1024 need elevated privileges on this platform; the server may fail to start.';
+}
+
+/** Per-OS trust instructions for the accordion. Pure/exported so its text is unit-testable. */
+export function trustInstructionsFor(platform: NodeJS.Platform | string): string {
+    switch (platform) {
+        case 'win32':
+            return (
+                'double-click the downloaded file, choose "install certificate", pick "local machine" ' +
+                '(admin) or "current user", select "place all certificates in the following store", ' +
+                'choose "trusted root certification authorities", then finish.'
+            );
+        case 'darwin':
+            return (
+                'open keychain access, drag the downloaded file into the "system" keychain, double-click ' +
+                'it, expand "trust", and set "when using this certificate" to "always trust".'
+            );
+        case 'linux':
+            return (
+                'copy the downloaded file into /usr/local/share/ca-certificates/ (renamed to end in .crt) ' +
+                'and run "sudo update-ca-certificates", or import it into your browser\'s certificate settings directly.'
+            );
+        default:
+            return "import the downloaded certificate into your browser or operating system's trusted root store.";
+    }
+}
+
+/** Local copy of the notice-row shape every other tab already uses for a status line. */
+function buildNoticeRow(): HTMLParagraphElement {
+    const p = document.createElement('p');
+    p.className = 'settings-status settings-status-warning';
+    p.style.gridColumn = '1 / -1';
+    p.hidden = true;
+    return p;
+}
+
+function setNotice(el: HTMLParagraphElement, text: string | null): void {
+    el.textContent = text ?? '';
+    el.hidden = text === null;
+}
+
+async function fetchTlsState(fetchFn: typeof fetch): Promise<TlsCertState> {
+    try {
+        const res = await fetchFn('/api/tls/state');
+        if (!res.ok) return { status: 'none' };
+        return (await res.json()) as TlsCertState;
+    } catch {
+        return { status: 'none' };
+    }
+}
+
+/**
+ * Build the Local HTTPS panel — a self-contained `<section>` covering subject
+ * generation, the CA download + per-OS trust instructions, and the plain-HTTP
+ * exposure radios. Async: it fetches `/api/tls/state` before returning so the
+ * caller (and every test) gets a panel already reflecting the real cert state,
+ * rather than a placeholder that fills in later.
+ *
+ * Deliberately does NOT touch `StagedSettingsStore`. Two controls here look
+ * like they should stage into the dialog's batch Save the way `webPort` does,
+ * and both are NOT wired that way on purpose:
+ *
+ * - The port field: `SettingsBatchApi.STAGEABLE_IDS` (an ALLOWLIST) has no
+ *   `httpsPort` entry, and `POST /api/tls/generate` itself accepts only
+ *   `{ kind, value }` -- no port. Registering it with `store` anyway would
+ *   make an UNRELATED save fail: the batch endpoint rejects the whole batch
+ *   on any single unknown id, so editing this field would silently break a
+ *   legitimate `webPort` change bundled in the same Save. It is local-preview
+ *   only (notification 5) until a real endpoint exists.
+ * - The exposure "ok" button: Task 8's own Interfaces line lists exactly three
+ *   consumed routes (`state`, `generate`, `ca-root`) -- no exposure-writing
+ *   endpoint is in scope anywhere in this plan (verified: `TlsApi.ts` has no
+ *   route for it, and `HTTP_EXPOSURE_KEY` is read-only today, in
+ *   `HttpServer.ts`). The button still calls `POST /api/tls/exposure` on the
+ *   chance a later task adds it, and renders whatever comes back (including a
+ *   graceful "not supported yet" for the 404 every build without that route
+ *   returns) rather than silently doing nothing on click.
+ */
+export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<HTMLElement> {
+    const initialState = await fetchTlsState(deps.fetchFn);
+    let currentState: TlsCertState = initialState;
+    const candidateIpsFor = (s: TlsCertState): string[] => s.candidateIps ?? deps.candidateIps;
+
+    const { section, body } = buildSection('Local HTTPS');
+
+    // ---- subject: ip vs hostname, and the value itself ----
+    const subjectInput = document.createElement('input');
+    subjectInput.type = 'text';
+    subjectInput.className = 'settings-input';
+    subjectInput.setAttribute('data-tls-subject', '');
+
+    const ipLabel = document.createElement('label');
+    ipLabel.className = 'settings-radio-label';
+    const ipRadio = document.createElement('input');
+    ipRadio.type = 'radio';
+    ipRadio.name = 'tls-subject-kind';
+    ipRadio.value = 'ip';
+    ipLabel.appendChild(ipRadio);
+    ipLabel.appendChild(document.createTextNode('ip address'));
+
+    const hostLabel = document.createElement('label');
+    hostLabel.className = 'settings-radio-label';
+    const hostRadio = document.createElement('input');
+    hostRadio.type = 'radio';
+    hostRadio.name = 'tls-subject-kind';
+    hostRadio.value = 'hostname';
+    hostLabel.appendChild(hostRadio);
+    hostLabel.appendChild(document.createTextNode('hostname'));
+
+    const initialCandidateIps = candidateIpsFor(initialState);
+    const initialKind: 'ip' | 'hostname' = initialState.kind === 'hostname' ? 'hostname' : 'ip';
+    ipRadio.checked = initialKind === 'ip';
+    hostRadio.checked = initialKind === 'hostname';
+    subjectInput.value = initialState.subject ?? (initialKind === 'ip' ? (initialCandidateIps[0] ?? '') : '');
+
+    // Remembers each mode's last value across a radio flip, so switching kind
+    // and back doesn't lose what was typed.
+    let lastIpValue = initialKind === 'ip' ? subjectInput.value : (initialCandidateIps[0] ?? '');
+    let lastHostValue = initialKind === 'hostname' ? subjectInput.value : '';
+    // 'click', not 'change': a radio's activation behavior (flipping
+    // `.checked`) runs before the click is dispatched, but jsdom only fires
+    // 'change' for a radio connected to `document` -- a panel this test
+    // suite builds and inspects standalone never is. 'click' fires either
+    // way, and `.checked` already reflects the click by the time this runs
+    // (measured in both jsdom and real browsers).
+    ipRadio.addEventListener('click', () => {
+        if (!ipRadio.checked) return;
+        lastHostValue = subjectInput.value;
+        subjectInput.value = lastIpValue;
+    });
+    hostRadio.addEventListener('click', () => {
+        if (!hostRadio.checked) return;
+        lastIpValue = subjectInput.value;
+        subjectInput.value = lastHostValue;
+    });
+
+    const subjectFrag = document.createDocumentFragment();
+    subjectFrag.appendChild(ipLabel);
+    subjectFrag.appendChild(hostLabel);
+    subjectFrag.appendChild(subjectInput);
+    body.appendChild(buildRow('certificate subject', subjectFrag));
+
+    // Notification 2 — ALWAYS shown, beside the subject controls (not
+    // conditional on anything: it is a standing fact about allowedHosts, not
+    // a mistake state).
+    const allowedHostsNotice = document.createElement('p');
+    allowedHostsNotice.className = 'settings-status';
+    allowedHostsNotice.style.gridColumn = '1 / -1';
+    allowedHostsNotice.textContent =
+        'allowedHosts takes domain names only. raw ip addresses already work, and it does not affect streaming.';
+    body.appendChild(allowedHostsNotice);
+
+    // ---- port (local preview only -- see the class doc's "NOT WIRED" note) ----
+    const portInput = document.createElement('input');
+    portInput.type = 'number';
+    portInput.className = 'settings-input';
+    portInput.style.maxWidth = '120px';
+    portInput.setAttribute('data-tls-port', '');
+    portInput.value = '8443';
+    body.appendChild(buildRow('https port', portInput));
+
+    const portNotice = buildNoticeRow();
+    body.appendChild(portNotice);
+    portInput.addEventListener('input', () => {
+        setNotice(portNotice, subPrivilegedPortNotice(Number(portInput.value), deps.platform));
+    });
+
+    // ---- generate ----
+    const generateBtn = document.createElement('button');
+    generateBtn.type = 'button';
+    generateBtn.className = 'settings-btn settings-btn-primary';
+    generateBtn.textContent = 'generate';
+    body.appendChild(buildRow('certificate', generateBtn));
+
+    const generateStatus = buildNoticeRow();
+    body.appendChild(generateStatus);
+
+    const allowedHostAddedNotice = document.createElement('p');
+    allowedHostAddedNotice.className = 'settings-status';
+    allowedHostAddedNotice.style.gridColumn = '1 / -1';
+    allowedHostAddedNotice.hidden = true;
+    body.appendChild(allowedHostAddedNotice);
+
+    // ---- current-certificate summary + notifications 3, 4, 8, 9 ----
+    const certSummary = document.createElement('p');
+    certSummary.className = 'settings-status';
+    certSummary.style.gridColumn = '1 / -1';
+    body.appendChild(certSummary);
+
+    const untrustedCaNotice = buildNoticeRow();
+    body.appendChild(untrustedCaNotice);
+    const mismatchNotice = buildNoticeRow();
+    body.appendChild(mismatchNotice);
+    const hostnameGuideNotice = buildNoticeRow();
+    body.appendChild(hostnameGuideNotice);
+    const expiryNotice = buildNoticeRow();
+    body.appendChild(expiryNotice);
+    const caRestoreNotice = buildNoticeRow();
+    body.appendChild(caRestoreNotice);
+
+    // ---- download CA + per-OS trust instructions ----
+    const downloadBtn = document.createElement('button');
+    downloadBtn.type = 'button';
+    downloadBtn.className = 'settings-btn';
+    downloadBtn.textContent = 'download ca certificate';
+    body.appendChild(buildRow('root ca', downloadBtn));
+
+    const downloadStatus = buildNoticeRow();
+    body.appendChild(downloadStatus);
+
+    const details = document.createElement('details');
+    const summary = document.createElement('summary');
+    summary.textContent = 'how to trust this certificate on this device';
+    details.appendChild(summary);
+    const instructions = document.createElement('p');
+    instructions.className = 'settings-status';
+    instructions.textContent = trustInstructionsFor(deps.platform);
+    details.appendChild(instructions);
+    const detailsRow = buildRow('trust the ca', details);
+    detailsRow.style.gridColumn = '1 / -1';
+    body.appendChild(detailsRow);
+
+    function renderCertState(state: TlsCertState): void {
+        const candidateIps = candidateIpsFor(state);
+        if (state.status !== 'ready') {
+            certSummary.textContent = 'no certificate yet.';
+            downloadBtn.disabled = true;
+            setNotice(untrustedCaNotice, null);
+            setNotice(mismatchNotice, null);
+            setNotice(hostnameGuideNotice, null);
+            setNotice(expiryNotice, null);
+            setNotice(caRestoreNotice, null);
+            return;
+        }
+
+        // Built from text nodes, never innerHTML/string interpolation into
+        // markup — `subject` is server round-tripped user input (test:
+        // "uses textContent for the subject").
+        certSummary.textContent = '';
+        certSummary.appendChild(document.createTextNode('current certificate: '));
+        const subjectSpan = document.createElement('span');
+        subjectSpan.textContent = state.subject ?? '(unknown)';
+        certSummary.appendChild(subjectSpan);
+
+        downloadBtn.disabled = state.caPresent === false;
+        setNotice(caRestoreNotice, state.caPresent === false ? 'regenerate to restore the ca download.' : null);
+        setNotice(
+            untrustedCaNotice,
+            deps.caTrusted === false
+                ? 'this browser does not trust the certificate yet. install the ca below to remove the warning — streaming already works.'
+                : null,
+        );
+        setNotice(mismatchNotice, certSubjectMismatchNotice(state, candidateIps));
+        setNotice(
+            hostnameGuideNotice,
+            state.kind === 'hostname'
+                ? 'this name must resolve on every machine that connects — add it to their hosts file or your local dns.'
+                : null,
+        );
+        setNotice(expiryNotice, certExpiryNotice(state, new Date()));
+    }
+
+    function setAllowedHostAddedNotice(subject: string | undefined): void {
+        allowedHostAddedNotice.textContent = '';
+        if (!subject) {
+            allowedHostAddedNotice.hidden = true;
+            return;
+        }
+        allowedHostAddedNotice.appendChild(document.createTextNode('added '));
+        const span = document.createElement('span');
+        span.textContent = subject;
+        allowedHostAddedNotice.appendChild(span);
+        allowedHostAddedNotice.appendChild(
+            document.createTextNode(' to allowedHosts so the server will answer to that name.'),
+        );
+        allowedHostAddedNotice.hidden = false;
+    }
+
+    generateBtn.addEventListener('click', () => {
+        void (async () => {
+            const kind: 'ip' | 'hostname' = hostRadio.checked ? 'hostname' : 'ip';
+            const value = subjectInput.value.trim();
+            if (!value) {
+                setNotice(generateStatus, 'enter an ip address or hostname first.');
+                return;
+            }
+            generateBtn.disabled = true;
+            const prevText = generateBtn.textContent;
+            generateBtn.textContent = 'generating…';
+            setNotice(generateStatus, null);
+            setAllowedHostAddedNotice(undefined);
+            try {
+                const res = await deps.fetchFn('/api/tls/generate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ kind, value }),
+                });
+                const data = (await res.json().catch(() => null)) as
+                    | (TlsCertState & { allowedHostAdded?: boolean; error?: string })
+                    | null;
+                if (!res.ok || !data) {
+                    setNotice(generateStatus, data?.error ?? 'that address could not be used for a certificate.');
+                    return;
+                }
+                currentState = data;
+                renderCertState(currentState);
+                if (data.allowedHostAdded) {
+                    setAllowedHostAddedNotice(data.subject);
+                }
+            } catch {
+                setNotice(generateStatus, 'could not reach the server.');
+            } finally {
+                generateBtn.disabled = false;
+                generateBtn.textContent = prevText;
+            }
+        })();
+    });
+
+    downloadBtn.addEventListener('click', () => {
+        void (async () => {
+            downloadBtn.disabled = true;
+            setNotice(downloadStatus, null);
+            try {
+                const res = await deps.fetchFn('/api/tls/ca-root');
+                if (!res.ok) {
+                    // 404 (no cert yet) / 429 (rate limited) both answer JSON
+                    // `{ error }` -- TlsApi.ts is the source of truth for the
+                    // shape, read here rather than assumed.
+                    const data = (await res.json().catch(() => null)) as { error?: string } | null;
+                    setNotice(downloadStatus, data?.error ?? `could not download the ca certificate (${res.status}).`);
+                    return;
+                }
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                try {
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'ws-scrcpy-web-local-ca.pem';
+                    a.click();
+                } finally {
+                    URL.revokeObjectURL(url);
+                }
+            } catch {
+                setNotice(downloadStatus, 'could not reach the server.');
+            } finally {
+                downloadBtn.disabled = currentState.caPresent === false;
+            }
+        })();
+    });
+
+    // ---- plain-HTTP exposure (local preview only -- see the class doc's
+    //      "NOT WIRED" note) ----
+    const exposureFrag = document.createDocumentFragment();
+    const exposureModes: Array<{ value: 'open' | 'httpsOnly' | 'redirect'; label: string }> = [
+        { value: 'open', label: 'open (plain http answers every machine)' },
+        { value: 'httpsOnly', label: 'https only' },
+        { value: 'redirect', label: 'redirect http to https' },
+    ];
+    const exposureRadios: HTMLInputElement[] = [];
+    for (const mode of exposureModes) {
+        const label = document.createElement('label');
+        label.className = 'settings-radio-label';
+        const radio = document.createElement('input');
+        radio.type = 'radio';
+        radio.name = 'tls-exposure';
+        radio.value = mode.value;
+        radio.setAttribute('data-exposure', mode.value);
+        radio.checked = mode.value === 'open';
+        label.appendChild(radio);
+        label.appendChild(document.createTextNode(mode.label));
+        exposureFrag.appendChild(label);
+        exposureRadios.push(radio);
+    }
+    const okBtn = document.createElement('button');
+    okBtn.type = 'button';
+    okBtn.className = 'settings-btn settings-btn-primary';
+    okBtn.textContent = 'ok';
+    exposureFrag.appendChild(okBtn);
+    body.appendChild(buildRow('plain http exposure', exposureFrag));
+
+    const exposureLockoutNotice = buildNoticeRow();
+    body.appendChild(exposureLockoutNotice);
+    const exposureRestartNotice = buildNoticeRow();
+    body.appendChild(exposureRestartNotice);
+    const exposureSaveStatus = buildNoticeRow();
+    body.appendChild(exposureSaveStatus);
+
+    for (const radio of exposureRadios) {
+        // 'click', not 'change' -- see the subject radios' listeners above for why.
+        radio.addEventListener('click', () => {
+            if (!radio.checked) return;
+            const narrowed = radio.value !== 'open';
+            // Notifications 6 and 7 — shown together, BEFORE confirm, the
+            // moment a narrowed mode is selected.
+            setNotice(
+                exposureLockoutNotice,
+                narrowed
+                    ? 'plain http will stop answering other machines. this machine keeps working over localhost, so you cannot lock yourself out.'
+                    : null,
+            );
+            setNotice(
+                exposureRestartNotice,
+                narrowed ? 'the server will restart and any active streams will drop.' : null,
+            );
+        });
+    }
+
+    okBtn.addEventListener('click', () => {
+        void (async () => {
+            const mode = exposureRadios.find((r) => r.checked)?.value ?? 'open';
+            okBtn.disabled = true;
+            setNotice(exposureSaveStatus, null);
+            try {
+                // NOT WIRED (see the class doc): no task in this plan adds this
+                // route. Calling it anyway means a build that DOES add it later
+                // works with no further changes here, and one that doesn't yet
+                // gets a clear, non-crashing message instead of a dead button.
+                const res = await deps.fetchFn('/api/tls/exposure', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ mode }),
+                });
+                if (!res.ok) {
+                    if (res.status === 404) {
+                        setNotice(exposureSaveStatus, 'this server does not support saving this setting yet.');
+                        return;
+                    }
+                    const data = (await res.json().catch(() => null)) as { error?: string } | null;
+                    setNotice(
+                        exposureSaveStatus,
+                        data?.error ?? `could not change plain-http exposure (${res.status}).`,
+                    );
+                    return;
+                }
+            } catch {
+                setNotice(exposureSaveStatus, 'could not reach the server.');
+            } finally {
+                okBtn.disabled = false;
+            }
+        })();
+    });
+
+    renderCertState(initialState);
+    return section;
+}
+
 /**
  * Build the "reset all my settings" trigger button. When clicked, opens
  * ResetConfirmModal (a top-layer <dialog>). On confirmation, calls
@@ -400,6 +922,11 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
     let installAllUsersNote: HTMLElement | null = null;
     let uninstallRow: HTMLElement | null = null;
     let uninstallButton: HTMLButtonElement | null = null;
+    let localHttpsContainer: HTMLElement | null = null;
+    // Built once the first real `platform` arrives via applyServiceStatus
+    // (see its call below) -- platform isn't known synchronously at tab-build
+    // time, same category as docker/adminReachable per TabContext's own doc.
+    let localHttpsBuilt = false;
 
     // 1. reset all my settings — user-level, always visible. Opens
     //    ResetConfirmModal, then clears all user settings (theme, device
@@ -660,6 +1187,18 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
         body.appendChild(row);
     }
 
+    // 6. Local HTTPS — its own admin-gated section (`/api/tls/*` is
+    //    admin-gated server-side; an ungated panel here would 403-spam every
+    //    control the moment a non-admin opened this tab, the same
+    //    misreads-as-a-bug anti-pattern adminGate.ts's `dependencies` entry
+    //    documents). Built lazily from applyServiceStatus below, once a real
+    //    `platform` is known -- see localHttpsBuilt's comment above.
+    if (canSeeSection(ctx.role, 'localHttps')) {
+        const container = document.createElement('div');
+        localHttpsContainer = container;
+        section.appendChild(container);
+    }
+
     function setServerStatus(msg: string, isError = false): void {
         const el = webPortStatus;
         if (!el) return; // web port row not built (non-admin)
@@ -738,6 +1277,25 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
             // (unlike "stop server & exit"); uninstalling is how you tear a service
             // down. Asserting it here documents and enforces that invariant.
             uninstallButton.disabled = false;
+        }
+
+        // Local HTTPS panel: built once, the first time a real platform is
+        // available. Rebuilding on every later service-status refresh would
+        // needlessly re-fetch /api/tls/state and blow away whatever the user
+        // is mid-typing in the subject/port fields.
+        if (localHttpsContainer && !localHttpsBuilt) {
+            localHttpsBuilt = true;
+            const platform: NodeJS.Platform = (resp.platform as NodeJS.Platform | undefined) ?? 'linux';
+            void buildLocalHttpsPanel({
+                fetchFn: fetch,
+                // Always [] in production: GET /api/tls/state itself returns
+                // the real candidateIps (Task 5's amendment (b)), which
+                // buildLocalHttpsPanel prefers over this fallback.
+                candidateIps: [],
+                platform,
+            }).then((panel) => {
+                localHttpsContainer?.replaceChildren(panel);
+            });
         }
     }
 
