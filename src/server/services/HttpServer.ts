@@ -181,7 +181,8 @@ function readHttpExposure(): HttpExposure {
  * than no port at all, because 'redirect' would send a caller at a dead end
  * and 'httpsOnly' would 421 the only listener still standing.
  *
- * No reset seam (M5): nothing removes a port from this Set, including a
+ * No reset seam (M5, widened by N1: its sibling `boundSecurePorts` below has
+ * the identical gap). Nothing removes a port from this Set, including a
  * later successful bind (there is none -- see attachListenErrorHandler) or
  * `HttpServer.release()`. Not a leak in production (the process exits and
  * restarts fresh rather than re-listening in place -- see
@@ -221,6 +222,15 @@ function findHttpsPort(): number | undefined {
  * Configured secure port -> the port actually bound (see the `.listen()`
  * callback in `start()`). Only ever differs from the configured port when
  * that port is `0` (ephemeral, OS-assigned) -- see M7 / findHttpsPort.
+ *
+ * No reset seam (N1): the identical gap `failedSecurePorts` documents above
+ * -- nothing ever removes an entry, including `HttpServer.release()`. Same
+ * "harmless in production, latent test trap" reasoning applies (no
+ * in-process re-listen). A contrived edge exists only through a
+ * user-authored `fileConfig.server` array: two secure entries sharing one
+ * configured port would collide on this Map's key (last `.listen()`
+ * callback wins) while `findHttpsPort()` reads the *first* secure entry --
+ * not reachable from any in-tree config.
  */
 const boundSecurePorts = new Map<number, number>();
 

@@ -15,20 +15,7 @@ vi.mock('../Config', () => ({
 
 import { Config } from '../Config';
 
-/**
- * A secure ("https") entry exists at the given port, unless `noSecureEntry`.
- *
- * Returns `findSpy`, wrapping `servers.find` -- the one call `findHttpsPort()`
- * makes in EVERY case (present, absent, or failed secure entry; every mode).
- * A test asserting `findSpy` was called proves the `if (!serverIsTls) {...}`
- * exposure block actually ran, independent of what it decided -- which is
- * what makes even a "this should just serve" test (open mode, loopback,
- * no-secure-entry) fail if that whole block were deleted. A response-status
- * assertion alone cannot do that for those cases: deleting the block also
- * serves, by falling straight through to the ordinary request gate, so
- * "served" is satisfied by "the feature doesn't exist" just as much as by
- * "the feature correctly decided to serve". See I3 in the review.
- */
+/** A secure ("https") entry exists at the given port, unless `noSecureEntry`. */
 function mockConfig(mode: string | undefined, opts: { securePort?: number; noSecureEntry?: boolean } = {}) {
     const servers = opts.noSecureEntry
         ? [{ secure: false, port: 8000 }]
@@ -36,24 +23,19 @@ function mockConfig(mode: string | undefined, opts: { securePort?: number; noSec
               { secure: false, port: 8000 },
               { secure: true, port: opts.securePort ?? 8443, options: { cert: 'c', key: 'k' } },
           ];
-    const findSpy = vi.fn(servers.find.bind(servers));
-    (servers as unknown as { find: typeof findSpy }).find = findSpy;
     vi.mocked(Config.getInstance).mockReturnValue({
         db: { appSettings: { get: vi.fn(() => mode) } },
         servers,
     } as never);
-    return findSpy;
 }
 
-// I3 (from review): every request below now carries a real `host` header that
-// matches its `remoteAddress`, and a "served" outcome is asserted as an exact
-// 200 from this fallback -- not merely "not 421" / "not 302". Without a valid
-// Host, `evaluateHttpRequest`'s own DNS-rebinding gate 403s the request before
-// this feature's code is ever reached, which is precisely how five of this
-// file's eight tests previously passed with the entire exposure block
-// deleted (including the headline loopback lockout-guarantee test). A bare
-// negative assertion is satisfied by ANY earlier failure, including that one;
-// asserting the specific positive outcome is not.
+// I3 (from review round 1): every request below carries a real `host` header
+// that matches its `remoteAddress`, and a "served" outcome is asserted as an
+// exact 200 from this fallback -- not merely "not 421" / "not 302". Without a
+// valid Host, `evaluateHttpRequest`'s own DNS-rebinding gate 403s the request
+// before this feature's code is ever reached, which is precisely how five of
+// this file's eight tests originally passed with the entire exposure block
+// deleted (including the headline loopback lockout-guarantee test).
 const SERVED = { status: 200, body: 'served' };
 function servedFallback(_req: IncomingMessage, res: ServerResponse): void {
     res.writeHead(SERVED.status);
@@ -62,56 +44,107 @@ function servedFallback(_req: IncomingMessage, res: ServerResponse): void {
 
 // The handler is built with serverIsTls=false, i.e. the PLAIN-HTTP listener.
 function plainHandler(mode: string, opts?: { securePort?: number; noSecureEntry?: boolean }) {
-    const findSpy = mockConfig(mode, opts);
-    return { handler: createHttpRequestHandler([], servedFallback, false), findSpy };
+    mockConfig(mode, opts);
+    return createHttpRequestHandler([], servedFallback, false);
 }
 
+// I3, round 2 (re-review): round 1 fixed the tests above by asserting the
+// EXACT status instead of a negative ("not 421"), plus a spy on
+// `Config.servers.find` to prove the exposure block ran at all. The
+// re-reviewer measured that the spy closes only the "whole block deleted"
+// mutation -- a mutant that runs the block and then reaches the WRONG
+// verdict (e.g. `decideHttpRequest` wrongly serving a LAN caller in
+// `httpsOnly`) still calls `servers.find`, so the spy stays green. It is
+// also coupled to an implementation detail: refactor `findHttpsPort` to stop
+// calling `.find` (a loop, a cache, `.filter`) and all eight tests go red
+// for a reason that has nothing to do with behaviour.
+//
+// The durable fix, per the controller: a CONTRAST PAIR. Assert the same
+// request under two configurations the feature is supposed to tell apart,
+// so deleting the feature (or getting the verdict wrong) collapses the pair
+// and the test fails on STATUS alone -- no spy, no implementation coupling.
+// Below, "serves a LAN caller in open mode" and "refuses a LAN caller in
+// httpsOnly" are themselves a pair (same LAN Host, two modes, two outcomes);
+// so are "redirects a LAN caller in redirect mode" and the no-secure-entry
+// tests below it (same mode, with vs. without a secure entry). The spy and
+// its `servers.find` monkey-patch are gone; nothing in this file is a
+// substitute for a status assertion any more.
 describe('plain-HTTP listener under each exposure mode', () => {
     it('serves a LAN caller in open mode', async () => {
-        const { handler, findSpy } = plainHandler('open');
+        const h = plainHandler('open');
         const r = makeReqRes('GET', '/', undefined, { host: '192.168.86.50:8000' }, { remoteAddress: '192.168.86.50' });
-        await handler(r.req, r.res);
+        await h(r.req, r.res);
         expect(r.getStatus()).toBe(SERVED.status);
-        expect(findSpy).toHaveBeenCalled();
     });
 
+    // Pairs with the test above: same LAN Host, `httpsOnly` instead of
+    // `open`. Delete the exposure block (or decide the mode wrong) and BOTH
+    // this test and the one above collapse to the same 200 -- this is what
+    // makes the pair, not either half alone, fail on that mutation.
     it('refuses a LAN caller in httpsOnly', async () => {
-        const { handler, findSpy } = plainHandler('httpsOnly');
+        const h = plainHandler('httpsOnly');
         const r = makeReqRes('GET', '/', undefined, { host: '192.168.86.50:8000' }, { remoteAddress: '192.168.86.50' });
-        await handler(r.req, r.res);
+        await h(r.req, r.res);
         expect(r.getStatus()).toBe(421);
         // M2: closes amendment D's cache-poisoning concern against a
         // non-conforming intermediary caching this response past the user
         // turning the setting back off.
         expect(r.getHeader('cache-control')).toBe('no-store');
-        expect(findSpy).toHaveBeenCalled();
     });
 
+    // Pairs with the same two tests: same LAN Host, `redirect` instead.
     it('redirects a LAN caller in redirect mode', async () => {
-        const { handler, findSpy } = plainHandler('redirect', { securePort: 8443 });
+        const h = plainHandler('redirect', { securePort: 8443 });
         const r = makeReqRes('GET', '/', undefined, { host: '192.168.86.50:8000' }, { remoteAddress: '192.168.86.50' });
-        await handler(r.req, r.res);
+        await h(r.req, r.res);
         expect(r.getStatus()).toBe(302);
         expect(r.getHeader('location')).toMatch(/^https:/);
         expect(r.getHeader('location')).toBe('https://192.168.86.50:8443/');
         expect(r.getHeader('cache-control')).toBe('no-store');
-        expect(findSpy).toHaveBeenCalled();
     });
 
+    // The lockout guarantee, made self-contained: for each mode, the SAME
+    // request from loopback vs. from a LAN address must come out different
+    // whenever the mode narrows anything. Deleting the exposure block makes
+    // every LAN case in this loop serve too (200), collapsing every pair
+    // below and failing the `httpsOnly`/`redirect` cases on status alone --
+    // no spy needed. (The `open` iteration has no narrowing to contrast
+    // against by design; loopback and LAN legitimately produce the same
+    // outcome there, exactly as they would with no feature at all -- the
+    // `httpsOnly` and `redirect` iterations are what make this test able to
+    // fail.)
     it('SERVES LOOPBACK IN EVERY MODE — the lockout guarantee', async () => {
+        const lanOutcome: Record<string, { status: number; location?: string }> = {
+            open: { status: SERVED.status },
+            httpsOnly: { status: 421 },
+            redirect: { status: 302, location: 'https://192.168.86.50:8443/' },
+        };
         for (const mode of ['open', 'httpsOnly', 'redirect']) {
-            const { handler, findSpy } = plainHandler(mode);
-            const r = makeReqRes('GET', '/', undefined, { host: '127.0.0.1:8000' }, { remoteAddress: '127.0.0.1' });
-            await handler(r.req, r.res);
-            expect(r.getStatus(), `mode ${mode}`).toBe(SERVED.status);
-            // The load-bearing half of this test: a valid Host plus a 200
-            // fallback means "served" alone is satisfied by the exposure
-            // block being deleted entirely (it falls straight through to
-            // the ordinary request gate). This proves the block RAN and
-            // reached the point of consulting the configured servers for
-            // every mode, not merely that the response happened to come out
-            // as 200 some other way.
-            expect(findSpy, `mode ${mode}`).toHaveBeenCalled();
+            const loopback = plainHandler(mode, { securePort: 8443 });
+            const rLoopback = makeReqRes(
+                'GET',
+                '/',
+                undefined,
+                { host: '127.0.0.1:8000' },
+                { remoteAddress: '127.0.0.1' },
+            );
+            await loopback(rLoopback.req, rLoopback.res);
+            expect(rLoopback.getStatus(), `loopback, mode ${mode}`).toBe(SERVED.status);
+
+            const lan = plainHandler(mode, { securePort: 8443 });
+            const rLan = makeReqRes(
+                'GET',
+                '/',
+                undefined,
+                { host: '192.168.86.50:8000' },
+                { remoteAddress: '192.168.86.50' },
+            );
+            await lan(rLan.req, rLan.res);
+            const expected = lanOutcome[mode];
+            expect(rLan.getStatus(), `LAN, mode ${mode}`).toBe(expected?.status);
+            if (expected?.location) {
+                expect(rLan.getHeader('location'), `LAN, mode ${mode}`).toBe(expected.location);
+            }
         }
     });
 
@@ -119,20 +152,26 @@ describe('plain-HTTP listener under each exposure mode', () => {
     // no HTTPS listener to refuse toward or redirect toward. Every mode must
     // serve, or the setting locks the user out of the only listener that
     // exists -- including the one that hosts the Settings page to undo it.
+    //
+    // Pairs with "refuses a LAN caller in httpsOnly" above (same mode, same
+    // LAN Host, WITH a secure entry -> 421): deleting either the whole
+    // exposure block or just the no-secure-entry fail-open collapses this
+    // test to the SAME 200 either way, but pairing it against the
+    // with-secure-entry case is what proves the mode itself still narrows
+    // when there IS something to narrow toward.
     it('serves a LAN caller in httpsOnly when there is no secure server entry', async () => {
-        const { handler, findSpy } = plainHandler('httpsOnly', { noSecureEntry: true });
+        const h = plainHandler('httpsOnly', { noSecureEntry: true });
         const r = makeReqRes('GET', '/', undefined, { host: '192.168.86.50:8000' }, { remoteAddress: '192.168.86.50' });
-        await handler(r.req, r.res);
+        await h(r.req, r.res);
         expect(r.getStatus()).toBe(SERVED.status);
-        expect(findSpy).toHaveBeenCalled();
     });
 
+    // Pairs with "redirects a LAN caller in redirect mode" above the same way.
     it('serves a LAN caller in redirect when there is no secure server entry', async () => {
-        const { handler, findSpy } = plainHandler('redirect', { noSecureEntry: true });
+        const h = plainHandler('redirect', { noSecureEntry: true });
         const r = makeReqRes('GET', '/', undefined, { host: '192.168.86.50:8000' }, { remoteAddress: '192.168.86.50' });
-        await handler(r.req, r.res);
+        await h(r.req, r.res);
         expect(r.getStatus()).toBe(SERVED.status);
-        expect(findSpy).toHaveBeenCalled();
     });
 
     // C1 (Critical, from review): the OLD charset-only check accepted any
@@ -145,9 +184,11 @@ describe('plain-HTTP listener under each exposure mode', () => {
     // entangled with that downstream gate). What this test pins at the
     // full-handler level: no Location is ever emitted, and the final
     // response is the SPECIFIC 403 the shared Host policy produces, not some
-    // other failure that happens to also not be 302.
+    // other failure that happens to also not be 302. It also pairs with
+    // "redirects a LAN caller in redirect mode" above: same mode, a
+    // disallowed Host instead of an allowed one -> no Location instead of one.
     it('never redirects to a disallowed Host, and the request is independently refused', async () => {
-        const { handler, findSpy } = plainHandler('redirect', { securePort: 8443 });
+        const h = plainHandler('redirect', { securePort: 8443 });
         const r = makeReqRes(
             'GET',
             '/',
@@ -155,15 +196,14 @@ describe('plain-HTTP listener under each exposure mode', () => {
             { host: 'evil.example.com/\r\nSet-Cookie:%20pwned=1' },
             { remoteAddress: '192.168.86.50' },
         );
-        await handler(r.req, r.res);
+        await h(r.req, r.res);
         expect(r.getHeader('location')).toBeUndefined();
         expect(r.getStatus()).toBe(403);
         expect(r.getJson()).toMatchObject({ error: 'forbidden', reason: 'host not allowed (possible DNS rebinding)' });
-        expect(findSpy).toHaveBeenCalled();
     });
 
     it('strips a port from Host and preserves path+query in the redirect target', async () => {
-        const { handler, findSpy } = plainHandler('redirect', { securePort: 9443 });
+        const h = plainHandler('redirect', { securePort: 9443 });
         const r = makeReqRes(
             'GET',
             '/foo?bar=1',
@@ -171,10 +211,9 @@ describe('plain-HTTP listener under each exposure mode', () => {
             { host: '192.168.86.50:8000' },
             { remoteAddress: '192.168.86.50' },
         );
-        await handler(r.req, r.res);
+        await h(r.req, r.res);
         expect(r.getStatus()).toBe(302);
         expect(r.getHeader('location')).toBe('https://192.168.86.50:9443/foo?bar=1');
-        expect(findSpy).toHaveBeenCalled();
     });
 });
 
