@@ -24,6 +24,30 @@ export function getArch(): 'x64' | 'arm64' {
 /** The release we vendor. Bump deliberately: it is trust material. */
 export const MKCERT_VERSION = 'v1.4.4-bt.2';
 
+/**
+ * SHA-256 of `mkcert-v1.4.4-bt.2-SHA256SUMS.txt` ITSELF -- not any of the
+ * seven platform binaries the manifest lists.
+ *
+ * Without this, the manifest and the binary we check against it both come
+ * from the same GitHub release: that catches a corrupted download, but not
+ * a tampered release, because anyone who could alter one could alter the
+ * other. Pinning the manifest's own digest here moves the trust anchor into
+ * OUR source -- an attacker would have to modify this file too, and that
+ * modification shows up in a diff. One constant covers every platform,
+ * because the manifest covers every platform; a version bump touches only
+ * this line (and `MKCERT_VERSION` above), which is why they sit together.
+ *
+ * Fetched fresh and computed independently (never copied from a chat
+ * message, a PR description, or anything else that could itself be wrong or
+ * tampered with) via `sha256sum` against the real release asset, then
+ * cross-checked against the mkcert fork's own Sigstore build-provenance
+ * attestation for this exact tag (`gh attestation verify`, subject digest
+ * for `mkcert-v1.4.4-bt.2-SHA256SUMS.txt`) -- both agree. Update this
+ * DELIBERATELY, by the same two-step process, whenever `MKCERT_VERSION`
+ * bumps; never guess or reuse an old value.
+ */
+export const MKCERT_SHA256SUMS_PIN = 'd8cac61cd58e78b77ad889cacbad64e7f6c23179b1e9a94c1ed45a9d16a8589d';
+
 export function mkcertExeName(): string {
     return os.platform() === 'win32' ? 'mkcert.exe' : 'mkcert';
 }
