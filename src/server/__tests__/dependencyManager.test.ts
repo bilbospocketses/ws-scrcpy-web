@@ -5,7 +5,7 @@ import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DependencyStatus } from '../../common/DependencyTypes';
 import { mkcertAssetName, mkcertExeName } from '../DependencyDefinitions';
-import { DependencyManager, getDependencyManager } from '../DependencyManager';
+import { DependencyManager, getDependencyManager, makeUpdateTmpDir } from '../DependencyManager';
 
 describe('DependencyManager', () => {
     it('initializes with all dependencies in unknown state', async () => {
@@ -205,6 +205,41 @@ describe('DependencyManager.update("mkcert") — checksum verification (I8)', ()
         expect(result.success).toBe(false);
         expect(result.errorMessage).toMatch(/checksum manifest fetch failed/i);
     });
+
+    it('two concurrent installs of the SAME dependency both succeed rather than one seeing a spurious mismatch (N7)', async () => {
+        // An end-to-end demonstration on top of the deterministic
+        // makeUpdateTmpDir unit tests below: real concurrent update() calls
+        // for the same name, both against a matching checksum, must BOTH
+        // succeed. A tmpDir collision would make (at least) one of them race
+        // the other's `using`-scoped cleanup and fail with a spurious
+        // "checksum mismatch".
+        const correctHash = createHash('sha256').update(FAKE_BINARY).digest('hex');
+        mockFetch(`${correctHash}  ${assetName}\n`);
+        const mgr = new DependencyManager(tmpDepsDir);
+        mgr.getByName('mkcert')!.latestVersion = version;
+
+        const [first, second] = await Promise.all([mgr.update('mkcert'), mgr.update('mkcert')]);
+
+        expect(first.success).toBe(true);
+        expect(second.success).toBe(true);
+    });
+});
+
+describe('makeUpdateTmpDir (N7)', () => {
+    it('never produces the same path twice for the same name, even called back-to-back synchronously', () => {
+        // The historical bug was keying this on Date.now() alone, which two
+        // calls landing in the same millisecond (Node's clock resolution is
+        // coarser than its event loop) could produce identically. Calling it
+        // twice with nothing in between is the deterministic version of that
+        // race -- no reliance on real timing luck to reproduce it.
+        const a = makeUpdateTmpDir('mkcert');
+        const b = makeUpdateTmpDir('mkcert');
+        expect(a).not.toBe(b);
+    });
+
+    it('still contains the dependency name, for a diagnosable path', () => {
+        expect(makeUpdateTmpDir('mkcert')).toContain('update-mkcert-');
+    });
 });
 
 describe('DependencyManager.autoInstallMissing — mkcert defers to first use (M2)', () => {
@@ -231,10 +266,22 @@ describe('DependencyManager.autoInstallMissing — mkcert defers to first use (M
 });
 
 describe('getDependencyManager (composition-root singleton)', () => {
-    it('returns the SAME instance across calls, so boot and an on-demand mkcert install share one state', () => {
-        const a = getDependencyManager({ dependenciesPath: '/tmp/test-deps-singleton' });
-        const b = getDependencyManager({ dependenciesPath: '/tmp/a-different-path-does-not-matter-once-memoized' });
+    // Order matters within this describe block: both tests share the SAME
+    // module-scoped singleton (there is no reset hook, deliberately -- a
+    // reset would defeat the point of a composition-root singleton). The
+    // first test's call is what seeds it for the second.
+    it('returns the SAME instance across calls with the SAME config, so boot and an on-demand mkcert install share one state', () => {
+        const opts = { dependenciesPath: '/tmp/test-deps-singleton-same' };
+        const a = getDependencyManager(opts);
+        const b = getDependencyManager(opts);
         expect(b).toBe(a);
+    });
+
+    it('throws on a mismatched second call rather than silently handing back a manager configured for someone else (N6)', () => {
+        // The singleton is already seeded (with '/tmp/test-deps-singleton-same'
+        // from the test above) by the time this runs -- a DIFFERENT
+        // dependenciesPath here must be refused, not silently accepted.
+        expect(() => getDependencyManager({ dependenciesPath: '/tmp/test-deps-singleton-DIFFERENT' })).toThrow();
     });
 });
 
