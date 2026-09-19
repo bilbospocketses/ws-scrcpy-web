@@ -222,6 +222,14 @@ export interface LocalHttpsPanelDeps {
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const EXPIRY_WARNING_DAYS = 30;
 
+// This repo's established convention for transient save/status feedback: ONE
+// bottom-of-panel alert, never scattered inline next to whichever control
+// caused it (a user who just clicked something looks in one place for the
+// result). Success auto-hides sooner than an error, which may need reading
+// and acting on.
+const TRANSIENT_ALERT_SUCCESS_MS = 5_000;
+const TRANSIENT_ALERT_ERROR_MS = 10_000;
+
 /** Notification 4: the cert's IP subject no longer matches any local interface. */
 export function certSubjectMismatchNotice(state: TlsCertState, candidateIps: string[]): string | null {
     if (state.status !== 'ready' || state.kind !== 'ip' || !state.subject) return null;
@@ -320,6 +328,16 @@ async function fetchTlsState(fetchFn: typeof fetch): Promise<TlsCertState> {
  *   chance a later task adds it, and renders whatever comes back (including a
  *   graceful "not supported yet" for the 404 every build without that route
  *   returns) rather than silently doing nothing on click.
+ *
+ * Every notice in here is one of two kinds, and each renders differently
+ * (this repo's convention -- see TRANSIENT_ALERT_*_MS above):
+ * - TRANSIENT OUTCOMES (a generate/download/exposure-save result) -- one
+ *   shared alert at the bottom of this panel, auto-hiding after 5s/10s.
+ * - PERSISTENT CONDITIONS and PRE-ACTION WARNINGS (notifications 2-9 from the
+ *   spec table) -- rendered in place, beside the control they describe, and
+ *   stay up for exactly as long as the condition holds (2/3/4/8/9) or until
+ *   the choice is made (5/6/7). A toast is wrong for these: nobody wants a
+ *   5-second flash for "your certificate expires in three weeks".
  */
 export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<HTMLElement> {
     const initialState = await fetchTlsState(deps.fetchFn);
@@ -415,16 +433,8 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
     generateBtn.type = 'button';
     generateBtn.className = 'settings-btn settings-btn-primary';
     generateBtn.textContent = 'generate';
+    generateBtn.setAttribute('data-tls-generate', '');
     body.appendChild(buildRow('certificate', generateBtn));
-
-    const generateStatus = buildNoticeRow();
-    body.appendChild(generateStatus);
-
-    const allowedHostAddedNotice = document.createElement('p');
-    allowedHostAddedNotice.className = 'settings-status';
-    allowedHostAddedNotice.style.gridColumn = '1 / -1';
-    allowedHostAddedNotice.hidden = true;
-    body.appendChild(allowedHostAddedNotice);
 
     // ---- current-certificate summary + notifications 3, 4, 8, 9 ----
     const certSummary = document.createElement('p');
@@ -448,10 +458,8 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
     downloadBtn.type = 'button';
     downloadBtn.className = 'settings-btn';
     downloadBtn.textContent = 'download ca certificate';
+    downloadBtn.setAttribute('data-tls-download', '');
     body.appendChild(buildRow('root ca', downloadBtn));
-
-    const downloadStatus = buildNoticeRow();
-    body.appendChild(downloadStatus);
 
     const details = document.createElement('details');
     const summary = document.createElement('summary');
@@ -505,20 +513,45 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
         setNotice(expiryNotice, certExpiryNotice(state, new Date()));
     }
 
-    function setAllowedHostAddedNotice(subject: string | undefined): void {
-        allowedHostAddedNotice.textContent = '';
-        if (!subject) {
-            allowedHostAddedNotice.hidden = true;
-            return;
+    // One shared bottom-of-panel alert for every transient outcome (generate
+    // succeeded/failed, CA download succeeded/failed, exposure save
+    // succeeded/failed) -- see the class doc above for why this is one
+    // element rather than a status line per button.
+    const transientAlert = document.createElement('p');
+    transientAlert.className = 'settings-status';
+    transientAlert.style.gridColumn = '1 / -1';
+    transientAlert.setAttribute('data-tls-alert', '');
+    transientAlert.hidden = true;
+    let transientAlertTimer: ReturnType<typeof setTimeout> | null = null;
+
+    /**
+     * `parts` are text nodes, or `{ echo }` for a value round-tripped from the
+     * server (the generated subject) -- appended via a `<span>.textContent`
+     * exactly like `renderCertState`'s subject span, never string
+     * interpolation into markup.
+     */
+    function showTransientAlert(kind: 'success' | 'error', ...parts: Array<string | { echo: string }>): void {
+        transientAlert.textContent = '';
+        for (const part of parts) {
+            if (typeof part === 'string') {
+                transientAlert.appendChild(document.createTextNode(part));
+            } else {
+                const span = document.createElement('span');
+                span.textContent = part.echo;
+                transientAlert.appendChild(span);
+            }
         }
-        allowedHostAddedNotice.appendChild(document.createTextNode('added '));
-        const span = document.createElement('span');
-        span.textContent = subject;
-        allowedHostAddedNotice.appendChild(span);
-        allowedHostAddedNotice.appendChild(
-            document.createTextNode(' to allowedHosts so the server will answer to that name.'),
+        transientAlert.hidden = false;
+        transientAlert.classList.toggle('settings-status-error', kind === 'error');
+        transientAlert.classList.toggle('settings-status-ready', kind === 'success');
+        if (transientAlertTimer !== null) clearTimeout(transientAlertTimer);
+        transientAlertTimer = setTimeout(
+            () => {
+                transientAlert.hidden = true;
+                transientAlertTimer = null;
+            },
+            kind === 'success' ? TRANSIENT_ALERT_SUCCESS_MS : TRANSIENT_ALERT_ERROR_MS,
         );
-        allowedHostAddedNotice.hidden = false;
     }
 
     generateBtn.addEventListener('click', () => {
@@ -526,14 +559,12 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
             const kind: 'ip' | 'hostname' = hostRadio.checked ? 'hostname' : 'ip';
             const value = subjectInput.value.trim();
             if (!value) {
-                setNotice(generateStatus, 'enter an ip address or hostname first.');
+                showTransientAlert('error', 'enter an ip address or hostname first.');
                 return;
             }
             generateBtn.disabled = true;
             const prevText = generateBtn.textContent;
             generateBtn.textContent = 'generating…';
-            setNotice(generateStatus, null);
-            setAllowedHostAddedNotice(undefined);
             try {
                 const res = await deps.fetchFn('/api/tls/generate', {
                     method: 'POST',
@@ -544,16 +575,27 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
                     | (TlsCertState & { allowedHostAdded?: boolean; error?: string })
                     | null;
                 if (!res.ok || !data) {
-                    setNotice(generateStatus, data?.error ?? 'that address could not be used for a certificate.');
+                    showTransientAlert('error', data?.error ?? 'that address could not be used for a certificate.');
                     return;
                 }
                 currentState = data;
                 renderCertState(currentState);
-                if (data.allowedHostAdded) {
-                    setAllowedHostAddedNotice(data.subject);
+                // Resolved Decision 2: state the allowedHosts edit plainly
+                // rather than mutate it silently. This is a one-time outcome
+                // of THIS generate, not a standing condition, so it belongs in
+                // the transient alert, not a persistent in-panel notice.
+                if (data.allowedHostAdded && data.subject) {
+                    showTransientAlert(
+                        'success',
+                        'certificate generated. added ',
+                        { echo: data.subject },
+                        ' to allowedHosts so the server will answer to that name.',
+                    );
+                } else {
+                    showTransientAlert('success', 'certificate generated.');
                 }
             } catch {
-                setNotice(generateStatus, 'could not reach the server.');
+                showTransientAlert('error', 'could not reach the server.');
             } finally {
                 generateBtn.disabled = false;
                 generateBtn.textContent = prevText;
@@ -564,7 +606,6 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
     downloadBtn.addEventListener('click', () => {
         void (async () => {
             downloadBtn.disabled = true;
-            setNotice(downloadStatus, null);
             try {
                 const res = await deps.fetchFn('/api/tls/ca-root');
                 if (!res.ok) {
@@ -572,7 +613,10 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
                     // `{ error }` -- TlsApi.ts is the source of truth for the
                     // shape, read here rather than assumed.
                     const data = (await res.json().catch(() => null)) as { error?: string } | null;
-                    setNotice(downloadStatus, data?.error ?? `could not download the ca certificate (${res.status}).`);
+                    showTransientAlert(
+                        'error',
+                        data?.error ?? `could not download the ca certificate (${res.status}).`,
+                    );
                     return;
                 }
                 const blob = await res.blob();
@@ -585,8 +629,9 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
                 } finally {
                     URL.revokeObjectURL(url);
                 }
+                showTransientAlert('success', 'ca certificate downloaded.');
             } catch {
-                setNotice(downloadStatus, 'could not reach the server.');
+                showTransientAlert('error', 'could not reach the server.');
             } finally {
                 downloadBtn.disabled = currentState.caPresent === false;
             }
@@ -620,6 +665,7 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
     okBtn.type = 'button';
     okBtn.className = 'settings-btn settings-btn-primary';
     okBtn.textContent = 'ok';
+    okBtn.setAttribute('data-exposure-ok', '');
     exposureFrag.appendChild(okBtn);
     body.appendChild(buildRow('plain http exposure', exposureFrag));
 
@@ -627,8 +673,6 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
     body.appendChild(exposureLockoutNotice);
     const exposureRestartNotice = buildNoticeRow();
     body.appendChild(exposureRestartNotice);
-    const exposureSaveStatus = buildNoticeRow();
-    body.appendChild(exposureSaveStatus);
 
     for (const radio of exposureRadios) {
         // 'click', not 'change' -- see the subject radios' listeners above for why.
@@ -654,7 +698,6 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
         void (async () => {
             const mode = exposureRadios.find((r) => r.checked)?.value ?? 'open';
             okBtn.disabled = true;
-            setNotice(exposureSaveStatus, null);
             try {
                 // NOT WIRED (see the class doc): no task in this plan adds this
                 // route. Calling it anyway means a build that DOES add it later
@@ -667,23 +710,25 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
                 });
                 if (!res.ok) {
                     if (res.status === 404) {
-                        setNotice(exposureSaveStatus, 'this server does not support saving this setting yet.');
+                        showTransientAlert('error', 'this server does not support saving this setting yet.');
                         return;
                     }
                     const data = (await res.json().catch(() => null)) as { error?: string } | null;
-                    setNotice(
-                        exposureSaveStatus,
-                        data?.error ?? `could not change plain-http exposure (${res.status}).`,
-                    );
+                    showTransientAlert('error', data?.error ?? `could not change plain-http exposure (${res.status}).`);
                     return;
                 }
+                showTransientAlert('success', 'plain-http exposure updated.');
             } catch {
-                setNotice(exposureSaveStatus, 'could not reach the server.');
+                showTransientAlert('error', 'could not reach the server.');
             } finally {
                 okBtn.disabled = false;
             }
         })();
     });
+
+    // Bottom-of-panel: appended LAST so it always sits below every control,
+    // per this repo's convention for transient outcomes (see the class doc).
+    body.appendChild(transientAlert);
 
     renderCertState(initialState);
     return section;
