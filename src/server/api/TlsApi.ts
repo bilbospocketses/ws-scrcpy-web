@@ -106,24 +106,25 @@ export interface HttpsListenerField {
  * reports the real port and no reason at all, regardless of what config or
  * cert state would otherwise imply.
  *
- * Among the not-bound cases, precedence (team-lead's explicit ordering) is
- * `config-override` > `port-collision` > `bind-failed` > `restart-required`:
- * report the condition a restart will NOT fix first, since that is where the
- * user's next action differs most -- `config-override` and `port-collision`
- * need a config.json edit no restart will ever fix; `bind-failed` MIGHT clear
- * on its own if whatever held the port is gone by the next restart;
- * `restart-required` (the ordinary case -- a usable certificate exists,
- * nothing else explains the gap) WILL be fixed by one, deterministically. No
- * certificate and nothing else applicable reports no reason at all --
- * "regenerate" is the wrong remedy for every one of these, which is the whole
- * point of this field existing.
+ * Among the not-bound cases, precedence is `bind-failed` > `config-override`
+ * > `port-collision` > `restart-required`. This was briefly inverted (report
+ * the condition a restart will NOT fix first) and reverted at N3 (re-review):
+ * that rationale is wrong, because `bind-failed` and `advancedConfig` CAN
+ * co-occur -- a user's own advanced `server` array can contain a secure entry
+ * that fails to bind, and reporting `'config-override'` for that case is true
+ * but misdiagnostic, since the actionable fact is the bind failure, not the
+ * array's mere presence. The correct principle: an OBSERVED bind failure is a
+ * FACT; the other three (`config-override`, `port-collision`,
+ * `restart-required`) are INFERENCES about why no entry is live. A fact
+ * outranks an inference, so `bind-failed` goes first regardless of what else
+ * is also true. No certificate and nothing else applicable reports no reason
+ * at all -- "regenerate" is the wrong remedy for every one of these, which is
+ * the whole point of this field existing.
  *
- * Note: in the real implementation `bind-failed` and
- * {`config-override`, `port-collision`} cannot co-occur -- a bind failure
- * presupposes `Config.servers` HAS a secure entry, while both of the other
- * two mean no such entry was ever added. The precedence above is exercised
- * (correctly) only by contrived test inputs; it exists for the case reality
- * never produces, not because reality needs it.
+ * `config-override` and `port-collision` themselves cannot co-occur with each
+ * other (both mean "no secure entry exists in Config.servers", for mutually
+ * exclusive reasons), but EITHER can co-occur with `bind-failed`, which is
+ * why the ordering matters and is tested against exactly that input below.
  */
 export function buildHttpsListenerField(
     listenerStatus: { listening: boolean; boundPort?: number; bindFailed: boolean },
@@ -135,9 +136,9 @@ export function buildHttpsListenerField(
             ? { bound: true }
             : { bound: true, port: listenerStatus.boundPort };
     }
+    if (listenerStatus.bindFailed) return { bound: false, reason: 'bind-failed' };
     if (configSnapshot.advancedConfig) return { bound: false, reason: 'config-override' };
     if (configSnapshot.portCollision) return { bound: false, reason: 'port-collision' };
-    if (listenerStatus.bindFailed) return { bound: false, reason: 'bind-failed' };
     if (certReady) return { bound: false, reason: 'restart-required' };
     return { bound: false };
 }
@@ -198,6 +199,12 @@ export class TlsApi {
                 // `readHttpsConfigSnapshot()` reads the two Config facts that
                 // tell the four states apart; `buildHttpsListenerField`
                 // combines them into the exact contract below.
+                //
+                // STANDING RULE (re-review, after candidateIps and this field
+                // both had to be added a second time to `/generate` below):
+                // any field the panel branches on must be present on EVERY
+                // response that could change what it should show, not just
+                // the one this task happened to be about.
                 const certState = svc.getState();
                 const httpsStatus = getHttpsListenerStatus();
                 const httpsSnapshot = readHttpsConfigSnapshot();
@@ -347,8 +354,29 @@ export class TlsApi {
                 // SUCCESSFUL generate for the user's own current LAN IP --
                 // whose suggested remedy (regenerate) deletes the CA every
                 // device on the network already trusts.
+                //
+                // C1 (re-review): httpsListener too, from the SAME builder
+                // GET /api/tls/state uses -- the panel never re-fetches
+                // /state after a generate, so this is the ONLY response it
+                // reads that could tell it the listener is not live yet.
+                // RULE: any field the panel branches on must be present on
+                // every response that could change what it should show. A
+                // generate changes listener state (a fresh certificate has
+                // no bound listener until a restart); a response reporting
+                // one must carry it, exactly like candidateIps above.
                 res.writeHead(200);
-                res.end(JSON.stringify({ ...state, allowedHostAdded, candidateIps: this.getCandidateIps() }));
+                res.end(
+                    JSON.stringify({
+                        ...state,
+                        allowedHostAdded,
+                        candidateIps: this.getCandidateIps(),
+                        httpsListener: buildHttpsListenerField(
+                            getHttpsListenerStatus(),
+                            readHttpsConfigSnapshot(),
+                            state.status === 'ready',
+                        ),
+                    }),
+                );
                 return true;
             }
 

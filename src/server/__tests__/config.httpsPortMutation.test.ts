@@ -85,6 +85,28 @@ describe('Config.setHttpsPort (task 11)', () => {
         expect(cfg.servers).toBe(serversBefore);
         expect(readConfig(configPath)['httpsPort']).toBe(9999);
     });
+
+    // N8 (Minor, re-review): httpsPort used to be resolved once at boot and
+    // never updated, so between a port save and the restart a second later
+    // (or indefinitely under a non-supervised run) `/api/tls/state` reported
+    // the OLD value. `Config.httpsPort` is the CONFIGURED value, not the
+    // bound one -- httpsListener.bound/port already carries "not yet live" --
+    // so there is no reason for the getter to lag behind the write that just
+    // happened in this same process.
+    it('httpsPort getter reflects the new value immediately after setHttpsPort, unlike cfg.servers (paired with the test above)', () => {
+        setup({ ...BOOT, httpsPort: 8443 });
+        const cfg = Config.getInstance();
+        expect(cfg.httpsPort).toBe(8443);
+
+        cfg.setHttpsPort(9999);
+
+        // Contrast with the "does not apply live" test above: cfg.servers is
+        // UNCHANGED (no listener rebind), but cfg.httpsPort -- the CONFIGURED
+        // value the panel prefills from -- IS updated. A version that left
+        // httpsPort stale would fail only this assertion; a version that
+        // also rebuilt cfg.servers would fail the sibling test instead.
+        expect(cfg.httpsPort).toBe(9999);
+    });
 });
 
 // C1 (Critical, whole-branch review): /api/tls/state needs enough to tell
