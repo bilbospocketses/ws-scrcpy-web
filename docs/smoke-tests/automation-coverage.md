@@ -7,9 +7,10 @@ canonical list of rows and their steps.
 
 Derived from `smoke-test.md` at `v0.1.30-beta.92`, which held **140 rows**; item 63
 (the Linux tray, 2026-09-06) added 14.8 and 14.9, item 114 (the tray's Exit, same
-day) added 15.6, item 24 (live rotation, 2026-09-15) added 8.10 and 8.11, and
-item 73 (wireless pairing, 2026-09-15) added 7.6 and 7.7, so the doc holds **147**.
-Row ids are stable and gappy; so are the lines here.
+day) added 15.6, item 24 (live rotation, 2026-09-15) added 8.10 and 8.11, item 73
+(wireless pairing, 2026-09-15) added 7.6 and 7.7 (147), and the 2026-09-19
+local-https plan's task 9 added Module 21 — 21.1 through 21.4 — so the doc holds
+**151**. Row ids are stable and gappy; so are the lines here.
 
 | | Rows | Where |
 |---|---|---|
@@ -19,19 +20,24 @@ Row ids are stable and gappy; so are the lines here.
 | Windows guest | 26 | qa-harness, nightly, once P4 lands |
 | Windows guest **and** Linux residual | 2 | Windows half P4; Linux half nobody |
 | Automatable, no spec written yet | 2 | — (8.10 / 8.11, item 24's rotation rows; the six of 2026-09-04 were written 2026-09-06, item 104) |
+| Automated, manual/conditional | 1 | 21.1 — `tests/e2e/local-https.spec.ts` exists and proves the row, but `test.skip`s unless a person points `QA_LAN_HTTPS_ORIGIN` at a real, non-loopback LAN origin serving a generated certificate. No CI run sets that, so it never contributes to "automated today" below. |
 | **Residual — Linux installer and desktop** | **50** | nobody (14.8 / 14.9 are assertable by qa-harness item 14's Linux guests) |
-| **Residual — un-automatable** | **7** | nobody, ever |
-| **Total** | **147** | |
+| **Residual — un-automatable** | **10** | nobody, ever |
+| **Total** | **151** | |
 
-**Automated today: 58 of 147 = 39 %.** After P4: 84 of 147 = 57 %, plus the
+**Automated today: 58 of 151 = 38 %.** After P4: 84 of 151 = 56 %, plus the
 Windows halves of the two split rows. (52 / 37 % and 77 / 55 % until 2026-09-06,
 when item 104 wrote the six specs this table used to list as "automatable, no
 spec"; the denominator was 140 until item 63 added the two tray rows and item 114
-added 15.6, 143 until item 24 added 8.10 and 8.11 on 2026-09-15, and 145 until the
-same day's item 73 added 7.6 and 7.7 — the percentages fell again because pairing
-needs a real phone with its pairing screen open, which no phase of this stack
-builds, so both rows land in the un-automatable bucket rather than adding
-coverage.)
+added 15.6, 143 until item 24 added 8.10 and 8.11 on 2026-09-15, 147 once item 73
+added 7.6 and 7.7 the same day — the percentages fell again because pairing needs
+a real phone with its pairing screen open, which no phase of this stack builds,
+so both rows land in the un-automatable bucket rather than adding coverage — and
+151 once task 9 added Module 21: the numerator does NOT move, because 21.1's spec
+is real but conditional (manual/conditional, not automated — recording a
+skip-by-default spec as coverage would be the documentation equivalent of a false
+green) and 21.2-21.4 need a second real LAN machine nothing in this stack
+provides.)
 
 Three different row counts have been quoted for this document, and only one of them
 is wrong. The plan that commissioned this register worked from **127**, which was
@@ -84,6 +90,13 @@ Buckets, once each, no row in two:
 - **residual: linux-desktop** — blocked on a Linux desktop that no phase builds.
 - **residual: un-automatable** — blocked on hardware, on an app defect, or on a
   product decision nobody has taken.
+- **manual/conditional** — a real spec exists under `tests/e2e/`, and it genuinely
+  proves the row when it runs, but it `test.skip`s by default because it needs a
+  real environment nothing in this stack provisions (here: a second machine's LAN
+  origin, with `QA_LAN_HTTPS_ORIGIN` naming it). No CI run sets that, so the spec
+  never runs unattended and never counts toward "automated today" — the distinction
+  from **residual: un-automatable** is that a person CAN run it by hand, on demand,
+  against a real setup, where the residual bucket cannot be run at all.
 
 ## Every row
 
@@ -238,6 +251,10 @@ Sorted by module, then by row number, which is not the doc's execution order.
 | 20.11 | `[Both]` | Persistence across `docker rm` + re-run | container | `container-lifecycle.spec.ts` `@docker-host`, **CI only**. `compose rm --stop` then `up --wait` on the same volume: dependencies present at once (no second hydrate in the log), the store's rows identical, the log appended rather than replaced, `config.json` byte-identical when present, no prompt over the second boot's home page. |
 | 20.12 | `[Both]` | Graceful `docker stop` | container | `container-lifecycle.spec.ts` `@docker-host`, **CI only**. `docker stop` returns inside docker's 10 s grace with exit 0 (143/137 are the failures), and the log on the volume carries `Stopping adb daemon (kill-server)`. |
 | 20.13 | `[Both]` | `HEALTHCHECK` healthy | container | `tests/e2e/support/dockerStack.ts` — `composeUpFresh` brings the stack up with `--wait`, which refuses to proceed unless the image reports healthy. |
+| 21.1 | `[Both]` | Generate a certificate for this machine's LAN IP, restart, then stream from another machine over the generated HTTPS origin | manual/conditional | `tests/e2e/local-https.spec.ts`'s default tests prove the secure-context + WebCodecs half against a real, already-generated, already-restarted certificate — `isSecureContext`, `VideoDecoder` and an `isConfigSupported` h264 check, each contrasted against the same LAN address over plain http — but `test.skip`s unless `QA_LAN_HTTPS_ORIGIN` names a non-loopback LAN origin; it FAILS rather than skips if that origin is loopback (`http://localhost` is a secure context on its own and would prove nothing). They deliberately never click generate (it deletes the installed CA — see 21.2); a separate opt-in test in the same file, gated behind `QA_LAN_HTTPS_ALLOW_REGENERATE`, covers the generate click and its destructive consequence instead. The "restart, then stream from another machine" half is not driven by the spec and stays manual. |
+| 21.2 | `[Both]` | Install the CA on a second machine and confirm the browser's untrusted-certificate warning disappears | residual: un-automatable | Needs a second machine's real browser chrome — the actual warning banner, the OS certificate store, the per-OS install dialog Settings → Server → Local HTTPS links to. Nothing this stack builds renders that. |
+| 21.3 | `[Both]` | Each plain-http exposure mode (open / https only / redirect), including that `localhost` on this machine still answers in every mode | residual: un-automatable | Needs a second real machine on the LAN to prove the "other machines stop answering" half of `httpsOnly`/`redirect`. No restart is involved — this mode is re-read fresh on every plain-http request, unlike the https port field — so the only blocker is the second network client; no phase builds one outside the emulator's own host. |
+| 21.4 | `[Both]` | The DHCP-moved-IP mismatch notice (`certSubjectMismatchNotice`) | residual: un-automatable | Needs this machine's own real IP address to change mid-session (a DHCP lease actually moving, or a manual reassignment) — nothing in this stack renegotiates its own network address to order. |
 
 ---
 
@@ -434,7 +451,7 @@ precisely the ones no container will ever reach, which is what makes it a *deskt
 phase rather than a container with systemd in it. Recorded as a recommendation, not
 scheduled: P0–P6 are not being widened here.
 
-The remaining 7 are un-automatable, though not all for the same kind of reason, and
+The remaining 10 are un-automatable, though not all for the same kind of reason, and
 the distinction matters to anyone deciding what to fix:
 
 - **Hardware that does not exist here.** 7.3 (USB, barred by the wireless-only lock)
@@ -443,6 +460,13 @@ the distinction matters to anyone deciding what to fix:
 - **A capability the Linux runner lacks.** 8.7 needs a browser that decodes H.265 in
   order to observe one being *offered*, and no browser in this runner does (finding
   8.11).
+- **A second real machine, which nothing in this stack provides.** 21.2 (a second
+  browser's own certificate-trust chrome), 21.3 (a second network client to prove
+  the other-machines-stop-answering half of `httpsOnly`/`redirect`) and 21.4 (this
+  machine's own IP actually changing under it, e.g. a DHCP lease moving). None of
+  these are Linux-desktop rows — 21.1's own secure-context half already has a real
+  spec (`local-https.spec.ts`), just a conditional one; see the manual/conditional
+  bucket above.
 - **An app defect, not a testing limit.** 7.5's enrichment lives on a route the UI
   never calls (register finding 7.6). It becomes an ordinary device row the day
   that is fixed.

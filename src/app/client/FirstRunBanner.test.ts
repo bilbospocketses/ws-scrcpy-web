@@ -15,6 +15,35 @@ const dep = (displayName: string): DependencyInfo => ({
     canUpdate: false,
 });
 
+/**
+ * The banner's whole purpose is "first-run setup did not finish". A dependency
+ * fetched on first use has not failed and is not pending, but it does sit in
+ * `installedVersion === null` + status `Unknown` for as long as nobody needs
+ * it -- which is exactly what this filter used to key on. mkcert made that
+ * permanent for every user.
+ *
+ * The two cases are a pair on purpose: same null version, same Unknown status,
+ * one differing field, opposite expectations. A fix that simply stopped
+ * treating `Unknown` as pending would pass the first and fail the second.
+ */
+describe('FirstRunBanner and a dependency fetched on first use', () => {
+    const unknownAndAbsent = (over: Partial<DependencyInfo>): DependencyInfo => ({
+        ...dep('mkcert'),
+        status: DependencyStatus.Unknown,
+        ...over,
+    });
+
+    it('does not report a deferred dependency as pending setup', () => {
+        const pending = (FirstRunBanner as any).pendingDeps([unknownAndAbsent({ deferInstall: true })]);
+        expect(pending).toEqual([]);
+    });
+
+    it('still reports one that should have installed at boot', () => {
+        const pending = (FirstRunBanner as any).pendingDeps([unknownAndAbsent({ name: 'adb', displayName: 'adb' })]);
+        expect(pending).toHaveLength(1);
+    });
+});
+
 describe('FirstRunBanner XSS', () => {
     it('escapes a malicious dependency displayName instead of injecting markup', () => {
         const banner = new FirstRunBanner();

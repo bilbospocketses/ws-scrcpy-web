@@ -21,6 +21,63 @@ export function getArch(): 'x64' | 'arm64' {
     return os.arch() === 'arm64' ? 'arm64' : 'x64';
 }
 
+/** The release we vendor. Bump deliberately: it is trust material. */
+export const MKCERT_VERSION = 'v1.4.4-bt.2';
+
+/**
+ * SHA-256 of `mkcert-v1.4.4-bt.2-SHA256SUMS.txt` ITSELF -- not any of the
+ * seven platform binaries the manifest lists.
+ *
+ * Without this, the manifest and the binary we check against it both come
+ * from the same GitHub release: that catches a corrupted download, but not
+ * a tampered release, because anyone who could alter one could alter the
+ * other. Pinning the manifest's own digest here moves the trust anchor into
+ * OUR source -- an attacker would have to modify this file too, and that
+ * modification shows up in a diff. One constant covers every platform,
+ * because the manifest covers every platform; a version bump touches only
+ * this line (and `MKCERT_VERSION` above), which is why they sit together.
+ *
+ * Fetched fresh and computed independently (never copied from a chat
+ * message, a PR description, or anything else that could itself be wrong or
+ * tampered with) via `sha256sum` against the real release asset, then
+ * cross-checked against the mkcert fork's own Sigstore build-provenance
+ * attestation for this exact tag (`gh attestation verify`, subject digest
+ * for `mkcert-v1.4.4-bt.2-SHA256SUMS.txt`) -- both agree. Update this
+ * DELIBERATELY, by the same two-step process, whenever `MKCERT_VERSION`
+ * bumps; never guess or reuse an old value.
+ */
+export const MKCERT_SHA256SUMS_PIN = 'd8cac61cd58e78b77ad889cacbad64e7f6c23179b1e9a94c1ed45a9d16a8589d';
+
+export function mkcertExeName(): string {
+    return os.platform() === 'win32' ? 'mkcert.exe' : 'mkcert';
+}
+
+/**
+ * Asset naming in bilbospocketses/mkcert releases. Darwin is included because
+ * the matrix publishes it, even though ws-scrcpy-web does not ship macOS yet.
+ */
+export function mkcertAssetName(version: string): string {
+    const plat = os.platform();
+    const arch = os.arch() === 'arm64' ? 'arm64' : 'amd64';
+    if (plat === 'win32') return `mkcert-${version}-windows-${arch}.exe`;
+    if (plat === 'darwin') return `mkcert-${version}-darwin-${arch}`;
+    return `mkcert-${version}-linux-${arch}`;
+}
+
+/**
+ * I8: the fork's release workflow (`.github/workflows/release.yml`) runs
+ * `sha256sum mkcert-*` over every platform asset and publishes the result as
+ * a single manifest per release, named exactly this. One line per asset:
+ * `<64-hex-digest>  <asset filename>`.
+ */
+export function mkcertChecksumsAssetName(version: string): string {
+    return `mkcert-${version}-SHA256SUMS.txt`;
+}
+
+export function mkcertChecksumsUrl(version: string): string {
+    return `https://github.com/bilbospocketses/mkcert/releases/download/${version}/${mkcertChecksumsAssetName(version)}`;
+}
+
 /**
  * Node major version → ABI number (`process.versions.modules`).
  * ABI is stable within a major; it changes only across majors.
@@ -66,6 +123,18 @@ export interface DependencyDefinition {
      * back genuinely works while the lookup is refused.
      */
     fallbackVersion?: string;
+    /**
+     * M2: skip this dependency in `autoInstallMissing()`'s boot-time loop.
+     * The spec is deliberate for mkcert specifically — "fetched on first use
+     * rather than at install time, so a user who never enables HTTPS never
+     * downloads it" — a ~4.5 MB fetch on every fresh boot for a feature the
+     * user may never turn on is a cost with no consent. `checkInstalled` /
+     * `checkLatest` still run at boot (so the dependency panel shows accurate
+     * status); only the DOWNLOAD is deferred. `update(name)` remains directly
+     * callable on demand — see `createCertService.ts`'s lazy-install wrapper
+     * around `run`, which is what actually triggers it on first use.
+     */
+    deferInstall?: boolean;
 }
 
 async function runVersionCommand(exe: string, args: string[], pattern: RegExp): Promise<string | null> {
@@ -208,6 +277,43 @@ export function getDependencyDefinitions(depsPath: string): DependencyDefinition
             getDownloadUrl: (version) => {
                 return `https://github.com/Genymobile/scrcpy/releases/download/v${version}/scrcpy-server-v${version}`;
             },
+        },
+        {
+            name: 'mkcert',
+            displayName: 'mkcert',
+            description: 'Issues the local certificate that lets browsers stream over HTTPS on a LAN',
+            requiresRestart: false,
+            // Our own hardened fork, NOT FiloSottile/mkcert. Upstream has been dormant
+            // since 2024-08 and its last release is from 2022; the fork carries five
+            // dependency bumps, 28 tests where upstream has none, and fixes for four
+            // review findings including an argument-controlled path escape that wrote
+            // outside the working directory and still exited 0.
+            fallbackVersion: MKCERT_VERSION,
+            // M2: fetched on first use (see the field's own doc comment), not at
+            // boot -- this is the highest-consequence binary the app fetches
+            // (it mints a CA the user installs into their OS and phone trust
+            // stores), so a download nobody asked for yet is a cost with no
+            // consent, unlike the other three which the app needs unconditionally.
+            deferInstall: true,
+            checkInstalled: async (depsPath) => {
+                const exe = path.join(depsPath, 'mkcert', mkcertExeName());
+                if (!fs.existsSync(exe)) return null;
+                return runVersionCommand(exe, ['-version'], /v?([\d.]+(?:-bt\.\d+)?)/);
+            },
+            checkLatest: async () => {
+                const res = await fetchOkWithRetry(
+                    'https://api.github.com/repos/bilbospocketses/mkcert/releases/latest',
+                    {
+                        init: { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'ws-scrcpy-web' } },
+                        ...VERSION_CHECK_POLICY,
+                        onRetry: (n) => log.warn(`mkcert latest check ${n.attempt}/${n.attempts}: ${n.reason}`),
+                    },
+                );
+                const data = (await res.json()) as { tag_name?: string };
+                return data.tag_name ?? null;
+            },
+            getDownloadUrl: (version) =>
+                `https://github.com/bilbospocketses/mkcert/releases/download/${version}/${mkcertAssetName(version)}`,
         },
     ];
 }

@@ -458,7 +458,18 @@ test.describe('auth / opt-in login (smoke §18)', () => {
             'Dependencies',
             'Server',
         ]);
-        await expect(sectionHeadings(settings)).toHaveText(['Users', 'Embedding', 'Updates', 'Service', 'Server']);
+        // 'Local HTTPS' is a second section INSIDE the Server tab, which is why
+        // the tab assertion above is unchanged while this one grew. Keeping
+        // both is the point: the tab strip catches a whole tab appearing, this
+        // catches a section appearing, and neither substitutes for the other.
+        await expect(sectionHeadings(settings)).toHaveText([
+            'Users',
+            'Embedding',
+            'Updates',
+            'Service',
+            'Server',
+            'Local HTTPS',
+        ]);
         // Users is the tab the dialog happens to open on for an admin, and the
         // three assertions below are about controls that live in it. Opened
         // explicitly so they stay true if the tab order ever changes — a role
@@ -904,6 +915,9 @@ test.describe('auth / opt-in login (smoke §18)', () => {
                 'Updates',
                 'Service',
                 'Server',
+                // Admin-only, like everything else in this list. The non-admin
+                // assertion earlier in this test is what proves it stays hidden.
+                'Local HTTPS',
             ]);
             // Same explicitness as the user side above: 'manage users' lives in
             // the Users tab, so the contrast is only a contrast with it open.

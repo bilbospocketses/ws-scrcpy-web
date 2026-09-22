@@ -10,9 +10,9 @@ This document covers the internal architecture of ws-scrcpy-web -- a browser-bas
 
 ## Table of Contents
 
-> **On `§NN` in source comments.** This guide has sections **1-27**, and a comment citing one
+> **On `§NN` in source comments.** This guide has sections **1-28**, and a comment citing one
 > in that range means this document -- with the single exception noted below. Comments citing
-> **§28 and above** -- `§30`, `§32`, `§34`, `§36`, `§39`, `§40`, `§49` -- do **not**: they are
+> **§29 and above** -- `§30`, `§32`, `§34`, `§36`, `§39`, `§40`, `§49` -- do **not**: they are
 > historical references to numbered items in the maintainer's internal planning file, which is
 > not part of this repository, and several of those numbers were reassigned or archived as that
 > file evolved. They are left in place because they still carry provenance for the maintainer,
@@ -50,6 +50,7 @@ This document covers the internal architecture of ws-scrcpy-web -- a browser-bas
 25. [Why the Screen Is Black](#25-why-the-screen-is-black)
 26. [Container Image (Docker)](#26-container-image-docker)
 27. [Settings: Tabs, Staged Saves and the Batch Write-Ahead Log](#27-settings-tabs-staged-saves-and-the-batch-write-ahead-log)
+28. [Local HTTPS](#28-local-https)
 
 ---
 
@@ -1040,7 +1041,7 @@ The dependency updater manages runtime dependencies (Node.js + node-pty, ADB, sc
 | `src/server/DependencyManager.ts` | Core logic: version detection, remote checking, download, extract, install, `autoInstallMissing()` first-run bootstrap primitive, never-auto-downgrade in `resolveStatus` |
 | `src/server/api/DependencyApi.ts` | HTTP REST endpoints under `/api/dependencies/` |
 | `src/app/client/DependencyPanel.ts` | Browser-side table UI with status badges and update buttons |
-| `src/app/client/FirstRunBanner.ts` | Home-page banner shown when any managed dep is in `Error` state or `Unknown` with null `installedVersion`. Offers a Retry button for offline-at-first-boot recovery. |
+| `src/app/client/FirstRunBanner.ts` | Home-page banner shown when any managed dep is in `Error` state or `Unknown` with null `installedVersion` — **excluding `deferInstall` deps**, which are absent by design until first use rather than pending. Offers a Retry button for offline-at-first-boot recovery. |
 | `start.cmd` / `start.sh` | Launcher scripts. Handle restart after Node.js updates (via `.restart` marker at `$DEPS_PATH/.restart` and/or exit code 75). Probe `dependencies/node/` first, fall back to `seed/node/` (Velopack-bundled location) before hard-failing. |
 
 ### 13.2 API Endpoints
@@ -1075,8 +1076,8 @@ Fresh Velopack installs arrive with `dependencies/` empty. SP2b adds an auto-ins
 
 1. Launcher probe chain finds Node: `dependencies/node/` first, `seed/node/` (Velopack-bundled) fallback.
 2. Server boots and runs the standard `checkAll()` — populates `installedVersion` + `latestVersion` for every dep.
-3. `DependencyManager.autoInstallMissing()` runs right after: walks dep state, calls `update(name)` for any dep with `installedVersion === null && latestVersion !== null`. Sequential (no network-saturation storm). Idempotent. Offline-tolerant (skips deps whose latest check failed — the banner path handles those). **It runs while the server is already serving**, so extraction and the copy into place must not hold the event loop: `zipExtract.ts` inflates through zlib's async API and `copyDirContents` goes through `fs.promises` file by file. The synchronous versions parked every in-flight request for the duration — 4 s measured locally, >10 s on a CI runner — and that stall, not a test wait, was behind the auth suite's intermittent 18.11 (`zipExtract.offThread.test.ts`, `dependencyManager.eventLoop.test.ts`).
-4. If any dep is still in `Error` or `Unknown+null-installed` after the sweep, `FirstRunBanner` renders on the home page with a Retry button. Click → `POST /api/dependencies/retry-install` → re-runs checkAll + autoInstallMissing → banner re-polls state and hides on success.
+3. `DependencyManager.autoInstallMissing()` runs right after: walks dep state, calls `update(name)` for any dep with `installedVersion === null && latestVersion !== null` **except those marked `deferInstall`** (mkcert — fetched on first use, so it is never downloaded at boot). Sequential (no network-saturation storm). Idempotent. Offline-tolerant (skips deps whose latest check failed — the banner path handles those). **It runs while the server is already serving**, so extraction and the copy into place must not hold the event loop: `zipExtract.ts` inflates through zlib's async API and `copyDirContents` goes through `fs.promises` file by file. The synchronous versions parked every in-flight request for the duration — 4 s measured locally, >10 s on a CI runner — and that stall, not a test wait, was behind the auth suite's intermittent 18.11 (`zipExtract.offThread.test.ts`, `dependencyManager.eventLoop.test.ts`).
+4. If any **non-deferred** dep is still in `Error` or `Unknown+null-installed` after the sweep, `FirstRunBanner` renders on the home page with a Retry button. A `deferInstall` dep sits permanently in `Unknown+null-installed` until something needs it, so counting it here would have pinned the banner open forever — `DependencyInfo.deferInstall` carries that distinction to the client. Click → `POST /api/dependencies/retry-install` → re-runs checkAll + autoInstallMissing → banner re-polls state and hides on success.
 
 In practice, Node ships via Velopack seed (never null), scrcpy-server seed-promotes from `<install>/current/seed/scrcpy-server/` to `<deps>/scrcpy-server/scrcpy-server` on first run (idempotent — falls back to network download from Genymobile if the seed is absent), and ADB is the only dep that always downloads on first run.
 
@@ -2891,3 +2892,326 @@ stays bounded; `pending` rows are never pruned.
 | `src/server/db/PendingSettingsStore.ts` | The WAL rows and their transitions |
 | `src/server/db/reconcilePendingSettings.ts` | Boot-time abandon + prune |
 | `src/server/db/migrations/002_pending_settings.ts` | The `pending_settings` table |
+
+---
+
+## 28. Local HTTPS
+
+Streaming needs a secure context: the browser exposes its video decoder (WebCodecs) only on
+`https://`, `http://localhost`, or `http://127.0.0.1`, so `http://<lan-ip>:8000` lists devices and
+plays nothing (§24, and the README's Access-control section). Local HTTPS closes that gap without a
+domain, a public CA, or a reverse proxy: a **Settings → Server → Local HTTPS** panel drives a
+vendored, hardened fork of `mkcert` (`bilbospocketses/mkcert` — see §13's dependency-manager pattern,
+which this dependency joins) to mint a certificate for this machine's LAN IP or a chosen hostname,
+and an HTTPS listener starts alongside the existing plain-HTTP one once that certificate exists. The
+design rationale, the measured facts it rests on, and the decisions that were explicitly rejected
+live in `docs/superpowers/specs/2026-09-18-local-https-design.md` — this section covers what the
+code actually does.
+
+The admin-gated `/api/tls/*` routes (`src/server/api/TlsApi.ts`) are the whole server-side surface:
+`GET /state`, `POST /generate`, `POST /revoke`, `GET /ca-root` (rate-limited to 10 downloads per 60
+seconds, tracked on the one `TlsApi` instance the composition root constructs — handing out a root CA
+is the shape of a malware-delivery step even though this CA is only dangerous to whoever installs
+it), `POST /exposure`, and `POST /https-port`. The admin gate runs **before** the route table, so a
+route added later cannot land ungated.
+
+### 28.1 `CertService` — the certificate lifecycle
+
+`src/server/tls/CertService.ts` owns four operations against dependency-injected `CertServiceDeps`
+(`run`, `exists`, `readFile`, `chmod`, `removeCaRoot`, `removeLeaf`, `ensureCaRootDir`, plus
+`paths`/`mkcertExe`/`platform`) — the whole class is testable without ever spawning mkcert. The only
+place those dependencies are bound to real `fs`/`child_process` is
+`src/server/tls/createCertService.ts`'s memoized `getCertService()`; every other construction in the
+test suite is a fake.
+
+- **`generate(kind, value)` validates before it destroys anything.** The subject is checked against
+  `isConnectAddress` (rejecting a `:port` suffix, which that function otherwise allows for its usual
+  connect-address callers) and cross-checked against `kind` with `isIP` — a caller-supplied `kind`
+  that doesn't match the value's actual shape would otherwise mint a certificate whose real SAN type
+  falls outside the constraints built for the other type, failing silently in a browser with nothing
+  in this stack having reported a problem. A hostname subject additionally needs at least two labels
+  and must miss a small explicit denylist of common public suffixes (`co.uk`, `com`, `gov`, …) —
+  **not a Public Suffix List implementation, and not claimed to be complete.** It exists because
+  mkcert's own name-constraint code (`cert.go:512`) appends the subject **and its entire subtree**
+  unconditionally: a CA constrained to `com` would let a stolen CA key mint a certificate for
+  `google.com`. The constraint permits the subject and everything beneath it — never the subject
+  alone — so the subject must be a name only the requester could plausibly own.
+- **`nameConstraintsFor(kind, value)` constrains both name types on every call**, because mkcert
+  warns (and this code treats it as a failure — see below) when a name-constrained CA ends up
+  covering only one type: a half-constrained CA "looks protected" while not being. An IPv4 subject
+  repeats the literal as a DNS entry alongside its own `/32`; IPv6 can't use that trick (mkcert's
+  DNS-name regex rejects `:` and `[`), so it uses the RFC 2606 reserved `invalid` TLD paired with a
+  `/128`; a hostname subject permits only `0.0.0.0/32` on the IP side, excluding every real address.
+- **`removeCaRoot()` runs unconditionally before every spawn.** mkcert only reads `-name-constraints`
+  and `-ca-name` when the CA is *created* — an existing `CAROOT` silently keeps whatever constraints
+  it was minted with otherwise, so a regenerate for a different subject would produce a leaf **outside
+  the old CA's permitted subtree**, which a browser rejects with no explanation. The cost is a fresh
+  CA — and a fresh CA-root download/re-trust — on every regenerate; that is already the flow and is
+  visible, not silent.
+- **`ensureCaRootDir()` runs on POSIX, just before the spawn, tightening the CAROOT directory to
+  `0700`.** mkcert itself creates `CAROOT` at `0755` (`os.MkdirAll(CAROOT, 0755)`) — world-readable and
+  world-executable — so without this, confidentiality of `rootCA-key.pem` rests entirely on mkcert's
+  own `0400` file write, with nothing in this app's own code behind it. Skipped on Windows, where
+  `CAROOT` already resolves to the per-user directory §28.2 describes and Windows ignores the Unix mode
+  argument entirely regardless.
+- **The leaf key is `chmod`'d `0600` on POSIX**, after mkcert exits successfully and before the
+  half-constrained-CA check below — the key has already been written by that point regardless of what
+  the constraints turned out to cover, so a rejection must not skip the permission fix. Windows skips
+  this chmod entirely: see §28.2 for why the file mode does nothing there.
+- **A `Warning:` line in mkcert's stderr on an otherwise exit-0 run is treated as a failure**, not a
+  success with a note. mkcert warns rather than fails when a name-constrained CA ends up half-covered
+  — exactly the spec's worst case — so an exit code alone is not enough to report `ready`.
+- **`getState()` hydrates `subject`/`kind`/`notAfter` from the leaf certificate's own
+  `subjectAltName`** (via Node's builtin `X509Certificate`) rather than a sidecar record that could
+  disagree with the certificate it describes. This matters across a restart: without it, a fresh
+  process has no in-memory state, `subject`/`kind` come back `undefined` forever, the panel's
+  DHCP-moved and expiry notices can never fire, and a "regenerate" click has no remembered `kind` to
+  default to — silently switching a hostname certificate to an IP one. In-memory state from a
+  `generate()` this process actually ran still wins when present. An IPv6 SAN is re-normalised through
+  the WHATWG `URL` host parser (RFC 5952 compression) because `X509Certificate.subjectAltName` renders
+  IPv6 fully expanded, and a naive round-trip would silently change the stored form on every restart.
+  `getState()` and `caRootPem()` both back plain GET routes and never throw: a missing, empty, or
+  unparseable file is an ordinary state, not a 500.
+- **`revoke()` deletes the CA and the leaf together — this is the most destructive action in the
+  feature.** It deletes the CA that every device on the network has already been told to trust, with
+  no partial form; a subsequent `generate()` mints an entirely new CA that has to be downloaded and
+  installed on every one of those devices again.
+
+### 28.2 `certPaths` and the Windows CAROOT reasoning
+
+`src/server/tls/certPaths.ts`'s `resolveCertPaths({ platform, dataRoot, localAppData, home })` decides
+where the CA and the leaf certificate/key live, and the two platforms are **not** the same shape:
+
+- **POSIX:** both the CA (`<dataRoot>/tls/ca`) and the leaf (`<dataRoot>/tls/{cert,key}.pem`) live
+  under the data root. That is what makes the container case work — the leaf must survive a
+  `docker rm`, which is what the `/data` volume is for — and mkcert's `0400` on the CA key means what
+  it says there. mkcert creates the `CAROOT` **directory** itself at a looser `0755`, though, so
+  `CertService.generate()` additionally calls `ensureCaRootDir()` (§28.1) just before spawning, to
+  tighten it to `0700` — the same defence-in-depth reasoning already applied to the leaf key, extended
+  to the directory that would otherwise be the one thing standing between "readable" and "not" for the
+  CA key on a multi-user POSIX box.
+- **Windows: all TLS material moves to a per-user directory**
+  (`%LOCALAPPDATA%\WsScrcpyWeb\tls\...`), **never** the shared data root
+  (`C:\ProgramData\WsScrcpyWeb` in production). The reason is a measured ACL, not a guess: that data
+  root grants `BUILTIN\Users` — every local account on the machine — `ReadAndExecute` by inheritance.
+  Combined with the fact that Go maps a POSIX file mode to only the Windows read-only **attribute**
+  and sets **no ACL at all**, a CAROOT under `ProgramData` would mean the CA private key is readable
+  by any account on the box, and whoever reads it can mint a certificate for any name and have it
+  trusted by every device that installed that CA. **Confidentiality on Windows comes from the
+  directory's ACL, not the file mode** — a per-user AppData directory's inherited ACL already is that
+  restriction, which is why the leaf key gets the identical per-user treatment (§28.1's `chmod`
+  is POSIX-only for exactly this reason: it would be decorative on Windows).
+- `resolveCertPaths` refuses a non-absolute `dataRoot`, and on Windows specifically refuses a resolved
+  CAROOT that would land under `dataRoot` — a containment guard, case-insensitive and
+  segment-bounded (so `C:\Data2` is correctly not "under" `C:\Data`).
+- `createCertService.ts`'s `buildCertService()` supplies the real inputs
+  (`resolveDataRoot(process.env, platform)`, `process.env.LOCALAPPDATA` / `HOME`/`USERPROFILE`) and
+  throws **at first use**, not at boot, if no data root is resolvable — TLS storage cannot have a home
+  without one, and failing loudly beats silently writing somewhere wrong.
+
+### 28.3 `httpExposure` and the loopback exemption
+
+`src/server/tls/httpExposure.ts` defines `HttpExposure = 'open' | 'httpsOnly' | 'redirect'`,
+persisted under `HTTP_EXPOSURE_KEY` (`'httpExposure'`) in the same `app_settings` store as other
+non-`config.json` settings, plus the pure decision function
+`decideHttpRequest(mode, isLoopback): 'serve' | 'refuse' | 'redirect'`.
+
+**Loopback is exempt from every mode, unconditionally, and that exemption is the entire point of the
+design.** Without it, a certificate that goes bad — expired, an IP moved under DHCP, `CAROOT` wiped by
+a container recreate — would remove the only route back to the Settings page that could turn the mode
+off again, and recovery becomes hand-editing `config.json` and restarting. The same exemption keeps
+`GET /api/whoami` answering over loopback HTTP for the Control Menu integration. An unrecognised mode
+— a hand-edited or newer-version database row — also serves, for the identical reason: the stored
+value can never brick access in either direction.
+
+`src/server/services/HttpServer.ts`'s `createHttpRequestHandler` consults this **only when
+`!serverIsTls`** — exposure modes govern the plain-HTTP listener alone. Applying them to the HTTPS
+listener itself would be meaningless (a TLS caller already has HTTPS) or an outright lockout (421-ing
+the one listener a client actually reached over the right protocol). If no HTTPS listener is actually
+bound right now — checked via `getHttpsListenerStatus()`, covered below, not merely "does
+`config.json` list a secure entry" — every mode serves regardless of setting, because `'refuse'` would
+421 the only listener that exists and `'redirect'` would point at a certificate nothing is listening
+on. A `'redirect'` decision builds its `Location` header by running the request's `Host` through
+`isHostAllowed` — **the same allowlist check the request gate already applies**, not a second,
+independently written one — which is what closes a spoofed-`Host` open redirect: the redirect target
+and the Host policy can never quietly disagree. The response is `302` (not `301`, so a browser never
+caches the redirect past the user turning the mode back off) with `Cache-Control: no-store`.
+
+`GET /api/tls/state` reports the same listener truth the request handler acts on, through a small
+`httpsListener: { bound, port?, reason? }` field (`TlsApi.ts`'s `buildHttpsListenerField`, a pure
+function over `getHttpsListenerStatus()` plus two `Config` facts) — rather than only "does a
+certificate exist on disk." When nothing is bound, exactly one of four reasons explains why, in this
+priority order:
+
+| `reason` | Means | Priority |
+|---|---|---|
+| `bind-failed` | A secure entry was configured and the listener broke (port already in use, etc.) | Highest — a secure entry genuinely *was* going to exist |
+| `config-override` | An advanced `server` array in `config.json` bypasses the generated entry entirely | |
+| `port-collision` | `httpsPort` equals the plain-HTTP port, so `Config.buildServers` skipped the entry | |
+| `restart-required` | A usable certificate exists on disk; nothing else explains the gap — the listener set is built once at boot and simply has not picked it up yet | Lowest — the ordinary case |
+
+No `reason` at all (and `bound: false`) means no certificate exists and none of the above applies.
+`/state` also always returns a separate top-level `httpsPort` — the **configured** port,
+post-`sanitizeHttpsPort`, used for the panel's port-field prefill — which is independent of
+`httpsListener.port` (present only when actually bound, and can differ for an ephemeral `port: 0`
+entry).
+
+**`reason: 'restart-required'` can also appear ALONGSIDE `bound: true` — `bound` is a fact about the
+socket, not a claim that it is serving the current certificate.** The HTTPS listener is created once,
+at boot, from whatever leaf `Config.servers` held then; `generate()` later replaces the leaf **file** on
+disk, but the already-bound listener keeps serving the **old, in-memory** material until a restart.
+Without this, a regenerate looked identical to success: the socket was genuinely `bound: true`, so the
+panel reported "streaming already works" while the listener kept serving the old leaf — signed by the
+CA `generate()` had just deleted. The fix compares two independently-captured fingerprints
+(`X509Certificate#fingerprint256`): `HttpServer` records the fingerprint of the PEM content it actually
+handed to `https.createServer` at bind time (`getHttpsListenerStatus().leafFingerprint`), and
+`CertService.currentLeafFingerprint()` re-reads whatever leaf is on disk **right now**. A mismatch adds
+`reason: 'restart-required'` without flipping `bound` to `false`. **Deliberately not part of
+`CertState`** — it exists only as a comparison input for this one check, not a field the panel's JSON
+otherwise carries. With either fingerprint unavailable (a listener from before this fix, or an
+unparseable leaf), nothing is claimed either way — fail-safe, the same direction every other unknown in
+this feature defaults to.
+
+**`POST /api/tls/generate` returns the identical `httpsListener` field, built the same way, on
+success.** The panel never re-fetches `/state` after a generate, so this is the only response it reads
+that could tell it the listener is not live yet — the standing rule this branch settled on is that any
+field the panel branches on must be present on every response that could change what it should show,
+not just the endpoint the requirement happened to be filed against.
+
+`src/app/client/settings/tabs/ServerTab.ts`'s `listenerStatusNotice()` renders exactly these four
+reasons as four distinct messages, replacing an earlier unconditional "streaming already works" the
+moment a certificate existed on disk — which was false in all four of these states, and whose only
+offered remedy at the time (regenerate) is actively harmful there: it deletes a CA that may already be
+installed on other devices, and the certificate was never the actual problem in any of the four.
+
+**The exposure radios themselves are gated on the same field, not on the certificate merely
+existing.** `httpsOnly` and `redirect` are disabled client-side until `httpsListener.bound === true`;
+a certificate that exists but has no bound listener (any of the four states above — most commonly
+right after a `generate`, before the required restart) must not let the user narrow plain HTTP toward
+an HTTPS listener that is not actually running yet, which would be a lockout with no HTTPS to fall
+back to. The save handler re-checks the same condition rather than trusting the disabled attribute
+alone, in case a stale click was queued before the panel's last state refresh.
+
+### 28.4 Installing mkcert: on-demand fetch and the pinned-manifest gate
+
+mkcert is fetched **on first use**, not at boot: its `DependencyDefinition`
+(`src/server/DependencyDefinitions.ts`) carries `deferInstall: true`, which
+`DependencyManager.autoInstallMissing()` checks and skips — a user who never opens the Local HTTPS
+panel never downloads the ~4.5 MB binary. `createCertService.ts`'s `ensureMkcertInstalled(exe)` is the
+trigger: called from the injected `run` right before every mkcert spawn, so a `generate()` click is
+what actually causes the install, and the only cost on every call after the first is one
+`fs.existsSync` check. It goes through `getDependencyManager()`'s process-wide singleton — the same
+instance `index.ts`'s boot sequence and `DependencyApi` use — so an on-demand install here is visible
+to the Dependencies tab immediately, rather than tracked by a second manager the panel never sees.
+
+**The install verifies in two stages, in this order, because checking the binary against a manifest
+from the same release never proved authenticity — only that the download was not corrupted in
+transit.** A tampered GitHub release could alter the binary and its manifest together, so:
+
+1. **Fetch `SHA256SUMS.txt` and verify the manifest itself against `MKCERT_SHA256SUMS_PIN`** — a SHA-256
+   constant committed in `DependencyDefinitions.ts`, next to `MKCERT_VERSION` — **before the platform
+   binary is downloaded at all.** This is what moves the trust anchor into this app's own source: an
+   attacker would have to alter the pinned constant too, and that shows up in a diff, where altering a
+   GitHub release does not.
+2. **Only once the manifest passes that check, download the platform binary and verify it against the
+   now-trusted manifest.**
+
+**The two failure messages are deliberately worded differently, and that difference is the point.**
+"The manifest does not match its pin" means the release changed underneath this pin, or the pin is
+stale after a version bump — a maintenance signal, not necessarily an attack. "The binary does not
+match the manifest" means a bad download, or a same-release tamper — the case the original
+same-release checksum design could already catch. Collapsing the two into one generic message would
+make a forgotten pin update after a version bump look identical to an active attack. Both are
+fail-closed: a missing manifest entry, a failed fetch, or either mismatch refuse the install outright,
+with no warn-and-continue path, before anything is placed where `resolveMkcertExe` would find it.
+
+**`MKCERT_SHA256SUMS_PIN` must be updated by hand, deliberately, whenever `MKCERT_VERSION` bumps** —
+never guessed or copied from a chat message or a PR description. Its own doc comment records the
+procedure: fetch the new release's `SHA256SUMS.txt`, compute its SHA-256 independently
+(`sha256sum` against the real asset), and cross-check that value against the fork's own Sigstore
+build-provenance attestation for that exact tag (`gh attestation verify`) before trusting it. A future
+version bump should follow that same two-source procedure rather than trusting either alone.
+
+**Runtime attestation verification is not implemented, by user decision — not because it is
+impossible.** The published SLSA/Sigstore provenance is what `MKCERT_SHA256SUMS_PIN` was independently
+cross-checked against when the pin was set (above), so attestation is already part of how this app's
+trust in mkcert was established — it is used **out-of-band, by whoever updates the pin**, not
+**at runtime, by the app itself**. A hand-rolled Sigstore verifier has no Node builtin to build on, and
+`gh attestation verify` is a PATH-resolved binary that Local-Dependencies-Only forbids reaching for at
+runtime; the pinned-manifest checksum is the control the app actually runs.
+
+### 28.5 The four mkcert invocation requirements
+
+`CertService.generate()` enforces all four of these itself, in one place, rather than at a call site —
+they come from the fork's own item-1 review (see the design spec §2b for the full writeup):
+
+1. **`-cert-file` / `-key-file` as absolute paths.** mkcert's leaf output defaults to the spawned
+   process's working directory, not `CAROOT` — a relative path would write wherever the process
+   happened to be launched from. `certPaths` always returns absolute paths, so this is satisfied by
+   construction rather than checked.
+2. **`CAROOT` set to a per-user directory, never a shared one.** See §28.2 — this is the control that
+   actually protects the CA key on Windows, since the file mode does not.
+3. **Validate the subject before spawning.** The fork's own PR #2 already fixed the argument-controlled
+   path escape (`F3`, upstream) this guards against, so validating here is now defence in depth rather
+   than the only thing standing between an argument and an arbitrary write on disk — but it reverts to
+   load-bearing the instant this app ever falls back to an unpatched upstream `mkcert` binary.
+4. **`TRUST_STORES=none` in the spawn environment.** Also already fixed in the fork (`F5`: a stray
+   `JAVA_HOME` in the host environment made every run exec `keytool` and die on its failure), kept for
+   the same reason as #3 — it costs nothing and removes a host-environment dependency entirely.
+
+**Requirements 3 and 4 are "defence in depth" only because this app vendors its own patched fork.** A
+reader who ever swaps in a stock upstream `mkcert` binary must treat both as load-bearing again, not
+optional.
+
+### 28.6 Restart semantics, and why they are not symmetric
+
+Two controls in the same panel have opposite truths, and the panel's copy is written to match each
+one rather than a single generic "may require a restart":
+
+- **Exposure mode (`POST /api/tls/exposure`) needs NO restart.** It writes straight to the database,
+  and `HttpServer.ts` re-reads that key fresh on every plain-HTTP request — there is no cache to
+  invalidate and no listener to rebind. A mode change takes effect on the very next request.
+- **Enabling HTTPS for the first time, regenerating the certificate, and changing the HTTPS port
+  (`POST /api/tls/https-port`) all DO need a restart.** The listener set (the module-level `buildServerList()` in `Config.ts`, deliberately NOT the private
+  static `Config.buildServers` that calls it) is
+  built once at boot with no in-process rebind, so a certificate that did not exist at boot, or a port
+  that has changed, is simply not reflected until the process restarts. `https-port` schedules a
+  restart through the same exit-75 marker path `webPort` already uses.
+
+  **This claim is now enforced, not merely stated (NF-1).** A regenerate used to look identical to
+  success: the bound listener is a genuinely live socket, so `httpsListener.bound` stayed `true` while
+  it quietly kept serving the **old** leaf on disk — signed by the CA `generate()` had just deleted, and
+  invisible to anyone reading `bound` alone. `HttpServer` and `CertService` now each independently
+  fingerprint the leaf they see (§28.3), and a mismatch reports `restart-required` even while `bound`
+  stays `true` — a bound-but-stale listener is treated the same as any other case this table already
+  covers, not as a fifth, silent state.
+
+The two HTTP/HTTPS ports are independent, with independent defaults (the module-level `DEFAULT_HTTPS_PORT = 8443`
+in `Config.ts`): setting the HTTP port to `80` never moves HTTPS, and setting the HTTPS port never moves HTTP.
+If the two are ever set to the same value, `Config.buildServers` skips the HTTPS entry for that boot
+rather than erroring.
+
+A present-but-broken certificate can never stop the app from booting. `Config.ts`'s
+`readCertMaterial` validates **content**, not just readability: `tls.createSecureContext({cert, key})`
+(the same construction `https.createServer` performs internally) plus an explicit
+`X509Certificate#checkPrivateKey` cross-check — `createSecureContext` alone does not catch a
+cross-algorithm mismatch (an RSA cert paired with an EC key, or the reverse), which would otherwise
+bind a listener that accepts a TLS connection and then fails every handshake. Any failure here
+degrades to HTTP-only, logged, never a crash.
+
+### 28.7 Key Files
+
+| File | Purpose |
+|---|---|
+| `src/server/tls/CertService.ts` | Certificate lifecycle (`generate`, `getState`, `caRootPem`, `revoke`); subject validation, name-constraint construction, leaf-subject hydration, the POSIX `ensureCaRootDir`/`chmod` defence-in-depth pair, `currentLeafFingerprint()` |
+| `src/server/tls/certPaths.ts` | `resolveCertPaths` — POSIX vs. per-user-Windows CAROOT/leaf placement, the containment guard |
+| `src/server/tls/createCertService.ts` | The composition root: binds `CertServiceDeps` to real `fs`/`child_process`; memoized `getCertService()`; `ensureMkcertInstalled()`'s on-demand-fetch trigger |
+| `src/server/tls/httpExposure.ts` | `HttpExposure`, `HTTP_EXPOSURE_KEY`, the pure `decideHttpRequest` decision function |
+| `src/server/api/TlsApi.ts` | Admin-gated `/api/tls/*` routes; CA-root rate limiting; the hostname-only `allowedHosts` auto-add (issue #691); `buildHttpsListenerField`'s `httpsListener` contract on `/state` and `/generate`, including the stale-leaf `restart-required` case |
+| `src/server/network/candidateLanIps.ts` | RFC1918 LAN-IP candidates for the subject picker, excluding CGNAT (`100.64.0.0/10`) and link-local |
+| `src/server/services/HttpServer.ts` | Exposure enforcement on the plain-HTTP listener, the listen-error handler, `getHttpsListenerStatus`, the bound leaf's `leafFingerprint` capture |
+| `src/server/Config.ts` | `buildServerList`, `readCertMaterial`, `sanitizeHttpsPort` / `validateHttpsPortInput` / `setHttpsPort`, `DEFAULT_HTTPS_PORT` |
+| `src/server/DependencyDefinitions.ts` | The `mkcert` dependency definition (`bilbospocketses/mkcert` fork, `deferInstall: true`); `mkcertExeName` / `mkcertAssetName` / `mkcertChecksumsUrl`; `MKCERT_VERSION` / `MKCERT_SHA256SUMS_PIN` |
+| `src/server/DependencyManager.ts` | `installMkcert()` — the install handler; `fetchPinnedMkcertManifest()` (manifest-vs-pin) and `verifyMkcertBinaryAgainstManifest()` (binary-vs-manifest), reusing `parseSha256Sums`/`verifySha256` |
+| `src/app/client/settings/tabs/ServerTab.ts` | The Settings → Server → Local HTTPS panel; `listenerStatusNotice()`; the exposure-radio gate on `httpsListener.bound` |
+| `docs/superpowers/specs/2026-09-18-local-https-design.md` | The full design: measured facts, rejected alternatives, the UI notification table |

@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { openSettingsTab } from './support/auth';
+import { BOOT_INSTALLED_DEPENDENCIES } from './support/privateServer';
 
 /**
  * The container tier (SP4 E4).
@@ -193,13 +194,19 @@ test.describe('container mode', () => {
                 errorMessage?: string;
             }[];
         await expect
-            .poll(async () => (await deps()).every((d) => d.installedVersion !== null), {
-                timeout: 180_000,
-                message: 'every dependency installed on the fresh volume',
-            })
+            .poll(
+                async () =>
+                    (await deps())
+                        .filter((d) => (BOOT_INSTALLED_DEPENDENCIES as readonly string[]).includes(d.name))
+                        .every((d) => d.installedVersion !== null),
+                {
+                    timeout: 180_000,
+                    message: 'every boot-installed dependency present on the fresh volume',
+                },
+            )
             .toBe(true);
         const final = await deps();
-        expect(final.map((d) => d.name).sort()).toEqual(['adb', 'nodejs', 'scrcpy-server']);
+        expect(final.map((d) => d.name).sort()).toEqual(['adb', 'mkcert', 'nodejs', 'scrcpy-server']);
         for (const d of final) {
             expect(d.status, d.name).not.toBe('error');
             expect(d.errorMessage, d.name).toBeUndefined();

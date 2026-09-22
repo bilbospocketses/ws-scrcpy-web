@@ -9,6 +9,7 @@ import {
     dockerStop,
     readVolumeFile,
 } from './support/dockerStack';
+import { BOOT_INSTALLED_DEPENDENCIES } from './support/privateServer';
 
 /**
  * Smoke rows 20.6, 20.12 and 20.11 — the container's lifecycle from the
@@ -53,7 +54,11 @@ async function waitForExit(timeoutMs: number): Promise<{ status: string; exitCod
     return last;
 }
 
-/** Every dependency installed, polled: the first boot on a fresh volume hydrates them. */
+/**
+ * Every BOOT-INSTALLED dependency installed, polled: the first boot on a fresh
+ * volume hydrates them. mkcert is excluded because it is fetched on first use,
+ * never at boot, so waiting for it would burn the whole budget and throw.
+ */
 async function waitForHydrate(baseURL: string, timeoutMs: number): Promise<DependencyInfo[]> {
     const ctx = await request.newContext({ baseURL });
     try {
@@ -62,7 +67,8 @@ async function waitForHydrate(baseURL: string, timeoutMs: number): Promise<Depen
         let deps: DependencyInfo[] = [];
         while (Date.now() < deadline) {
             deps = (await (await ctx.get('/api/dependencies')).json()) as DependencyInfo[];
-            if (deps.length > 0 && deps.every((d) => d.installedVersion !== null)) return deps;
+            const boot = deps.filter((d) => (BOOT_INSTALLED_DEPENDENCIES as readonly string[]).includes(d.name));
+            if (boot.length > 0 && boot.every((d) => d.installedVersion !== null)) return deps;
             await new Promise((r) => setTimeout(r, 1_000));
         }
         throw new Error(

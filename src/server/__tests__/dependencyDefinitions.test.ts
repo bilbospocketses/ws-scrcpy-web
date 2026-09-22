@@ -1,5 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { getArch, getDependencyDefinitions, getPlatform, NODE_LTS_ABI, parseNodeMajor } from '../DependencyDefinitions';
+import {
+    getArch,
+    getDependencyDefinitions,
+    getPlatform,
+    MKCERT_SHA256SUMS_PIN,
+    mkcertChecksumsAssetName,
+    mkcertChecksumsUrl,
+    NODE_LTS_ABI,
+    parseNodeMajor,
+} from '../DependencyDefinitions';
 import * as NodePtyResolver from '../NodePtyResolver';
 
 describe('getPlatform', () => {
@@ -59,6 +68,18 @@ describe('getDependencyDefinitions', () => {
         for (const def of defs) {
             expect(def).not.toHaveProperty('requiresLauncher');
         }
+    });
+
+    it('only mkcert defers install to first use (M2) -- the other three fetch at boot', () => {
+        // Contrast pair: a mutation that flips the flag onto the wrong entry,
+        // or removes it from mkcert, fails this test either way -- it does
+        // not just check "mkcert has it", it checks nobody else does too.
+        const defs = getDependencyDefinitions('/tmp/test-deps');
+        const byName = Object.fromEntries(defs.map((d) => [d.name, d]));
+        expect(byName['mkcert']?.deferInstall).toBe(true);
+        expect(byName['nodejs']?.deferInstall).toBeUndefined();
+        expect(byName['adb']?.deferInstall).toBeUndefined();
+        expect(byName['scrcpy-server']?.deferInstall).toBeUndefined();
     });
 });
 
@@ -274,8 +295,39 @@ describe('checkLatest rejects a non-OK response instead of returning null (item 
         await expect(defFor('nodejs').checkLatest()).rejects.toThrow(/HTTP 403/);
     });
 
+    it('mkcert: a 403 throws', async () => {
+        fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValue(new Response('nope', { status: 403 }));
+        await expect(defFor('mkcert').checkLatest()).rejects.toThrow(/HTTP 403/);
+    });
+
     it('the thrown message names the URL, so the recorded errorMessage is actionable', async () => {
         fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValue(new Response('nope', { status: 403 }));
         await expect(defFor('scrcpy-server').checkLatest()).rejects.toThrow(/api\.github\.com/);
+    });
+});
+
+describe('mkcertChecksumsAssetName / mkcertChecksumsUrl (I8)', () => {
+    it("names the manifest exactly as the fork's release workflow publishes it", () => {
+        // .github/workflows/release.yml: `sha256sum mkcert-* > ...` then
+        // `mv ... "mkcert-$TAG-SHA256SUMS.txt"` -- this must match that
+        // literally, or the fetch 404s on every real release.
+        expect(mkcertChecksumsAssetName('v1.4.4-bt.2')).toBe('mkcert-v1.4.4-bt.2-SHA256SUMS.txt');
+    });
+
+    it('points at the fork repo, not upstream FiloSottile/mkcert', () => {
+        const url = mkcertChecksumsUrl('v1.4.4-bt.2');
+        expect(url).toBe(
+            'https://github.com/bilbospocketses/mkcert/releases/download/v1.4.4-bt.2/mkcert-v1.4.4-bt.2-SHA256SUMS.txt',
+        );
+    });
+});
+
+describe('MKCERT_SHA256SUMS_PIN', () => {
+    it("is shaped like a lowercase SHA-256 hex digest, matching what createHash('sha256').digest('hex') produces", () => {
+        // Shape only, not the exact value: the value legitimately changes on
+        // every MKCERT_VERSION bump, and a test pinning it to itself would
+        // be a change-detector that breaks the moment the pin is updated
+        // for a real reason, proving nothing about correctness.
+        expect(MKCERT_SHA256SUMS_PIN).toMatch(/^[0-9a-f]{64}$/);
     });
 });

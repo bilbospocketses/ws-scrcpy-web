@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { Config } from '../Config';
 import { EnvName } from '../EnvName';
 import { securityHeaders, setFrameAncestors } from '../security/frameGuard';
+import { isHostAllowed, setAllowedHosts } from '../security/originGuard';
 
 // Same temp harness as config.storeBacked.test.ts: CONFIG_PATH + DEPS_PATH, with the DB
 // co-located beside config.json so each test is isolated.
@@ -29,6 +30,10 @@ function readConfig(configPath: string): Record<string, unknown> {
 afterEach(() => {
     Config._resetForTest();
     setFrameAncestors([]);
+    // N2: without this, the allowedHost block below leaves originGuard's
+    // module-level configuredAllowedHosts populated across tests -- harmless
+    // only because nothing asserted against it before this fix.
+    setAllowedHosts([]);
     if (saved.CONFIG === undefined) delete process.env[EnvName.CONFIG_PATH];
     else process.env[EnvName.CONFIG_PATH] = saved.CONFIG;
     if (saved.DEPS === undefined) delete process.env['DEPS_PATH'];
@@ -116,6 +121,71 @@ describe('Config frame-ancestor grant and revoke', () => {
         config.addFrameAncestor('http://localhost:5159');
 
         expect(config.frameAncestors).toEqual(['http://localhost:5159']);
+    });
+});
+
+describe('Config allowedHost grant (TlsApi generate, amendment c)', () => {
+    it('persists a granted hostname without disturbing the other keys', () => {
+        const configPath = setup({ ...BOOT, frameAncestors: ['http://localhost:5159'] });
+
+        expect(Config.getInstance().addAllowedHost('devices.lan')).toBe(true);
+
+        const written = readConfig(configPath);
+        expect(written['allowedHosts']).toEqual(['devices.lan']);
+        expect(written['frameAncestors']).toEqual(['http://localhost:5159']);
+        expect(written['webPort']).toBe(8200);
+        expect(written['installMode']).toBe('user');
+        expect(written['firstRunComplete']).toBe(true);
+    });
+
+    it('applies the grant to the running Host allowlist immediately, and normalises case', () => {
+        // N2: the earlier version of this test asserted only the Config
+        // getter, which is backed by the SAME array addAllowedHost pushed to
+        // two lines above -- it passes even with the setAllowedHosts(...)
+        // live-apply call deleted from Config.ts. isHostAllowed() reads
+        // originGuard's own module-level set, so it can only be true if the
+        // live-apply call actually ran.
+        setup(BOOT);
+
+        expect(isHostAllowed('devices.lan')).toBe(false);
+
+        Config.getInstance().addAllowedHost('DEVICES.LAN');
+
+        expect(isHostAllowed('devices.lan')).toBe(true);
+        expect(Config.getInstance().allowedHosts).toEqual(['devices.lan']);
+    });
+
+    it('does not duplicate a hostname granted twice', () => {
+        setup(BOOT);
+        const config = Config.getInstance();
+
+        config.addAllowedHost('devices.lan');
+        config.addAllowedHost('devices.lan');
+
+        expect(config.allowedHosts).toEqual(['devices.lan']);
+    });
+
+    it('refuses an empty (or whitespace-only) hostname, without disturbing a real grant', () => {
+        setup(BOOT);
+        const config = Config.getInstance();
+
+        // A stub that always returns false would pass the two rejections below
+        // vacuously; asserting a genuine grant alongside them (and that it
+        // survives the rejections untouched) proves the method actually does
+        // something rather than merely never accepting anything.
+        expect(config.addAllowedHost('devices.lan')).toBe(true);
+        expect(config.addAllowedHost('')).toBe(false);
+        expect(config.addAllowedHost('   ')).toBe(false);
+        expect(config.allowedHosts).toEqual(['devices.lan']);
+    });
+
+    it('appends to an existing allowedHosts list rather than replacing it', () => {
+        const configPath = setup({ ...BOOT, allowedHosts: ['proxy.example.com'] });
+
+        Config.getInstance().addAllowedHost('devices.lan');
+
+        expect(Config.getInstance().allowedHosts.sort()).toEqual(['devices.lan', 'proxy.example.com'].sort());
+        expect(readConfig(configPath)['allowedHosts']).toEqual(['proxy.example.com', 'devices.lan']);
     });
 });
 

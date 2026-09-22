@@ -18,6 +18,18 @@ export interface DependencyInfo {
     requiresRestart: boolean;
     pairedWith?: string | undefined;
     canUpdate: boolean;
+    /**
+     * True when this dependency is fetched on FIRST USE rather than at boot
+     * (the server-side `DependencyDefinition.deferInstall`).
+     *
+     * On the wire because the client cannot otherwise distinguish "not
+     * installed yet because something went wrong" from "not installed because
+     * nothing has needed it yet", and those want opposite treatment. Without
+     * it `FirstRunBanner` raised a permanent setup-incomplete warning naming
+     * mkcert, which is not pending at all -- it is waiting, correctly, for
+     * someone to enable HTTPS.
+     */
+    deferInstall?: boolean | undefined;
 }
 
 export interface UpdateResult {

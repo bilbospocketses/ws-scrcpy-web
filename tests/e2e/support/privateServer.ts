@@ -166,7 +166,24 @@ export async function waitForServer(handle: ServerHandle, baseURL: string, timeo
  * blame it on the stop. Rows that read the log wait for this first.
  */
 /**
- * Wait until every dependency reports an installed version.
+ * The dependencies a fresh data root installs AT BOOT, and therefore the only
+ * ones it makes sense to wait for.
+ *
+ * Stated as what this helper REQUIRES, deliberately, rather than as a list of
+ * what to skip. A skip list is a copy of `DependencyManager.autoInstallMissing`'s
+ * own opt-outs, and a copy of another module's current behaviour is false the
+ * moment that module changes -- the failure mode this branch hit five times
+ * over in comments. mkcert is the case in point: it is a registered dependency
+ * that is fetched on FIRST USE, never at boot, so `installedVersion` stays null
+ * for the life of a server that never generates a certificate. Waiting for
+ * "every dependency" therefore could not ever succeed once it was added, which
+ * is exactly what CI reported -- three rows timing out at 240 s on
+ * `nodejs=24.21.0, adb=37.0.1, scrcpy-server=4.1, mkcert=unknown`.
+ */
+export const BOOT_INSTALLED_DEPENDENCIES = ['nodejs', 'adb', 'scrcpy-server'] as const;
+
+/**
+ * Wait until every BOOT-INSTALLED dependency reports an installed version.
  *
  * **Budget it against the caller's `test.setTimeout`, not against nothing.**
  * This waits on a real first-run download (Node + ADB), so on a slow runner it
@@ -189,8 +206,22 @@ export async function waitForDependencies(baseURL: string, timeoutMs = 120_000):
             const res = await ctx.get('/api/dependencies');
             if (res.status() === 200) {
                 const deps = (await res.json()) as { name: string; installedVersion: string | null; status: string }[];
-                if (deps.every((d) => d.installedVersion !== null)) return;
-                last = deps.map((d) => `${d.name}=${d.installedVersion ?? d.status}`).join(', ');
+                const required = deps.filter((d) =>
+                    (BOOT_INSTALLED_DEPENDENCIES as readonly string[]).includes(d.name),
+                );
+                // A filter is only as good as the names it matches: rename a
+                // dependency upstream and `required` silently becomes shorter,
+                // `every` over the remainder still returns true, and this
+                // function degrades into a no-op that waits for nothing while
+                // reporting success. Assert the whole expected set is present
+                // so that shows up as a named failure here instead of as a
+                // mysterious log-noise failure three rows later.
+                expect(
+                    required.map((d) => d.name).sort(),
+                    'the boot-installed dependency names must all appear in /api/dependencies',
+                ).toEqual([...BOOT_INSTALLED_DEPENDENCIES].sort());
+                if (required.every((d) => d.installedVersion !== null)) return;
+                last = required.map((d) => `${d.name}=${d.installedVersion ?? d.status}`).join(', ');
             }
             await new Promise((r) => setTimeout(r, 1_000));
         }

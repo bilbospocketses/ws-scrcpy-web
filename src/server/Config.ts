@@ -1,6 +1,8 @@
+import { createPrivateKey, X509Certificate } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as process from 'process';
+import { createSecureContext } from 'tls';
 import {
     APP_CONFIG_DEFAULTS,
     type AppConfig,
@@ -19,7 +21,15 @@ import { EnvName } from './EnvName';
 import { clampScanConcurrency, DEFAULT_SCAN_CONCURRENCY } from './fdBudget';
 import { Logger } from './Logger';
 import { parseFrameAncestorOrigin, setFrameAncestors } from './security/frameGuard';
+import { setAllowedHosts } from './security/originGuard';
+import { resolveCertPaths } from './tls/certPaths';
 import { writeFileAtomicSync } from './util/atomicFile';
+
+/**
+ * HTTPS default. Deliberately not derived from the HTTP port -- the two ports
+ * are independent (see buildServerList's doc comment).
+ */
+export const DEFAULT_HTTPS_PORT = 8443;
 
 // DEFAULT_SCAN_CONCURRENCY lives in fdBudget.ts, beside the cap it is tuned against.
 const DEFAULT_SCAN_TCP_TIMEOUT_MS = 300;
@@ -72,6 +82,13 @@ export interface FlatConfig {
     // allowedHosts, deliberately NOT part of AppConfig, so it is never exposed
     // or mutable via the frontend-facing GET/PATCH /api/config surface.
     frameAncestors?: string[];
+
+    // TLS: the port the HTTPS listener binds when a readable, valid certificate
+    // exists (see buildServerList). Defaults to DEFAULT_HTTPS_PORT and is
+    // INDEPENDENT of webPort -- setting webPort does not move this. Server-only
+    // and read at boot, like allowedHosts/frameAncestors above: not part of
+    // AppConfig, so it is never exposed or mutable via GET/PATCH /api/config.
+    httpsPort?: number;
 }
 
 /**
@@ -233,6 +250,148 @@ export function resolveConfigPath(
 
 function isInteger(n: unknown): n is number {
     return typeof n === 'number' && Number.isInteger(n);
+}
+
+export interface CertMaterial {
+    cert: string;
+    key: string;
+}
+
+/**
+ * Reads BOTH the cert and the key and returns their PEM content -- but only
+ * once each is validated as USABLE, not merely readable. Two distinct failure
+ * classes both fall through to the same "no certificate, HTTP only":
+ *
+ *  - UNREADABLE (amendment B). `Config.parseServerItem` reads
+ *    `options.certPath`/`keyPath` with no try, during Config construction --
+ *    so a file that EXISTS but cannot be READ (a wrong ACL after a profile
+ *    move, a bind mount that lost its permissions) would otherwise throw
+ *    before the app has any listener at all. A readable cert with an
+ *    unreadable key fails in exactly the same place, so both are read.
+ *
+ *  - READABLE BUT INVALID (review fix round 2, C1/C2; round 3 corrected the
+ *    C1 check; round 4 closed a residue in round 3's fix). A TRULY empty
+ *    string reads as truthy but is not a certificate, and `createSecureContext`
+ *    (below) ACCEPTS it -- so that exact case is rejected separately, first,
+ *    by an explicit trim-length check. (Whitespace-only content does NOT need
+ *    this check: measured, `createSecureContext` already throws
+ *    `ERR_OSSL_PEM_NO_START_LINE` on it by itself -- the guard's job is the
+ *    empty string specifically.) Garbage, truncated, mismatched, or otherwise
+ *    unusable content reads successfully too, but handed straight to
+ *    `https.createServer` throws SYNCHRONOUSLY and UNCAUGHT (measured on
+ *    Node v24.19.0), taking the whole app down, plain HTTP included.
+ *
+ *    Round 2 validated the cert and the key SEPARATELY (`X509Certificate`,
+ *    `createPrivateKey`) -- that is NOT the same check. It missed a valid
+ *    cert paired with a valid but MISMATCHED key
+ *    (`ERR_OSSL_X509_KEY_VALUES_MISMATCH`, since nothing checked they
+ *    belonged together) and a cert followed by a truncated second PEM block
+ *    (`X509Certificate` reads only the first block and returns happily;
+ *    `ERR_OSSL_PEM_BAD_END_LINE` only surfaces once TLS actually tries to use
+ *    it). Round 3 caught both by validating with `tls.createSecureContext({
+ *    cert, key })` instead -- the same secure-context construction
+ *    `https.createServer` performs internally, so it cannot disagree with it.
+ *
+ *    Round 4: `createSecureContext` itself has a residue -- it only
+ *    cross-checks a cert and key of the SAME algorithm. A cross-algorithm
+ *    mismatched pair (an RSA key paired with an EC cert, or the reverse)
+ *    passes it and then BINDS, with every handshake failing silently
+ *    (`ERR_SSL_SSL/TLS_ALERT_HANDSHAKE_FAILURE`) -- the same user-visible
+ *    outcome as C2: a listener that is up while the feature does not work,
+ *    reported as working. Closed by also checking
+ *    `new X509Certificate(cert).checkPrivateKey(createPrivateKey(key))`,
+ *    which returns `false` (not a throw) for a mismatch of any kind,
+ *    including cross-algorithm -- measured to reject both cross-algorithm
+ *    directions and accept every legitimate input tried (chain, BOM, CRLF,
+ *    PKCS#1). `createSecureContext` is kept as well; the two checks cover
+ *    different things.
+ *
+ * `buildServerList` embeds the content directly rather than ever routing this
+ * generated entry through `parseServerItem`'s untried read.
+ *
+ * One read each, not a probe-then-read pair: avoids a TOCTOU window between
+ * checking readability and reading, and there is no second syscall to save by
+ * splitting them.
+ *
+ * Never throws: an optional feature (HTTPS) must never be able to stop the app
+ * starting. `readFile` is injectable so tests don't need a real unreadable
+ * file, which is not portably creatable on Windows.
+ */
+export function readCertMaterial(
+    certFile: string,
+    keyFile: string,
+    readFile: (p: string) => string = (p) => fs.readFileSync(p, 'utf-8'),
+): CertMaterial | null {
+    try {
+        const cert = readFile(certFile);
+        const key = readFile(keyFile);
+        // Truly-empty content reads as truthy but is not a certificate (C2)
+        // -- reject before createSecureContext, which ACCEPTS an empty string
+        // and would otherwise let a dead listener bind with no key material
+        // and fail every handshake silently. Whitespace-only content needs no
+        // separate check here: createSecureContext already rejects it below.
+        if (cert.trim().length === 0 || key.trim().length === 0) return null;
+        // Garbage, truncated, or same-algorithm mismatched content (C1) --
+        // validate with the same secure-context construction
+        // https.createServer performs internally, so an unusable pair is
+        // caught here instead of crashing the boot. Parsing the cert and the
+        // key separately is NOT equivalent: see the doc comment above.
+        createSecureContext({ cert, key });
+        // Cross-algorithm mismatch (round 4): createSecureContext does not
+        // catch an RSA key paired with an EC cert (or the reverse). This
+        // returns a boolean, not a throw, so the check is explicit.
+        if (!new X509Certificate(cert).checkPrivateKey(createPrivateKey(key))) {
+            return null;
+        }
+        return { cert, key };
+    } catch {
+        return null;
+    }
+}
+
+export interface BuildServerListOpts {
+    httpPort: number;
+    httpsPort: number;
+    /** The cert/key PEM content (see readCertMaterial), or null when no readable certificate exists. */
+    certMaterial: CertMaterial | null;
+}
+
+/**
+ * The listener set. HTTP is always present -- the HTTPS entry is added only
+ * when a readable certificate exists on disk.
+ *
+ * The two ports are INDEPENDENT. Setting HTTP to 80 does not imply HTTPS 443;
+ * HTTPS stays on its own default (DEFAULT_HTTPS_PORT) until the user sets it
+ * explicitly via config.json's `httpsPort` (see `sanitizeHttpsPort`, M3).
+ * Coupling them would move a port the user never touched.
+ *
+ * A missing or unreadable certificate yields HTTP alone rather than a boot
+ * failure: an optional feature must never be able to stop the app starting.
+ *
+ * The HTTPS entry's `options` carry the actual `cert`/`key` PEM content, NOT
+ * `certPath`/`keyPath`. The spec's own config.json snippet shows certPath/
+ * keyPath, but that illustrates a USER-AUTHORED advanced `server` array, which
+ * goes through `Config.parseServerItem` -- the right place for that form. This
+ * entry is machine-generated and never passes through `parseServerItem`
+ * (which would also throw `Can't use "cert" and "certPath" together` if both
+ * were present), so embedding the content directly here means the untried
+ * `fs.readFileSync` in `parseServerItem` is never reached for it, keeping
+ * amendment B's no-boot-crash guarantee intact end to end.
+ *
+ * Named `buildServerList` rather than `buildServers` -- the private static
+ * `Config.buildServers` below already owns that name in this file.
+ */
+export function buildServerList(opts: BuildServerListOpts): ServerItem[] {
+    const http: ServerItem = { secure: false, port: opts.httpPort };
+    if (!opts.certMaterial) return [http];
+    return [
+        http,
+        {
+            secure: true,
+            port: opts.httpsPort,
+            options: { cert: opts.certMaterial.cert, key: opts.certMaterial.key },
+        },
+    ];
 }
 
 /**
@@ -466,6 +625,44 @@ export function sanitizeFrameAncestors(raw: unknown, warn: (msg: string) => void
     return out;
 }
 
+/**
+ * Validate the optional `httpsPort` escape-hatch from config.json (M3, review
+ * fix round 2). Like sanitizeAllowedHosts/sanitizeFrameAncestors this never
+ * throws (Contract 1) and falls back to the default with a warning on
+ * anything invalid, rather than letting a bad value reach `buildServerList`.
+ *
+ * This is what makes the spec's "HTTPS stays on its own default until the
+ * user sets it explicitly" sentence actually true -- without this, there was
+ * no way to set it at all, explicitly or otherwise.
+ */
+export function sanitizeHttpsPort(raw: unknown, warn: (msg: string) => void): number {
+    if (raw === undefined) return DEFAULT_HTTPS_PORT;
+    if (!isInteger(raw) || raw < 1 || raw > 65535) {
+        warn(`config.json: httpsPort must be an integer between 1 and 65535; using default ${DEFAULT_HTTPS_PORT}`);
+        return DEFAULT_HTTPS_PORT;
+    }
+    return raw;
+}
+
+/**
+ * Validate a `port` field for `POST /api/tls/https-port` (task 11).
+ *
+ * Deliberately NOT `sanitizeHttpsPort`: that function backs config.json's
+ * "never throw on load" contract (Contract 1) by falling back to
+ * DEFAULT_HTTPS_PORT with a warning. A live API request has a caller waiting
+ * for an answer, so silently coercing a typo'd port to 8443 would persist the
+ * WRONG value without telling anyone -- this rejects outright instead,
+ * mirroring TlsApi's `kind` validation (amendment C). Same bounds as
+ * sanitizeHttpsPort (1-65535): httpsPort is not held to webPort's 1024 floor
+ * (buildServerList's doc comment -- the two ports are independent).
+ */
+export function validateHttpsPortInput(raw: unknown): ValidationResult<number> {
+    if (!isInteger(raw) || raw < 1 || raw > 65535) {
+        return { ok: false, error: 'port must be an integer between 1 and 65535' };
+    }
+    return { ok: true, value: raw };
+}
+
 export class Config {
     private static instance?: Config | undefined;
 
@@ -500,9 +697,24 @@ export class Config {
         }
     }
 
-    private static buildServers(fileConfig: FlatConfig, webPort: number): ServerItem[] {
+    private static buildServers(
+        fileConfig: FlatConfig,
+        webPort: number,
+        dataRoot: string | null,
+        // Resolved by the caller via sanitizeHttpsPort -- validated once,
+        // there, alongside allowedHosts/frameAncestors' identical pattern,
+        // rather than re-validated here on every call.
+        httpsPort: number,
+        // Injectable so no test needs to touch this developer's real per-user
+        // profile just to exercise Config.getInstance() -- matches the
+        // resolveDataRoot/resolveDependenciesPath/resolveConfigPath pattern
+        // above, which already take `env` explicitly rather than reaching
+        // into `process.env` deep inside a branch.
+        env: NodeJS.ProcessEnv = process.env,
+        warn: (msg: string) => void = () => {},
+    ): ServerItem[] {
         // Env var PORT takes highest priority
-        const envPort = process.env['PORT'];
+        const envPort = env['PORT'];
         const port = envPort ? Number.parseInt(envPort, 10) : webPort;
 
         if (fileConfig.server && fileConfig.server.length > 0) {
@@ -514,8 +726,74 @@ export class Config {
             return servers;
         }
 
-        // Simple flat config: single HTTP server
-        return [{ secure: false, port }];
+        // Simple flat config: HTTP always; HTTPS joins it once a readable
+        // certificate exists on disk. `dataRoot` can be null on a non-Windows
+        // host with neither DATA_ROOT/XDG_DATA_HOME/HOME set -- HTTPS is
+        // optional, so that just means no usable per-user TLS directory and
+        // HTTP alone, same as resolveCertPaths throwing for any other reason.
+        let certMaterial: CertMaterial | null = null;
+        if (dataRoot) {
+            try {
+                const paths = resolveCertPaths({
+                    platform: process.platform,
+                    dataRoot,
+                    localAppData: env['LOCALAPPDATA'],
+                    home: env['HOME'] || env['USERPROFILE'],
+                });
+                certMaterial = readCertMaterial(paths.certFile, paths.keyFile);
+            } catch {
+                // No usable per-user TLS directory -- fall through to HTTP alone.
+            }
+        }
+
+        // N3 (review fix round 3): HTTP and HTTPS colliding on the same port
+        // means only one of them can actually bind. It must be HTTP -- that
+        // is the listener this whole feature promises must never stop the
+        // app starting, and the HTTPS one could not have bound anyway. Skip
+        // the HTTPS entry rather than let two listeners silently fight over
+        // one port; httpsPort is the first user-settable way to reach this
+        // (webPort and httpsPort are otherwise resolved independently).
+        if (certMaterial && port === httpsPort) {
+            warn(
+                `config.json: httpsPort (${httpsPort}) collides with the http port (${port}); ` +
+                    'HTTPS is disabled for this boot -- set httpsPort to a different port to enable it',
+            );
+            certMaterial = null;
+        }
+
+        return buildServerList({ httpPort: port, httpsPort, certMaterial });
+    }
+
+    /**
+     * Test-only: exercises the private `buildServers` directly with an
+     * injected `env`, so a certificate-branch test can drive it without
+     * mutating this developer's real environment -- `vitest.setup.ts`
+     * redirects LOCALAPPDATA/HOME/USERPROFILE for the whole suite, which pins
+     * the ambient env to "no certificate" and makes the branch otherwise
+     * unreachable from a test (review fix round 2, I1/M1).
+     *
+     * Takes `fileConfig.httpsPort` through the SAME `sanitizeHttpsPort` the
+     * real boot path uses (review fix round 3, N2), and `webPortRaw` through
+     * the SAME `validateField('webPort', ...)` + `APP_CONFIG_DEFAULTS`
+     * fallback `sanitizeAppConfig` uses, rather than raw arguments -- a
+     * test-only door into production code must not accept input the real
+     * path would reject (round 4, N3: the real `webPort` this class ever
+     * sees is `appConfig.webPort`, already validated by the time
+     * `getInstance()` calls `buildServers`; this door took an unvalidated
+     * number directly, so a test could hand it a port the real path can
+     * never produce, e.g. 80).
+     */
+    public static _buildServersForTest(
+        fileConfig: FlatConfig,
+        webPortRaw: unknown,
+        dataRoot: string | null,
+        env: NodeJS.ProcessEnv,
+        warn: (msg: string) => void = () => {},
+    ): ServerItem[] {
+        const webPortResult = validateField('webPort', webPortRaw);
+        const webPort = webPortResult.ok ? webPortResult.value : APP_CONFIG_DEFAULTS.webPort;
+        const httpsPort = sanitizeHttpsPort(fileConfig.httpsPort, warn);
+        return Config.buildServers(fileConfig, webPort, dataRoot, httpsPort, env, warn);
     }
 
     private static parseServerItem(config: Partial<ServerItem> = {}): ServerItem {
@@ -615,7 +893,16 @@ export class Config {
             // false — and the overlay must defer to a user who wrote one.
             const firstRunExplicit = fileConfig.firstRunComplete !== undefined;
 
-            const servers = Config.buildServers(fileConfig, appConfig.webPort);
+            // C1 (whole-branch review): whether an advanced `server` array is
+            // in use -- mirrors the EXACT condition `Config.buildServers`
+            // branches on below, so the two can never disagree about what
+            // "advanced" means. When true, `buildServers` returns the array
+            // verbatim and NEVER adds a generated HTTPS entry for a
+            // certificate this app manages, restart or not -- `/api/tls/state`
+            // needs this to tell that apart from "restart required".
+            const usesAdvancedServerConfig = Boolean(fileConfig.server && fileConfig.server.length > 0);
+            const httpsPort = sanitizeHttpsPort(fileConfig.httpsPort, warn);
+            const servers = Config.buildServers(fileConfig, appConfig.webPort, dataRoot, httpsPort, process.env, warn);
 
             // An app_settings override of dependenciesPath/adbPath is overlaid for
             // downstream consumers (the adb spawn path) AFTER the DB opens — it
@@ -695,6 +982,15 @@ export class Config {
                 dataRoot,
                 allowedHosts,
                 frameAncestors,
+                // Always the sanitized value, even in advanced-config mode --
+                // team-lead's exact /api/tls/state contract (C1) wants
+                // `httpsPort` unconditionally present as "the configured
+                // value, post-sanitizeHttpsPort", for the panel's prefill
+                // (I2). `Config.buildServers` simply never CONSULTS it in
+                // that mode; `usesAdvancedServerConfig` is the separate
+                // signal for "and it won't take effect either way".
+                httpsPort,
+                usesAdvancedServerConfig,
                 db,
                 dockerMode,
                 firstRunExplicit,
@@ -722,6 +1018,8 @@ export class Config {
         private readonly _dataRoot: string | null,
         private readonly _allowedHosts: string[],
         private readonly _frameAncestors: string[],
+        private _httpsPort: number,
+        private readonly _usesAdvancedServerConfig: boolean,
         private readonly _db: Db,
         private readonly _dockerMode: boolean = false,
         firstRunExplicit: boolean = false,
@@ -798,6 +1096,32 @@ export class Config {
     }
 
     /**
+     * Grant an extra Host hostname (config.json `allowedHosts`), applying it to
+     * the running server immediately and persisting it to config.json. Mirrors
+     * `addFrameAncestor` above.
+     *
+     * Used by `POST /api/tls/generate` for a **hostname** certificate subject
+     * only -- a raw IP subject already passes `isHostAllowed()` (it accepts any
+     * IP literal), so appending one here would recreate the exact confusion
+     * issue #691 was about: a user reading `allowedHosts: ["192.168.86.3"]`
+     * reasonably concludes IPs belong there. See TlsApi.
+     *
+     * Returns false for a value that is not a usable hostname once trimmed and
+     * lowercased (i.e. empty); a duplicate grant is a no-op that still returns
+     * true.
+     */
+    public addAllowedHost(hostname: string): boolean {
+        const normalized = hostname.trim().toLowerCase();
+        if (!normalized) return false;
+
+        if (!this._allowedHosts.includes(normalized)) {
+            this._allowedHosts.push(normalized);
+        }
+        this.applyAndPersistAllowedHosts();
+        return true;
+    }
+
+    /**
      * Operator-configured origins allowed to embed the app in a frame
      * (config.json `frameAncestors`), beyond its own origin. Read once at boot
      * and applied to the security layer via setFrameAncestors(); never
@@ -805,6 +1129,42 @@ export class Config {
      */
     public get frameAncestors(): string[] {
         return this._frameAncestors;
+    }
+
+    /**
+     * The target HTTPS port -- the CONFIGURED value (post-`sanitizeHttpsPort`),
+     * not the bound one. ALWAYS a number, even when `usesAdvancedServerConfig`
+     * is true (an advanced `server` array may hold several secure entries or
+     * none, so `Config.buildServers` never consults this value in that mode,
+     * but the value itself is still resolved and reported: team-lead's exact
+     * `/api/tls/state` contract for C1/I2 wants `httpsPort` unconditionally
+     * present, so the panel's port field can prefill the real configured
+     * value regardless of mode).
+     *
+     * Resolved at boot like `servers`, but -- unlike `servers` -- kept
+     * current by `setHttpsPort()` (N8, re-review): a save updates this
+     * getter's answer immediately, in this same process, even though the
+     * LISTENER itself does not rebind until a restart. Those are two
+     * different facts and this getter only owns one of them; `httpsListener`
+     * on `/api/tls/state` is what tells the panel whether the new port is
+     * actually live yet. Without this, a caller polling `/state` between a
+     * port save and the restart a second later (or indefinitely under a
+     * non-supervised run) would see the OLD configured value.
+     */
+    public get httpsPort(): number {
+        return this._httpsPort;
+    }
+
+    /**
+     * True when config.json's advanced `server` array is in use. Mirrors the
+     * exact condition `Config.buildServers` branches on, so the two can never
+     * disagree about what "advanced" means -- in that mode `buildServers`
+     * returns the array verbatim and NEVER adds a generated HTTPS entry for a
+     * certificate this app manages, restart or not. `/api/tls/state` needs
+     * this to tell that apart from "restart required" (C1).
+     */
+    public get usesAdvancedServerConfig(): boolean {
+        return this._usesAdvancedServerConfig;
     }
 
     /**
@@ -868,6 +1228,68 @@ export class Config {
             fs.mkdirSync(dir, { recursive: true });
         }
         writeFileAtomicSync(this._configFilePath, `${JSON.stringify(existing, null, 2)}\n`);
+    }
+
+    /**
+     * Apply the current allowedHosts list to the running server, then write it
+     * to config.json. Mirrors `applyAndPersistFrameAncestors` above: apply
+     * first, so a write failure never leaves the caller told "added" while the
+     * server is still refusing the hostname.
+     */
+    private applyAndPersistAllowedHosts(): void {
+        setAllowedHosts(this._allowedHosts);
+
+        const existing: Record<string, unknown> = {};
+        try {
+            Object.assign(existing, JSON.parse(fs.readFileSync(this._configFilePath, 'utf-8')));
+        } catch {
+            /* no existing file / unparseable — write a fresh one below */
+        }
+        existing['allowedHosts'] = this._allowedHosts;
+
+        const dir = path.dirname(this._configFilePath);
+        if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+        }
+        writeFileAtomicSync(this._configFilePath, `${JSON.stringify(existing, null, 2)}\n`);
+    }
+
+    /**
+     * Persist a validated `httpsPort` to config.json (task 11's
+     * `POST /api/tls/https-port`) -- the port the HTTPS listener binds when a
+     * readable certificate exists (see buildServerList).
+     *
+     * Unlike `applyAndPersistAllowedHosts`/`applyAndPersistFrameAncestors`
+     * above, there is no live "apply" half for the LISTENER: the listener set
+     * is built exactly once, at boot (`Config.buildServers`), and nothing in
+     * this class rebinds it in-process. A caller MUST restart the process for
+     * a new port to actually SERVE -- see TlsApi's `https-port` route, which
+     * schedules that restart the same way SettingsBatchApi does for
+     * `webPort`.
+     *
+     * The `httpsPort` GETTER, however, is updated here immediately (N8,
+     * re-review) -- it reports config INTENT, not listener reality, and
+     * there is no reason for a caller in this same process to see a stale
+     * value between this write and the restart a second later. Takes an
+     * already-validated port (see `validateHttpsPortInput`); like its
+     * allowedHosts/frameAncestors siblings, this method does not itself
+     * validate.
+     */
+    public setHttpsPort(port: number): void {
+        const existing: Record<string, unknown> = {};
+        try {
+            Object.assign(existing, JSON.parse(fs.readFileSync(this._configFilePath, 'utf-8')));
+        } catch {
+            /* no existing file / unparseable — write a fresh one below */
+        }
+        existing['httpsPort'] = port;
+
+        const dir = path.dirname(this._configFilePath);
+        if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+        }
+        writeFileAtomicSync(this._configFilePath, `${JSON.stringify(existing, null, 2)}\n`);
+        this._httpsPort = port;
     }
 
     /**
@@ -1046,13 +1468,13 @@ export class Config {
      */
     public saveToDisk(): void {
         // config.json holds ONLY the boot trio now. Preserve the server-only boot
-        // fields (`server` SSL array, `allowedHosts`, `frameAncestors`) that live
-        // in the file but aren't part of AppConfig — re-read them so a save never
-        // drops them.
+        // fields (`server` SSL array, `allowedHosts`, `frameAncestors`, `httpsPort`)
+        // that live in the file but aren't part of AppConfig — re-read them so a
+        // save never drops them.
         const preserved: Record<string, unknown> = {};
         try {
             const existing = JSON.parse(fs.readFileSync(this._configFilePath, 'utf-8')) as Record<string, unknown>;
-            for (const k of ['server', 'allowedHosts', 'frameAncestors']) {
+            for (const k of ['server', 'allowedHosts', 'frameAncestors', 'httpsPort']) {
                 if (existing[k] !== undefined) preserved[k] = existing[k];
             }
         } catch {

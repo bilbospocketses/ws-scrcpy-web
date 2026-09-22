@@ -23,6 +23,18 @@ Exhaustive grep of every `spawn`, `execFile`, `execFileSync`, `execFileAsync`, `
 | node | Launcher `spawn.rs::resolve_node_with` → `<deps>/node/node.exe` | spawn.rs |
 | servy-cli | `<deps>/servy/servy-cli.exe` (fetched by fetch-servy.mjs) | elevatedRunner.ts (via launcher) |
 | launcher (self) | `resolveLauncherPath()` → `<installRoot>/current/*.exe` | ServiceApi.ts, elevatedRunner.ts, active-session.ts, operation_server.rs, tray_supervisor.rs |
+| mkcert | `resolveMkcertExe()` → `<deps>/mkcert/mkcert.exe` | createCertService.ts (binds `CertServiceDeps.run`), CertService.ts, DependencyManager.ts (`installMkcert`) |
+
+> **mkcert, added 2026-09-19 with the Local HTTPS feature.** Compliant on the same terms as the rest:
+> `resolveMkcertExe()` is `path.join(depsPath, 'mkcert', mkcertExeName())`, and it reuses
+> `mkcertExeName()` from `DependencyDefinitions.ts` rather than re-deriving the filename — so the
+> installer and the spawner cannot drift to different paths. Never resolved from `PATH`.
+>
+> Two ways it differs from the four above, both deliberate: it carries `deferInstall`, so it is
+> fetched the first time a certificate is generated rather than at boot; and it is the only one whose
+> download is verified before placement, against a SHA-256 pin held in this repo's own source
+> (`MKCERT_SHA256SUMS_PIN`). The pin matters because mkcert mints a CA the user installs into their OS
+> and phone trust stores — see `docs/TECHNICAL_GUIDE.md` §28.4.
 
 ### OS-utility carve-outs (cannot be vendored — they ARE the OS)
 
