@@ -57,6 +57,23 @@ export class DependencyManager {
      * format or the UI has any use for.
      */
     private readonly lookupRefused = new Set<string>();
+    /**
+     * In-flight `update()` calls, keyed on dependency name (NF-5).
+     *
+     * N7 gave each concurrent `update('mkcert')` its own tmpDir, which removed
+     * the spurious "checksum mismatch" -- but nothing serialized the two, so
+     * both still walked all the way to `copyFileAtomicSync` against the SAME
+     * destination. On Windows a `renameSync` over a path another request is
+     * mid-placement can still `EPERM`, so the class was narrowed rather than
+     * removed. Coalescing removes it: the second caller awaits the first
+     * caller's promise instead of performing a second install.
+     *
+     * Keyed on name, not global -- installing adb while mkcert installs is
+     * genuinely independent work and must stay parallel. The entry is deleted
+     * in a `finally`, so a rejected install does not poison the name for the
+     * life of the process; the next caller retries from scratch.
+     */
+    private readonly inFlightUpdates = new Map<string, Promise<UpdateResult>>();
 
     constructor(
         private readonly depsPath: string,
@@ -195,7 +212,29 @@ export class DependencyManager {
         log.info(`Dependency check complete: ${parts.length > 0 ? parts.join(', ') : 'no results'}`);
     }
 
-    public async update(name: string): Promise<UpdateResult> {
+    /**
+     * NF-5: one install per dependency name at a time. Two callers that
+     * arrive together (the realistic case being a double-click on "generate",
+     * both finding mkcert missing and both entering `ensureMkcertInstalled`)
+     * share ONE install and one result, rather than racing each other's
+     * writes to the same destination file.
+     *
+     * Deliberately not `async`: returning the stored promise directly means
+     * the second caller observes the first's settlement, whereas an `async`
+     * wrapper would add a tick without changing the outcome. The
+     * `UpdateResult` is a plain data object and both callers only read it.
+     */
+    public update(name: string): Promise<UpdateResult> {
+        const existing = this.inFlightUpdates.get(name);
+        if (existing) return existing;
+        const started = this.performUpdate(name).finally(() => {
+            this.inFlightUpdates.delete(name);
+        });
+        this.inFlightUpdates.set(name, started);
+        return started;
+    }
+
+    private async performUpdate(name: string): Promise<UpdateResult> {
         const def = this.definitions.find((d) => d.name === name);
         const info = this.state.get(name);
         if (!def || !info) {

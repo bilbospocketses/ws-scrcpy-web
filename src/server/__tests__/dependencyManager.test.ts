@@ -283,6 +283,52 @@ describe('DependencyManager.update("mkcert") — checksum verification, manifest
         expect(first.success).toBe(true);
         expect(second.success).toBe(true);
     });
+
+    // NF-5: N7 above proves both callers succeed; it does NOT prove only one
+    // install ran. Distinct tmpDirs removed the spurious mismatch but left
+    // both callers writing the same destination, which on Windows can still
+    // EPERM in `renameSync`. Counting asset fetches is what distinguishes
+    // "both succeeded" from "both succeeded because only one of them did the
+    // work" -- the assertion N7 structurally cannot make.
+    it('coalesces two concurrent updates of the same name into a single install (NF-5)', async () => {
+        const correctHash = createHash('sha256').update(FAKE_BINARY).digest('hex');
+        const manifest = `${correctHash}  ${assetName}\n`;
+        const assetFetches: string[] = [];
+        mockFetch(manifest, FAKE_BINARY, (url) => assetFetches.push(url));
+        const mgr = await makeMgrWithPinnedManifest(tmpDepsDir, manifest);
+        mgr.getByName('mkcert')!.latestVersion = version;
+
+        const [first, second] = await Promise.all([mgr.update('mkcert'), mgr.update('mkcert')]);
+
+        expect(first.success).toBe(true);
+        expect(second.success).toBe(true);
+        expect(assetFetches).toHaveLength(1);
+    });
+
+    // The other half of the contract: coalescing must not turn one failure
+    // into a permanently poisoned name. The map entry is cleared in a
+    // `finally`, so a retry after a failed install does real work again --
+    // without this, a single transient network error would make the
+    // dependency uninstallable until restart.
+    it('does not poison the name after a failed install -- a retry installs for real (NF-5)', async () => {
+        const correctHash = createHash('sha256').update(FAKE_BINARY).digest('hex');
+        const manifest = `${correctHash}  ${assetName}\n`;
+
+        const bad = await makeMgrWithPinnedManifest(tmpDepsDir, manifest, { pinOverride: 'f'.repeat(64) });
+        mockFetch(manifest);
+        bad.getByName('mkcert')!.latestVersion = version;
+        const failed = await bad.update('mkcert');
+        expect(failed.success).toBe(false);
+
+        const assetFetches: string[] = [];
+        mockFetch(manifest, FAKE_BINARY, (url) => assetFetches.push(url));
+        const good = await makeMgrWithPinnedManifest(tmpDepsDir, manifest);
+        good.getByName('mkcert')!.latestVersion = version;
+        const retried = await good.update('mkcert');
+
+        expect(retried.success).toBe(true);
+        expect(assetFetches).toHaveLength(1);
+    });
 });
 
 describe('makeUpdateTmpDir (N7)', () => {
@@ -326,21 +372,26 @@ describe('DependencyManager.autoInstallMissing — mkcert defers to first use (M
 });
 
 describe('getDependencyManager (composition-root singleton)', () => {
-    // Order matters within this describe block: both tests share the SAME
-    // module-scoped singleton (there is no reset hook, deliberately -- a
-    // reset would defeat the point of a composition-root singleton). The
-    // first test's call is what seeds it for the second.
-    it('returns the SAME instance across calls with the SAME config, so boot and an on-demand mkcert install share one state', () => {
+    // NF-4: this was two tests sharing the module-scoped singleton, where the
+    // first test's call was what seeded the second. Deterministic under
+    // Vitest's in-file ordering, but it FAILED (rather than skipped) if the
+    // order ever changed or a `.only` landed on the second one -- an unusual
+    // thing to debug, since the failure names the assertion and not the
+    // missing precondition. `getDependencyManager` has no reset seam on
+    // purpose (a reset would defeat a composition-root singleton), so the
+    // robust form is one test that establishes the state it depends on.
+    it('returns one instance per config and refuses a mismatched second call (N6)', () => {
         const opts = { dependenciesPath: '/tmp/test-deps-singleton-same' };
+
+        // Same config twice: boot and an on-demand mkcert install must share
+        // one state, or each would keep its own view of what is installed.
         const a = getDependencyManager(opts);
         const b = getDependencyManager(opts);
         expect(b).toBe(a);
-    });
 
-    it('throws on a mismatched second call rather than silently handing back a manager configured for someone else (N6)', () => {
-        // The singleton is already seeded (with '/tmp/test-deps-singleton-same'
-        // from the test above) by the time this runs -- a DIFFERENT
-        // dependenciesPath here must be refused, not silently accepted.
+        // A DIFFERENT dependenciesPath against the now-seeded singleton must
+        // be refused, not silently handed a manager configured for someone
+        // else. Seeded by THIS test's own calls above, not by a neighbour's.
         expect(() => getDependencyManager({ dependenciesPath: '/tmp/test-deps-singleton-DIFFERENT' })).toThrow();
     });
 });
