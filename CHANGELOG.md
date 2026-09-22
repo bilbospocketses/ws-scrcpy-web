@@ -139,7 +139,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   poll went red on it 2026-09-09.
   - **`DependencyDefinition` gains an optional `fallbackVersion`**, set to `SERVER_VERSION` for
     scrcpy-server — the version this build ships in `assets/scrcpy-server`, with a pinned hash in
-    `common/Constants.ts`. Installing the version we already vouch for beats installing none. The release
+    `src/common/Constants.ts`. Installing the version we already vouch for beats installing none. The release
     **asset** download is not the API and is not rate-limited the same way, so it genuinely works while
     the lookup is refused.
   - **Gated on REFUSED, not merely absent.** A new `HttpStatusError` separates *the server answered and
@@ -222,7 +222,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **The last attempt's response is returned as-is**, so the existing `console.error` still reports the
     real status and the script still exits 1 on a genuine failure. Each retry prints the attempt, the
     reason and the wait to stderr, so a green run that rode over a blip still says so in the log.
-  - 14 unit tests cover the status predicate, the backoff sequence, the 404 no-retry path, exhausting the
+  - 21 unit tests cover the status predicate, the backoff sequence, the 404 no-retry path, exhausting the
     budget on both a status and a thrown error, and the `onRetry` reporting. `fetchImpl` and `sleep` are
     injectable, so none of them touch the network or actually wait.
 
@@ -2807,7 +2807,7 @@ Other v0.1.24 work folded into this stable: Settings modal layout overhaul (fixe
 
 First stable v0.1.23 cut, rolling up everything from the 26-beta investigation. Eight architectural fixes in the in-app updater chain (install-root ACL via UAC, Job Object kill-on-close release, Rust SDK auto-apply disable, adb pre-apply hygiene + cwd anchoring, node-pty Local-Dependencies-Only restructure with `process.getBuiltinModule` runtime require, Logger to dataRoot, UI uninstall-flow modal race code path), Settings modal redesign (label-control grid layout, dual-purpose apply-update button), CI prerelease flag drop, and migration documentation. See per-beta entries below for the diagnosis chain.
 
-**Migration:** users on v0.1.21 / v0.1.22 / v0.1.23-beta.{1..6} must fresh-install the v0.1.23 MSI — the in-app updater on those builds is broken at varying severity and won't reach v0.1.23 by clicking apply. v0.1.23-beta.7+ users can in-app update normally. See `docs/PROGRAMDATA-MIGRATION.md` for the per-bug fix-version table.
+**Migration:** users on v0.1.21 / v0.1.22 / v0.1.23-beta.{1..6} must fresh-install the v0.1.23 MSI — the in-app updater on those builds is broken at varying severity and won't reach v0.1.23 by clicking apply. v0.1.23-beta.7+ users can in-app update normally. See `docs/PROGRAMDATA-MIGRATION.md` (removed in #452) for the per-bug fix-version table.
 
 ### Known issues (carried into v0.1.24)
 
@@ -3009,9 +3009,9 @@ Diagnostic-only beta cut. Targets the v0.1.22 in-app updater spawn-loop investig
 
 ### Changed
 
-- **Install layout migrated to per-machine** (Windows). Binaries now live at `C:\Program Files\WsScrcpyWeb\` (Velopack-managed); writable runtime state (`config.json`, `dependencies\`, logs) lives at `C:\ProgramData\WsScrcpyWeb\` with `Authenticated Users:Modify (OI)(CI)` granted at MSI install time. **Existing v0.1.x users must uninstall + reinstall** — Velopack auto-update cannot migrate across install locations. Detailed upgrade instructions in `docs/PROGRAMDATA-MIGRATION.md`. The Setup.exe artifact still ships through v0.1.21 as a fallback for users who prefer per-user installs without UAC on every update; v0.1.22 will drop Setup.exe.
+- **Install layout migrated to per-machine** (Windows). Binaries now live at `C:\Program Files\WsScrcpyWeb\` (Velopack-managed); writable runtime state (`config.json`, `dependencies\`, logs) lives at `C:\ProgramData\WsScrcpyWeb\` with `Authenticated Users:Modify (OI)(CI)` granted at MSI install time. **Existing v0.1.x users must uninstall + reinstall** — Velopack auto-update cannot migrate across install locations. Detailed upgrade instructions in `docs/PROGRAMDATA-MIGRATION.md` (removed in #452). The Setup.exe artifact still ships through v0.1.21 as a fallback for users who prefer per-user installs without UAC on every update; v0.1.22 will drop Setup.exe.
 - **Service-mode + multi-user state is now coherent.** All users (and the Local System service-Node) share `C:\ProgramData\WsScrcpyWeb\config.json` and the downloaded `dependencies\` tree. Settings changed in any context are visible to all others. Bob's first login after Alice installs the service automatically picks up the existing service URL via the shared config — no second WelcomeModal, no orphaned per-user instances.
-- **Updates require UAC every apply** (consequence of per-machine install). Velopack's `Update.exe` writes to Program Files which non-admin users cannot modify. The signed Update.exe triggers a single UAC prompt per update. Documented in PROGRAMDATA-MIGRATION.md.
+- **Updates require UAC every apply** (consequence of per-machine install). Velopack's `Update.exe` writes to Program Files which non-admin users cannot modify. The signed Update.exe triggers a single UAC prompt per update. Documented in PROGRAMDATA-MIGRATION.md (removed in #452).
 - **Tray menu** — left-click now opens the app in the default browser (the most common action becomes the cheapest gesture). Right-click shows a popup menu with "Open ws-scrcpy-web" + "Exit". Pre-v0.1.21 left-click was the exit-confirm dialog only; that path moved to the right-click menu's "Exit" item. Both the user-mode launcher tray and the standalone service-mode tray helper share the new menu.
 
 ### Added
@@ -3019,7 +3019,7 @@ Diagnostic-only beta cut. Targets the v0.1.22 in-app updater spawn-loop investig
 - **Two-root path resolution** under the hood. `installRoot` (binaries, Velopack-managed) and `dataRoot` (writable state) are now distinct concepts in both the TS server (`resolveDataRoot` + `Config.dataRoot`) and the Rust launcher (`Paths::data_root`). `dataRoot` defaults to `%PROGRAMDATA%\WsScrcpyWeb` on Windows and collapses to `installRoot` on non-Windows hosts (Linux AppImage layout unchanged).
 - **VelopackLocator runtime override.** `UpdateService.init()` builds a `VelopackLocatorConfig` from `installRoot` and passes it to `new UpdateManager(...)`. Velopack no longer relies on `%LOCALAPPDATA%`-walking auto-locate, fixing the v0.1.20 service-mode failure ("Could not auto-locate app manifest. Treating as dev mode.") at root cause. The v0.1.20 `LOCALAPPDATA`/`APPDATA`/`USERPROFILE` env-var passthrough in `ServiceApi.handleInstall` remains in place as belt-and-braces; v0.1.22 will remove it.
 - **One-shot legacy-config migration shim** (`launcher/src/migrate.rs`). When v0.1.21+ runs over a v0.1.20 install (i.e. Setup.exe → MSI upgrade where the user retained `%LocalAppData%\WsScrcpyWeb\config.json`), the launcher copies the legacy config to `<dataRoot>` on first start so settings carry over. Idempotent; no-op once `<dataRoot>\config.json` exists.
-- `docs/PROGRAMDATA-MIGRATION.md` — full upgrade guide for existing v0.1.x users.
+- `docs/PROGRAMDATA-MIGRATION.md` (removed in #452) — full upgrade guide for existing v0.1.x users.
 
 ### Fixed
 

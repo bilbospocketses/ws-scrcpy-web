@@ -92,7 +92,7 @@ Every log file is bounded at **10 MB with a single `.1` backup**. The rotation *
 **1. Files our loggers write — rename-rotate, size-checked on every write (10 MB).**
 These are opened per-write (`appendFileSync` / Rust `OpenOptions…append` per call), holding no persistent handle, so a rename is safe.
 - `Logger.ts`: change `rotateIfNeeded` from once-per-process (`rotationChecked` short-circuit removed) to a `statSync` + rename check on **every** `writeToFile`; threshold 5 MB → **10 MB**. Covers `ws-scrcpy-web.log`.
-- `common/log.rs`: add the same per-write `stat` + `rename` to `<name>.log.1` at 10 MB inside `append()` (after `is_disabled()`, before the write). Covers `launcher.log` + `tray.log`.
+- `common/src/log.rs`: add the same per-write `stat` + `rename` to `<name>.log.1` at 10 MB inside `append()` (after `is_disabled()`, before the write). Covers `launcher.log` + `tray.log`.
 
 **2. `server.log` — rename-rotate at launcher open (10 MB).**
 Node holds the `server.log` fd *during* a run, but it is free *between* spawns, and `spawn.rs::open_server_log` reopens it on each (re)spawn. So at open: `stat`; if `>= 10 MB`, `rename` to `server.log.1`; then open fresh and hand to Node. Per-spawn cadence; adequate because `server.log` is now thin (only non-logger crash/native output, which barely accumulates in normal operation).
@@ -137,7 +137,7 @@ This bounds **every** log file; nothing grows unbounded.
 
 ## Consumers / docs to update
 
-- **Comments:** `Logger.ts` (the v0.1.17 "prefix console so server.log matches" comment is now obsolete), `common/log.rs`, `spawn.rs::open_server_log` — relabel `server.log`/`service.log` as thin crash-catchers and document the `isTTY`/`is_terminal` gates.
+- **Comments:** `Logger.ts` (the v0.1.17 "prefix console so server.log matches" comment is now obsolete), `common/src/log.rs`, `spawn.rs::open_server_log` — relabel `server.log`/`service.log` as thin crash-catchers and document the `isTTY`/`is_terminal` gates.
 - **`README.md:342`**, **`docs/TECHNICAL_GUIDE.md`**, **`docs/PROGRAMDATA-MIGRATION.md`** — update the log-file descriptions to the canonical-vs-crash-catcher model.
 - **Smoke** (`smoke-full.md`/`smoke-runbook.md` 10.2/10.3): note that `server.log`/`service.log` are now thin (normal lines moved to `ws-scrcpy-web.log`/`launcher.log`); files are still tail-able. `capture-logs.{sh,ps1}` need no code change.
 - Historical specs/plans referencing the old filenames are left as-is (historical record).

@@ -364,7 +364,7 @@ After implementation:
 
 ## Implementation order (suggested phasing for plan)
 
-1. **Types first** (`common/DependencyTypes.ts`) — add `canUpdate`, `reason`. Cheap, enables typed callsites downstream.
+1. **Types first** (`src/common/DependencyTypes.ts`) — add `canUpdate`, `reason`. Cheap, enables typed callsites downstream.
 2. **Definitions** (`DependencyDefinitions.ts`) — add `requiresLauncher` per dep. Update existing definition tests.
 3. **Manager — `getAll()` + `update()` guard + `autoInstallMissing()` skip** (`DependencyManager.ts`). Update existing manager tests.
 4. **Rollback fix** in `installNodejs` (`DependencyManager.ts`). Add rollback tests.
