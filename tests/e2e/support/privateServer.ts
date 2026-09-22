@@ -180,7 +180,7 @@ export async function waitForServer(handle: ServerHandle, baseURL: string, timeo
  * is exactly what CI reported -- three rows timing out at 240 s on
  * `nodejs=24.21.0, adb=37.0.1, scrcpy-server=4.1, mkcert=unknown`.
  */
-const BOOT_INSTALLED_DEPENDENCIES = ['nodejs', 'adb', 'scrcpy-server'] as const;
+export const BOOT_INSTALLED_DEPENDENCIES = ['nodejs', 'adb', 'scrcpy-server'] as const;
 
 /**
  * Wait until every BOOT-INSTALLED dependency reports an installed version.

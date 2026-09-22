@@ -15,6 +15,7 @@ import {
 import { gotoHome } from './support/consent';
 import { composeDown, composeUpFresh, dockerExecRoot, dockerLogs } from './support/dockerStack';
 import {
+    BOOT_INSTALLED_DEPENDENCIES,
     privateServerPaths,
     type ServerHandle,
     seedPrivateDataRoot,
@@ -65,18 +66,28 @@ test.describe('dependencies (smoke §9.4, §9.5, §1.9)', () => {
             const api = visitor.context.request;
             // The fast tier's server downloads its dependencies at boot; wait for
             // that to land rather than assert a table of "Not installed".
+            //
+            // Only the BOOT-installed ones, and that distinction is load-bearing:
+            // mkcert is a registered dependency fetched on FIRST USE, so on a
+            // server that never generates a certificate its installedVersion
+            // stays null forever and "every dependency installed" can never
+            // become true. Imported from the support module rather than spelled
+            // again here, so there is one list to keep right.
             await expect
                 .poll(
                     async () =>
-                        ((await (await api.get('/api/dependencies')).json()) as DependencyInfo[]).every(
-                            (d) => d.installedVersion !== null,
-                        ),
+                        ((await (await api.get('/api/dependencies')).json()) as DependencyInfo[])
+                            .filter((d) => (BOOT_INSTALLED_DEPENDENCIES as readonly string[]).includes(d.name))
+                            .every((d) => d.installedVersion !== null),
                     { timeout: 120_000, message: 'first-run install to finish on the shared server' },
                 )
                 .toBe(true);
             const deps = (await (await api.get('/api/dependencies')).json()) as DependencyInfo[];
             // node-pty is not a managed dependency (it rides on nodejs as `pairedWith`).
-            expect(deps.map((d) => d.name).sort()).toEqual(['adb', 'nodejs', 'scrcpy-server']);
+            // mkcert IS one, and is listed here even though it installs on first
+            // use rather than at boot -- the panel shows its status like any
+            // other, which is what makes it visible and updatable at all.
+            expect(deps.map((d) => d.name).sort()).toEqual(['adb', 'mkcert', 'nodejs', 'scrcpy-server']);
 
             await gotoHome(visitor.page);
             // Nothing dependency-shaped is left on the home page. This is the

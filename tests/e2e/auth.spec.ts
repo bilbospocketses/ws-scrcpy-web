@@ -458,7 +458,18 @@ test.describe('auth / opt-in login (smoke §18)', () => {
             'Dependencies',
             'Server',
         ]);
-        await expect(sectionHeadings(settings)).toHaveText(['Users', 'Embedding', 'Updates', 'Service', 'Server']);
+        // 'Local HTTPS' is a second section INSIDE the Server tab, which is why
+        // the tab assertion above is unchanged while this one grew. Keeping
+        // both is the point: the tab strip catches a whole tab appearing, this
+        // catches a section appearing, and neither substitutes for the other.
+        await expect(sectionHeadings(settings)).toHaveText([
+            'Users',
+            'Embedding',
+            'Updates',
+            'Service',
+            'Server',
+            'Local HTTPS',
+        ]);
         // Users is the tab the dialog happens to open on for an admin, and the
         // three assertions below are about controls that live in it. Opened
         // explicitly so they stay true if the tab order ever changes — a role
