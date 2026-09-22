@@ -98,6 +98,7 @@ export class DependencyManager {
                 requiresRestart: def.requiresRestart,
                 pairedWith: def.pairedWith,
                 canUpdate: false,
+                deferInstall: def.deferInstall,
             });
         }
     }

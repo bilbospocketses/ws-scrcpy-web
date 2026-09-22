@@ -348,6 +348,25 @@ describe('makeUpdateTmpDir (N7)', () => {
     });
 });
 
+describe('DependencyManager — deferInstall reaches the wire', () => {
+    /**
+     * `deferInstall` lived only on the server-side definition, so
+     * `/api/dependencies` never carried it and the client could not tell "not
+     * installed because something failed" from "not installed because nothing
+     * has needed it yet". FirstRunBanner keys on exactly that difference, and
+     * without this it raised a permanent setup-incomplete warning naming
+     * mkcert. A flag that stops at the server boundary is invisible to the code
+     * that needs it.
+     */
+    it('publishes deferInstall on the DependencyInfo the client receives', () => {
+        const mgr = new DependencyManager('/tmp/test-deps-defer-wire');
+        expect(mgr.getByName('mkcert')?.deferInstall).toBe(true);
+        // The contrast half: a boot-time dependency must NOT carry it, or the
+        // banner would stop reporting genuine first-run failures.
+        expect(mgr.getByName('adb')?.deferInstall).toBeUndefined();
+    });
+});
+
 describe('DependencyManager.autoInstallMissing — mkcert defers to first use (M2)', () => {
     it('installs adb (a normal boot-time dependency) but SKIPS mkcert even though both equally qualify', async () => {
         // Contrast pair: both entries start with installedVersion: null and a

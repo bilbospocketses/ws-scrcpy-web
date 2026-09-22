@@ -75,9 +75,27 @@ export class FirstRunBanner {
         }
     }
 
+    /**
+     * The dependencies whose absence means setup is genuinely incomplete.
+     *
+     * `deferInstall` ones are excluded, and that exclusion is load-bearing
+     * rather than cosmetic. `resolveStatus` sets `Unknown` for anything with no
+     * installed version, so a dependency fetched on first use -- mkcert -- sits
+     * permanently in `installedVersion === null` + `Unknown` and matched this
+     * filter forever. The result was a standing warning banner naming a
+     * dependency that is not pending at all: it is waiting, correctly, for
+     * someone to enable HTTPS. Nothing the user could do would clear it except
+     * generating a certificate they may not want.
+     *
+     * A deferred dependency that FAILS while being fetched on demand is a real
+     * error, but it is not this banner's job -- the panel that triggered the
+     * install reports it, and this banner is specifically about first-run
+     * completeness.
+     */
     private static pendingDeps(deps: DependencyInfo[]): DependencyInfo[] {
         return deps.filter(
             (d) =>
+                !d.deferInstall &&
                 d.installedVersion === null &&
                 (d.status === DependencyStatus.Error || d.status === DependencyStatus.Unknown),
         );
