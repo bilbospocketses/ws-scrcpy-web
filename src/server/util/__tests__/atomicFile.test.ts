@@ -262,3 +262,127 @@ describe.runIf(!isWindows)('mode preservation (POSIX)', () => {
         expect(fs.statSync(dest).mode & 0o777).not.toBe(0o600);
     });
 });
+
+/**
+ * Item 140. These three helpers already defended against one cause of `EPERM`
+ * on Windows -- a destination whose HIDDEN or READONLY attribute refuses the
+ * write -- by writing a temp sibling and renaming over it. Windows reports a
+ * second, unrelated condition with the same errno: the rename itself is
+ * refused while another process holds a handle on the source or destination,
+ * which in practice is a real-time scanner that opened our temp file
+ * microseconds after we created it. Renaming cannot fix that, because renaming
+ * is the operation being refused.
+ *
+ * It presented for weeks as three unrelated flaky tests. Measured 2026-09-22:
+ * 17 clean full-suite runs on a quiet machine, then 1 failing run in 3 with
+ * the CPU pinned at 100%, every failure an `EPERM ... rename` out of one of
+ * these functions and a different caller each time. Load widens the window; it
+ * is not the cause.
+ *
+ * The rename is injected rather than spied: `vi.spyOn(fs, 'renameSync')` throws
+ * `Cannot spy on export "renameSync". Module namespace is not configurable in
+ * ESM`. Injecting also makes these tests drive the REAL public functions, so
+ * they prove the retry is wired in and not merely that the policy is correct
+ * in isolation.
+ */
+describe('rename retry on a transient sharing violation (item 140)', () => {
+    function eperm(): NodeJS.ErrnoException {
+        return Object.assign(new Error('EPERM: operation not permitted, rename'), { code: 'EPERM' });
+    }
+
+    /** A rename that fails `failures` times with EPERM, then really renames. */
+    function flakyRename(failures: number): { impl: (f: string, t: string) => void; calls: () => number } {
+        let calls = 0;
+        return {
+            impl: (from: string, to: string) => {
+                calls += 1;
+                if (calls <= failures) throw eperm();
+                fs.renameSync(from, to);
+            },
+            calls: () => calls,
+        };
+    }
+
+    it('writeFileAtomicSync survives a rename that fails twice and then succeeds', () => {
+        const dest = path.join(dir, 'config.json');
+        fs.writeFileSync(dest, 'old');
+        const flaky = flakyRename(2);
+
+        writeFileAtomicSync(dest, 'new', undefined, flaky.impl);
+
+        expect(flaky.calls()).toBe(3);
+        expect(fs.readFileSync(dest, 'utf8')).toBe('new');
+        // The write landed AND the two failed attempts left nothing behind. A
+        // retry leaking a temp per attempt shows up here, not in the content.
+        expect(fs.readdirSync(dir)).toEqual(['config.json']);
+    });
+
+    it('gives up and rethrows once the budget is exhausted, leaving the old file intact', () => {
+        const dest = path.join(dir, 'config.json');
+        fs.writeFileSync(dest, 'old');
+        let calls = 0;
+        const always = () => {
+            calls += 1;
+            throw eperm();
+        };
+
+        expect(() => writeFileAtomicSync(dest, 'new', undefined, always)).toThrow(/EPERM/);
+
+        // Bounded: 1 initial attempt + 6 backoff steps. Pinning the number is
+        // what stops a well-meaning "retry until it works" turning a genuine
+        // permission error into a hang.
+        expect(calls).toBe(7);
+        // Never a partial destination -- the point of temp-then-rename.
+        expect(fs.readFileSync(dest, 'utf8')).toBe('old');
+        expect(fs.readdirSync(dir)).toEqual(['config.json']);
+    });
+
+    it('does NOT retry an error that is not a sharing violation', () => {
+        const dest = path.join(dir, 'config.json');
+        let calls = 0;
+        const enoent = () => {
+            calls += 1;
+            throw Object.assign(new Error('ENOENT: no such file or directory, rename'), { code: 'ENOENT' });
+        };
+
+        expect(() => writeFileAtomicSync(dest, 'new', undefined, enoent)).toThrow(/ENOENT/);
+
+        // Exactly one attempt. Retrying ENOENT would only delay a real error by
+        // the whole budget, and this is what would catch a retry predicate
+        // widened to "any error".
+        expect(calls).toBe(1);
+    });
+
+    it('copyFileAtomicSync retries on the same terms', () => {
+        const src = path.join(dir, 'src.bin');
+        const dest = path.join(dir, 'dest.bin');
+        fs.writeFileSync(src, 'new');
+        fs.writeFileSync(dest, 'old');
+        const flaky = flakyRename(1);
+
+        copyFileAtomicSync(src, dest, flaky.impl);
+
+        expect(flaky.calls()).toBe(2);
+        expect(fs.readFileSync(dest, 'utf8')).toBe('new');
+        expect(fs.readdirSync(dir).sort()).toEqual(['dest.bin', 'src.bin']);
+    });
+
+    it('copyFileAtomic (async) retries without blocking, on the same terms', async () => {
+        const src = path.join(dir, 'src.bin');
+        const dest = path.join(dir, 'dest.bin');
+        fs.writeFileSync(src, 'new');
+        fs.writeFileSync(dest, 'old');
+        let calls = 0;
+        const flaky = async (from: string, to: string): Promise<void> => {
+            calls += 1;
+            if (calls === 1) throw eperm();
+            await fs.promises.rename(from, to);
+        };
+
+        await copyFileAtomic(src, dest, flaky);
+
+        expect(calls).toBe(2);
+        expect(fs.readFileSync(dest, 'utf8')).toBe('new');
+        expect(fs.readdirSync(dir).sort()).toEqual(['dest.bin', 'src.bin']);
+    });
+});
