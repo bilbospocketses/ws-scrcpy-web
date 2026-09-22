@@ -136,8 +136,20 @@ test.describe('dependencies (smoke §9.4, §9.5, §1.9)', () => {
             for (const dep of deps) {
                 const row = rows.filter({ hasText: dep.displayName });
                 await expect(row).toHaveCount(1);
-                await expect(row.locator('td.dep-version').first()).toHaveText(dep.installedVersion ?? '');
-                await expect(row.locator('td.dep-version').first()).not.toHaveText('Not installed');
+                const installed = row.locator('td.dep-version').first();
+                if (dep.installedVersion === null) {
+                    // An on-demand dependency -- mkcert -- is listed in the panel
+                    // but fetched on first use, so "Not installed" is the honest
+                    // thing for its Installed cell to say until someone generates
+                    // a certificate. Asserted positively rather than skipped: the
+                    // row still has to exist, still has to be findable by display
+                    // name, and still has to report its real state. Skipping it
+                    // would let the row vanish without this test noticing.
+                    await expect(installed).toHaveText('Not installed');
+                } else {
+                    await expect(installed).toHaveText(dep.installedVersion);
+                    await expect(installed).not.toHaveText('Not installed');
+                }
             }
 
             // check for updates: the real POST, then every Latest cell filled.
@@ -367,7 +379,12 @@ test.describe('dependencies (smoke §9.4, §9.5, §1.9)', () => {
                 .poll(
                     async () => {
                         const deps = (await (await api.get('/api/dependencies')).json()) as DependencyInfo[];
-                        return deps.every((d) => d.installedVersion !== null && d.status !== 'error');
+                        // Boot-installed only: mkcert is fetched on first use, so
+                        // it is legitimately never installed here and would hold
+                        // this poll open for its whole 180 s budget.
+                        return deps
+                            .filter((d) => (BOOT_INSTALLED_DEPENDENCIES as readonly string[]).includes(d.name))
+                            .every((d) => d.installedVersion !== null && d.status !== 'error');
                     },
                     { timeout: 180_000, message: 'every dependency installed after Retry' },
                 )

@@ -915,6 +915,9 @@ test.describe('auth / opt-in login (smoke §18)', () => {
                 'Updates',
                 'Service',
                 'Server',
+                // Admin-only, like everything else in this list. The non-admin
+                // assertion earlier in this test is what proves it stays hidden.
+                'Local HTTPS',
             ]);
             // Same explicitness as the user side above: 'manage users' lives in
             // the Users tab, so the contrast is only a contrast with it open.
