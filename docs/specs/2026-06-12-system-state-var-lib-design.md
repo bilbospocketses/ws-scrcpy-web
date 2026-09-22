@@ -58,7 +58,7 @@ migrated (they only ever worked on non-SELinux Ubuntu anyway). All migration mac
   `semanage` local in the install builder.
 - `ServiceApi.ts`: remove the `/api/service/migrate-system` handler + `systemServiceNeedsMigration` +
   `serviceMigrationNeeded` wiring.
-- `ServiceClient.ts`, `common/ServiceEvents.ts`, `app/index.ts`: remove the migration field / comment / UI offer.
+- `ServiceClient.ts`, `src/common/ServiceEvents.ts`, `app/index.ts`: remove the migration field / comment / UI offer.
 
 **Rust — launcher:**
 - `linux_service.rs`: teardown dirs `/var/opt` → `/var/lib`; the fcontext-removal specs drop the `/var/opt`
