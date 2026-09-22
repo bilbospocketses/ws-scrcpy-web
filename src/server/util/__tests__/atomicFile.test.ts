@@ -38,16 +38,20 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-    // Clear attributes first: a hidden leftover would otherwise trip rmSync.
-    if (isWindows && fs.existsSync(dir)) {
-        for (const entry of fs.readdirSync(dir)) {
-            try {
-                execFileSync(ATTRIB, ['-h', path.join(dir, entry)], { windowsHide: true });
-            } catch {
-                /* best-effort */
-            }
-        }
-    }
+    // This used to clear the hidden attribute off every entry first, on the
+    // stated grounds that "a hidden leftover would otherwise trip rmSync".
+    // MEASURED 2026-09-22, and it is not true: `fs.rmSync(.., {force: true})`
+    // deletes a hidden file, a read-only file, and a hidden+read-only file
+    // without complaint -- `force` already clears the read-only attribute, and
+    // hidden never blocked deletion in the first place. The loop was guarding
+    // against nothing.
+    //
+    // It was not free, either. Each `attrib` spawn costs ~343 ms on this box
+    // even IDLE -- endpoint AV sits in the process-creation path -- so a
+    // teardown that spawns once per file ran up seconds per test and was the
+    // single largest contributor to item 140's `Hook timed out in 10000ms`
+    // failures under load. `setHidden`/`isHidden` still shell out, but those
+    // are the subject under test rather than bookkeeping, and they run once.
     fs.rmSync(dir, { recursive: true, force: true });
 });
 
