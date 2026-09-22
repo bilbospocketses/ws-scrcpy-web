@@ -110,10 +110,63 @@ describe('HttpServer listen-error handling', () => {
         expect(servers.some((s) => s.port === 8443)).toBe(true);
     });
 
-    it('a plain-HTTP bind failure stays fatal — it is logged, then re-thrown, not swallowed', async () => {
+    // Item 141: the mirror case. `attachListenErrorHandler` already degraded
+    // when the HTTPS listener failed to bind, but the HTTP side re-threw --
+    // so a busy port 80 took down a perfectly healthy HTTPS listener with it,
+    // which is the exact outcome C3 was filed to prevent, one protocol over.
+    // The spec only ever guaranteed that HTTP survives an HTTPS failure, so
+    // the old behaviour was defensible rather than wrong; the user's ruling
+    // (2026-09-22) is degrade-never-exit in both directions.
+    it('a plain-HTTP bind failure degrades and does NOT take a healthy HTTPS listener down (141)', async () => {
         vi.resetModules();
         let httpServer: FakeServer | undefined;
-        vi.doMock('http', () => ({ createServer: vi.fn(() => (httpServer = makeFakeServer())) }));
+        let httpsServer: FakeServer | undefined;
+        vi.doMock('http', () => ({ createServer: vi.fn(() => (httpServer = makeFakeServer(8000))) }));
+        vi.doMock('https', () => ({ createServer: vi.fn(() => (httpsServer = makeFakeServer())) }));
+        mockConfigModule();
+
+        const { HttpServer } = await import('../services/HttpServer');
+        const { Logger } = await import('../Logger');
+        const errorSpy = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+
+        const service = HttpServer.getInstance();
+        await service.start();
+
+        // The HTTPS listener bound fine and is live -- this is what the old
+        // `throw err` destroyed.
+        if (httpsServer) httpsServer.listening = true;
+
+        expect(() => {
+            httpServer?.emit('error', Object.assign(new Error('address in use'), { code: 'EADDRINUSE' }));
+        }).not.toThrow();
+
+        // Pinning the logged content, not merely "it didn't throw": a handler
+        // that silently swallowed the error would also pass `.not.toThrow()`.
+        const logged = errorSpy.mock.calls.flat().map(String).join(' ');
+        expect(logged).toContain('8000');
+        expect(logged).toContain('EADDRINUSE');
+        expect(logged).toContain('failed to bind');
+
+        // And the specific thing 141 is about: HTTPS is untouched. A
+        // regression that re-threw would never reach this line at all, but a
+        // regression that marked the secure port failed WOULD -- so assert
+        // the secure side's standing, not just survival.
+        const { getHttpsListenerStatus } = await import('../services/HttpServer');
+        expect(getHttpsListenerStatus().listening).toBe(true);
+        expect(getHttpsListenerStatus().bindFailed).toBe(false);
+    });
+
+    // Item 141, the mirror of I2. Once the HTTP branch stops re-throwing it
+    // needs the same `!server.listening` guard the secure branch has, or a
+    // transient runtime error (EMFILE under load) on an ALREADY-serving HTTP
+    // listener gets recorded as "failed to bind" -- a false log line about a
+    // listener that is still up. Without the guard this test fails on the
+    // wording assertion rather than by throwing, which is why it asserts the
+    // two phrasings are distinct rather than just counting calls.
+    it('a runtime error on an already-bound HTTP listener is not reported as a failed bind (141)', async () => {
+        vi.resetModules();
+        let httpServer: FakeServer | undefined;
+        vi.doMock('http', () => ({ createServer: vi.fn(() => (httpServer = makeFakeServer(8000))) }));
         vi.doMock('https', () => ({ createServer: vi.fn(() => makeFakeServer()) }));
         mockConfigModule();
 
@@ -124,17 +177,72 @@ describe('HttpServer listen-error handling', () => {
         const service = HttpServer.getInstance();
         await service.start();
 
+        if (httpServer) httpServer.listening = true;
+        expect(() => {
+            httpServer?.emit('error', Object.assign(new Error('too many open files'), { code: 'EMFILE' }));
+        }).not.toThrow();
+
+        const logged = errorSpy.mock.calls.flat().map(String).join(' ');
+        expect(logged).toContain('runtime error');
+        expect(logged).not.toContain('failed to bind');
+    });
+
+    // Item 141's one genuine cost: with nothing re-thrown, a boot where BOTH
+    // listeners fail to bind no longer exits -- it would sit there serving
+    // nothing, which is worse than crashing because it looks healthy. The
+    // ruling was degrade-never-exit, so the process stays up; this asserts
+    // the condition is at least stated once, loudly, rather than inferred
+    // from two unrelated bind-failure lines.
+    it('logs a distinct line when BOTH listeners failed, so "serving nothing" is never silent (141)', async () => {
+        vi.resetModules();
+        let httpServer: FakeServer | undefined;
+        let httpsServer: FakeServer | undefined;
+        vi.doMock('http', () => ({ createServer: vi.fn(() => (httpServer = makeFakeServer(8000))) }));
+        vi.doMock('https', () => ({ createServer: vi.fn(() => (httpsServer = makeFakeServer())) }));
+        mockConfigModule();
+
+        const { HttpServer } = await import('../services/HttpServer');
+        const { Logger } = await import('../Logger');
+        const errorSpy = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+
+        const service = HttpServer.getInstance();
+        await service.start();
+
+        // HTTPS goes down first, then HTTP -- so by the time the HTTP handler
+        // runs there is genuinely nothing left serving.
+        httpsServer?.emit('error', Object.assign(new Error('address in use'), { code: 'EADDRINUSE' }));
         expect(() => {
             httpServer?.emit('error', Object.assign(new Error('address in use'), { code: 'EADDRINUSE' }));
-        }).toThrow('address in use');
+        }).not.toThrow();
 
-        // A silent catch (log-and-continue, the way HTTPS behaves) would
-        // pass a bare `.toThrow()` vacuously if the emit itself still threw
-        // for unrelated reasons -- pinning the logged content is what proves
-        // this specific handler ran, not just that *something* threw.
         const logged = errorSpy.mock.calls.flat().map(String).join(' ');
-        expect(logged).toContain('8000');
-        expect(logged).toContain('EADDRINUSE');
+        expect(logged).toContain('no listener is serving');
+    });
+
+    // The inverse, and the reason the line above is gated rather than
+    // unconditional: an HTTP failure while HTTPS is healthy must NOT claim
+    // nothing is serving. Pairs with the test above (same HTTP failure, one
+    // differing fact, opposite expectation).
+    it('does not claim "serving nothing" when HTTPS is still up (141)', async () => {
+        vi.resetModules();
+        let httpServer: FakeServer | undefined;
+        let httpsServer: FakeServer | undefined;
+        vi.doMock('http', () => ({ createServer: vi.fn(() => (httpServer = makeFakeServer(8000))) }));
+        vi.doMock('https', () => ({ createServer: vi.fn(() => (httpsServer = makeFakeServer())) }));
+        mockConfigModule();
+
+        const { HttpServer } = await import('../services/HttpServer');
+        const { Logger } = await import('../Logger');
+        const errorSpy = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+
+        const service = HttpServer.getInstance();
+        await service.start();
+
+        if (httpsServer) httpsServer.listening = true;
+        httpServer?.emit('error', Object.assign(new Error('address in use'), { code: 'EADDRINUSE' }));
+
+        const logged = errorSpy.mock.calls.flat().map(String).join(' ');
+        expect(logged).not.toContain('no listener is serving');
     });
 
     it('after an HTTPS bind failure, redirect mode serves rather than pointing at the dead port — reads runtime reality, not just config', async () => {
@@ -244,15 +352,17 @@ describe('HttpServer listen-error handling', () => {
         const service = HttpServer.getInstance();
         await service.start();
 
-        // The HTTP failure is fatal and re-throws -- caught here so the test
-        // can go on to check the (should-be-unrelated) HTTPS/redirect state.
-        // A buggy unconditional `failedSecurePorts.add(port)` would record
-        // 8000 here, which -- because the secure entry is ALSO configured at
-        // 8000 in this test -- would make `findHttpsPort()` treat the secure
-        // entry as failed too.
+        // The HTTP failure degrades rather than re-throwing (item 141), so
+        // there is nothing to catch here any more -- but the point of the
+        // test is unchanged. A buggy unconditional `failedSecurePorts
+        // .add(port)` would record 8000 here, which -- because the secure
+        // entry is ALSO configured at 8000 in this test -- would make
+        // `findHttpsPort()` treat the secure entry as failed too. The
+        // `.not.toThrow()` is kept deliberately: it is what would catch a
+        // revert of 141 in the file that owns the behaviour.
         expect(() => {
             httpServer?.emit('error', Object.assign(new Error('address in use'), { code: 'EADDRINUSE' }));
-        }).toThrow();
+        }).not.toThrow();
 
         const { makeReqRes } = await import('./helpers/httpMock');
         const handler = createHttpRequestHandler([], () => {}, false);

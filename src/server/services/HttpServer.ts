@@ -195,6 +195,20 @@ function readHttpExposure(): HttpExposure {
  */
 const failedSecurePorts = new Set<number>();
 
+/**
+ * Plain-HTTP ports that were configured for this boot but failed to bind
+ * (item 141). The exact mirror of `failedSecurePorts` above, and it exists
+ * for the same reason: once an HTTP bind failure stops being fatal, "this
+ * port is configured" and "this port is serving" are no longer the same
+ * statement, and the difference has to be recorded somewhere.
+ *
+ * Read by `attachListenErrorHandler` itself to decide whether the
+ * nothing-is-serving line is warranted. Same no-reset-seam caveat as its
+ * twin -- there is no in-process re-listen, so an entry here is true for the
+ * life of the process.
+ */
+const failedPlainPorts = new Set<number>();
+
 /** The shape `getHttpsListenerStatus()` (below) answers with. */
 export interface HttpsListenerStatus {
     /** True when an HTTPS listener is actually bound and serving right now. */
@@ -325,14 +339,26 @@ let boundLeafFingerprint: string | undefined;
  * narrowed exposure modes for the rest of the process's life on a listener
  * that is still up.
  *
- * Plain HTTP is not optional -- there is no server at all without it -- so
- * its bind failure stays fatal, exactly as it was before this handler
- * existed (no listener meant Node itself threw the error as an
- * uncaughtException). This logs the specific port and cause first, then lets
- * the same failure surface the same way; it does not swallow it. (This is
- * unconditional on `server.listening`, unlike the secure branch: an HTTP
- * bind failure and a later HTTP runtime error are both already fatal today,
- * so there is no false-log-line failure mode to guard against here.)
+ * Plain HTTP degrades too, as of item 141 (user ruling, 2026-09-22). It used
+ * to re-throw -- which meant a busy port 80, or `EACCES` on a sub-1024 port
+ * the port model explicitly invites the user to pick, destroyed a perfectly
+ * healthy HTTPS listener along with it. That is precisely the outcome this
+ * handler was created to prevent, one protocol over: the spec guaranteed
+ * that HTTP survives an HTTPS failure and simply never said the reverse, so
+ * the old behaviour was defensible rather than wrong. Both directions now
+ * follow the same degrade-never-exit principle as the rest of the feature.
+ *
+ * The HTTP branch therefore needs the SAME `!server.listening` guard the
+ * secure branch has, and for the same reason -- now that a runtime error is
+ * no longer fatal, an EMFILE on an already-serving HTTP listener would
+ * otherwise be logged as "failed to bind", a false statement about a
+ * listener that is still up.
+ *
+ * The one thing degrading costs: a boot where BOTH listeners fail to bind no
+ * longer exits, so the process would sit serving nothing while looking
+ * healthy -- worse than crashing, because a crash is legible. So that exact
+ * condition gets its own log line, stated once, rather than left to be
+ * inferred from two unrelated bind-failure lines.
  */
 function attachListenErrorHandler(server: http.Server | https.Server, port: number, secure: boolean): void {
     server.on('error', (err: NodeJS.ErrnoException) => {
@@ -350,8 +376,26 @@ function attachListenErrorHandler(server: http.Server | https.Server, port: numb
             }
             return;
         }
-        Logger.for('HttpServer').error(`HTTP listener on port ${port} failed to bind (${cause})`);
-        throw err;
+        if (!server.listening) {
+            failedPlainPorts.add(port);
+            Logger.for('HttpServer').error(
+                `HTTP listener on port ${port} failed to bind (${cause}); continuing without plain HTTP.`,
+            );
+            // Gated, not unconditional: an HTTP failure while HTTPS is live
+            // is a degraded app, not an unreachable one, and saying otherwise
+            // would be the same kind of false claim NF-1 was about.
+            if (!getHttpsListenerStatus().listening) {
+                Logger.for('HttpServer').error(
+                    `no listener is serving: plain HTTP on port ${port} failed to bind and no HTTPS listener is ` +
+                        'live. the app is running but unreachable -- free the port (or change it in config.json) ' +
+                        'and restart.',
+                );
+            }
+            return;
+        }
+        Logger.for('HttpServer').error(
+            `HTTP listener on port ${port} reported a runtime error (${cause}); it may be degraded.`,
+        );
     });
 }
 
