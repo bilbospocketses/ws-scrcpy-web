@@ -4,6 +4,24 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FirstRunStatus } from '../../common/ConfigEvents';
 import { AdminScopeBanner, bannerStateFor } from './AdminScopeBanner';
 
+/**
+ * `vi.waitFor` with a budget that survives a loaded machine (item 140).
+ *
+ * Every wait in this file is waiting on the same thing: a `dialog` that only
+ * exists after the banner dynamically `import()`s the modal. That import pays
+ * for an on-demand module transform the FIRST time it runs, inside the wait's
+ * own clock -- and `vi.waitFor` has its own short default budget which
+ * `vitest.config.ts`'s `testTimeout: 20000` does not extend. On a quiet box
+ * the transform finishes in milliseconds and nobody notices; with the CPU
+ * saturated it does not, and the wait gives up while the import is still
+ * compiling. It fails as `expected null to be truthy`, which reads as "the
+ * modal never opened" rather than "we stopped waiting too early".
+ *
+ * Measured 2026-09-22: 1 failure in 6 full-suite runs with 24 CPU burners
+ * live, always one of these waits, never on an idle machine.
+ */
+const waitForModal = (assertion: () => void): Promise<void> => vi.waitFor(assertion, { timeout: 15_000, interval: 25 });
+
 function runtime(over: Partial<FirstRunStatus>): FirstRunStatus {
     return { firstRunComplete: true, portWasAutoShifted: false, webPort: 8000, ...over };
 }
@@ -112,14 +130,14 @@ describe('AdminScopeBanner opt-out wiring', () => {
         );
         allow?.click();
         // Let the dynamic import + the modal's queueMicrotask body settle.
-        await vi.waitFor(() => {
+        await waitForModal(() => {
             expect(document.querySelector('dialog')).toBeTruthy();
         });
         const decline = [...document.querySelectorAll('button')].find(
             (b) => b.textContent === 'Set up sign-in instead',
         );
         decline?.click();
-        await vi.waitFor(() => {
+        await waitForModal(() => {
             expect(document.querySelectorAll('dialog').length).toBeGreaterThan(0);
         });
         const patched = fetchSpy.mock.calls.some(([, init]) => (init as RequestInit | undefined)?.method === 'PATCH');
@@ -134,13 +152,13 @@ describe('AdminScopeBanner opt-out wiring', () => {
         [...banner.getElement().querySelectorAll('button')]
             .find((b) => b.textContent === 'Allow remote admin without sign-in')
             ?.click();
-        await vi.waitFor(() => {
+        await waitForModal(() => {
             expect(document.querySelector('dialog')).toBeTruthy();
         });
         [...document.querySelectorAll('button')]
             .find((b) => b.textContent === 'I understand — allow remote admin')
             ?.click();
-        await vi.waitFor(() => {
+        await waitForModal(() => {
             const patch = fetchSpy.mock.calls.find(([, init]) => (init as RequestInit | undefined)?.method === 'PATCH');
             expect(patch).toBeTruthy();
             const init = (patch as unknown[])[1] as RequestInit;
@@ -187,7 +205,7 @@ describe('AdminScopeBanner dismissal', () => {
         const banner = new AdminScopeBanner();
         banner.render(runtime({ adminScope: 'local', callerIsLocal: true }));
         [...banner.getElement().querySelectorAll('button')].find((b) => b.textContent === 'Dismiss')?.click();
-        await vi.waitFor(() => {
+        await waitForModal(() => {
             const patch = fetchSpy.mock.calls.find(([url]) => url === '/api/settings');
             expect(patch).toBeTruthy();
             const init = (patch as unknown[])[1] as RequestInit;
