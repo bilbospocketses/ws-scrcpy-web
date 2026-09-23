@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.131] - 2026-09-23
+
 ### Fixed
 
 - **A stream that starts without the information needed to show a picture now asks the device to send it again, instead of staying black.** Some devices — redroid containers in particular — occasionally begin sending video without first describing the format, and a browser cannot start decoding without that description. Frames arrive, data flows, and the picture never appears. There was already a recovery path for this, but it lived in the browser and only ran when decoding went wrong; with no format description nothing ever started decoding, so nothing ever went wrong and it never ran. The server now notices that no format description has arrived after eight seconds and asks the device for a fresh keyframe, which brings the description with it. Measured on redroid 13: **five of eight sessions previously stayed black forever; all eight now recover**, with the picture arriving one to three seconds after the request. It asks at most three times — a device that will not answer by then is not going to — and it only asks when the description is genuinely missing, never when the stream simply has a lull.
