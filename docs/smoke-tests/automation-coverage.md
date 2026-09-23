@@ -9,8 +9,9 @@ Derived from `smoke-test.md` at `v0.1.30-beta.92`, which held **140 rows**; item
 (the Linux tray, 2026-09-06) added 14.8 and 14.9, item 114 (the tray's Exit, same
 day) added 15.6, item 24 (live rotation, 2026-09-15) added 8.10 and 8.11, item 73
 (wireless pairing, 2026-09-15) added 7.6 and 7.7 (147), and the 2026-09-19
-local-https plan's task 9 added Module 21 — 21.1 through 21.4 — so the doc holds
-**151**. Row ids are stable and gappy; so are the lines here.
+local-https plan's task 9 added Module 21 — 21.1 through 21.4 (151) — and item 68's
+beta.131 server work (2026-09-23) added 8.15, 8.16, 8.17 and 12.6, so the doc holds
+**155**. Row ids are stable and gappy; so are the lines here.
 
 | | Rows | Where |
 |---|---|---|
@@ -19,13 +20,13 @@ local-https plan's task 9 added Module 21 — 21.1 through 21.4 — so the doc h
 | Automated, device tier | 17 | qa-harness, nightly |
 | Windows guest | 26 | qa-harness, nightly, once P4 lands |
 | Windows guest **and** Linux residual | 2 | Windows half P4; Linux half nobody |
-| Automatable, no spec written yet | 2 | — (8.10 / 8.11, item 24's rotation rows; the six of 2026-09-04 were written 2026-09-06, item 104) |
+| Automatable, no spec written yet | 6 | — (8.10 / 8.11, item 24's rotation rows; the six of 2026-09-04 were written 2026-09-06, item 104; **plus item 68's four beta.131 rows — 8.15, 8.16, 8.17, 12.6**, all four automatable because the fixtures now exist: 12.6 only needs the port occupied, and redroid supplies the other three — its x86_64 image has **no Opus encoder at all** (8.16) and redroid 13 **withholds SPS/PPS in roughly 5 of 8 sessions** (8.17), both measured 2026-09-23) |
 | Automated, manual/conditional | 1 | 21.1 — `tests/e2e/local-https.spec.ts` exists and proves the row, but `test.skip`s unless a person points `QA_LAN_HTTPS_ORIGIN` at a real, non-loopback LAN origin serving a generated certificate. No CI run sets that, so it never contributes to "automated today" below. |
 | **Residual — Linux installer and desktop** | **50** | nobody (14.8 / 14.9 are assertable by qa-harness item 14's Linux guests) |
 | **Residual — un-automatable** | **10** | nobody, ever |
-| **Total** | **151** | |
+| **Total** | **155** | |
 
-**Automated today: 58 of 151 = 38 %.** After P4: 84 of 151 = 56 %, plus the
+**Automated today: 58 of 155 = 37 %.** After P4: 84 of 155 = 54 %, plus the
 Windows halves of the two split rows. (52 / 37 % and 77 / 55 % until 2026-09-06,
 when item 104 wrote the six specs this table used to list as "automatable, no
 spec"; the denominator was 140 until item 63 added the two tray rows and item 114
@@ -37,7 +38,7 @@ so both rows land in the un-automatable bucket rather than adding coverage — a
 is real but conditional (manual/conditional, not automated — recording a
 skip-by-default spec as coverage would be the documentation equivalent of a false
 green) and 21.2-21.4 need a second real LAN machine nothing in this stack
-provides.)
+provides. Then **155** once item 68 added 8.15/8.16/8.17 and 12.6 on 2026-09-23: the numerator again does NOT move, because all four are automatable-with-no-spec rather than automated — counting a row as covered because a fixture for it exists, before the spec that uses the fixture exists, is the same false green as counting a skip-by-default spec.)
 
 Three different row counts have been quoted for this document, and only one of them
 is wrong. The plan that commissioned this register worked from **127**, which was
@@ -178,6 +179,9 @@ Sorted by module, then by row number, which is not the doc's execution order.
 | 8.9 | `[Both]` | Hardware encoder is offered | residual: un-automatable | Needs a vendor hardware encoder (`c2.exynos.*`, `c2.amlogic.*`). The emulator offers only the `c2.android.*` software one. |
 | 8.10 | `[Both]` | Rotating the device re-fits the picture | automatable: no spec yet | Device tier. The emulator rotates on demand (`adb shell settings put system user_rotation`), and the assertion is a dimension change the client logs, so nothing here needs a human — only a spec. |
 | 8.11 | `[Both]` | Touch still lands correctly after a rotation | automatable: no spec yet | Device tier. Rotate, inject a tap at a known edge coordinate, and assert where it landed on the device. Deliberately separate from 8.10: the picture and the touch mapping fail independently, and this is the half a human checking the picture would tick without testing. |
+| 8.15 | `[Both]` | The stream summary names what arrived | automatable: no spec yet | Device tier, and the cheapest of the four: stream, close, assert one `stream summary: config=N keyframe=N frame=N` line with non-zero counts. Worth writing FIRST — 8.16 and 8.17 are both judged by reading this line, so a spec that cannot trust it cannot prove either of them. |
+| 8.16 | `[Both]` | An unavailable audio codec no longer kills the video stream | automatable: no spec yet | Device tier, and the fixture is specific: the device must LACK the requested codec. **x86_64 redroid has no Opus encoder at all** (measured 2026-09-23), so requesting opus there exercises the fallback deterministically; a real phone usually has all three and cannot. Assert video still flows and the log names the substituted codec. |
+| 8.17 | `[Both]` | A device that never sends codec config is recovered, not left black | automatable: no spec yet | Device tier. **redroid 13 withholds SPS/PPS in roughly 5 of 8 sessions on x86_64 and 6 of 6 on emulated arm64** (measured 2026-09-23, issue #703), which is the only fixture known to reproduce it — so this is automatable but NOT on a healthy phone. Two traps for whoever writes it: the run is probabilistic, so a single green session proves nothing; and the capture window must exceed the device's own latency — a 14s window read a working fix as 6-of-6 broken because the emulated device needed ~20s. |
 | 9.1 | `[Both]` | Shell modal | device | `device/modals.spec.ts` |
 | 9.2 | `[Both]` | File listing/transfer | device | `device/modals.spec.ts` |
 | 9.3 | `[Both]` | Device actions | device | `device/modals.spec.ts` |
@@ -199,6 +203,7 @@ Sorted by module, then by row number, which is not the doc's execution order.
 | 12.3 | `[Win]` | Local-mode reaps everything | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
 | 12.4 | `[Linux]` | DATA_ROOT override honored | fast | `lifecycle.spec.ts`. **Partial:** the Node side is covered; the launcher half stays manual. |
 | 12.5 | `[Win]` | Abnormal-termination JobObject reap | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
+| 12.6 | `[Both]` | The server EXITS when no listener can bind | automatable: no spec yet | Fast tier — no device needed, which makes it the easiest row in this table to automate. Occupy the port, start the server, assert a non-zero exit rather than a process that stays up. Must be driven BOTH ways round when Local HTTPS is on: the original defect only checked in the plain-HTTP branch, so one order reported and the other did not, and the existing test happened to emit in the order that passed. |
 | 13.1 | `[Both]` | Bookmark global-dismiss | fast | `settings-prompts.spec.ts` |
 | 13.2 | `[Both]` | Reset welcome & bookmark prompts | fast | `settings-prompts.spec.ts` |
 | 13.3 | `[Both]` | Server-section layout + web-port inline save | fast | `settings-prompts.spec.ts`. **Partial:** layout, inline save and the at-rest status are covered; "change port, save, persists and restarts" stays manual. |
