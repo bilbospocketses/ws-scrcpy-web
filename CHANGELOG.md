@@ -17,6 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **If no listener can be bound at all, the server now stops instead of sitting there unreachable.** The previous release made a bind failure survivable in both directions, so one busy port can no longer take down a listener that came up fine — that is unchanged and is still the right behaviour whenever *something* is still serving. What it also meant, though, is that a start-up where *every* configured port was refused left the process running and answering nothing: alive to any supervisor watching it, healthy to anything checking whether it is up, and reachable by nobody. That is worse than stopping, because a process that stops is noticed immediately and this one is not noticed at all. So that single case now logs what happened, names the ports and the remedy, and exits. Nothing else changed: a failure while another listener is still serving still degrades quietly and keeps running.
+
+### Fixed
+
+- **A start-up where both listeners fail in the less common order is now reported.** The "nothing is serving" condition was only ever checked when the plain-HTTP listener failed, so it was detected when HTTPS failed first and HTTP second — and silently missed in the other order, where HTTP failed while HTTPS had not yet been marked and nothing looked again afterwards. Both orders are now handled the same way.
+
 ## [0.1.30-beta.130] - 2026-09-22
 
 ### Added
