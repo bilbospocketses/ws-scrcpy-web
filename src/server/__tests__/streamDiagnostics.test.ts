@@ -159,3 +159,52 @@ describe('StreamDiagnostics', () => {
         expect(lossy.summary()).toContain('dropped=1');
     });
 });
+
+// #703 config-recovery gate. `TYPE_RESET_VIDEO` makes the device emit a fresh
+// config packet WITH the keyframe, so it rescues a stream that never got
+// SPS/PPS — and does nothing for a stream that has a configured decoder and is
+// merely short of frames. Getting this predicate backwards would either miss
+// the case the feature exists for, or throw away a working decoder.
+describe('StreamDiagnostics.canRecoverWithKeyframeRequest', () => {
+    it('is TRUE when nothing has arrived at all', () => {
+        const d = new StreamDiagnostics(() => 0);
+        d.start();
+        expect(d.canRecoverWithKeyframeRequest()).toBe(true);
+    });
+
+    it('is TRUE when media frames arrive but no config — the #703 shape', () => {
+        const d = new StreamDiagnostics(() => 0);
+        d.start();
+        d.noteFrame('frame', 500);
+        d.noteFrame('frame', 500);
+        expect(d.canRecoverWithKeyframeRequest()).toBe(true);
+    });
+
+    it('is FALSE once a config packet has arrived, even with no frames', () => {
+        // A configured decoder that is starved is a different problem, and a
+        // reset would discard the decoder to chase it.
+        const d = new StreamDiagnostics(() => 0);
+        d.start();
+        d.noteFrame('config', 37);
+        expect(d.canRecoverWithKeyframeRequest()).toBe(false);
+    });
+
+    it('is FALSE on a healthy stream', () => {
+        const d = new StreamDiagnostics(() => 0);
+        d.start();
+        d.noteFrame('config', 37);
+        d.noteFrame('keyframe', 9000);
+        expect(d.canRecoverWithKeyframeRequest()).toBe(false);
+    });
+
+    it('flips to FALSE as soon as config arrives, so a retry loop stops on its own', () => {
+        // This is what bounds the retry in practice: the caller re-checks, and
+        // a successful reset ends the sequence without needing the attempt cap.
+        const d = new StreamDiagnostics(() => 0);
+        d.start();
+        d.noteFrame('frame', 500);
+        expect(d.canRecoverWithKeyframeRequest()).toBe(true);
+        d.noteFrame('config', 37);
+        expect(d.canRecoverWithKeyframeRequest()).toBe(false);
+    });
+});
