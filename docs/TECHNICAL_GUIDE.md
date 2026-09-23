@@ -2275,10 +2275,11 @@ By default only `localhost` + IP literals pass layer 1, so terminating TLS at a 
 
 ## 25. Why the Screen Is Black
 
-Four separate mechanisms produce "the stream connected but I see a black
+Six separate mechanisms produce "the stream connected but I see a black
 rectangle", and they need entirely different responses. Issue #498 spent
 several days moving between them, so each is recorded here with the
-measurement that identified it.
+measurement that identified it. Issue #703 added two more (25.9, 25.10), both
+found on redroid and neither anywhere near the video path.
 
 All figures below come from a Pixel 10a (Android 17, Exynos) with the stream
 instrumented at both the WebSocket and the `VideoDecoder`.
@@ -2332,9 +2333,15 @@ A 2-second interval implies roughly twelve. **This is not a VP8/VP9 trait** —
 an earlier version of this section said it was, and that was wrong.
 
 So a session that misses its keyframe can wait a long time or forever. The
-recovery is `ControlMessage.TYPE_RESET_VIDEO`, sent by the decode watchdog;
-the device answers with a fresh config packet **and** keyframe, measured at
-+180ms and +188ms respectively.
+recovery is `ControlMessage.TYPE_RESET_VIDEO`; the device answers with a fresh
+config packet **and** keyframe, measured at +180ms and +188ms respectively.
+
+**It is requested from two places, and they cover different failures.** The
+decode watchdog in the browser handles a decoder that started and then starved.
+It cannot handle a decoder that never started — see 25.9 — because an
+unconfigured decoder never decodes, never faults, and so never trips a watchdog
+that keys on decoding. `ScrcpyConnection` therefore asks as well, on the server
+side, when no config packet has arrived at all.
 
 **Asking for a shorter interval does not help.** scrcpy applies
 `video_codec_options` after its own `KEY_I_FRAME_INTERVAL` default of 10s, so
@@ -2381,6 +2388,23 @@ proves nothing. Ask instead for:
 3. Average frame size if available. Around 13 bytes means a black surface;
    tens of KB means real content is arriving and the fault is downstream.
 
+**Since beta.131 the app's own log answers most of this without asking.** Every
+session ends with a summary, written whether or not anything went wrong —
+because a healthy reading is what makes an unhealthy one legible:
+
+```
+stream summary after 15005ms: codec=h264 config=1 keyframe=1 frame=10
+  total=221.5 kB (first config 2380ms, first keyframe 2389ms, first frame 2451ms)
+```
+
+Read it as: `config=0 frame>0` is 25.9 · `config=0 frame=0` with the server
+exiting is 25.10 or a capture failure · `config=1 keyframe=0` is 25.2 ·
+everything present but no picture puts the fault in the browser, which is 25.3
+or 25.4. The line beginning `scrcpy-server effective:` lists every setting
+handed to the device, so it can be diffed directly against a working
+`scrcpy --verbosity=debug` run on the same hardware — `serializeOptions` alone
+cannot be, since it omits anything left at its default.
+
 ### 25.7 `TypedEmitter` and Node's reserved `'error'` event
 
 Not a black-screen cause, but it lives in the same failure neighbourhood and is
@@ -2421,6 +2445,64 @@ listener. Attaching a listener restores ordinary delivery, which is how
 | `src/app/player/WebCodecsPlayer.ts` | Keyframe gate, decode watchdog, `recoverDecoder` |
 | `src/app/player/webCodecsConfig.ts` | `CONFIGLESS_CODECS`, decode-support probe |
 | `src/common/StreamUrlParams.ts` | `buildVideoCodecOptions` and why the interval is not a lever |
+| `src/server/StreamDiagnostics.ts` | Server-side frame-path counters; names which of these causes is in play |
+| `src/server/audioCodecFallback.ts` | `chooseAudioCodec` — 25.10; empty encoder list means unknown, not none |
+| `src/server/ScrcpyConnection.ts` | Stall watchdog, the server-side keyframe request (25.9), `scrcpy-server effective:` |
+
+### 25.9 The device never sends a config packet at all
+
+Distinct from 25.2, and the distinction is the whole diagnosis: there, config
+arrived and a keyframe did not. Here **nothing decodable ever arrives** —
+media frames flow, and the stream contains no SPS/PPS and no IDR.
+
+Measured on redroid 13, x86_64 and arm64, `ws-scrcpy-web` against a live
+container, scanning NAL types on the WebSocket payload:
+
+```
+failing session   NAL[1:10]              SPS=0 PPS=0 IDR=0
+healthy session   NAL[1:10 5:1 7:1 8:1]  SPS=1 PPS=1 IDR=1
+```
+
+It is **intermittent** — 5 of 8 sessions on x86_64, 6 of 6 on arm64 — which is
+why a single clean run proves nothing about it.
+
+**The loss is not ours.** The server's own packet counter and an independent
+NAL scan of the bytes we forward agree: when the counter says `config=0`, the
+payload genuinely contains none. That rules out mis-flagging in `FrameReader`,
+which was the leading suspicion for months.
+
+Recovered by the server-side keyframe request described in 25.2 — bounded to 3
+attempts, gated strictly on *no config seen*, because a session that has config
+and is merely starved has a working decoder that a reset would throw away.
+Measured after the fix: 8 of 8 healthy on x86_64, 3 of 3 on arm64, with config
+arriving 1.5-3.0s after the request on hardware-accelerated guests.
+
+### 25.10 An audio codec the device cannot encode
+
+The black screen whose cause is not in the video path at all.
+
+scrcpy asks for **Opus** by default. A device with no Opus encoder does not
+fall back to silence — `MediaCodec` creation throws
+`IllegalArgumentException: Failed to initialize audio/opus, error 0xfffffffe
+(NAME_NOT_FOUND)`, the exception escapes scrcpy-server's audio thread, and the
+**whole process exits**, taking video with it. Measured on redroid 13 x86_64,
+whose entire audio encoder list is `OMX.google.aac.encoder` and
+`OMX.google.flac.encoder`:
+
+```
+stream summary: config=0 keyframe=0 frame=0 total=0 B   (server exited 137)
+```
+
+The SDK gate does not help: it forces audio off below SDK 30, and redroid
+reports SDK 33. Handled by `audioCodecFallback.ts`, which reads the device's
+advertised encoders and picks one it has. Note an **empty** encoder list means
+*unknown*, not *none* — `dumpsys media.player` does not report encoders on
+every device, and treating silence as "no audio" would disable working audio
+because a diagnostic was quiet.
+
+Worth knowing for reproduction: arm64 redroid **does** have
+`c2.android.opus.encoder`, x86_64 redroid does not — so this one is
+architecture-specific even though the image tag is not.
 
 ---
 
