@@ -64,6 +64,32 @@ function mockConfigModule(mode: string | undefined = undefined, securePort = 844
     }));
 }
 
+// Item 141 (user ruling 2026-09-23): the both-listeners-down case now calls
+// `process.exit(1)`, so the tests for it need to observe that call rather than
+// perform it.
+//
+// SPYING ON `process.exit` DOES NOT WORK HERE, AND THE FAILURE IS CONFUSING
+// ENOUGH TO BE WORTH WRITING DOWN. vitest's module runner installs its own
+// `process.exit` that THROWS (`startModuleRunner`, vitest/dist/chunks/base.*.js
+// -- `process.exit unexpectedly called with "1"`), and re-installs it whenever
+// the runner re-initialises. Every test in this file calls `vi.resetModules()`
+// and then re-imports, which does exactly that -- so a spy installed either in
+// a `beforeEach` OR after the imports is replaced before the assertion runs,
+// and the exit surfaces as a thrown error attributed to the `.emit()` line
+// rather than as the call it is. `vitest.setup.ts`'s worker-lifetime no-op
+// loses to the same assignment; it still covers the between-files leaked-timer
+// case it was written for.
+//
+// So the production code injects its exit (`_setExitProcessForTest`), the same
+// way `ServiceApi` takes `scheduleExit` as a constructor parameter, and these
+// tests observe a plain `vi.fn()` with no runner involvement at all.
+async function captureExit(): Promise<ReturnType<typeof vi.fn>> {
+    const { _setExitProcessForTest } = await import('../services/HttpServer');
+    const exitFn = vi.fn();
+    _setExitProcessForTest(exitFn);
+    return exitFn;
+}
+
 afterEach(() => {
     vi.doUnmock('http');
     vi.doUnmock('https');
@@ -187,13 +213,13 @@ describe('HttpServer listen-error handling', () => {
         expect(logged).not.toContain('failed to bind');
     });
 
-    // Item 141's one genuine cost: with nothing re-thrown, a boot where BOTH
-    // listeners fail to bind no longer exits -- it would sit there serving
-    // nothing, which is worse than crashing because it looks healthy. The
-    // ruling was degrade-never-exit, so the process stays up; this asserts
-    // the condition is at least stated once, loudly, rather than inferred
-    // from two unrelated bind-failure lines.
-    it('logs a distinct line when BOTH listeners failed, so "serving nothing" is never silent (141)', async () => {
+    // Item 141's one genuine cost, and the user's 2026-09-23 ruling on it.
+    // With nothing re-thrown, a boot where BOTH listeners fail to bind would
+    // sit there serving nothing -- worse than crashing, because it looks
+    // healthy to every supervisor and human watching it. The ruling: that one
+    // case EXITS. Asserts the exit and the explanation, because an exit with
+    // no reason logged is just a different kind of silence.
+    it('EXITS when every listener failed to bind, rather than staying up unreachable (141)', async () => {
         vi.resetModules();
         let httpServer: FakeServer | undefined;
         let httpsServer: FakeServer | undefined;
@@ -204,6 +230,8 @@ describe('HttpServer listen-error handling', () => {
         const { HttpServer } = await import('../services/HttpServer');
         const { Logger } = await import('../Logger');
         const errorSpy = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+
+        const exitSpy = await captureExit();
 
         const service = HttpServer.getInstance();
         await service.start();
@@ -211,19 +239,25 @@ describe('HttpServer listen-error handling', () => {
         // HTTPS goes down first, then HTTP -- so by the time the HTTP handler
         // runs there is genuinely nothing left serving.
         httpsServer?.emit('error', Object.assign(new Error('address in use'), { code: 'EADDRINUSE' }));
+        expect(exitSpy).not.toHaveBeenCalled(); // not yet -- HTTP had not failed
+
         expect(() => {
             httpServer?.emit('error', Object.assign(new Error('address in use'), { code: 'EADDRINUSE' }));
         }).not.toThrow();
 
+        expect(exitSpy).toHaveBeenCalledWith(1);
         const logged = errorSpy.mock.calls.flat().map(String).join(' ');
         expect(logged).toContain('no listener is serving');
     });
 
-    // The inverse, and the reason the line above is gated rather than
-    // unconditional: an HTTP failure while HTTPS is healthy must NOT claim
-    // nothing is serving. Pairs with the test above (same HTTP failure, one
-    // differing fact, opposite expectation).
-    it('does not claim "serving nothing" when HTTPS is still up (141)', async () => {
+    // The SAME end state reached in the opposite order, and it is a genuine
+    // regression test rather than a symmetry exercise. The check used to live
+    // only in the plain-HTTP branch, so HTTP-fails-then-HTTPS-fails reported
+    // nothing at all: when HTTP failed the secure entry was not yet marked, and
+    // nothing looked again once it was. The pre-existing test above emits HTTPS
+    // first, which is the one order that happened to work -- so the gap sat
+    // behind a passing test. Fails against the previous implementation.
+    it('EXITS when the listeners fail in the other order, HTTP first (141)', async () => {
         vi.resetModules();
         let httpServer: FakeServer | undefined;
         let httpsServer: FakeServer | undefined;
@@ -235,13 +269,85 @@ describe('HttpServer listen-error handling', () => {
         const { Logger } = await import('../Logger');
         const errorSpy = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
 
+        const exitSpy = await captureExit();
+
+        const service = HttpServer.getInstance();
+        await service.start();
+
+        httpServer?.emit('error', Object.assign(new Error('address in use'), { code: 'EADDRINUSE' }));
+        // Nothing yet: HTTPS has not failed, so for all this code knows it is
+        // still coming up. Exiting here would kill a boot that was about to
+        // succeed -- which is the whole reason the condition is "every listener
+        // RECORDED a failure" and not "nothing is listening right now".
+        expect(exitSpy).not.toHaveBeenCalled();
+
+        httpsServer?.emit('error', Object.assign(new Error('address in use'), { code: 'EADDRINUSE' }));
+
+        expect(exitSpy).toHaveBeenCalledWith(1);
+        const logged = errorSpy.mock.calls.flat().map(String).join(' ');
+        expect(logged).toContain('no listener is serving');
+    });
+
+    // The inverse, and the reason the exit is gated rather than unconditional:
+    // an HTTP failure while HTTPS is healthy is a DEGRADED app, not an
+    // unreachable one, and must neither claim otherwise nor exit. Pairs with
+    // the tests above -- same HTTP failure, one differing fact, opposite
+    // expectation -- so the gate is proven to be a gate in both directions.
+    it('does NOT exit or claim "serving nothing" when HTTPS is still up (141)', async () => {
+        vi.resetModules();
+        let httpServer: FakeServer | undefined;
+        let httpsServer: FakeServer | undefined;
+        vi.doMock('http', () => ({ createServer: vi.fn(() => (httpServer = makeFakeServer(8000))) }));
+        vi.doMock('https', () => ({ createServer: vi.fn(() => (httpsServer = makeFakeServer())) }));
+        mockConfigModule();
+
+        const { HttpServer } = await import('../services/HttpServer');
+        const { Logger } = await import('../Logger');
+        const errorSpy = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+
+        const exitSpy = await captureExit();
+
         const service = HttpServer.getInstance();
         await service.start();
 
         if (httpsServer) httpsServer.listening = true;
         httpServer?.emit('error', Object.assign(new Error('address in use'), { code: 'EADDRINUSE' }));
 
+        expect(exitSpy).not.toHaveBeenCalled();
         const logged = errorSpy.mock.calls.flat().map(String).join(' ');
+        expect(logged).not.toContain('no listener is serving');
+    });
+
+    // A runtime error is not a bind failure, so it must not contribute to the
+    // exit condition however many of them arrive. Without the `!server
+    // .listening` guards this passes anyway on the log wording but exits here,
+    // which is the more damaging half of that regression: an EMFILE burst on
+    // two healthy, serving listeners would take the process down.
+    it('does NOT exit when both listeners report runtime errors while still serving (141)', async () => {
+        vi.resetModules();
+        let httpServer: FakeServer | undefined;
+        let httpsServer: FakeServer | undefined;
+        vi.doMock('http', () => ({ createServer: vi.fn(() => (httpServer = makeFakeServer(8000))) }));
+        vi.doMock('https', () => ({ createServer: vi.fn(() => (httpsServer = makeFakeServer())) }));
+        mockConfigModule();
+
+        const { HttpServer } = await import('../services/HttpServer');
+        const { Logger } = await import('../Logger');
+        const errorSpy = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+
+        const exitSpy = await captureExit();
+
+        const service = HttpServer.getInstance();
+        await service.start();
+
+        if (httpServer) httpServer.listening = true;
+        if (httpsServer) httpsServer.listening = true;
+        httpServer?.emit('error', Object.assign(new Error('too many open files'), { code: 'EMFILE' }));
+        httpsServer?.emit('error', Object.assign(new Error('too many open files'), { code: 'EMFILE' }));
+
+        expect(exitSpy).not.toHaveBeenCalled();
+        const logged = errorSpy.mock.calls.flat().map(String).join(' ');
+        expect(logged).toContain('runtime error');
         expect(logged).not.toContain('no listener is serving');
     });
 

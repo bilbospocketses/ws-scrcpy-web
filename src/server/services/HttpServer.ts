@@ -320,6 +320,100 @@ const boundSecurePorts = new Map<number, number>();
 let boundLeafFingerprint: string | undefined;
 
 /**
+ * True only once EVERY configured listener has POSITIVELY recorded a bind
+ * failure in its own protocol's set.
+ *
+ * Deliberately NOT "nothing is currently listening". Listeners bind
+ * asynchronously and independently (`start()` calls `.listen()` on all of them
+ * in one pass), so at the moment one 'error' fires the others may simply not
+ * have bound YET -- and "not bound yet" is indistinguishable from "never going
+ * to bind" if you only ask what is live right now. Requiring a RECORDED
+ * failure per entry makes the condition monotonic: it can only become true
+ * once every listener has had its turn and lost. That is what makes it safe to
+ * hang an exit on, where a liveness check would occasionally kill a boot that
+ * was a millisecond from succeeding.
+ *
+ * Keyed per entry by protocol, not by port alone: the M6 test deliberately
+ * configures a plain and a secure entry on the SAME port, so `has(port)`
+ * against the wrong set would report a failure that belongs to the other
+ * protocol.
+ *
+ * `Config.getInstance()` is wrapped the same way `getHttpsListenerStatus()`
+ * wraps it -- this runs inside an 'error' handler, where throwing would be an
+ * uncaught exception in exactly the situation we are trying to report.
+ */
+function everyListenerFailedToBind(): boolean {
+    try {
+        const servers = Config.getInstance().servers;
+        if (servers.length === 0) {
+            return false;
+        }
+        return servers.every((item) => (item.secure ? failedSecurePorts : failedPlainPorts).has(item.port));
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * Item 141, user ruling 2026-09-23: when every configured listener has failed
+ * to bind, EXIT rather than stay up unreachable.
+ *
+ * The earlier ruling (2026-09-22) was degrade-never-exit, which is what stopped
+ * one busy port from destroying a healthy listener of the other protocol. This
+ * is the one exception to it, and it is not a reversal: degrading is right
+ * while SOMETHING can still serve. When nothing can, "never exit" produces a
+ * process that looks healthy to every supervisor, health check and human
+ * watching it, while being reachable by no one -- strictly worse than crashing,
+ * because a crash is legible and this is silent.
+ *
+ * Called after recording ANY bind failure, from both protocol branches rather
+ * than only the plain one. Order matters and used to be load-bearing: with the
+ * check living solely in the HTTP branch, HTTP-fails-then-HTTPS-fails reported
+ * nothing at all, because by the time HTTP failed the secure entry had not been
+ * marked yet and nothing looked again afterwards. Only the reverse order
+ * reported -- which is the order the original test happened to emit in.
+ */
+function exitIfNothingCanServe(): void {
+    if (!everyListenerFailedToBind()) {
+        return;
+    }
+    Logger.for('HttpServer').error(
+        'no listener is serving: every configured listener failed to bind, so the app is unreachable. ' +
+            'exiting rather than staying up and looking healthy -- free the port(s) (or change them in ' +
+            'config.json) and restart.',
+    );
+    exitProcess(1);
+}
+
+/**
+ * How `exitIfNothingCanServe()` terminates, behind an injectable seam --
+ * the module-level equivalent of `ServiceApi`'s `scheduleExit` constructor
+ * parameter, which exists for the same reason.
+ *
+ * A test cannot simply spy on `process.exit` here. vitest's module runner
+ * installs its own `process.exit` that THROWS (`startModuleRunner`, in
+ * vitest/dist/chunks/base.*.js), and re-installs it whenever the runner
+ * re-initialises -- which `vi.resetModules()` causes, and every test in
+ * `httpServerListenErrors.test.ts` calls `vi.resetModules()` before importing
+ * this module fresh. A spy installed before that point is silently replaced,
+ * and the exit then surfaces as a thrown error attributed to whichever line
+ * emitted the event rather than as the call it is. Injecting the exit removes
+ * the race entirely instead of racing it.
+ */
+let exitProcess: (code: number) => void = (code) => {
+    process.exit(code);
+};
+
+/**
+ * Test seam for the above, named after the existing `Config._resetForTest()`
+ * convention. Not part of the runtime surface: production never calls it, and
+ * the module-level default is what ships.
+ */
+export function _setExitProcessForTest(fn: (code: number) => void): void {
+    exitProcess = fn;
+}
+
+/**
  * Attaches the 'error' listener a bind failure needs, before `.listen()` is
  * called. Node's http/https Server emits 'error' asynchronously when a port
  * can't be bound (EADDRINUSE, EACCES on ports < 1024, ...); an EventEmitter
@@ -354,11 +448,11 @@ let boundLeafFingerprint: string | undefined;
  * otherwise be logged as "failed to bind", a false statement about a
  * listener that is still up.
  *
- * The one thing degrading costs: a boot where BOTH listeners fail to bind no
- * longer exits, so the process would sit serving nothing while looking
- * healthy -- worse than crashing, because a crash is legible. So that exact
- * condition gets its own log line, stated once, rather than left to be
- * inferred from two unrelated bind-failure lines.
+ * The one thing degrading costs: a boot where BOTH listeners fail to bind
+ * would sit serving nothing while looking healthy -- worse than crashing,
+ * because a crash is legible. That is the single case that still exits, via
+ * `exitIfNothingCanServe()` above; see its comment for why this is an
+ * exception to degrade-never-exit rather than a reversal of it.
  */
 function attachListenErrorHandler(server: http.Server | https.Server, port: number, secure: boolean): void {
     server.on('error', (err: NodeJS.ErrnoException) => {
@@ -369,6 +463,10 @@ function attachListenErrorHandler(server: http.Server | https.Server, port: numb
                 Logger.for('HttpServer').error(
                     `HTTPS listener on port ${port} failed to bind (${cause}); continuing without HTTPS.`,
                 );
+                // Checked from BOTH branches, not just the plain one: whichever
+                // listener fails LAST is the one that completes the picture, and
+                // it is not always HTTP.
+                exitIfNothingCanServe();
             } else {
                 Logger.for('HttpServer').error(
                     `HTTPS listener on port ${port} reported a runtime error (${cause}); it may be degraded.`,
@@ -384,13 +482,7 @@ function attachListenErrorHandler(server: http.Server | https.Server, port: numb
             // Gated, not unconditional: an HTTP failure while HTTPS is live
             // is a degraded app, not an unreachable one, and saying otherwise
             // would be the same kind of false claim NF-1 was about.
-            if (!getHttpsListenerStatus().listening) {
-                Logger.for('HttpServer').error(
-                    `no listener is serving: plain HTTP on port ${port} failed to bind and no HTTPS listener is ` +
-                        'live. the app is running but unreachable -- free the port (or change it in config.json) ' +
-                        'and restart.',
-                );
-            }
+            exitIfNothingCanServe();
             return;
         }
         Logger.for('HttpServer').error(
