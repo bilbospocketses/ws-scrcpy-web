@@ -7,6 +7,7 @@ import { ChannelId } from '../common/ChannelId';
 import { DEVICE_SERVER_PATH, SERVER_PACKAGE } from '../common/Constants';
 import { AUDIO_DISABLED, AUDIO_ERROR, codecName } from '../common/ScrcpyCodec';
 import { AdbClient } from './AdbClient';
+import { chooseAudioCodec, parseAudioEncodersFromDumpsys } from './audioCodecFallback';
 import { Config } from './Config';
 import { ensureScrcpyServerPushed } from './ensureScrcpyServerPushed';
 import { FrameReader } from './FrameReader';
@@ -112,7 +113,13 @@ export class ScrcpyConnection extends Mw {
         //    Android (ART class loading is lazier), the JAR vanishes before the
         //    server class fully resolves and app_process aborts with
         //    ClassNotFoundException. cleanup=false keeps the JAR around.
-        const sdkInt = await this.getSdkInt();
+        // Both probes are single `adb shell` round trips and neither depends on
+        // the other, so they run together — the audio check costs no extra wall
+        // time on the path to first frame.
+        const [sdkInt, audioEncoders] = await Promise.all([
+            this.getSdkInt(),
+            options.audio === false ? Promise.resolve<string[]>([]) : this.listAudioEncoders(),
+        ]);
         const useTunnelForward = sdkInt > 0 && sdkInt < 28;
         // Audio-capture gates:
         //  * SDK<30: scrcpy can't capture audio at all.
@@ -129,6 +136,23 @@ export class ScrcpyConnection extends Mw {
         if (useTunnelForward) {
             options.tunnelForward = true;
             options.cleanup = false;
+        }
+
+        // A codec the device cannot encode does not produce silence — it kills
+        // scrcpy-server, and VIDEO with it (see audioCodecFallback for the
+        // measurement). Applied after the SDK gates above so an explicit
+        // audio=false there is never re-enabled here.
+        if (options.audio !== false) {
+            const decision = chooseAudioCodec(options.audioCodec ?? 'opus', audioEncoders);
+            if (decision.disable) {
+                options.audio = false;
+            } else if (decision.codec) {
+                options.audioCodec = decision.codec;
+            }
+            // Logged on EVERY session, including the no-change case: "audio is
+            // missing" and "audio was never attempted" look identical after the
+            // fact, and this line is what tells them apart.
+            log.info(`audio codec: ${decision.reason}`);
         }
         log.info(
             `Starting session for ${this.serial} (scid=${options.scid}, sdk=${sdkInt || '?'}, tunnel=${useTunnelForward ? 'forward' : 'reverse'}, audio=${options.audio ?? 'default'}, cleanup=${options.cleanup ?? 'default'})`,
@@ -192,6 +216,27 @@ export class ScrcpyConnection extends Mw {
             if (line) log.warn(`${this.serial}: ${line}`);
         }, ScrcpyConnection.STALL_AFTER_MS);
         this.stallTimer.unref?.();
+    }
+
+    /**
+     * The device's audio encoder names, via `dumpsys media.player`.
+     *
+     * FAILS OPEN, deliberately. A probe that throws — adb hiccup, a device that
+     * does not implement this dumpsys section, a timeout — returns an EMPTY
+     * list, and `chooseAudioCodec` treats empty as "unknown" and changes
+     * nothing. The alternative, treating a failed probe as "no encoders", would
+     * silently switch audio off on a healthy device because a diagnostic
+     * command misbehaved: a fault in the detector becoming a fault in the
+     * product.
+     */
+    private async listAudioEncoders(): Promise<string[]> {
+        try {
+            const output = await this.adbClient.shell(this.serial, 'dumpsys media.player');
+            return parseAudioEncodersFromDumpsys(output);
+        } catch (err) {
+            log.warn(`could not list audio encoders for ${this.serial}: ${(err as Error).message}`);
+            return [];
+        }
     }
 
     private async getSdkInt(): Promise<number> {
