@@ -322,11 +322,17 @@ fn install_service(args: &InstallServiceArgs) -> ElevatedResult {
     }
 
     // Auto-start: same try-best-effort semantics as the Node-side ServyClient
-    // had in v0.1.6 — we capture but don't fail the overall install.
-    let start_out =
-        run_capture(&args.servy_path, &["start", "--name", &args.name]).unwrap_or_else(|e| {
-            CapturedOutput::error_only(&format!("servy-cli start spawn failed: {e}"))
-        });
+    // had in v0.1.6 — we capture but don't fail the overall install. The Node
+    // side's verifyServiceActive decides, and rolls back if it never came up.
+    // One retry: see start_with_retry for why a first start can time out.
+    let start_out = start_with_retry(
+        || {
+            run_capture(&args.servy_path, &["start", "--name", &args.name]).unwrap_or_else(|e| {
+                CapturedOutput::error_only(&format!("servy-cli start spawn failed: {e}"))
+            })
+        },
+        std::thread::sleep,
+    );
 
     // Spawn the tray detached so the installing admin immediately gets
     // a tray icon for their session. The tray_supervisor polling thread
@@ -490,6 +496,61 @@ impl CapturedOutput {
             stdout: String::new(),
             stderr: msg.to_string(),
         }
+    }
+}
+
+/// Wait between a failed first service start and the retry.
+const START_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Run the post-install service start, and retry ONCE if it fails.
+///
+/// The first start of a freshly written `Servy.Service.CLI.exe` is cold: .NET
+/// has to spin up and a newly updated AV engine scans a binary it has never
+/// seen. That can take longer than SCM's default 30 s `ServicesPipeTimeout`,
+/// and SCM then logs 7009/7000 and gives up. It was seen in qa-harness
+/// (2026-09-23, v0.1.30-beta.124) six minutes after a Defender platform update:
+/// the install rolled back although nothing was wrong with it. A second start
+/// of the same binary is warm and already scanned, so it is typically fast.
+///
+/// Retries on ANY failed start, not just a timeout. Servy's stderr for the
+/// timeout ("Cannot start service ... on computer '.'") does not name the
+/// cause, and a start that is genuinely broken simply fails twice. The Node
+/// side's rollback then runs as before. If the first start did come up late,
+/// the retry fails with "already running" and the verify poll sees it running.
+///
+/// Both attempts' output is kept, so the install log shows that a retry
+/// happened and what each attempt said.
+fn start_with_retry(
+    mut start: impl FnMut() -> CapturedOutput,
+    mut sleep: impl FnMut(std::time::Duration),
+) -> CapturedOutput {
+    let first = start();
+    if first.success {
+        return first;
+    }
+    log::info(&format!(
+        "install-service: first service start failed (code={:?}); retrying once in {}s",
+        first.code,
+        START_RETRY_DELAY.as_secs()
+    ));
+    sleep(START_RETRY_DELAY);
+    let second = start();
+    log::info(&format!(
+        "install-service: service start retry success={} code={:?}",
+        second.success, second.code
+    ));
+    let join = |a: String, b: String| {
+        if a.is_empty() && b.is_empty() {
+            String::new()
+        } else {
+            format!("{a}\n--- start (retry) ---\n{b}")
+        }
+    };
+    CapturedOutput {
+        success: second.success,
+        code: second.code,
+        stdout: join(first.stdout, second.stdout),
+        stderr: join(first.stderr, second.stderr),
     }
 }
 
@@ -760,6 +821,71 @@ mod tests {
     use super::*;
     use std::io::Read;
     use tempfile::tempdir;
+
+    fn captured(success: bool, stdout: &str, stderr: &str) -> CapturedOutput {
+        CapturedOutput {
+            success,
+            code: Some(if success { 0 } else { 1 }),
+            stdout: stdout.to_string(),
+            stderr: stderr.to_string(),
+        }
+    }
+
+    #[test]
+    fn start_with_retry_does_not_retry_a_successful_start() {
+        let mut calls = 0;
+        let mut slept = Vec::new();
+        let out = start_with_retry(
+            || {
+                calls += 1;
+                captured(true, "started", "")
+            },
+            |d| slept.push(d),
+        );
+        assert!(out.success);
+        assert_eq!(calls, 1);
+        assert!(slept.is_empty());
+        assert_eq!(out.stdout, "started");
+    }
+
+    #[test]
+    fn start_with_retry_retries_once_after_the_delay_and_reports_the_retry() {
+        // The qa-harness case: the first start hits SCM's 30 s timeout, the
+        // warm second start succeeds.
+        let mut outcomes = vec![
+            captured(true, "started", ""),
+            captured(
+                false,
+                "",
+                "Cannot start service 'WsScrcpyWeb' on computer '.'.",
+            ),
+        ];
+        let mut slept = Vec::new();
+        let out = start_with_retry(|| outcomes.pop().unwrap(), |d| slept.push(d));
+        assert!(out.success, "the retry's success decides the outcome");
+        assert_eq!(slept, vec![START_RETRY_DELAY]);
+        assert!(outcomes.is_empty(), "exactly two attempts");
+        assert!(
+            out.stderr.contains("Cannot start service")
+                && out.stderr.contains("--- start (retry) ---"),
+            "the first attempt's failure stays in the log: {:?}",
+            out.stderr
+        );
+    }
+
+    #[test]
+    fn start_with_retry_gives_up_after_the_second_failure() {
+        let mut calls = 0;
+        let out = start_with_retry(
+            || {
+                calls += 1;
+                captured(false, "", "boom")
+            },
+            |_| {},
+        );
+        assert!(!out.success);
+        assert_eq!(calls, 2, "one retry, never more");
+    }
 
     #[test]
     fn handle_returns_none_when_flag_absent() {
