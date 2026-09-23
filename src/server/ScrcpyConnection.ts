@@ -13,7 +13,7 @@ import { FrameReader } from './FrameReader';
 import { ControlCenter } from './goog-device/services/ControlCenter';
 import { Logger } from './Logger';
 import { Mw, type RequestParameters } from './mw/Mw';
-import { type ScrcpyOptions, serializeOptions } from './ScrcpyOptions';
+import { describeEffectiveOptions, type ScrcpyOptions, serializeOptions } from './ScrcpyOptions';
 import { StreamDiagnostics } from './StreamDiagnostics';
 import { scrcpyOptionsFromQuery } from './scrcpyOptionsFromQuery';
 import { getInstalledScrcpyServerVersion } from './scrcpyServerVersion';
@@ -142,7 +142,14 @@ export class ScrcpyConnection extends Mw {
         // encoder name, codec options). Logged as scrcpy's own `key=value`
         // form so it can be diffed against a working `scrcpy --verbosity=debug`
         // run directly.
+        //
+        // BOTH lines, deliberately. The literal args are what the device
+        // received; the effective line is what they MEAN, and only the second
+        // is comparable — `serializeOptions` omits anything left at its default,
+        // so a default session's argument list is just `scid=<hex>` and answers
+        // nothing. `*` marks a value this session set explicitly.
         log.info(`scrcpy-server args: ${serializeOptions(options).join(' ')}`);
+        log.info(`scrcpy-server effective: ${describeEffectiveOptions(options)}`);
 
         // 1. Push scrcpy-server binary only when the remote copy is missing or
         //    a different size. Keeping the JAR in place between sessions keeps
