@@ -131,6 +131,24 @@ export class StreamDiagnostics {
         );
     }
 
+    /**
+     * Whether a keyframe request could still rescue this session (#703).
+     *
+     * TRUE only when NO config packet has been seen. That is the recoverable
+     * shape: `TYPE_RESET_VIDEO` makes the device emit a fresh config packet
+     * together with a keyframe (proven on hardware in `WebCodecsPlayer` —
+     * h264 returned config at +180ms and keyframe at +188ms), so a stream with
+     * no config is exactly the one a reset can fix.
+     *
+     * FALSE once config HAS arrived, even if frames are starved. That session
+     * has a configured decoder and is short of pictures, which a reset does not
+     * address — and resetting it would discard a working decoder to chase a
+     * different problem.
+     */
+    canRecoverWithKeyframeRequest(): boolean {
+        return this.counts.config === 0;
+    }
+
     /** End-of-session line. Written whether or not anything went wrong. */
     summary(): string {
         const el = (k: FrameKind) => (this.firstAt[k] === undefined ? 'never' : `${this.firstAt[k]}ms`);

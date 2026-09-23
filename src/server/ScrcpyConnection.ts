@@ -63,6 +63,7 @@ export class ScrcpyConnection extends Mw {
     /** #703 frame-path instrumentation. Pure counter; this class owns the timer. */
     private readonly diagnostics = new StreamDiagnostics();
     private stallTimer?: NodeJS.Timeout | undefined;
+    private keyframeTimer?: NodeJS.Timeout | undefined;
 
     public static override processRequest(ws: WS, params: RequestParameters): ScrcpyConnection | undefined {
         const { action, url } = params;
@@ -214,8 +215,72 @@ export class ScrcpyConnection extends Mw {
         this.stallTimer = setTimeout(() => {
             const line = this.diagnostics.stallReport(ScrcpyConnection.STALL_AFTER_MS);
             if (line) log.warn(`${this.serial}: ${line}`);
+            this.requestKeyframeIfConfigMissing(1);
         }, ScrcpyConnection.STALL_AFTER_MS);
         this.stallTimer.unref?.();
+    }
+
+    /**
+     * Ask the device for a fresh keyframe when no config packet has arrived
+     * (#703).
+     *
+     * WHY THE SERVER AND NOT THE BROWSER. There is already a keyframe-recovery
+     * path in `WebCodecsPlayer`, but it hangs off the DECODE watchdog — and a
+     * decoder that never received SPS/PPS was never configured, so nothing
+     * decodes, nothing faults, and that watchdog never fires. The reporter of
+     * #703 observed exactly this. The server is the only party that can tell
+     * "no config has arrived" from "the decoder is unhappy".
+     *
+     * WHY IT WORKS. `TYPE_RESET_VIDEO` makes scrcpy-server produce a new config
+     * packet together with the keyframe, which is what an unconfigured decoder
+     * needs — not merely another frame.
+     *
+     * Measured 2026-09-23 on redroid 13: 5 of 8 sessions produced media frames
+     * and never a single SPS/PPS or IDR. A client NAL scan agreed with the
+     * server's own counter, which is what established the packets were never
+     * sent rather than lost in forwarding.
+     *
+     * BOUNDED, and deliberately so. A device that will not produce config after
+     * a few asks is not going to produce it on the hundredth, and an unbounded
+     * retry becomes a packet generator aimed at a device that is already
+     * struggling.
+     */
+    private requestKeyframeIfConfigMissing(attempt: number): void {
+        if (this.released) return;
+        if (!this.diagnostics.canRecoverWithKeyframeRequest()) return;
+        if (attempt > ScrcpyConnection.KEYFRAME_REQUEST_ATTEMPTS) {
+            log.warn(
+                `${this.serial}: still no config packet after ${ScrcpyConnection.KEYFRAME_REQUEST_ATTEMPTS} ` +
+                    'keyframe requests; the device is not producing one for this session.',
+            );
+            return;
+        }
+        const socket = this.controlSocket;
+        if (!socket || socket.destroyed) {
+            // control=false is a legitimate configuration, not a fault — say so
+            // once rather than retrying against a socket that does not exist.
+            log.warn(
+                `${this.serial}: no config packet and no control socket, so a keyframe cannot be requested ` +
+                    '(control is disabled for this session).',
+            );
+            return;
+        }
+        try {
+            socket.write(Buffer.from([ScrcpyConnection.CONTROL_MSG_RESET_VIDEO]));
+            log.info(
+                `${this.serial}: no config packet yet — requested a keyframe (TYPE_RESET_VIDEO), ` +
+                    `attempt ${attempt}/${ScrcpyConnection.KEYFRAME_REQUEST_ATTEMPTS}.`,
+            );
+        } catch (err) {
+            log.warn(`${this.serial}: keyframe request failed: ${(err as Error).message}`);
+            return;
+        }
+        const timer = setTimeout(
+            () => this.requestKeyframeIfConfigMissing(attempt + 1),
+            ScrcpyConnection.KEYFRAME_RETRY_MS,
+        );
+        timer.unref?.();
+        this.keyframeTimer = timer;
     }
 
     /**
@@ -550,6 +615,23 @@ export class ScrcpyConnection extends Mw {
      */
     private static readonly STALL_AFTER_MS = 8000;
 
+    /**
+     * scrcpy's `SC_CONTROL_MSG_TYPE_RESET_VIDEO`, matching the browser's
+     * `ControlMessage.TYPE_RESET_VIDEO`. The message is the type byte alone —
+     * it carries no payload.
+     */
+    private static readonly CONTROL_MSG_RESET_VIDEO = 17;
+
+    /** How many times to ask for a keyframe before accepting the device will not send one. */
+    private static readonly KEYFRAME_REQUEST_ATTEMPTS = 3;
+
+    /**
+     * Gap between keyframe requests. Comfortably longer than the ~190ms in
+     * which a healthy device answered a reset on hardware, so a slow-but-working
+     * device is never asked twice for the same thing.
+     */
+    private static readonly KEYFRAME_RETRY_MS = 2000;
+
     private startForwarding(): void {
         // Video: TCP → channel 0 → WS
         this.videoReader = new FrameReader(this.videoSocket!);
@@ -635,6 +717,10 @@ export class ScrcpyConnection extends Mw {
         if (this.stallTimer) {
             clearTimeout(this.stallTimer);
             this.stallTimer = undefined;
+        }
+        if (this.keyframeTimer) {
+            clearTimeout(this.keyframeTimer);
+            this.keyframeTimer = undefined;
         }
         log.info(`${this.serial}: ${this.diagnostics.summary()}`);
 
