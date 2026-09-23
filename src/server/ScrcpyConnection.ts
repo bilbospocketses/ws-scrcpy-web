@@ -14,6 +14,7 @@ import { ControlCenter } from './goog-device/services/ControlCenter';
 import { Logger } from './Logger';
 import { Mw, type RequestParameters } from './mw/Mw';
 import { type ScrcpyOptions, serializeOptions } from './ScrcpyOptions';
+import { StreamDiagnostics } from './StreamDiagnostics';
 import { scrcpyOptionsFromQuery } from './scrcpyOptionsFromQuery';
 import { getInstalledScrcpyServerVersion } from './scrcpyServerVersion';
 import {
@@ -58,6 +59,9 @@ export class ScrcpyConnection extends Mw {
     private forwardTunnel?: string;
     private serverProcess?: import('child_process').ChildProcess;
     private released = false;
+    /** #703 frame-path instrumentation. Pure counter; this class owns the timer. */
+    private readonly diagnostics = new StreamDiagnostics();
+    private stallTimer?: NodeJS.Timeout | undefined;
 
     public static override processRequest(ws: WS, params: RequestParameters): ScrcpyConnection | undefined {
         const { action, url } = params;
@@ -129,6 +133,16 @@ export class ScrcpyConnection extends Mw {
         log.info(
             `Starting session for ${this.serial} (scid=${options.scid}, sdk=${sdkInt || '?'}, tunnel=${useTunnelForward ? 'forward' : 'reverse'}, audio=${options.audio ?? 'default'}, cleanup=${options.cleanup ?? 'default'})`,
         );
+        this.diagnostics.start();
+        // #703: the EXACT argument list handed to scrcpy-server. One of the two
+        // live hypotheses for the black screen is "our launch options differ
+        // from desktop scrcpy's", and until now a reporter's log could not
+        // answer it — the line above names five settings out of a dozen and
+        // omits every one that reaches the encoder (codec, bit rate, max fps,
+        // encoder name, codec options). Logged as scrcpy's own `key=value`
+        // form so it can be diffed against a working `scrcpy --verbosity=debug`
+        // run directly.
+        log.info(`scrcpy-server args: ${serializeOptions(options).join(' ')}`);
 
         // 1. Push scrcpy-server binary only when the remote copy is missing or
         //    a different size. Keeping the JAR in place between sessions keeps
@@ -151,12 +165,26 @@ export class ScrcpyConnection extends Mw {
             metadata.videoEncoder = options.videoEncoder;
         }
         log.info(`Session ready: ${metadata.deviceName} ${metadata.screenWidth}x${metadata.screenHeight}`);
+        // #703: the codec and the chosen encoder were never logged, so "the
+        // device negotiated something we cannot decode" could not be checked.
+        log.info(this.diagnostics.noteMetadata(metadata));
 
         // 4. Send metadata to browser
         this.sendChannel(ChannelId.METADATA, Buffer.from(JSON.stringify(metadata)));
 
         // 5. Start forwarding
         this.startForwarding();
+
+        // 6. #703 watchdog. A black screen is silent by nature: the session is
+        //    up, the sockets are connected, and nothing says the picture never
+        //    started. One shot — a stall is a state, not an event, and
+        //    repeating it every tick would drown the session it describes.
+        //    `unref` so a diagnostic timer can never hold the process open.
+        this.stallTimer = setTimeout(() => {
+            const line = this.diagnostics.stallReport(ScrcpyConnection.STALL_AFTER_MS);
+            if (line) log.warn(`${this.serial}: ${line}`);
+        }, ScrcpyConnection.STALL_AFTER_MS);
+        this.stallTimer.unref?.();
     }
 
     private async getSdkInt(): Promise<number> {
@@ -461,10 +489,24 @@ export class ScrcpyConnection extends Mw {
     private static readonly PTS_FLAG_CONFIG = 0x8000000000000000n;
     private static readonly PTS_FLAG_KEYFRAME = 0x4000000000000000n;
 
+    /**
+     * How long a session may produce no decodable video before the fact is
+     * stated in the log (#703). Long enough that a slow cold start on an
+     * older device is not called a fault — `ensureScrcpyServerPushed` plus
+     * dexopt can cost seconds — and short enough that the line is already
+     * written by the time someone thinks to look.
+     */
+    private static readonly STALL_AFTER_MS = 8000;
+
     private startForwarding(): void {
         // Video: TCP → channel 0 → WS
         this.videoReader = new FrameReader(this.videoSocket!);
         this.videoReader.onFrame((frame) => {
+            // #703 instrumentation. Logs the FIRST of each kind only; the
+            // first config and the first keyframe are the two events that gate
+            // first paint, and per-frame logging would bury them.
+            const line = this.diagnostics.noteFrame(frame.type, frame.data.length);
+            if (line) log.info(line);
             let pts = frame.pts;
             if (frame.type === 'config') pts |= ScrcpyConnection.PTS_FLAG_CONFIG;
             else if (frame.type === 'keyframe') pts |= ScrcpyConnection.PTS_FLAG_KEYFRAME;
@@ -504,7 +546,14 @@ export class ScrcpyConnection extends Mw {
     }
 
     private sendChannel(channel: ChannelId, payload: Buffer): void {
-        if (this.ws.readyState !== this.ws.OPEN) return;
+        if (this.ws.readyState !== this.ws.OPEN) {
+            // Was a bare `return` (#703). Frames produced and discarded with no
+            // trace is indistinguishable from frames never produced, and both
+            // present as a black screen — so count it and say so once.
+            const line = this.diagnostics.noteDropped(this.ws.readyState);
+            if (line) log.warn(line);
+            return;
+        }
         const msg = Buffer.allocUnsafe(1 + payload.length);
         msg[0] = channel;
         payload.copy(msg, 1);
@@ -528,6 +577,14 @@ export class ScrcpyConnection extends Mw {
         if (this.released) return;
         this.released = true;
         log.info(`Releasing session for ${this.serial}`);
+        // #703: written on EVERY session, not only broken ones. A healthy
+        // summary is what makes a broken one legible — without a normal
+        // reading to compare against, "config=0" is just a number.
+        if (this.stallTimer) {
+            clearTimeout(this.stallTimer);
+            this.stallTimer = undefined;
+        }
+        log.info(`${this.serial}: ${this.diagnostics.summary()}`);
 
         this.videoReader?.destroy();
         this.audioReader?.destroy();
