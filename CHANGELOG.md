@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.132] - 2026-09-24
+
 ### Fixed
 
 - **Installing the Windows service no longer rolls back just because its first start was slow.** The first start of a freshly written `Servy.Service.CLI.exe` is cold (the next entry says exactly why), and that can take longer than SCM's default 30 s start timeout, and SCM then gives up (System log 7009/7000). The install made one start attempt, so `verifyServiceActive` found the service stopped and rolled the whole install back, although nothing was wrong with it. qa-harness caught this once in four runs on `v0.1.30-beta.124`, six minutes after a Defender platform update. `launcher/src/elevated_runner.rs` now retries the start once, 10 s after a failure, inside the same elevated run, so there's no second UAC prompt. A warm second start is typically fast. A service that is genuinely broken fails twice and rolls back as before. Both attempts' output is kept in the install log.
