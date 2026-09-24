@@ -1769,7 +1769,7 @@ Service mode lets ws-scrcpy-web run as a Windows service (via [Servy](https://gi
    3. runs `servy-cli start`, retrying once 10 s later if it fails.
 
    Each step's duration goes to the launcher log. The warm-up exists because of SCM's 30 s start timeout. The host is a single-file .NET app, and on its first run Defender makes a serial cloud lookup (event 2010, ~1.4–3 s each) for every DLL it unpacks and loads. Measured on fresh Windows 11 guests (2026-09-24), a cold start timed out at 30.5 s, a warmed one took 0.8 s, and a warm restart took 0.6 s. The Node side waits up to 8 minutes for the whole elevated run, UAC prompt included (`ELEVATION_TIMEOUT_MS`), then `verifyServiceActive` polls for RUNNING and rolls the install back if the service never came up.
-4. `ServiceOperationModal` opens in the browser, displaying "Installing service, please wait..."
+4. `ServiceOperationModal` opens in the browser, showing "installing service" and "please wait while the service is installed. the first install on a machine can take a couple of minutes." It opens before the POST, so it stays up for the whole elevated run.
 5. The modal polls `GET /api/service/status` until it detects that the service-mode Node has started and written a new `webPort` to `config.json`.
 6. On detection, the modal auto-navigates to the service-mode URL.
 
