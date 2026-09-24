@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **The service install now waits up to 8 minutes for the elevated step, up from 5.** That budget covers both answering the UAC prompt and the install itself. On a fresh machine `servy-cli install` alone can take two minutes, for the same Defender reason as above. With the host warm-up and a worst-case failed start and retry, 5 minutes left almost no time to answer the prompt. When the budget runs out, the app reports failure even though the install may still finish in the background.
+- **The "installing service" dialog now says a first install can take a couple of minutes.** On a fresh Windows machine the whole install measured 75 to 104 seconds, most of it Defender checking Servy's files for the first time. Until now that was a silent spinner, which looked like a hang.
 - **The launcher log now records how long each install step took:** `servy-cli install`, the host warm-up, and the service start. A slow install can finally be told apart from a slow start.
 
 ## [0.1.30-beta.131] - 2026-09-23
