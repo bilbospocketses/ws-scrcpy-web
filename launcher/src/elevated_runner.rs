@@ -304,10 +304,20 @@ fn install_service(args: &InstallServiceArgs) -> ElevatedResult {
 
     let servy_args = build_servy_install_args(args, post_stop_bat.as_ref());
 
+    // Each step logs how long it took. On a fresh machine every one of them
+    // can run to minutes, and without the split a slow install cannot be told
+    // apart from a slow start.
+    let install_started = std::time::Instant::now();
     let install_out = match run_capture(&args.servy_path, &servy_args) {
         Ok(out) => out,
         Err(e) => return fail(4, &format!("servy-cli install spawn failed: {e}")),
     };
+    log::info(&format!(
+        "install-service: servy-cli install success={} code={:?} took {}ms",
+        install_out.success,
+        install_out.code,
+        install_started.elapsed().as_millis()
+    ));
     if !install_out.success {
         return ElevatedResult {
             ok: false,
@@ -321,10 +331,15 @@ fn install_service(args: &InstallServiceArgs) -> ElevatedResult {
         };
     }
 
+    // Take the service host's cold first run off SCM's 30 s clock. See
+    // warm_service_host for what that cost is and why this removes it.
+    warm_service_host();
+
     // Auto-start: same try-best-effort semantics as the Node-side ServyClient
     // had in v0.1.6 — we capture but don't fail the overall install. The Node
     // side's verifyServiceActive decides, and rolls back if it never came up.
     // One retry: see start_with_retry for why a first start can time out.
+    let start_started = std::time::Instant::now();
     let start_out = start_with_retry(
         || {
             run_capture(&args.servy_path, &["start", "--name", &args.name]).unwrap_or_else(|e| {
@@ -333,6 +348,11 @@ fn install_service(args: &InstallServiceArgs) -> ElevatedResult {
         },
         std::thread::sleep,
     );
+    log::info(&format!(
+        "install-service: service start success={} took {}ms",
+        start_out.success,
+        start_started.elapsed().as_millis()
+    ));
 
     // Spawn the tray detached so the installing admin immediately gets
     // a tray icon for their session. The tray_supervisor polling thread
@@ -551,6 +571,165 @@ fn start_with_retry(
         code: second.code,
         stdout: join(first.stdout, second.stdout),
         stderr: join(first.stderr, second.stderr),
+    }
+}
+
+/// Upper bound on the service-host warm-up. Measured 14–71 s on fresh
+/// qa-harness guests (2026-09-24), longer the busier the host. It shares the
+/// Node side's elevation deadline with the install and the start, so it is
+/// capped rather than waited on indefinitely; a warm-up cut short still leaves
+/// the bundle extracted and most of its DLLs already cleared.
+#[cfg_attr(not(windows), allow(dead_code))]
+const HOST_WARM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
+
+/// How often the warm-up's exit is polled.
+#[cfg_attr(not(windows), allow(dead_code))]
+const HOST_WARM_POLL: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// Run Servy's service host once, outside SCM, so its cold first run is not
+/// spent inside SCM's 30 s start timeout.
+///
+/// **Where the time goes (measured on fresh Windows 11 guests, 2026-09-24).**
+/// `Servy.Service.CLI.exe` is a single-file .NET app. On its first run it
+/// extracts ~91 files to `<temp>\.net\Servy.Service.CLI\<bundle-hash>\`, and
+/// Defender makes a cloud lookup (Defender/Operational event 2010) for each
+/// DLL as it loads — ~1.4–3 s apiece, one after another, about a dozen of them
+/// before the host reaches `StartServiceCtrlDispatcher`. A cold start measured
+/// 20 s on an idle guest and hit SCM's timeout (STOPPED at 30.5 s) on a busy
+/// one; a warm restart took 0.6 s.
+///
+/// **Why the extraction base is pinned.** The service runs as LocalSystem, so
+/// its bundle extracts under SYSTEM's temp, not ours. Pointing this run's
+/// `DOTNET_BUNDLE_EXTRACT_BASE_DIR` there makes it extract into the very
+/// directory the service will reuse, and makes Defender clear those files
+/// ahead of time. Measured: first start 0.8 s with no cloud lookups, against
+/// 5.6 s when the warm-up extracted to the admin's own temp instead. Only
+/// SYSTEM and Administrators can write there, so an elevated admin writing
+/// it opens nothing new.
+///
+/// **What the run does.** Outside SCM the host prints "Cannot start service
+/// from the command line" and exits 0 once its dispatcher call fails. Its
+/// constructor runs first (event source, Servy's database, the restarter
+/// copy), all of which the real start would do anyway.
+///
+/// Best effort throughout: any failure is logged and ignored, because
+/// `start_with_retry` still stands behind it.
+#[cfg(windows)]
+fn warm_service_host() {
+    let program_data =
+        std::env::var("ProgramData").unwrap_or_else(|_| r"C:\ProgramData".to_string());
+    let host = servy_service_host_path(&program_data);
+    if !host.exists() {
+        log::info(&format!(
+            "install-service: service host not found at {host:?}; skipping warm-up"
+        ));
+        return;
+    }
+    let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".to_string());
+    let base = system_bundle_extract_base(&system_root, |p| p.is_dir());
+    let started = std::time::Instant::now();
+    let child = match silent_command(&host)
+        .env("DOTNET_BUNDLE_EXTRACT_BASE_DIR", &base)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            log::info(&format!(
+                "install-service: service host warm-up spawn failed: {e}"
+            ));
+            return;
+        }
+    };
+    // Both closures need the child; neither runs while the other is running.
+    let child = std::cell::RefCell::new(child);
+    let outcome = wait_or_kill(
+        || {
+            child
+                .borrow_mut()
+                .try_wait()
+                .map(|s| s.map(|s| s.code()))
+                .map_err(|e| e.to_string())
+        },
+        || {
+            let mut c = child.borrow_mut();
+            let _ = c.kill();
+            let _ = c.wait();
+        },
+        std::thread::sleep,
+        HOST_WARM_TIMEOUT,
+        HOST_WARM_POLL,
+    );
+    log::info(&format!(
+        "install-service: service host warm-up {outcome:?} took {}ms (extract base {base:?})",
+        started.elapsed().as_millis()
+    ));
+}
+
+#[cfg(not(windows))]
+fn warm_service_host() {}
+
+/// `%ProgramData%\Servy\Servy.Service.CLI.exe` — where `servy-cli install`
+/// writes the service host (it is the ImagePath SCM records).
+#[cfg_attr(not(windows), allow(dead_code))]
+fn servy_service_host_path(program_data: &str) -> PathBuf {
+    Path::new(program_data)
+        .join("Servy")
+        .join("Servy.Service.CLI.exe")
+}
+
+/// The `DOTNET_BUNDLE_EXTRACT_BASE_DIR` that LocalSystem gets by default.
+/// .NET takes it from `GetTempPath2`, which hands SYSTEM
+/// `%SystemRoot%\SystemTemp` where that directory exists (Windows 11, and
+/// Windows 10 builds that received it) and `%SystemRoot%\Temp` before that.
+/// The extraction lands in `<base>\.net\<app>\<bundle-hash>`.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn system_bundle_extract_base(system_root: &str, is_dir: impl Fn(&Path) -> bool) -> PathBuf {
+    let system_temp = Path::new(system_root).join("SystemTemp");
+    let temp = if is_dir(&system_temp) {
+        system_temp
+    } else {
+        Path::new(system_root).join("Temp")
+    };
+    temp.join(".net")
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+#[derive(Debug, PartialEq, Eq)]
+enum BoundedWait {
+    Exited(Option<i32>),
+    TimedOut,
+    WaitFailed(String),
+}
+
+/// Poll a child for exit until `timeout`, killing it if it runs over. The
+/// clock is the sum of the sleeps, so tests drive it without real time.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn wait_or_kill(
+    mut try_wait: impl FnMut() -> Result<Option<Option<i32>>, String>,
+    mut kill: impl FnMut(),
+    mut sleep: impl FnMut(std::time::Duration),
+    timeout: std::time::Duration,
+    poll: std::time::Duration,
+) -> BoundedWait {
+    let mut waited = std::time::Duration::ZERO;
+    loop {
+        match try_wait() {
+            Ok(Some(code)) => return BoundedWait::Exited(code),
+            Ok(None) => {}
+            Err(e) => {
+                kill();
+                return BoundedWait::WaitFailed(e);
+            }
+        }
+        if waited >= timeout {
+            kill();
+            return BoundedWait::TimedOut;
+        }
+        sleep(poll);
+        waited += poll;
     }
 }
 
@@ -885,6 +1064,89 @@ mod tests {
         );
         assert!(!out.success);
         assert_eq!(calls, 2, "one retry, never more");
+    }
+
+    #[test]
+    fn system_bundle_extract_base_prefers_system_temp_when_it_exists() {
+        // LocalSystem's GetTempPath2 on Windows 11 — where the measured cold
+        // start extracted (C:\Windows\SystemTemp\.net\Servy.Service.CLI\...).
+        let base = system_bundle_extract_base(r"C:\Windows", |p| p.ends_with("SystemTemp"));
+        assert_eq!(
+            base,
+            Path::new(r"C:\Windows").join("SystemTemp").join(".net")
+        );
+    }
+
+    #[test]
+    fn system_bundle_extract_base_falls_back_to_windows_temp() {
+        let base = system_bundle_extract_base(r"C:\Windows", |_| false);
+        assert_eq!(base, Path::new(r"C:\Windows").join("Temp").join(".net"));
+    }
+
+    #[test]
+    fn servy_service_host_path_is_under_program_data_servy() {
+        assert_eq!(
+            servy_service_host_path(r"C:\ProgramData"),
+            Path::new(r"C:\ProgramData")
+                .join("Servy")
+                .join("Servy.Service.CLI.exe")
+        );
+    }
+
+    #[test]
+    fn wait_or_kill_returns_the_exit_code_without_killing() {
+        let mut polls = vec![Ok(Some(Some(0))), Ok(None), Ok(None)];
+        let mut killed = false;
+        let mut slept = std::time::Duration::ZERO;
+        let out = wait_or_kill(
+            || polls.pop().unwrap(),
+            || killed = true,
+            |d| slept += d,
+            std::time::Duration::from_secs(90),
+            std::time::Duration::from_millis(250),
+        );
+        assert_eq!(out, BoundedWait::Exited(Some(0)));
+        assert!(!killed);
+        assert_eq!(slept, std::time::Duration::from_millis(500));
+    }
+
+    #[test]
+    fn wait_or_kill_kills_a_child_that_outlives_the_timeout() {
+        let mut polls = 0;
+        let mut killed = false;
+        let mut slept = std::time::Duration::ZERO;
+        let out = wait_or_kill(
+            || {
+                polls += 1;
+                Ok(None)
+            },
+            || killed = true,
+            |d| slept += d,
+            std::time::Duration::from_secs(1),
+            std::time::Duration::from_millis(250),
+        );
+        assert_eq!(out, BoundedWait::TimedOut);
+        assert!(killed, "a warm-up that overruns must not be left running");
+        assert_eq!(
+            slept,
+            std::time::Duration::from_secs(1),
+            "stops at the timeout, not after it"
+        );
+        assert_eq!(polls, 5);
+    }
+
+    #[test]
+    fn wait_or_kill_kills_when_the_wait_itself_fails() {
+        let mut killed = false;
+        let out = wait_or_kill(
+            || Err("access denied".to_string()),
+            || killed = true,
+            |_| {},
+            std::time::Duration::from_secs(90),
+            std::time::Duration::from_millis(250),
+        );
+        assert_eq!(out, BoundedWait::WaitFailed("access denied".to_string()));
+        assert!(killed);
     }
 
     #[test]

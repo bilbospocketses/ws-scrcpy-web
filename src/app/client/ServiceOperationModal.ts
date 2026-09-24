@@ -5,7 +5,14 @@ export interface ServiceOperationModalOptions {
 }
 
 const OPERATION_TEXT: Record<ServiceOperationModalOptions['operation'], { title: string; body: string }> = {
-    install: { title: 'installing service', body: 'please wait while the service is installed...' },
+    // "a couple of minutes" is measured, not padding: on a fresh Windows
+    // machine the elevated install spent 75–104 s end to end (2026-09-24),
+    // most of it Defender checking Servy's unpacked DLLs for the first time.
+    // Without saying so, a spinner that long reads as a hang.
+    install: {
+        title: 'installing service',
+        body: 'please wait while the service is installed. the first install on a machine can take a couple of minutes.',
+    },
     uninstall: { title: 'uninstalling service', body: 'please wait while the service is uninstalled...' },
 };
 

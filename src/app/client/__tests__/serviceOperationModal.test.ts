@@ -38,6 +38,17 @@ describe('ServiceOperationModal', () => {
         expect(document.querySelector('.modal-body')!.textContent).toContain('please wait');
     });
 
+    it('install body warns that a first install can take a couple of minutes', () => {
+        // A cold first install measured 75–104 s; the spinner must not read as a hang.
+        new ServiceOperationModal({ operation: 'install' });
+        expect(document.querySelector('.modal-body')!.textContent).toContain('can take a couple of minutes');
+    });
+
+    it('uninstall body does not carry the first-install warning', () => {
+        new ServiceOperationModal({ operation: 'uninstall' });
+        expect(document.querySelector('.modal-body')!.textContent).not.toContain('couple of minutes');
+    });
+
     it('close() closes the dialog', () => {
         const modal = new ServiceOperationModal({ operation: 'install' });
         const dialog = document.querySelector('dialog')!;
