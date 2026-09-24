@@ -233,12 +233,12 @@ export async function runElevated(
                 // "never" includes Windows auto-dismissing the prompt after
                 // ~2 minutes, which leaves this await pending forever and the
                 // caller stuck in a half-installed state (#646). The bound is
-                // the same 300s the result-file poll uses; expiry kills the
+                // the same 480s the result-file poll uses; expiry kills the
                 // helper, which also stops the process leaking.
                 //
                 // Residual, accepted: killing `--request-uac` does not retract
                 // a consent dialog Windows has already shown, so a user who
-                // answers Yes after the 5 minutes are up can still complete an
+                // answers Yes after the 8 minutes are up can still complete an
                 // install we have already reported as failed and reverted. The
                 // window is bounded and self-correcting on the next status
                 // read; an unbounded hang was not.
@@ -268,7 +268,7 @@ export async function runElevated(
     }
 
     // One deadline across both phases, not one each: the consent wait and the
-    // helper's own work share the 300s this function advertises, so the caller
+    // helper's own work share the 480s this function advertises, so the caller
     // cannot be held for twice that.
     const remainingMs = Math.max(0, ELEVATION_TIMEOUT_MS - (Date.now() - startedAt));
     const result = await pollForResultFile(resultPath, remainingMs, undefined, undefined, nonce);
@@ -280,8 +280,17 @@ export async function runElevated(
     return result;
 }
 
-/** 5 minutes — UAC dialog can legitimately stay up this long. */
-const ELEVATION_TIMEOUT_MS = 5 * 60 * 1000;
+/**
+ * 8 minutes, shared by the UAC wait and the elevated helper's own work.
+ *
+ * Was 5. On a fresh Windows machine a service install measured up to ~2 min in
+ * `servy-cli install` and up to ~70 s warming the service host (2026-09-24,
+ * qa-harness guests), with a failed start plus its retry adding ~80 s more in
+ * the worst case. That left almost nothing of 5 minutes for the user to answer
+ * the prompt, and an expiry reports failure WITHOUT rolling back while the
+ * helper can still finish the install on its own.
+ */
+const ELEVATION_TIMEOUT_MS = 8 * 60 * 1000;
 
 /**
  * Did our own timeout end the `--request-uac` child, rather than the helper

@@ -1763,7 +1763,12 @@ Service mode lets ws-scrcpy-web run as a Windows service (via [Servy](https://gi
 
 1. User clicks "Install as service" in the welcome modal or Settings.
 2. Browser calls `POST /api/service/install`.
-3. `ServiceApi` invokes the elevated runner (section 20.3), which triggers UAC once for `servy-cli install`.
+3. `ServiceApi` invokes the elevated runner (section 20.3), which triggers UAC once. Inside that single elevated run, `install_service` in `launcher/src/elevated_runner.rs`:
+   1. writes `post-stop.bat` and runs `servy-cli install`;
+   2. **warms the service host.** It runs `%ProgramData%\Servy\Servy.Service.CLI.exe` once outside SCM, with `DOTNET_BUNDLE_EXTRACT_BASE_DIR` set to LocalSystem's temp base (`%SystemRoot%\SystemTemp\.net`, or `%SystemRoot%\Temp\.net` where `SystemTemp` doesn't exist), capped at 90 s;
+   3. runs `servy-cli start`, retrying once 10 s later if it fails.
+
+   Each step's duration goes to the launcher log. The warm-up exists because of SCM's 30 s start timeout. The host is a single-file .NET app, and on its first run Defender makes a serial cloud lookup (event 2010, ~1.4–3 s each) for every DLL it unpacks and loads. Measured on fresh Windows 11 guests (2026-09-24), a cold start timed out at 30.5 s, a warmed one took 0.8 s, and a warm restart took 0.6 s. The Node side waits up to 8 minutes for the whole elevated run, UAC prompt included (`ELEVATION_TIMEOUT_MS`), then `verifyServiceActive` polls for RUNNING and rolls the install back if the service never came up.
 4. `ServiceOperationModal` opens in the browser, displaying "Installing service, please wait..."
 5. The modal polls `GET /api/service/status` until it detects that the service-mode Node has started and written a new `webPort` to `config.json`.
 6. On detection, the modal auto-navigates to the service-mode URL.
