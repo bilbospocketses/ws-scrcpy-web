@@ -2341,12 +2341,21 @@ So a session that misses its keyframe can wait a long time or forever. The
 recovery is `ControlMessage.TYPE_RESET_VIDEO`; the device answers with a fresh
 config packet **and** keyframe, measured at +180ms and +188ms respectively.
 
-**It is requested from two places, and they cover different failures.** The
-decode watchdog in the browser handles a decoder that started and then starved.
-It cannot handle a decoder that never started — see 25.9 — because an
-unconfigured decoder never decodes, never faults, and so never trips a watchdog
-that keys on decoding. `ScrcpyConnection` therefore asks as well, on the server
-side, when no config packet has arrived at all.
+**It is requested from two places, and both cover a decoder that never
+started.** The decode watchdog in the browser (`WebCodecsPlayer`,
+`DECODE_WATCHDOG_MS` = 5 s) is armed at **session start**, not only after
+`configure()` (finding 8.14), and its `decoder.state !== 'configured'` branch
+exists for exactly the no-config case: "video is arriving but the decoder was
+never configured". `ScrcpyConnection` asks as well, on the server side, when no
+config packet has arrived after `STALL_AFTER_MS` = 8 s. With a player on screen
+the browser fires first, and on a redroid Codec2 device it is the one that
+recovered every stalled session (25.9). The server request is the fallback for
+a session no browser is decoding.
+
+This section used to say the browser watchdog "cannot handle a decoder that
+never started" because an unconfigured decoder never trips a watchdog keyed on
+decoding. That stopped being true when the arm moved to session start, and
+qa-harness's measurements (25.9) show it.
 
 **Asking for a shorter interval does not help.** scrcpy applies
 `video_codec_options` after its own `KEY_I_FRAME_INTERVAL` default of 10s, so
@@ -2490,20 +2499,30 @@ depends on the guest KERNEL, not the image.** With `/dev/dma_heap/system` presen
 x86_64 runs Codec2 and encodes video with `c2.android.avc.encoder`. Without it,
 redroid silently falls back to the 32-bit `OMX.google.*` set (redroid-doc #407 and
 #743). The x86_64 guest measured here was the OMX case: see 25.10's encoder list.
-Whether a Codec2 redroid also withholds SPS/PPS is **not established**. qa-harness
-measures it on `c2.android.avc.encoder`, the #703 reporter's own encoder, and a
-run that never reproduces it reports NOT REPRODUCED rather than a pass.
+
+**It reproduces on Codec2 too** (qa-harness, 2026-09-25). On redroid 13 x86_64 running
+Codec2 with `c2.android.avc.encoder`, the #703 reporter's own encoder, 13 of 24
+sessions across three runs on beta.132 stalled, and all 24 recovered. A stalled
+session had media frames from about 340 ms and first config only at about 5.3 s.
+Smoke row 8.17 is automated on that fixture (qa-harness #95,
+`suites/wssw-virtual/playwright/specs/config-recovery.spec.ts`).
 
 **The loss is not ours.** The server's own packet counter and an independent
 NAL scan of the bytes we forward agree: when the counter says `config=0`, the
 payload genuinely contains none. That rules out mis-flagging in `FrameReader`,
 which was the leading suspicion for months.
 
-Recovered by the server-side keyframe request described in 25.2 — bounded to 3
-attempts, gated strictly on *no config seen*, because a session that has config
-and is merely starved has a working decoder that a reset would throw away.
-Measured after the fix: 8 of 8 healthy on x86_64, 3 of 3 on arm64, with config
-arriving 1.5-3.0s after the request on hardware-accelerated guests.
+Recovered by a `TYPE_RESET_VIDEO` request, which either side can send (25.2).
+**On the Codec2 fixture the browser always sent it.** Its 5 s decode watchdog fires
+before the server's 8 s stall check, `video-stalled` makes `StreamClientScrcpy` send
+the reset, scrcpy-server logs `Video capture reset`, and config arrives about 30 ms
+later. No stalled session logged the server's `no config packet yet — requested a
+keyframe` line. The server-side request is bounded to 3 attempts and gated
+strictly on *no config seen*, because a session that has config and is merely
+starved has a working decoder that a reset would throw away. It is the recovery
+for a session with no browser decoding it. Measured after #721 on the OMX
+fixture: 8 of 8 healthy on x86_64, 3 of 3 on arm64, with config arriving 1.5-3.0 s
+after the request on hardware-accelerated guests.
 
 ### 25.10 An audio codec the device cannot encode
 
