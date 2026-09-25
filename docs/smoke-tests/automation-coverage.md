@@ -15,19 +15,20 @@ beta.131 server work (2026-09-23) added 8.15, 8.16, 8.17 and 12.6, so the doc ho
 
 | | Rows | Where |
 |---|---|---|
-| Automated, fast tier | 30 | `build-and-test`, every PR |
+| Automated, fast tier | 31 | `build-and-test`, every PR |
 | Automated, container tier | 11 | `build-and-test`'s docker step, and qa-harness nightly |
-| Automated, device tier | 17 | qa-harness, nightly |
+| Automated, device tier | 18 | qa-harness, nightly (8.15 runs on qa-harness's own virtual-device tier) |
 | Windows guest | 26 | qa-harness, nightly, once P4 lands |
 | Windows guest **and** Linux residual | 2 | Windows half P4; Linux half nobody |
-| Automatable, no spec written yet | 8 | — (**20.4 / 20.5**, the container install/uninstall rows unblocked 2026-09-04, which this line counted as automated container rows until 2026-09-25 although neither has a spec; 8.10 / 8.11, item 24's rotation rows; the six of 2026-09-04 were written 2026-09-06, item 104; **plus item 68's four beta.131 rows — 8.15, 8.16, 8.17, 12.6**, all four automatable because the fixtures now exist: 12.6 only needs the port occupied, and redroid supplies the other three — its x86_64 image has **no Opus encoder at all** (8.16) and redroid 13 **withholds SPS/PPS in roughly 5 of 8 sessions** (8.17), both measured 2026-09-23) |
+| Automatable, no spec written yet | 6 | — (**20.4 / 20.5**, the container install/uninstall rows unblocked 2026-09-04, which this line counted as automated container rows until 2026-09-25 although neither has a spec; 8.10 / 8.11, item 24's rotation rows; the six of 2026-09-04 were written 2026-09-06, item 104; **plus two of item 68's four beta.131 rows — 8.16 and 8.17** (8.15 and 12.6 were automated 2026-09-25), both automatable because redroid supplies the fixture — its x86_64 image has **no Opus encoder at all** (8.16) and redroid 13 **withholds SPS/PPS in roughly 5 of 8 sessions** (8.17), both measured 2026-09-23) |
 | Automated, manual/conditional | 1 | 21.1 — `tests/e2e/local-https.spec.ts` exists and proves the row, but `test.skip`s unless a person points `QA_LAN_HTTPS_ORIGIN` at a real, non-loopback LAN origin serving a generated certificate. No CI run sets that, so it never contributes to "automated today" below. |
 | **Residual — Linux installer and desktop** | **50** | nobody (14.8 / 14.9 are assertable by qa-harness item 14's Linux guests) |
 | **Residual — un-automatable** | **10** | nobody, ever |
 | **Total** | **155** | |
 
-**Automated today: 58 of 155 = 37 %.** After P4: 84 of 155 = 54 %, plus the
-Windows halves of the two split rows. (52 / 37 % and 77 / 55 % until 2026-09-06,
+**Automated today: 60 of 155 = 39 %.** After P4: 86 of 155 = 55 %, plus the
+Windows halves of the two split rows. (58 / 37 % and 84 / 54 % until 2026-09-25, when 8.15 moved to
+the device tier on qa-harness #89 and 12.6 to the fast tier; 52 / 37 % and 77 / 55 % until 2026-09-06,
 when item 104 wrote the six specs this table used to list as "automatable, no
 spec"; the denominator was 140 until item 63 added the two tray rows and item 114
 added 15.6, 143 until item 24 added 8.10 and 8.11 on 2026-09-15, 147 once item 73
@@ -82,8 +83,10 @@ Buckets, once each, no row in two:
   nightly docker tier runs all but the six marked `@docker-host` (1.9, 9.5, 20.6,
   20.8, 20.11, 20.12), which drive the docker CLI on the host — compose stacks of
   their own, a `docker stop`, a `docker pull` — and need a CLI the runner does not have.
-- **device** — a `@device` spec under `tests/e2e/device/`. qa-harness only, nightly,
-  against the Android emulator P2 brings onto the run network.
+- **device** — a `@device` spec under `tests/e2e/device/`, or a spec in qa-harness's own
+  virtual-device tier (`suites/wssw-virtual/`, since 2026-09-25, row 8.15). qa-harness only,
+  nightly, against an Android emulator on the run network. Widened rather than split: both run
+  the app against an emulator; the only difference is which repo holds the spec.
 - **Windows guest** — P4's territory. Not automated today.
 - **no spec yet** — automatable with the tiers that already exist, and simply not
   written. Broken out rather than buried in the residual set, because these are the
@@ -179,7 +182,7 @@ Sorted by module, then by row number, which is not the doc's execution order.
 | 8.9 | `[Both]` | Hardware encoder is offered | residual: un-automatable | Needs a vendor hardware encoder (`c2.exynos.*`, `c2.amlogic.*`). The emulator offers only the `c2.android.*` software one. |
 | 8.10 | `[Both]` | Rotating the device re-fits the picture | automatable: no spec yet | Device tier. The emulator rotates on demand (`adb shell settings put system user_rotation`), and the assertion is a dimension change the client logs, so nothing here needs a human — only a spec. |
 | 8.11 | `[Both]` | Touch still lands correctly after a rotation | automatable: no spec yet | Device tier. Rotate, inject a tap at a known edge coordinate, and assert where it landed on the device. Deliberately separate from 8.10: the picture and the touch mapping fail independently, and this is the half a human checking the picture would tick without testing. |
-| 8.15 | `[Both]` | The stream summary names what arrived | automatable: no spec yet | Device tier, and the cheapest of the four: stream, close, assert one `stream summary: config=N keyframe=N frame=N` line with non-zero counts. Worth writing FIRST — 8.16 and 8.17 are both judged by reading this line, so a spec that cannot trust it cannot prove either of them. |
+| 8.15 | `[Both]` | The stream summary names what arrived | device | qa-harness virtual-device tier: `suites/wssw-virtual/playwright/specs/stream-summary.spec.ts` (`@phone`, Android 16 emulator; qa-harness #89, 5/5 on beta.132). Asserts exactly one `stream summary after <ms>ms: …` line per session, `config`/`keyframe`/`frame` all non-zero, and first config and first frame not `never`, read from the server log through a read-only mount of the data volume. 8.16 and 8.17 are judged by this line, so they can now trust it. |
 | 8.16 | `[Both]` | An unavailable audio codec no longer kills the video stream | automatable: no spec yet | Device tier, and the fixture is specific: the device must LACK the requested codec. **x86_64 redroid has no Opus encoder at all** (measured 2026-09-23), so requesting opus there exercises the fallback deterministically; a real phone usually has all three and cannot. Assert video still flows and the log names the substituted codec. |
 | 8.17 | `[Both]` | A device that never sends codec config is recovered, not left black | automatable: no spec yet | Device tier. **redroid 13 withholds SPS/PPS in roughly 5 of 8 sessions on x86_64 and 6 of 6 on emulated arm64** (measured 2026-09-23, issue #703), which is the only fixture known to reproduce it — so this is automatable but NOT on a healthy phone. Two traps for whoever writes it: the run is probabilistic, so a single green session proves nothing; and the capture window must exceed the device's own latency — a 14s window read a working fix as 6-of-6 broken because the emulated device needed ~20s. |
 | 9.1 | `[Both]` | Shell modal | device | `device/modals.spec.ts` |
@@ -203,7 +206,7 @@ Sorted by module, then by row number, which is not the doc's execution order.
 | 12.3 | `[Win]` | Local-mode reaps everything | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
 | 12.4 | `[Linux]` | DATA_ROOT override honored | fast | `lifecycle.spec.ts`. **Partial:** the Node side is covered; the launcher half stays manual. |
 | 12.5 | `[Win]` | Abnormal-termination JobObject reap | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
-| 12.6 | `[Both]` | The server EXITS when no listener can bind | automatable: no spec yet | Fast tier — no device needed, which makes it the easiest row in this table to automate. Occupy the port, start the server, assert a non-zero exit rather than a process that stays up. Must be driven BOTH ways round when Local HTTPS is on: the original defect only checked in the plain-HTTP branch, so one order reported and the other did not, and the existing test happened to emit in the order that passed. |
+| 12.6 | `[Both]` | The server EXITS when no listener can bind | fast | `lifecycle.spec.ts`, on spec-owned servers with the ports held by a blocker: HTTP only; both listeners refused in BOTH orders, with the log order asserted so each case provably drives the branch it names; and the negative, HTTP refused while HTTPS serves and the process stays up. The HTTPS listener uses a throwaway in-process certificate (`support/selfSignedCert.ts`). Writing it found finding 12.7. |
 | 13.1 | `[Both]` | Bookmark global-dismiss | fast | `settings-prompts.spec.ts` |
 | 13.2 | `[Both]` | Reset welcome & bookmark prompts | fast | `settings-prompts.spec.ts` |
 | 13.3 | `[Both]` | Server-section layout + web-port inline save | fast | `settings-prompts.spec.ts`. **Partial:** layout, inline save and the at-rest status are covered; "change port, save, persists and restarts" stays manual. |
@@ -364,11 +367,13 @@ from `tests/docker/` (see `tests/e2e/README.md`).
 | 10.6 | `allowedHosts` | automated — the listed host served, an unlisted one refused, defaults intact, on a spec-owned server seeded with the key |
 | 12.1 | clean exit + adb teardown | automated for the bare server (the UI path: confirm, the stopped notice, exit 0, no `.restart` marker, the teardown lines in order). The container half is 20.6 / 20.12, automated 2026-09-06 |
 | 12.4 | `DATA_ROOT` honoured | automated for the Node side — and see finding 12.5 for what "same root" actually rests on |
+| 12.6 | no listener can bind | automated 2026-09-25, all four cases (HTTP only, both orders, the one-listener negative) — and see finding 12.7, which this spec found and whose fix shipped with it |
 
 ### Findings — surfaced by task 11, deliberately NOT fixed there
 
 | # | Finding | Assessment |
 |---|---|---|
+| 12.7 | **With two listeners configured, the first bind failure crashed the app instead of degrading.** Found 2026-09-25 by row 12.6's own spec, not by task 11. `ws`'s WebSocketServer, given an existing `server`, forwards that server's `'error'` to itself, and `WebSocketServer.attachToServer` registered no `'error'` listener, so ws re-threw a listen failure HttpServer had already handled: `Uncaught exception: Error: listen EADDRINUSE`. With one listener it never showed, because `exitIfNothingCanServe()` exits first. With two, it broke degrade-never-exit outright: **a busy HTTPS port on a Local HTTPS install took the working HTTP listener down with it**, the M4 guarantee. `httpServerListenErrors.test.ts` could not see it because it never attaches ws. | **Fixed 2026-09-25**, in the same PR as the spec: `attachToServer` registers an `'error'` listener that swallows the forwarded event, since HttpServer has already logged and decided on it. Unit test `wsServerErrorForwarding.test.ts`; failing direction shown on both the unit test and the e2e cases before the fix. |
 | 12.5 | **The log file and the dependencies folder are keyed on `DEPS_PATH`, not `DATA_ROOT`.** A bare `node dist/index.js` with only `DATA_ROOT` set puts `config.json` and the store under it but logs to the repo root and, on Linux, hydrates into `<repo>/dependencies`. Row 12.4's "Node side and launcher agree" holds only because the Rust launcher sets both variables; Windows ignores `DATA_ROOT` entirely. | **Fixed 2026-09-04.** `resolveDataRoot` honours an explicit `DATA_ROOT` on every platform, Windows included, and `resolveDependenciesPath` derives `<DATA_ROOT>/dependencies` from it — so `DATA_ROOT` alone now means what the row says. `DEPS_PATH` and `config.json` still win over it.
 | 20.14 | **In the container there is no server log at all.** `start.sh` exports `DEPS_PATH=/app/dependencies` (a symlink to `/data/dependencies`), so the log path resolves to `/app/logs/ws-scrcpy-web.log` — and `/app` is root-owned while the app runs as uid 1000, so the directory is never created and every write no-ops (measured 2026-09-03: no `/app/logs`, no `/data/logs`, `docker logs` carries only `start.sh`'s own lines, because the console echo is TTY-only). SP4 §13 ("config + logs survive") and smoke row 20.11 assume a log on the volume. | **Fixed 2026-09-04.** The log path keys on `DATA_ROOT` first and falls back to `dirname(DEPS_PATH)`, so the desktop launcher's answer is unchanged and the container's log lands on the volume at `/data/logs`. `start.sh` no longer clobbers an inherited `DEPS_PATH`, and the entrypoint pre-creates `/data/logs` under the app's uid.
 | 20.16 | **adb aborted on every invocation inside the container.** The entrypoint's step-down kept the root shim's `HOME=/root`; adb creates `$HOME/.android` on every run, `adb --version` included, and aborts with a core dump when it cannot (`Cannot mkdir '/root/.android'`). The server's version probe swallowed the abort into `installedVersion: null`, so the first-run banner named adb as failed to download on every boot of the shipped image, the Dependencies panel showed it as not installed, and no device could have connected. Nothing in the container tier had asked; row 20.9 was marked as proven by `up --wait`, which only proves the loopback health probe. | **FIXED in the task 11 PR** (`docker/entrypoint.sh` exports a volume-backed `HOME=/data/home` before `setpriv`, so the adb key pair also survives `docker rm`, and owns that directory on **every** boot — a volume from an earlier image is already owned by the app user, so the one-time recursive chown skips it and a root-owned `/data/home` would reproduce the abort; the guard caught exactly that on a stale volume), and now guarded: `docker-gating.spec.ts` asserts every dependency, adb's real version included, is installed on a fresh volume. Found by row 1.9's Retry never clearing the banner. |

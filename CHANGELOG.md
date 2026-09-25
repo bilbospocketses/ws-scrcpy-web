@@ -22,6 +22,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A pull request that changes user-visible code must now update the smoke test doc, or say in its body why it doesn't need to.** Several releases shipped behaviour changes with no manual smoke row: the whole beta.131 server batch, and beta.132's service-install changes. The rows were only written afterwards, working back from the diffs. The new required `smoke-coverage` check fails a PR that touches `src/server/`, `src/app/` or `launcher/src/` (test files excluded) unless `docs/smoke-tests/smoke-test.md` also changes, or the PR body carries `<!-- smoke: none -- <reason> -->`. A marker with an empty reason fails. Editing the PR body re-runs the check in seconds. Replayed against the previous 30 merged PRs, it would have stopped every one of those misses.
 - **The two smoke documents are now checked against each other on every PR.** `smoke-test.md` and the automation register list the same rows, and the register restates their counts in several places, all kept up by hand. A new test checks that the row ids match exactly, including the module index, and rebuilds the register's bucket counts and headline from the rows. Its first run found a real miscount: rows 20.4 and 20.5 had no spec but were counted as automated container rows (11, not 13).
 - **Smoke row 4.3 now covers the beta.132 service-install changes:** the new dialog text, the order of the three `launcher.log` lines with no start retry and no SCM 7009/7000, and checking that Defender is running before any timing is trusted.
+- **Smoke row 12.6 is automated.** New fast-tier cases in `tests/e2e/lifecycle.spec.ts` start real servers with their ports held by another process:
+  - HTTP only: the server exits 1 and says why;
+  - both listeners refused, in both orders: the log order is asserted, so each case provably takes the path it names;
+  - the negative: HTTP refused while HTTPS serves, and the server stays up.
+
+  The HTTPS listener uses a throwaway certificate generated in-process, so nothing is fetched and no key is committed. Row 8.15 is automated too, on qa-harness's virtual-device tier. The register now counts 60 of 155 rows as automated (39 %).
+- **Smoke row 8.15 now quotes the stream summary line the app actually writes:** `stream summary after <ms>ms: codec=… config=N keyframe=N frame=N total=… (first config …, first keyframe …, first frame …)`. The short form it quoted before matched nothing on a working build.
+
+### Fixed
+
+- **With Local HTTPS on, a busy HTTPS port no longer takes the whole app down.** When one of two listeners fails to bind, the app is meant to keep serving on the other (HTTP survives an HTTPS failure, and the reverse). Instead it crashed with `Uncaught exception: Error: listen EADDRINUSE`. The WebSocket layer re-raised a bind failure the HTTP server had already handled, because the `ws` library forwards the server's error events and nothing was listening for them. It only ever showed with two listeners configured: with one, the app exits on the failure before the WebSocket layer sees it, which is why nothing caught it until row 12.6's new spec ran both listeners for real.
 
 ## [0.1.30-beta.132] - 2026-09-24
 
