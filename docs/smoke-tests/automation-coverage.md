@@ -18,16 +18,17 @@ beta.131 server work (2026-09-23) added 8.15, 8.16, 8.17 and 12.6, so the doc ho
 | Automated, fast tier | 31 | `build-and-test`, every PR |
 | Automated, container tier | 11 | `build-and-test`'s docker step, and qa-harness nightly |
 | Automated, device tier | 18 | qa-harness, nightly (8.15 runs on qa-harness's own virtual-device tier) |
-| Windows guest | 26 | qa-harness, nightly, once P4 lands |
-| Windows guest **and** Linux residual | 2 | Windows half P4; Linux half nobody |
-| Automatable, no spec written yet | 6 | — (**20.4 / 20.5**, the container install/uninstall rows unblocked 2026-09-04, which this line counted as automated container rows until 2026-09-25 although neither has a spec; 8.10 / 8.11, item 24's rotation rows; the six of 2026-09-04 were written 2026-09-06, item 104; **plus two of item 68's four beta.131 rows — 8.16 and 8.17** (8.15 and 12.6 were automated 2026-09-25), both automatable because redroid supplies the fixture — its x86_64 image has **no Opus encoder at all** (8.16) and redroid 13 **withholds SPS/PPS in roughly 5 of 8 sessions** (8.17), both measured 2026-09-23) |
-| Automated, manual/conditional | 1 | 21.1 — `tests/e2e/local-https.spec.ts` exists and proves the row, but `test.skip`s unless a person points `QA_LAN_HTTPS_ORIGIN` at a real, non-loopback LAN origin serving a generated certificate. No CI run sets that, so it never contributes to "automated today" below. |
+| Automated, Windows guest tier | 26 | qa-harness P4, nightly, on a Windows 11 guest. Its row set is 27 row-halves: these 26 (6.1 and 12.2 counted by their Windows halves) plus 5.10, which needs a person and sits under manual/conditional. **Most are partial**; each line below names what a pass does not prove. |
+| Automatable, no spec written yet | 7 | — (**15.6**, the tray's Exit end to end, which the Windows guest tier can reach once it can right-click a real tray icon (qa-harness item 21) but P4 does not claim; **20.4 / 20.5**, the container install/uninstall rows unblocked 2026-09-04, which this line counted as automated container rows until 2026-09-25 although neither has a spec; 8.10 / 8.11, item 24's rotation rows; the six of 2026-09-04 were written 2026-09-06, item 104; **plus two of item 68's four beta.131 rows — 8.16 and 8.17** (8.15 and 12.6 were automated 2026-09-25), both automatable because redroid supplies the fixture — its x86_64 image has **no Opus encoder at all** (8.16) and redroid 13 **withholds SPS/PPS in roughly 5 of 8 sessions** (8.17), both measured 2026-09-23) |
+| Automated, manual/conditional | 2 | 21.1 — `tests/e2e/local-https.spec.ts` exists and proves the row, but `test.skip`s unless a person points `QA_LAN_HTTPS_ORIGIN` at a real, non-loopback LAN origin serving a generated certificate. 5.10 — qa-harness P4 asserts it, but only with a person at the UAC prompt to click No; unattended it Skips. No unattended run proves either, so neither contributes to "automated today" below. |
 | **Residual — Linux installer and desktop** | **50** | nobody (14.8 / 14.9 are assertable by qa-harness item 14's Linux guests) |
 | **Residual — un-automatable** | **10** | nobody, ever |
 | **Total** | **155** | |
 
-**Automated today: 60 of 155 = 39 %.** After P4: 86 of 155 = 55 %, plus the
-Windows halves of the two split rows. (58 / 37 % and 84 / 54 % until 2026-09-25, when 8.15 moved to
+**Automated today: 86 of 155 = 55 %.** (60 / 39 % earlier on 2026-09-25, until item 148 counted
+qa-harness P4's Windows guest tier. P4 was already passing its row set: run `win-20260925T111742Z` on
+beta.132 went 26 Pass / 1 Skip (5.10) / 0 Fail. This table still read "once P4 lands", and the
+headline left all of it out. Before that, 58 / 37 % and, projected with P4, 84 / 54 % until 2026-09-25, when 8.15 moved to
 the device tier on qa-harness #89 and 12.6 to the fast tier; 52 / 37 % and 77 / 55 % until 2026-09-06,
 when item 104 wrote the six specs this table used to list as "automatable, no
 spec"; the denominator was 140 until item 63 added the two tray rows and item 114
@@ -61,18 +62,43 @@ covered and assumed the Linux installer rows were reachable. The measured number
 was **37 %** when this register was written, **40 %** since item 104 and item 24
 (41 % between them, on a denominator of 143), **39 %** since item 73 widened the
 denominator to 147 without adding coverage, **37 %** once item 68's four rows
-took it to 155, and **39 %** again since 2026-09-25, when 8.15 and 12.6 were
-automated, with 55 % once P4 lands. (This line said "57 % once P4 lands" until
-2026-09-25, a figure from before the denominator grew.) Item 13 was closed into this register on 2026-09-06: the register
+took it to 155, **39 %** again on 2026-09-25, when 8.15 and 12.6 were
+automated, and **55 %** later that day, once item 148 counted the Windows guest tier
+P4 had already been running. That last figure counts rows the way item 13 did,
+partial rows as covered, because this register always has (see below). Most P4
+rows are partial, so it is a count of rows a nightly run exercises, not of rows
+it fully proves. Item 13 was closed into this register on 2026-09-06: the register
 is the source of truth for coverage, and the only ws-scrcpy-web-side action it
 had left was item 104.
 
-**Seven automated rows carry a manual half.** Each states both halves on its own
-line below: 8.5, 8.8 and 9.5, whose remainder `smoke-test.md` itself calls
-residual, and 9.4, 10.3, 12.4 and 13.3, whose remainder it calls manual. They are
-counted once, in the tier that covers their automated half, so a reader adding the
-buckets up does not count them twice — but the residual set is larger than its 57
-rows by these seven halves.
+**Seven automated rows outside the Windows guest tier carry a manual half.** Each
+states both halves on its own line below: 8.5, 8.8 and 9.5, whose remainder
+`smoke-test.md` itself calls residual, and 9.4, 10.3, 12.4 and 13.3, whose
+remainder it calls manual. They are counted once, in the tier that covers their
+automated half, so a reader adding the buckets up does not count them twice — but
+the residual set is larger than its 60 rows by these seven halves. (It said 57
+rows until 2026-09-25; the two residual buckets have summed to 60 since item 68's
+rows landed.)
+
+**The Windows guest tier is counted the same way, and most of it is partial.** Of
+its 26 rows, a clause-by-clause reading (2026-09-25, item 148) found only a
+handful that prove every clause of Expected: 11.4, 6.8, 1.8 across two arcs, and
+5.6 against its reworded text. qa-harness's own reading calls 16 of its 27
+row-halves full, and the difference is mostly how literally a stated time or a
+colour is read. Each line below names what is not asserted. Some gaps are the tier's own: elevation is Silent for most
+arcs, so no UAC is observed, and no stream is live, because WebCodecs needs a
+secure origin. Some are wording: a stated "~100 ms" bounded at 5 s, a colour never
+read. And four look like harness gaps worth fixing on qa-harness's side: 1.6 passes
+vacuously on the default port, 1.10's ACE regex accepts an inherited ACE, 10.2's
+grep lets a bare `Error:` through, and 15.5 requires a hidden Linux-only button.
+6.1 and 12.2 are counted by their Windows halves; their Linux halves stay residual.
+
+**Four smoke rows were reworded on 2026-09-25 while this was checked:** 5.5, 5.6,
+5.10 and 15.1 described behaviour the app no longer has. They are the tray-handoff
+uninstall and its `handoff-timeout` refusal, which Phase 4 (#108) replaced; a UAC
+on a Windows service uninstall, which runs as LocalSystem and never elevates; and
+`Update.exe` raising the in-app uninstall's UAC, which was never true on an MSI
+install. qa-harness had already asserted the real behaviour for 5.6 and 5.10.
 
 Two further rows are marked **Split** rather than **Partial**, which is a different
 thing: 7.2 runs its two halves in two different tiers, and 12.1’s container half is
@@ -89,18 +115,23 @@ Buckets, once each, no row in two:
   virtual-device tier (`suites/wssw-virtual/`, since 2026-09-25, row 8.15). qa-harness only,
   nightly, against an Android emulator on the run network. Widened rather than split: both run
   the app against an emulator; the only difference is which repo holds the spec.
-- **Windows guest** — P4's territory. Not automated today.
+- **windows guest** — qa-harness P4 (`suites/wssw-win/`, six arcs, 1a through 4),
+  nightly, on a Windows 11 guest under dockur. The paths in the lines below are
+  relative to that directory. Its row set is `$script:ExpectedRows` in
+  `QaWinSuite.psm1`, and the suite reports any claimed row that did not run as
+  MISSING, so a row cannot silently drop out.
 - **no spec yet** — automatable with the tiers that already exist, and simply not
   written. Broken out rather than buried in the residual set, because these are the
   cheapest rows left on the board.
 - **residual: linux-desktop** — blocked on a Linux desktop that no phase builds.
 - **residual: un-automatable** — blocked on hardware, on an app defect, or on a
   product decision nobody has taken.
-- **manual/conditional** — a real spec exists under `tests/e2e/`, and it genuinely
-  proves the row when it runs, but it `test.skip`s by default because it needs a
-  real environment nothing in this stack provisions (here: a second machine's LAN
-  origin, with `QA_LAN_HTTPS_ORIGIN` naming it). No CI run sets that, so the spec
-  never runs unattended and never counts toward "automated today" — the distinction
+- **manual/conditional** — a real spec exists, in `tests/e2e/` or in qa-harness, and
+  it genuinely proves the row when it runs, but it skips by default because it needs
+  something nothing in this stack provisions: a second machine's LAN origin, with
+  `QA_LAN_HTTPS_ORIGIN` naming it (21.1), or a person to click No on a UAC prompt
+  that UI Automation cannot reach (5.10). No unattended run supplies either, so the
+  spec never counts toward "automated today" — the distinction
   from **residual: un-automatable** is that a person CAN run it by hand, on demand,
   against a real setup, where the residual bucket cannot be run at all.
 
@@ -114,12 +145,12 @@ Sorted by module, then by row number, which is not the doc's execution order.
 | 1.2 | `[Linux]` | Accept → install + delete original | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
 | 1.3 | `[Linux]` | Decline + remember | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
 | 1.4 | `[Linux]` | Headless first-run | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
-| 1.5 | `[Win]` | Fresh MSI install | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
-| 1.6 | `[Win]` | Reinstall reuses config | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
+| 1.5 | `[Win]` | Fresh MSI install | windows guest | qa-harness P4, `arcs/01a-install.ps1` + `readonly.spec.ts`. **Partial:** install, Program Files layout, first launch, the WelcomeModal, exactly one real tab and the pinned version are asserted; the tab's URL is not, only the count. |
+| 1.6 | `[Win]` | Reinstall reuses config | windows guest | qa-harness P4, `arcs/01c-uninstall.ps1`. **Partial:** `config.json`'s `webPort` is identical across the reinstall; nothing is launched afterwards, so "reachable on the previously-saved port" is not, and the port is not forced off the default first, so an 8000 → 8000 run passes vacuously (Arc 4 guards this for 15.1; Arc 1c does not). |
 | 1.7 | `[Linux]` | Cold-start opens one tab | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
-| 1.8 | `[Win]` | Cold-start opens one tab | Windows guest (P4) | qa-harness Arc 1a (`suites/wssw-win/arcs/01a-install.ps1`, 2026-09-06): cold start, and the port-change restart in both first-run states. The update-relaunch half is pending Arc 3. |
+| 1.8 | `[Win]` | Cold-start opens one tab | windows guest | qa-harness P4, `arcs/01a-install.ps1` (cold start, and the port-change restart in both first-run states) + `arcs/03-update.ps1` (the update relaunch adds no tab, `update.spec.ts`). All three halves run; the update half is recorded under 6.8's verdict, not 1.8's. |
 | 1.9 | `[Both]` | First-run dependency-bootstrap banner + Retry | container | `dependencies-panel.spec.ts` `@docker-host`. **CI only** - it drives a compose stack of its own, and the qa-harness runner has no docker CLI. |
-| 1.10 | `[Win]` | Install-dir ACL grant (install hook; no UAC on a fresh install) | Windows guest (P4) | qa-harness Arc 1a (`suites/wssw-win/arcs/01a-install.ps1`, 2026-09-06), in Prompt mode with the consent observer polling through both launches. |
+| 1.10 | `[Win]` | Install-dir ACL grant (install hook; no UAC on a fresh install) | windows guest | qa-harness P4, `arcs/01a-install.ps1`, in Prompt mode with the consent observer polling through both launches: zero UAC, the `Authenticated Users (M)` ACE, the hook line, no fallback line. **Partial:** the ACE regex also accepts an inherited `(I)` ACE, and the row asks for an explicit one. |
 | 2.1 | `[Fedora]` | Binary/deps labels | residual: linux-desktop | Residual. Needs a Fedora host with a policy store of its own, for `bin_t`/`var_lib_t` labelling and the `semanage` fcontext lifecycle. Containers share the host's. |
 | 2.2 | `[Fedora]` | State labels | residual: linux-desktop | Residual. Needs a Fedora host with a policy store of its own, for `bin_t`/`var_lib_t` labelling and the `semanage` fcontext lifecycle. Containers share the host's. |
 | 2.3 | `[Fedora]` | fcontext rules registered | residual: linux-desktop | Residual. Needs a Fedora host with a policy store of its own, for `bin_t`/`var_lib_t` labelling and the `semanage` fcontext lifecycle. Containers share the host's. |
@@ -134,16 +165,16 @@ Sorted by module, then by row number, which is not the doc's execution order.
 | 3.1 | `[Linux]` | Per-user launch | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
 | 3.2 | `[Linux]` | Single-instance ([flock](#g-flock)) | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
 | 3.3 | `[Linux]` | Service-defer | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
-| 3.4 | `[Win]` | Per-session tray | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
-| 3.5 | `[Win]` | 2nd tray.exe rejected | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
-| 3.6 | `[Win]` | Tray respawn after user-kill | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
-| 3.7 | `[Win]` | Single-instance integrity (User vs Admin) | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
-| 3.8 | `[Win]` | No startup Run-key (supervisor owns the tray) | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
+| 3.4 | `[Win]` | Per-session tray | windows guest | qa-harness P4, `arcs/01b-service-tray.ps1`. **Partial:** exactly one session-scoped tray is asserted, and the tray's "Open" is invoked (Skip on an input-delivery miss) but the page it loads is not checked; the cross-user half (Admin → User1 → User2) was scoped out 2026-09-08 and stays manual. |
+| 3.5 | `[Win]` | 2nd tray.exe rejected | windows guest | qa-harness P4, `arcs/01b-service-tray.ps1`: a second tray starts, exits 0 and leaves the incumbent untouched. The row's "~100 ms" is bounded at 5 s, not measured. |
+| 3.6 | `[Win]` | Tray respawn after user-kill | windows guest | qa-harness P4, `arcs/01b-service-tray.ps1`: one new-pid tray back, the startup balloon read live, three repeat kills stay at one. **Partial:** "Open still works" after the respawn is not invoked, the ~10 s window is 45 s, and the kill is `Stop-Process -Force` rather than Task Manager. |
+| 3.7 | `[Win]` | Single-instance integrity (User vs Admin) | windows guest | qa-harness P4, `arcs/01a-install.ps1`, cases (a)-(c). **Partial:** in (b) the arc restores a shifted port itself rather than asserting the elevated instance never wrote it to `config.json`, it stops that instance itself, and only open mode runs (not "with users configured"). |
+| 3.8 | `[Win]` | No startup Run-key (supervisor owns the tray) | windows guest | qa-harness P4, `arcs/01b-service-tray.ps1`: no `WsScrcpyWebTray` under HKLM/HKCU Run, nothing in either Startup folder. The per-session tray it points to is 3.4's assertion. |
 | 4.1 | `[Linux]` | System-scope gate | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
 | 4.2-system-cli | `[Linux]` | Install system scope — headless CLI | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
 | 4.2-system-gui | `[Linux]` | Install system scope — desktop pkexec takeover | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
 | 4.2-user | `[Linux]` | Install user scope | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
-| 4.3 | `[Win]` | Install confirm UX | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
+| 4.3 | `[Win]` | Install confirm UX | windows guest | qa-harness P4, `arcs/01b-service-tray.ps1` + `service.spec.ts`, gated on Defender. **Partial:** cancel/Esc/backdrop (no prompt, no fetch) and the install itself are asserted, with elevation Silent, so "continue → UAC" is not; the modal's title and the progress sentence are matched by class only; the three `launcher.log` lines are reported, not asserted; the System log is not read. |
 | 4.4 | `[Linux]` | Scope-radio legibility + detection | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
 | 4.5 | `[Both]` | Confirm-dialog button style | fast | `confirm-dialogs.spec.ts`. The revoke `ConfirmModal` and the reset-prompts `ResetConfirmModal` carry `modal-button` on both buttons and resolve to one shared computed style (outline = text colour, transparent ground) on every run. The service install's `AdminConfirmModal` pre-flight is asserted the same way **where the host offers the install** — a packaged install, or a dev box with a service manager and a launcher; CI's bare `node dist/index.js` renders it disabled, so there the run records a `partial` annotation and the dialog's class is pinned by its unit test. The shell-close confirm needs a live shell (a device); unit-tested. (`ResetConfirmModal` wore the Settings-row `settings-btn` family until item 111, 2026-09-06.) |
 | 4.6 | `[Linux]` | Service-unit hygiene | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
@@ -153,19 +184,19 @@ Sorted by module, then by row number, which is not the doc's execution order.
 | 5.3a | `[Linux]` | Headless uninstall `--keep-state` | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
 | 5.3b | `[Linux]` | Ubuntu install + boot + uninstall | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
 | 5.4 | `[Fedora]` | fcontext cleanup | residual: linux-desktop | Residual. Needs a Fedora host with a policy store of its own, for `bin_t`/`var_lib_t` labelling and the `semanage` fcontext lifecycle. Containers share the host's. |
-| 5.5 | `[Win]` | Uninstall + handoff affordance | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
-| 5.6 | `[Win]` | Uninstall handoff-failure guard | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
-| 5.7 | `[Win]` | Full uninstall | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
+| 5.5 | `[Win]` | Uninstall from service mode | windows guest | qa-harness P4, `arcs/01c-uninstall.ps1` + `service.spec.ts`: "uninstalling…", service gone through the Phase 4 path, `installMode` reverted, the local listener back. **Partial:** where the page ends is not checked. |
+| 5.6 | `[Win]` | Uninstall does not depend on the tray | windows guest | qa-harness P4, `arcs/01c-uninstall.ps1` + `service.spec.ts`: with every tray reaped, the uninstall completes, `installMode` reverts and the Phase 4 sequence is logged. Reworded 2026-09-25 to what the app does; the row used to expect a refusal the app cannot produce, and qa-harness had already asserted the real behaviour since 2026-09-08. |
+| 5.7 | `[Win]` | Full uninstall | windows guest | qa-harness P4, `arcs/01c-uninstall.ps1`: ARP uninstall succeeds, the ARP entry and `Program Files\WsScrcpyWeb` are gone, the dataRoot survives. **Partial:** the service was already removed by 5.5, so "service stops/unregisters" is not exercised here, and the arc stops the app before uninstalling, so "admin tray disappears" is not either. |
 | 5.8 | `[Linux]` | User-scope uninstall → relaunch local | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
 | 5.9 | `[Linux]` | System-scope uninstall message | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
-| 5.10 | `[Win]` | Non-admin uninstall, UAC declined | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
-| 6.1 | `[Both]` | Update check | Windows guest (P4) + residual: linux-desktop | **Windows half:** P4. **Linux half:** residual - the row needs a real install at an older version, and nothing builds a Linux desktop. |
+| 5.10 | `[Win]` | Service install, UAC declined | manual/conditional | qa-harness P4, `arcs/01c-uninstall.ps1` + `service.spec.ts`. **Needs a person:** the consent dialog exposes no UI Automation tree, so nothing can click No, and an unattended run Skips by design. With someone at the prompt it asserts the declined message, the freed button and no service. Reworded 2026-09-25 from an uninstall decline that Windows cannot produce. |
+| 6.1 | `[Both]` | Update check | windows guest | **Windows half:** qa-harness P4, `arcs/03-update.ps1` + `update.spec.ts`: the exact offer and an enabled apply. Against a harness-served pinned feed rather than github.com, from beta.103 rather than the row's beta.73, and the arc sets the channel itself, so "beta by default" is recorded, not asserted. **Linux half:** residual - the row needs a real install at an older version, and nothing builds a Linux desktop. |
 | 6.2 | `[Linux]` | Local-mode (home) update apply + relaunch | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
 | 6.3 | `[Linux]` | No-service `/opt` update | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
 | 6.4 | `[Linux]` | Newer home over `/opt` | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
 | 6.5 | `[Linux]` | User-scope service update apply | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
 | 6.6 | `[Linux]` | System-scope headless service update apply | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
-| 6.8 | `[Win]` | In-app update apply + tray persists | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
+| 6.8 | `[Win]` | In-app update apply + tray persists | windows guest | qa-harness P4, `arcs/03-update.ps1` + `update.spec.ts`: the new version, no offer left, exactly one tray held 20 s, `Update.exe` intact, one launcher, the pending marker consumed, no extra tab. Elevation is Silent, so whether the apply raises a UAC is not observed. |
 | 7.1 | `[Both]` | Wireless connect | device | `device/connect.spec.ts` |
 | 7.2 | `[Both]` | Scan subnet | device | `device/connect.spec.ts`. **Split across two tiers:** the public-range refusal is untagged and runs in the fast tier on every PR; the scan and connect-from-the-card need the emulator. |
 | 7.3 | `[Win]` | USB device | residual: un-automatable | USB, barred by the wireless-only lock. Neither a container nor the emulator has a USB bus to offer. |
@@ -193,21 +224,21 @@ Sorted by module, then by row number, which is not the doc's execution order.
 | 9.4 | `[Both]` | Dependencies panel | fast | `dependencies-panel.spec.ts`, untagged. **Partial:** the table, check-for-updates and the admin gate are covered; the per-dependency update and the restart after it need an available update and stay manual. |
 | 9.5 | `[Both]` | Shell-unavailable shows a reason | container | `dependencies-panel.spec.ts` `@docker-host`, **CI only**. **Partial:** the API half is covered; the per-device shell tooltip is residual - it needs a tracked device *and* an image without the node-pty prebuilt, and the device tier runs the full image. |
 | 10.1 | `[Both]` | Service status API | fast | `server-surface.spec.ts` |
-| 10.2 | `[Win]` | Logs clean | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
+| 10.2 | `[Win]` | Logs clean | windows guest | qa-harness P4, `arcs/01c-uninstall.ps1`: `launcher.log` and `ws-scrcpy-web.log` free of `EPERM`, `EACCES`, `UnhandledPromiseRejection`, `FATAL`, `Unhandled exception`. **Partial:** the row also bars `ERR` / `Error:`, and a bare `Error:` line passes that grep. |
 | 10.3 | `[Linux]` | Logs clean | fast | `server-surface.spec.ts`. **Partial:** the server's own `ws-scrcpy-web.log` is covered; `launcher.log` belongs to the Linux launcher and stays manual. |
 | 10.4 | `[Both]` | Per-instance token / reload-on-restart | fast | `server-surface.spec.ts` |
 | 10.5 | `[Both]` | 404 + security headers | fast | `server-surface.spec.ts` |
 | 10.6 | `[Both]` | `allowedHosts` reverse-proxy opt-in | fast | `server-surface.spec.ts` |
-| 10.7 | `[Win]` | Atomic writes survive the hidden attribute | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
+| 10.7 | `[Win]` | Atomic writes survive the hidden attribute | windows guest | qa-harness P4, `arcs/01b-service-tray.ps1`: two PATCH rewrites of a hidden `config.json`, no new EPERM, no `.tmp-*` strays. **Partial:** the dependency-update (manifest) half runs only when the in-guest update POST returns 200, and the row still passes with "manifest half NOT exercised"; the EPERM grep reads `launcher.log` only, not `ws-scrcpy-web.log`. |
 | 11.1 | `[Linux]` | No-libfuse2 launch | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
 | 11.2 | `[Linux]` | No-libfuse2 in-app update | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
 | 11.3 | `[Linux]` | Locator fix watch (velopack#921) | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
-| 11.4 | `[Win]` | PerMachine intact | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
+| 11.4 | `[Win]` | PerMachine intact | windows guest | qa-harness P4, `arcs/01a-install.ps1`: the install root under Program Files (ARP-proven), nothing under `%LOCALAPPDATA%`. |
 | 12.1 | `[Linux]` | Local-mode clean exit + adb teardown | fast | `lifecycle.spec.ts`. **Split:** the bare server is covered here; the container half is rows 20.6 and 20.12 (`container-lifecycle.spec.ts`). No part of it is manual. |
-| 12.2 | `[Both]` | Stop-exit service-mode gating | Windows guest (P4) + residual: linux-desktop | **Windows half:** P4. **Linux half:** residual - the gate is only meaningful with a systemd unit actually installed. |
-| 12.3 | `[Win]` | Local-mode reaps everything | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
+| 12.2 | `[Both]` | Stop-exit service-mode gating | windows guest | **Windows half:** qa-harness P4, `arcs/01b-service-tray.ps1` + `stopexit.spec.ts`: "stop server & exit" is disabled in service mode and the service is still installed. **Partial:** the neutral note, "no shutdown POST on click" and the re-enable after uninstalling the service are not asserted. **Linux half:** residual - the gate is only meaningful with a systemd unit actually installed. |
+| 12.3 | `[Win]` | Local-mode reaps everything | windows guest | qa-harness P4, `arcs/02-device.ps1` + `stopexit.spec.ts`: confirm/cancel, then launcher, node, tray and adb gone within 60 s and the seven log steps present. **Partial:** no stream is live (WebCodecs needs a secure origin on this tier), so it runs with a connected device only, and the tab's closing state is not checked. |
 | 12.4 | `[Linux]` | DATA_ROOT override honored | fast | `lifecycle.spec.ts`. **Partial:** the Node side is covered; the launcher half stays manual. |
-| 12.5 | `[Win]` | Abnormal-termination JobObject reap | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
+| 12.5 | `[Win]` | Abnormal-termination JobObject reap | windows guest | qa-harness P4, `arcs/02-device.ps1`: after `Stop-Process -Force` on the launcher no node or adb survives, and an immediate MSI repair succeeds with nothing in use. **Partial:** the service-mode repeat (`sc stop`) is not run, no stream is live, and `scrcpy.exe`'s absence is reported, not asserted. |
 | 12.6 | `[Both]` | The server EXITS when no listener can bind | fast | `lifecycle.spec.ts`, on spec-owned servers with the ports held by a blocker: HTTP only; both listeners refused in BOTH orders, with the log order asserted so each case provably drives the branch it names; and the negative, HTTP refused while HTTPS serves and the process stays up. The HTTPS listener uses a throwaway in-process certificate (`support/selfSignedCert.ts`). Writing it found finding 12.7. |
 | 13.1 | `[Both]` | Bookmark global-dismiss | fast | `settings-prompts.spec.ts` |
 | 13.2 | `[Both]` | Reset welcome & bookmark prompts | fast | `settings-prompts.spec.ts` |
@@ -221,12 +252,12 @@ Sorted by module, then by row number, which is not the doc's execution order.
 | 14.7 | `[Fedora]` | Uninstall — SELinux clean | residual: linux-desktop | Residual. Needs a Fedora host with a policy store of its own, for `bin_t`/`var_lib_t` labelling and the `semanage` fcontext lifecycle. Containers share the host's. |
 | 14.8 | `[Linux]` | Tray icon — StatusNotifier host (KDE) | residual: linux-desktop | Residual. Needs a Plasma session. qa-harness item 14's Linux guests can assert the `busctl --user list` name and the exit's `Received signal SIGTERM` log line under KDE. |
 | 14.9 | `[Fedora]` | Tray stands down — no host (GNOME) | residual: linux-desktop | Residual. qa-harness item 14's Fedora guest can assert the single stand-down line in `launcher.log` and the absence of the D-Bus name. |
-| 15.1 | `[Win]` | In-app uninstall — keep | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
-| 15.2 | `[Win]` | In-app uninstall — wipe | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
-| 15.3 | `[Win]` | Uninstall modal UX | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
-| 15.4 | `[Win]` | Stop-exit reaps tray + adb | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
-| 15.5 | `[Win]` | Server-section order | Windows guest (P4) | P4, the qa-harness Windows guest suite. Not yet automated. |
-| 15.6 | `[Win]` | Tray Exit actually stops the server | Windows guest (P4) | P4, the qa-harness Windows guest suite — it needs a real tray icon to right-click (its item 21 covers the Win11 overflow + right-click delivery). The gate half is unit-tested (`ServerShutdownApi.test.ts`, `instanceToken.test.ts`); this row is the end-to-end one. |
+| 15.1 | `[Win]` | In-app uninstall — keep | windows guest | qa-harness P4, `arcs/04-inapp-uninstall.ps1` + `uninstall.spec.ts`: Program Files, ARP, tray and launcher gone; `config.json` and `logs/` survive, `dependencies/` gone; the reinstall reuses a non-default port. **Partial:** it runs from an Admin session with Silent elevation (user decision 2026-09-09), so the standard-user premise, the one UAC and the decline half are not exercised (two tests are unconditional `test.skip`), and "service gone" is vacuous because the arc installs none. |
+| 15.2 | `[Win]` | In-app uninstall — wipe | windows guest | qa-harness P4, `arcs/04-inapp-uninstall.ps1` + `uninstall.spec.ts`: the data root is gone, `control\operation-server` included. Runs only when 15.1 passed, and inherits 15.1's elevation gaps. The `capture-logs.ps1 15.2-wipe` check runs only when the driver passes `-capture`. |
+| 15.3 | `[Win]` | Uninstall modal UX | windows guest | `readonly.spec.ts`, run in qa-harness P4's Arc 1a: the modal, keep checked by default, cancel/Esc/backdrop close with no `/api/` call. The overlay's stacking and the buttons' colours are not asserted. |
+| 15.4 | `[Win]` | Stop-exit reaps tray + adb | windows guest | qa-harness P4, `arcs/02-device.ps1`: launcher, node, tray and adb gone within 60 s, the tray still gone at +20 s. **Partial:** no stream is live, and the tab's closing state is not checked. |
+| 15.5 | `[Win]` | Server-section order | windows guest | `readonly.spec.ts`, run in qa-harness P4's Arc 1a. **Partial:** it compares every BUTTON in the section, hidden ones included, so the web-port input's position is not checked and the hidden, Linux-only "install for all users" button is REQUIRED to be present, which means its absence from view on Windows is not asserted either. |
+| 15.6 | `[Win]` | Tray Exit actually stops the server | automatable: no spec yet | Windows guest tier, not in P4's row set. It needs a real tray icon to right-click (qa-harness item 21 covers the Win11 overflow + right-click delivery). The gate half is unit-tested (`ServerShutdownApi.test.ts`, `instanceToken.test.ts`); this row is the end-to-end one. |
 | 16.1 | `[Both]` | Light/dark theme switch | fast | `a11y-theming.spec.ts` |
 | 16.2 | `[Both]` | Keyboard focus ring | fast | `a11y-theming.spec.ts` |
 | 16.3 | `[Both]` | Reduced motion | fast | `a11y-theming.spec.ts` |
