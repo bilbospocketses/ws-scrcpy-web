@@ -17,6 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **A pull request that changes user-visible code must now update the smoke test doc, or say in its body why it doesn't need to.** Several releases shipped behaviour changes with no manual smoke row: the whole beta.131 server batch, and beta.132's service-install changes. The rows were only written afterwards, working back from the diffs. The new required `smoke-coverage` check fails a PR that touches `src/server/`, `src/app/` or `launcher/src/` (test files excluded) unless `docs/smoke-tests/smoke-test.md` also changes, or the PR body carries `<!-- smoke: none -- <reason> -->`. A marker with an empty reason fails. Editing the PR body re-runs the check in seconds. Replayed against the previous 30 merged PRs, it would have stopped every one of those misses.
+- **The two smoke documents are now checked against each other on every PR.** `smoke-test.md` and the automation register list the same rows, and the register restates their counts in several places, all kept up by hand. A new test checks that the row ids match exactly, including the module index, and rebuilds the register's bucket counts and headline from the rows. Its first run found a real miscount: rows 20.4 and 20.5 had no spec but were counted as automated container rows (11, not 13).
+- **Smoke row 4.3 now covers the beta.132 service-install changes:** the new dialog text, the order of the three `launcher.log` lines with no start retry and no SCM 7009/7000, and checking that Defender is running before any timing is trusted.
+
 ## [0.1.30-beta.132] - 2026-09-24
 
 ### Fixed
