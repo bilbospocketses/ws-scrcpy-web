@@ -23,6 +23,7 @@ import {
     createAudioDisabledSocket,
     expectedTunnelSocketCount,
 } from './scrcpyTunnelSockets';
+import { watchForStuckClosing } from './util/closingWatchdog';
 
 const log = Logger.for('ScrcpyConnection');
 
@@ -64,6 +65,8 @@ export class ScrcpyConnection extends Mw {
     private readonly diagnostics = new StreamDiagnostics();
     private stallTimer?: NodeJS.Timeout | undefined;
     private keyframeTimer?: NodeJS.Timeout | undefined;
+    /** Item 151: stops the stuck-CLOSING watch; see util/closingWatchdog.ts. */
+    private stopClosingWatch?: () => void;
 
     public static override processRequest(ws: WS, params: RequestParameters): ScrcpyConnection | undefined {
         const { action, url } = params;
@@ -85,6 +88,18 @@ export class ScrcpyConnection extends Mw {
         private readonly queryParams: URLSearchParams,
     ) {
         super(ws);
+        // Release is keyed on the websocket's 'close', and ws can leave a socket
+        // CLOSING with no time limit (a peer FIN without a close frame while our
+        // send buffer cannot drain). This session then held its device for ~4
+        // minutes after the viewer closed (item 151). Past a short grace the
+        // socket is terminated, which fires 'close' and the release below.
+        this.stopClosingWatch = watchForStuckClosing(ws, {
+            onStuck: ({ closingForMs, bufferedAmount }) =>
+                log.warn(
+                    `${serial}: websocket stuck in CLOSING for ${closingForMs}ms (${bufferedAmount} bytes unsent); ` +
+                        'terminating it so the session and the device are released',
+                ),
+        });
         this.start().catch((err) => {
             log.error(`Failed to start session for ${serial}:`, err.message);
             try {
@@ -710,6 +725,7 @@ export class ScrcpyConnection extends Mw {
     public override release(): void {
         if (this.released) return;
         this.released = true;
+        this.stopClosingWatch?.();
         log.info(`Releasing session for ${this.serial}`);
         // #703: written on EVERY session, not only broken ones. A healthy
         // summary is what makes a broken one legible — without a normal

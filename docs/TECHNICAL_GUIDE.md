@@ -2284,7 +2284,8 @@ Six separate mechanisms produce "the stream connected but I see a black
 rectangle", and they need entirely different responses. Issue #498 spent
 several days moving between them, so each is recorded here with the
 measurement that identified it. Issue #703 added two more (25.9, 25.10), both
-found on redroid and neither anywhere near the video path.
+found on redroid and neither anywhere near the video path. 25.11 is the black
+screen a NEXT viewer sees when a closed session is still holding the device.
 
 All figures below come from a Pixel 10a (Android 17, Exynos) with the stream
 instrumented at both the WebSocket and the `VideoDecoder`.
@@ -2474,6 +2475,7 @@ its type map says.
 | `src/common/StreamUrlParams.ts` | `buildVideoCodecOptions` and why the interval is not a lever |
 | `src/server/StreamDiagnostics.ts` | Server-side frame-path counters; names which of these causes is in play |
 | `src/server/audioCodecFallback.ts` | `chooseAudioCodec` — 25.10; empty encoder list means unknown, not none |
+| `src/server/util/closingWatchdog.ts` | `watchForStuckClosing` — 25.11; terminates a stream socket stuck in CLOSING so the device is released |
 | `src/server/ScrcpyConnection.ts` | Stall watchdog, the server-side keyframe request (25.9), `scrcpy-server effective:` |
 
 ### 25.9 The device never sends a config packet at all
@@ -2552,9 +2554,43 @@ advertised encoders and picks one it has. Note an **empty** encoder list means
 every device, and treating silence as "no audio" would disable working audio
 because a diagnostic was quiet.
 
-Worth knowing for reproduction: arm64 redroid **does** have
-`c2.android.opus.encoder`, x86_64 redroid does not — so this one is
-architecture-specific even though the image tag is not.
+Worth knowing for reproduction: on 2026-09-23 the arm64 redroid guest **did** have
+`c2.android.opus.encoder` and the x86_64 guest did not. That is the guest kernel's
+codec stack (Codec2 with `/dev/dma_heap/system`, OMX without it; see 25.9), not the
+architecture. This section called it "architecture-specific" until 2026-09-25.
+
+### 25.11 A closed viewer can hold the device: a websocket stuck in CLOSING
+
+Not a black screen, but it presents as one to the NEXT viewer: the device is still
+held by a session nobody is watching, so a new stream cannot start. qa-harness saw
+it once in about 24 sessions (2026-09-25). A healthy session was closed with the ×,
+and the server logged `dropping stream data: websocket is not OPEN (readyState=2)`.
+It released the session (`stream summary after 260468ms`) only about 4 minutes
+later, when the page navigated away.
+
+**Why it can last that long.** `ScrcpyConnection` is released on the websocket's
+`'close'` event (`Mw.onSocketClose`), and `ws` has one CLOSING path with no time
+limit. When the peer half-closes TCP (FIN) without sending a close frame, `ws`
+enters CLOSING from its socket `'end'` handler and calls `socket.end()`, but it sets
+**no** close timer. Every path that starts from `ws.close()`, by contrast, destroys
+the socket after `closeTimeout` (30 s). If the peer has also stopped reading, our send
+buffer never drains, the close never completes, and `'close'` never fires. Measured
+on `ws` 8.21.3 with a raw client:
+
+| peer: stops reading, then | server CLOSING → `'close'` |
+|---|---|
+| sends a close frame | 30 s (the close timer) |
+| sends FIN, no close frame | **never** (still CLOSING at 75 s, 12.7 MB unsent) |
+
+Chromium's own `ws.close()` completes in 1–64 ms, even with the renderer blocked for
+40 s, so which browser behaviour produced the 4-minute case is **not established**.
+
+**Handled by** `util/closingWatchdog.ts`. It polls the socket every second, and if it
+stays CLOSING for more than 5 s it calls `terminate()`. That destroys the socket, `ws`
+emits `'close'` (1006) at once, and the normal release runs. It logs `websocket stuck in
+CLOSING for <ms>ms (<n> bytes unsent); terminating it …`, so a recurrence names
+itself. It polls rather than reacting to traffic, because an idle session (static
+screen, audio off) produces no frames that would trigger a check.
 
 ---
 
