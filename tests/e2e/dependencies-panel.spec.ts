@@ -51,6 +51,44 @@ interface DependencyInfo {
     errorMessage?: string;
 }
 
+/**
+ * The dependencies whose latest-version lookup goes through api.github.com
+ * (`src/server/DependencyDefinitions.ts`). nodejs.org and dl.google.com do not
+ * rate-limit, so nodejs and adb must ALWAYS resolve; api.github.com allows 60
+ * unauthenticated requests an hour per IP, and CI runners share IPs. Item 149:
+ * `scrcpy-server.latestVersion` came back null on beta.134's bump PR, twice in
+ * one run, and passed on a re-run.
+ */
+const GITHUB_BACKED_DEPENDENCIES: readonly string[] = ['scrcpy-server', 'mkcert'];
+
+/**
+ * This runner's remaining api.github.com core quota, read from `/rate_limit`,
+ * which GitHub does not count against the quota. The test runs on the same
+ * machine as the server, so this is the quota the server's lookup saw.
+ * `exhausted` is true only on positive evidence: `remaining` is 0. An
+ * unreachable endpoint proves nothing about the quota, so it is reported in
+ * the detail and never excuses a null.
+ */
+async function githubCoreQuota(): Promise<{ exhausted: boolean; detail: string }> {
+    const ctx = await request.newContext();
+    try {
+        const res = await ctx.get('https://api.github.com/rate_limit', {
+            headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'ws-scrcpy-web-e2e' },
+            timeout: 15_000,
+        });
+        if (!res.ok()) return { exhausted: false, detail: `rate_limit answered HTTP ${res.status()}` };
+        const core = ((await res.json()) as { resources?: { core?: { remaining?: number; reset?: number } } }).resources
+            ?.core;
+        const remaining = core?.remaining;
+        const reset = core?.reset ? new Date(core.reset * 1000).toISOString() : 'unknown';
+        return { exhausted: remaining === 0, detail: `core remaining=${remaining ?? 'unknown'}, resets ${reset}` };
+    } catch (err) {
+        return { exhausted: false, detail: `rate_limit unreachable: ${(err as Error).message}` };
+    } finally {
+        await ctx.dispose();
+    }
+}
+
 test.describe('dependencies (smoke §9.4, §9.5, §1.9)', () => {
     let sharedBrowser: Browser;
     test.beforeAll(async ({ browser }) => {
@@ -160,8 +198,32 @@ test.describe('dependencies (smoke §9.4, §9.5, §1.9)', () => {
             expect((await checked).status()).toBe(200);
             await expect(panel.locator('button.dep-check-all')).toHaveText('check for updates');
             const after = (await (await api.get('/api/dependencies')).json()) as DependencyInfo[];
+            // Asked only if a GitHub-backed lookup came back empty, and asked AFTER
+            // the check so the answer describes the window the check ran in.
+            const quota = after.some((d) => d.latestVersion === null && GITHUB_BACKED_DEPENDENCIES.includes(d.name))
+                ? await githubCoreQuota()
+                : undefined;
             for (const dep of after) {
-                expect(dep.latestVersion, `${dep.name}.latestVersion after the check`).not.toBeNull();
+                if (dep.latestVersion === null && GITHUB_BACKED_DEPENDENCIES.includes(dep.name) && quota?.exhausted) {
+                    // api.github.com refused this runner's IP, so the app is in the
+                    // state it deliberately reports for a refused lookup (Unknown
+                    // when installed, Error when not; DependencyManager.checkLatest)
+                    // and the Latest cell shows the dash. Assert THAT, and say so,
+                    // rather than fail the build on GitHub's quota. Only when the
+                    // quota is proven spent: a null with quota left is a real
+                    // failure and still fails below.
+                    test.info().annotations.push({
+                        type: 'partial',
+                        description: `${dep.name}: api.github.com quota exhausted for this IP (${quota.detail}); Latest shows the refused-lookup state`,
+                    });
+                    const row = rows.filter({ hasText: dep.displayName });
+                    await expect(row.locator('td.dep-version').nth(1)).toHaveText('—');
+                    continue;
+                }
+                expect(
+                    dep.latestVersion,
+                    `${dep.name}.latestVersion after the check${quota ? ` (api.github.com: ${quota.detail})` : ''}`,
+                ).not.toBeNull();
                 const row = rows.filter({ hasText: dep.displayName });
                 await expect(row.locator('td.dep-version').nth(1)).toHaveText(dep.latestVersion ?? '');
                 await expect(row.locator('td.dep-version').nth(1)).not.toHaveText('—');
