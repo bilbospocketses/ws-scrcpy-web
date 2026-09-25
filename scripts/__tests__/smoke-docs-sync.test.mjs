@@ -57,14 +57,18 @@ const BUCKETS = {
     'Automated, fast tier': ['fast'],
     'Automated, container tier': ['container'],
     'Automated, device tier': ['device'],
-    'Windows guest': ['Windows guest (P4)'],
-    'Windows guest and Linux residual': ['Windows guest (P4) + residual: linux-desktop'],
+    'Automated, Windows guest tier': ['windows guest'],
     'Automatable, no spec written yet': ['automatable: no spec yet', 'automatable — container'],
     'Automated, manual/conditional': ['manual/conditional'],
     'Residual — Linux installer and desktop': ['residual: linux-desktop'],
     'Residual — un-automatable': ['residual: un-automatable'],
 };
-const AUTOMATED = ['Automated, fast tier', 'Automated, container tier', 'Automated, device tier'];
+const AUTOMATED = [
+    'Automated, fast tier',
+    'Automated, container tier',
+    'Automated, device tier',
+    'Automated, Windows guest tier',
+];
 
 const bucketTable = (() => {
     const lines = register.split('\n');
