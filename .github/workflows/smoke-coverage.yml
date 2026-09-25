@@ -1,0 +1,40 @@
+# Every PR that changes user-visible code either updates the smoke doc or says in
+# its body why not. See scripts/check-smoke-coverage.mjs for the rule and the
+# history that made it a gate rather than a habit.
+#
+# A workflow of its own, not a step in ci.yml's build-and-test, for one reason:
+# `edited`. The usual way to satisfy this check is to add the opt-out marker to
+# the PR body, and a body edit must re-run the check in seconds. Put inside
+# build-and-test it would either re-run the whole ~10-minute build on every
+# title or body edit, or not re-run at all. The check is required by main's
+# ruleset under the context name `smoke-coverage`, so keep the job named exactly
+# that.
+
+name: Smoke coverage
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: smoke-coverage-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  smoke-coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.x
+      # No `npm ci`: the script uses node built-ins and the runner's own gh.
+      - run: node scripts/check-smoke-coverage.mjs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
