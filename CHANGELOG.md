@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.136] - 2026-09-25
+
 ### Fixed
 - **A browser that fell behind made the server buffer video without limit.** `ScrcpyConnection.sendChannel` sent every video and audio packet and never looked at `ws.bufferedAmount`, so a stalled connection or a frozen tab grew the server's memory for as long as the socket stayed open. Measured with a raw client that stopped reading: about 12.5 MB after 3 s. New `src/server/StreamCongestion.ts` sheds media once more than 4 MiB is unsent. It keeps config packets, device messages and session packets. Once the backlog drains below 1 MiB it asks the device for a fresh keyframe (`TYPE_RESET_VIDEO`, as #703 does) and resumes video only at a keyframe, because a delta frame after a gap decodes as garbage. Audio resumes as soon as the backlog drains. On a real `ws` socket whose client stopped reading, the unsent buffer now stays within one frame of the 4 MiB mark. The server logs one line when shedding starts, one when the backlog drains, and one when video resumes; the `stream summary` format is unchanged. TECHNICAL_GUIDE §25.12.
 
