@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.133] - 2026-09-25
+
 ### Changed
 
 - **A pull request that changes user-visible code must now update the smoke test doc, or say in its body why it doesn't need to.** Several releases shipped behaviour changes with no manual smoke row: the whole beta.131 server batch, and beta.132's service-install changes. The rows were only written afterwards, working back from the diffs. The new required `smoke-coverage` check fails a PR that touches `src/server/`, `src/app/` or `launcher/src/` (test files excluded) unless `docs/smoke-tests/smoke-test.md` also changes, or the PR body carries `<!-- smoke: none -- <reason> -->`. A marker with an empty reason fails. Editing the PR body re-runs the check in seconds. Replayed against the previous 30 merged PRs, it would have stopped every one of those misses.
