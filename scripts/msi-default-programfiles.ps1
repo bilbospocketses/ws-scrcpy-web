@@ -13,6 +13,14 @@
   raw MSI's drive-root default as the shipped behaviour. Nothing tested the real
   install location, so it went unnoticed until qa-harness measured it.
 
+  vpk 1.2.158 (velopack#970) added its own execute-sequence default for quiet
+  installs, `SetQuietDefaultInstallFolder` =
+  `[ProgramFiles64Folder][ApplicationFolderName]` with ApplicationFolderName =
+  the packId (WsScrcpyWeb), so it resolves to the same folder as this patch.
+  Measured 2026-09-25 against a locally built 1.2.158 MSI. The Directory table
+  still roots INSTALLFOLDER at TARGETDIR, so this patch stays: it is the
+  table default every path falls back on, and the two must keep agreeing.
+
   This reparents INSTALLFOLDER under the standard ProgramFiles64Folder system
   folder, so the shipped MSI installs to C:\Program Files\<AppFolder> by default
   in EVERY mode -- double-click and silent (`/qn`) alike, because the change is to
