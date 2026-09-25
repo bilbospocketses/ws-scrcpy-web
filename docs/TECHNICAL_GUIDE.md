@@ -2476,6 +2476,7 @@ its type map says.
 | `src/server/StreamDiagnostics.ts` | Server-side frame-path counters; names which of these causes is in play |
 | `src/server/audioCodecFallback.ts` | `chooseAudioCodec` — 25.10; empty encoder list means unknown, not none |
 | `src/server/util/closingWatchdog.ts` | `watchForStuckClosing` — 25.11; terminates a stream socket stuck in CLOSING so the device is released |
+| `src/server/StreamCongestion.ts` | Sheds video and audio past 4 MiB unsent and resumes at a keyframe — 25.12 |
 | `src/server/ScrcpyConnection.ts` | Stall watchdog, the server-side keyframe request (25.9), `scrcpy-server effective:` |
 
 ### 25.9 The device never sends a config packet at all
@@ -2591,6 +2592,43 @@ emits `'close'` (1006) at once, and the normal release runs. It logs `websocket 
 CLOSING for <ms>ms (<n> bytes unsent); terminating it …`, so a recurrence names
 itself. It polls rather than reacting to traffic, because an idle session (static
 screen, audio off) produces no frames that would trigger a check.
+
+### 25.12 A browser that falls behind: shedding instead of buffering
+
+Found while measuring 25.11. `ScrcpyConnection.sendChannel` sent every video and
+audio packet without looking at `ws.bufferedAmount`, so a browser that stopped
+reading made the server buffer the stream in memory without limit. A raw client
+that stopped reading reached about 12.5 MB unsent in 3 s, and it kept growing for
+as long as the socket stayed OPEN.
+
+`StreamCongestion` (a pure state machine, called per packet with the socket's
+current `bufferedAmount`) now gates video and audio:
+
+| state | video | audio | leaves when |
+|---|---|---|---|
+| flowing | sent | sent | unsent > **4 MiB** → congested |
+| congested | shed | shed | unsent ≤ **1 MiB** → awaiting-keyframe, and one `TYPE_RESET_VIDEO` is sent |
+| awaiting-keyframe | delta frames shed, the keyframe resumes | sent | a keyframe arrives → flowing; unsent > 4 MiB → congested |
+
+Config packets are never shed, because they are tiny and a decoder cannot start
+without one. Device messages and session packets never pass through the gate.
+
+**Why shed rather than pause the device socket.** Pausing pushes the backlog back
+into scrcpy-server and delivers it later, so a live mirror would show a picture
+seconds or minutes old. Shedding keeps it live, at the cost of a visible skip.
+
+**Why resume at a keyframe.** After a gap, the next delta frame refers to frames
+the browser never received and decodes as garbage. `TYPE_RESET_VIDEO` is the same
+request #703 uses, and it brings a config packet together with the keyframe. With
+no control socket the video resumes at the device's own periodic keyframe
+(scrcpy's default interval is 10 s).
+
+**What the log says.** `the browser is not keeping up (<n> bytes unsent); shedding
+video and audio …` when shedding starts, `backlog drained after <ms>ms (shed <v> video
+and <a> audio packets, peak <n> bytes unsent)` when it drains, and `video resumed at a
+keyframe after <ms>ms (<d> delta frames skipped while waiting)`. These are separate
+lines: the `stream summary` line's format is parsed by qa-harness (row 8.15) and is
+unchanged.
 
 ---
 
