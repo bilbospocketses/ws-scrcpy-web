@@ -2243,7 +2243,7 @@ checksum = "1ffae5123b2d3fc086436f8834ae3ab053a283cfac8fe0a0b8eaae044768a4c4"
 
 [[package]]
 name = "ws-scrcpy-web-common"
-version = "0.1.30-beta.134"
+version = "0.1.30-beta.135"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2256,7 +2256,7 @@ dependencies = [
 
 [[package]]
 name = "ws-scrcpy-web-launcher"
-version = "0.1.30-beta.134"
+version = "0.1.30-beta.135"
 dependencies = [
  "anyhow",
  "ctrlc",
@@ -2274,7 +2274,7 @@ dependencies = [
 
 [[package]]
 name = "ws-scrcpy-web-tray"
-version = "0.1.30-beta.134"
+version = "0.1.30-beta.135"
 dependencies = [
  "anyhow",
  "ureq 2.12.1",

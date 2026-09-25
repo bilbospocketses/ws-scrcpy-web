@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.135] - 2026-09-25
+
 ### Fixed
 - **A closed viewer could keep the device busy for minutes, so the next stream could not start** (item 151). A stream session is released when its websocket emits `'close'`, and `ws` has one closing path with no time limit: a peer that half-closes TCP without sending a close frame, while our send buffer cannot drain, leaves the socket CLOSING indefinitely. Measured on `ws` 8.21.3, it was still CLOSING at 75 s with 12.7 MB unsent, where the same peer sending a close frame is released at 30 s. qa-harness saw a session held about 4 minutes after its viewer closed. New `src/server/util/closingWatchdog.ts` terminates a stream socket that stays CLOSING for more than 5 s, which fires `'close'` and the normal release, and logs `websocket stuck in CLOSING …` so a recurrence names itself. The browser-side trigger of qa-harness's occurrence is not established: Chromium's own close completes in milliseconds. TECHNICAL_GUIDE §25.11.
 
