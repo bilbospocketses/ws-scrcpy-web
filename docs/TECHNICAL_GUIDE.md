@@ -2495,8 +2495,10 @@ whose entire audio encoder list is `OMX.google.aac.encoder` and
 `OMX.google.flac.encoder`:
 
 ```
-stream summary: config=0 keyframe=0 frame=0 total=0 B   (server exited 137)
+stream summary after <ms>ms: config=0 keyframe=0 frame=0 total=0 B (first config never, first keyframe never, first frame never)
 ```
+
+scrcpy-server exited 137 before sending any metadata, which is why the line carries no `codec=`.
 
 The SDK gate does not help: it forces audio off below SDK 30, and redroid
 reports SDK 33. Handled by `audioCodecFallback.ts`, which reads the device's

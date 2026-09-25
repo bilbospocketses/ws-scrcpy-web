@@ -1,4 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
+import https from 'node:https';
+import net from 'node:net';
 import path from 'node:path';
 import { type BrowserContext, expect, request, test } from '@playwright/test';
 import {
@@ -18,17 +20,52 @@ import {
     waitForServer,
     withTimeout,
 } from './support/privateServer';
+import { selfSignedCert } from './support/selfSignedCert';
 
 /**
- * Smoke module 12 — lifecycle (rows 12.1, 12.4).
+ * Smoke module 12 — lifecycle (rows 12.1, 12.4, 12.6).
  *
- * Both rows end a server, so both run one the spec owns: the shared 8123
+ * Every row ends a server, so each runs one the spec owns: the shared 8123
  * server has no supervisor and "stop server & exit" would end the suite with
  * it. The log the rows read is the file the server writes under its data root
  * (`logs/ws-scrcpy-web.log`) — the console echo is TTY-only and a spawned
  * child has none.
  */
 const LOG_REL = path.join('logs', 'ws-scrcpy-web.log');
+
+/** The line `exitIfNothingCanServe()` writes just before `process.exit(1)` (HttpServer.ts, #718). */
+const NOTHING_SERVES = 'no listener is serving: every configured listener failed to bind';
+
+/**
+ * Hold a port the way another program would. `listen(port)` with no host binds
+ * the same dual-stack wildcard the app's own `server.listen(port)` does, so
+ * the collision is real on Linux and Windows alike; a blocker on 127.0.0.1
+ * alone would not stop a wildcard bind on Windows.
+ */
+async function holdPort(port: number): Promise<net.Server> {
+    const blocker = net.createServer();
+    await new Promise<void>((resolve, reject) => {
+        blocker.once('error', reject);
+        blocker.listen(port, () => resolve());
+    });
+    return blocker;
+}
+
+function release(blocker: net.Server | undefined): Promise<void> {
+    return new Promise((resolve) => (blocker ? blocker.close(() => resolve()) : resolve()));
+}
+
+/** GET / over HTTPS, trusting exactly the throwaway certificate: verification stays ON. */
+function httpsStatus(port: number, ca: string): Promise<number> {
+    return new Promise((resolve, reject) => {
+        const req = https.get({ host: 'localhost', port, path: '/', ca, timeout: 2_000 }, (res) => {
+            res.resume();
+            resolve(res.statusCode ?? 0);
+        });
+        req.on('timeout', () => req.destroy(new Error('timeout')));
+        req.on('error', reject);
+    });
+}
 
 test.describe('lifecycle (smoke §12)', () => {
     let sharedBrowser: import('@playwright/test').Browser;
@@ -177,6 +214,127 @@ test.describe('lifecycle (smoke §12)', () => {
             } catch (err) {
                 console.warn(`12.4 cleanup: ${String(err)}`);
             }
+        }
+    });
+
+    // Row 12.6 (#718). The server must EXIT when no listener can bind, and must
+    // NOT exit while one still can. Every case pins the first listener's port
+    // with WS_SCRCPY_WEB_PORT (spawnServer sets it to `paths.port`), which makes
+    // reconcileWebPort demand that exact port instead of walking forward to a
+    // free one. Without that, a busy port is auto-shifted and never fails.
+    //
+    // The two-listener cases use config.json's advanced `server` array: it
+    // is the only way to choose which listener is started first, and the row
+    // asks for both orders because #718's bug existed in one order only.
+
+    test('12.6 HTTP only: with its port held by another program the server exits 1 and says why', async () => {
+        test.setTimeout(150_000);
+        const paths = privateServerPaths('ws-scrcpy-web-e2e-no-listener-http', 8133);
+        seedPrivateDataRoot(paths);
+        const blocker = await holdPort(paths.port);
+        const handle = spawnServer(paths);
+        try {
+            const exit = await withTimeout(handle.exited, 120_000, () => `waiting for the exit:\n${handle.output()}`);
+            expect(exit.code, handle.output()).toBe(1);
+            const log = readFileSync(path.join(paths.dataRoot, LOG_REL), 'utf8');
+            expect(log, log.slice(-1500)).toContain(`HTTP listener on port ${paths.port} failed to bind (EADDRINUSE)`);
+            expect(log, log.slice(-1500)).toContain(NOTHING_SERVES);
+        } finally {
+            try {
+                await stopServer(handle);
+            } catch (err) {
+                console.warn(`12.6 cleanup: ${String(err)}`);
+            }
+            await release(blocker);
+        }
+    });
+
+    for (const order of ['http-first', 'https-first'] as const) {
+        test(`12.6 both listeners refused (${order}): the server exits 1, and both failures are named in that order`, async () => {
+            test.setTimeout(150_000);
+            const [plainPort, securePort] = order === 'http-first' ? [8134, 8135] : [8137, 8136];
+            const tls = selfSignedCert();
+            const plain = { secure: false, port: plainPort };
+            const secure = { secure: true, port: securePort, options: { cert: tls.cert, key: tls.key } };
+            const servers = order === 'http-first' ? [plain, secure] : [secure, plain];
+            const paths = privateServerPaths(`ws-scrcpy-web-e2e-no-listener-${order}`, servers[0]!.port);
+            seedPrivateDataRoot(paths, { server: servers });
+            const blockers = [await holdPort(plainPort), await holdPort(securePort)];
+            const handle = spawnServer(paths);
+            try {
+                const exit = await withTimeout(
+                    handle.exited,
+                    120_000,
+                    () => `waiting for the exit:\n${handle.output()}`,
+                );
+                expect(exit.code, handle.output()).toBe(1);
+                const log = readFileSync(path.join(paths.dataRoot, LOG_REL), 'utf8');
+                const http = log.indexOf(`HTTP listener on port ${plainPort} failed to bind (EADDRINUSE)`);
+                const tlsFail = log.indexOf(`HTTPS listener on port ${securePort} failed to bind (EADDRINUSE)`);
+                const exitLine = log.indexOf(NOTHING_SERVES);
+                expect(http, log.slice(-2000)).toBeGreaterThanOrEqual(0);
+                expect(tlsFail, log.slice(-2000)).toBeGreaterThanOrEqual(0);
+                // The order is the point of the row: it proves this case drove the
+                // branch it names, and the exit line comes after the LAST failure.
+                const [first, last] = order === 'http-first' ? [http, tlsFail] : [tlsFail, http];
+                expect(first, log.slice(-2000)).toBeLessThan(last);
+                expect(exitLine, log.slice(-2000)).toBeGreaterThan(last);
+            } finally {
+                try {
+                    await stopServer(handle);
+                } catch (err) {
+                    console.warn(`12.6 cleanup: ${String(err)}`);
+                }
+                for (const b of blockers) await release(b);
+            }
+        });
+    }
+
+    test('12.6 one listener still binds: HTTP refused, HTTPS serves, and the server stays up', async () => {
+        test.setTimeout(150_000);
+        const [plainPort, securePort] = [8138, 8139];
+        const tls = selfSignedCert();
+        const paths = privateServerPaths('ws-scrcpy-web-e2e-no-listener-degrade', plainPort);
+        seedPrivateDataRoot(paths, {
+            server: [
+                { secure: false, port: plainPort },
+                { secure: true, port: securePort, options: { cert: tls.cert, key: tls.key } },
+            ],
+        });
+        const blocker = await holdPort(plainPort);
+        const handle = spawnServer(paths);
+        try {
+            // Serving over the listener that DID bind, verified against the cert.
+            await expect
+                .poll(() => httpsStatus(securePort, tls.cert).catch(() => 0), {
+                    message: `HTTPS on ${securePort} never served:\n${handle.output()}`,
+                    timeout: 90_000,
+                })
+                .toBe(200);
+            const logPath = path.join(paths.dataRoot, LOG_REL);
+            await expect
+                .poll(
+                    () =>
+                        existsSync(logPath) &&
+                        readFileSync(logPath, 'utf8').includes(`HTTP listener on port ${plainPort} failed to bind`),
+                    {
+                        message: 'the refused HTTP listener is logged by name',
+                        timeout: 30_000,
+                    },
+                )
+                .toBe(true);
+            // Degrade, never exit: still alive after the failure has been handled.
+            await new Promise((r) => setTimeout(r, 3_000));
+            expect(handle.child.exitCode, handle.output()).toBeNull();
+            expect(readFileSync(logPath, 'utf8')).not.toContain(NOTHING_SERVES);
+            expect(await httpsStatus(securePort, tls.cert)).toBe(200);
+        } finally {
+            try {
+                await stopServer(handle);
+            } catch (err) {
+                console.warn(`12.6 cleanup: ${String(err)}`);
+            }
+            await release(blocker);
         }
     });
 });

@@ -138,6 +138,16 @@ export class WebSocketServer implements Service {
         wss.on('close', () => {
             log.info('stopped');
         });
+        // Load-bearing, not tidiness. Given an existing `server`, ws forwards that
+        // server's 'error' event to this WebSocketServer, and an EventEmitter with
+        // no 'error' listener THROWS what it is given. So a listen failure that
+        // HttpServer's attachListenErrorHandler had already handled (logged,
+        // recorded, and either degraded or exited on) came back here as an
+        // uncaught exception and killed the process. That broke degrade-never-exit
+        // for every two-listener setup: a busy HTTPS port on a Local HTTPS install
+        // took HTTP down with it (row 12.6, found 2026-09-25). Nothing to log:
+        // HttpServer has already said everything about this error.
+        wss.on('error', () => {});
         this.servers.push(wss);
         return wss;
     }
