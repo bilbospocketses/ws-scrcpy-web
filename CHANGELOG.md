@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.134] - 2026-09-25
+
 ### Changed
 - **Velopack upgraded 1.2.0 → 1.2.158 across all touchpoints**: the npm SDK in `package.json`, the Rust crate in `Cargo.lock`, and the `vpk` CLI, which `scripts/vpk-path.mjs` derives from the npm SDK's resolved version. Two upstream changes reach this app's installs:
   - **The MSI's own default install folder now matches ours.** 1.2.158 adds an execute-sequence default for quiet installs (velopack#970) and sets `INSTALLFOLDER` to `[ProgramFiles64Folder][ApplicationFolderName]`, with `ApplicationFolderName = WsScrcpyWeb`. That is the folder `scripts/msi-default-programfiles.ps1` already reparents to, so both paths land on `C:\Program Files\WsScrcpyWeb`. The patch still applies and verifies cleanly against a locally built 1.2.158 MSI, and it stays: it is the Directory-table default, and it is what a double-click install falls back on.
