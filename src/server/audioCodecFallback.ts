@@ -12,6 +12,12 @@
 //     OMX.google.aac.encoder
 //     OMX.google.flac.encoder
 //
+// That list is redroid's legacy OMX stack, which it falls back to only when the
+// guest kernel has no /dev/dma_heap/system. On a kernel with it (stock Ubuntu
+// 24.04 generic, for one), the same image runs Codec2 and DOES list
+// c2.android.opus.encoder. So redroid is not a reliable fixture for this case;
+// the unit tests carry it (TECHNICAL_GUIDE 25.9/25.10).
+//
 // The session produced `config=0 keyframe=0 frame=0 total=0 B` and the server
 // exited 137 — a completely black screen caused by AUDIO. The existing SDK gate
 // does not help: it forces audio off below SDK 30, and redroid reports SDK 33.
