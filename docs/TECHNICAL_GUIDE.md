@@ -2484,6 +2484,16 @@ healthy session   NAL[1:10 5:1 7:1 8:1]  SPS=1 PPS=1 IDR=1
 It is **intermittent** — 5 of 8 sessions on x86_64, 6 of 6 on arm64 — which is
 why a single clean run proves nothing about it.
 
+**Those counts come from redroid's legacy OMX codec stack, and redroid's stack
+depends on the guest KERNEL, not the image.** With `/dev/dma_heap/system` present
+(`CONFIG_DMABUF_HEAPS_SYSTEM`, as on stock Ubuntu 24.04's generic kernel), redroid 13
+x86_64 runs Codec2 and encodes video with `c2.android.avc.encoder`. Without it,
+redroid silently falls back to the 32-bit `OMX.google.*` set (redroid-doc #407 and
+#743). The x86_64 guest measured here was the OMX case: see 25.10's encoder list.
+Whether a Codec2 redroid also withholds SPS/PPS is **not established**. qa-harness
+measures it on `c2.android.avc.encoder`, the #703 reporter's own encoder, and a
+run that never reproduces it reports NOT REPRODUCED rather than a pass.
+
 **The loss is not ours.** The server's own packet counter and an independent
 NAL scan of the bytes we forward agree: when the counter says `config=0`, the
 payload genuinely contains none. That rules out mis-flagging in `FrameReader`,
@@ -2503,9 +2513,12 @@ scrcpy asks for **Opus** by default. A device with no Opus encoder does not
 fall back to silence — `MediaCodec` creation throws
 `IllegalArgumentException: Failed to initialize audio/opus, error 0xfffffffe
 (NAME_NOT_FOUND)`, the exception escapes scrcpy-server's audio thread, and the
-**whole process exits**, taking video with it. Measured on redroid 13 x86_64,
-whose entire audio encoder list is `OMX.google.aac.encoder` and
-`OMX.google.flac.encoder`:
+**whole process exits**, taking video with it. Measured on redroid 13 x86_64
+running its legacy OMX stack (a guest kernel without `/dev/dma_heap/system`; see
+25.9), whose entire audio encoder list is `OMX.google.aac.encoder` and
+`OMX.google.flac.encoder`. On a kernel with dma_heap, the same image runs Codec2 and
+lists `c2.android.opus.encoder`, so there this case never arises (redroid-doc #402
+covers OMX having no Opus):
 
 ```
 stream summary after <ms>ms: config=0 keyframe=0 frame=0 total=0 B (first config never, first keyframe never, first frame never)

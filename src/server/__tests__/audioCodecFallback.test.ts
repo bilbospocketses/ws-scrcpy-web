@@ -3,11 +3,14 @@ import { chooseAudioCodec, parseAudioEncodersFromDumpsys } from '../audioCodecFa
 
 // A device without the configured audio codec used to lose its VIDEO stream:
 // MediaCodec creation throws, the exception escapes scrcpy-server's audio
-// thread, and the process exits. Measured against redroid 13 (x86_64), whose
-// entire audio encoder list is aac + flac while scrcpy defaults to opus.
+// thread, and the process exits. Measured against redroid 13 (x86_64) on its
+// legacy OMX stack, whose entire audio encoder list is aac + flac while scrcpy
+// defaults to opus. (On a guest kernel with /dev/dma_heap/system redroid runs
+// Codec2 and has opus, which is why this lives in a unit test and not on a
+// redroid fixture.)
 
-// The real list from redroid 13 x86_64, kept verbatim so the case that caused
-// this work is the case that guards it.
+// The real list from redroid 13 x86_64 (OMX stack), kept verbatim so the case
+// that caused this work is the case that guards it.
 const REDROID = ['OMX.google.aac.encoder', 'OMX.google.flac.encoder'];
 
 describe('chooseAudioCodec', () => {
