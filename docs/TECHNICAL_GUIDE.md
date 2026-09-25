@@ -2441,6 +2441,19 @@ Both methods now return `false` instead of emitting when `'error'` has no
 listener. Attaching a listener restores ordinary delivery, which is how
 `AdbkitFilePushStream` → `FilePushHandler` works.
 
+**The server side had the same trap, one library over** (finding 12.7, fixed in
+v0.1.30-beta.133). `ws`'s `WebSocketServer`, given an existing `server`, forwards
+that server's `'error'` event to itself, and `WebSocketServer.attachToServer`
+registered no listener for it. So a listen failure `HttpServer` had already
+handled came back as `Uncaught exception: Error: listen EADDRINUSE` and killed
+the process: with Local HTTPS on, a busy HTTPS port took the working HTTP
+listener down too. A single listener hid it, because `exitIfNothingCanServe()`
+exits inside the first handler before ws's forwarder runs. `attachToServer` now
+attaches an `'error'` listener that swallows the forwarded event, since
+`HttpServer` has already logged it and decided what to do. **Any new emitter
+wired to someone else's `server` needs its own `'error'` listener**, whatever
+its type map says.
+
 ### 25.8 Key Files
 
 | File | Purpose |
