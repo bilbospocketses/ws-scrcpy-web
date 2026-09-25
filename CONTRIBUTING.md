@@ -118,6 +118,7 @@ Do not include AI-generated attribution lines in commit messages.
 - Update `CHANGELOG.md` under `[Unreleased]` for any user-visible change.
 - Update `docs/TECHNICAL_GUIDE.md` or `README.md` when behavior the user sees changes.
 - If you're changing protocol encoding, include a vitest test that asserts the exact byte layout.
+- If your PR touches `src/server/`, `src/app/` or `launcher/src/` (test files aside), add or update the rows in `docs/smoke-tests/smoke-test.md` that cover it. If it genuinely has no smoke impact, say why in the PR body: `<!-- smoke: none -- <reason> -->`. The required `smoke-coverage` check enforces one or the other, a marker with an empty reason fails, and editing the body re-runs the check. A new row also needs a line in `docs/smoke-tests/automation-coverage.md`'s `## Every row` table, plus its bucket count; `npm test` fails until the two files agree.
 
 ## Branch Strategy
 
