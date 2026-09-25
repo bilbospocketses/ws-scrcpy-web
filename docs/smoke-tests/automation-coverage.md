@@ -16,11 +16,11 @@ beta.131 server work (2026-09-23) added 8.15, 8.16, 8.17 and 12.6, so the doc ho
 | | Rows | Where |
 |---|---|---|
 | Automated, fast tier | 30 | `build-and-test`, every PR |
-| Automated, container tier | 13 | `build-and-test`'s docker step, and qa-harness nightly |
+| Automated, container tier | 11 | `build-and-test`'s docker step, and qa-harness nightly |
 | Automated, device tier | 17 | qa-harness, nightly |
 | Windows guest | 26 | qa-harness, nightly, once P4 lands |
 | Windows guest **and** Linux residual | 2 | Windows half P4; Linux half nobody |
-| Automatable, no spec written yet | 6 | — (8.10 / 8.11, item 24's rotation rows; the six of 2026-09-04 were written 2026-09-06, item 104; **plus item 68's four beta.131 rows — 8.15, 8.16, 8.17, 12.6**, all four automatable because the fixtures now exist: 12.6 only needs the port occupied, and redroid supplies the other three — its x86_64 image has **no Opus encoder at all** (8.16) and redroid 13 **withholds SPS/PPS in roughly 5 of 8 sessions** (8.17), both measured 2026-09-23) |
+| Automatable, no spec written yet | 8 | — (**20.4 / 20.5**, the container install/uninstall rows unblocked 2026-09-04, which this line counted as automated container rows until 2026-09-25 although neither has a spec; 8.10 / 8.11, item 24's rotation rows; the six of 2026-09-04 were written 2026-09-06, item 104; **plus item 68's four beta.131 rows — 8.15, 8.16, 8.17, 12.6**, all four automatable because the fixtures now exist: 12.6 only needs the port occupied, and redroid supplies the other three — its x86_64 image has **no Opus encoder at all** (8.16) and redroid 13 **withholds SPS/PPS in roughly 5 of 8 sessions** (8.17), both measured 2026-09-23) |
 | Automated, manual/conditional | 1 | 21.1 — `tests/e2e/local-https.spec.ts` exists and proves the row, but `test.skip`s unless a person points `QA_LAN_HTTPS_ORIGIN` at a real, non-loopback LAN origin serving a generated certificate. No CI run sets that, so it never contributes to "automated today" below. |
 | **Residual — Linux installer and desktop** | **50** | nobody (14.8 / 14.9 are assertable by qa-harness item 14's Linux guests) |
 | **Residual — un-automatable** | **10** | nobody, ever |
