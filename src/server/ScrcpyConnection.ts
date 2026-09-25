@@ -15,6 +15,7 @@ import { ControlCenter } from './goog-device/services/ControlCenter';
 import { Logger } from './Logger';
 import { Mw, type RequestParameters } from './mw/Mw';
 import { describeEffectiveOptions, type ScrcpyOptions, serializeOptions } from './ScrcpyOptions';
+import { type CongestionEvent, StreamCongestion } from './StreamCongestion';
 import { StreamDiagnostics } from './StreamDiagnostics';
 import { scrcpyOptionsFromQuery } from './scrcpyOptionsFromQuery';
 import { getInstalledScrcpyServerVersion } from './scrcpyServerVersion';
@@ -67,6 +68,8 @@ export class ScrcpyConnection extends Mw {
     private keyframeTimer?: NodeJS.Timeout | undefined;
     /** Item 151: stops the stuck-CLOSING watch; see util/closingWatchdog.ts. */
     private stopClosingWatch?: () => void;
+    /** Sheds media when the browser falls behind, so the server's buffer is bounded. */
+    private readonly congestion = new StreamCongestion();
 
     public static override processRequest(ws: WS, params: RequestParameters): ScrcpyConnection | undefined {
         const { action, url } = params;
@@ -656,6 +659,11 @@ export class ScrcpyConnection extends Mw {
             // first paint, and per-frame logging would bury them.
             const line = this.diagnostics.noteFrame(frame.type, frame.data.length);
             if (line) log.info(line);
+            // Counted above as produced; gated here on what the browser can take.
+            const decision = this.congestion.video(frame.type, this.ws.bufferedAmount);
+            if (decision.event) this.logCongestion(decision.event);
+            if (decision.requestKeyframe) this.requestKeyframeAfterBacklog();
+            if (!decision.send) return;
             let pts = frame.pts;
             if (frame.type === 'config') pts |= ScrcpyConnection.PTS_FLAG_CONFIG;
             else if (frame.type === 'keyframe') pts |= ScrcpyConnection.PTS_FLAG_KEYFRAME;
@@ -680,6 +688,7 @@ export class ScrcpyConnection extends Mw {
         // Audio: TCP → channel 1 → WS
         this.audioReader = new FrameReader(this.audioSocket!);
         this.audioReader.onFrame((frame) => {
+            if (!this.congestion.audio(frame.type, this.ws.bufferedAmount)) return;
             let pts = frame.pts;
             if (frame.type === 'config') pts |= ScrcpyConnection.PTS_FLAG_CONFIG;
             const header = Buffer.alloc(12);
@@ -692,6 +701,49 @@ export class ScrcpyConnection extends Mw {
         this.controlSocket!.on('data', (data: Buffer) => {
             this.sendChannel(ChannelId.DEVICE_MSG, data);
         });
+    }
+
+    /**
+     * One line per congestion transition (see StreamCongestion). Deliberately NOT
+     * part of the `stream summary` line, whose format qa-harness parses (row 8.15).
+     */
+    private logCongestion(event: CongestionEvent): void {
+        if (event.type === 'congested') {
+            log.warn(
+                `${this.serial}: the browser is not keeping up (${event.bufferedAmount} bytes unsent); ` +
+                    'shedding video and audio until the backlog drains',
+            );
+        } else if (event.type === 'drained') {
+            log.info(
+                `${this.serial}: backlog drained after ${event.afterMs}ms (shed ${event.videoShed} video and ` +
+                    `${event.audioShed} audio packets, peak ${event.peakBufferedAmount} bytes unsent); ` +
+                    'resuming at the next keyframe',
+            );
+        } else {
+            log.info(
+                `${this.serial}: video resumed at a keyframe after ${event.waitedMs}ms ` +
+                    `(${event.deltasSkipped} delta frames skipped while waiting)`,
+            );
+        }
+    }
+
+    /**
+     * After shedding, the next delta frame would decode as garbage, so ask the
+     * device for a keyframe (`TYPE_RESET_VIDEO` brings config and keyframe
+     * together, as in #703). Without a control socket the device's own periodic
+     * keyframe (scrcpy's default interval is 10 s) is what resumes the video.
+     */
+    private requestKeyframeAfterBacklog(): void {
+        const socket = this.controlSocket;
+        if (!socket || socket.destroyed) {
+            log.info(`${this.serial}: no control socket; waiting for the device's next periodic keyframe to resume`);
+            return;
+        }
+        try {
+            socket.write(Buffer.from([ScrcpyConnection.CONTROL_MSG_RESET_VIDEO]));
+        } catch (err) {
+            log.warn(`${this.serial}: keyframe request after backlog failed: ${(err as Error).message}`);
+        }
     }
 
     private sendChannel(channel: ChannelId, payload: Buffer): void {
