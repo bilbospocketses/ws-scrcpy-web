@@ -51,7 +51,7 @@
     "test:e2e:types": "tsc -p tests/e2e --noEmit"
   },
   "dependencies": {
-    "velopack": "^1.2.0",
+    "velopack": "^1.2.158",
     "ws": "^8.21.3"
   },
   "optionalDependencies": {
