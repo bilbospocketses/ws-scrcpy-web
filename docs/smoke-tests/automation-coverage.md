@@ -60,8 +60,10 @@ from manual minutes to automated seconds". That figure counted partial rows as
 covered and assumed the Linux installer rows were reachable. The measured number
 was **37 %** when this register was written, **40 %** since item 104 and item 24
 (41 % between them, on a denominator of 143), **39 %** since item 73 widened the
-denominator to 147 without adding coverage, and 57 % once P4
-lands. Item 13 was closed into this register on 2026-09-06: the register
+denominator to 147 without adding coverage, **37 %** once item 68's four rows
+took it to 155, and **39 %** again since 2026-09-25, when 8.15 and 12.6 were
+automated, with 55 % once P4 lands. (This line said "57 % once P4 lands" until
+2026-09-25, a figure from before the denominator grew.) Item 13 was closed into this register on 2026-09-06: the register
 is the source of truth for coverage, and the only ws-scrcpy-web-side action it
 had left was item 104.
 
