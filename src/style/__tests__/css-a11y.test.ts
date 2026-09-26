@@ -49,3 +49,13 @@ describe('custom-property naming', () => {
         expect(read('src/style/app.css')).not.toMatch(/--link-color_visited/);
     });
 });
+
+describe('responsive header wrapping', () => {
+    it('allows .discovery-header and .discovery-header-actions to wrap on narrow viewports', () => {
+        const homeCss = read('src/style/home.css');
+        const headerBlock = homeCss.match(/\.discovery-header\s*\{[^}]+\}/)?.[0] ?? '';
+        expect(headerBlock).toMatch(/flex-wrap\s*:\s*wrap/);
+        const actionsBlock = homeCss.match(/\.discovery-header-actions\s*\{[^}]+\}/)?.[0] ?? '';
+        expect(actionsBlock).toMatch(/flex-wrap\s*:\s*wrap/);
+    });
+});
