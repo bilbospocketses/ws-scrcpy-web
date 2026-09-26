@@ -90,8 +90,8 @@ describe('parseResult', () => {
 // rather than the integration.
 
 // #646. `--request-uac` blocks until the consent dialog is answered, and the
-// await had no timeout — so an unanswered prompt (including Windows' own ~2
-// minute auto-dismiss) never returned, leaving installMode at 'system-service'
+// await had no timeout — so an unanswered prompt (which Windows never dismisses
+// on its own: measured still up at 10.5 minutes) never returned, leaving installMode at 'system-service'
 // with no service until the app restarted. The wait is now bounded; these
 // tests pin the part that decides what the user is told when it expires,
 // because the wrong answer here is "you declined", which they did not.

@@ -229,11 +229,15 @@ export async function runElevated(
                 windowsHide: true,
                 maxBuffer: 1024 * 1024,
                 // `--request-uac` blocks until the consent dialog is answered,
-                // so without this the wait is unbounded when it never is — and
-                // "never" includes Windows auto-dismissing the prompt after
-                // ~2 minutes, which leaves this await pending forever and the
-                // caller stuck in a half-installed state (#646). The bound is
-                // the same 480s the result-file poll uses; expiry kills the
+                // so without this the wait is unbounded when it never is,
+                // which left this await pending forever and the caller stuck
+                // in a half-installed state (#646). THIS TIMEOUT IS THE ONLY
+                // DEADLINE: Windows does not dismiss an unanswered consent
+                // prompt on its own. qa-harness measured consent.exe still up
+                // after 10.5 minutes untouched (2026-09-26, qa-harness #100).
+                // This comment said Windows auto-dismisses it after ~2 minutes
+                // until then; that was never measured and is wrong. The bound
+                // is the same 480s the result-file poll uses; expiry kills the
                 // helper, which also stops the process leaking.
                 //
                 // Residual, accepted: killing `--request-uac` does not retract
