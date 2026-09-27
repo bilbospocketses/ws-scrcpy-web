@@ -27,8 +27,8 @@ import { cookieSecurity } from './cookiePolicy';
  *
  * A fourth, `GET /api/tls/ca-root`, is the one exemption that DOES reach off-box,
  * and deliberately: a device installing the local CA has never loaded the page.
- * It returns a public certificate, and TlsApi's admin gate still applies — see
- * `requiresToken`.
+ * It returns a public certificate, and it does not bypass sign-in: AuthGate and
+ * TlsApi's admin gate still apply in locked mode — see `requiresToken`.
  *
  * The shutdown exemption is a fix, not a widening (item 114, 2026-09-06): the
  * tray has POSTed that path cookieless since v0.1.8, and once this token landed
@@ -128,9 +128,10 @@ export function requiresToken(method: string | undefined, pathname: string): boo
     // link or a QR code, `curl` from another machine. That caller never loaded
     // the page, so it has no cookie. Unlike the three above this one IS
     // reachable off-box, on purpose (user decision 2026-09-27): what it returns
-    // is a public certificate, never the key, and TlsApi's admin gate still
-    // stands in front of it, so in locked mode a caller who is not a signed-in
-    // admin still gets 403. Rate-limited and logged by TlsApi as before.
+    // is a public certificate, never the key. It does not bypass sign-in: in
+    // locked mode AuthGate answers a caller with no session 401 before TlsApi
+    // runs, and TlsApi's admin gate answers a signed-in non-admin 403.
+    // Rate-limited and logged by TlsApi as before.
     if (m === 'GET' && pathname === '/api/tls/ca-root') {
         return false;
     }

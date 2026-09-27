@@ -208,6 +208,17 @@ describe('migrateLegacyTlsHome', () => {
         expect(fs.readFileSync(path.join(paths.legacyTlsDir!, 'ca', 'rootCA.pem'), 'utf-8')).toBe('ROOT CERT');
     });
 
+    it('moves into a new home that exists but holds no files, rather than stranding the CA', () => {
+        // An empty WsScrcpyWeb-tls (an interrupted start, or a hand-made folder)
+        // is not a newer home. Treating it as one would leave the CA in the old
+        // place on every boot while HTTPS reads "no certificate".
+        seedLegacy();
+        fs.mkdirSync(paths.caRoot, { recursive: true });
+        expect(migrateLegacyTlsHome(paths)).toEqual({ outcome: 'moved' });
+        expect(fs.readFileSync(path.join(paths.caRoot, 'rootCA-key.pem'), 'utf-8')).toBe('ROOT KEY');
+        expect(fs.existsSync(paths.legacyTlsDir!)).toBe(false);
+    });
+
     it('does nothing when there is no legacy home', () => {
         expect(migrateLegacyTlsHome(paths)).toEqual({ outcome: 'none' });
         expect(fs.existsSync(path.dirname(paths.certFile))).toBe(false);

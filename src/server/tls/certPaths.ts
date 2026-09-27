@@ -103,9 +103,10 @@ export type TlsHomeMigration =
  * have to reinstall it on each one.
  *
  * A single `rename` of the whole folder, so the CA, its read-only key and the
- * leaf move together or not at all. It only ever moves INTO an absent home: if
- * the new home already exists, both are left alone (`kept-both`), because the
- * new one is either newer or deliberate and overwriting it would destroy a CA.
+ * leaf move together or not at all. It only ever moves INTO a home that is
+ * absent or holds no files: if the new home has any file in it, both are left
+ * alone (`kept-both`), because the new one is either newer or deliberate and
+ * overwriting it would destroy a CA.
  * A failed move leaves the legacy home untouched and is reported, never
  * thrown. HTTPS then reads as "no certificate yet" until a regenerate, which
  * is the same as a fresh install. Idempotent: once moved there is nothing to
@@ -113,12 +114,19 @@ export type TlsHomeMigration =
  */
 export function migrateLegacyTlsHome(
     paths: CertPaths,
-    fsImpl: Pick<typeof fs, 'existsSync' | 'renameSync'> = fs,
+    fsImpl: Pick<typeof fs, 'existsSync' | 'renameSync' | 'readdirSync' | 'rmSync'> = fs,
 ): TlsHomeMigration {
     const legacy = paths.legacyTlsDir;
     if (!legacy || !fsImpl.existsSync(legacy)) return { outcome: 'none' };
     const home = path.dirname(paths.certFile);
-    if (fsImpl.existsSync(home)) return { outcome: 'kept-both' };
+    if (fsImpl.existsSync(home)) {
+        // A home with any file in it is newer or deliberate: never overwrite it.
+        // One with NO files (an interrupted start, a hand-made folder) is not a
+        // home at all, and treating it as one would strand the CA in the old
+        // place on every boot while HTTPS reads "no certificate".
+        if (holdsAnyFile(home, fsImpl)) return { outcome: 'kept-both' };
+        fsImpl.rmSync(home, { recursive: true, force: true });
+    }
     try {
         // Bounded retry: endpoint AV holding a handle for a moment makes a
         // rename fail EPERM/EBUSY, and only under load (atomicFile.ts, item 140).
@@ -127,6 +135,14 @@ export function migrateLegacyTlsHome(
     } catch (err) {
         return { outcome: 'failed', detail: err instanceof Error ? err.message : String(err) };
     }
+}
+
+function holdsAnyFile(dir: string, fsImpl: Pick<typeof fs, 'readdirSync'>): boolean {
+    for (const entry of fsImpl.readdirSync(dir, { withFileTypes: true })) {
+        if (!entry.isDirectory()) return true;
+        if (holdsAnyFile(path.join(dir, entry.name), fsImpl)) return true;
+    }
+    return false;
 }
 
 /** The log line for a migration that did something, or `null` when there was nothing to move. */
