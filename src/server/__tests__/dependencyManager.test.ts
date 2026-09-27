@@ -132,7 +132,7 @@ describe('DependencyManager.requestRestart', () => {
 describe('DependencyManager.update("mkcert") — attested manifest, then checksum (I8)', () => {
     let fetchSpy: ReturnType<typeof vi.spyOn>;
     let tmpDepsDir: string;
-    const version = 'v1.4.4-bt.2';
+    const version = 'v0.1.0';
     const FAKE_BINARY = 'not-a-real-mkcert-binary-but-deterministic-bytes';
     const assetName = mkcertAssetName(version);
 

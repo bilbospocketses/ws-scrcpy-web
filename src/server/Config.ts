@@ -22,7 +22,7 @@ import { clampScanConcurrency, DEFAULT_SCAN_CONCURRENCY } from './fdBudget';
 import { Logger } from './Logger';
 import { parseFrameAncestorOrigin, setFrameAncestors } from './security/frameGuard';
 import { setAllowedHosts } from './security/originGuard';
-import { resolveCertPaths } from './tls/certPaths';
+import { describeTlsHomeMigration, migrateLegacyTlsHome, resolveCertPaths } from './tls/certPaths';
 import { writeFileAtomicSync } from './util/atomicFile';
 
 /**
@@ -740,6 +740,11 @@ export class Config {
                     localAppData: env['LOCALAPPDATA'],
                     home: env['HOME'] || env['USERPROFILE'],
                 });
+                // Before the certificate is read: a Windows TLS home still in
+                // its pre-2026-09-27 place moves to its own folder once, so an
+                // existing HTTPS setup keeps working after the update.
+                const moved = describeTlsHomeMigration(paths, migrateLegacyTlsHome(paths));
+                if (moved) warn(moved);
                 certMaterial = readCertMaterial(paths.certFile, paths.keyFile);
             } catch {
                 // No usable per-user TLS directory -- fall through to HTTP alone.

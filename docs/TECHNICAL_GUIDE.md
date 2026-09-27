@@ -2235,7 +2235,7 @@ Against cross-network and cross-site attackers the server applies four layers, t
 
 1. **Host allowlist (DNS-rebinding defense)** — `originGuard.isHostAllowed`. The `Host` header's hostname must be `localhost`, an IP literal (e.g. `192.168.1.5`, `[::1]`), or an operator-configured `allowedHosts` entry. A bare domain name is rejected, because DNS-rebinding attacks require a domain the attacker can re-point at a loopback/LAN address. This check is **universal** — it applies even to document / static-asset requests, so a rebound page never loads.
 2. **Origin match (CSRF defense)** — `originGuard.isRequestAllowed`. For the sensitive surface (`/api/*` and any state-changing method), a present `Origin` header must equal the request's own origin (`http(s)://<host>`). A *missing* Origin is allowed here (non-browser clients and top-level navigations omit it); the token layer closes that gap.
-3. **Per-instance token** — `instanceToken.ts`. A 256-bit random token is minted once per server launch and handed to the browser as an `HttpOnly` cookie when it loads a document. It is `SameSite=Strict` unless an embedder is allow-listed, in which case `cookiePolicy.ts` relaxes it — and the login session cookie with it — to `SameSite=None; Secure; Partitioned`, because a browser sends neither `Strict` nor `Lax` on a request a cross-site iframe makes, the WebSocket handshake included. Before that, `/embed.html` could not authenticate in any deployment where the embedder was a different site: the page rendered and the socket closed 1006 (#641), or 4401 in locked mode. `Secure` is mandatory with `None`, so the relaxation is also gated on the request being https from the browser's point of view — `forwardedProto.ts` reads `X-Forwarded-Proto`, but only from a loopback peer, since the header is otherwise client-controlled. SameSite was never the CSRF layer here; layer 2 is, and it is unchanged. Every `/api/*` call and every WebSocket upgrade must present it, compared in constant time, with two process-to-process exceptions: the launcher's `GET /api/config` discovery probe, and the sibling guard's `GET /api/whoami` identity probe (`siblingInstance.ts`), which a second instance of the app sends with no cookie and, in locked mode, no session -- so it is also exempt from `AuthGate`, and its handler refuses any caller that is not on loopback. Read that as the `/api` prefix, not as an inventory of the whole surface: `/embed-request` and `/embed-request/{id}/cancel` sit **outside** `/api` deliberately, so an app that wants to ask for embed permission can do so without first holding a token — and they are loopback-only precisely because they are ungated. A non-browser LAN client that never loaded the page has no token and is refused.
+3. **Per-instance token** — `instanceToken.ts`. A 256-bit random token is minted once per server launch and handed to the browser as an `HttpOnly` cookie when it loads a document. It is `SameSite=Strict` unless an embedder is allow-listed, in which case `cookiePolicy.ts` relaxes it — and the login session cookie with it — to `SameSite=None; Secure; Partitioned`, because a browser sends neither `Strict` nor `Lax` on a request a cross-site iframe makes, the WebSocket handshake included. Before that, `/embed.html` could not authenticate in any deployment where the embedder was a different site: the page rendered and the socket closed 1006 (#641), or 4401 in locked mode. `Secure` is mandatory with `None`, so the relaxation is also gated on the request being https from the browser's point of view — `forwardedProto.ts` reads `X-Forwarded-Proto`, but only from a loopback peer, since the header is otherwise client-controlled. SameSite was never the CSRF layer here; layer 2 is, and it is unchanged. Every `/api/*` call and every WebSocket upgrade must present it, compared in constant time, with four exceptions (`requiresToken`). Three are process-to-process and loopback-only: the launcher's `GET /api/config` discovery probe; the sibling guard's `GET /api/whoami` identity probe (`siblingInstance.ts`), which a second instance of the app sends with no cookie and, in locked mode, no session -- so it is also exempt from `AuthGate`, and its handler refuses any caller that is not on loopback; and the tray helper's `POST /api/server/shutdown` quit. The fourth, `GET /api/tls/ca-root` (since 2026-09-27), is the one that reaches off-box, deliberately: a device installing the local CA -- a phone following a link, `curl` from another machine -- has never loaded the page. It returns a public certificate, never a key, and it does not bypass sign-in: in locked mode `AuthGate` answers a caller with no session **401** before `TlsApi` runs, and `TlsApi`'s admin gate (§28) answers a signed-in non-admin **403**. Read that as the `/api` prefix, not as an inventory of the whole surface: `/embed-request` and `/embed-request/{id}/cancel` sit **outside** `/api` deliberately, so an app that wants to ask for embed permission can do so without first holding a token — and they are loopback-only precisely because they are ungated. A non-browser LAN client that never loaded the page has no token and is refused.
    **It is not an authenticator.** `shouldSetTokenCookie` returns true for any GET/HEAD of an extensionless non-`/api` path, and the cookie is attached with no authentication at all, so anything that can fetch `/` can have one. It raises the cost of a *blind* cross-site or rebinding attack; it does not identify a caller. Only `authEnabled` does that.
 4. **Framing policy (clickjacking)** — `security/frameGuard.ts`. Every response carries `X-Frame-Options: SAMEORIGIN` and, when `frameAncestors` is configured, a matching CSP `frame-ancestors` header. Cross-origin framing is **refused by default**; an operator opts in per origin, either by editing `config.json` or by approving a consent prompt raised by the embedding app (`embedRequests.ts`, `EmbedRequestApi.ts`). See `SECURITY.md` §Framing.
 
@@ -2267,7 +2267,7 @@ By default only `localhost` + IP literals pass layer 1, so terminating TLS at a 
 | `src/server/auth/requireOperator.ts` | Proof of operator (`requireOperator`), the opt-out (`allowRemoteAdmin`), and the wire fields (`resolveAdminScope`, `callerIsLocal`) — §24.0 |
 | `src/app/client/AdminScopeBanner.ts` | The posture card: informational everywhere, actionable only from loopback |
 | `src/app/client/adminGate.ts` | `canSeeSection` (may this ROLE) + `adminApiReachable` (will the API answer THIS caller) |
-| `src/server/security/instanceToken.ts` | Per-launch token mint, cookie build, constant-time validation; the two probe exemptions (`requiresToken`) |
+| `src/server/security/instanceToken.ts` | Per-launch token mint, cookie build, constant-time validation; the four exemptions (`requiresToken`): three loopback-only process probes and the off-box CA download |
 | `src/server/security/cookiePolicy.ts` | `cookieSameSiteAttrs()` — the shared SameSite/Secure/Partitioned decision for both cookies; relaxes only under a framing opt-in |
 | `src/server/security/forwardedProto.ts` | `isRequestSecure()` — the browser's scheme, trusting `X-Forwarded-Proto` from a loopback peer only |
 | `src/server/security/loopback.ts` | `isLoopback()` -- the "this machine only" check behind every ungated surface |
@@ -3123,6 +3123,14 @@ is the shape of a malware-delivery step even though this CA is only dangerous to
 it), `POST /exposure`, and `POST /https-port`. The admin gate runs **before** the route table, so a
 route added later cannot land ungated.
 
+**`GET /ca-root` needs no instance token (since 2026-09-27)**, unlike every other route here: a device
+installing the CA has never loaded the page, so it has no cookie. In open mode, where everyone is the
+implicit admin, a bare link, a QR code or `curl -k https://<LAN IP>:<https port>/api/tls/ca-root`
+(`-k` because the device does not trust this CA yet; that is why it is fetching it) therefore downloads
+`ws-scrcpy-web-local-ca.pem` directly. It does not bypass sign-in: in locked mode `AuthGate` answers a
+caller with no session 401 before this handler runs, and the admin gate answers a signed-in non-admin
+403. The rate limit and the per-download log line are unchanged.
+
 ### 28.1 `CertService` — the certificate lifecycle
 
 `src/server/tls/CertService.ts` owns four operations against dependency-injected `CertServiceDeps`
@@ -3198,8 +3206,8 @@ where the CA and the leaf certificate/key live, and the two platforms are **not*
   tighten it to `0700` — the same defence-in-depth reasoning already applied to the leaf key, extended
   to the directory that would otherwise be the one thing standing between "readable" and "not" for the
   CA key on a multi-user POSIX box.
-- **Windows: all TLS material moves to a per-user directory**
-  (`%LOCALAPPDATA%\WsScrcpyWeb\tls\...`), **never** the shared data root
+- **Windows: all TLS material moves to a per-user directory of its own**
+  (`%LOCALAPPDATA%\WsScrcpyWeb-tls\...`, beside the app folder, not inside it), **never** the shared data root
   (`C:\ProgramData\WsScrcpyWeb` in production). The reason is a measured ACL, not a guess: that data
   root grants `BUILTIN\Users` — every local account on the machine — `ReadAndExecute` by inheritance.
   Combined with the fact that Go maps a POSIX file mode to only the Windows read-only **attribute**
@@ -3209,6 +3217,15 @@ where the CA and the leaf certificate/key live, and the two platforms are **not*
   directory's ACL, not the file mode** — a per-user AppData directory's inherited ACL already is that
   restriction, which is why the leaf key gets the identical per-user treatment (§28.1's `chmod`
   is POSIX-only for exactly this reason: it would be decorative on Windows).
+- **Why its own folder (since 2026-09-27).** Until then the home was `%LOCALAPPDATA%\WsScrcpyWeb\tls`,
+  inside the folder a per-user Velopack install owns, and that install's uninstall removes the folder:
+  a reinstall would have destroyed the CA every device was told to trust. `migrateLegacyTlsHome`
+  moves an existing home once, at boot (`Config`) and again before any generate (`createCertService`),
+  as a single directory rename with `atomicFile`'s bounded retry against a scanner holding a file. It
+  only ever moves into a home that is ABSENT or holds no files (an empty one, from an interrupted start
+  or made by hand, is removed first, or it would strand the CA). When the new home has any file in it,
+  both are left alone and it is logged, because the new one is newer or deliberate. A move that fails is logged and leaves the old home in place; HTTPS then
+  reads as "no certificate yet" until a later start moves it or a certificate is regenerated.
 - `resolveCertPaths` refuses a non-absolute `dataRoot`, and on Windows specifically refuses a resolved
   CAROOT that would land under `dataRoot` — a containment guard, case-insensitive and
   segment-bounded (so `C:\Data2` is correctly not "under" `C:\Data`).
@@ -3315,9 +3332,10 @@ to the Dependencies tab immediately, rather than tracked by a second manager the
 **It installs the fork's LATEST release** (`checkLatest` → `api.github.com/…/releases/latest`), with
 no pinned version and no fallback. A fallback tag could not be verified anyway: the attestation lookup
 below is `api.github.com` too, so a refused version lookup would be refused again one step later. The
-tag must be `vX.Y.Z`, optionally with a `-bt.N` suffix (the retired numbering), or it is refused before
-it reaches a URL. The filter only keeps odd characters out; which tag is trusted is decided by the signer
-identity below, which names the exact tag.
+tag must be plain `vX.Y.Z` with no leading zeros (the same rule the fork's release workflow enforces), or
+it is refused before it reaches a URL. The retired `-bt.N` numbering is refused too: every such tag was
+deleted on 2026-09-27 and the fork can no longer publish one. The filter only keeps odd tags out; which
+tag is trusted is decided by the signer identity below, which names the exact tag.
 
 **The install verifies in two stages, in this order, because checking the binary against a manifest
 from the same release never proved authenticity — only that the download was not corrupted in
@@ -3326,7 +3344,8 @@ transit.** A tampered GitHub release could alter the binary and its manifest tog
 1. **Fetch `mkcert-<tag>-SHA256SUMS.txt` and check the manifest's own build provenance** —
    `src/server/mkcertProvenance.ts` — **before the platform binary is downloaded at all.** GitHub is
    asked for every attestation of the manifest's SHA-256 (`/repos/bilbospocketses/mkcert/attestations/sha256:<digest>`),
-   and one must pass `sigstore.verify` against the Sigstore public-good trust root, with the certificate
+   and one must pass the Sigstore verifier (`@sigstore/verify`, given a trusted root fetched by
+   `@sigstore/tuf`) against the Sigstore public-good trust root, with the certificate
    issued to `https://token.actions.githubusercontent.com` for exactly
    `https://github.com/bilbospocketses/mkcert/.github/workflows/release.yml@refs/tags/<tag>`, and be an
    in-toto SLSA provenance statement naming this manifest's release name and digest. That identity is
@@ -3349,16 +3368,30 @@ Four details of step 1 are load-bearing:
   for a manifest that claims to belong to another.
 - **A verified signature is not enough on its own.** The statement's `subject[]` must name this
   manifest's digest; otherwise a genuine attestation for some other file would pass. The test suite
-  proves this with the real v1.4.4-bt.2 manifest and attestation, committed as fixtures under
+  proves this with the real v0.1.0 manifest and attestation, committed as fixtures under
   `src/server/__tests__/fixtures/`: an edited manifest under the genuine bundle is refused, and so is
   the genuine bundle for a different tag.
 
+**Each refusal test names the layer that refused and asserts that every other layer passed.** The real-
+crypto tests wrap the production verifier and record what each call concluded, so a refusal is pinned
+to one cause rather than inferred from its message: the edited manifest is refused while the signature
+layer PASSED (so the digest-coverage check is the only thing that refused it), the other tag is refused
+by the verifier with `UNTRUSTED_SIGNER_ERROR`, and an edited signed payload with `TLOG_BODY_ERROR`. The
+statement checks (`_type`, `predicateType`, `payloadType`, release name) each have a variant that
+changes one field of the genuine statement and is refused after a stubbed signature layer passed. This
+is the evidence a mutation run would give, stated as an assertion that holds on every run.
+
 **Network.** An install now reaches `tuf-repo-cdn.sigstore.dev`, for the Sigstore trust root, in
 addition to `api.github.com` and `github.com`. The TUF metadata is cached in `<dependencies>/.sigstore`
-rather than in sigstore's default under the running user's home, which for the Windows service is the
+rather than in the library's default under the running user's home, which for the Windows service is the
 SYSTEM profile. Every verify refreshes it; that refresh is how a rotated Fulcio or Rekor key reaches
 an installed app. The test suite alone uses the trust root the library ships (`tufForceCache`), so CI
-needs no network. `sigstore` is loaded on demand, so a server that never installs mkcert never loads it.
+needs no network. The Sigstore packages are loaded on demand, so a server that never installs mkcert
+never loads them. Only the three that verify ship (`@sigstore/bundle`, `@sigstore/tuf`,
+`@sigstore/verify`), wired the way the `sigstore` umbrella's own `verify` wires them. The umbrella also
+brings a signing stack and its HTTP client, which this app never calls. Dropping it took the production
+dependency tree from 55 packages to 19 (36 removed, none added) and from 94.4 MB to 87.0 MB, measured on
+`npm ci --omit=dev` trees built from the before and after lockfiles on 2026-09-27.
 
 **The two failure families are deliberately worded differently.** "No attestation this app can
 verify" / "no build-provenance attestation exists" means the release itself is suspect. "The binary does
@@ -3370,14 +3403,16 @@ with no warn-and-continue path, before anything is placed where `resolveMkcertEx
 v1.4.4-bt.2's manifest digest in source, and attestation was checked only out of band, by whoever set
 the pin. The user moved mkcert to "latest", and a digest pin cannot follow a release that does not
 exist yet, so the pinned anchor became an identity instead of a hash. The reasons once given against
-runtime verification did not survive: `sigstore` is an npm dependency bundled with the app, not a
-PATH-resolved binary, so Local-Dependencies-Only is not in play. Releases v0.1.30-beta.130 to .137
+runtime verification did not survive: the Sigstore verifier is an npm dependency shipped with the app,
+not a PATH-resolved binary, so Local-Dependencies-Only is not in play. Releases v0.1.30-beta.130 to .137
 carry the old pin, so they refuse any mkcert release other than v1.4.4-bt.2.
 
 **Status follows the fork across its version reset.** The fork restarted its numbering at v0.1.0 after
 v1.4.4-bt.2. `latestIsAuthoritative` on the definition makes `resolveStatus` compare by identity, so an
 installed `1.4.4-bt.2` reports *update available* against `v0.1.0` rather than "newer than latest,
-staying put".
+staying put". The installed-version regex still reads the `-bt.N` suffix for exactly this reason, even
+though releases no longer carry it: an installed bt.2 binary does, and reading it is what offers that
+machine the update.
 
 ### 28.5 The four mkcert invocation requirements
 
@@ -3451,7 +3486,8 @@ degrades to HTTP-only, logged, never a crash.
 | `src/server/services/HttpServer.ts` | Exposure enforcement on the plain-HTTP listener, the listen-error handler, `getHttpsListenerStatus`, the bound leaf's `leafFingerprint` capture |
 | `src/server/Config.ts` | `buildServerList`, `readCertMaterial`, `sanitizeHttpsPort` / `validateHttpsPortInput` / `setHttpsPort`, `DEFAULT_HTTPS_PORT` |
 | `src/server/DependencyDefinitions.ts` | The `mkcert` dependency definition (`bilbospocketses/mkcert` fork, `deferInstall: true`); `mkcertExeName` / `mkcertAssetName` / `mkcertChecksumsUrl`; `latestIsAuthoritative` |
-| `src/server/mkcertProvenance.ts` | The attested-manifest gate: fetch GitHub's attestations for the manifest digest, `sigstore.verify` them against the tag-pinned release-workflow identity, and check the statement names the manifest |
+| `src/server/mkcertProvenance.ts` | The attested-manifest gate: fetch GitHub's attestations for the manifest digest, verify them (`createSigstoreVerifier`: `@sigstore/tuf` + `@sigstore/verify`) against the tag-pinned release-workflow identity, and check the statement names the manifest |
+| `tests/e2e/support/githubRefusal.ts` | The e2e spent-quota rule as pure functions (`quotaFromRateLimit`, `partitionRetryErrors`, `partitionDependencyStates`, `isExcusableNullLatest`), unit-tested in `tests/unit/githubRefusal.test.ts` so the spent-quota branch runs on every build |
 | `src/server/DependencyManager.ts` | `installMkcert()` — the install handler; `fetchAttestedMkcertManifest()` (manifest provenance, via `mkcertProvenance.ts`) and `verifyMkcertBinaryAgainstManifest()` (binary-vs-manifest), reusing `parseSha256Sums`/`verifySha256` |
 | `src/app/client/settings/tabs/ServerTab.ts` | The Settings → Server → Local HTTPS panel; `listenerStatusNotice()`; the exposure-radio gate on `httpsListener.bound` |
 | `docs/superpowers/specs/2026-09-18-local-https-design.md` | The full design: measured facts, rejected alternatives, the UI notification table |

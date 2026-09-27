@@ -386,6 +386,30 @@ describe('Config.buildServers (exercised via _buildServersForTest)', () => {
         expect(servers[1]!.options).toMatchObject({ cert: MATCHED_CERT_PEM, key: MATCHED_KEY_PEM });
     });
 
+    // Windows only: the pre-2026-09-27 home (%LOCALAPPDATA%\WsScrcpyWeb\tls) never
+    // existed on POSIX, and Config resolves paths with the real process.platform.
+    it.runIf(process.platform === 'win32')(
+        'moves a pre-2026-09-27 TLS home into its own folder at boot, then serves HTTPS from it',
+        () => {
+            const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-cfg-https-dataroot-'));
+            const localAppData = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-cfg-https-localappdata-'));
+            tmpDirs.push(dataRoot, localAppData);
+            const paths = resolveCertPaths({ platform: 'win32', dataRoot, localAppData });
+            fs.mkdirSync(path.join(paths.legacyTlsDir!, 'ca'), { recursive: true });
+            fs.writeFileSync(path.join(paths.legacyTlsDir!, 'cert.pem'), MATCHED_CERT_PEM);
+            fs.writeFileSync(path.join(paths.legacyTlsDir!, 'key.pem'), MATCHED_KEY_PEM);
+            const env = { LOCALAPPDATA: localAppData, HOME: localAppData, USERPROFILE: localAppData };
+
+            const servers = Config._buildServersForTest({}, 8000, dataRoot, env);
+
+            expect(servers).toHaveLength(2);
+            expect(servers[1]!.secure).toBe(true);
+            expect(servers[1]!.options).toMatchObject({ cert: MATCHED_CERT_PEM, key: MATCHED_KEY_PEM });
+            expect(fs.readFileSync(paths.certFile, 'utf-8')).toBe(MATCHED_CERT_PEM);
+            expect(fs.existsSync(paths.legacyTlsDir!)).toBe(false);
+        },
+    );
+
     it('C1: falls back to HTTP-only, not a crash, when the cert content is garbage', () => {
         const { dataRoot, env } = setupCertFiles('not a certificate', MATCHED_KEY_PEM);
         const servers = Config._buildServersForTest({}, 8000, dataRoot, env);

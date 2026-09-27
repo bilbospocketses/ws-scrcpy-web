@@ -147,6 +147,21 @@ describe('instanceToken', () => {
             expect(requiresToken('POST', '/api/server/restart')).toBe(true);
         });
 
+        // 2026-09-27 (user decision): the root CA certificate is public material,
+        // and a device installing it -- a phone following a link or a QR code,
+        // `curl` from another machine -- has never loaded the page, so it has no
+        // cookie. The admin gate in front of every /api/tls route still applies:
+        // in locked mode a caller who is not a signed-in admin still gets 403.
+        it('exempts GET /api/tls/ca-root, that method and exact path only', () => {
+            expect(requiresToken('GET', '/api/tls/ca-root')).toBe(false);
+            expect(requiresToken('HEAD', '/api/tls/ca-root')).toBe(true);
+            expect(requiresToken('POST', '/api/tls/ca-root')).toBe(true);
+            expect(requiresToken('GET', '/api/tls/ca-root/')).toBe(true);
+            expect(requiresToken('GET', '/api/tls/ca-rootx')).toBe(true);
+            expect(requiresToken('GET', '/api/tls/state')).toBe(true);
+            expect(requiresToken('POST', '/api/tls/generate')).toBe(true);
+        });
+
         it('does not require a token for static (non-API) requests', () => {
             expect(requiresToken('GET', '/')).toBe(false);
             expect(requiresToken('GET', '/bundle.js')).toBe(false);

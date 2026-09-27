@@ -120,14 +120,16 @@ Copyright (c) 2018 - present Microsoft Corporation
 Copyright (c) the Velopack authors
 ```
 
-**sigstore** (`sigstore`, `@sigstore/bundle`, `@sigstore/core`, `@sigstore/protobuf-specs`,
-`@sigstore/sign`, `@sigstore/tuf`, `@sigstore/verify`) — https://github.com/sigstore/sigstore-js
+**Sigstore** (`@sigstore/bundle`, `@sigstore/core`, `@sigstore/protobuf-specs`, `@sigstore/tuf`,
+`@sigstore/verify`) — https://github.com/sigstore/sigstore-js
 
 Used at runtime to verify the build-provenance attestation of the `mkcert` release the app downloads.
-Distributed under the **Apache License 2.0**, not MIT; none of these packages ships a `NOTICE` file.
-They are installed into the production `node_modules`, not compiled into `dist/`, and bring 43 further
-packages with them under the MIT, ISC, BSD-2-Clause and Blue Oak Model 1.0.0 licences. Every one of
-those packages carries its own licence text in `node_modules/<package>/`.
+Only the verifying packages ship, not the `sigstore` umbrella and its signing stack. Distributed under
+the **Apache License 2.0**, not MIT; none of these packages ships a `NOTICE` file. They are installed
+into the production `node_modules`, not compiled into `dist/`, and bring 9 further packages with them:
+`tuf-js`, `@tufjs/models`, `@tufjs/canonical-json`, `@gar/promise-retry`, `debug`, `ms`,
+`brace-expansion` and `balanced-match` under the MIT License, and `minimatch` under the Blue Oak Model
+1.0.0 licence. Every one of those packages carries its own licence text in `node_modules/<package>/`.
 
 ```
 Copyright 2023 The Sigstore Authors.

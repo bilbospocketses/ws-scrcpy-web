@@ -14,7 +14,12 @@ import {
 } from './support/auth';
 import { gotoHome } from './support/consent';
 import { composeDown, composeUpFresh, dockerExecRoot, dockerLogs } from './support/dockerStack';
-import { GITHUB_BACKED_DEPENDENCIES, githubCoreQuota, isDeferredGithubLookupRefusal } from './support/githubQuota';
+import {
+    GITHUB_BACKED_DEPENDENCIES,
+    githubCoreQuota,
+    isExcusableNullLatest,
+    partitionRetryErrors,
+} from './support/githubQuota';
 import {
     BOOT_INSTALLED_DEPENDENCIES,
     privateServerPaths,
@@ -168,7 +173,10 @@ test.describe('dependencies (smoke §9.4, §9.5, §1.9)', () => {
                 ? await githubCoreQuota()
                 : undefined;
             for (const dep of after) {
-                if (dep.latestVersion === null && GITHUB_BACKED_DEPENDENCIES.includes(dep.name) && quota?.exhausted) {
+                // The decision is `isExcusableNullLatest`, unit-tested in
+                // tests/unit/githubRefusal.test.ts, where the spent-quota branch
+                // runs on every build rather than only on a rate-limited runner.
+                if (isExcusableNullLatest(dep, quota)) {
                     // api.github.com refused this runner's IP, so the app is in the
                     // state it deliberately reports for a refused lookup (Unknown
                     // when installed, Error when not; DependencyManager.checkLatest)
@@ -178,7 +186,7 @@ test.describe('dependencies (smoke §9.4, §9.5, §1.9)', () => {
                     // failure and still fails below.
                     test.info().annotations.push({
                         type: 'partial',
-                        description: `${dep.name}: api.github.com quota exhausted for this IP (${quota.detail}); Latest shows the refused-lookup state`,
+                        description: `${dep.name}: api.github.com quota exhausted for this IP (${quota?.detail}); Latest shows the refused-lookup state`,
                     });
                     const row = rows.filter({ hasText: dep.displayName });
                     await expect(row.locator('td.dep-version').nth(1)).toHaveText('—');
@@ -400,28 +408,20 @@ test.describe('dependencies (smoke §9.4, §9.5, §1.9)', () => {
             // mkcert is fetched on first use, so a retry never installs it, and a
             // refused api.github.com lookup leaves it in Error with that refusal
             // as its message. Excused ONLY when /rate_limit proves the quota is
-            // spent (the item-149 rule), and still asserted as that exact state.
+            // spent (the item-149 rule). The decision is `partitionRetryErrors`,
+            // unit-tested with this exact reply in tests/unit/githubRefusal.test.ts.
             const listed = (await (await api.get('/api/dependencies')).json()) as DependencyInfo[];
-            const refusals = Object.entries(body.errors).filter(([name, errorMessage]) =>
-                isDeferredGithubLookupRefusal({
-                    name,
-                    errorMessage,
-                    status: 'error',
-                    deferInstall: listed.find((d) => d.name === name)?.deferInstall,
-                }),
-            );
-            const quota = refusals.length > 0 ? await githubCoreQuota() : undefined;
-            const excused = new Set(quota?.exhausted ? refusals.map(([name]) => name) : []);
+            // /rate_limit is not counted against the quota, so asking whenever
+            // anything errored costs nothing.
+            const quota = Object.keys(body.errors).length > 0 ? await githubCoreQuota() : undefined;
+            const { excused, unexplained } = partitionRetryErrors(body.errors, listed, quota);
             for (const name of excused) {
                 test.info().annotations.push({
                     type: 'partial',
                     description: `${name}: api.github.com quota exhausted for this IP (${quota?.detail}); its retry error is the refused lookup`,
                 });
             }
-            expect(
-                Object.fromEntries(Object.entries(body.errors).filter(([name]) => !excused.has(name))),
-                quota ? `retry errors (api.github.com: ${quota.detail})` : 'retry errors',
-            ).toEqual({});
+            expect(unexplained, quota ? `retry errors (api.github.com: ${quota.detail})` : 'retry errors').toEqual({});
             expect(body.installed.length + body.stillMissing.length).toBeGreaterThan(0);
 
             // Then everything lands, and the banner clears on its own poll.

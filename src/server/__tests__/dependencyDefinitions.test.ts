@@ -310,13 +310,13 @@ describe('mkcertChecksumsAssetName / mkcertChecksumsUrl (I8)', () => {
         // .github/workflows/release.yml: `sha256sum mkcert-* > ...` then
         // `mv ... "mkcert-$TAG-SHA256SUMS.txt"` -- this must match that
         // literally, or the fetch 404s on every real release.
-        expect(mkcertChecksumsAssetName('v1.4.4-bt.2')).toBe('mkcert-v1.4.4-bt.2-SHA256SUMS.txt');
+        expect(mkcertChecksumsAssetName('v0.1.0')).toBe('mkcert-v0.1.0-SHA256SUMS.txt');
     });
 
     it('points at the fork repo, not upstream FiloSottile/mkcert', () => {
-        const url = mkcertChecksumsUrl('v1.4.4-bt.2');
+        const url = mkcertChecksumsUrl('v0.1.0');
         expect(url).toBe(
-            'https://github.com/bilbospocketses/mkcert/releases/download/v1.4.4-bt.2/mkcert-v1.4.4-bt.2-SHA256SUMS.txt',
+            'https://github.com/bilbospocketses/mkcert/releases/download/v0.1.0/mkcert-v0.1.0-SHA256SUMS.txt',
         );
     });
 });

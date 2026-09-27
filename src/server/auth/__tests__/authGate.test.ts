@@ -39,6 +39,18 @@ describe('AuthGate', () => {
         expect(handled).toBe(true);
         expect(status).toBe(401);
     });
+    it('401s a cold GET /api/tls/ca-root when locked -- the token exemption does not open it', async () => {
+        // The CA download is exempt from the per-instance TOKEN (instanceToken.ts)
+        // so a device that never loaded the page can fetch it in open mode. It is
+        // NOT on the AuthGate allowlist: in locked mode a caller with no session
+        // is refused here, before TlsApi's admin gate is ever reached.
+        const d = db();
+        setAuthEnabled(d, true);
+        const gate = new AuthGate(() => d);
+        const { status, handled } = await runGate(gate, 'GET', '/api/tls/ca-root', undefined);
+        expect(handled).toBe(true);
+        expect(status).toBe(401);
+    });
     it('passes a valid session through and attaches the user', async () => {
         const d = db();
         setAuthEnabled(d, true);

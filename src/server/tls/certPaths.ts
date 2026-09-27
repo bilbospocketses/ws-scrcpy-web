@@ -1,4 +1,6 @@
+import fs from 'fs';
 import path from 'path';
+import { renameSyncWithRetry } from '../util/atomicFile';
 
 export interface CertPathOpts {
     platform: NodeJS.Platform;
@@ -14,6 +16,12 @@ export interface CertPaths {
     certFile: string;
     /** Absolute leaf key path passed as -key-file. */
     keyFile: string;
+    /**
+     * Windows only: where the TLS home lived before 2026-09-27, inside the
+     * per-user app folder (`%LOCALAPPDATA%\WsScrcpyWeb\tls`). `migrateLegacyTlsHome`
+     * moves it to the current home once.
+     */
+    legacyTlsDir?: string;
 }
 
 /**
@@ -30,6 +38,11 @@ export interface CertPaths {
  * data root grants BUILTIN\Users ReadAndExecute by inheritance. So both CA and
  * leaf keys would be world-readable if placed there. Solution: per-user directory
  * (AppData\Local) whose inherited ACL is already restrictive.
+ *
+ * And its OWN folder there, `WsScrcpyWeb-tls`, beside the app folder rather than
+ * inside it (user decision 2026-09-27). A per-user Velopack install lives in
+ * `%LOCALAPPDATA%\WsScrcpyWeb` and its uninstall removes that folder; the CA
+ * every device was told to trust must survive a reinstall.
  */
 export function resolveCertPaths(opts: CertPathOpts): CertPaths {
     const pathModule = opts.platform === 'win32' ? path.win32 : path.posix;
@@ -53,18 +66,19 @@ export function resolveCertPaths(opts: CertPathOpts): CertPaths {
             throw new Error(`LOCALAPPDATA or HOME\\AppData\\Local must be absolute: ${base}`);
         }
 
-        const caRoot = pathModule.join(base, 'WsScrcpyWeb', 'tls', 'ca');
+        const tlsDir = pathModule.join(base, 'WsScrcpyWeb-tls');
+        const caRoot = pathModule.join(tlsDir, 'ca');
 
         // Critical: ensure caRoot doesn't resolve under dataRoot
         if (resolvesUnder(caRoot, opts.dataRoot, pathModule)) {
             throw new Error(`caRoot must not resolve under dataRoot: ${caRoot} is under ${opts.dataRoot}`);
         }
 
-        const tlsDir = pathModule.join(base, 'WsScrcpyWeb', 'tls');
         const certFile = pathModule.join(tlsDir, 'cert.pem');
         const keyFile = pathModule.join(tlsDir, 'key.pem');
+        const legacyTlsDir = pathModule.join(base, 'WsScrcpyWeb', 'tls');
 
-        return { caRoot, certFile, keyFile };
+        return { caRoot, certFile, keyFile, legacyTlsDir };
     }
 
     // POSIX: both CA and leaf in data root
@@ -74,6 +88,79 @@ export function resolveCertPaths(opts: CertPathOpts): CertPaths {
     const keyFile = pathModule.join(tlsDir, 'key.pem');
 
     return { caRoot, certFile, keyFile };
+}
+
+export type TlsHomeMigration =
+    | { outcome: 'none' }
+    | { outcome: 'moved' }
+    | { outcome: 'kept-both' }
+    | { outcome: 'failed'; detail: string };
+
+/**
+ * One-time move of a Windows TLS home from its pre-2026-09-27 location inside
+ * the app folder to its own folder (see `resolveCertPaths`). Without it, every
+ * existing Local HTTPS user would lose the CA their devices already trust and
+ * have to reinstall it on each one.
+ *
+ * A single `rename` of the whole folder, so the CA, its read-only key and the
+ * leaf move together or not at all. It only ever moves INTO a home that is
+ * absent or holds no files: if the new home has any file in it, both are left
+ * alone (`kept-both`), because the new one is either newer or deliberate and
+ * overwriting it would destroy a CA.
+ * A failed move leaves the legacy home untouched and is reported, never
+ * thrown. HTTPS then reads as "no certificate yet" until a regenerate, which
+ * is the same as a fresh install. Idempotent: once moved there is nothing to
+ * move.
+ */
+export function migrateLegacyTlsHome(
+    paths: CertPaths,
+    fsImpl: Pick<typeof fs, 'existsSync' | 'renameSync' | 'readdirSync' | 'rmSync'> = fs,
+): TlsHomeMigration {
+    const legacy = paths.legacyTlsDir;
+    if (!legacy || !fsImpl.existsSync(legacy)) return { outcome: 'none' };
+    const home = path.dirname(paths.certFile);
+    if (fsImpl.existsSync(home)) {
+        // A home with any file in it is newer or deliberate: never overwrite it.
+        // One with NO files (an interrupted start, a hand-made folder) is not a
+        // home at all, and treating it as one would strand the CA in the old
+        // place on every boot while HTTPS reads "no certificate".
+        if (holdsAnyFile(home, fsImpl)) return { outcome: 'kept-both' };
+        fsImpl.rmSync(home, { recursive: true, force: true });
+    }
+    try {
+        // Bounded retry: endpoint AV holding a handle for a moment makes a
+        // rename fail EPERM/EBUSY, and only under load (atomicFile.ts, item 140).
+        renameSyncWithRetry(legacy, home, (from, to) => fsImpl.renameSync(from, to));
+        return { outcome: 'moved' };
+    } catch (err) {
+        return { outcome: 'failed', detail: err instanceof Error ? err.message : String(err) };
+    }
+}
+
+function holdsAnyFile(dir: string, fsImpl: Pick<typeof fs, 'readdirSync'>): boolean {
+    for (const entry of fsImpl.readdirSync(dir, { withFileTypes: true })) {
+        if (!entry.isDirectory()) return true;
+        if (holdsAnyFile(path.join(dir, entry.name), fsImpl)) return true;
+    }
+    return false;
+}
+
+/** The log line for a migration that did something, or `null` when there was nothing to move. */
+export function describeTlsHomeMigration(paths: CertPaths, result: TlsHomeMigration): string | null {
+    const home = path.dirname(paths.certFile);
+    switch (result.outcome) {
+        case 'none':
+            return null;
+        case 'moved':
+            return `moved the TLS home from ${paths.legacyTlsDir} to ${home}, its own folder since 2026-09-27`;
+        case 'kept-both':
+            return `TLS material exists in both ${paths.legacyTlsDir} and ${home}; using ${home} and leaving the other alone`;
+        case 'failed':
+            return (
+                `could not move the TLS home from ${paths.legacyTlsDir} to ${home} (${result.detail}); ` +
+                'HTTPS stays off until it moves on a later start or a certificate is regenerated'
+            );
+    }
 }
 
 /**

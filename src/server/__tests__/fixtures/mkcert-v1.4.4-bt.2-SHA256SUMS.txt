@@ -1,7 +1,0 @@
-922d8486897650d09ffdd220c346ed668b5ea46bd76add3ccea773527632d4d6  mkcert-v1.4.4-bt.2-darwin-amd64
-718049647324de665f77ef676a97d484ce72599c67b9cefb7950a4552a8efa3a  mkcert-v1.4.4-bt.2-darwin-arm64
-b0058d474d07314b11faadd8b8d3ccd4c5b4568a775cb07ab252ab10deabac31  mkcert-v1.4.4-bt.2-linux-amd64
-9a9fabe18c40e9677c58d42b7ec813d4df994deb807ec92016f56f7f73951aac  mkcert-v1.4.4-bt.2-linux-arm64
-2a40d75c38a0eadcba8e4e59a8e80027d72b963a8655a1912014329bc6dd0868  mkcert-v1.4.4-bt.2-linux-armv6
-f196c8154f66c35080a0cdfdd6d0b16fcdab1c15447c26dd9f0054afa12158c2  mkcert-v1.4.4-bt.2-windows-amd64.exe
-bcb19909ddc8f722acc30f21c2b64f3f0c7a9b322470dba6ee5525c7847fcaf1  mkcert-v1.4.4-bt.2-windows-arm64.exe

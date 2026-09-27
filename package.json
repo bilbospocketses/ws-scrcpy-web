@@ -1,6 +1,6 @@
 {
   "name": "ws-scrcpy-web",
-  "version": "0.1.30-beta.138",
+  "version": "0.1.30-beta.139",
   "description": "Browser-based Android screen mirroring and control, powered by scrcpy",
   "license": "GPL-3.0-only",
   "author": "bilbospocketses",
@@ -51,7 +51,9 @@
     "test:e2e:types": "tsc -p tests/e2e --noEmit"
   },
   "dependencies": {
-    "sigstore": "^5.0.0",
+    "@sigstore/bundle": "^5.0.0",
+    "@sigstore/tuf": "^5.0.0",
+    "@sigstore/verify": "^4.1.2",
     "velopack": "^1.2.158",
     "ws": "^8.21.3"
   },
