@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.138] - 2026-09-27
+
 ### Changed
 - **Local HTTPS now installs the latest release of our mkcert fork, and checks its build provenance on every install.** Before, the app could only ever install `v1.4.4-bt.2`: the checksum manifest had to match a digest compiled into the app (`MKCERT_SHA256SUMS_PIN`), so any newer fork release was refused. The fork is restarting its numbering at `v0.1.0` (same code as `v1.4.4-bt.2`) and will then delete `bt.2`. From v0.1.0's publication, releases beta.130 to beta.137 therefore cannot install mkcert on first HTTPS use; a copy they already downloaded keeps working. The app now resolves the fork's latest release and, before downloading the binary, requires the release's `SHA256SUMS` file to carry a Sigstore build-provenance attestation. That attestation must be signed by the fork's own `release.yml` at that exact tag, and its statement must name the file's digest. Verification uses the `sigstore` npm package (Apache-2.0, new runtime dependency, loaded only when mkcert is installed). New `src/server/mkcertProvenance.ts`; the pin and the `v1.4.4-bt.2` fallback are gone. An install now also contacts `tuf-repo-cdn.sigstore.dev` for the Sigstore trust root, cached in `<dependencies>/.sigstore`. An installed `1.4.4-bt.2` now shows *update available* against `v0.1.0`, instead of reading as newer than it. Tests run the real Sigstore chain offline against the genuine `bt.2` manifest and attestation. They refuse an edited manifest under the genuine attestation, the genuine attestation presented for another tag, and an attestation whose signed payload was edited. TECHNICAL_GUIDE §28.4.
 
