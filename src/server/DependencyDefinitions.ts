@@ -282,7 +282,7 @@ export function getDependencyDefinitions(depsPath: string): DependencyDefinition
             // No fallbackVersion, unlike scrcpy-server: an install also needs the
             // attestation lookup, which is api.github.com too, so a refused
             // version lookup would be refused again one step later. A fixed tag
-            // here would also go stale: the last one, v1.4.4-bt.2, is being deleted.
+            // here would also go stale: the last one, v1.4.4-bt.2, was deleted on 2026-09-27.
             latestIsAuthoritative: true,
             // M2: fetched on first use (see the field's own doc comment), not at
             // boot -- this is the highest-consequence binary the app fetches
@@ -293,6 +293,9 @@ export function getDependencyDefinitions(depsPath: string): DependencyDefinition
             checkInstalled: async (depsPath) => {
                 const exe = path.join(depsPath, 'mkcert', mkcertExeName());
                 if (!fs.existsSync(exe)) return null;
+                // Still parses the retired `-bt.N` suffix: releases no longer carry
+                // it, but an installed v1.4.4-bt.2 binary does, and reading it is
+                // what lets the panel offer that machine the update to v0.1.0.
                 return runVersionCommand(exe, ['-version'], /v?([\d.]+(?:-bt\.\d+)?)/);
             },
             checkLatest: async () => {

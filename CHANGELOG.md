@@ -17,6 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **mkcert verification ships 38 fewer packages.** The `sigstore` umbrella is replaced by the three packages that do the verifying, `@sigstore/bundle`, `@sigstore/tuf` and `@sigstore/verify`, wired exactly as the umbrella's own `verify` wires them. The umbrella also brought a signing stack and its HTTP client (`make-fetch-happen` and about 35 others) that the app never calls. The production dependency tree goes from 52 packages to 14 for this feature, about 7.9 MB less on disk and in the Docker image. Verified live: a fresh install resolves `v0.1.0`, refreshes the Sigstore trust root and passes the attestation gate, and a production-only (`npm ci --omit=dev`) tree verifies the real attestation with no `sigstore` package present. `THIRD-PARTY-NOTICES.md` lists the new set.
+- **A mkcert release tag must now be plain `vX.Y.Z`.** The retired `-bt.N` numbering is refused as well: the fork deleted every such tag on 2026-09-27 and its release workflow no longer publishes one, so a `-bt` "latest" could only be a mistake. Leading zeros are refused too, matching the fork's own rule. An installed `v1.4.4-bt.2` binary is still recognised, which is what lets the Dependencies tab offer it the update to `v0.1.0`.
+
+### Fixed
+- **Tests for the mkcert provenance gate now say which layer refused.** Each real-crypto test records what the production verifier concluded, then asserts it. A manifest edited under the genuine attestation is refused while the signature layer PASSED, so the digest-coverage check is proven to be the only thing that refused it. The wrong-tag case is proven to be refused by the signer policy (`UNTRUSTED_SIGNER_ERROR`), and an edited signed payload by the transparency-log check (`TLOG_BODY_ERROR`). The fixtures are now the genuine `v0.1.0` manifest and attestation; the `v1.4.4-bt.2` ones went with that release. Stale "is being deleted" comments are corrected.
+- **The e2e rule for a spent GitHub quota is now tested on every build.** Its decision (items 149 and #753: smoke rows 9.4, 20.9 and 1.9) moved into pure functions in `tests/e2e/support/githubRefusal.ts`. `tests/unit/githubRefusal.test.ts` runs every branch of it, including the spent-quota branch, which otherwise executes only on a rate-limited CI runner. That branch is tested against the exact error #752's failed runs produced. The specs call the same functions, so what is unit-tested is what runs.
+
 ## [0.1.30-beta.138] - 2026-09-27
 
 ### Changed
