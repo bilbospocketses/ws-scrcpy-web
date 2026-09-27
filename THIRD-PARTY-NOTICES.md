@@ -120,7 +120,20 @@ Copyright (c) 2018 - present Microsoft Corporation
 Copyright (c) the Velopack authors
 ```
 
-All four packages are distributed under the MIT License:
+**sigstore** (`sigstore`, `@sigstore/bundle`, `@sigstore/core`, `@sigstore/protobuf-specs`,
+`@sigstore/sign`, `@sigstore/tuf`, `@sigstore/verify`) — https://github.com/sigstore/sigstore-js
+
+Used at runtime to verify the build-provenance attestation of the `mkcert` release the app downloads.
+Distributed under the **Apache License 2.0**, not MIT; none of these packages ships a `NOTICE` file.
+They are installed into the production `node_modules`, not compiled into `dist/`, and bring 43 further
+packages with them under the MIT, ISC, BSD-2-Clause and Blue Oak Model 1.0.0 licences. Every one of
+those packages carries its own licence text in `node_modules/<package>/`.
+
+```
+Copyright 2023 The Sigstore Authors.
+```
+
+`ws`, `@xterm/*`, `node-pty` and `velopack` are distributed under the MIT License:
 
 ```
 Permission is hereby granted, free of charge, to any person obtaining a copy

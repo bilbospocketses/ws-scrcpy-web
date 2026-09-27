@@ -129,7 +129,7 @@ describe('DependencyManager.requestRestart', () => {
     });
 });
 
-describe('DependencyManager.update("mkcert") — checksum verification, manifest pinned (I8)', () => {
+describe('DependencyManager.update("mkcert") — attested manifest, then checksum (I8)', () => {
     let fetchSpy: ReturnType<typeof vi.spyOn>;
     let tmpDepsDir: string;
     const version = 'v1.4.4-bt.2';
@@ -143,7 +143,6 @@ describe('DependencyManager.update("mkcert") — checksum verification, manifest
     afterEach(async () => {
         fetchSpy?.mockRestore();
         fs.rmSync(tmpDepsDir, { recursive: true, force: true });
-        vi.resetModules();
     });
 
     /** Mocks fetch: the manifest URL returns `checksumManifest`, everything
@@ -162,30 +161,30 @@ describe('DependencyManager.update("mkcert") — checksum verification, manifest
     }
 
     /**
-     * MKCERT_SHA256SUMS_PIN is a fixed constant in production -- these tests
-     * need a DIFFERENT expected value per scenario (a manifest that lists a
-     * correct binary digest, one that lists a wrong one, one deliberately
-     * mismatching its own pin). Vitest can't spy a plain exported const, so
-     * this re-imports DependencyManager fresh with DependencyDefinitions'
-     * pin overridden -- the same dynamic-remock pattern this file already
-     * uses for `elevatedRunner` above. Defaults to the manifest's OWN real
-     * hash (pin passes); `pinOverride` forces a specific -- possibly
-     * deliberately wrong -- value instead.
+     * The provenance check itself is covered against the real Sigstore chain
+     * in mkcertProvenance.test.ts. Here it is a seam: `accept` lets the
+     * binary-vs-manifest half run, `refuse` proves nothing runs after it.
      */
-    async function makeMgrWithPinnedManifest(
-        depsDir: string,
-        manifest: string,
-        opts: { pinOverride?: string } = {},
-    ): Promise<DependencyManager> {
-        const pin = opts.pinOverride ?? createHash('sha256').update(manifest).digest('hex');
-        vi.resetModules();
-        vi.doMock('../DependencyDefinitions', async (importOriginal) => {
-            const actual = await importOriginal<typeof import('../DependencyDefinitions')>();
-            return { ...actual, MKCERT_SHA256SUMS_PIN: pin };
+    type Verdict = (manifest: string, tag: string) => Promise<void>;
+    const accept: Verdict = async () => {};
+    const refuse: Verdict = async () => {
+        throw new Error('no build-provenance attestation exists for this manifest -- refusing to trust it');
+    };
+    const makeMgr = (depsDir: string, verifyMkcertManifest: Verdict = accept) =>
+        new DependencyManager(depsDir, { verifyMkcertManifest });
+
+    it('hands the provenance check the manifest text and the tag being installed', async () => {
+        const manifest = `${createHash('sha256').update(FAKE_BINARY).digest('hex')}  ${assetName}\n`;
+        mockFetch(manifest);
+        const seen: [string, string][] = [];
+        const mgr = makeMgr(tmpDepsDir, async (m: string, tag: string) => {
+            seen.push([m, tag]);
         });
-        const { DependencyManager: Mgr } = await import('../DependencyManager');
-        return new Mgr(depsDir);
-    }
+        mgr.getByName('mkcert')!.latestVersion = version;
+        const result = await mgr.update('mkcert');
+        expect(result.success).toBe(true);
+        expect(seen).toEqual([[manifest, version]]);
+    });
 
     it('installs on a matching hash, and refuses (leaving nothing installed) on a mismatch — contrast pair', async () => {
         const correctHash = createHash('sha256').update(FAKE_BINARY).digest('hex');
@@ -194,7 +193,7 @@ describe('DependencyManager.update("mkcert") — checksum verification, manifest
         // --- matching checksum: installs ---
         const okManifest = `${correctHash}  ${assetName}\n`;
         mockFetch(okManifest);
-        const mgr = await makeMgrWithPinnedManifest(tmpDepsDir, okManifest);
+        const mgr = makeMgr(tmpDepsDir);
         mgr.getByName('mkcert')!.latestVersion = version;
         const okResult = await mgr.update('mkcert');
         expect(okResult.success).toBe(true);
@@ -203,13 +202,13 @@ describe('DependencyManager.update("mkcert") — checksum verification, manifest
 
         // --- mismatching checksum: refuses, and does NOT leave the old
         // (verified) install in place tampered -- re-download a WRONG
-        // binary under a (pin-trusted) manifest that still claims the
+        // binary under an (attested) manifest that still claims the
         // correct hash for it.
         fs.rmSync(destFile, { force: true });
         const wrongHash = '0'.repeat(64);
         const badManifest = `${wrongHash}  ${assetName}\n`;
         mockFetch(badManifest);
-        const mgr2 = await makeMgrWithPinnedManifest(tmpDepsDir, badManifest);
+        const mgr2 = makeMgr(tmpDepsDir);
         mgr2.getByName('mkcert')!.latestVersion = version;
         const badResult = await mgr2.update('mkcert');
         expect(badResult.success).toBe(false);
@@ -217,10 +216,10 @@ describe('DependencyManager.update("mkcert") — checksum verification, manifest
         expect(fs.existsSync(destFile)).toBe(false);
     });
 
-    it('refuses when the (pin-trusted) manifest does not list the downloaded asset at all', async () => {
+    it('refuses when the (attested) manifest does not list the downloaded asset at all', async () => {
         const manifest = `${'a'.repeat(64)}  some-other-platform-asset\n`;
         mockFetch(manifest);
-        const mgr = await makeMgrWithPinnedManifest(tmpDepsDir, manifest);
+        const mgr = makeMgr(tmpDepsDir);
         mgr.getByName('mkcert')!.latestVersion = version;
         const result = await mgr.update('mkcert');
         expect(result.success).toBe(false);
@@ -243,26 +242,49 @@ describe('DependencyManager.update("mkcert") — checksum verification, manifest
         expect(result.errorMessage).toMatch(/checksum manifest fetch failed/i);
     });
 
-    it('refuses a manifest that fails the pin check BEFORE the binary is ever fetched -- "no download of anything else"', async () => {
+    it('refuses a manifest that fails the provenance check BEFORE the binary is ever fetched -- "no download of anything else"', async () => {
         // The manifest text itself is well-formed (a real digest, a real
-        // asset name) -- what fails is the manifest's OWN hash against a
-        // deliberately wrong pin, which is exactly the "release changed
-        // under us, or the pin is stale" case, distinct from a bad binary
+        // asset name) -- what fails is its provenance, which is exactly the
+        // "a release asset was replaced" case, distinct from a bad binary
         // download.
         const manifest = `${'1'.repeat(64)}  ${assetName}\n`;
         const assetFetches: string[] = [];
         mockFetch(manifest, FAKE_BINARY, (url) => assetFetches.push(url));
-        const mgr = await makeMgrWithPinnedManifest(tmpDepsDir, manifest, { pinOverride: 'f'.repeat(64) });
+        const mgr = makeMgr(tmpDepsDir, refuse);
         mgr.getByName('mkcert')!.latestVersion = version;
 
         const result = await mgr.update('mkcert');
 
         expect(result.success).toBe(false);
-        expect(result.errorMessage).toMatch(/does not match the pinned digest/i);
+        expect(result.errorMessage).toMatch(/no build-provenance attestation/i);
         // Not just "it threw" -- the binary asset URL must never have been
         // requested at all.
         expect(assetFetches).toEqual([]);
         expect(fs.existsSync(path.join(tmpDepsDir, 'mkcert', mkcertExeName()))).toBe(false);
+    });
+
+    it('by default runs the real provenance check -- no attestation on GitHub means no install', async () => {
+        // No injected verifier: this is the production wiring. The attestation
+        // API answers 404 (GitHub's "none for this digest"), so the install must
+        // stop there -- a manager that skipped provenance would go on to fetch
+        // and install the binary, since the manifest does list it correctly.
+        const manifest = `${createHash('sha256').update(FAKE_BINARY).digest('hex')}  ${assetName}\n`;
+        const assetFetches: string[] = [];
+        fetchSpy = vi.spyOn(global, 'fetch').mockImplementation(async (input: string | URL | Request) => {
+            const url = String(input instanceof Request ? input.url : input);
+            if (url.endsWith('SHA256SUMS.txt')) return new Response(manifest, { status: 200 });
+            if (url.includes('/attestations/sha256:')) return new Response('{}', { status: 404 });
+            assetFetches.push(url);
+            return new Response(FAKE_BINARY, { status: 200 });
+        });
+        const mgr = new DependencyManager(tmpDepsDir);
+        mgr.getByName('mkcert')!.latestVersion = version;
+
+        const result = await mgr.update('mkcert');
+
+        expect(result.success).toBe(false);
+        expect(result.errorMessage).toMatch(/no build-provenance attestation/i);
+        expect(assetFetches).toEqual([]);
     });
 
     it('two concurrent installs of the SAME dependency both succeed rather than one seeing a spurious mismatch (N7)', async () => {
@@ -275,7 +297,7 @@ describe('DependencyManager.update("mkcert") — checksum verification, manifest
         const correctHash = createHash('sha256').update(FAKE_BINARY).digest('hex');
         const manifest = `${correctHash}  ${assetName}\n`;
         mockFetch(manifest);
-        const mgr = await makeMgrWithPinnedManifest(tmpDepsDir, manifest);
+        const mgr = makeMgr(tmpDepsDir);
         mgr.getByName('mkcert')!.latestVersion = version;
 
         const [first, second] = await Promise.all([mgr.update('mkcert'), mgr.update('mkcert')]);
@@ -295,7 +317,7 @@ describe('DependencyManager.update("mkcert") — checksum verification, manifest
         const manifest = `${correctHash}  ${assetName}\n`;
         const assetFetches: string[] = [];
         mockFetch(manifest, FAKE_BINARY, (url) => assetFetches.push(url));
-        const mgr = await makeMgrWithPinnedManifest(tmpDepsDir, manifest);
+        const mgr = makeMgr(tmpDepsDir);
         mgr.getByName('mkcert')!.latestVersion = version;
 
         const [first, second] = await Promise.all([mgr.update('mkcert'), mgr.update('mkcert')]);
@@ -314,17 +336,19 @@ describe('DependencyManager.update("mkcert") — checksum verification, manifest
         const correctHash = createHash('sha256').update(FAKE_BINARY).digest('hex');
         const manifest = `${correctHash}  ${assetName}\n`;
 
-        const bad = await makeMgrWithPinnedManifest(tmpDepsDir, manifest, { pinOverride: 'f'.repeat(64) });
+        // ONE manager throughout -- the poisoning this guards against lives in
+        // its in-flight map, so a second manager would prove nothing.
+        let verdict = refuse;
+        const mgr = makeMgr(tmpDepsDir, (m: string, tag: string) => verdict(m, tag));
         mockFetch(manifest);
-        bad.getByName('mkcert')!.latestVersion = version;
-        const failed = await bad.update('mkcert');
+        mgr.getByName('mkcert')!.latestVersion = version;
+        const failed = await mgr.update('mkcert');
         expect(failed.success).toBe(false);
 
+        verdict = accept;
         const assetFetches: string[] = [];
         mockFetch(manifest, FAKE_BINARY, (url) => assetFetches.push(url));
-        const good = await makeMgrWithPinnedManifest(tmpDepsDir, manifest);
-        good.getByName('mkcert')!.latestVersion = version;
-        const retried = await good.update('mkcert');
+        const retried = await mgr.update('mkcert');
 
         expect(retried.success).toBe(true);
         expect(assetFetches).toHaveLength(1);
@@ -444,5 +468,31 @@ describe('DependencyManager resolveStatus — never auto-downgrade', () => {
         // @ts-expect-error — invoke private method for unit test
         mgr.resolveStatus(info);
         expect(info.status).toBe(DependencyStatus.UpToDate);
+    });
+});
+
+describe('DependencyManager resolveStatus — mkcert follows the fork across its version reset', () => {
+    // 2026-09-27 the fork restarted its numbering: v1.4.4-bt.2 is succeeded by
+    // v0.1.0. `mkcert -version` reports the installed one without the `v`.
+    const status = (installed: string, latest: string) => {
+        const mgr = new DependencyManager('/tmp/test-deps');
+        const info = mgr.getByName('mkcert')!;
+        info.installedVersion = installed;
+        info.latestVersion = latest;
+        // @ts-expect-error — invoke private method for unit test
+        mgr.resolveStatus(info);
+        return info.status;
+    };
+
+    it('offers v0.1.0 over an installed 1.4.4-bt.2, though it is numerically lower', () => {
+        expect(status('1.4.4-bt.2', 'v0.1.0')).toBe(DependencyStatus.UpdateAvailable);
+    });
+
+    it('reads an installed 0.1.0 as current against the v0.1.0 tag', () => {
+        expect(status('0.1.0', 'v0.1.0')).toBe(DependencyStatus.UpToDate);
+    });
+
+    it('still offers a newer release in the ordinary direction', () => {
+        expect(status('0.1.0', 'v0.2.0')).toBe(DependencyStatus.UpdateAvailable);
     });
 });

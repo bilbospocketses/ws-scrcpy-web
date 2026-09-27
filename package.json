@@ -51,6 +51,7 @@
     "test:e2e:types": "tsc -p tests/e2e --noEmit"
   },
   "dependencies": {
+    "sigstore": "^5.0.0",
     "velopack": "^1.2.158",
     "ws": "^8.21.3"
   },

@@ -1,5 +1,5 @@
 import os from 'os';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { getDependencyDefinitions, mkcertAssetName } from '../DependencyDefinitions';
 
 describe('mkcert dependency definition', () => {
@@ -28,10 +28,42 @@ describe('mkcert dependency definition', () => {
         expect(known).toContain(asset);
     });
 
-    it('carries a fallbackVersion, so a rate-limited lookup still installs something', () => {
-        // Same reasoning as scrcpy-server: api.github.com rate-limits at 60/hour
-        // unauthenticated, and without this a first run installs nothing silently.
-        expect(def().fallbackVersion).toBe('v1.4.4-bt.2');
+    it('carries NO fallbackVersion — a fallback could not be verified anyway', () => {
+        // scrcpy-server falls back when api.github.com refuses the version
+        // lookup. mkcert cannot: its install also needs the attestation lookup,
+        // which is api.github.com too, so a fallback tag would be refused at the
+        // next step. And any fixed tag here goes stale — v1.4.4-bt.2, the old
+        // fallback, is being deleted.
+        expect(def().fallbackVersion).toBeUndefined();
+    });
+
+    it("treats the fork's latest release as authoritative, so a retired numbering line still updates", () => {
+        // v1.4.4-bt.2 → v0.1.0 goes numerically DOWN; ordered comparison would
+        // call bt.2 "newer than latest" and leave it installed forever.
+        expect(def().latestIsAuthoritative).toBe(true);
+    });
+
+    describe('checkLatest', () => {
+        let fetchSpy: ReturnType<typeof vi.spyOn>;
+        afterEach(() => fetchSpy?.mockRestore());
+
+        const answer = (tag: string) => {
+            fetchSpy = vi
+                .spyOn(global, 'fetch')
+                .mockImplementation(async () => new Response(JSON.stringify({ tag_name: tag }), { status: 200 }));
+        };
+
+        it('returns the release tag verbatim', async () => {
+            answer('v0.1.0');
+            await expect(def().checkLatest()).resolves.toBe('v0.1.0');
+        });
+
+        it('refuses a tag that is not a release-tag shape', async () => {
+            // The tag becomes part of a download URL and of the signer-identity
+            // pattern, so an odd one is refused at the source.
+            answer('v0.1.0/../../evil');
+            await expect(def().checkLatest()).rejects.toThrow(/unexpected mkcert release tag/);
+        });
     });
 
     it('does not require a restart — nothing is loaded from it in-process', () => {

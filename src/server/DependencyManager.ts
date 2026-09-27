@@ -1,5 +1,5 @@
 import { execFile } from 'child_process';
-import { createHash, randomUUID } from 'crypto';
+import { randomUUID } from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -12,13 +12,13 @@ import type { DependencyDefinition } from './DependencyDefinitions';
 import {
     getDependencyDefinitions,
     getPlatform,
-    MKCERT_SHA256SUMS_PIN,
     mkcertAssetName,
     mkcertChecksumsUrl,
     mkcertExeName,
 } from './DependencyDefinitions';
 import { Logger } from './Logger';
 import { parseSha256Sums } from './linuxUpdateAssets';
+import { defaultMkcertProvenanceDeps, verifyMkcertManifestProvenance } from './mkcertProvenance';
 import { writeInstalledScrcpyServerVersion } from './scrcpyServerVersion';
 import { resolveSystemTool } from './service/systemTools';
 import { copyFileAtomic, copyFileAtomicSync, writeFileAtomicSync } from './util/atomicFile';
@@ -74,16 +74,28 @@ export class DependencyManager {
      * life of the process; the next caller retries from scratch.
      */
     private readonly inFlightUpdates = new Map<string, Promise<UpdateResult>>();
+    /** Throws unless the mkcert checksum manifest is attested -- see `mkcertProvenance.ts`. */
+    private readonly verifyMkcertManifest: (manifest: string, tag: string) => Promise<void>;
 
     constructor(
         private readonly depsPath: string,
-        opts: { restartMarkerPath?: string } = {},
+        opts: {
+            restartMarkerPath?: string;
+            /** A seam for tests; production always takes the default. */
+            verifyMkcertManifest?: (manifest: string, tag: string) => Promise<void>;
+        } = {},
     ) {
         // Default to <depsPath>/.restart preserves pre-Phase-1 behavior for
         // tests that don't care about the marker location. Production code
         // (index.ts) passes the explicit Config.restartMarkerPath so the
         // marker lands at <dataRoot>/.restart, matching launcher/src/paths.rs:70.
         this.restartMarkerPath = opts.restartMarkerPath ?? path.join(depsPath, '.restart');
+        // Sigstore's TUF cache sits beside the dependencies it vouches for.
+        // Its own default is the running user's home, which for the Windows
+        // service is the SYSTEM profile.
+        const provenance = defaultMkcertProvenanceDeps(path.join(depsPath, '.sigstore'));
+        this.verifyMkcertManifest =
+            opts.verifyMkcertManifest ?? ((manifest, tag) => verifyMkcertManifestProvenance(manifest, tag, provenance));
         this.definitions = getDependencyDefinitions(depsPath);
         this.state = new Map();
 
@@ -292,16 +304,13 @@ export class DependencyManager {
             // Create temp directory
             fs.mkdirSync(tmpDir, { recursive: true });
 
-            // I8 (pinned-manifest extension): for mkcert, fetch and pin-check
-            // the SHA256SUMS manifest BEFORE downloading the binary at all --
-            // "no download of anything else" on a manifest that doesn't match
-            // MKCERT_SHA256SUMS_PIN. Fetching the manifest first, rather than
-            // after the binary as the original checksum design did, is what
-            // makes that possible: a tampered release could otherwise alter
-            // the binary and its own manifest together, so checking the
-            // binary against a manifest from the same untrusted release never
-            // proved anything a corrupted-download check didn't already.
-            const mkcertManifest = name === 'mkcert' ? await this.fetchPinnedMkcertManifest(version) : undefined;
+            // I8: for mkcert, fetch the SHA256SUMS manifest and check its
+            // provenance BEFORE downloading the binary at all -- "no download
+            // of anything else" on a manifest nothing vouches for. Checking
+            // the binary against a manifest from the same release alone never
+            // proved anything a corrupted-download check didn't already: a
+            // tampered release could alter both together.
+            const mkcertManifest = name === 'mkcert' ? await this.fetchAttestedMkcertManifest(version) : undefined;
 
             // Download
             const fileName = url.split('/').pop() || `${name}-download`;
@@ -446,6 +455,11 @@ export class DependencyManager {
             return;
         }
         const cmp = compareVersions(info.installedVersion, info.latestVersion);
+        if (this.definitions.find((d) => d.name === info.name)?.latestIsAuthoritative) {
+            info.status = cmp === 0 ? DependencyStatus.UpToDate : DependencyStatus.UpdateAvailable;
+            info.errorMessage = undefined;
+            return;
+        }
         if (cmp > 0) {
             // Never auto-downgrade: filter (e.g. Option D prebuilt gating) can
             // report a "latest" older than what the user has. Leave them alone.
@@ -502,7 +516,7 @@ export class DependencyManager {
                 await this.installScrcpyServer(downloadPath, version);
                 break;
             case 'mkcert':
-                // update() always fetches and pin-verifies the manifest
+                // update() always fetches and provenance-checks the manifest
                 // BEFORE calling install() for mkcert -- see its own call
                 // site -- so this is never undefined on this branch.
                 await this.installMkcert(downloadPath, version, mkcertManifest!);
@@ -528,8 +542,9 @@ export class DependencyManager {
      * `using`-scoped tmpDir cleanup in `update()` removes the unverified
      * download. Nothing partially-verified is ever installed.
      *
-     * `manifest` arrives ALREADY pin-verified by `fetchPinnedMkcertManifest`
-     * -- this method only checks the downloaded binary against it.
+     * `manifest` arrives ALREADY provenance-checked by
+     * `fetchAttestedMkcertManifest` -- this method only checks the downloaded
+     * binary against it.
      */
     private async installMkcert(downloadPath: string, version: string, manifest: string): Promise<void> {
         await this.verifyMkcertBinaryAgainstManifest(downloadPath, version, manifest);
@@ -545,20 +560,17 @@ export class DependencyManager {
 
     /**
      * Fetches the release's SHA256SUMS manifest and checks the MANIFEST
-     * ITSELF against `MKCERT_SHA256SUMS_PIN` -- see that constant's own doc
-     * comment for why. Called from `update()` BEFORE the binary is
-     * downloaded at all: "no download of anything else" on a manifest that
-     * doesn't match the pin, per the user's decision this implements.
+     * ITSELF for a build-provenance attestation from the fork's release
+     * workflow at this exact tag -- see `mkcertProvenance.ts` for why that is
+     * the anchor. Called from `update()` BEFORE the binary is downloaded at
+     * all: "no download of anything else" on a manifest nothing vouches for.
      *
-     * Deliberately a DIFFERENT thrown message than
-     * `verifyMkcertBinaryAgainstManifest`'s: "the manifest doesn't match its
-     * pin" means the release changed under us (or the pin is stale after a
-     * version bump) -- a maintenance signal -- while "the binary doesn't
-     * match the manifest" means a bad download or a same-release tamper. A
-     * single generic message would make a stale pin look identical to an
-     * active attack.
+     * Deliberately a DIFFERENT failure than
+     * `verifyMkcertBinaryAgainstManifest`'s: "nothing vouches for the
+     * manifest" means the release itself is suspect, while "the binary doesn't
+     * match the manifest" means a bad download or a same-release tamper.
      */
-    private async fetchPinnedMkcertManifest(version: string): Promise<string> {
+    private async fetchAttestedMkcertManifest(version: string): Promise<string> {
         const checksumsUrl = mkcertChecksumsUrl(version);
         const res = await fetchWithRetry(checksumsUrl, {
             ...VERSION_CHECK_POLICY,
@@ -568,30 +580,20 @@ export class DependencyManager {
             throw new Error(`mkcert checksum manifest fetch failed: HTTP ${res.status} from ${checksumsUrl}`);
         }
         const manifest = await res.text();
-        const manifestHash = createHash('sha256').update(manifest).digest('hex');
-        if (manifestHash !== MKCERT_SHA256SUMS_PIN) {
-            throw new Error(
-                'mkcert checksum manifest itself does not match the pinned digest ' +
-                    `(expected ${MKCERT_SHA256SUMS_PIN}, got ${manifestHash}) -- the release may have changed, ` +
-                    'or MKCERT_SHA256SUMS_PIN is stale after a version bump; refusing to trust it either way',
-            );
-        }
+        await this.verifyMkcertManifest(manifest, version);
         return manifest;
     }
 
     /**
-     * Checks the just-downloaded asset against an ALREADY pin-verified
-     * manifest (see `fetchPinnedMkcertManifest`). Throws on ANY failure to
+     * Checks the just-downloaded asset against an ALREADY provenance-checked
+     * manifest (see `fetchAttestedMkcertManifest`). Throws on ANY failure to
      * verify -- an asset the manifest does not list, or a hash mismatch --
      * because a binary that fails verification must never be executed. This
      * is deliberately fail-closed: there is no "warn and continue" path.
      *
-     * NOT a build-provenance/attestation check. The spec asks for one; the
-     * user's decision (recorded, not mine to revisit here) is that a
-     * pinned-manifest checksum is the implemented control instead. Prior
-     * reasoning against a hand-rolled Sigstore verifier still applies: no
-     * Node builtin for it, and `gh attestation verify` is a PATH-resolved
-     * binary Local-Dependencies-Only forbids.
+     * The binary itself is not attestation-checked: the attested manifest
+     * already names its digest, so one attestation check covers every
+     * platform asset the release carries.
      */
     private async verifyMkcertBinaryAgainstManifest(
         downloadPath: string,

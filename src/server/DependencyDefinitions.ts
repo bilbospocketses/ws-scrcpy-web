@@ -5,6 +5,7 @@ import path from 'path';
 import { promisify } from 'util';
 import { SERVER_VERSION } from '../common/Constants';
 import { Logger } from './Logger';
+import { isMkcertReleaseTag } from './mkcertProvenance';
 import { loadManifest } from './NodePtyResolver';
 import { getInstalledScrcpyServerVersion } from './scrcpyServerVersion';
 import { fetchOkWithRetry, VERSION_CHECK_POLICY } from './util/fetchWithRetry';
@@ -21,32 +22,10 @@ export function getArch(): 'x64' | 'arm64' {
     return os.arch() === 'arm64' ? 'arm64' : 'x64';
 }
 
-/** The release we vendor. Bump deliberately: it is trust material. */
-export const MKCERT_VERSION = 'v1.4.4-bt.2';
-
-/**
- * SHA-256 of `mkcert-v1.4.4-bt.2-SHA256SUMS.txt` ITSELF -- not any of the
- * seven platform binaries the manifest lists.
- *
- * Without this, the manifest and the binary we check against it both come
- * from the same GitHub release: that catches a corrupted download, but not
- * a tampered release, because anyone who could alter one could alter the
- * other. Pinning the manifest's own digest here moves the trust anchor into
- * OUR source -- an attacker would have to modify this file too, and that
- * modification shows up in a diff. One constant covers every platform,
- * because the manifest covers every platform; a version bump touches only
- * this line (and `MKCERT_VERSION` above), which is why they sit together.
- *
- * Fetched fresh and computed independently (never copied from a chat
- * message, a PR description, or anything else that could itself be wrong or
- * tampered with) via `sha256sum` against the real release asset, then
- * cross-checked against the mkcert fork's own Sigstore build-provenance
- * attestation for this exact tag (`gh attestation verify`, subject digest
- * for `mkcert-v1.4.4-bt.2-SHA256SUMS.txt`) -- both agree. Update this
- * DELIBERATELY, by the same two-step process, whenever `MKCERT_VERSION`
- * bumps; never guess or reuse an old value.
- */
-export const MKCERT_SHA256SUMS_PIN = 'd8cac61cd58e78b77ad889cacbad64e7f6c23179b1e9a94c1ed45a9d16a8589d';
+// mkcert tracks the fork's LATEST release (user decision 2026-09-27). There is
+// no pinned version or pinned digest any more: what vouches for a download is
+// the release's Sigstore build-provenance attestation, checked against an
+// identity pinned in mkcertProvenance.ts.
 
 export function mkcertExeName(): string {
     return os.platform() === 'win32' ? 'mkcert.exe' : 'mkcert';
@@ -135,6 +114,17 @@ export interface DependencyDefinition {
      * around `run`, which is what actually triggers it on first use.
      */
     deferInstall?: boolean;
+    /**
+     * Compare installed against latest by IDENTITY rather than by order: any
+     * installed version other than latest reports `UpdateAvailable`.
+     *
+     * The default "installed is newer than latest, stay put" guard exists for
+     * a FILTERED latest (Option D's prebuilt gating can report one older than
+     * what is installed). mkcert's latest is unfiltered, and the fork restarted
+     * its numbering on 2026-09-27 (v1.4.4-bt.2 → v0.1.0), so ordered comparison
+     * would call the retired build "newer" and keep it forever.
+     */
+    latestIsAuthoritative?: boolean;
 }
 
 async function runVersionCommand(exe: string, args: string[], pattern: RegExp): Promise<string | null> {
@@ -288,7 +278,12 @@ export function getDependencyDefinitions(depsPath: string): DependencyDefinition
             // dependency bumps, 28 tests where upstream has none, and fixes for four
             // review findings including an argument-controlled path escape that wrote
             // outside the working directory and still exited 0.
-            fallbackVersion: MKCERT_VERSION,
+            //
+            // No fallbackVersion, unlike scrcpy-server: an install also needs the
+            // attestation lookup, which is api.github.com too, so a refused
+            // version lookup would be refused again one step later. A fixed tag
+            // here would also go stale: the last one, v1.4.4-bt.2, is being deleted.
+            latestIsAuthoritative: true,
             // M2: fetched on first use (see the field's own doc comment), not at
             // boot -- this is the highest-consequence binary the app fetches
             // (it mints a CA the user installs into their OS and phone trust
@@ -310,7 +305,13 @@ export function getDependencyDefinitions(depsPath: string): DependencyDefinition
                     },
                 );
                 const data = (await res.json()) as { tag_name?: string };
-                return data.tag_name ?? null;
+                if (data.tag_name === undefined) return null;
+                // The tag becomes part of a download URL and of the signer
+                // identity the attestation must match, so refuse an odd one here.
+                if (!isMkcertReleaseTag(data.tag_name)) {
+                    throw new Error(`unexpected mkcert release tag ${JSON.stringify(data.tag_name)}`);
+                }
+                return data.tag_name;
             },
             getDownloadUrl: (version) =>
                 `https://github.com/bilbospocketses/mkcert/releases/download/${version}/${mkcertAssetName(version)}`,

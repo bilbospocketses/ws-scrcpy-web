@@ -3300,7 +3300,7 @@ an HTTPS listener that is not actually running yet, which would be a lockout wit
 back to. The save handler re-checks the same condition rather than trusting the disabled attribute
 alone, in case a stale click was queued before the panel's last state refresh.
 
-### 28.4 Installing mkcert: on-demand fetch and the pinned-manifest gate
+### 28.4 Installing mkcert: on-demand fetch and the attested-manifest gate
 
 mkcert is fetched **on first use**, not at boot: its `DependencyDefinition`
 (`src/server/DependencyDefinitions.ts`) carries `deferInstall: true`, which
@@ -3312,41 +3312,65 @@ what actually causes the install, and the only cost on every call after the firs
 instance `index.ts`'s boot sequence and `DependencyApi` use — so an on-demand install here is visible
 to the Dependencies tab immediately, rather than tracked by a second manager the panel never sees.
 
+**It installs the fork's LATEST release** (`checkLatest` → `api.github.com/…/releases/latest`), with
+no pinned version and no fallback. A fallback tag could not be verified anyway: the attestation lookup
+below is `api.github.com` too, so a refused version lookup would be refused again one step later. The
+tag must be `vX.Y.Z` or the retired `v1.4.4-bt.N` shape, or it is refused before it reaches a URL.
+
 **The install verifies in two stages, in this order, because checking the binary against a manifest
 from the same release never proved authenticity — only that the download was not corrupted in
 transit.** A tampered GitHub release could alter the binary and its manifest together, so:
 
-1. **Fetch `SHA256SUMS.txt` and verify the manifest itself against `MKCERT_SHA256SUMS_PIN`** — a SHA-256
-   constant committed in `DependencyDefinitions.ts`, next to `MKCERT_VERSION` — **before the platform
-   binary is downloaded at all.** This is what moves the trust anchor into this app's own source: an
-   attacker would have to alter the pinned constant too, and that shows up in a diff, where altering a
-   GitHub release does not.
+1. **Fetch `mkcert-<tag>-SHA256SUMS.txt` and check the manifest's own build provenance** —
+   `src/server/mkcertProvenance.ts` — **before the platform binary is downloaded at all.** GitHub is
+   asked for every attestation of the manifest's SHA-256 (`/repos/bilbospocketses/mkcert/attestations/sha256:<digest>`),
+   and one must pass `sigstore.verify` against the Sigstore public-good trust root, with the certificate
+   issued to `https://token.actions.githubusercontent.com` for exactly
+   `https://github.com/bilbospocketses/mkcert/.github/workflows/release.yml@refs/tags/<tag>`, and be an
+   in-toto SLSA provenance statement naming this manifest's release name and digest. That identity is
+   what this app's source pins now: a stolen upload token can replace release assets, but it cannot get
+   the fork's own release workflow to sign them.
 2. **Only once the manifest passes that check, download the platform binary and verify it against the
    now-trusted manifest.**
 
-**The two failure messages are deliberately worded differently, and that difference is the point.**
-"The manifest does not match its pin" means the release changed underneath this pin, or the pin is
-stale after a version bump — a maintenance signal, not necessarily an attack. "The binary does not
-match the manifest" means a bad download, or a same-release tamper — the case the original
-same-release checksum design could already catch. Collapsing the two into one generic message would
-make a forgotten pin update after a version bump look identical to an active attack. Both are
-fail-closed: a missing manifest entry, a failed fetch, or either mismatch refuse the install outright,
+Three details of step 1 are load-bearing:
+
+- **The identity is an anchored, escaped regex.** sigstore-js tests the SAN with `san.match(pattern)`,
+  which is unanchored, so a bare URL would also accept a longer tag, a look-alike repo (`mkcert-evil`)
+  or `githubXcom`. `mkcertSignerIdentityPattern()` builds `^…$` with every metacharacter escaped.
+- **It is pinned to the exact tag, not `refs/tags/v*`.** One release's genuine attestation cannot vouch
+  for a manifest that claims to belong to another.
+- **A verified signature is not enough on its own.** The statement's `subject[]` must name this
+  manifest's digest; otherwise a genuine attestation for some other file would pass. The test suite
+  proves this with the real v1.4.4-bt.2 manifest and attestation, committed as fixtures under
+  `src/server/__tests__/fixtures/`: an edited manifest under the genuine bundle is refused, and so is
+  the genuine bundle for a different tag.
+
+**Network.** An install now reaches `tuf-repo-cdn.sigstore.dev`, for the Sigstore trust root, in
+addition to `api.github.com` and `github.com`. The TUF metadata is cached in `<dependencies>/.sigstore`
+rather than in sigstore's default under the running user's home, which for the Windows service is the
+SYSTEM profile. Every verify refreshes it; that refresh is how a rotated Fulcio or Rekor key reaches
+an installed app. The test suite alone uses the trust root the library ships (`tufForceCache`), so CI
+needs no network. `sigstore` is loaded on demand, so a server that never installs mkcert never loads it.
+
+**The two failure families are deliberately worded differently.** "No attestation this app can
+verify" / "no build-provenance attestation exists" means the release itself is suspect. "The binary does
+not match the manifest" means a bad download or a same-release tamper. Both are fail-closed: a missing
+manifest entry, a failed fetch, an unverifiable attestation or a mismatch refuse the install outright,
 with no warn-and-continue path, before anything is placed where `resolveMkcertExe` would find it.
 
-**`MKCERT_SHA256SUMS_PIN` must be updated by hand, deliberately, whenever `MKCERT_VERSION` bumps** —
-never guessed or copied from a chat message or a PR description. Its own doc comment records the
-procedure: fetch the new release's `SHA256SUMS.txt`, compute its SHA-256 independently
-(`sha256sum` against the real asset), and cross-check that value against the fork's own Sigstore
-build-provenance attestation for that exact tag (`gh attestation verify`) before trusting it. A future
-version bump should follow that same two-source procedure rather than trusting either alone.
+**This replaced a pinned manifest digest on 2026-09-27.** Before that, `MKCERT_SHA256SUMS_PIN` held
+v1.4.4-bt.2's manifest digest in source, and attestation was checked only out of band, by whoever set
+the pin. The user moved mkcert to "latest", and a digest pin cannot follow a release that does not
+exist yet, so the pinned anchor became an identity instead of a hash. The reasons once given against
+runtime verification did not survive: `sigstore` is an npm dependency bundled with the app, not a
+PATH-resolved binary, so Local-Dependencies-Only is not in play. Releases v0.1.30-beta.130 to .137
+carry the old pin, so they refuse any mkcert release other than v1.4.4-bt.2.
 
-**Runtime attestation verification is not implemented, by user decision — not because it is
-impossible.** The published SLSA/Sigstore provenance is what `MKCERT_SHA256SUMS_PIN` was independently
-cross-checked against when the pin was set (above), so attestation is already part of how this app's
-trust in mkcert was established — it is used **out-of-band, by whoever updates the pin**, not
-**at runtime, by the app itself**. A hand-rolled Sigstore verifier has no Node builtin to build on, and
-`gh attestation verify` is a PATH-resolved binary that Local-Dependencies-Only forbids reaching for at
-runtime; the pinned-manifest checksum is the control the app actually runs.
+**Status follows the fork across its version reset.** The fork restarted its numbering at v0.1.0 after
+v1.4.4-bt.2. `latestIsAuthoritative` on the definition makes `resolveStatus` compare by identity, so an
+installed `1.4.4-bt.2` reports *update available* against `v0.1.0` rather than "newer than latest,
+staying put".
 
 ### 28.5 The four mkcert invocation requirements
 
@@ -3419,7 +3443,8 @@ degrades to HTTP-only, logged, never a crash.
 | `src/server/network/candidateLanIps.ts` | RFC1918 LAN-IP candidates for the subject picker, excluding CGNAT (`100.64.0.0/10`) and link-local |
 | `src/server/services/HttpServer.ts` | Exposure enforcement on the plain-HTTP listener, the listen-error handler, `getHttpsListenerStatus`, the bound leaf's `leafFingerprint` capture |
 | `src/server/Config.ts` | `buildServerList`, `readCertMaterial`, `sanitizeHttpsPort` / `validateHttpsPortInput` / `setHttpsPort`, `DEFAULT_HTTPS_PORT` |
-| `src/server/DependencyDefinitions.ts` | The `mkcert` dependency definition (`bilbospocketses/mkcert` fork, `deferInstall: true`); `mkcertExeName` / `mkcertAssetName` / `mkcertChecksumsUrl`; `MKCERT_VERSION` / `MKCERT_SHA256SUMS_PIN` |
+| `src/server/DependencyDefinitions.ts` | The `mkcert` dependency definition (`bilbospocketses/mkcert` fork, `deferInstall: true`); `mkcertExeName` / `mkcertAssetName` / `mkcertChecksumsUrl`; `latestIsAuthoritative` |
+| `src/server/mkcertProvenance.ts` | The attested-manifest gate: fetch GitHub's attestations for the manifest digest, `sigstore.verify` them against the tag-pinned release-workflow identity, and check the statement names the manifest |
 | `src/server/DependencyManager.ts` | `installMkcert()` — the install handler; `fetchPinnedMkcertManifest()` (manifest-vs-pin) and `verifyMkcertBinaryAgainstManifest()` (binary-vs-manifest), reusing `parseSha256Sums`/`verifySha256` |
 | `src/app/client/settings/tabs/ServerTab.ts` | The Settings → Server → Local HTTPS panel; `listenerStatusNotice()`; the exposure-radio gate on `httpsListener.bound` |
 | `docs/superpowers/specs/2026-09-18-local-https-design.md` | The full design: measured facts, rejected alternatives, the UI notification table |
