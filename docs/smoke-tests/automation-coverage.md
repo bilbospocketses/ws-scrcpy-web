@@ -19,14 +19,14 @@ so the doc holds **162**. Row ids are stable and gappy; so are the lines here.
 | Automated, fast tier | 33 | `build-and-test`, every PR |
 | Automated, container tier | 12 | `build-and-test`'s docker step, and qa-harness nightly |
 | Automated, device tier | 19 | qa-harness, nightly (8.15 and 8.17 run on qa-harness's own virtual-device tier) |
-| Automated, Windows guest tier | 26 | qa-harness P4, nightly, on a Windows 11 guest. Its row set is 27 row-halves: these 26 (6.1 and 12.2 counted by their Windows halves) plus 5.10, which needs a person and sits under manual/conditional. **Most are partial**; each line below names what a pass does not prove. |
+| Automated, Windows guest tier | 29 | qa-harness P4, nightly, on a Windows 11 guest. Its row set is 30 row-halves: these 29 (6.1, 12.2 and 21.1-21.3 counted by their Windows halves) plus 5.10, which needs a person and sits under manual/conditional. **Most are partial**; each line below names what a pass does not prove. |
 | Automatable, no spec written yet | 10 | — (**13.4-13.7**, four of the tabbed Settings dialog's behaviours (beta.125, #692) that ws-scrcpy-web's unit tests cover and no e2e drives yet, added 2026-09-27; **15.6**, the tray's Exit end to end, which the Windows guest tier can reach once it can right-click a real tray icon (qa-harness item 21) but P4 does not claim; **20.4 / 20.5**, the container install/uninstall rows unblocked 2026-09-04, which this line counted as automated container rows until 2026-09-25 although neither has a spec; 8.10 / 8.11, item 24's rotation rows; the six of 2026-09-04 were written 2026-09-06, item 104; **plus one of item 68's four beta.131 rows — 8.16** (8.15 and 12.6 were automated 2026-09-25, and 8.17 later the same day on qa-harness #95). 8.16 was measured 2026-09-23 on an x86_64 redroid on its **legacy OMX stack** (a guest kernel without `/dev/dma_heap/system`), which had **no Opus encoder at all**. On a kernel with dma_heap, redroid runs Codec2, which has Opus, so 8.16 needs an OMX fixture that qa-harness has decided not to build) |
-| Automated, manual/conditional | 2 | 21.1 — `tests/e2e/local-https.spec.ts` exists and proves the row, but `test.skip`s unless a person points `QA_LAN_HTTPS_ORIGIN` at a real, non-loopback LAN origin serving a generated certificate. 5.10 — qa-harness P4 asserts it, but only with a person at the UAC prompt to click No; unattended it Skips. No unattended run proves either, so neither contributes to "automated today" below. |
+| Automated, manual/conditional | 1 | 5.10 — qa-harness P4 asserts it, but only with a person at the UAC prompt to click No; unattended it Skips. No unattended run proves it, so it does not contribute to "automated today" below. (21.1 sat here until 2026-09-27, when qa-harness Arc 5 supplied the second machine; its own `tests/e2e/local-https.spec.ts` still skips unless a person names an origin.) |
 | **Residual — Linux installer and desktop** | **50** | nobody (14.8 / 14.9 are assertable by qa-harness item 14's Linux guests) |
-| **Residual — un-automatable** | **10** | nobody, ever |
+| **Residual — un-automatable** | **8** | nobody, ever |
 | **Total** | **162** | |
 
-**Automated today: 90 of 162 = 56 %.** (87 of 155 until 2026-09-27, when qa-harness task 28 added the seven rows for items 35 and 45: 10.10, 10.11 and 20.17 arrive already covered by existing specs, 13.4-13.7 arrive without one. 86 / 55 % until 8.17 moved to the device tier on qa-harness #95,
+**Automated today: 93 of 162 = 57 %.** (90 / 56 % until later on 2026-09-27, when qa-harness Arc 5 (Local HTTPS) moved 21.1 from manual/conditional and 21.2-21.3 from un-automatable to the Windows guest tier. Its Playwright runner is its own container on the run network, dialling the guest by IP, so it is the second machine on the LAN those rows were waiting for. Run `win-20260927T095130Z` on beta.138 passed all three. 87 of 155 until earlier that day, when qa-harness task 28 added the seven rows for items 35 and 45: 10.10, 10.11 and 20.17 arrive already covered by existing specs, 13.4-13.7 arrive without one. 86 / 55 % until 8.17 moved to the device tier on qa-harness #95,
 later on 2026-09-25; 60 / 39 % earlier that day, until item 148 counted
 qa-harness P4's Windows guest tier. P4 was already passing its row set: run `win-20260925T111742Z` on
 beta.132 went 26 Pass / 1 Skip (5.10) / 0 Fail. This table still read "once P4 lands", and the
@@ -148,10 +148,11 @@ Buckets, once each, no row in two:
   product decision nobody has taken.
 - **manual/conditional** — a real spec exists, in `tests/e2e/` or in qa-harness, and
   it genuinely proves the row when it runs, but it skips by default because it needs
-  something nothing in this stack provisions: a second machine's LAN origin, with
-  `QA_LAN_HTTPS_ORIGIN` naming it (21.1), or a person to click No on a UAC prompt
-  that UI Automation cannot reach (5.10). No unattended run supplies either, so the
-  spec never counts toward "automated today" — the distinction
+  something nothing in this stack provisions: a person to click No on a UAC prompt
+  that UI Automation cannot reach (5.10). 21.1 was the other member, waiting on a
+  second machine's LAN origin, until qa-harness Arc 5 supplied one on 2026-09-27. No
+  unattended run supplies a person, so the spec never counts toward "automated
+  today" — the distinction
   from **residual: un-automatable** is that a person CAN run it by hand, on demand,
   against a real setup, where the residual bucket cannot be run at all.
 
@@ -319,9 +320,9 @@ Sorted by module, then by row number, which is not the doc's execution order.
 | 20.12 | `[Both]` | Graceful `docker stop` | container | `container-lifecycle.spec.ts` `@docker-host`, **CI only**. `docker stop` returns inside docker's 10 s grace with exit 0 (143/137 are the failures), and the log on the volume carries `Stopping adb daemon (kill-server)`. |
 | 20.13 | `[Both]` | `HEALTHCHECK` healthy | container | `tests/e2e/support/dockerStack.ts` — `composeUpFresh` brings the stack up with `--wait`, which refuses to proceed unless the image reports healthy. |
 | 20.17 | `[Both]` | Dependencies in a container | container | `docker-gating.spec.ts`: the Dependencies tab carries the container note and no buttons, and the home-page alert is mounted but hidden with an update waiting. (Numbered 20.17 because 20.14-20.16 are finding ids.) |
-| 21.1 | `[Both]` | Generate a certificate for this machine's LAN IP, restart, then stream from another machine over the generated HTTPS origin | manual/conditional | `tests/e2e/local-https.spec.ts`'s default tests prove the secure-context + WebCodecs half against a real, already-generated, already-restarted certificate — `isSecureContext`, `VideoDecoder` and an `isConfigSupported` h264 check, each contrasted against the same LAN address over plain http — but `test.skip`s unless `QA_LAN_HTTPS_ORIGIN` names a non-loopback LAN origin; it FAILS rather than skips if that origin is loopback (`http://localhost` is a secure context on its own and would prove nothing). They deliberately never click generate (it deletes the installed CA — see 21.2); a separate opt-in test in the same file, gated behind `QA_LAN_HTTPS_ALLOW_REGENERATE`, covers the generate click and its destructive consequence instead. The "restart, then stream from another machine" half is not driven by the spec and stays manual. |
-| 21.2 | `[Both]` | Install the CA on a second machine and confirm the browser's untrusted-certificate warning disappears | residual: un-automatable | Needs a second machine's real browser chrome — the actual warning banner, the OS certificate store, the per-OS install dialog Settings → Server → Local HTTPS links to. Nothing this stack builds renders that. |
-| 21.3 | `[Both]` | Each plain-http exposure mode (open / https only / redirect), including that `localhost` on this machine still answers in every mode | residual: un-automatable | Needs a second real machine on the LAN to prove the "other machines stop answering" half of `httpsOnly`/`redirect`. No restart is involved — this mode is re-read fresh on every plain-http request, unlike the https port field — so the only blocker is the second network client; no phase builds one outside the emulator's own host. |
+| 21.1 | `[Both]` | Generate a certificate for this machine's LAN IP, restart, then stream from another machine over the generated HTTPS origin | windows guest | qa-harness P4 Arc 5, `arcs/05-local-https.ps1` + `localhttps.spec.ts` (the Windows half), on a fresh install. `POST /api/tls/generate` runs for the address a second machine dials, and on a fresh install that call is also mkcert's first install (the app logs `Updated mkcert to <version>`, attestation-gated; run `win-20260927T095130Z` on beta.138 installed v0.1.0 in 7 s). Before the restart the https port refuses a connection and `/api/tls/state` reports no bound listener; after it the listener is bound. Then qa-harness's runner, a second machine on the run network, finds the https origin a secure context with `VideoDecoder` and h264 `isConfigSupported`, and the same address over plain http none of them. **Partial:** the stream itself from the second machine is not driven (no device on that lane), and the Linux half is not measured. Before qa-harness supplied the second machine this row was manual/conditional: `tests/e2e/local-https.spec.ts`'s default tests prove the secure-context + WebCodecs half against a real, already-generated, already-restarted certificate — `isSecureContext`, `VideoDecoder` and an `isConfigSupported` h264 check, each contrasted against the same LAN address over plain http — but `test.skip`s unless `QA_LAN_HTTPS_ORIGIN` names a non-loopback LAN origin; it FAILS rather than skips if that origin is loopback (`http://localhost` is a secure context on its own and would prove nothing). They deliberately never click generate (it deletes the installed CA — see 21.2); a separate opt-in test in the same file, gated behind `QA_LAN_HTTPS_ALLOW_REGENERATE`, covers the generate click and its destructive consequence instead. The "restart, then stream from another machine" half is not driven by the spec and stays manual. |
+| 21.2 | `[Both]` | Install the CA on a second machine and confirm the browser's untrusted-certificate warning disappears | windows guest | qa-harness P4 Arc 5 (the Windows half). The second machine downloads the CA from the loaded page (`GET /api/tls/ca-root`), and a verified TLS handshake succeeds against it and fails without it, on a trust error. On the Windows machine, `X509Chain` rejects the served certificate (`PartialChain`) until the CA is added to `LocalMachine\Root`, then chains it to that same CA. **Partial:** the browser's own warning banner and the per-OS install dialog are not observed; the trust decision they rest on is. |
+| 21.3 | `[Both]` | Each plain-http exposure mode (open / https only / redirect), including that `localhost` on this machine still answers in every mode | windows guest | qa-harness P4 Arc 5 (the Windows half). Each mode is set through `POST /api/tls/exposure`. From the second machine, plain http gets 200 under open, 421 with the "https only" text under httpsOnly, and a 302 to the https origin under redirect. `http://localhost` on the Windows machine answers 200 in every mode, and the web port's listening pid is the same before and after the cycle, so no restart happened. |
 | 21.4 | `[Both]` | The DHCP-moved-IP mismatch notice (`certSubjectMismatchNotice`) | residual: un-automatable | Needs this machine's own real IP address to change mid-session (a DHCP lease actually moving, or a manual reassignment) — nothing in this stack renegotiates its own network address to order. |
 
 ---
@@ -521,7 +522,7 @@ precisely the ones no container will ever reach, which is what makes it a *deskt
 phase rather than a container with systemd in it. Recorded as a recommendation, not
 scheduled: P0–P6 are not being widened here.
 
-The remaining 10 are un-automatable, though not all for the same kind of reason, and
+The remaining 8 are un-automatable, though not all for the same kind of reason, and
 the distinction matters to anyone deciding what to fix:
 
 - **Hardware that does not exist here.** 7.3 (USB, barred by the wireless-only lock)
@@ -530,13 +531,14 @@ the distinction matters to anyone deciding what to fix:
 - **A capability the Linux runner lacks.** 8.7 needs a browser that decodes H.265 in
   order to observe one being *offered*, and no browser in this runner does (finding
   8.11).
-- **A second real machine, which nothing in this stack provides.** 21.2 (a second
-  browser's own certificate-trust chrome), 21.3 (a second network client to prove
-  the other-machines-stop-answering half of `httpsOnly`/`redirect`) and 21.4 (this
-  machine's own IP actually changing under it, e.g. a DHCP lease moving). None of
-  these are Linux-desktop rows — 21.1's own secure-context half already has a real
-  spec (`local-https.spec.ts`), just a conditional one; see the manual/conditional
-  bucket above.
+- **This machine's own IP changing under it.** 21.4 needs a real DHCP lease to move,
+  or a manual reassignment, mid-session. It is not a Linux-desktop row. Its siblings
+  21.2 and 21.3 were listed here as needing "a second real machine, which nothing in
+  this stack provides" until 2026-09-27, when qa-harness Arc 5's runner became that
+  machine. The mismatch notice compares the certificate's subject against the
+  machine's own candidate addresses, and in qa-harness the subject is the address the
+  runner dials, which is never one of the guest's own. So a run there would show the
+  notice every time and prove nothing.
 - **An app defect, not a testing limit.** 7.5's enrichment lives on a route the UI
   never calls (register finding 7.6). It becomes an ordinary device row the day
   that is fixed.
