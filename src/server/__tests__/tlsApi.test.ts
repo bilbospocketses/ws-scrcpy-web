@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildHttpsListenerField, TlsApi } from '../api/TlsApi';
 import { Config } from '../Config';
 import { Logger } from '../Logger';
@@ -58,6 +58,18 @@ function makeApi(over: Record<string, unknown> = {}, candidateIps: string[] = ['
 }
 
 describe('TlsApi', () => {
+    // Every gate override below is a one-shot (`...Once`). Reset both gates
+    // before each test so an override a regression stopped consuming fails in
+    // ITS test, instead of leaking a 403 into whichever test runs next.
+    beforeEach(() => {
+        vi.mocked(requireAdmin)
+            .mockReset()
+            .mockImplementation(() => true);
+        vi.mocked(requireOperator)
+            .mockReset()
+            .mockImplementation(() => true);
+    });
+
     it('does not claim urls outside /api/tls', async () => {
         const { api } = makeApi();
         const r = makeReqRes('GET', '/api/devices');

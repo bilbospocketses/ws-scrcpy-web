@@ -242,6 +242,32 @@ describe('migrateLegacyTlsHome', () => {
         expect(fs.existsSync(paths.legacyTlsDir!)).toBe(false);
     });
 
+    it('never removes an old parent that is a junction, even when the move emptied the path through it', () => {
+        // A per-user install relocated with a junction on the same volume: the
+        // `tls` rename goes through the link, and `rmdirSync` on a junction
+        // deletes the LINK whatever its target holds (measured on Node 24,
+        // tls-gate review), which would unhook the install from its path.
+        const realInstall = path.join(tmp, 'real-install');
+        fs.mkdirSync(realInstall);
+        fs.writeFileSync(path.join(realInstall, 'Update.exe'), 'VELOPACK');
+        const link = path.dirname(paths.legacyTlsDir!);
+        fs.symlinkSync(realInstall, link, 'junction');
+        seedLegacy();
+        expect(migrateLegacyTlsHome(paths)).toEqual({ outcome: 'moved' });
+        expect(fs.lstatSync(link).isSymbolicLink()).toBe(true);
+        expect(fs.readFileSync(path.join(link, 'Update.exe'), 'utf-8')).toBe('VELOPACK');
+    });
+
+    it('never removes an old parent that is a link even when its target is EMPTY: it is not a folder we made', () => {
+        const emptyTarget = path.join(tmp, 'empty-target');
+        fs.mkdirSync(emptyTarget);
+        const link = path.dirname(paths.legacyTlsDir!);
+        fs.symlinkSync(emptyTarget, link, 'junction');
+        seedLegacy();
+        expect(migrateLegacyTlsHome(paths)).toEqual({ outcome: 'moved' });
+        expect(fs.lstatSync(link).isSymbolicLink()).toBe(true);
+    });
+
     it('a parent it cannot remove never turns a successful move into a failure', () => {
         seedLegacy();
         const rmdirSync = vi.fn(() => {

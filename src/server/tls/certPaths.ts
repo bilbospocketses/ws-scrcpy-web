@@ -113,13 +113,14 @@ export type TlsHomeMigration =
  * move.
  *
  * After a move, the old parent (`%LOCALAPPDATA%\WsScrcpyWeb`) is removed if,
- * and only if, it is now empty (item 154). On a Program Files install the TLS
- * home was the only thing in it; on a per-user install it IS the install, and
- * a non-recursive removal cannot touch a folder that holds anything.
+ * and only if, it is a real, now-empty directory (item 154). On a Program
+ * Files install the TLS home was the only thing in it; on a per-user install
+ * it IS the install and holds files, so the non-recursive removal refuses it.
+ * A junction or symlink is never removed at all: see `removeIfEmpty`.
  */
 export function migrateLegacyTlsHome(
     paths: CertPaths,
-    fsImpl: Pick<typeof fs, 'existsSync' | 'renameSync' | 'readdirSync' | 'rmSync' | 'rmdirSync'> = fs,
+    fsImpl: Pick<typeof fs, 'existsSync' | 'renameSync' | 'readdirSync' | 'rmSync' | 'rmdirSync' | 'lstatSync'> = fs,
 ): TlsHomeMigration {
     const legacy = paths.legacyTlsDir;
     if (!legacy || !fsImpl.existsSync(legacy)) return { outcome: 'none' };
@@ -145,13 +146,22 @@ export function migrateLegacyTlsHome(
 
 /**
  * Best-effort, and NON-recursive on purpose: `rmdirSync` without `recursive`
- * refuses a folder that holds anything (ENOTEMPTY), so it can only ever take
- * away an empty one. Any refusal, including a scanner holding the folder, is
- * ignored: an empty folder left behind is cosmetic, and it must never turn a
- * move that succeeded into a reported failure.
+ * refuses a real directory that holds anything (ENOTEMPTY), so it can only
+ * take away an empty one.
+ *
+ * A link is skipped BEFORE that, because the ENOTEMPTY protection does not
+ * cover it: on Windows `RemoveDirectoryW` deletes a junction or directory
+ * symlink whatever its target holds (measured on Node 24 in the review of
+ * item 154). A per-user install relocated with a junction would otherwise be
+ * unhooked from its own path. A link is also not a folder this app made.
+ *
+ * Any refusal, including a scanner holding the folder, is ignored: an empty
+ * folder left behind is cosmetic, and it must never turn a move that
+ * succeeded into a reported failure.
  */
-function removeIfEmpty(dir: string, fsImpl: Pick<typeof fs, 'rmdirSync'>): void {
+function removeIfEmpty(dir: string, fsImpl: Pick<typeof fs, 'rmdirSync' | 'lstatSync'>): void {
     try {
+        if (!fsImpl.lstatSync(dir).isDirectory()) return;
         fsImpl.rmdirSync(dir);
     } catch {
         // Not empty (a per-user install lives here), already gone, or held open.

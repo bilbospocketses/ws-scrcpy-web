@@ -3243,9 +3243,11 @@ where the CA and the leaf certificate/key live, and the two platforms are **not*
   or made by hand, is removed first, or it would strand the CA). When the new home has any file in it,
   both are left alone and it is logged, because the new one is newer or deliberate. A move that fails is logged and leaves the old home in place; HTTPS then
   reads as "no certificate yet" until a later start moves it or a certificate is regenerated. After a
-  move, the old parent `%LOCALAPPDATA%\WsScrcpyWeb` is removed if it is now empty (item 154): on a
-  Program Files install the TLS home was all it held. The removal is non-recursive, so on a per-user
-  install, where that folder IS the install, it cannot touch anything, and a refusal never turns a
+  move, the old parent `%LOCALAPPDATA%\WsScrcpyWeb` is removed if it is a real directory that is now
+  empty (item 154): on a Program Files install the TLS home was all it held. The removal is
+  non-recursive, so a per-user install, where that folder IS the install and holds files, is refused
+  with `ENOTEMPTY`. A junction or symlink there is never removed, because Windows deletes a junction
+  whatever its target holds, and a relocated install would lose its path. A refusal never turns a
   successful move into a failure.
 - `resolveCertPaths` refuses a non-absolute `dataRoot`, and on Windows specifically refuses a resolved
   CAROOT that would land under `dataRoot` — a containment guard, case-insensitive and
