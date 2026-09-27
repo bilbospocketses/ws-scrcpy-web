@@ -1,6 +1,6 @@
 # Privacy Policy
 
-**Effective: 2026-08-31**
+**Effective: 2026-09-27**
 
 ## TL;DR
 
@@ -34,18 +34,25 @@ The request reveals your IP address and User-Agent string to GitHub (the file ho
 - **Switch channels** between stable and beta.
 - **Override the feed URL** by setting the `VELOPACK_FEED_URL` environment variable -- useful for air-gapped deployments pointing at a local mirror.
 
-### 2. Dependency installation (first run + retry)
+### 2. Dependency version checks and installation
 
-The first-run dependency manager and the in-app updater fetch standalone runtime dependencies on demand. Outbound destinations:
+The dependency manager checks each standalone runtime dependency for a newer version on every start, and downloads one when it is missing or you update it. Outbound destinations:
 
-- `https://nodejs.org/dist/` -- Node.js binaries.
-- `https://dl.google.com/android/repository/` -- ADB platform-tools.
-- `https://github.com/Genymobile/scrcpy/releases/...` -- scrcpy-server binary.
+- `https://nodejs.org/dist/` -- Node.js binaries and their version index.
+- `https://dl.google.com/android/repository/` -- ADB platform-tools and their repository listing.
+- `https://api.github.com/repos/Genymobile/scrcpy/releases/latest` and
+  `https://github.com/Genymobile/scrcpy/releases/...` -- the scrcpy-server version lookup and binary.
 - `https://github.com/<owner>/ws-scrcpy-web/releases/...` -- our own node-pty prebuilts.
-- `https://api.github.com/repos/bilbospocketses/mkcert/releases/latest` and
-  `https://github.com/bilbospocketses/mkcert/releases/download/...` -- our `mkcert` fork: the checksum
-  manifest and the platform binary. **Unlike the four above, these are not fetched on first run.**
-  Nothing is requested until you open Settings → Server → Local HTTPS and generate a certificate, so a
+- `https://api.github.com/repos/bilbospocketses/mkcert/releases/latest` -- the version lookup for our
+  `mkcert` fork. Like the lookups above, it runs on every start, whether or not Local HTTPS is in use.
+- `https://github.com/bilbospocketses/mkcert/releases/download/...`,
+  `https://api.github.com/repos/bilbospocketses/mkcert/attestations/...` and
+  `https://tuf-repo-cdn.sigstore.dev/` -- installing or updating `mkcert`: the checksum manifest and the
+  platform binary, the manifest's build-provenance attestation, and the Sigstore trust root that
+  attestation is checked against (cached in `dependencies/.sigstore` and refreshed on each later install or
+  update). **Unlike the other
+  downloads, these are not fetched on first run.** Nothing is downloaded until you open Settings →
+  Server → Local HTTPS and generate a certificate, or update mkcert from Settings → Dependencies, so a
   deployment that never uses that feature never contacts them. The certificate itself is then minted
   entirely on your machine -- the binary runs locally and sends nothing anywhere.
 
@@ -69,11 +76,12 @@ When traffic does leave your machine, it goes to one of these well-known operato
 
 | Operator | Role | Privacy policy |
 |---|---|---|
-| GitHub (Microsoft) | Hosts release artifacts, the Velopack feed, and the source repo | https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement |
+| GitHub (Microsoft) | Hosts release artifacts, the Velopack feed, and the source repo; answers the release and attestation lookups (`api.github.com`) | https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement |
 | Google | Hosts ADB platform-tools | https://policies.google.com/privacy |
 | Node.js Foundation | Hosts Node.js binaries | https://nodejs.org/en/about/privacy |
 | Velopack | Update SDK (the SDK runs locally; no data goes to Velopack itself) | https://velopack.io |
 | Genymobile (scrcpy) | Source of scrcpy-server binary, hosted on GitHub | See GitHub policy above |
+| Sigstore (OpenSSF, Linux Foundation) | Serves the trust root that mkcert's build-provenance attestation is checked against (`tuf-repo-cdn.sigstore.dev`); contacted only when mkcert is installed or updated | https://www.linuxfoundation.org/legal/privacy-policy |
 
 ## Web UI storage
 

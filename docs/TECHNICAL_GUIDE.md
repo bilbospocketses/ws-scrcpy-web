@@ -999,11 +999,15 @@ Run `npm outdated` to check all at once. Update one at a time, build + test afte
 | 13 | `@xterm/addon-attach` | Connects xterm to a WebSocket for remote shell | Must match `@xterm/xterm` major version |
 | 14 | `@xterm/addon-fit` | Auto-resizes terminal to fit its container | Must match `@xterm/xterm` major version |
 
-### Runtime dependency bundled into build
+### Runtime npm dependencies
+
+The server bundle keeps every package import external (`externals: [/^[a-z@]/]` in `webpack/ws-scrcpy-web.common.ts`), so these ship as installed packages beside the bundle, not inside it. None is user-updatable.
 
 | # | Package | Purpose | Update notes |
 |---|---------|---------|--------------|
-| 15 | `ws` | WebSocket server powering all browser-to-server communication | Bundled into webpack output; not user-updatable. Stable, rarely updates. Check before every release. |
+| 15 | `ws` | WebSocket server powering all browser-to-server communication | Stable, rarely updates. Check before every release. |
+| 16 | `velopack` | Velopack's Node SDK, behind the in-app updater | `scripts/vpk-path.mjs` derives the `vpk` packaging CLI from this package's resolved version, so the two cannot drift. The Rust `velopack` crate in `Cargo.lock` is not tied to it: bump it in the same change. Read the upstream notes for MSI changes and check them against `scripts/msi-default-programfiles.ps1`. |
+| 17 | `@sigstore/bundle`, `@sigstore/tuf`, `@sigstore/verify` | Verify the build-provenance attestation of a mkcert release before it is installed (§28.4) | Loaded with a dynamic `import()` only when mkcert is installed or updated. `createSigstoreVerifier` in `src/server/mkcertProvenance.ts` wires the three by hand, so a major bump of any of them can change an API it calls; `mkcertProvenance.test.ts` runs the genuine v0.1.0 attestation through them offline and fails if it does. |
 
 ### Runtime dependencies managed by in-app updater
 
@@ -1011,10 +1015,11 @@ These are not npm packages in the build -- they are external binaries bundled in
 
 | # | Dependency | Pinned in | Purpose | Update source | Update notes |
 |---|------------|-----------|---------|---------------|--------------|
-| 16 | `node-pty` | `package.json` (`optionalDependencies`) | Provides pseudo-terminal for ADB shell sessions in the browser | npm prebuilt binaries | Native DLL (conpty.dll + OpenConsole.exe) is ABI-locked to Node.js version. Must update together with Node.js. |
-| 17 | Node.js | `NODE_VERSION` in `scripts/fetch-node.mjs` (with the per-platform sha256 pins beside it) | JavaScript runtime that runs the ws-scrcpy-web server | nodejs.org | Paired with node-pty (#16) and with `@types/node` (#9). Only use LTS (even-numbered) releases. |
-| 18 | ADB (platform-tools) | unpinned — always latest | Communicates with Android devices (push, shell, tunnel) | Google SDK | Standalone zip download and extract |
-| 19 | scrcpy-server | `SERVER_VERSION` in `src/common/Constants.ts` (bundled seed), `<deps>/scrcpy-server/.version` (installed) | Runs on Android device to capture screen, audio, and accept input | Genymobile/scrcpy releases | Single binary replace via the in-app dep panel — installed version is tracked at `<deps>/scrcpy-server/.version` and read by `src/server/scrcpyServerVersion.ts`; both the UI display and the wire-protocol arg passed to `app_process` resolve from the marker. `SERVER_VERSION` is the fallback for legacy seed installs predating the marker — bump it only when bumping the bundled seed binary, not on every user-facing scrcpy release. The bundled JAR is checksum-pinned per version and asserted by `scrcpyServerAsset.test.ts`, so the binary and the version the app reports cannot drift apart. |
+| 18 | `node-pty` | `package.json` (`optionalDependencies`) | Provides pseudo-terminal for ADB shell sessions in the browser | npm prebuilt binaries | Native DLL (conpty.dll + OpenConsole.exe) is ABI-locked to Node.js version. Must update together with Node.js. |
+| 19 | Node.js | `NODE_VERSION` in `scripts/fetch-node.mjs` (with the per-platform sha256 pins beside it) | JavaScript runtime that runs the ws-scrcpy-web server | nodejs.org | Paired with node-pty (#18) and with `@types/node` (#9). Only use LTS (even-numbered) releases. |
+| 20 | ADB (platform-tools) | unpinned — always latest | Communicates with Android devices (push, shell, tunnel) | Google SDK | Standalone zip download and extract |
+| 21 | scrcpy-server | `SERVER_VERSION` in `src/common/Constants.ts` (bundled seed), `<deps>/scrcpy-server/.version` (installed) | Runs on Android device to capture screen, audio, and accept input | Genymobile/scrcpy releases | Single binary replace via the in-app dep panel — installed version is tracked at `<deps>/scrcpy-server/.version` and read by `src/server/scrcpyServerVersion.ts`; both the UI display and the wire-protocol arg passed to `app_process` resolve from the marker. `SERVER_VERSION` is the fallback for legacy seed installs predating the marker — bump it only when bumping the bundled seed binary, not on every user-facing scrcpy release. The bundled JAR is checksum-pinned per version and asserted by `scrcpyServerAsset.test.ts`, so the binary and the version the app reports cannot drift apart. |
+| 22 | mkcert | unpinned — the fork's latest release, installed only once its `SHA256SUMS` carries a valid build-provenance attestation (`src/server/mkcertProvenance.ts`) | Mints the local CA and the leaf certificate for Local HTTPS (§28) | `bilbospocketses/mkcert` releases | Fetched on first use (`deferInstall`), not at boot. Its tag must be plain `vX.Y.Z`. There is no pin to bump: a new fork release installs as long as its manifest is attested by the fork's `release.yml` at that exact tag (§28.4). |
 
 ### Quick check
 
@@ -1022,7 +1027,7 @@ These are not npm packages in the build -- they are external binaries bundled in
 npm outdated
 ```
 
-Shows all npm packages (1-15) with available updates. For runtime dependencies (16-19), read the pin from the file named in the table, then check the upstream release page.
+Shows all npm packages (1-17) with available updates. For runtime dependencies (18-22), read the pin from the file named in the table, then check the upstream release page.
 
 ---
 
@@ -1030,7 +1035,7 @@ Shows all npm packages (1-15) with available updates. For runtime dependencies (
 
 ### 13.1 Architecture
 
-The dependency updater manages runtime dependencies (Node.js + node-pty, ADB, scrcpy-server) through a browser UI on the home page. It allows users to check for updates and install them without leaving the browser.
+The dependency updater manages runtime dependencies (Node.js + node-pty, ADB, scrcpy-server, mkcert) through Settings → Dependencies; the home page keeps only an alert card, shown when an update is waiting. It allows users to check for updates and install them without leaving the browser.
 
 **Components:**
 
@@ -3114,7 +3119,9 @@ which this dependency joins) to mint a certificate for this machine's LAN IP or 
 and an HTTPS listener starts alongside the existing plain-HTTP one once that certificate exists. The
 design rationale, the measured facts it rests on, and the decisions that were explicitly rejected
 live in `docs/superpowers/specs/2026-09-18-local-https-design.md` — this section covers what the
-code actually does.
+code actually does. That spec is the design as of 2026-09-18: its mkcert pin, its Windows TLS path and
+its token-gated CA download have since changed, and §28.2, §28.4 and the route list below supersede it
+on each.
 
 The admin-gated `/api/tls/*` routes (`src/server/api/TlsApi.ts`) are the whole server-side surface:
 `GET /state`, `POST /generate`, `POST /revoke`, `GET /ca-root` (rate-limited to 10 downloads per 60
@@ -3490,4 +3497,4 @@ degrades to HTTP-only, logged, never a crash.
 | `tests/e2e/support/githubRefusal.ts` | The e2e spent-quota rule as pure functions (`quotaFromRateLimit`, `partitionRetryErrors`, `partitionDependencyStates`, `isExcusableNullLatest`), unit-tested in `tests/unit/githubRefusal.test.ts` so the spent-quota branch runs on every build |
 | `src/server/DependencyManager.ts` | `installMkcert()` — the install handler; `fetchAttestedMkcertManifest()` (manifest provenance, via `mkcertProvenance.ts`) and `verifyMkcertBinaryAgainstManifest()` (binary-vs-manifest), reusing `parseSha256Sums`/`verifySha256` |
 | `src/app/client/settings/tabs/ServerTab.ts` | The Settings → Server → Local HTTPS panel; `listenerStatusNotice()`; the exposure-radio gate on `httpsListener.bound` |
-| `docs/superpowers/specs/2026-09-18-local-https-design.md` | The full design: measured facts, rejected alternatives, the UI notification table |
+| `docs/superpowers/specs/2026-09-18-local-https-design.md` | The full design as of 2026-09-18: measured facts, rejected alternatives, the UI notification table. §28.4, §28.2 and §28's route list supersede its mkcert pin, its Windows TLS path and its token-gated CA download |

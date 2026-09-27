@@ -17,6 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`PRIVACY.md` now lists every host the dependency manager contacts.** Since beta.138, installing or updating mkcert also fetches the release's build-provenance attestation from `api.github.com` and the Sigstore trust root from `tuf-repo-cdn.sigstore.dev`. Neither was listed, and Sigstore was missing from the operators table. The page also said a deployment that never uses Local HTTPS never contacts the mkcert fork, but the version lookup for it (`api.github.com/repos/bilbospocketses/mkcert/releases/latest`) has run on every start since mkcert was added, as scrcpy-server's lookup has; neither lookup was listed. The Effective date moves to 2026-09-27, as the file's own change rule requires. The local-dependencies audit's mkcert note described the checksum pin that beta.138 replaced and now describes the attestation check.
+- **`SECURITY.md` names the one route the per-instance token does not gate.** It said the token cookie refuses any non-browser client that never loaded the page; since beta.139 `GET /api/tls/ca-root` is exempt, with sign-in and the admin gate still in front of it.
+- **The dependency tables in TECHNICAL_GUIDE §12 list what now ships.** mkcert has a row (unpinned, installed only on a valid attestation), and so do the three `@sigstore/*` packages and `velopack`, which was never listed. `ws` was described as bundled into the webpack output; the server bundle keeps every package external, so it ships as an installed package.
+- **The Dependencies panel is described where it is.** README, TECHNICAL_GUIDE §13.1 and smoke row 9.4 still placed it on the home page, which since the tabbed-settings work keeps only an alert card; it is Settings → Dependencies.
+- **The coverage register says when 1.9, 9.4 and 20.9 pass as `partial`.** Each passes with a `partial` annotation instead of failing when `/rate_limit` proves the runner's GitHub quota spent (#753 and item 149), and the register's rule is that every row names what a pass does not prove.
+- **The remaining docs catch up with the session.** `dependencies/README.md` lists mkcert and its `.sigstore/` trust-root cache; CONTRIBUTING says where `tests/unit/` sits and which commands cover it; TECHNICAL_GUIDE marks the 2026-09-18 Local HTTPS design spec as dated, since its mkcert pin, Windows TLS path and token-gated CA download have all changed.
+
 ## [0.1.30-beta.139] - 2026-09-27
 
 ### Changed

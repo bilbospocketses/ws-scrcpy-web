@@ -1,6 +1,6 @@
 # `dependencies/` — Linux dev fallback only
 
-Managed binaries (Node, ADB, scrcpy-server, node-pty) are always resolved to an
+Managed binaries (Node, ADB, scrcpy-server, node-pty, mkcert) are always resolved to an
 absolute path under a dependencies folder — never from `PATH`, never from a host
 environment guess. Which folder depends on how the app was started:
 
@@ -28,4 +28,6 @@ and `config.depsPath.test.ts` locks the two together.
 
 Do not commit binary contents of the subdirs here — they are populated at runtime by
 `DependencyManager.autoInstallMissing()`, which downloads and SHA256-verifies each
-dependency on first launch.
+dependency on first launch. mkcert is the exception: it is fetched the first time a
+Local HTTPS certificate is generated, and only after its release's checksum file passes
+a Sigstore build-provenance check, whose trust root is cached in `.sigstore/` here.

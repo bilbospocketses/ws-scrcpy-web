@@ -32,9 +32,12 @@ Exhaustive grep of every `spawn`, `execFile`, `execFileSync`, `execFileAsync`, `
 >
 > Two ways it differs from the four above, both deliberate: it carries `deferInstall`, so it is
 > fetched the first time a certificate is generated rather than at boot; and it is the only one whose
-> download is verified before placement, against a SHA-256 pin held in this repo's own source
-> (`MKCERT_SHA256SUMS_PIN`). The pin matters because mkcert mints a CA the user installs into their OS
-> and phone trust stores — see `docs/TECHNICAL_GUIDE.md` §28.4.
+> download is verified before placement. Since 2026-09-27 that check is the release's own Sigstore
+> build-provenance attestation: the checksum manifest must be attested by the fork's `release.yml` at
+> that exact tag before the binary is fetched (`src/server/mkcertProvenance.ts`). Until then it was a
+> SHA-256 pin held in this repo's own source (`MKCERT_SHA256SUMS_PIN`), which could only ever accept
+> one release. The check matters because mkcert mints a CA the user installs into their OS and phone
+> trust stores — see `docs/TECHNICAL_GUIDE.md` §28.4.
 
 ### OS-utility carve-outs (cannot be vendored — they ARE the OS)
 

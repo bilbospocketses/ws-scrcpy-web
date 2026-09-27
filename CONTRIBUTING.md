@@ -91,7 +91,7 @@ dist/public/embed.js          embed page entry script
 
 ## Tests
 
-Tests use **Vitest** and live alongside the code (`*.test.ts`). Prefer unit tests for protocol layers (control messages, binary readers/writers, codec configs, device labels). Stream lifecycle is manually smoke-tested — WebCodecs + WebSocket + ADB timing doesn't mock cleanly.
+Tests use **Vitest** and live alongside the code (`*.test.ts`). Tests of the e2e suite's own support code live in `tests/unit/`, which `npm test` runs and `npm run test:e2e:types` type-checks. Prefer unit tests for protocol layers (control messages, binary readers/writers, codec configs, device labels). Stream lifecycle is manually smoke-tested — WebCodecs + WebSocket + ADB timing doesn't mock cleanly.
 
 Any PR that changes protocol code or control-message encoding MUST include or update a test.
 

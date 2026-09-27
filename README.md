@@ -264,7 +264,7 @@ The dependency manager skips downloads when it finds an existing valid copy.
 
 ### What Updates Automatically (In-App Updater)
 
-The Dependencies panel on the home page lets you check for updates and install them with one click. These runtime dependencies are standalone binaries that can be safely swapped without recompiling the application:
+The Dependencies tab in Settings lets you check for updates and install them with one click. These runtime dependencies are standalone binaries that can be safely swapped without recompiling the application:
 
 | Dependency | What it does | How it updates |
 |------------|-------------|----------------|
