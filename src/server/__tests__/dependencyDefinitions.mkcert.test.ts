@@ -10,21 +10,23 @@ describe('mkcert dependency definition', () => {
     });
 
     it('pins our fork, not upstream — upstream is dormant and unfixed', () => {
-        const url = def().getDownloadUrl('v1.4.4-bt.2');
+        const url = def().getDownloadUrl('v0.1.0');
         expect(url).toContain('bilbospocketses/mkcert');
         expect(url).not.toContain('FiloSottile');
     });
 
     it('asks for an asset name that exists in the release', () => {
-        // Real asset names, verified against the published release 2026-09-19.
+        // Real asset names: the v0.1.0 release's own SHA256SUMS, fetched
+        // 2026-09-27 and committed as fixtures/mkcert-v0.1.0-SHA256SUMS.txt.
         const known = [
-            'mkcert-v1.4.4-bt.2-windows-amd64.exe',
-            'mkcert-v1.4.4-bt.2-linux-amd64',
-            'mkcert-v1.4.4-bt.2-linux-arm64',
-            'mkcert-v1.4.4-bt.2-darwin-amd64',
-            'mkcert-v1.4.4-bt.2-darwin-arm64',
+            'mkcert-v0.1.0-windows-amd64.exe',
+            'mkcert-v0.1.0-windows-arm64.exe',
+            'mkcert-v0.1.0-linux-amd64',
+            'mkcert-v0.1.0-linux-arm64',
+            'mkcert-v0.1.0-darwin-amd64',
+            'mkcert-v0.1.0-darwin-arm64',
         ];
-        const asset = def().getDownloadUrl('v1.4.4-bt.2').split('/').pop()!;
+        const asset = def().getDownloadUrl('v0.1.0').split('/').pop()!;
         expect(known).toContain(asset);
     });
 
@@ -33,7 +35,7 @@ describe('mkcert dependency definition', () => {
         // lookup. mkcert cannot: its install also needs the attestation lookup,
         // which is api.github.com too, so a fallback tag would be refused at the
         // next step. And any fixed tag here goes stale — v1.4.4-bt.2, the old
-        // fallback, is being deleted.
+        // fallback, was deleted on 2026-09-27.
         expect(def().fallbackVersion).toBeUndefined();
     });
 
@@ -64,6 +66,13 @@ describe('mkcert dependency definition', () => {
             answer('v0.1.0/../../evil');
             await expect(def().checkLatest()).rejects.toThrow(/unexpected mkcert release tag/);
         });
+
+        it('refuses the retired -bt.N numbering', async () => {
+            // Every -bt tag was deleted and the fork's release workflow now
+            // refuses to publish one, so a -bt "latest" can only be a mistake.
+            answer('v1.4.4-bt.2');
+            await expect(def().checkLatest()).rejects.toThrow(/unexpected mkcert release tag/);
+        });
     });
 
     it('does not require a restart — nothing is loaded from it in-process', () => {
@@ -77,12 +86,12 @@ describe('mkcertAssetName produces correct asset names for all platform/arch com
         arch: NodeJS.Architecture;
         expected: string;
     }> = [
-        { platform: 'win32', arch: 'x64', expected: 'mkcert-v1.4.4-bt.2-windows-amd64.exe' },
-        { platform: 'win32', arch: 'arm64', expected: 'mkcert-v1.4.4-bt.2-windows-arm64.exe' },
-        { platform: 'linux', arch: 'x64', expected: 'mkcert-v1.4.4-bt.2-linux-amd64' },
-        { platform: 'linux', arch: 'arm64', expected: 'mkcert-v1.4.4-bt.2-linux-arm64' },
-        { platform: 'darwin', arch: 'x64', expected: 'mkcert-v1.4.4-bt.2-darwin-amd64' },
-        { platform: 'darwin', arch: 'arm64', expected: 'mkcert-v1.4.4-bt.2-darwin-arm64' },
+        { platform: 'win32', arch: 'x64', expected: 'mkcert-v0.1.0-windows-amd64.exe' },
+        { platform: 'win32', arch: 'arm64', expected: 'mkcert-v0.1.0-windows-arm64.exe' },
+        { platform: 'linux', arch: 'x64', expected: 'mkcert-v0.1.0-linux-amd64' },
+        { platform: 'linux', arch: 'arm64', expected: 'mkcert-v0.1.0-linux-arm64' },
+        { platform: 'darwin', arch: 'x64', expected: 'mkcert-v0.1.0-darwin-amd64' },
+        { platform: 'darwin', arch: 'arm64', expected: 'mkcert-v0.1.0-darwin-arm64' },
     ];
 
     testCases.forEach(({ platform, arch, expected }) => {
@@ -91,7 +100,7 @@ describe('mkcertAssetName produces correct asset names for all platform/arch com
             const archSpy = vi.spyOn(os, 'arch').mockReturnValue(arch);
 
             try {
-                const result = mkcertAssetName('v1.4.4-bt.2');
+                const result = mkcertAssetName('v0.1.0');
                 expect(result).toBe(expected);
             } finally {
                 platformSpy.mockRestore();

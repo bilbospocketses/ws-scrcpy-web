@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { openSettingsTab } from './support/auth';
-import { githubCoreQuota, isDeferredGithubLookupRefusal } from './support/githubQuota';
+import { githubCoreQuota, partitionDependencyStates } from './support/githubQuota';
 import { BOOT_INSTALLED_DEPENDENCIES } from './support/privateServer';
 
 /**
@@ -213,17 +213,20 @@ test.describe('container mode', () => {
         // api.github.com refused its version lookup, the server reports it in
         // Error with that refusal as its message. That is the network's state,
         // not the app's, and it is excused ONLY when /rate_limit proves the
-        // quota spent (the item-149 rule). Every other error still fails.
-        const quota = final.some(isDeferredGithubLookupRefusal) ? await githubCoreQuota() : undefined;
-        for (const d of final) {
-            if (quota?.exhausted && isDeferredGithubLookupRefusal(d)) {
-                test.info().annotations.push({
-                    type: 'partial',
-                    description: `${d.name}: api.github.com quota exhausted for this IP (${quota.detail}); Error is the refused lookup`,
-                });
-                expect(d.installedVersion, d.name).toBeNull();
-                continue;
-            }
+        // quota spent (the item-149 rule). Every other error still fails. The
+        // decision is `partitionDependencyStates`, unit-tested with this exact
+        // list in tests/unit/githubRefusal.test.ts. /rate_limit is not counted
+        // against the quota, so asking whenever anything errored costs nothing.
+        const quota = final.some((d) => d.status === 'error') ? await githubCoreQuota() : undefined;
+        const { excused, checked } = partitionDependencyStates(final, quota);
+        for (const d of excused) {
+            test.info().annotations.push({
+                type: 'partial',
+                description: `${d.name}: api.github.com quota exhausted for this IP (${quota?.detail}); Error is the refused lookup`,
+            });
+            expect(d.installedVersion, d.name).toBeNull();
+        }
+        for (const d of checked) {
             const why = quota ? `${d.name} (api.github.com: ${quota.detail})` : d.name;
             expect(d.status, why).not.toBe('error');
             expect(d.errorMessage, why).toBeUndefined();

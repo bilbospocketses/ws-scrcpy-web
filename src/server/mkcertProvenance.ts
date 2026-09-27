@@ -1,5 +1,5 @@
+import type { SerializedBundle } from '@sigstore/bundle';
 import { createHash } from 'crypto';
-import type { Bundle, VerifyOptions } from 'sigstore';
 import { Logger } from './Logger';
 import { fetchOkWithRetry, HttpStatusError, VERSION_CHECK_POLICY } from './util/fetchWithRetry';
 
@@ -26,19 +26,21 @@ const IN_TOTO_STATEMENT_V1 = 'https://in-toto.io/Statement/v1';
 const SLSA_PROVENANCE_V1 = 'https://slsa.dev/provenance/v1';
 
 /**
- * The tag shapes the fork publishes: plain `vX.Y.Z` from v0.1.0 on, and the
- * retired `v1.4.4-bt.N` line, which is still `latest` until v0.1.0 ships. The
- * tag comes from the GitHub API and ends up in a download URL and in the
- * identity pattern below, so anything else is refused rather than escaped.
+ * The tag shape the fork publishes: plain `vX.Y.Z`, no leading zeros -- the
+ * same rule the fork's own release workflow enforces. The retired `-bt.N`
+ * numbering is refused: every such tag was deleted on 2026-09-27 and the fork
+ * can no longer publish one. The tag comes from the GitHub API and ends up in
+ * a download URL and in the identity pattern below, so anything else is
+ * refused rather than escaped.
  */
-const RELEASE_TAG = /^v\d+\.\d+\.\d+(?:-bt\.\d+)?$/;
+const RELEASE_TAG = /^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/;
 
 export function isMkcertReleaseTag(tag: string): boolean {
     return RELEASE_TAG.test(tag);
 }
 
 /**
- * sigstore-js checks the certificate SAN with `san.match(pattern)`, an
+ * The verifier tests the certificate SAN with `san.match(pattern)`, an
  * UNANCHORED regex, so a bare URL would also accept a longer tag, a look-alike
  * repo or `githubXcom`. Anchored and fully escaped, and pinned to the exact tag
  * rather than `refs/tags/v*`, so one release's attestation cannot vouch for a
@@ -49,17 +51,58 @@ export function mkcertSignerIdentityPattern(tag: string): string {
     return `^${literal}$`;
 }
 
+/** Who must have signed the attestation. */
+export interface MkcertSignerPolicy {
+    /** The OIDC issuer of the signing certificate (exact match). */
+    issuer: string;
+    /** An anchored regex the certificate's SAN must match. */
+    identityPattern: string;
+}
+
 export interface MkcertProvenanceDeps {
     /** Every attestation bundle GitHub holds for the digest; `[]` when there are none. */
-    fetchBundles: (sha256Hex: string) => Promise<Bundle[]>;
-    /** `sigstore.verify` in production; throws on any failure. */
-    verifyBundle: (bundle: Bundle, options: VerifyOptions) => Promise<unknown>;
+    fetchBundles: (sha256Hex: string) => Promise<SerializedBundle[]>;
     /**
-     * Where sigstore keeps its TUF metadata. Its default is under the running
-     * user's home, which for the Windows service is the SYSTEM profile, so the
-     * caller points it into the app's own dependencies folder instead.
+     * Verifies the bundle's DSSE signature, its certificate chain to the
+     * Sigstore root, its transparency-log entry, and that the certificate
+     * matches `policy`. Throws on any failure.
      */
+    verifyBundle: (bundle: SerializedBundle, policy: MkcertSignerPolicy) => Promise<void>;
+}
+
+/**
+ * The production verifier, built from the three Sigstore packages that do the
+ * checking rather than the `sigstore` umbrella, which also pulls in a signing
+ * stack (and its whole HTTP client) this app never calls. Dropping it took the
+ * production dependency tree from 55 packages to 19 (36 removed, none added;
+ * `npm ci --omit=dev`, measured 2026-09-27). The wiring is the umbrella's own `verify`:
+ * TUF-fetched trusted root -> trust material -> Verifier -> policy.
+ *
+ * `tufCachePath` is where the TUF metadata lives. The library's default is
+ * under the running user's home, which for the Windows service is the SYSTEM
+ * profile, so the caller points it into the app's own dependencies folder.
+ * `tufForceCache` uses the root the library ships instead of refreshing it; the
+ * test suite alone sets it, so CI needs no network.
+ */
+export function createSigstoreVerifier(opts: {
     tufCachePath: string;
+    tufForceCache?: boolean;
+}): MkcertProvenanceDeps['verifyBundle'] {
+    return async (bundle, policy) => {
+        // Loaded on demand, so a server that never installs mkcert never loads them.
+        const [{ bundleFromJSON }, { getTrustedRoot }, { Verifier, toSignedEntity, toTrustMaterial }] =
+            await Promise.all([import('@sigstore/bundle'), import('@sigstore/tuf'), import('@sigstore/verify')]);
+        const trustedRoot = await getTrustedRoot({
+            cachePath: opts.tufCachePath,
+            forceCache: opts.tufForceCache ?? false,
+            retry: { retries: 2 },
+            timeout: 5000,
+        });
+        new Verifier(toTrustMaterial(trustedRoot)).verify(toSignedEntity(bundleFromJSON(bundle)), {
+            subjectAlternativeName: policy.identityPattern,
+            extensions: { issuer: policy.issuer },
+        });
+    };
 }
 
 export function defaultMkcertProvenanceDeps(tufCachePath: string): MkcertProvenanceDeps {
@@ -72,7 +115,7 @@ export function defaultMkcertProvenanceDeps(tufCachePath: string): MkcertProvena
                     ...VERSION_CHECK_POLICY,
                     onRetry: (n) => log.warn(`mkcert attestation lookup ${n.attempt}/${n.attempts}: ${n.reason}`),
                 });
-                const body = (await res.json()) as { attestations?: { bundle?: Bundle }[] };
+                const body = (await res.json()) as { attestations?: { bundle?: SerializedBundle }[] };
                 return (body.attestations ?? []).flatMap((a) => (a.bundle ? [a.bundle] : []));
             } catch (err) {
                 // GitHub answers 404 for a digest it holds no attestation for.
@@ -82,10 +125,7 @@ export function defaultMkcertProvenanceDeps(tufCachePath: string): MkcertProvena
                 throw err;
             }
         },
-        // Loaded on demand: sigstore pulls in a TUF client and a signing stack
-        // the server never needs unless someone turns HTTPS on.
-        verifyBundle: async (bundle, options) => (await import('sigstore')).verify(bundle, options),
-        tufCachePath,
+        verifyBundle: createSigstoreVerifier({ tufCachePath }),
     };
 }
 
@@ -112,22 +152,21 @@ export async function verifyMkcertManifestProvenance(
         );
     }
 
-    const options: VerifyOptions = {
-        certificateIssuer: GITHUB_ACTIONS_ISSUER,
-        certificateIdentityURI: mkcertSignerIdentityPattern(tag),
-        tufCachePath: deps.tufCachePath,
+    const policy: MkcertSignerPolicy = {
+        issuer: GITHUB_ACTIONS_ISSUER,
+        identityPattern: mkcertSignerIdentityPattern(tag),
     };
     const failures: string[] = [];
     for (const bundle of bundles) {
         try {
-            // sigstore-js verifies `messageSignature` in preference to
+            // The verifier checks `messageSignature` in preference to
             // `dsseEnvelope` when a bundle carries both, while the statement
             // check below reads the envelope. Such a bundle fails verification
             // today only because no artifact is passed; refuse the shape itself.
             if ('messageSignature' in bundle) {
                 throw new Error('the attestation carries a message signature as well as a DSSE envelope');
             }
-            await deps.verifyBundle(bundle, options);
+            await deps.verifyBundle(bundle, policy);
             assertStatementCoversManifest(bundle, digest, `mkcert-${tag}-SHA256SUMS.txt`);
             return;
         } catch (err) {
@@ -145,7 +184,7 @@ export async function verifyMkcertManifestProvenance(
  * the certificate signed. A genuine attestation proves nothing about THIS file
  * unless its statement names this file's digest.
  */
-function assertStatementCoversManifest(bundle: Bundle, digest: string, releaseName: string): void {
+function assertStatementCoversManifest(bundle: SerializedBundle, digest: string, releaseName: string): void {
     const envelope = (bundle as { dsseEnvelope?: { payload: string; payloadType: string } }).dsseEnvelope;
     if (!envelope || envelope.payloadType !== IN_TOTO_PAYLOAD_TYPE) {
         throw new Error('the attestation is not an in-toto statement');

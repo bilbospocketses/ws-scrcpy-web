@@ -3329,9 +3329,10 @@ to the Dependencies tab immediately, rather than tracked by a second manager the
 **It installs the fork's LATEST release** (`checkLatest` → `api.github.com/…/releases/latest`), with
 no pinned version and no fallback. A fallback tag could not be verified anyway: the attestation lookup
 below is `api.github.com` too, so a refused version lookup would be refused again one step later. The
-tag must be `vX.Y.Z`, optionally with a `-bt.N` suffix (the retired numbering), or it is refused before
-it reaches a URL. The filter only keeps odd characters out; which tag is trusted is decided by the signer
-identity below, which names the exact tag.
+tag must be plain `vX.Y.Z` with no leading zeros (the same rule the fork's release workflow enforces), or
+it is refused before it reaches a URL. The retired `-bt.N` numbering is refused too: every such tag was
+deleted on 2026-09-27 and the fork can no longer publish one. The filter only keeps odd tags out; which
+tag is trusted is decided by the signer identity below, which names the exact tag.
 
 **The install verifies in two stages, in this order, because checking the binary against a manifest
 from the same release never proved authenticity — only that the download was not corrupted in
@@ -3340,7 +3341,8 @@ transit.** A tampered GitHub release could alter the binary and its manifest tog
 1. **Fetch `mkcert-<tag>-SHA256SUMS.txt` and check the manifest's own build provenance** —
    `src/server/mkcertProvenance.ts` — **before the platform binary is downloaded at all.** GitHub is
    asked for every attestation of the manifest's SHA-256 (`/repos/bilbospocketses/mkcert/attestations/sha256:<digest>`),
-   and one must pass `sigstore.verify` against the Sigstore public-good trust root, with the certificate
+   and one must pass the Sigstore verifier (`@sigstore/verify`, given a trusted root fetched by
+   `@sigstore/tuf`) against the Sigstore public-good trust root, with the certificate
    issued to `https://token.actions.githubusercontent.com` for exactly
    `https://github.com/bilbospocketses/mkcert/.github/workflows/release.yml@refs/tags/<tag>`, and be an
    in-toto SLSA provenance statement naming this manifest's release name and digest. That identity is
@@ -3363,16 +3365,30 @@ Four details of step 1 are load-bearing:
   for a manifest that claims to belong to another.
 - **A verified signature is not enough on its own.** The statement's `subject[]` must name this
   manifest's digest; otherwise a genuine attestation for some other file would pass. The test suite
-  proves this with the real v1.4.4-bt.2 manifest and attestation, committed as fixtures under
+  proves this with the real v0.1.0 manifest and attestation, committed as fixtures under
   `src/server/__tests__/fixtures/`: an edited manifest under the genuine bundle is refused, and so is
   the genuine bundle for a different tag.
 
+**Each refusal test names the layer that refused and asserts that every other layer passed.** The real-
+crypto tests wrap the production verifier and record what each call concluded, so a refusal is pinned
+to one cause rather than inferred from its message: the edited manifest is refused while the signature
+layer PASSED (so the digest-coverage check is the only thing that refused it), the other tag is refused
+by the verifier with `UNTRUSTED_SIGNER_ERROR`, and an edited signed payload with `TLOG_BODY_ERROR`. The
+statement checks (`_type`, `predicateType`, `payloadType`, release name) each have a variant that
+changes one field of the genuine statement and is refused after a stubbed signature layer passed. This
+is the evidence a mutation run would give, stated as an assertion that holds on every run.
+
 **Network.** An install now reaches `tuf-repo-cdn.sigstore.dev`, for the Sigstore trust root, in
 addition to `api.github.com` and `github.com`. The TUF metadata is cached in `<dependencies>/.sigstore`
-rather than in sigstore's default under the running user's home, which for the Windows service is the
+rather than in the library's default under the running user's home, which for the Windows service is the
 SYSTEM profile. Every verify refreshes it; that refresh is how a rotated Fulcio or Rekor key reaches
 an installed app. The test suite alone uses the trust root the library ships (`tufForceCache`), so CI
-needs no network. `sigstore` is loaded on demand, so a server that never installs mkcert never loads it.
+needs no network. The Sigstore packages are loaded on demand, so a server that never installs mkcert
+never loads them. Only the three that verify ship (`@sigstore/bundle`, `@sigstore/tuf`,
+`@sigstore/verify`), wired the way the `sigstore` umbrella's own `verify` wires them. The umbrella also
+brings a signing stack and its HTTP client, which this app never calls. Dropping it took the production
+dependency tree from 55 packages to 19 (36 removed, none added) and from 94.4 MB to 87.0 MB, measured on
+`npm ci --omit=dev` trees built from the before and after lockfiles on 2026-09-27.
 
 **The two failure families are deliberately worded differently.** "No attestation this app can
 verify" / "no build-provenance attestation exists" means the release itself is suspect. "The binary does
@@ -3384,14 +3400,16 @@ with no warn-and-continue path, before anything is placed where `resolveMkcertEx
 v1.4.4-bt.2's manifest digest in source, and attestation was checked only out of band, by whoever set
 the pin. The user moved mkcert to "latest", and a digest pin cannot follow a release that does not
 exist yet, so the pinned anchor became an identity instead of a hash. The reasons once given against
-runtime verification did not survive: `sigstore` is an npm dependency bundled with the app, not a
-PATH-resolved binary, so Local-Dependencies-Only is not in play. Releases v0.1.30-beta.130 to .137
+runtime verification did not survive: the Sigstore verifier is an npm dependency shipped with the app,
+not a PATH-resolved binary, so Local-Dependencies-Only is not in play. Releases v0.1.30-beta.130 to .137
 carry the old pin, so they refuse any mkcert release other than v1.4.4-bt.2.
 
 **Status follows the fork across its version reset.** The fork restarted its numbering at v0.1.0 after
 v1.4.4-bt.2. `latestIsAuthoritative` on the definition makes `resolveStatus` compare by identity, so an
 installed `1.4.4-bt.2` reports *update available* against `v0.1.0` rather than "newer than latest,
-staying put".
+staying put". The installed-version regex still reads the `-bt.N` suffix for exactly this reason, even
+though releases no longer carry it: an installed bt.2 binary does, and reading it is what offers that
+machine the update.
 
 ### 28.5 The four mkcert invocation requirements
 
@@ -3465,7 +3483,8 @@ degrades to HTTP-only, logged, never a crash.
 | `src/server/services/HttpServer.ts` | Exposure enforcement on the plain-HTTP listener, the listen-error handler, `getHttpsListenerStatus`, the bound leaf's `leafFingerprint` capture |
 | `src/server/Config.ts` | `buildServerList`, `readCertMaterial`, `sanitizeHttpsPort` / `validateHttpsPortInput` / `setHttpsPort`, `DEFAULT_HTTPS_PORT` |
 | `src/server/DependencyDefinitions.ts` | The `mkcert` dependency definition (`bilbospocketses/mkcert` fork, `deferInstall: true`); `mkcertExeName` / `mkcertAssetName` / `mkcertChecksumsUrl`; `latestIsAuthoritative` |
-| `src/server/mkcertProvenance.ts` | The attested-manifest gate: fetch GitHub's attestations for the manifest digest, `sigstore.verify` them against the tag-pinned release-workflow identity, and check the statement names the manifest |
+| `src/server/mkcertProvenance.ts` | The attested-manifest gate: fetch GitHub's attestations for the manifest digest, verify them (`createSigstoreVerifier`: `@sigstore/tuf` + `@sigstore/verify`) against the tag-pinned release-workflow identity, and check the statement names the manifest |
+| `tests/e2e/support/githubRefusal.ts` | The e2e spent-quota rule as pure functions (`quotaFromRateLimit`, `partitionRetryErrors`, `partitionDependencyStates`, `isExcusableNullLatest`), unit-tested in `tests/unit/githubRefusal.test.ts` so the spent-quota branch runs on every build |
 | `src/server/DependencyManager.ts` | `installMkcert()` — the install handler; `fetchAttestedMkcertManifest()` (manifest provenance, via `mkcertProvenance.ts`) and `verifyMkcertBinaryAgainstManifest()` (binary-vs-manifest), reusing `parseSha256Sums`/`verifySha256` |
 | `src/app/client/settings/tabs/ServerTab.ts` | The Settings → Server → Local HTTPS panel; `listenerStatusNotice()`; the exposure-radio gate on `httpsListener.bound` |
 | `docs/superpowers/specs/2026-09-18-local-https-design.md` | The full design: measured facts, rejected alternatives, the UI notification table |
