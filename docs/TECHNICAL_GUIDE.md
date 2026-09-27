@@ -3315,7 +3315,9 @@ to the Dependencies tab immediately, rather than tracked by a second manager the
 **It installs the fork's LATEST release** (`checkLatest` → `api.github.com/…/releases/latest`), with
 no pinned version and no fallback. A fallback tag could not be verified anyway: the attestation lookup
 below is `api.github.com` too, so a refused version lookup would be refused again one step later. The
-tag must be `vX.Y.Z` or the retired `v1.4.4-bt.N` shape, or it is refused before it reaches a URL.
+tag must be `vX.Y.Z`, optionally with a `-bt.N` suffix (the retired numbering), or it is refused before
+it reaches a URL. The filter only keeps odd characters out; which tag is trusted is decided by the signer
+identity below, which names the exact tag.
 
 **The install verifies in two stages, in this order, because checking the binary against a manifest
 from the same release never proved authenticity — only that the download was not corrupted in
@@ -3333,7 +3335,12 @@ transit.** A tampered GitHub release could alter the binary and its manifest tog
 2. **Only once the manifest passes that check, download the platform binary and verify it against the
    now-trusted manifest.**
 
-Three details of step 1 are load-bearing:
+Four details of step 1 are load-bearing:
+
+- **A bundle carrying a `messageSignature` as well as a `dsseEnvelope` is refused before verification.**
+  sigstore-js verifies the message signature in preference when both are present, while the statement
+  check reads the envelope. Such a bundle would fail today anyway, because no artifact is passed to
+  `verify`, but that is an accident of the call shape rather than a guard.
 
 - **The identity is an anchored, escaped regex.** sigstore-js tests the SAN with `san.match(pattern)`,
   which is unanchored, so a bare URL would also accept a longer tag, a look-alike repo (`mkcert-evil`)
@@ -3445,6 +3452,6 @@ degrades to HTTP-only, logged, never a crash.
 | `src/server/Config.ts` | `buildServerList`, `readCertMaterial`, `sanitizeHttpsPort` / `validateHttpsPortInput` / `setHttpsPort`, `DEFAULT_HTTPS_PORT` |
 | `src/server/DependencyDefinitions.ts` | The `mkcert` dependency definition (`bilbospocketses/mkcert` fork, `deferInstall: true`); `mkcertExeName` / `mkcertAssetName` / `mkcertChecksumsUrl`; `latestIsAuthoritative` |
 | `src/server/mkcertProvenance.ts` | The attested-manifest gate: fetch GitHub's attestations for the manifest digest, `sigstore.verify` them against the tag-pinned release-workflow identity, and check the statement names the manifest |
-| `src/server/DependencyManager.ts` | `installMkcert()` — the install handler; `fetchPinnedMkcertManifest()` (manifest-vs-pin) and `verifyMkcertBinaryAgainstManifest()` (binary-vs-manifest), reusing `parseSha256Sums`/`verifySha256` |
+| `src/server/DependencyManager.ts` | `installMkcert()` — the install handler; `fetchAttestedMkcertManifest()` (manifest provenance, via `mkcertProvenance.ts`) and `verifyMkcertBinaryAgainstManifest()` (binary-vs-manifest), reusing `parseSha256Sums`/`verifySha256` |
 | `src/app/client/settings/tabs/ServerTab.ts` | The Settings → Server → Local HTTPS panel; `listenerStatusNotice()`; the exposure-radio gate on `httpsListener.bound` |
 | `docs/superpowers/specs/2026-09-18-local-https-design.md` | The full design: measured facts, rejected alternatives, the UI notification table |
