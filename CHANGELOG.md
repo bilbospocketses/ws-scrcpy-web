@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.140] - 2026-09-27
+
 ### Security
 - **Local HTTPS changes now need proof that the caller is the machine's operator, like every other admin action.** The `/api/tls` routes checked only for an admin, and in open mode (no sign-in) everyone is the implicit admin. So any device on the LAN that had loaded a page could regenerate the CA every other device trusts, revoke it, change the plain-HTTP exposure, or change the HTTPS port, which restarts the server. Generate, revoke, exposure and https-port now go through `requireOperator`: the machine itself, a signed-in admin, or `WS_SCRCPY_ALLOW_REMOTE_ADMIN=1`. Anyone else gets `403 {"error":"admin actions are limited to this machine"}`. The gate is keyed on the request method, so a write route added later is covered too. The two reads, the panel's state and the CA download, stay reachable from another device, because installing the CA there is the point of them (smoke 21.2). The panel shows the refusal's own message for revoke as well, instead of a bare "(403)". SECURITY.md and TECHNICAL_GUIDE §24.0 and §28 list the covered routes.
 
