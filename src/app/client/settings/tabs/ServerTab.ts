@@ -1125,7 +1125,12 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
             try {
                 const res = await deps.fetchFn('/api/tls/revoke', { method: 'POST' });
                 if (!res.ok) {
-                    showTransientAlert('error', `could not revoke the certificate (${res.status}).`);
+                    // The server's own reason when it gives one, as generate,
+                    // exposure and port already show: an off-box caller in open
+                    // mode is refused by requireOperator (item 153), and "(403)"
+                    // alone reads as a bug rather than as "not from here".
+                    const data = (await res.json().catch(() => null)) as { error?: string } | null;
+                    showTransientAlert('error', data?.error ?? `could not revoke the certificate (${res.status}).`);
                     revokeBtn.disabled = false;
                     return;
                 }

@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { networkInterfaces } from 'os';
 import { requireAdmin } from '../auth/requireAdmin';
+import { requireOperator } from '../auth/requireOperator';
 import { Config, DEFAULT_HTTPS_PORT, validateHttpsPortInput } from '../Config';
 import { Logger } from '../Logger';
 import { candidateLanIps } from '../network/candidateLanIps';
@@ -219,7 +220,17 @@ export class TlsApi {
         // shape of a malware delivery step; it does not get an anonymous
         // endpoint even though this CA is only dangerous to someone who
         // installs it.
-        if (!requireAdmin(req, res)) return true;
+        //
+        // Every WRITE also needs proof of operator (item 153), like every other
+        // admin action (SECURITY.md). In open mode requireAdmin alone is the
+        // implicit admin, so without this any LAN client holding a token could
+        // regenerate the CA every device trusts, revoke it, change exposure, or
+        // restart the server through the port. The READS (`/state`, `/ca-root`)
+        // stay admin-only on purpose: a second machine opening the Local HTTPS
+        // panel to download the CA is the feature (smoke 21.2). Keyed on the
+        // method rather than a route list, so a write added later is gated too.
+        const isRead = req.method === 'GET' || req.method === 'HEAD';
+        if (!(isRead ? requireAdmin(req, res) : requireOperator(req, res))) return true;
 
         try {
             // Inside the try (N11): getService() can throw on first use (e.g.

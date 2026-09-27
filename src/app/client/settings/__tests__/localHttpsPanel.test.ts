@@ -774,6 +774,29 @@ describe('local https panel — final review fixes (C1, I1, I2, I5, I7, I11)', (
         expect(revokeBtn.disabled).toBe(true);
     });
 
+    it('a refused revoke shows the server-provided reason and keeps the certificate (item 153)', async () => {
+        // An off-box caller in open mode is refused by requireOperator; the panel
+        // must say why, as generate/exposure/port already do, not just "(403)".
+        const fetchFn = vi.fn(async (url: RequestInfo | URL) => {
+            if (url === '/api/tls/revoke') {
+                return new Response(JSON.stringify({ error: 'admin actions are limited to this machine' }), {
+                    status: 403,
+                });
+            }
+            return new Response(JSON.stringify(state({ status: 'ready', kind: 'ip', subject: '192.168.86.3' })));
+        });
+        const el = await buildLocalHttpsPanel({ fetchFn, candidateIps: ['192.168.86.3'], platform: 'win32' });
+        const revokeBtn = el.querySelector<HTMLButtonElement>('[data-tls-revoke]')!;
+        revokeBtn.click();
+        await new Promise((r) => setTimeout(r, 0));
+        modalButton('ok').click();
+        await new Promise((r) => setTimeout(r, 0));
+        const alert = el.querySelector<HTMLElement>('[data-tls-alert]')!;
+        expect(alert.textContent).toMatch(/admin actions are limited to this machine/);
+        expect(el.querySelector('[data-tls-current-subject]')).not.toBeNull();
+        expect(revokeBtn.disabled).toBe(false);
+    });
+
     // ---- I2: https port prefill ----
 
     it('prefills the https port from the server, not a hardcoded 8443 (I2)', async () => {

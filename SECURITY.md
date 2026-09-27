@@ -62,7 +62,7 @@ The **admin** API is no longer part of the paragraph above. Since v0.1.30, `requ
 - **loopback** — the request came from the machine the server runs on; or
 - **a signed-in admin session** — when login is enabled, they have said who they are.
 
-Neither, and the route answers `403 {"error":"admin actions are limited to this machine"}`. That covers `UsersApi`, `ConfigApi` PATCH, `ServiceApi`, `DependencyApi`, `UpdatesApi`, `AuthApi`'s enable/disable, and `ServerShutdownApi`. `GET /api/config` is deliberately **not** gated: it is the launcher's readiness probe, the Docker image's `HEALTHCHECK`, and the test harness's ready path, and it discloses no secrets.
+Neither, and the route answers `403 {"error":"admin actions are limited to this machine"}`. That covers `UsersApi`, `ConfigApi` PATCH, `ServiceApi`, `DependencyApi`, `UpdatesApi`, `SettingsBatchApi`, `AuthApi`'s enable/disable, `ServerShutdownApi`, and every Local HTTPS write (`/api/tls` generate, revoke, exposure and https-port). The two Local HTTPS reads, the panel's state and the CA certificate download, stay admin-only rather than operator-only, because installing the CA from another device is the point of them. `GET /api/config` is deliberately **not** gated: it is the launcher's readiness probe, the Docker image's `HEALTHCHECK`, and the test harness's ready path, and it discloses no secrets.
 
 `requireAdmin` still runs last, so a signed-in non-admin is refused everywhere regardless.
 

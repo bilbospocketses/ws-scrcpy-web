@@ -2207,7 +2207,7 @@ ws-scrcpy-web serves an API + WebSocket surface that is **unauthenticated by def
 
 ### 24.0 Proof of operator on the admin API (item 81)
 
-The **admin** surface is no longer covered by that paragraph. `src/server/auth/requireOperator.ts` wraps `requireAdmin` with a pre-check that the caller *is the operator*, and six handlers call it instead: `UsersApi`, `ConfigApi` (PATCH only), `ServiceApi`, `DependencyApi`, `UpdatesApi`, `AuthApi` (enable/disable).
+The **admin** surface is no longer covered by that paragraph. `src/server/auth/requireOperator.ts` wraps `requireAdmin` with a pre-check that the caller *is the operator*, and eight handlers call it instead: `UsersApi`, `ConfigApi` (PATCH only), `ServiceApi`, `DependencyApi`, `UpdatesApi`, `AuthApi` (enable/disable), `SettingsBatchApi`, and `TlsApi` (every write; its two reads stay `requireAdmin`, §28).
 
 ```ts
 if (!isLoopback(req.socket?.remoteAddress ?? '')) {
@@ -3130,6 +3130,16 @@ is the shape of a malware-delivery step even though this CA is only dangerous to
 it), `POST /exposure`, and `POST /https-port`. The admin gate runs **before** the route table, so a
 route added later cannot land ungated.
 
+**Every write also needs proof of operator (since 2026-09-27, item 153), and the reads do not.** The
+gate is keyed on the method: `GET`/`HEAD` go through `requireAdmin`, anything else through
+`requireOperator` (§24.0), so a write route added later is operator-gated too. Before this, in open
+mode, any LAN client that had loaded a page could regenerate the CA every device trusts, revoke it,
+change the exposure, or restart the server through the port. The two reads stay reachable off-box on
+purpose: a second machine opening Settings → Server → Local HTTPS to download the CA is the feature
+(smoke 21.2), so the panel still renders there, and a write from it is answered
+`403 {"error":"admin actions are limited to this machine"}`, which the panel shows as it is.
+`WS_SCRCPY_ALLOW_REMOTE_ADMIN=1` and a signed-in admin session pass the gate as they do everywhere else.
+
 **`GET /ca-root` needs no instance token (since 2026-09-27)**, unlike every other route here: a device
 installing the CA has never loaded the page, so it has no cookie. In open mode, where everyone is the
 implicit admin, a bare link, a QR code or `curl -k https://<LAN IP>:<https port>/api/tls/ca-root`
@@ -3232,7 +3242,11 @@ where the CA and the leaf certificate/key live, and the two platforms are **not*
   only ever moves into a home that is ABSENT or holds no files (an empty one, from an interrupted start
   or made by hand, is removed first, or it would strand the CA). When the new home has any file in it,
   both are left alone and it is logged, because the new one is newer or deliberate. A move that fails is logged and leaves the old home in place; HTTPS then
-  reads as "no certificate yet" until a later start moves it or a certificate is regenerated.
+  reads as "no certificate yet" until a later start moves it or a certificate is regenerated. After a
+  move, the old parent `%LOCALAPPDATA%\WsScrcpyWeb` is removed if it is now empty (item 154): on a
+  Program Files install the TLS home was all it held. The removal is non-recursive, so on a per-user
+  install, where that folder IS the install, it cannot touch anything, and a refusal never turns a
+  successful move into a failure.
 - `resolveCertPaths` refuses a non-absolute `dataRoot`, and on Windows specifically refuses a resolved
   CAROOT that would land under `dataRoot` — a containment guard, case-insensitive and
   segment-bounded (so `C:\Data2` is correctly not "under" `C:\Data`).
@@ -3488,7 +3502,7 @@ degrades to HTTP-only, logged, never a crash.
 | `src/server/tls/certPaths.ts` | `resolveCertPaths` — POSIX vs. per-user-Windows CAROOT/leaf placement, the containment guard |
 | `src/server/tls/createCertService.ts` | The composition root: binds `CertServiceDeps` to real `fs`/`child_process`; memoized `getCertService()`; `ensureMkcertInstalled()`'s on-demand-fetch trigger |
 | `src/server/tls/httpExposure.ts` | `HttpExposure`, `HTTP_EXPOSURE_KEY`, the pure `decideHttpRequest` decision function |
-| `src/server/api/TlsApi.ts` | Admin-gated `/api/tls/*` routes; CA-root rate limiting; the hostname-only `allowedHosts` auto-add (issue #691); `buildHttpsListenerField`'s `httpsListener` contract on `/state` and `/generate`, including the stale-leaf `restart-required` case |
+| `src/server/api/TlsApi.ts` | The `/api/tls/*` routes: reads admin-gated, writes operator-gated (item 153); CA-root rate limiting; the hostname-only `allowedHosts` auto-add (issue #691); `buildHttpsListenerField`'s `httpsListener` contract on `/state` and `/generate`, including the stale-leaf `restart-required` case |
 | `src/server/network/candidateLanIps.ts` | RFC1918 LAN-IP candidates for the subject picker, excluding CGNAT (`100.64.0.0/10`) and link-local |
 | `src/server/services/HttpServer.ts` | Exposure enforcement on the plain-HTTP listener, the listen-error handler, `getHttpsListenerStatus`, the bound leaf's `leafFingerprint` capture |
 | `src/server/Config.ts` | `buildServerList`, `readCertMaterial`, `sanitizeHttpsPort` / `validateHttpsPortInput` / `setHttpsPort`, `DEFAULT_HTTPS_PORT` |

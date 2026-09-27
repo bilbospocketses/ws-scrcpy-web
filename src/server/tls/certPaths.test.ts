@@ -219,6 +219,39 @@ describe('migrateLegacyTlsHome', () => {
         expect(fs.existsSync(paths.legacyTlsDir!)).toBe(false);
     });
 
+    // Item 154 (qa-harness, beta.139): on a Program Files install nothing but the
+    // TLS home ever lived in %LOCALAPPDATA%\WsScrcpyWeb, so the move left an
+    // empty folder with the per-user install's name behind.
+    it('removes the old parent folder when the move leaves it empty', () => {
+        seedLegacy();
+        const oldParent = path.dirname(paths.legacyTlsDir!);
+        expect(migrateLegacyTlsHome(paths)).toEqual({ outcome: 'moved' });
+        expect(fs.existsSync(oldParent)).toBe(false);
+        expect(fs.readFileSync(paths.certFile, 'utf-8')).toBe('LEAF CERT');
+    });
+
+    it('leaves the old parent, and everything in it, when it holds anything else: a per-user install lives there', () => {
+        seedLegacy();
+        const oldParent = path.dirname(paths.legacyTlsDir!);
+        fs.writeFileSync(path.join(oldParent, 'Update.exe'), 'VELOPACK');
+        fs.mkdirSync(path.join(oldParent, 'current'));
+        fs.writeFileSync(path.join(oldParent, 'current', 'ws-scrcpy-web.exe'), 'APP');
+        expect(migrateLegacyTlsHome(paths)).toEqual({ outcome: 'moved' });
+        expect(fs.readFileSync(path.join(oldParent, 'Update.exe'), 'utf-8')).toBe('VELOPACK');
+        expect(fs.readFileSync(path.join(oldParent, 'current', 'ws-scrcpy-web.exe'), 'utf-8')).toBe('APP');
+        expect(fs.existsSync(paths.legacyTlsDir!)).toBe(false);
+    });
+
+    it('a parent it cannot remove never turns a successful move into a failure', () => {
+        seedLegacy();
+        const rmdirSync = vi.fn(() => {
+            throw Object.assign(new Error('EPERM: operation not permitted'), { code: 'EPERM' });
+        });
+        expect(migrateLegacyTlsHome(paths, { ...fs, rmdirSync })).toEqual({ outcome: 'moved' });
+        expect(rmdirSync).toHaveBeenCalledWith(path.dirname(paths.legacyTlsDir!));
+        expect(fs.readFileSync(paths.certFile, 'utf-8')).toBe('LEAF CERT');
+    });
+
     it('does nothing when there is no legacy home', () => {
         expect(migrateLegacyTlsHome(paths)).toEqual({ outcome: 'none' });
         expect(fs.existsSync(path.dirname(paths.certFile))).toBe(false);

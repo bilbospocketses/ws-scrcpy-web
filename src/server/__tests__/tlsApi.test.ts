@@ -6,8 +6,14 @@ import { HTTP_EXPOSURE_KEY } from '../tls/httpExposure';
 import { makeReqRes } from './helpers/httpMock';
 
 vi.mock('../auth/requireAdmin', () => ({ requireAdmin: vi.fn(() => true) }));
+// Item 153: writes go through requireOperator, reads through requireAdmin. Both
+// are mocked here so the route tests below exercise the routes; the REAL gates,
+// against real off-box and loopback sockets, are asserted in
+// adminAuthorization.test.ts.
+vi.mock('../auth/requireOperator', () => ({ requireOperator: vi.fn(() => true) }));
 
 import { requireAdmin } from '../auth/requireAdmin';
+import { requireOperator } from '../auth/requireOperator';
 
 vi.mock('../Config', async (importOriginal) => {
     // Only Config.getInstance() is mocked (per-test, via vi.mocked(...).mockReturnValue).
@@ -72,11 +78,20 @@ describe('TlsApi', () => {
     // not just inspection. `denyAdmin` mirrors requireAdmin's own real
     // behaviour (writes 403, returns false) so the status assertion is honest.
 
-    describe('the admin gate covers every route, not just ca-root (N4)', () => {
+    describe('the gate covers every route, not just ca-root (N4)', () => {
         function denyAdmin() {
             vi.mocked(requireAdmin).mockImplementationOnce((_req, res) => {
                 res.writeHead(403, { 'content-type': 'application/json' });
                 res.end(JSON.stringify({ error: 'forbidden' }));
+                return false;
+            });
+        }
+        // Item 153: a WRITE is decided by requireOperator. Mirrors its real
+        // off-box refusal, so the status and body assertions are honest.
+        function denyOperator() {
+            vi.mocked(requireOperator).mockImplementationOnce((_req, res) => {
+                res.writeHead(403, { 'content-type': 'application/json' });
+                res.end(JSON.stringify({ error: 'admin actions are limited to this machine' }));
                 return false;
             });
         }
@@ -90,8 +105,18 @@ describe('TlsApi', () => {
             expect(svc.getState).not.toHaveBeenCalled();
         });
 
-        it('POST /api/tls/generate is gated', async () => {
-            denyAdmin();
+        it('a READ never consults the operator gate: a second machine must still reach the panel (item 153)', async () => {
+            vi.mocked(requireOperator).mockClear();
+            const { api } = makeApi();
+            for (const url of ['/api/tls/state', '/api/tls/ca-root']) {
+                const r = makeReqRes('GET', url);
+                await api.handle(r.req, r.res);
+            }
+            expect(requireOperator).not.toHaveBeenCalled();
+        });
+
+        it('POST /api/tls/generate is operator-gated', async () => {
+            denyOperator();
             const { api, svc } = makeApi();
             const r = makeReqRes('POST', '/api/tls/generate', { kind: 'ip', value: '192.168.86.3' });
             expect(await api.handle(r.req, r.res)).toBe(true);
@@ -99,8 +124,8 @@ describe('TlsApi', () => {
             expect(svc.generate).not.toHaveBeenCalled();
         });
 
-        it('POST /api/tls/revoke is gated', async () => {
-            denyAdmin();
+        it('POST /api/tls/revoke is operator-gated', async () => {
+            denyOperator();
             const { api, svc } = makeApi();
             const r = makeReqRes('POST', '/api/tls/revoke', {});
             expect(await api.handle(r.req, r.res)).toBe(true);
@@ -108,12 +133,23 @@ describe('TlsApi', () => {
             expect(svc.revoke).not.toHaveBeenCalled();
         });
 
+        // POST /exposure and POST /https-port are pinned in their own describes
+        // below ("is operator-gated like every other tls write").
+
         it('an unmatched /api/tls/* path is gated BEFORE the unknown-route 404', async () => {
             denyAdmin();
             const { api } = makeApi();
             const r = makeReqRes('GET', '/api/tls/nonexistent-route');
             expect(await api.handle(r.req, r.res)).toBe(true);
             // Not 404 -- the gate runs before the route table sees this path at all.
+            expect(r.getStatus()).toBe(403);
+        });
+
+        it('an unmatched WRITE is operator-gated before the 404: a write route added later lands gated', async () => {
+            denyOperator();
+            const { api } = makeApi();
+            const r = makeReqRes('POST', '/api/tls/some-future-write', {});
+            expect(await api.handle(r.req, r.res)).toBe(true);
             expect(r.getStatus()).toBe(403);
         });
     });
@@ -1095,10 +1131,10 @@ describe('TlsApi', () => {
             expect(r.getStatus()).toBe(500);
         });
 
-        it('is gated by requireAdmin like every other tls route', async () => {
-            vi.mocked(requireAdmin).mockImplementationOnce((_req, res) => {
+        it('is operator-gated like every other tls write (item 153)', async () => {
+            vi.mocked(requireOperator).mockImplementationOnce((_req, res) => {
                 res.writeHead(403, { 'content-type': 'application/json' });
-                res.end(JSON.stringify({ error: 'forbidden' }));
+                res.end(JSON.stringify({ error: 'admin actions are limited to this machine' }));
                 return false;
             });
             const set = vi.fn();
@@ -1218,10 +1254,10 @@ describe('TlsApi', () => {
             expect(schedule).not.toHaveBeenCalled();
         });
 
-        it('is gated by requireAdmin like every other tls route', async () => {
-            vi.mocked(requireAdmin).mockImplementationOnce((_req, res) => {
+        it('is operator-gated like every other tls write (item 153)', async () => {
+            vi.mocked(requireOperator).mockImplementationOnce((_req, res) => {
                 res.writeHead(403, { 'content-type': 'application/json' });
-                res.end(JSON.stringify({ error: 'forbidden' }));
+                res.end(JSON.stringify({ error: 'admin actions are limited to this machine' }));
                 return false;
             });
             const setHttpsPort = vi.fn();

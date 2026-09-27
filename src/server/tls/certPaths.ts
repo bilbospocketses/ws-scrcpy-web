@@ -111,10 +111,15 @@ export type TlsHomeMigration =
  * thrown. HTTPS then reads as "no certificate yet" until a regenerate, which
  * is the same as a fresh install. Idempotent: once moved there is nothing to
  * move.
+ *
+ * After a move, the old parent (`%LOCALAPPDATA%\WsScrcpyWeb`) is removed if,
+ * and only if, it is now empty (item 154). On a Program Files install the TLS
+ * home was the only thing in it; on a per-user install it IS the install, and
+ * a non-recursive removal cannot touch a folder that holds anything.
  */
 export function migrateLegacyTlsHome(
     paths: CertPaths,
-    fsImpl: Pick<typeof fs, 'existsSync' | 'renameSync' | 'readdirSync' | 'rmSync'> = fs,
+    fsImpl: Pick<typeof fs, 'existsSync' | 'renameSync' | 'readdirSync' | 'rmSync' | 'rmdirSync'> = fs,
 ): TlsHomeMigration {
     const legacy = paths.legacyTlsDir;
     if (!legacy || !fsImpl.existsSync(legacy)) return { outcome: 'none' };
@@ -131,9 +136,25 @@ export function migrateLegacyTlsHome(
         // Bounded retry: endpoint AV holding a handle for a moment makes a
         // rename fail EPERM/EBUSY, and only under load (atomicFile.ts, item 140).
         renameSyncWithRetry(legacy, home, (from, to) => fsImpl.renameSync(from, to));
-        return { outcome: 'moved' };
     } catch (err) {
         return { outcome: 'failed', detail: err instanceof Error ? err.message : String(err) };
+    }
+    removeIfEmpty(path.dirname(legacy), fsImpl);
+    return { outcome: 'moved' };
+}
+
+/**
+ * Best-effort, and NON-recursive on purpose: `rmdirSync` without `recursive`
+ * refuses a folder that holds anything (ENOTEMPTY), so it can only ever take
+ * away an empty one. Any refusal, including a scanner holding the folder, is
+ * ignored: an empty folder left behind is cosmetic, and it must never turn a
+ * move that succeeded into a reported failure.
+ */
+function removeIfEmpty(dir: string, fsImpl: Pick<typeof fs, 'rmdirSync'>): void {
+    try {
+        fsImpl.rmdirSync(dir);
+    } catch {
+        // Not empty (a per-user install lives here), already gone, or held open.
     }
 }
 
