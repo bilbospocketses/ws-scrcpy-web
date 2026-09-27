@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { openSettingsTab } from './support/auth';
+import { githubCoreQuota, isDeferredGithubLookupRefusal } from './support/githubQuota';
 import { BOOT_INSTALLED_DEPENDENCIES } from './support/privateServer';
 
 /**
@@ -192,6 +193,7 @@ test.describe('container mode', () => {
                 installedVersion: string | null;
                 status: string;
                 errorMessage?: string;
+                deferInstall?: boolean;
             }[];
         await expect
             .poll(
@@ -207,9 +209,24 @@ test.describe('container mode', () => {
             .toBe(true);
         const final = await deps();
         expect(final.map((d) => d.name).sort()).toEqual(['adb', 'mkcert', 'nodejs', 'scrcpy-server']);
+        // mkcert is fetched on first use, so nothing installs it here; if
+        // api.github.com refused its version lookup, the server reports it in
+        // Error with that refusal as its message. That is the network's state,
+        // not the app's, and it is excused ONLY when /rate_limit proves the
+        // quota spent (the item-149 rule). Every other error still fails.
+        const quota = final.some(isDeferredGithubLookupRefusal) ? await githubCoreQuota() : undefined;
         for (const d of final) {
-            expect(d.status, d.name).not.toBe('error');
-            expect(d.errorMessage, d.name).toBeUndefined();
+            if (quota?.exhausted && isDeferredGithubLookupRefusal(d)) {
+                test.info().annotations.push({
+                    type: 'partial',
+                    description: `${d.name}: api.github.com quota exhausted for this IP (${quota.detail}); Error is the refused lookup`,
+                });
+                expect(d.installedVersion, d.name).toBeNull();
+                continue;
+            }
+            const why = quota ? `${d.name} (api.github.com: ${quota.detail})` : d.name;
+            expect(d.status, why).not.toBe('error');
+            expect(d.errorMessage, why).toBeUndefined();
         }
         // adb specifically: a real version, which only a run that did not abort can produce.
         expect(final.find((d) => d.name === 'adb')?.installedVersion).toMatch(/^\d+\.\d+\.\d+$/);
