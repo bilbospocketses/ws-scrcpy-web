@@ -73,8 +73,9 @@ export interface MkcertProvenanceDeps {
 /**
  * The production verifier, built from the three Sigstore packages that do the
  * checking rather than the `sigstore` umbrella, which also pulls in a signing
- * stack (and its whole HTTP client) this app never calls: 14 packages instead
- * of 52, measured 2026-09-27. The wiring is the umbrella's own `verify`:
+ * stack (and its whole HTTP client) this app never calls. Dropping it took the
+ * production dependency tree from 55 packages to 19 (36 removed, none added;
+ * `npm ci --omit=dev`, measured 2026-09-27). The wiring is the umbrella's own `verify`:
  * TUF-fetched trusted root -> trust material -> Verifier -> policy.
  *
  * `tufCachePath` is where the TUF metadata lives. The library's default is

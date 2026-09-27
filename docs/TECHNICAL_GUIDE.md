@@ -3372,8 +3372,9 @@ an installed app. The test suite alone uses the trust root the library ships (`t
 needs no network. The Sigstore packages are loaded on demand, so a server that never installs mkcert
 never loads them. Only the three that verify ship (`@sigstore/bundle`, `@sigstore/tuf`,
 `@sigstore/verify`), wired the way the `sigstore` umbrella's own `verify` wires them. The umbrella also
-brings a signing stack and its HTTP client, which this app never calls: 14 packages instead of 52,
-measured 2026-09-27.
+brings a signing stack and its HTTP client, which this app never calls. Dropping it took the production
+dependency tree from 55 packages to 19 (36 removed, none added) and from 94.4 MB to 87.0 MB, measured on
+`npm ci --omit=dev` trees built from the before and after lockfiles on 2026-09-27.
 
 **The two failure families are deliberately worded differently.** "No attestation this app can
 verify" / "no build-provenance attestation exists" means the release itself is suspect. "The binary does
