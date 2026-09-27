@@ -94,6 +94,24 @@ passed vacuously on the default port, 1.10's ACE regex accepted an inherited ACE
 10.2's grep let a bare `Error:` through, and 15.5 required a hidden Linux-only button.
 6.1 and 12.2 are counted by their Windows halves; their Linux halves stay residual.
 
+**What a green Windows-guest run does not prove, across the whole tier** (qa-harness
+task 28's ledger, consolidated 2026-09-27; the per-row lines below carry the rest):
+
+- **The update rows run against a harness-served feed** of hash-pinned bytes, so 6.1 and
+  6.8 exercise the update mechanism but not Velopack's GitHub source resolution, and not an
+  update from a pre-beta.103 install at the drive root.
+- **Row 1.8 is split across two arcs**: cold start and port change in the install arc,
+  update-relaunch in the update arc. Both halves run; neither is manual.
+- **Tab counts (1.5, 1.8) run with Edge's first-run and background windows switched off by
+  policy** in the guest's base image, so they count the app's tabs, not Edge's.
+- **Abnormal termination (3.6, 12.5) is `Stop-Process -Force`**, not Task Manager's End task:
+  the same termination path, a different trigger.
+- **One interactive session.** 3.4 proves one session-scoped tray; tray-per-user across
+  sessions is not implemented by the app (item 119), so no row asserts it.
+- **No automation can answer a UAC consent dialog**, which exposes no UI Automation surface
+  by design. Rows that elevate run with elevation Silent, and the one row that declines a
+  prompt (5.10) needs a person.
+
 **Four smoke rows were reworded on 2026-09-25 while this was checked:** 5.5, 5.6,
 5.10 and 15.1 described behaviour the app no longer has. They are the tray-handoff
 uninstall and its `handoff-timeout` refusal, which Phase 4 (#108) replaced; a UAC
@@ -228,7 +246,7 @@ Sorted by module, then by row number, which is not the doc's execution order.
 | 10.2 | `[Win]` | Logs clean | windows guest | qa-harness P4, `arcs/01c-uninstall.ps1`: `launcher.log` and `ws-scrcpy-web.log` free of `EPERM`, `EACCES`, `UnhandledPromiseRejection`, `FATAL`, `Unhandled exception`, `ERR` and `Error:`, except the node-pty AttachConsole noise the row names (qa-harness #98). |
 | 10.3 | `[Linux]` | Logs clean | fast | `server-surface.spec.ts`. **Partial:** the server's own `ws-scrcpy-web.log` is covered; `launcher.log` belongs to the Linux launcher and stays manual. |
 | 10.4 | `[Both]` | Per-instance token / reload-on-restart | fast | `server-surface.spec.ts` |
-| 10.5 | `[Both]` | 404 + security headers | fast | `server-surface.spec.ts` |
+| 10.5 | `[Both]` | 404 + security headers | fast | `server-surface.spec.ts`; the `frame-ancestors` CSP (absent by default, added for an approved origin, dropped on revoke) is `framing-headers.spec.ts` |
 | 10.6 | `[Both]` | `allowedHosts` reverse-proxy opt-in | fast | `server-surface.spec.ts` |
 | 10.7 | `[Win]` | Atomic writes survive the hidden attribute | windows guest | qa-harness P4, `arcs/01b-service-tray.ps1`: two PATCH rewrites of a hidden `config.json`, no new EPERM in `launcher.log` OR `ws-scrcpy-web.log` (qa-harness #98), no `.tmp-*` strays. **Partial:** the dependency-update (manifest) half runs only when the in-guest update POST returns 200, and the row still passes with "manifest half NOT exercised" (it returned 500 on qa-harness #98's run). |
 | 11.1 | `[Linux]` | No-libfuse2 launch | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
@@ -243,7 +261,7 @@ Sorted by module, then by row number, which is not the doc's execution order.
 | 12.6 | `[Both]` | The server EXITS when no listener can bind | fast | `lifecycle.spec.ts`, on spec-owned servers with the ports held by a blocker: HTTP only; both listeners refused in BOTH orders, with the log order asserted so each case provably drives the branch it names; and the negative, HTTP refused while HTTPS serves and the process stays up. The HTTPS listener uses a throwaway in-process certificate (`support/selfSignedCert.ts`). Writing it found finding 12.7. |
 | 13.1 | `[Both]` | Bookmark global-dismiss | fast | `settings-prompts.spec.ts` |
 | 13.2 | `[Both]` | Reset welcome & bookmark prompts | fast | `settings-prompts.spec.ts` |
-| 13.3 | `[Both]` | Server-section layout + web-port inline save | fast | `settings-prompts.spec.ts`. **Partial:** layout, inline save and the at-rest status are covered; "change port, save, persists and restarts" stays manual. |
+| 13.3 | `[Both]` | Server-tab layout + staged web-port save | fast | `settings-prompts.spec.ts`. **Partial:** the row order, the web port having no save of its own, the range guard and the quiet status are covered; "save, review, restart and reload on the new port" stays manual. |
 | 14.1 | `[Linux]` | Install-for-all-users button | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
 | 14.2 | `[Linux]` | Start-menu icon | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
 | 14.3 | `[Linux]` | Complete uninstall — local | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
@@ -283,8 +301,8 @@ Sorted by module, then by row number, which is not the doc's execution order.
 | 20.1 | `[Both]` | Settings → Service in a container | container | `docker-gating.spec.ts` |
 | 20.2 | `[Both]` | Settings → Updates in a container | container | `docker-gating.spec.ts` |
 | 20.3 | `[Both]` | libfuse2 banner | residual: un-automatable | Nothing left to test - the libfuse2 gate this row checked no longer exists. A tombstone, kept so the number is not reused. |
-| 20.4 | `[Both]` | "install for all users" row in a container | automatable — container | Unblocked 2026-09-04: the decision was taken (hide in Docker, and refuse server-side). The row is now an ordinary container assertion. |
-| 20.5 | `[Both]` | "uninstall ws-scrcpy-web" row in a container | automatable — container | Unblocked 2026-09-04 with 20.4, same decision. |
+| 20.4 | `[Both]` | "install for all users" row in a container | automatable — container | Decided 2026-09-04 (#601): hidden in a container (`appSectionButtonsState`) and refused server-side, `/api/service/install-system-wide` → 409 `reason: unsupported` (`refuseInContainer`). Unit-tested in `serviceApi.containerGuard.test.ts`; no container spec asserts it yet. |
+| 20.5 | `[Both]` | "uninstall ws-scrcpy-web" row in a container | automatable — container | Same decision as 20.4: hidden, and `/api/service/uninstall-app` → 409 naming `docker rm`. Unit-tested alongside 20.4; no container spec yet. |
 | 20.6 | `[Both]` | "stop server & exit" in a container | container | `container-lifecycle.spec.ts` `@docker-host`, **CI only**. The confirm, the 200, then `docker inspect` = exited 0, still exited 5 s later, and the adb-teardown line in the log on the volume. |
 | 20.7 | `[Both]` | Linux system-wide-install offer in a container | container | `docker-gating.spec.ts` |
 | 20.8 | `[Both]` | Pull `:beta` from Docker Hub | container | `container-publish.spec.ts` `@docker-host`, **CI only** — needs Docker Hub. `:beta`'s digest equals the highest `0.1.30-beta.N` tag's (the D3 channel rule), the pull succeeds, and the pulled image's RepoDigests contain that digest. An anonymous-pull 429 is a retry, not a finding. |
@@ -310,7 +328,7 @@ free number.
 | # | Affordance | Container behaviour | Status |
 |---|---|---|---|
 | 20.1 | Settings → Service | replaced by *"service install not applicable — this instance runs in a container."* | automated (`settingsModal.dockerGating.test.ts`; container smoke in task 11) |
-| 20.2 | Settings → Updates | replaced by *"update via `docker pull bilbospocketses/ws-scrcpy-web:latest`."* | automated (same) |
+| 20.2 | Settings → Updates | replaced by *"app updates not applicable — this instance runs in a container; pull a newer image to update."* (no tag named, item 135) | automated (same) |
 | 20.3 | libfuse2 banner | **nothing to hide — the gate no longer exists** | n/a, see below |
 
 **20.3 is satisfied by deletion, not by gating.** SP4 decision 4 requires the
@@ -359,7 +377,7 @@ return-to-open-mode `afterAll`, the never-retry-a-login rule).
 |---|---|---|
 | 18.1 | default open mode | automated |
 | 18.2 | secure the admin account | automated — the farewell text is recorded by an observer and read back from the login page, because the client reloads in the same synchronous run |
-| 18.3 | login | automated — the row's "dependencies" is the page-level panel, not a Settings section; the spec asserts the five section headings and the admin-only rows |
+| 18.3 | login | automated — the spec asserts the six Settings tabs in order (Users, Embedding, Updates, Service, Dependencies, Server) and the admin-only rows |
 | 18.4 | brute-force lockout + generic error | automated — the enumeration half is byte-identical bodies plus identical UI text; timing blinding is covered by the unit tests, not end to end |
 | 18.5 | admin clears a lockout | automated |
 | 18.6 | manage users + last-admin guard | automated |
@@ -415,7 +433,7 @@ from `tests/docker/` (see `tests/e2e/README.md`).
 | 10.7 | **An unknown `/api/*` path answers with the SPA shell when navigated to as a document.** The static fallback keys on `Accept: text/html` plus an extensionless path, and `/api/no-such-route` is extensionless; a JSON caller gets the 404 the row describes, a browser address bar gets 200 and the shell. | **Fixed 2026-09-04.** `isSpaNavigation` excludes `/api` and `/api/*` outright, so an unknown API path 404s whatever the `Accept` header says.
 | 10.8 | **API JSON responses and the request gate's 403 carry no `X-Content-Type-Options` / `X-Frame-Options`.** Static responses, the login page and its 401 do. | **Fixed 2026-09-04.** `securityHeaders()` is applied once at the request-handler choke point (`createHttpRequestHandler`), so the gate's 403 and every API JSON response carry them; `writeHead(status, headers)` still merges over them, so handlers that spread the helper themselves are unaffected.
 | 9.6 | **The Dependencies panel is not hidden from a user-role account.** It renders its heading and table for everyone and, on the 403, shows `Failed to load dependencies` — the row's "doesn't see it" is the panel failing, not being gated. | **Fixed 2026-09-04.** `dependencies` is an admin-only section now, and the panel's mount is gated on the same role the API enforces, so a user-role account does not see it rather than seeing it fail. Login disabled is unaffected: `/api/auth/me` answers with the implicit admin.
-| 9.7 | **`retry-install` replies before the retried install has finished.** The response can be `{"success":false,"stillMissing":["adb"],"errors":{}}` for a retry that completes ten seconds later; the banner's own poll is what actually clears it. | **Fixed 2026-09-04, and the stated cause was wrong.** `update()` is fully awaited, so the reply is not early. The witnessed `{success:false, stillMissing:['adb'], errors:{}}` is `autoInstallMissing` *skipping* a dependency whose latest version is unknown — deliberate, so an offline first run does not thrash — and reporting that skip as a failure with nothing to explain it. The banner's poll then installed it seconds later once the version check succeeded, which is what made it look like a race. The reply now says why nothing was attempted.
+| 9.7 | **`retry-install` replies before the retried install has finished.** The response can be `{"success":false,"stillMissing":["adb"],"errors":{}}` for a retry that completes ten seconds later; the banner's own poll is what actually clears it. | **Fixed 2026-09-04, and the stated cause was wrong.** `update()` is fully awaited, so the reply is not early. The witnessed `{success:false, stillMissing:['adb'], errors:{}}` is `autoInstallMissing` *skipping* a dependency whose latest version is unknown, and reporting that skip as a failure with nothing to explain it. The banner's poll then installed it seconds later once the version check succeeded, which is what made it look like a race. The reply now says why nothing was attempted. **Since #668 the skip is only half the story:** a version lookup that is *refused* (the server answered with a status, e.g. a rate-limited 403 from `api.github.com`) now falls back, so `scrcpy-server` installs its bundled `SERVER_VERSION`; only a lookup that is *unreachable* (no answer at all) is still skipped, which is the half the "offline first run must not thrash" reasoning covers (`DependencyManager.ts`, "a refused lookup may fall back, an unreachable one may not").
 | 10.9 | **The node-pty resolver reports the seed's absence at ERROR level.** A checkout that has not run `npm run stage-seed` (CI's `npm ci` + build tree) logs `[NodePtyResolver] ERROR no seed node-pty package found; cannot resolve` at every boot, for a condition the app itself treats as a capability, not a fault (`/api/capabilities` answers `shellReason: 'no-seed-package'`, row 9.5). The Linux CI run of 10.3 caught it; the spec now tolerates that one line only while the seed really is absent from the tree. | **Fixed 2026-09-04.** The line is a WARN naming the capability it reports (`shellReason: no-seed-package`), and row 10.3's allow-list is empty again.
 
 
@@ -519,11 +537,15 @@ the distinction matters to anyone deciding what to fix:
   debugging pairing screen; the Android emulator never advertises that service, so
   there is no pairing screen for a device-tier spec to find.
 - **A tombstone.** 20.3 — the libfuse2 gate it checked no longer exists. (20.4 and
-  20.5 moved to the container tier on 2026-09-04, #601 — see "Module 20 — container
-  (Docker) behaviour" above — and are no longer counted here.)
+  20.5 left this list on 2026-09-04, #601, when the app decided their behaviour: both
+  rows are hidden in a container and their endpoints answer 409 — see "Module 20 —
+  container (Docker) behaviour" above. They are counted under *Automatable, no spec
+  written yet*, because the behaviour exists and no container spec asserts it.)
 
 Six further rows are automatable with the tiers already built and simply have no
-spec yet: 4.5 in the fast tier, 20.6, 20.8, 20.11 and 20.12 in the container tier,
-and 20.10 in the device tier. They are the cheapest coverage left anywhere in this
-document and are listed as their own bucket so they cannot be mistaken for residual
-manual work.
+spec yet: **15.6** (the Windows tray's Exit, end to end), **20.4 and 20.5** (the
+container's hidden install/uninstall rows and their 409s), **8.10 and 8.11** (item
+24's rotation rows) and **8.16** (Opus on redroid's legacy OMX stack). They are the
+cheapest coverage left anywhere in this document and are listed as their own bucket
+so they cannot be mistaken for residual manual work. (Until 2026-09-27 this sentence
+named 4.5, 20.6, 20.8, 20.10, 20.11 and 20.12, all of which have specs now.)
