@@ -142,6 +142,86 @@ describe('verifyMkcertManifestProvenance — refusal paths', () => {
     });
 });
 
+describe('verifyMkcertManifestProvenance — what a signature-valid attestation must also say', () => {
+    // The verifier is stubbed to ACCEPT, so each test isolates one check that
+    // runs after the signature: the genuine bundle passes (the control), and
+    // each variant changes exactly one thing about it.
+    type Statement = { _type: string; predicateType: string; subject: { name: string; digest: { sha256: string } }[] };
+    type Envelope = { payload: string; payloadType: string };
+    const acceptAll = (bundles: Bundle[]): MkcertProvenanceDeps => ({
+        fetchBundles: async () => bundles,
+        verifyBundle: async () => {},
+        tufCachePath: '/unused',
+    });
+    const variant = (edit: (statement: Statement, envelope: Envelope) => void): Bundle => {
+        const bundle = structuredClone(REAL_BUNDLE) as Bundle & { dsseEnvelope: Envelope };
+        const statement = JSON.parse(Buffer.from(bundle.dsseEnvelope.payload, 'base64').toString('utf-8')) as Statement;
+        edit(statement, bundle.dsseEnvelope);
+        bundle.dsseEnvelope.payload = Buffer.from(JSON.stringify(statement)).toString('base64');
+        return bundle;
+    };
+    const manifestSubject = (s: Statement) => s.subject.find((x) => x.digest.sha256 === sha256(REAL_MANIFEST))!;
+
+    it('accepts the genuine statement (the control for every test below)', async () => {
+        await expect(
+            verifyMkcertManifestProvenance(REAL_MANIFEST, REAL_TAG, acceptAll([variant(() => {})])),
+        ).resolves.toBeUndefined();
+    });
+
+    it('refuses a statement naming the right digest under another file name', async () => {
+        const bundle = variant((s) => {
+            manifestSubject(s).name = 'mkcert-v1.4.4-bt.2-windows-amd64.exe';
+        });
+        await expect(verifyMkcertManifestProvenance(REAL_MANIFEST, REAL_TAG, acceptAll([bundle]))).rejects.toThrow(
+            /does not cover mkcert-v1\.4\.4-bt\.2-SHA256SUMS\.txt/,
+        );
+    });
+
+    it('refuses a statement that is not SLSA provenance', async () => {
+        const bundle = variant((s) => {
+            s.predicateType = 'https://example.com/some-other-predicate';
+        });
+        await expect(verifyMkcertManifestProvenance(REAL_MANIFEST, REAL_TAG, acceptAll([bundle]))).rejects.toThrow(
+            /not SLSA build provenance/,
+        );
+    });
+
+    it('refuses a statement that is not an in-toto v1 statement', async () => {
+        const bundle = variant((s) => {
+            s._type = 'https://in-toto.io/Statement/v0.1';
+        });
+        await expect(verifyMkcertManifestProvenance(REAL_MANIFEST, REAL_TAG, acceptAll([bundle]))).rejects.toThrow(
+            /not an in-toto v1 statement/,
+        );
+    });
+
+    it('refuses an envelope whose payload type is not in-toto', async () => {
+        const bundle = variant((_s, e) => {
+            e.payloadType = 'application/json';
+        });
+        await expect(verifyMkcertManifestProvenance(REAL_MANIFEST, REAL_TAG, acceptAll([bundle]))).rejects.toThrow(
+            /not an in-toto statement/,
+        );
+    });
+
+    it('refuses a bundle carrying a message signature beside its DSSE envelope, before verifying it', async () => {
+        // sigstore-js prefers `messageSignature` when both are present, so it
+        // would verify one thing while this module reads the other. Today that
+        // verification fails anyway (no artifact is passed); refusing the shape
+        // outright makes the safety explicit rather than an accident of the API.
+        const mixed = {
+            ...structuredClone(REAL_BUNDLE),
+            messageSignature: { messageDigest: { algorithm: 'SHA2_256', digest: '' }, signature: '' },
+        } as unknown as Bundle;
+        const verifyBundle = vi.fn(async () => {});
+        const deps: MkcertProvenanceDeps = { fetchBundles: async () => [mixed], verifyBundle, tufCachePath: '/unused' };
+        await expect(verifyMkcertManifestProvenance(REAL_MANIFEST, REAL_TAG, deps)).rejects.toThrow(
+            /message signature/,
+        );
+        expect(verifyBundle).not.toHaveBeenCalled();
+    });
+});
+
 describe('isMkcertReleaseTag', () => {
     it.each(['v0.1.0', 'v1.4.4-bt.2', 'v12.30.456'])('accepts %s', (tag) => {
         expect(isMkcertReleaseTag(tag)).toBe(true);

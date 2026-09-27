@@ -120,6 +120,13 @@ export async function verifyMkcertManifestProvenance(
     const failures: string[] = [];
     for (const bundle of bundles) {
         try {
+            // sigstore-js verifies `messageSignature` in preference to
+            // `dsseEnvelope` when a bundle carries both, while the statement
+            // check below reads the envelope. Such a bundle fails verification
+            // today only because no artifact is passed; refuse the shape itself.
+            if ('messageSignature' in bundle) {
+                throw new Error('the attestation carries a message signature as well as a DSSE envelope');
+            }
             await deps.verifyBundle(bundle, options);
             assertStatementCoversManifest(bundle, digest, `mkcert-${tag}-SHA256SUMS.txt`);
             return;
@@ -148,7 +155,10 @@ function assertStatementCoversManifest(bundle: Bundle, digest: string, releaseNa
         predicateType?: string;
         subject?: { name?: string; digest?: { sha256?: string } }[];
     };
-    if (statement._type !== IN_TOTO_STATEMENT_V1 || statement.predicateType !== SLSA_PROVENANCE_V1) {
+    if (statement._type !== IN_TOTO_STATEMENT_V1) {
+        throw new Error(`the attestation is not an in-toto v1 statement (${statement._type})`);
+    }
+    if (statement.predicateType !== SLSA_PROVENANCE_V1) {
         throw new Error(`the attestation is not SLSA build provenance (${statement.predicateType})`);
     }
     const covered = statement.subject?.some((s) => s.name === releaseName && s.digest?.sha256 === digest);
