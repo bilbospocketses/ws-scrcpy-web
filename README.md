@@ -1,5 +1,13 @@
 # ws-scrcpy-web
 
+> ## ⚠️ Local HTTPS on beta.130 – beta.137: update before you turn it on
+>
+> **Betas `0.1.30-beta.130` through `0.1.30-beta.137` can only ever install mkcert `v1.4.4-bt.2`**, the one release they pinned. The mkcert fork this app uses is moving to `v0.1.0` and retiring `bt.2`. From then on, those betas **fail to download mkcert the first time you generate a certificate** under Settings → Server → Local HTTPS.
+>
+> **Update ws-scrcpy-web first** (Settings → Updates; in Docker, pull the newer image). Newer releases install the fork's latest release and check its build provenance before using it. If mkcert is already installed on your machine, it keeps working and you don't need to do anything.
+>
+> *This notice will be removed after 2026-10-11.*
+
 > ## ⚠️ The Docker image is moving
 >
 > **The image is now published as [`bilbospocketses/ws-scrcpy-web`](https://hub.docker.com/r/bilbospocketses/ws-scrcpy-web), and mirrored at `ghcr.io/bilbospocketses/ws-scrcpy-web`.**
