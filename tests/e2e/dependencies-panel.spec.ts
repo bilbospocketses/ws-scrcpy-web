@@ -14,6 +14,7 @@ import {
 } from './support/auth';
 import { gotoHome } from './support/consent';
 import { composeDown, composeUpFresh, dockerExecRoot, dockerLogs } from './support/dockerStack';
+import { GITHUB_BACKED_DEPENDENCIES, githubCoreQuota, isDeferredGithubLookupRefusal } from './support/githubQuota';
 import {
     BOOT_INSTALLED_DEPENDENCIES,
     privateServerPaths,
@@ -49,44 +50,7 @@ interface DependencyInfo {
     latestVersion: string | null;
     status: string;
     errorMessage?: string;
-}
-
-/**
- * The dependencies whose latest-version lookup goes through api.github.com
- * (`src/server/DependencyDefinitions.ts`). nodejs.org and dl.google.com do not
- * rate-limit, so nodejs and adb must ALWAYS resolve; api.github.com allows 60
- * unauthenticated requests an hour per IP, and CI runners share IPs. Item 149:
- * `scrcpy-server.latestVersion` came back null on beta.134's bump PR, twice in
- * one run, and passed on a re-run.
- */
-const GITHUB_BACKED_DEPENDENCIES: readonly string[] = ['scrcpy-server', 'mkcert'];
-
-/**
- * This runner's remaining api.github.com core quota, read from `/rate_limit`,
- * which GitHub does not count against the quota. The test runs on the same
- * machine as the server, so this is the quota the server's lookup saw.
- * `exhausted` is true only on positive evidence: `remaining` is 0. An
- * unreachable endpoint proves nothing about the quota, so it is reported in
- * the detail and never excuses a null.
- */
-async function githubCoreQuota(): Promise<{ exhausted: boolean; detail: string }> {
-    const ctx = await request.newContext();
-    try {
-        const res = await ctx.get('https://api.github.com/rate_limit', {
-            headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'ws-scrcpy-web-e2e' },
-            timeout: 15_000,
-        });
-        if (!res.ok()) return { exhausted: false, detail: `rate_limit answered HTTP ${res.status()}` };
-        const core = ((await res.json()) as { resources?: { core?: { remaining?: number; reset?: number } } }).resources
-            ?.core;
-        const remaining = core?.remaining;
-        const reset = core?.reset ? new Date(core.reset * 1000).toISOString() : 'unknown';
-        return { exhausted: remaining === 0, detail: `core remaining=${remaining ?? 'unknown'}, resets ${reset}` };
-    } catch (err) {
-        return { exhausted: false, detail: `rate_limit unreachable: ${(err as Error).message}` };
-    } finally {
-        await ctx.dispose();
-    }
+    deferInstall?: boolean;
 }
 
 test.describe('dependencies (smoke §9.4, §9.5, §1.9)', () => {
@@ -432,8 +396,32 @@ test.describe('dependencies (smoke §9.4, §9.5, §1.9)', () => {
                 errors: Record<string, string>;
             };
             // adb can still be mid-download when the reply is written; what must
-            // not happen is an error.
-            expect(body.errors).toEqual({});
+            // not happen is an error. One error is the network's, not the app's:
+            // mkcert is fetched on first use, so a retry never installs it, and a
+            // refused api.github.com lookup leaves it in Error with that refusal
+            // as its message. Excused ONLY when /rate_limit proves the quota is
+            // spent (the item-149 rule), and still asserted as that exact state.
+            const listed = (await (await api.get('/api/dependencies')).json()) as DependencyInfo[];
+            const refusals = Object.entries(body.errors).filter(([name, errorMessage]) =>
+                isDeferredGithubLookupRefusal({
+                    name,
+                    errorMessage,
+                    status: 'error',
+                    deferInstall: listed.find((d) => d.name === name)?.deferInstall,
+                }),
+            );
+            const quota = refusals.length > 0 ? await githubCoreQuota() : undefined;
+            const excused = new Set(quota?.exhausted ? refusals.map(([name]) => name) : []);
+            for (const name of excused) {
+                test.info().annotations.push({
+                    type: 'partial',
+                    description: `${name}: api.github.com quota exhausted for this IP (${quota?.detail}); its retry error is the refused lookup`,
+                });
+            }
+            expect(
+                Object.fromEntries(Object.entries(body.errors).filter(([name]) => !excused.has(name))),
+                quota ? `retry errors (api.github.com: ${quota.detail})` : 'retry errors',
+            ).toEqual({});
             expect(body.installed.length + body.stillMissing.length).toBeGreaterThan(0);
 
             // Then everything lands, and the banner clears on its own poll.
