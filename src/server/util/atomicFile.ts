@@ -107,8 +107,12 @@ function sleepSync(ms: number): void {
 export type RenameSyncImpl = (from: string, to: string) => void;
 export type RenameImpl = (from: string, to: string) => Promise<void>;
 
-/** `fs.renameSync` with a bounded retry on a transient sharing violation. */
-function renameSyncWithRetry(tmp: string, dest: string, rename: RenameSyncImpl): void {
+/**
+ * `fs.renameSync` with a bounded retry on a transient sharing violation.
+ * Exported for the one-off TLS-home move (tls/certPaths.ts), which is a
+ * directory rename exposed to the same scanner race.
+ */
+export function renameSyncWithRetry(tmp: string, dest: string, rename: RenameSyncImpl): void {
     for (let attempt = 0; ; attempt += 1) {
         try {
             rename(tmp, dest);

@@ -6,9 +6,11 @@ import { promisify } from 'util';
 import { Config, resolveDataRoot } from '../Config';
 import { mkcertExeName } from '../DependencyDefinitions';
 import { getDependencyManager } from '../DependencyManager';
+import { Logger } from '../Logger';
 import { CertService, type CertServiceDeps } from './CertService';
-import { resolveCertPaths } from './certPaths';
+import { describeTlsHomeMigration, migrateLegacyTlsHome, resolveCertPaths } from './certPaths';
 
+const log = Logger.for('createCertService');
 const execFileAsync = promisify(execFile);
 
 /**
@@ -156,6 +158,12 @@ function buildCertService(): CertService {
         localAppData: process.env['LOCALAPPDATA'],
         home: process.env['HOME'] || process.env['USERPROFILE'],
     });
+    // Normally a no-op: Config already moved a pre-2026-09-27 TLS home at boot.
+    // Repeated here so a move that failed then (a scanner holding a file past
+    // the retry budget) is tried again before anything is generated into the
+    // new home, which would otherwise strand the old CA.
+    const moved = describeTlsHomeMigration(paths, migrateLegacyTlsHome(paths));
+    if (moved) log.warn(moved);
 
     const mkcertExe = resolveMkcertExe(config.dependenciesPath);
 

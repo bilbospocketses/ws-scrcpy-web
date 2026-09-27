@@ -25,6 +25,11 @@ import { cookieSecurity } from './cookiePolicy';
  * helper's `POST /api/server/shutdown` quit (tray/src/main.rs). Each of those
  * handlers is loopback-only, so no exemption reaches anything off-box.
  *
+ * A fourth, `GET /api/tls/ca-root`, is the one exemption that DOES reach off-box,
+ * and deliberately: a device installing the local CA has never loaded the page.
+ * It returns a public certificate, and TlsApi's admin gate still applies — see
+ * `requiresToken`.
+ *
  * The shutdown exemption is a fix, not a widening (item 114, 2026-09-06): the
  * tray has POSTed that path cookieless since v0.1.8, and once this token landed
  * the gate answered it 403 — measured, with the handler's own log line absent —
@@ -117,6 +122,16 @@ export function requiresToken(method: string | undefined, pathname: string): boo
     // `ServerShutdownApi` refuses any caller that is not on loopback, and the
     // Origin check above still rejects a cross-origin browser POST.
     if (m === 'POST' && pathname === '/api/server/shutdown') {
+        return false;
+    }
+    // The root CA certificate, for a device to install: a phone following a
+    // link or a QR code, `curl` from another machine. That caller never loaded
+    // the page, so it has no cookie. Unlike the three above this one IS
+    // reachable off-box, on purpose (user decision 2026-09-27): what it returns
+    // is a public certificate, never the key, and TlsApi's admin gate still
+    // stands in front of it, so in locked mode a caller who is not a signed-in
+    // admin still gets 403. Rate-limited and logged by TlsApi as before.
+    if (m === 'GET' && pathname === '/api/tls/ca-root') {
         return false;
     }
     return true;

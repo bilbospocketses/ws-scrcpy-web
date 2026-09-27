@@ -1,5 +1,8 @@
-import { describe, expect, it } from 'vitest';
-import { resolveCertPaths } from './certPaths';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { type CertPaths, migrateLegacyTlsHome, resolveCertPaths } from './certPaths';
 
 describe('resolveCertPaths', () => {
     it('keeps CAROOT OUT of the shared data root on Windows — structural property', () => {
@@ -128,5 +131,118 @@ describe('resolveCertPaths', () => {
                 dataRoot: 'C:\\ProgramData\\WsScrcpyWeb',
             }),
         ).toThrow(/cannot resolve a per-user TLS directory on Windows/);
+    });
+
+    it('gives the Windows TLS home its own folder, beside the app folder rather than inside it', () => {
+        // A per-user Velopack install lives in %LOCALAPPDATA%\WsScrcpyWeb and
+        // its uninstall removes that folder. The CA every device trusts must
+        // not go with it, so the TLS home is a sibling (user decision 2026-09-27).
+        const p = resolveCertPaths({
+            platform: 'win32',
+            dataRoot: 'C:\\ProgramData\\WsScrcpyWeb',
+            localAppData: 'C:\\Users\\jane\\AppData\\Local',
+        });
+        expect(p).toEqual({
+            caRoot: 'C:\\Users\\jane\\AppData\\Local\\WsScrcpyWeb-tls\\ca',
+            certFile: 'C:\\Users\\jane\\AppData\\Local\\WsScrcpyWeb-tls\\cert.pem',
+            keyFile: 'C:\\Users\\jane\\AppData\\Local\\WsScrcpyWeb-tls\\key.pem',
+            legacyTlsDir: 'C:\\Users\\jane\\AppData\\Local\\WsScrcpyWeb\\tls',
+        });
+    });
+
+    it('reports no legacy location on POSIX, where the TLS home never moved', () => {
+        expect(resolveCertPaths({ platform: 'linux', dataRoot: '/data' }).legacyTlsDir).toBeUndefined();
+    });
+});
+
+describe('migrateLegacyTlsHome', () => {
+    // Real directories, because the property that matters is what the
+    // filesystem does: mkcert writes rootCA-key.pem read-only, and the move
+    // has to carry it.
+    let tmp: string;
+    let paths: CertPaths;
+
+    beforeEach(() => {
+        tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-tls-migrate-'));
+        const home = path.join(tmp, 'WsScrcpyWeb-tls');
+        paths = {
+            caRoot: path.join(home, 'ca'),
+            certFile: path.join(home, 'cert.pem'),
+            keyFile: path.join(home, 'key.pem'),
+            legacyTlsDir: path.join(tmp, 'WsScrcpyWeb', 'tls'),
+        };
+    });
+
+    afterEach(() => {
+        // `force` removes the read-only key too; nothing to clear first.
+        fs.rmSync(tmp, { recursive: true, force: true });
+    });
+
+    /** A legacy home as a real install leaves it: CA with a read-only key, plus the leaf. */
+    function seedLegacy(): void {
+        const ca = path.join(paths.legacyTlsDir!, 'ca');
+        fs.mkdirSync(ca, { recursive: true });
+        fs.writeFileSync(path.join(ca, 'rootCA.pem'), 'ROOT CERT');
+        fs.writeFileSync(path.join(ca, 'rootCA-key.pem'), 'ROOT KEY');
+        fs.chmodSync(path.join(ca, 'rootCA-key.pem'), 0o400);
+        fs.writeFileSync(path.join(paths.legacyTlsDir!, 'cert.pem'), 'LEAF CERT');
+        fs.writeFileSync(path.join(paths.legacyTlsDir!, 'key.pem'), 'LEAF KEY');
+    }
+
+    it('moves the legacy home, read-only CA key included, when only the legacy home exists', () => {
+        seedLegacy();
+        expect(migrateLegacyTlsHome(paths)).toEqual({ outcome: 'moved' });
+        expect(fs.readFileSync(path.join(paths.caRoot, 'rootCA.pem'), 'utf-8')).toBe('ROOT CERT');
+        expect(fs.readFileSync(path.join(paths.caRoot, 'rootCA-key.pem'), 'utf-8')).toBe('ROOT KEY');
+        expect(fs.readFileSync(paths.certFile, 'utf-8')).toBe('LEAF CERT');
+        expect(fs.readFileSync(paths.keyFile, 'utf-8')).toBe('LEAF KEY');
+        expect(fs.existsSync(paths.legacyTlsDir!)).toBe(false);
+    });
+
+    it('leaves BOTH homes alone when the new one already exists, and never overwrites it', () => {
+        seedLegacy();
+        fs.mkdirSync(paths.caRoot, { recursive: true });
+        fs.writeFileSync(path.join(paths.caRoot, 'rootCA.pem'), 'NEWER ROOT');
+        expect(migrateLegacyTlsHome(paths)).toEqual({ outcome: 'kept-both' });
+        expect(fs.readFileSync(path.join(paths.caRoot, 'rootCA.pem'), 'utf-8')).toBe('NEWER ROOT');
+        expect(fs.readFileSync(path.join(paths.legacyTlsDir!, 'ca', 'rootCA.pem'), 'utf-8')).toBe('ROOT CERT');
+    });
+
+    it('does nothing when there is no legacy home', () => {
+        expect(migrateLegacyTlsHome(paths)).toEqual({ outcome: 'none' });
+        expect(fs.existsSync(path.dirname(paths.certFile))).toBe(false);
+    });
+
+    it('does nothing on POSIX, where there is no legacy location', () => {
+        const { legacyTlsDir: _unused, ...posix } = paths;
+        expect(migrateLegacyTlsHome(posix)).toEqual({ outcome: 'none' });
+    });
+
+    it('retries a transient sharing violation, then moves', () => {
+        // Endpoint AV can hold a handle for a moment and a rename is refused
+        // while any handle is open; atomicFile's bounded retry is the remedy.
+        seedLegacy();
+        let calls = 0;
+        const renameSync = vi.fn((from: fs.PathLike, to: fs.PathLike) => {
+            calls += 1;
+            if (calls === 1) throw Object.assign(new Error('EPERM: operation not permitted'), { code: 'EPERM' });
+            fs.renameSync(from, to);
+        });
+        expect(migrateLegacyTlsHome(paths, { ...fs, renameSync })).toEqual({ outcome: 'moved' });
+        expect(renameSync).toHaveBeenCalledTimes(2);
+        expect(fs.readFileSync(paths.certFile, 'utf-8')).toBe('LEAF CERT');
+    });
+
+    it('gives up after the bounded retries, reports the failure and leaves the legacy home where it was', () => {
+        seedLegacy();
+        const renameSync = vi.fn(() => {
+            throw Object.assign(new Error('EBUSY: resource busy or locked'), { code: 'EBUSY' });
+        });
+        expect(migrateLegacyTlsHome(paths, { ...fs, renameSync })).toEqual({
+            outcome: 'failed',
+            detail: 'EBUSY: resource busy or locked',
+        });
+        expect(renameSync).toHaveBeenCalledTimes(7);
+        expect(fs.readFileSync(path.join(paths.legacyTlsDir!, 'ca', 'rootCA.pem'), 'utf-8')).toBe('ROOT CERT');
     });
 });
