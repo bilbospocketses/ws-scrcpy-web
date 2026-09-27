@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **On a phone, the Network Discovery header ran off the screen** (#747, contributed by `yegle`). Its title and its three buttons (`quick scan`, `scan network`, `manually add`) were held on one row, so below about 480px the title broke onto three lines and `manually add` hung past the card's edge, which made the whole page scroll sideways. The header and its button group now wrap (`flex-wrap` in `src/style/home.css`): on a narrow screen the title keeps one line and the buttons move under it. From 768px up the page renders pixel-identically to before.
+- **The device list and the scan results still forced sideways scrolling on phones narrower than about 383px.** Both card grids had a fixed minimum column, `minmax(340px, 1fr)` for devices and `minmax(280px, 1fr)` for scan hits, and a column never shrinks below its floor, so it stuck out past the screen even with no device attached. The floors are now clamped to the container (`minmax(min(340px, 100%), 1fr)`), so a narrow screen gets one full-width column. A new unit check fails any auto-fill grid in `src/style/` whose floor is a bare length, and a new fast-tier e2e spec, `tests/e2e/responsive-reflow.spec.ts`, checks WCAG 1.4.10 Reflow on the home page: nothing may extend past the right edge at 320 or 375 CSS px.
+
 ## [0.1.30-beta.136] - 2026-09-25
 
 ### Fixed

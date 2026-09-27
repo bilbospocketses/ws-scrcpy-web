@@ -115,9 +115,10 @@
     margin: 0;
 }
 
+/* Floor clamped to the container, so a scan hit never forces a column wider than a phone. */
 .discovery-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr));
     gap: 10px;
 }
 

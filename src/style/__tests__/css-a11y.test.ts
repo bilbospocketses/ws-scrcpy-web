@@ -24,6 +24,27 @@ describe('document language (WCAG 3.1.1)', () => {
     });
 });
 
+describe('reflow (WCAG 1.4.10)', () => {
+    it('no auto-fill grid holds a fixed minimum column wider than a phone', () => {
+        // `repeat(auto-fill, minmax(340px, 1fr))` never lays a column narrower than
+        // 340px, so on a phone narrower than the column plus the page's padding the
+        // grid overflows and the whole page scrolls sideways. Clamp the floor to the
+        // container instead: `minmax(min(340px, 100%), 1fr)`.
+        const grids = fs
+            .readdirSync(path.resolve('src', 'style'))
+            .filter((f) => f.endsWith('.css'))
+            .flatMap((f) =>
+                [...read(`src/style/${f}`).matchAll(/repeat\(\s*auto-(?:fill|fit)\s*,\s*minmax\(\s*([^,]+?)\s*,/g)].map(
+                    (m) => `${f}: ${m[1]}`,
+                ),
+            );
+        // Both known grids must be found, or an empty scan passes trivially.
+        expect(grids.some((g) => g.startsWith('devicelist.css'))).toBe(true);
+        expect(grids.some((g) => g.startsWith('home.css'))).toBe(true);
+        expect(grids.filter((g) => /: [1-9][\d.]*(px|rem|em|ch)$/.test(g))).toEqual([]);
+    });
+});
+
 describe('cascade hygiene (no !important war)', () => {
     it('home.css uses specificity, not !important, for the discovery buttons', () => {
         // Match the declaration form (`… !important;` / `… !important}`) so a

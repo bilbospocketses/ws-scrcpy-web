@@ -370,10 +370,12 @@ body.list #device_list_menu {
     background-color: var(--device-list-hover-color);
 }
 
-/* Tracker block — inherits grid layout so device cards flow correctly */
+/* Tracker block — inherits grid layout so device cards flow correctly.
+   The column floor is clamped to the container: a bare 340px floor held a
+   column wider than a phone, and the whole page scrolled sideways below ~383px. */
 #devices .device-list > div {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr));
     gap: 12px;
 }
 
