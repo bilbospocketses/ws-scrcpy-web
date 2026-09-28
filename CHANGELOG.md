@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **The README's list of admin actions that need proof of operator is complete.** It named users, configuration, service control, updates and shutdown. Dependencies have been operator-gated since the list was written, and Local HTTPS changes since beta.140 (#762); both are now named, along with the fact that another machine can still download the CA.
+
 ## [0.1.30-beta.140] - 2026-09-27
 
 ### Security
