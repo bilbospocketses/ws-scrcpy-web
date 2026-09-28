@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **The Ubuntu note no longer says the AppImage may not launch there.** It claimed Ubuntu's restriction on unprivileged user namespaces (24.04 / 26.04) could block the AppImage from mounting itself, and promised a built-in extract-and-run fallback. Measured on stock Ubuntu 26.04 with the restriction on and no `libfuse2`, the AppImage mounts through the `fusermount3` helper and launches from a terminal and from Files. The fallback is no longer planned. The note now says to mark the file executable first, since GNOME opens a non-executable AppImage in Disk Image Mounter. Smoke row 2b.1 becomes a regression check, and Ubuntu's baseline `fusermount3` AppArmor denials no longer count against the AppArmor criterion.
 - **The README's list of admin actions that need proof of operator is complete.** It named users, configuration, service control, updates and shutdown. Dependencies have been operator-gated since the list was written, and Local HTTPS changes since beta.140 (#762); both are now named, along with the fact that another machine can still download the CA.
 
 ## [0.1.30-beta.140] - 2026-09-27
