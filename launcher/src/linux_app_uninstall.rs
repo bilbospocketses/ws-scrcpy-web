@@ -35,9 +35,19 @@ use crate::log;
 
 /// App / systemd-unit identity shared by every footprint path.
 const UNIT_NAME: &str = "WsScrcpyWeb";
-/// `pkill -f` pattern matching every long-lived process the app can spawn
-/// (server, launcher, the standalone tray, and an escaped scrcpy-server).
-const PROC_PATTERN: &str = "WsScrcpyWeb|ws-scrcpy-web-tray|ws-scrcpy-web-launcher|scrcpy-server";
+/// Command-line substrings identifying every long-lived process the app can
+/// spawn (server, launcher, the standalone tray, and an escaped scrcpy-server).
+/// Matched in-process by `stray_kill_targets`, NOT handed to `pkill -f`: this
+/// helper's own argv (`.../control/operation-server/ws-scrcpy-web-launcher.exe
+/// ... --data-root .../WsScrcpyWeb`) matches the pattern, and procps `pkill`
+/// spares only ITSELF — so a `pkill -f` step SIGKILLed its parent, this helper,
+/// before any later step ran (qa-harness arc L1, rows 14.3 / 14.6 on beta.140).
+const PROC_NAMES: [&str; 4] = [
+    "WsScrcpyWeb",
+    "ws-scrcpy-web-tray",
+    "ws-scrcpy-web-launcher",
+    "scrcpy-server",
+];
 /// Machine-wide install staging dir: binary + bundled deps, root-owned, ALWAYS
 /// fully removed (never "kept"). The system-service DATA root (/var/lib, holding
 /// config.json + logs) is deliberately NOT a const — it arrives as `data_root` so
@@ -62,8 +72,10 @@ pub struct UninstallPlan {
     /// system-service data root (/var/lib) keep/wipe, the .desktop + icon plus a
     /// menu-cache refresh, and the SELinux fcontext rules.
     pub privileged: Vec<Vec<String>>,
-    /// Unelevated steps: kill strays, user-scope service cascade, the instance
+    /// Unelevated steps: reap adb, user-scope service cascade, the instance
     /// lock, and the data root (whole, or regenerable subdirs when `keep`).
+    /// The stray-process kill that precedes them is NOT an argv step — it runs
+    /// in-process (`kill_strays`) so it can exclude this helper itself.
     pub user_owned: Vec<Vec<String>>,
 }
 
@@ -146,23 +158,17 @@ pub fn app_uninstall_commands(
     let rm = format!("{bindir}/rm");
 
     // ── user_owned (always; in teardown order) ───────────────────────────────
-    // 1. kill stray app processes (server, launcher, tray, escaped scrcpy-server).
-    //    Seeds the vec (vec![..]-init mirrors teardown_commands; the rest is conditional).
-    let mut user_owned: Vec<Vec<String>> = vec![vec![
-        format!("{bindir}/pkill"),
-        "-KILL".into(),
-        "-f".into(),
-        PROC_PATTERN.to_string(),
-    ]];
-
+    // 1. stray app processes are killed in-process by `kill_strays` just before
+    //    this group runs — see PROC_NAMES for why it is not a `pkill -f` step.
+    //
     // 1b. reap the bundled adb daemon by exact name — it daemonizes and escapes
-    //     the pattern pkill above.
-    user_owned.push(vec![
+    //     the name match above. `-x adb` cannot match this helper.
+    let mut user_owned: Vec<Vec<String>> = vec![vec![
         format!("{bindir}/pkill"),
         "-KILL".into(),
         "-x".into(),
         "adb".into(),
-    ]);
+    ]];
 
     // 2. user-scope service cascade — only when the service was installed --user.
     if svc_scope == Some(Scope::User) {
@@ -460,8 +466,90 @@ fn run_unelevated(a: &UninstallArgs) -> i32 {
 
     // 2. Unelevated group (kills our own processes + tears down the user data
     //    root). Best-effort: log non-zero, KEEP GOING (mirrors linux_service::run).
+    kill_strays();
     run_best_effort(&plan.user_owned, "uninstall");
     0
+}
+
+/// One `/proc` entry, as much of it as the stray kill needs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProcEntry {
+    pid: i32,
+    ppid: i32,
+    /// argv joined with spaces — what `pkill -f` matches against.
+    cmdline: String,
+}
+
+/// Pids to SIGKILL: every process whose command line contains one of
+/// `PROC_NAMES`, EXCEPT `self_pid` and its ancestors. Excluding the ancestor
+/// chain is the part `pkill` cannot do: it spares only itself, so a pkill run
+/// from this helper killed the helper. Pure so it is unit-testable off-Linux.
+fn stray_kill_targets(procs: &[ProcEntry], self_pid: i32) -> Vec<i32> {
+    let ppid_of: std::collections::HashMap<i32, i32> =
+        procs.iter().map(|p| (p.pid, p.ppid)).collect();
+    let mut spared = std::collections::HashSet::new();
+    let mut cur = self_pid;
+    // `insert` returning false stops a malformed (cyclic) chain; pid 0/1 end it.
+    while cur > 1 && spared.insert(cur) {
+        match ppid_of.get(&cur) {
+            Some(&pp) => cur = pp,
+            None => break,
+        }
+    }
+    procs
+        .iter()
+        .filter(|p| !spared.contains(&p.pid))
+        .filter(|p| PROC_NAMES.iter().any(|n| p.cmdline.contains(n)))
+        .map(|p| p.pid)
+        .collect()
+}
+
+/// Parse the ppid out of `/proc/<pid>/stat`. The comm field is parenthesised
+/// and may itself contain spaces or `)`, so split after the LAST `)`: the
+/// fields that follow are `state ppid ...`.
+fn parse_stat_ppid(stat: &str) -> Option<i32> {
+    let rest = &stat[stat.rfind(')')? + 1..];
+    rest.split_whitespace().nth(1)?.parse().ok()
+}
+
+/// Snapshot `/proc`. Processes that vanish mid-read, and kernel threads (empty
+/// cmdline), are skipped.
+fn read_procs() -> Vec<ProcEntry> {
+    let Ok(dir) = std::fs::read_dir("/proc") else {
+        return Vec::new();
+    };
+    dir.filter_map(|e| {
+        let pid: i32 = e.ok()?.file_name().to_str()?.parse().ok()?;
+        let raw = std::fs::read(format!("/proc/{pid}/cmdline")).ok()?;
+        if raw.is_empty() {
+            return None;
+        }
+        let cmdline = String::from_utf8_lossy(&raw)
+            .trim_end_matches('\0')
+            .replace('\0', " ");
+        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+        Some(ProcEntry {
+            pid,
+            ppid: parse_stat_ppid(&stat)?,
+            cmdline,
+        })
+    })
+    .collect()
+}
+
+/// SIGKILL every stray app process except this helper and its ancestors.
+/// Best-effort, like the argv groups: a failed kill is logged, never fatal.
+fn kill_strays() {
+    let self_pid = rustix::process::getpid().as_raw_nonzero().get();
+    for pid in stray_kill_targets(&read_procs(), self_pid) {
+        let Some(p) = rustix::process::Pid::from_raw(pid) else {
+            continue;
+        };
+        match rustix::process::kill_process(p, rustix::process::Signal::KILL) {
+            Ok(()) => log::info(&format!("uninstall ok: killed stray pid {pid}")),
+            Err(e) => log::error(&format!("uninstall: kill stray pid {pid} failed: {e}")),
+        }
+    }
 }
 
 /// Elevated run (under pkexec, as root): the privileged group ONLY, best-effort
@@ -602,21 +690,18 @@ mod tests {
             DR_LOCAL,
             Some("/run/user/1000"),
         );
-        // Exact ordered user_owned: pattern-kill -> adb-kill -> autostart -> lock
-        // -> data-root wipe. (autostart is HOME-relative: matched by prefix+suffix.)
+        // Exact ordered user_owned: adb-kill -> autostart -> lock -> data-root
+        // wipe. (autostart is HOME-relative: matched by prefix+suffix.) The
+        // stray-process kill runs in-process before this group (kill_strays).
         let u = joined(&plan.user_owned);
-        assert_eq!(u.len(), 5);
-        assert_eq!(
-            u[0],
-            "/usr/bin/pkill -KILL -f WsScrcpyWeb|ws-scrcpy-web-tray|ws-scrcpy-web-launcher|scrcpy-server"
-        );
-        assert_eq!(u[1], "/usr/bin/pkill -KILL -x adb");
+        assert_eq!(u.len(), 4);
+        assert_eq!(u[0], "/usr/bin/pkill -KILL -x adb");
         assert!(
-            u[2].starts_with("/usr/bin/rm -f ")
-                && u[2].ends_with("/.config/autostart/ws-scrcpy-web-tray.desktop")
+            u[1].starts_with("/usr/bin/rm -f ")
+                && u[1].ends_with("/.config/autostart/ws-scrcpy-web-tray.desktop")
         );
-        assert_eq!(u[3], "/usr/bin/rm -f /run/user/1000/ws-scrcpy-web.lock");
-        assert_eq!(u[4], "/usr/bin/rm -rf /home/u/.local/share/WsScrcpyWeb");
+        assert_eq!(u[2], "/usr/bin/rm -f /run/user/1000/ws-scrcpy-web.lock");
+        assert_eq!(u[3], "/usr/bin/rm -rf /home/u/.local/share/WsScrcpyWeb");
         // privileged is empty -> no elevation.
         assert!(plan.privileged.is_empty());
         // no systemctl anywhere (no service installed).
@@ -792,8 +877,8 @@ mod tests {
         let plan = app_uninstall_commands(None, false, false, "/usr/bin", DR_LOCAL, None);
         let u = joined(&plan.user_owned);
         assert!(!u.iter().any(|c| c.contains("ws-scrcpy-web.lock")));
-        // but the kill is still first and the data root is still wiped.
-        assert!(u[0].starts_with("/usr/bin/pkill -KILL -f "));
+        // but the adb reap is still first and the data root is still wiped.
+        assert_eq!(u[0], "/usr/bin/pkill -KILL -x adb");
         assert!(
             u.iter()
                 .any(|c| c.as_str() == "/usr/bin/rm -rf /home/u/.local/share/WsScrcpyWeb")
@@ -1019,6 +1104,102 @@ mod tests {
         assert_eq!(parse_args(&with_data_root("--privileged")), None);
         assert_eq!(parse_args(&with_data_root("relative/WsScrcpyWeb")), None);
         assert_eq!(parse_args(&with_data_root("")), None);
+    }
+
+    #[test]
+    fn no_plan_ever_pattern_kills() {
+        // Regression (beta.140, qa-harness L1): a `pkill -f` over the app's names
+        // matches this helper's own argv, and pkill spares only itself, so it
+        // SIGKILLed the helper before any later step ran. No combination of
+        // inputs may put one back in either group.
+        for svc in [None, Some(Scope::User), Some(Scope::System)] {
+            for mw in [false, true] {
+                for keep in [false, true] {
+                    let plan = app_uninstall_commands(
+                        svc,
+                        mw,
+                        keep,
+                        "/usr/bin",
+                        DR_LOCAL,
+                        Some("/run/user/1000"),
+                    );
+                    for c in joined(&plan.user_owned)
+                        .iter()
+                        .chain(joined(&plan.privileged).iter())
+                    {
+                        assert!(
+                            !(c.contains("/pkill ") && c.contains(" -f ")),
+                            "pattern kill in plan: {c}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    fn pe(pid: i32, ppid: i32, cmdline: &str) -> ProcEntry {
+        ProcEntry {
+            pid,
+            ppid,
+            cmdline: cmdline.to_string(),
+        }
+    }
+
+    /// The helper's real argv from the beta.140 journal (arc L1 run 2).
+    const HELPER: &str = "/home/qa/.local/share/WsScrcpyWeb/control/operation-server/ws-scrcpy-web-launcher.exe --linux-app-uninstall --scope none --machine-wide 0 --wipe --data-root /home/qa/.local/share/WsScrcpyWeb --relaunch /home/qa/Downloads/WsScrcpyWeb-linux-beta.AppImage";
+
+    #[test]
+    fn stray_kill_spares_self_and_ancestors_but_kills_strays() {
+        let procs = vec![
+            pe(1, 0, "/sbin/init"),
+            pe(900, 1, "/usr/lib/systemd/systemd --user"),
+            // the helper, spawned by the user manager via systemd-run
+            pe(1000, 900, HELPER),
+            // a (hypothetical) wrapper ancestor whose argv also matches
+            pe(950, 900, "/tmp/.mount_WsScrcpyWeb/AppRun"),
+            pe(1001, 950, "sh -c WsScrcpyWeb"),
+            // strays: the server's node, the tray, an escaped scrcpy-server
+            pe(
+                2000,
+                900,
+                "/tmp/.mount_WsScrcpyWebXYZ/usr/bin/node dist/index.js",
+            ),
+            pe(
+                2001,
+                900,
+                "/home/qa/.local/share/WsScrcpyWeb/bin/ws-scrcpy-web-tray",
+            ),
+            pe(
+                2002,
+                2000,
+                "app_process / com.genymobile.scrcpy.Server 4.1 scrcpy-server",
+            ),
+            // unrelated
+            pe(3000, 900, "/usr/bin/gnome-shell"),
+        ];
+        let mut t = stray_kill_targets(&procs, 1000);
+        t.sort();
+        assert_eq!(t, vec![950, 1001, 2000, 2001, 2002]);
+        // Now the helper is a child of 1001 -> 950: both ancestors are spared.
+        let mut nested = procs.clone();
+        nested[2] = pe(1000, 1001, HELPER);
+        let mut t = stray_kill_targets(&nested, 1000);
+        t.sort();
+        assert_eq!(t, vec![2000, 2001, 2002]);
+    }
+
+    #[test]
+    fn stray_kill_survives_a_cyclic_ppid_chain() {
+        // A malformed snapshot must terminate, not loop.
+        let procs = vec![pe(10, 11, HELPER), pe(11, 10, "WsScrcpyWeb")];
+        assert_eq!(stray_kill_targets(&procs, 10), Vec::<i32>::new());
+    }
+
+    #[test]
+    fn parse_stat_ppid_handles_parens_and_spaces_in_comm() {
+        assert_eq!(parse_stat_ppid("1234 (node) S 900 1234 1234 0"), Some(900));
+        assert_eq!(parse_stat_ppid("1234 (a) b) (c) R 77 1 1"), Some(77));
+        assert_eq!(parse_stat_ppid("garbage"), None);
     }
 
     #[test]
