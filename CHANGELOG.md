@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **A Linux complete uninstall that deletes your data no longer leaves a `logs` folder behind.** The uninstall deleted the data folder, then wrote two more lines to its own log, and writing a log line re-creates the folder it lives in, so `WsScrcpyWeb/logs/launcher.log` came back straight away. Deleting the data folder is now the uninstall's last step, and the uninstall stops logging just before it. If the delete does not fully succeed, a short report is written next to the data folder (`WsScrcpyWeb-uninstall-report.txt`), never inside it. The same change covers a system service's data in `/var/lib/ws-scrcpy-web`. "Keep my settings" is unchanged. Found by qa-harness on Ubuntu 26.04 (row 14.3).
+
 ### Changed
 - **The technical guide, README and smoke register describe how beta.141 and beta.142 behave.** §19.4 explains why a Settings page reloads after a service hand-off (the per-instance token belongs to one process); §24's token layer points there; the complete-uninstall paragraph and key-files row name the in-process stray kill that replaced `pkill -f`; the `install-system-wide` route and a new §20.8 row describe the relaunch-only `--linux-apply` helper and why it runs in its own `systemd-run --user` unit. The README's list of what lives in `config.json` now includes `allowRemoteAdmin`. Smoke row 4.2-user credits #772 alongside beta.48, and the register's 14.1 line records its new clause.
 

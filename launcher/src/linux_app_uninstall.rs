@@ -26,6 +26,14 @@
 // The direct and the pkexec-elevated executions feed the SAME args to the SAME
 // builder, so the privileged/user_owned split is identical either way.
 //
+// On `--wipe` the step that deletes the WHOLE data root is lifted out of its
+// group and run LAST in the process (`split_data_root_wipe` +
+// `run_data_root_wipe`). Every log line does `create_dir_all(<dataRoot>/logs)`,
+// so a process that logs inside the root it deletes must stop logging before
+// the `rm`; anything after that would re-create `<dataRoot>/logs/launcher.log`
+// (D6, qa-harness row 14.3 on beta.142). Same fix as the Windows cleaner:
+// `log::disable()`, plus a report BESIDE the data root if the wipe fell short.
+//
 // Local-Dependencies-Only: every tool is resolved under `bindir` (sbin tools via
 // `sbindir_from(bindir)`) — never a bare name and never via PATH.
 use crate::linux_service::{
@@ -389,6 +397,8 @@ fn run_unelevated(a: &UninstallArgs) -> i32 {
         a.svc_scope, a.machine_wide, a.keep
     ));
     let plan = plan_for(a);
+    // Whole-data-root wipes held back until every other step has run and logged.
+    let mut wipes: Vec<(Vec<String>, &str)> = Vec::new();
 
     // 1. Privileged group FIRST. Already root -> run it directly (no pkexec);
     //    non-root -> re-invoke self under ONE pkexec; empty -> skip elevation.
@@ -398,11 +408,15 @@ fn run_unelevated(a: &UninstallArgs) -> i32 {
         PrivMode::Direct => {
             // Already root (system-service mode): run the privileged group
             // DIRECTLY, best-effort (mirrors linux_service::run / the user_owned
-            // loop). No relaunch — a complete uninstall never relaunches.
+            // loop). No relaunch — a complete uninstall never relaunches. The
+            // root service hands us DATA_ROOT=/var/lib/ws-scrcpy-web, so this
+            // process logs inside the /var/lib root it wipes: defer that step.
             log::info(
                 "uninstall: already root (system-service) — running privileged group directly",
             );
-            run_best_effort(&plan.privileged, "uninstall (root)");
+            let (steps, wipe) = split_data_root_wipe(&plan.privileged, &a.data_root);
+            run_best_effort(&steps, "uninstall (root)");
+            wipes.extend(wipe.map(|w| (w, "uninstall (root)")));
         }
         PrivMode::Pkexec => {
             let pkexec = format!("{}/pkexec", tool_dir("pkexec"));
@@ -467,7 +481,14 @@ fn run_unelevated(a: &UninstallArgs) -> i32 {
     // 2. Unelevated group (kills our own processes + tears down the user data
     //    root). Best-effort: log non-zero, KEEP GOING (mirrors linux_service::run).
     kill_strays();
-    run_best_effort(&plan.user_owned, "uninstall");
+    let (steps, wipe) = split_data_root_wipe(&plan.user_owned, &a.data_root);
+    run_best_effort(&steps, "uninstall");
+    wipes.extend(wipe.map(|w| (w, "uninstall")));
+
+    // 3. The whole-data-root wipe, last of all — nothing may log after it (D6).
+    for (argv, label) in &wipes {
+        run_data_root_wipe(argv, label, &a.data_root);
+    }
     0
 }
 
@@ -561,8 +582,153 @@ fn run_elevated(a: &UninstallArgs) -> i32 {
         a.svc_scope, a.machine_wide, a.keep
     ));
     let plan = plan_for(a);
-    run_best_effort(&plan.privileged, "uninstall (root)");
+    let (steps, wipe) = split_data_root_wipe(&plan.privileged, &a.data_root);
+    run_best_effort(&steps, "uninstall (root)");
+    if let Some(argv) = wipe {
+        run_data_root_wipe(&argv, "uninstall (root)", &a.data_root);
+    }
     0
+}
+
+/// Lift the step that deletes the WHOLE data root out of `group`, keeping the
+/// rest in order, so the caller can run it last. A `--keep` plan has no such
+/// step (it deletes only regenerable subdirs, and there `logs/` is meant to
+/// survive), so it comes back unchanged with `None`.
+fn split_data_root_wipe(
+    group: &[Vec<String>],
+    data_root: &str,
+) -> (Vec<Vec<String>>, Option<Vec<String>>) {
+    let mut wipe = None;
+    let mut steps = Vec::with_capacity(group.len());
+    for argv in group {
+        let whole_root =
+            argv.len() == 3 && argv[0].ends_with("/rm") && argv[1] == "-rf" && argv[2] == data_root;
+        if whole_root && wipe.is_none() {
+            wipe = Some(argv.clone());
+        } else {
+            steps.push(argv.clone());
+        }
+    }
+    (steps, wipe)
+}
+
+/// Whether this process's log root sits at or under the data root being wiped
+/// — i.e. whether a log line written after the wipe would re-create it.
+/// Component-wise, so `.../WsScrcpyWebX` is not inside `.../WsScrcpyWeb`. An
+/// unresolvable log root counts as inside: when we cannot tell, silence is the
+/// safe side of a wipe.
+fn logs_inside(log_root: Option<&std::path::Path>, data_root: &std::path::Path) -> bool {
+    match log_root {
+        Some(root) => root.starts_with(data_root),
+        None => true,
+    }
+}
+
+/// Where the wipe report goes: a SIBLING of the data root, e.g.
+/// `~/.local/share/WsScrcpyWeb-uninstall-report.txt` or
+/// `/var/lib/ws-scrcpy-web-uninstall-report.txt`. Never inside it — that would
+/// re-create the tree the wipe just removed. `None` when the data root has no
+/// parent or name. The Windows cleaner's `residue_report_path` is the model.
+fn residue_report_path(data_root: &str) -> Option<std::path::PathBuf> {
+    let path = std::path::Path::new(data_root);
+    let name = path.file_name()?;
+    let parent = path.parent()?;
+    let mut filename = name.to_os_string();
+    filename.push("-uninstall-report.txt");
+    Some(parent.join(filename))
+}
+
+/// How many surviving entries the report lists before truncating.
+const RESIDUE_REPORT_MAX_LISTED: usize = 40;
+
+/// The wipe report body, or `None` when the wipe was clean — the file's
+/// PRESENCE is the signal, so a clean uninstall leaves nothing behind. Pure: the
+/// caller supplies the timestamp, the `rm` failure (if any) and what is left.
+/// `remaining` is `None` when the data root is gone.
+fn wipe_report_body(
+    timestamp: &str,
+    data_root: &str,
+    failure: Option<&str>,
+    remaining: Option<&[String]>,
+) -> Option<String> {
+    if failure.is_none() && remaining.is_none() {
+        return None;
+    }
+    let mut out = format!("ws-scrcpy-web uninstall {timestamp} UTC (--wipe)\n");
+    out.push_str(&format!(
+        "rm -rf {data_root}: {}\n",
+        failure.unwrap_or("exited 0")
+    ));
+    match remaining {
+        None => out.push_str(&format!("{data_root} is gone\n")),
+        Some(entries) => {
+            out.push_str(&format!(
+                "{data_root} still exists; {} entr{} left in it:\n",
+                entries.len(),
+                if entries.len() == 1 { "y" } else { "ies" }
+            ));
+            for e in entries.iter().take(RESIDUE_REPORT_MAX_LISTED) {
+                out.push_str(&format!("  {e}\n"));
+            }
+            if entries.len() > RESIDUE_REPORT_MAX_LISTED {
+                out.push_str(&format!(
+                    "  … and {} more\n",
+                    entries.len() - RESIDUE_REPORT_MAX_LISTED
+                ));
+            }
+        }
+    }
+    Some(out)
+}
+
+/// Run the whole-data-root `rm -rf` as this process's LAST step (D6).
+///
+/// When this process logs inside the root it is deleting (the unelevated helper,
+/// and the root-Direct helper whose DATA_ROOT is /var/lib), it says what it is
+/// about to do, turns logging off, and then runs the `rm`; its outcome goes to
+/// a report beside the data root, written only if the wipe fell short. When it
+/// logs elsewhere (the pkexec child, whose HOME is /root) nothing can be
+/// re-created, so the step runs and logs like any other.
+fn run_data_root_wipe(argv: &[String], label: &str, data_root: &str) {
+    let log_root = common::config::try_data_root_from_env();
+    if !logs_inside(log_root.as_deref(), std::path::Path::new(data_root)) {
+        run_best_effort(&[argv.to_vec()], label);
+        return;
+    }
+    log::info(&format!(
+        "{label}: wiping {data_root} last; this process logs inside it, so logging stops here"
+    ));
+    log::disable();
+    let failure = match run_argv(argv) {
+        Ok(s) if s.success() => None,
+        Ok(s) => Some(format!("exited {:?}", s.code())),
+        Err(e) => Some(format!("could not start ({e})")),
+    };
+    let remaining = std::fs::read_dir(data_root).ok().map(|dir| {
+        let mut names: Vec<String> = dir
+            .filter_map(|e| Some(e.ok()?.file_name().to_string_lossy().into_owned()))
+            .collect();
+        names.sort();
+        names
+    });
+    let timestamp = log::format_timestamp_utc(std::time::SystemTime::now());
+    if let (Some(body), Some(path)) = (
+        wipe_report_body(
+            &timestamp,
+            data_root,
+            failure.as_deref(),
+            remaining.as_deref(),
+        ),
+        residue_report_path(data_root),
+    ) {
+        let _ = std::fs::write(path, body);
+    }
+}
+
+/// Spawn one argv-vector and wait for it.
+fn run_argv(argv: &[String]) -> std::io::Result<std::process::ExitStatus> {
+    let (cmd, rest) = argv.split_first().expect("non-empty argv");
+    std::process::Command::new(cmd).args(rest).status()
 }
 
 /// Run a best-effort command group: log each step's outcome and KEEP GOING on
@@ -570,8 +736,7 @@ fn run_elevated(a: &UninstallArgs) -> i32 {
 /// (root) group from the user-owned group in the log lines.
 fn run_best_effort(group: &[Vec<String>], label: &str) {
     for argv in group {
-        let (cmd, rest) = argv.split_first().expect("non-empty argv");
-        match std::process::Command::new(cmd).args(rest).status() {
+        match run_argv(argv) {
             Ok(s) if s.success() => log::info(&format!("{label} ok: {}", argv.join(" "))),
             Ok(s) => log::error(&format!(
                 "{label} non-zero ({:?}): {}",
@@ -1200,6 +1365,156 @@ mod tests {
         assert_eq!(parse_stat_ppid("1234 (node) S 900 1234 1234 0"), Some(900));
         assert_eq!(parse_stat_ppid("1234 (a) b) (c) R 77 1 1"), Some(77));
         assert_eq!(parse_stat_ppid("garbage"), None);
+    }
+
+    // ── D6: the whole-data-root wipe runs last, and nothing logs after it ──
+
+    #[test]
+    fn split_lifts_the_local_wipe_out_and_keeps_the_rest_in_order() {
+        let plan = app_uninstall_commands(
+            None,
+            false,
+            false,
+            "/usr/bin",
+            DR_LOCAL,
+            Some("/run/user/1000"),
+        );
+        let (steps, wipe) = split_data_root_wipe(&plan.user_owned, DR_LOCAL);
+        assert_eq!(
+            wipe.map(|w| w.join(" ")).as_deref(),
+            Some("/usr/bin/rm -rf /home/u/.local/share/WsScrcpyWeb")
+        );
+        assert_eq!(joined(&steps), joined(&plan.user_owned[..3]));
+    }
+
+    #[test]
+    fn split_lifts_the_var_lib_wipe_out_of_the_privileged_group() {
+        // The root-Direct sibling: /var/lib is wiped mid-group today, and the
+        // .desktop / icon / semanage steps after it all log inside /var/lib.
+        let dr = "/var/lib/ws-scrcpy-web";
+        let plan = app_uninstall_commands(Some(Scope::System), true, false, "/usr/bin", dr, None);
+        let (steps, wipe) = split_data_root_wipe(&plan.privileged, dr);
+        assert_eq!(
+            wipe.map(|w| w.join(" ")).as_deref(),
+            Some("/usr/bin/rm -rf /var/lib/ws-scrcpy-web")
+        );
+        assert_eq!(steps.len(), plan.privileged.len() - 1);
+        // /opt is still removed, in the ordinary group.
+        assert!(
+            joined(&steps)
+                .iter()
+                .any(|c| c.as_str() == "/usr/bin/rm -rf /opt/ws-scrcpy-web")
+        );
+    }
+
+    #[test]
+    fn keep_plans_have_nothing_to_lift() {
+        // --keep deletes only deps/bin/control; logs/ is meant to survive.
+        for (svc, dr) in [
+            (None, DR_LOCAL),
+            (Some(Scope::User), DR_LOCAL),
+            (Some(Scope::System), "/var/lib/ws-scrcpy-web"),
+        ] {
+            let plan = app_uninstall_commands(svc, true, true, "/usr/bin", dr, None);
+            for group in [&plan.user_owned, &plan.privileged] {
+                let (steps, wipe) = split_data_root_wipe(group, dr);
+                assert!(wipe.is_none(), "{svc:?}: keep must not lift a wipe");
+                assert_eq!(joined(&steps), joined(group));
+            }
+        }
+    }
+
+    #[test]
+    fn every_wipe_plan_defers_exactly_one_whole_root_rm() {
+        // Across every scope / machine-wide combination, a --wipe plan holds the
+        // whole-root rm exactly once, and after splitting no ordinary step is it.
+        for svc in [None, Some(Scope::User), Some(Scope::System)] {
+            for mw in [false, true] {
+                let plan = app_uninstall_commands(svc, mw, false, "/usr/bin", DR_LOCAL, None);
+                let (u_steps, u_wipe) = split_data_root_wipe(&plan.user_owned, DR_LOCAL);
+                let (p_steps, p_wipe) = split_data_root_wipe(&plan.privileged, DR_LOCAL);
+                assert_eq!(
+                    usize::from(u_wipe.is_some()) + usize::from(p_wipe.is_some()),
+                    1,
+                    "{svc:?} mw={mw}"
+                );
+                let bare = format!("/usr/bin/rm -rf {DR_LOCAL}");
+                assert!(
+                    !joined(&u_steps)
+                        .iter()
+                        .chain(joined(&p_steps).iter())
+                        .any(|c| *c == bare),
+                    "{svc:?} mw={mw}: the wipe was left in an ordinary group"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn logs_inside_is_component_wise_and_fails_safe() {
+        use std::path::Path;
+        let dr = Path::new(DR_LOCAL);
+        assert!(logs_inside(Some(dr), dr));
+        assert!(logs_inside(Some(&dr.join("logs")), dr));
+        // The pkexec child logs under /root, never inside /var/lib.
+        assert!(!logs_inside(
+            Some(Path::new("/root/.local/share/WsScrcpyWeb")),
+            Path::new("/var/lib/ws-scrcpy-web")
+        ));
+        // A string prefix is not a path prefix.
+        assert!(!logs_inside(
+            Some(Path::new("/home/u/.local/share/WsScrcpyWebX")),
+            dr
+        ));
+        // Unknown log root -> treat as inside (stay silent through the wipe).
+        assert!(logs_inside(None, dr));
+    }
+
+    #[test]
+    fn the_wipe_report_is_a_sibling_of_the_data_root_never_inside_it() {
+        for (dr, want) in [
+            (
+                DR_LOCAL,
+                "/home/u/.local/share/WsScrcpyWeb-uninstall-report.txt",
+            ),
+            (
+                "/var/lib/ws-scrcpy-web",
+                "/var/lib/ws-scrcpy-web-uninstall-report.txt",
+            ),
+        ] {
+            let p = residue_report_path(dr).expect("data root has a parent");
+            assert_eq!(p, std::path::PathBuf::from(want));
+            assert!(!p.starts_with(dr));
+        }
+        assert!(residue_report_path("/").is_none());
+    }
+
+    #[test]
+    fn a_clean_wipe_writes_no_report() {
+        assert!(wipe_report_body("t", DR_LOCAL, None, None).is_none());
+    }
+
+    #[test]
+    fn a_short_wipe_reports_the_failure_and_what_is_left() {
+        let left = vec!["logs".to_string()];
+        let body = wipe_report_body("t", DR_LOCAL, Some("exited Some(1)"), Some(&left)).unwrap();
+        assert!(body.contains("(--wipe)"));
+        assert!(body.contains(&format!("rm -rf {DR_LOCAL}: exited Some(1)")));
+        assert!(body.contains("1 entry left in it:\n  logs\n"));
+
+        // rm said 0 but something re-created the root: still worth a report.
+        let body = wipe_report_body("t", DR_LOCAL, None, Some(&left)).unwrap();
+        assert!(body.contains(": exited 0\n"));
+
+        // rm failed but the root is gone anyway.
+        let body = wipe_report_body("t", DR_LOCAL, Some("exited Some(1)"), None).unwrap();
+        assert!(body.contains("is gone"));
+
+        let many: Vec<String> = (0..45).map(|i| format!("e{i}")).collect();
+        let body = wipe_report_body("t", DR_LOCAL, None, Some(&many)).unwrap();
+        assert!(body.contains("45 entries"));
+        assert!(body.contains("… and 5 more"));
+        assert!(!body.contains("e44"));
     }
 
     #[test]
