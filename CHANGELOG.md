@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.141] - 2026-09-29
+
 ### Fixed
 - **The in-app uninstall on Linux removes what it says it removes.** The uninstall helper's first step was `pkill -KILL -f` over the app's process names, and the helper's own command line contains two of them. `pkill` spares only itself, so it killed the helper, and nothing after that step ran. A local uninstall left the whole data root (or, with "keep my settings & logs", `dependencies/`, `bin/` and `control/`), the instance lock and the tray autostart entry behind. A machine-wide uninstall removed `/opt`, the menu entry and the icon, then left the user's data root and lock. The helper now finds and kills the app's processes itself, skipping its own process and the processes that started it. Found by qa-harness on Ubuntu 26.04 (smoke rows 14.3, 14.6 and 2b.7).
 - **A second user on the same Linux machine gets their dependencies installed.** Every download was staged under one shared `/tmp/ws-scrcpy-web` folder, created by whichever user ran the app first and writable only by them. Every later user's first-run install of Node.js, adb and scrcpy-server failed with `EACCES`. Each download now gets its own private folder directly in the temp directory. Found by qa-harness during smoke row 3.1.
