@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **The smoke test names beta.143 as its target.** It still said beta.92, 51 releases behind the build qa-harness's Linux desktop runs are pinned to.
+
 ## [0.1.30-beta.143] - 2026-09-29
 
 ### Fixed
