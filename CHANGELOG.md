@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.142] - 2026-09-29
+
 ### Fixed
 - **After Settings hands the app over to a service or back, the page reconnects instead of timing out.** Each server process issues its own access token, and a page only receives one when it loads. Once the new process held the port, every check the old page made was refused as "missing or invalid token", which the page read as "not ready yet". The install then gave up with "port discovery timed out" and the uninstall with "fresh instance not detected". The page now treats that specific refusal as proof a new process is answering and reloads to pick up its token. Found by qa-harness on Ubuntu 26.04 (rows 4.2-user, 4.6, 2b.6 and 5.8).
 - **"Install for all users" brings the app back from `/opt` even when the app had restarted itself earlier**, for example after a user-scope service uninstall. The helper that relaunches from `/opt` was started as a plain background process. An instance the app had relaunched runs inside its own systemd unit, and systemd stops everything in that unit when the app exits, so the helper died before relaunching. It now runs in a systemd unit of its own, as the updater's helper already did. Found by qa-harness on Ubuntu 26.04; row 14.1 now covers it.
