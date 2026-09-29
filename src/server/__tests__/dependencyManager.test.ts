@@ -370,6 +370,14 @@ describe('makeUpdateTmpDir (N7)', () => {
     it('still contains the dependency name, for a diagnosable path', () => {
         expect(makeUpdateTmpDir('mkcert')).toContain('update-mkcert-');
     });
+
+    it('has no shared parent: it sits directly in the OS temp dir', () => {
+        // A fixed per-machine parent (`<tmp>/ws-scrcpy-web`) was created by the
+        // first user with their umask, and every later user's mkdir inside it
+        // failed with EACCES (qa-harness arc L1, beta.140, a second user's
+        // first-run dependency installs).
+        expect(path.dirname(makeUpdateTmpDir('nodejs'))).toBe(os.tmpdir());
+    });
 });
 
 describe('DependencyManager — deferInstall reaches the wire', () => {

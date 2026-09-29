@@ -1472,7 +1472,7 @@ export class Config {
      * with 2-space indent and trailing newline (Contract 1).
      */
     public saveToDisk(): void {
-        // config.json holds ONLY the boot trio now. Preserve the server-only boot
+        // config.json holds the boot trio plus allowRemoteAdmin. Preserve the server-only boot
         // fields (`server` SSL array, `allowedHosts`, `frameAncestors`, `httpsPort`)
         // that live in the file but aren't part of AppConfig — re-read them so a
         // save never drops them.
@@ -1490,7 +1490,13 @@ export class Config {
             webPort: this._appConfig.webPort,
             firstRunComplete: this._appConfig.firstRunComplete,
         };
-        const out = `${JSON.stringify({ ...trio, ...preserved }, null, 2)}\n`;
+        // allowRemoteAdmin is config.json-backed too (sanitizeAppConfig reads it
+        // at boot; TECHNICAL_GUIDE §24). It was never written here, so the
+        // banner's PATCH lived only in memory and was gone after a restart, and
+        // any save dropped a hand-set value. Written only when on: false is the
+        // default, so an absent key reads back the same.
+        const remoteAdmin = this._appConfig.allowRemoteAdmin === true ? { allowRemoteAdmin: true } : {};
+        const out = `${JSON.stringify({ ...trio, ...remoteAdmin, ...preserved }, null, 2)}\n`;
         const dir = path.dirname(this._configFilePath);
         if (!fs.existsSync(dir)) {
             fs.mkdirSync(dir, { recursive: true });

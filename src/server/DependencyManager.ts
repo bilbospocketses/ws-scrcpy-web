@@ -40,9 +40,17 @@ const execFileAsync = promisify(execFile);
  * cleanup, and the failure that produces is indistinguishable from a
  * genuine checksum mismatch -- the one error message that should mean
  * tampering. `randomUUID()` has no such collision window.
+ *
+ * The directory sits DIRECTLY under the OS temp dir, with no shared parent.
+ * It used to be `<tmp>/ws-scrcpy-web/update-…`, and on Linux that parent is
+ * one per machine: whichever user ran the app first created it with their
+ * umask (775), so every other user's `mkdir` inside it failed with EACCES and
+ * their first-run dependency installs all failed (qa-harness arc L1, beta.140).
+ * `performUpdate` creates it with mode 0700, and without `recursive`, so a path
+ * that already exists is an error rather than something we silently reuse.
  */
 export function makeUpdateTmpDir(name: string): string {
-    return path.join(os.tmpdir(), 'ws-scrcpy-web', `update-${name}-${randomUUID()}`);
+    return path.join(os.tmpdir(), `ws-scrcpy-web-update-${name}-${randomUUID()}`);
 }
 
 export class DependencyManager {
@@ -301,8 +309,8 @@ export class DependencyManager {
 
             const url = def.getDownloadUrl(version);
 
-            // Create temp directory
-            fs.mkdirSync(tmpDir, { recursive: true });
+            // Create temp directory (private to this user; see makeUpdateTmpDir)
+            fs.mkdirSync(tmpDir, { mode: 0o700 });
 
             // I8: for mkcert, fetch the SHA256SUMS manifest and check its
             // provenance BEFORE downloading the binary at all -- "no download
