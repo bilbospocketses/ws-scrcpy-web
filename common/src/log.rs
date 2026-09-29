@@ -182,19 +182,23 @@ fn append(prefix: &str, msg: &str) {
         return;
     }
     let ts = format_timestamp_utc(SystemTime::now());
-    if STDERR_ONLY.load(Ordering::Relaxed) {
-        if stderr_route_keeps(prefix, STDERR_INFO.load(Ordering::Relaxed)) {
-            eprintln!("{ts} [{prefix}] {msg}");
-        }
-        return;
-    }
-    if let Some(path) = log_path() {
-        rotate_by_rename_if_large(&path, MAX_LOG_SIZE);
-        if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&path) {
-            let _ = writeln!(f, "{ts} [{prefix}] {msg}");
+    let stderr_only = STDERR_ONLY.load(Ordering::Relaxed);
+    if !stderr_only {
+        if let Some(path) = log_path() {
+            rotate_by_rename_if_large(&path, MAX_LOG_SIZE);
+            if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&path) {
+                let _ = writeln!(f, "{ts} [{prefix}] {msg}");
+            }
         }
     }
-    if should_echo_stderr(std::io::stderr().is_terminal()) {
+    // One stderr sink for both modes: the terminal echo, and the pkexec route
+    // (where stderr is the ONLY destination, level-filtered).
+    let echo = if stderr_only {
+        stderr_route_keeps(prefix, STDERR_INFO.load(Ordering::Relaxed))
+    } else {
+        should_echo_stderr(std::io::stderr().is_terminal())
+    };
+    if echo {
         eprintln!("{ts} [{prefix}] {msg}");
     }
 }
