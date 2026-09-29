@@ -273,7 +273,12 @@ export function buildMachineWideInstallScript(
         'Categories=Utility;',
     ].join('\\n');
     const steps = [
-        `${mkdir} -p ${STAGED_SYSTEM_DIR}`,
+        // pkexec keeps the desktop user's umask (0002 on Ubuntu), which made /opt
+        // group-writable and the later system install refuse it (D8). `umask` is a
+        // shell builtin, so it cannot be a resolved absolute tool path.
+        'umask 022',
+        `${mkdir} -p -m 0755 ${STAGED_SYSTEM_DIR}`,
+        `${chmod} 0755 ${STAGED_SYSTEM_DIR}`,
         `${cp} ${shQuote(args.sourceAppImage)} "${staged}"`,
         `${chmod} 0755 "${staged}"`,
         `${printf} '%s' ${shQuote(args.version)} > ${SYSTEM_OPT_VERSION_FILE}`,

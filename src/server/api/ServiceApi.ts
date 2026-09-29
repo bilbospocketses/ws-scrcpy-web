@@ -544,7 +544,18 @@ export class ServiceApi {
                 res.end(JSON.stringify(body));
                 return true;
             }
-            const r = await this.runElevated([pkexec, binPath, '--install-system-service', '--port', String(port)]);
+            // --deps-source: the root one-shot runs with pkexec's scrubbed env
+            // (HOME=/root), so it cannot find this user's dependencies itself, and
+            // resolving them through Config there opened a store in /root (D7b).
+            const r = await this.runElevated([
+                pkexec,
+                binPath,
+                '--install-system-service',
+                '--port',
+                String(port),
+                '--deps-source',
+                cfg.dependenciesPath,
+            ]);
             if (r.code !== 0) {
                 // revert installMode so the next load doesn't see a phantom service mode
                 try {
@@ -563,9 +574,12 @@ export class ServiceApi {
                     res.end(JSON.stringify(body));
                     return true;
                 }
+                // The one-shot reports why on stderr; stdout is a fallback for an
+                // older build, which printed its refusal there and so showed the
+                // user nothing but the generic line (D8).
                 const body: ServiceActionFailure = {
                     ok: false,
-                    error: (r.stderr || 'system-service install failed').trim(),
+                    error: r.stderr.trim() || r.stdout.trim() || 'system-service install failed',
                     reason: 'servy-failure',
                 };
                 res.writeHead(500);

@@ -127,7 +127,7 @@ describe('buildMachineWideInstallScript', () => {
             (t) => `/usr/bin/${t}`,
             (t) => `/usr/sbin/${t}`,
         );
-        expect(s).toContain('mkdir -p /opt/ws-scrcpy-web');
+        expect(s).toContain('mkdir -p -m 0755 /opt/ws-scrcpy-web');
         expect(s).toContain(
             `cp '/home/u/Downloads/WsScrcpyWeb-linux-beta.AppImage' "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"`,
         );
@@ -140,6 +140,20 @@ describe('buildMachineWideInstallScript', () => {
         expect(s).not.toContain('dependencies'); // binary only — deps stay per-user ~/.local
         expect(s).not.toContain('systemctl'); // no service install here
         expect(s).toContain(`rm -f '/home/u/Downloads/WsScrcpyWeb-linux-beta.AppImage'`); // final step: delete the original (true relocate)
+    });
+
+    it('sets umask 022 first and leaves /opt 0755 even if it already existed 775 (D8)', () => {
+        // pkexec keeps the desktop user's umask (0002 on Ubuntu); /opt came out
+        // 775 and the later system install refused it.
+        const s = buildMachineWideInstallScript(
+            { sourceAppImage: '/home/u/Downloads/WsScrcpyWeb-linux-beta.AppImage', version: '0.1.31-beta.1' },
+            (t) => `/usr/bin/${t}`,
+            (t) => `/usr/sbin/${t}`,
+        );
+        const steps = s.split(' && ');
+        expect(steps[0]).toBe('umask 022');
+        expect(steps[1]).toBe('/usr/bin/mkdir -p -m 0755 /opt/ws-scrcpy-web');
+        expect(steps[2]).toBe('/usr/bin/chmod 0755 /opt/ws-scrcpy-web');
     });
 
     it('installs the menu icon into the hicolor theme + refreshes the icon cache when iconSource is given', () => {
