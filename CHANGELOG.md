@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.143] - 2026-09-29
+
 ### Fixed
 - **A Linux complete uninstall that deletes your data no longer leaves a `logs` folder behind.** The uninstall deleted the data folder, then wrote two more lines to its own log, and writing a log line re-creates the folder it lives in, so `WsScrcpyWeb/logs/launcher.log` came back straight away. Deleting the data folder is now the uninstall's last step, and the uninstall stops logging just before it. If the delete does not fully succeed, a short report is written next to the data folder (`WsScrcpyWeb-uninstall-report.txt`), never inside it. The same change covers a system service's data in `/var/lib/ws-scrcpy-web`. "Keep my settings" is unchanged. Found by qa-harness on Ubuntu 26.04 (row 14.3).
 
