@@ -45,8 +45,31 @@ export type PollOutcome =
     | { kind: 'reconnect' }
     | { kind: 'timeout' };
 
+/**
+ * True when a hand-off poll was refused because this page's instance token
+ * belongs to a process that has gone. The token is minted per PROCESS and only
+ * handed out with a document response (instanceToken.ts), so once a service
+ * hand-off puts a new process on this origin, every API call the old page makes
+ * is `403 {"error":"forbidden","reason":"missing or invalid token"}`. That refusal
+ * is itself the proof that a DIFFERENT process now answers here, so the poll
+ * reloads to pick up the new token. Before this, both hand-off polls read the
+ * 403 as "not ready yet" and timed out (qa-harness arc L2, rows 4.2-user / 4.6 /
+ * 2b.6 / 5.8, beta.141). Any other 403 (a non-admin's `{"error":"forbidden"}`,
+ * the operator gate) is not this and returns false.
+ */
+export function isStaleTokenRefusal(status: number, body: unknown): boolean {
+    return (
+        status === 403 &&
+        typeof body === 'object' &&
+        body !== null &&
+        (body as { reason?: unknown }).reason === 'missing or invalid token'
+    );
+}
+
 export function classifyInstallPoll(args: {
     reachable: boolean;
+    /** This tick was an `isStaleTokenRefusal`: a new process holds this origin. */
+    tokenRejected: boolean;
     servedByService: boolean;
     configMtime: number | null;
     baselineMtime: number;
@@ -75,6 +98,12 @@ export function classifyInstallPoll(args: {
     const portMoved = args.diskWebPort != null && args.currentPort != null && args.diskWebPort !== args.currentPort;
     if (portMoved && (args.servedByService || args.serviceSeenRunning)) {
         return { kind: 'navigate', port: args.diskWebPort as number };
+    }
+    // Our token was refused on our own origin: the process that served this page
+    // is gone and a new one (the service) holds the port. It cannot tell us
+    // servedByService until we hold its token, and only a reload gets that.
+    if (args.tokenRejected) {
+        return { kind: 'reconnect' };
     }
     // Success requires a POSITIVE signal: the instance answering /api/service/status
     // is the service itself (WS_SCRCPY_SERVICE on its unit), not the exiting local
@@ -567,12 +596,16 @@ export function buildServiceTab(_ctx: TabContext, _store: StagedSettingsStore): 
                 // do NOT treat that as success: we wait for the service to answer with
                 // servedByService=true (below) before reconnecting/navigating.
                 let reachable = true;
+                let tokenRejected = false;
                 let servedByService = false;
                 let configMtime: number | null = null;
                 let diskWebPort: number | null = null;
                 try {
                     const statusResp = await fetch('/api/service/status', { signal: AbortSignal.timeout(5000) });
-                    if (statusResp.ok) {
+                    if (!statusResp.ok) {
+                        const body: unknown = await statusResp.json().catch(() => null);
+                        tokenRejected = isStaleTokenRefusal(statusResp.status, body);
+                    } else {
                         const statusData = (await statusResp.json()) as {
                             configMtime?: number;
                             diskWebPort?: number;
@@ -597,6 +630,7 @@ export function buildServiceTab(_ctx: TabContext, _store: StagedSettingsStore): 
                 }
                 const outcome = classifyInstallPoll({
                     reachable,
+                    tokenRejected,
                     servedByService,
                     configMtime,
                     baselineMtime,
@@ -733,7 +767,16 @@ export function buildServiceTab(_ctx: TabContext, _store: StagedSettingsStore): 
                     }
                     try {
                         const resp = await fetch('/api/discover', { signal: AbortSignal.timeout(5000) });
-                        if (!resp.ok) return;
+                        if (!resp.ok) {
+                            // The relaunched local instance holds this origin with a
+                            // new token (see isStaleTokenRefusal): reload to get it.
+                            const body: unknown = await resp.json().catch(() => null);
+                            if (isStaleTokenRefusal(resp.status, body)) {
+                                clearInterval(poll);
+                                window.location.reload();
+                            }
+                            return;
+                        }
                         const discoverData = (await resp.json()) as {
                             webPort?: number | null;
                             configMtime?: number | null;
