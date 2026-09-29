@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Smoke coverage for two of beta.141's fixes.** Row 3.1 (a second Linux user's launch) now also expects that user's first launch to finish installing its dependencies into its own data root, with no `EACCES` in its log. New row 18.13 checks that "allow remote admin" survives a server restart and an unrelated settings save, and that turning it off removes it from `config.json`. Both rows were drafted by qa-harness, which found the bugs.
+
 ## [0.1.30-beta.141] - 2026-09-29
 
 ### Fixed
