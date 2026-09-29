@@ -97,6 +97,12 @@ pub fn run() -> Result<(i32, Option<Arc<AtomicBool>>)> {
         paths.install_root, paths.data_root, paths.deps_path
     ));
 
+    // D14: as root (the system service), never run anything from a dependencies
+    // tree another user can change. beta.145's install left one owned by the
+    // desktop user; this removes it and the service provisions a fresh one.
+    #[cfg(target_os = "linux")]
+    crate::root_deps_guard::guard(&paths.deps_path);
+
     // Stale marker cleanup on startup. Prevents an old marker from a
     // previous crash from triggering an immediate respawn loop.
     cleanup_stale_marker(&paths.restart_marker);

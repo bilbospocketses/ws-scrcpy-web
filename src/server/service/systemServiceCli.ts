@@ -1,9 +1,7 @@
 import { execFile } from 'child_process';
 import * as fs from 'fs';
-import * as path from 'path';
 import { APP_CONFIG_DEFAULTS } from '../../common/ConfigEvents';
 import { WS_SCRCPY_SERVICE_DESCRIPTION, WS_SCRCPY_SERVICE_NAME } from '../../common/ServiceEvents';
-import { resolveDependenciesPath } from '../Config';
 import { Logger } from '../Logger';
 import {
     buildServiceUnitEnv,
@@ -31,13 +29,9 @@ export interface CoreDeps {
     run: CommandRunner;
     writeFile: (path: string, content: string, opts: { mode: number }) => void;
     appImageSource: string;
-    /** Fallback dependencies tree to stage when the caller passes none; null = none known. */
-    depsSource: string | null;
     tool: (t: string) => string; // /usr/bin resolver
     sbinTool: (t: string) => string; // /usr/sbin resolver (semanage/restorecon)
     lstat: (path: string) => { uid: number; gid: number; mode: number; isSymbolicLink: boolean };
-    /** Non-fatal problems worth surfacing (stderr in production). */
-    warn?: (s: string) => void;
 }
 
 const UNIT_PATH = `/etc/systemd/system/${WS_SCRCPY_SERVICE_NAME}.service`;
@@ -89,10 +83,7 @@ export async function ensureSafeRootDir(dir: string, d: Pick<CoreDeps, 'lstat' |
     assertSafeRootDir(dir, d.lstat);
 }
 
-export async function installSystemService(
-    opts: { port: number; depsSource?: string | undefined },
-    d: CoreDeps,
-): Promise<void> {
+export async function installSystemService(opts: { port: number }, d: CoreDeps): Promise<void> {
     assertRoot(d.getuid);
     const mkdir = d.tool('mkdir');
     const cp = d.tool('cp');
@@ -116,18 +107,15 @@ export async function installSystemService(
     await ensureSafeRootDir(SYSTEM_LOGS_DIR, d);
     await d.run([cp, d.appImageSource, STAGED_BIN]);
     await d.run([chmod, '0755', STAGED_BIN]);
+    // The service's dependencies tree starts EMPTY and root-owned; the service
+    // (root) provisions node/adb/scrcpy-server into it itself. NEVER stage the
+    // desktop user's tree: beta.145 did (`cp -a` of --deps-source), `-a` kept the
+    // user's ownership, and the root service then exec'd a node the user could
+    // rewrite -- a local privilege escalation (D14). Remove whatever an earlier
+    // install left, so a reinstall also repairs a 145 tree.
+    await d.run([d.tool('rm'), '-rf', STAGED_SYSTEM_DEPS_DIR]);
     await d.run([mkdir, '-p', '-m', '0755', STAGED_SYSTEM_DEPS_DIR]);
-    const depsSource = opts.depsSource ?? d.depsSource;
-    if (depsSource) {
-        const copied = await d.run([cp, '-a', `${depsSource}/.`, `${STAGED_SYSTEM_DEPS_DIR}/`]);
-        if (copied.code !== 0) {
-            d.warn?.(
-                `dependencies not staged from ${depsSource}: ${copied.stderr.trim() || `cp exited ${copied.code}`}`,
-            );
-        }
-    } else {
-        d.warn?.('dependencies not staged: no source given (--deps-source) and none resolvable');
-    }
+    await ensureSafeRootDir(STAGED_SYSTEM_DEPS_DIR, d);
 
     // SELinux relabel — best-effort, matching the uninstall path below.
     // semanage/restorecon only exist on SELinux distros (Fedora/RHEL); on
@@ -200,7 +188,7 @@ export async function systemServiceStatus(
 // ---------------------------------------------------------------------------
 
 export type ParsedSystemServiceArgs =
-    | { op: 'install'; port: number | undefined; depsSource?: string | undefined }
+    | { op: 'install'; port: number | undefined }
     | { op: 'uninstall'; keepState: boolean }
     | { op: 'status' };
 
@@ -209,14 +197,8 @@ export function parseSystemServiceArgs(argv: string[]): ParsedSystemServiceArgs 
         const portIdx = argv.indexOf('--port');
         const portStr = portIdx !== -1 ? argv[portIdx + 1] : undefined;
         const port = portStr !== undefined ? parseInt(portStr, 10) : undefined;
-        // --deps-source <abs path>: the desktop caller's own dependencies tree.
-        // Under pkexec the env is scrubbed (HOME=/root), so nothing here could
-        // resolve it; ServiceApi passes it. Only an absolute, non-flag value is
-        // taken — root `cp -a`s from it.
-        const dsIdx = argv.indexOf('--deps-source');
-        const dsStr = dsIdx !== -1 ? argv[dsIdx + 1] : undefined;
-        const depsSource = dsStr !== undefined && path.posix.isAbsolute(dsStr) ? dsStr : undefined;
-        return depsSource !== undefined ? { op: 'install', port, depsSource } : { op: 'install', port };
+        // No --deps-source: root never stages a user's dependencies tree (D14).
+        return { op: 'install', port };
     }
     if (argv.includes('--uninstall-system-service')) {
         return { op: 'uninstall', keepState: argv.includes('--keep-state') };
@@ -246,7 +228,7 @@ export async function runSystemServiceCli(parsed: ParsedSystemServiceArgs, deps:
         switch (parsed.op) {
             case 'install': {
                 const port = parsed.port ?? deps.defaultPort();
-                await installSystemService({ port, depsSource: parsed.depsSource }, deps);
+                await installSystemService({ port }, deps);
                 return 0;
             }
             case 'uninstall': {
@@ -266,25 +248,6 @@ export async function runSystemServiceCli(parsed: ParsedSystemServiceArgs, deps:
     }
 }
 
-/**
- * The dependencies tree to fall back on when no `--deps-source` was passed (the
- * headless `sudo` CLI), resolved from the env alone, or null. Deliberately NOT
- * `Config.getInstance()`: that opens the store, and under pkexec/sudo the env
- * resolves the data root to `/root/.local/share/WsScrcpyWeb`, so the one-shot
- * left a root-owned `wsscrcpy.db` there (D7b, qa-harness L3 on beta.144).
- */
-export function fallbackDepsSource(
-    env: NodeJS.ProcessEnv,
-    entryScript: string,
-    platform: NodeJS.Platform = process.platform,
-): string | null {
-    try {
-        return resolveDependenciesPath(env, {}, entryScript, fs.existsSync, platform);
-    } catch {
-        return null;
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Production deps factory
 // ---------------------------------------------------------------------------
@@ -294,8 +257,8 @@ export function fallbackDepsSource(
  * The CommandRunner receives fully-resolved absolute paths from `tool`/`sbinTool`
  * (resolveSystemTool returns /usr/bin/<t> or bare name as last-resort fallback),
  * so no system-PATH resolution occurs in the runner itself. execFile is invoked
- * with NO timeout option — deliberately: long-running ops (cp -a of a large
- * deps tree, daemon-reload) must not be killed mid-flight.
+ * with NO timeout option — deliberately: long-running ops (daemon-reload,
+ * `enable --now`) must not be killed mid-flight.
  */
 export function makeProductionCoreDeps(): CliDeps {
     const run: CommandRunner = (argv) =>
@@ -323,10 +286,10 @@ export function makeProductionCoreDeps(): CliDeps {
         },
         existsCheck: (p) => fs.existsSync(p),
         appImageSource: process.env['APPIMAGE'] ?? process.execPath,
-        // Neither of these opens Config or the store (D7b): see fallbackDepsSource.
-        depsSource: fallbackDepsSource(process.env, process.argv[1] ?? ''),
         tool: (t) => resolveSystemTool(t),
         sbinTool: (t) => resolveSystemTool(t),
+        // Never Config.getInstance(): that opens the store, and under pkexec/sudo
+        // the env resolves the data root to /root/.local/share/WsScrcpyWeb (D7b).
         // Root's own config.json is not this app's port anyway; the default is.
         defaultPort: () => APP_CONFIG_DEFAULTS.webPort,
         log: (s) => {
@@ -334,9 +297,6 @@ export function makeProductionCoreDeps(): CliDeps {
         },
         logError: (s) => {
             process.stderr.write(`${s}\n`);
-        },
-        warn: (s) => {
-            process.stderr.write(`warning: ${s}\n`);
         },
     };
 }

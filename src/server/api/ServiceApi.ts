@@ -544,18 +544,10 @@ export class ServiceApi {
                 res.end(JSON.stringify(body));
                 return true;
             }
-            // --deps-source: the root one-shot runs with pkexec's scrubbed env
-            // (HOME=/root), so it cannot find this user's dependencies itself, and
-            // resolving them through Config there opened a store in /root (D7b).
-            const r = await this.runElevated([
-                pkexec,
-                binPath,
-                '--install-system-service',
-                '--port',
-                String(port),
-                '--deps-source',
-                cfg.dependenciesPath,
-            ]);
+            // No dependencies are handed to the root one-shot: the root service
+            // provisions its own. beta.145 passed --deps-source and root staged this
+            // user's tree with its ownership intact -- a privilege escalation (D14).
+            const r = await this.runElevated([pkexec, binPath, '--install-system-service', '--port', String(port)]);
             if (r.code !== 0) {
                 // revert installMode so the next load doesn't see a phantom service mode
                 try {

@@ -4,7 +4,6 @@ import {
     assertSafeRootDir,
     type CommandRunner,
     ensureSafeRootDir,
-    fallbackDepsSource,
     installSystemService,
     makeProductionCoreDeps,
     parseSystemServiceArgs,
@@ -25,7 +24,6 @@ function recordingRunner() {
 const deps = {
     getuid: () => 0,
     appImageSource: '/tmp/.mount_x/usr/bin/WsScrcpyWeb.AppImage',
-    depsSource: '/home/u/.local/share/WsScrcpyWeb/dependencies',
     tool: (t: string) => `/usr/bin/${t}`,
     sbinTool: (t: string) => `/usr/sbin/${t}`,
     writeFile: vi.fn(),
@@ -183,35 +181,40 @@ describe('installSystemService — D8 / D9 / D7b', () => {
         const unit = writeFile.mock.calls.find((c) => c[0] === '/etc/systemd/system/WsScrcpyWeb.service')?.[1];
         expect(unit).toContain('StandardOutput=append:/var/lib/ws-scrcpy-web/logs/service.log');
     });
-    it('stages dependencies from --deps-source over the fallback', async () => {
-        const { run, calls } = recordingRunner();
-        await installSystemService(
-            { port: 8000, depsSource: '/home/qa/.local/share/WsScrcpyWeb/dependencies' },
-            {
-                ...deps,
-                run,
-            },
-        );
-        expect(calls.map((c) => c.join(' '))).toContain(
-            '/usr/bin/cp -a /home/qa/.local/share/WsScrcpyWeb/dependencies/. /opt/ws-scrcpy-web/dependencies/',
-        );
-    });
-    it('warns, and still installs, when the dependency copy fails or has no source', async () => {
-        const warn = vi.fn();
-        const run: CommandRunner = vi.fn(async (argv: string[]) =>
-            argv[0] === '/usr/bin/cp' && argv[1] === '-a'
-                ? { code: 1, stdout: '', stderr: 'cp: cannot stat: No such file or directory' }
-                : { code: 0, stdout: '', stderr: '' },
-        );
-        await installSystemService({ port: 8000 }, { ...deps, run, warn });
-        expect(warn).toHaveBeenCalledWith(expect.stringContaining('cannot stat'));
+});
 
-        const warn2 = vi.fn();
-        const r2 = recordingRunner();
-        await installSystemService({ port: 8000 }, { ...deps, depsSource: null, run: r2.run, warn: warn2 });
-        expect(warn2).toHaveBeenCalledWith(expect.stringContaining('no source'));
-        expect(r2.calls.some((c) => c[0] === '/usr/bin/cp' && c[1] === '-a')).toBe(false);
-        expect(r2.calls.some((c) => c.join(' ').includes('enable --now'))).toBe(true);
+describe('installSystemService — D14: root never stages a user-owned tree', () => {
+    it('copies nothing into /opt except the AppImage itself', async () => {
+        // beta.145 `cp -a`'d the desktop user's dependencies into /opt; -a kept
+        // their ownership, and the root service exec'd a node they could rewrite.
+        const { run, calls } = recordingRunner();
+        await installSystemService({ port: 8000 }, { ...deps, run });
+        const cps = calls.filter((c) => c[0] === '/usr/bin/cp');
+        expect(cps.map((c) => c.join(' '))).toEqual([
+            '/usr/bin/cp /tmp/.mount_x/usr/bin/WsScrcpyWeb.AppImage /opt/ws-scrcpy-web/WsScrcpyWeb.AppImage',
+        ]);
+        // …and no step reaches into a user's home.
+        expect(calls.some((c) => c.some((a) => a.startsWith('/home/')))).toBe(false);
+    });
+    it('removes any staged dependencies tree, then recreates it empty, 0755 and checked', async () => {
+        // A reinstall over a beta.145 install must not keep that user-owned tree.
+        const { run, calls } = recordingRunner();
+        await installSystemService({ port: 8000 }, { ...deps, run });
+        const flat = calls.map((c) => c.join(' '));
+        const rm = flat.indexOf('/usr/bin/rm -rf /opt/ws-scrcpy-web/dependencies');
+        const mk = flat.indexOf('/usr/bin/mkdir -p -m 0755 /opt/ws-scrcpy-web/dependencies');
+        expect(rm).toBeGreaterThanOrEqual(0);
+        expect(mk).toBeGreaterThan(rm);
+        expect(mk).toBeLessThan(flat.indexOf('/usr/bin/systemctl enable --now WsScrcpyWeb.service'));
+    });
+    it('refuses to install when the recreated dependencies dir is not safe', async () => {
+        const lstat = (p: string) =>
+            p === '/opt/ws-scrcpy-web/dependencies'
+                ? { uid: 1000, gid: 1000, mode: 0o775, isSymbolicLink: false }
+                : { uid: 0, gid: 0, mode: 0o755, isSymbolicLink: false };
+        const { run, calls } = recordingRunner();
+        await expect(installSystemService({ port: 8000 }, { ...deps, run, lstat })).rejects.toThrow(/not root-owned/);
+        expect(calls.some((c) => c.join(' ').includes('enable --now'))).toBe(false);
     });
 });
 
@@ -222,10 +225,6 @@ describe('the one-shot never opens Config or the store (D7b)', () => {
         d.defaultPort();
         expect(spy).not.toHaveBeenCalled();
         spy.mockRestore();
-    });
-    it('fallbackDepsSource resolves from the env alone, and is null when it cannot', () => {
-        expect(fallbackDepsSource({ DEPS_PATH: '/srv/deps' }, '/nowhere/dist/index.js', 'linux')).toBe('/srv/deps');
-        expect(fallbackDepsSource({}, '/nowhere/dist/index.js', 'linux')).toBeNull();
     });
 });
 
@@ -278,18 +277,10 @@ describe('parseSystemServiceArgs', () => {
         });
         expect(parseSystemServiceArgs(['--install-system-service'])).toEqual({ op: 'install', port: undefined });
     });
-    it('takes an absolute --deps-source and ignores a relative or flag-shaped one', () => {
+    it('ignores a --deps-source from a beta.145 caller: nothing is staged from it (D14)', () => {
         expect(
             parseSystemServiceArgs(['--install-system-service', '--port', '8000', '--deps-source', '/home/qa/deps']),
-        ).toEqual({ op: 'install', port: 8000, depsSource: '/home/qa/deps' });
-        expect(parseSystemServiceArgs(['--install-system-service', '--deps-source', 'rel/deps'])).toEqual({
-            op: 'install',
-            port: undefined,
-        });
-        expect(parseSystemServiceArgs(['--install-system-service', '--deps-source', '--port'])).toEqual({
-            op: 'install',
-            port: undefined,
-        });
+        ).toEqual({ op: 'install', port: 8000 });
     });
     it('parses uninstall with keep-state flag', () => {
         expect(parseSystemServiceArgs(['--uninstall-system-service', '--keep-state'])).toEqual({

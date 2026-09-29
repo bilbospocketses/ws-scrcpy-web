@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **beta.145's system service could run code the desktop user controls. Update to this release.** When you installed the system service from Settings on beta.145, the install copied your own `dependencies` folder into `/opt/ws-scrcpy-web/dependencies` and kept you as its owner. The service runs as root and starts `node` from that folder, so anyone who could write as your user could replace it and have it run as root the next time the service started. The install no longer copies dependencies at all; the service downloads its own, as root, as it did before beta.145. On a machine that already has the beta.145 folder, the service now checks its dependencies whenever it starts. If anything there is not owned by root, is writable by other users, or links outside the folder, it deletes the folder and downloads fresh copies. Updating a beta.145 system service to this release repairs it on its first start. Only system services installed from Settings on beta.145 were affected. Found by qa-harness on Ubuntu 26.04.
+
 ## [0.1.30-beta.145] - 2026-09-29
 
 ### Fixed

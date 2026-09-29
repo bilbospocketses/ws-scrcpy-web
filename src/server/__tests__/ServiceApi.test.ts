@@ -913,11 +913,10 @@ describe('ServiceApi', () => {
                 const expectedPort = String(Config.getInstance().getAppConfig().webPort);
                 expect(argv[portFlagIdx + 1]).toBe(expectedPort);
 
-                // (d2) --deps-source names THIS user's dependencies tree: the root
-                // one-shot's env is scrubbed and cannot find it (D7b).
-                const depsIdx = argv.indexOf('--deps-source');
-                expect(depsIdx).toBeGreaterThanOrEqual(0);
-                expect(argv[depsIdx + 1]).toBe(Config.getInstance().dependenciesPath);
+                // (d2) nothing of this user's is handed to root to stage: no
+                // --deps-source, and no path under the user's data root at all (D14).
+                expect(argv).not.toContain('--deps-source');
+                expect(argv.some((a) => a.startsWith(Config.getInstance().dependenciesPath))).toBe(false);
 
                 // (e) client.install must NOT be called (system scope exits early)
                 expect(installFn).not.toHaveBeenCalled();
