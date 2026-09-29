@@ -913,6 +913,12 @@ describe('ServiceApi', () => {
                 const expectedPort = String(Config.getInstance().getAppConfig().webPort);
                 expect(argv[portFlagIdx + 1]).toBe(expectedPort);
 
+                // (d2) --deps-source names THIS user's dependencies tree: the root
+                // one-shot's env is scrubbed and cannot find it (D7b).
+                const depsIdx = argv.indexOf('--deps-source');
+                expect(depsIdx).toBeGreaterThanOrEqual(0);
+                expect(argv[depsIdx + 1]).toBe(Config.getInstance().dependenciesPath);
+
                 // (e) client.install must NOT be called (system scope exits early)
                 expect(installFn).not.toHaveBeenCalled();
 
@@ -1019,6 +1025,38 @@ describe('ServiceApi', () => {
 
             // (c) client.install never called
             expect(installFn).not.toHaveBeenCalled();
+        });
+
+        it('POST /install Linux system scope: a failure reported only on stdout still reaches the user (D8)', async () => {
+            // Builds up to beta.144 printed the one-shot's refusal on stdout, and the
+            // page showed only "system-service install failed".
+            const client = fakeClient({ status: vi.fn(async () => 'not-installed' as const) });
+            const factoryResult: ServiceClientFactoryResult = { client, supported: true, platform: 'linux' };
+            const runElevated = vi.fn(async (_argv: string[]) => ({
+                code: 1,
+                stdout: 'refusing to operate on /opt/ws-scrcpy-web: group/other-writable (mode 775)\n',
+                stderr: '',
+            }));
+            const api = new ServiceApi(
+                () => factoryResult,
+                () => 'user',
+                () => false,
+                () => {
+                    /* no spawn */
+                },
+                () => {
+                    /* no-op scheduleExit */
+                },
+                async () => '',
+                async () => true,
+                runElevated,
+            );
+            Config.getInstance().updateAppConfig({ installMode: 'user' });
+            const { req, res } = makeReqRes('/api/service/install', 'POST', JSON.stringify({ scope: 'system' }));
+            await api.handle(req, res);
+            expect((res as any).getStatus()).toBe(500);
+            const body = JSON.parse((res as any).getBody());
+            expect(body.error).toBe('refusing to operate on /opt/ws-scrcpy-web: group/other-writable (mode 775)');
         });
 
         it('POST /install on Linux with $APPIMAGE set writes local-appimage marker to <dataRoot>/control/local-appimage', async () => {

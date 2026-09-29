@@ -1,7 +1,9 @@
 import { execFile } from 'child_process';
 import * as fs from 'fs';
+import * as path from 'path';
+import { APP_CONFIG_DEFAULTS } from '../../common/ConfigEvents';
 import { WS_SCRCPY_SERVICE_DESCRIPTION, WS_SCRCPY_SERVICE_NAME } from '../../common/ServiceEvents';
-import { Config } from '../Config';
+import { resolveDependenciesPath } from '../Config';
 import { Logger } from '../Logger';
 import {
     buildServiceUnitEnv,
@@ -29,14 +31,18 @@ export interface CoreDeps {
     run: CommandRunner;
     writeFile: (path: string, content: string, opts: { mode: number }) => void;
     appImageSource: string;
-    depsSource: string;
+    /** Fallback dependencies tree to stage when the caller passes none; null = none known. */
+    depsSource: string | null;
     tool: (t: string) => string; // /usr/bin resolver
     sbinTool: (t: string) => string; // /usr/sbin resolver (semanage/restorecon)
-    lstat: (path: string) => { uid: number; mode: number; isSymbolicLink: boolean };
+    lstat: (path: string) => { uid: number; gid: number; mode: number; isSymbolicLink: boolean };
+    /** Non-fatal problems worth surfacing (stderr in production). */
+    warn?: (s: string) => void;
 }
 
 const UNIT_PATH = `/etc/systemd/system/${WS_SCRCPY_SERVICE_NAME}.service`;
 const STAGED_BIN = `${STAGED_SYSTEM_DIR}/${STAGED_SYSTEM_APPIMAGE}`;
+const SYSTEM_LOGS_DIR = `${SYSTEM_STATE_DIR}/logs`;
 
 function assertRoot(getuid: () => number): void {
     if (getuid() !== 0) {
@@ -65,7 +71,28 @@ export function assertSafeRootDir(path: string, lstat: CoreDeps['lstat']): void 
     }
 }
 
-export async function installSystemService(opts: { port: number }, d: CoreDeps): Promise<void> {
+/**
+ * `assertSafeRootDir`, after repairing the ONE unsafe shape root itself produces:
+ * a real, root:root directory that is group-writable but not world-writable.
+ * A desktop user's umask is 0002 on Ubuntu (user-private groups), pkexec keeps
+ * it, and every `mkdir` root ran through it before D8's fix left 775 behind —
+ * so the system install refused a directory its own machine-wide install made.
+ * Group root admits only root-group members, so dropping g+w is a repair, not a
+ * trust decision. Everything else (a symlink, a non-root owner, a group other
+ * than root, world-writable) is still refused, by the re-check.
+ */
+export async function ensureSafeRootDir(dir: string, d: Pick<CoreDeps, 'lstat' | 'run' | 'tool'>): Promise<void> {
+    const st = d.lstat(dir);
+    if (!st.isSymbolicLink && st.uid === 0 && st.gid === 0 && (st.mode & 0o022) === 0o020) {
+        await d.run([d.tool('chmod'), 'g-w', dir]);
+    }
+    assertSafeRootDir(dir, d.lstat);
+}
+
+export async function installSystemService(
+    opts: { port: number; depsSource?: string | undefined },
+    d: CoreDeps,
+): Promise<void> {
     assertRoot(d.getuid);
     const mkdir = d.tool('mkdir');
     const cp = d.tool('cp');
@@ -74,17 +101,33 @@ export async function installSystemService(opts: { port: number }, d: CoreDeps):
     const semanage = d.sbinTool('semanage');
     const restorecon = d.sbinTool('restorecon');
 
-    await d.run([mkdir, '-p', STAGED_SYSTEM_DIR]);
-    await d.run([mkdir, '-p', SYSTEM_STATE_DIR]);
+    // Explicit 0755 (D8): never inherit the caller's umask for a root tree.
+    await d.run([mkdir, '-p', '-m', '0755', STAGED_SYSTEM_DIR]);
+    await d.run([mkdir, '-p', '-m', '0755', SYSTEM_STATE_DIR]);
     // Guard against a symlink/TOCTOU swap before root copies or relabels into
     // these predictable dirs (#15): each must be a real, root-owned,
-    // non-world-writable directory.
-    assertSafeRootDir(STAGED_SYSTEM_DIR, d.lstat);
-    assertSafeRootDir(SYSTEM_STATE_DIR, d.lstat);
+    // non-group/world-writable directory (a root:root 775 is repaired first).
+    await ensureSafeRootDir(STAGED_SYSTEM_DIR, d);
+    await ensureSafeRootDir(SYSTEM_STATE_DIR, d);
+    // The unit appends to <state>/logs/service.log, and systemd does not create
+    // an `append:` target's parent: without this the unit fails at step STDOUT
+    // (status 209) on every clean host (D9).
+    await d.run([mkdir, '-p', '-m', '0755', SYSTEM_LOGS_DIR]);
+    await ensureSafeRootDir(SYSTEM_LOGS_DIR, d);
     await d.run([cp, d.appImageSource, STAGED_BIN]);
     await d.run([chmod, '0755', STAGED_BIN]);
-    await d.run([mkdir, '-p', STAGED_SYSTEM_DEPS_DIR]);
-    await d.run([cp, '-a', `${d.depsSource}/.`, `${STAGED_SYSTEM_DEPS_DIR}/`]);
+    await d.run([mkdir, '-p', '-m', '0755', STAGED_SYSTEM_DEPS_DIR]);
+    const depsSource = opts.depsSource ?? d.depsSource;
+    if (depsSource) {
+        const copied = await d.run([cp, '-a', `${depsSource}/.`, `${STAGED_SYSTEM_DEPS_DIR}/`]);
+        if (copied.code !== 0) {
+            d.warn?.(
+                `dependencies not staged from ${depsSource}: ${copied.stderr.trim() || `cp exited ${copied.code}`}`,
+            );
+        }
+    } else {
+        d.warn?.('dependencies not staged: no source given (--deps-source) and none resolvable');
+    }
 
     // SELinux relabel — best-effort, matching the uninstall path below.
     // semanage/restorecon only exist on SELinux distros (Fedora/RHEL); on
@@ -108,7 +151,7 @@ export async function installSystemService(opts: { port: number }, d: CoreDeps):
             startupDir: STAGED_SYSTEM_DIR,
             maxRestartAttempts: 10,
             envVars,
-            logPath: `${SYSTEM_STATE_DIR}/logs/service.log`,
+            logPath: `${SYSTEM_LOGS_DIR}/service.log`,
         } as unknown as Parameters<typeof renderUnitFile>[0],
         'system',
     );
@@ -157,7 +200,7 @@ export async function systemServiceStatus(
 // ---------------------------------------------------------------------------
 
 export type ParsedSystemServiceArgs =
-    | { op: 'install'; port: number | undefined }
+    | { op: 'install'; port: number | undefined; depsSource?: string | undefined }
     | { op: 'uninstall'; keepState: boolean }
     | { op: 'status' };
 
@@ -166,7 +209,14 @@ export function parseSystemServiceArgs(argv: string[]): ParsedSystemServiceArgs 
         const portIdx = argv.indexOf('--port');
         const portStr = portIdx !== -1 ? argv[portIdx + 1] : undefined;
         const port = portStr !== undefined ? parseInt(portStr, 10) : undefined;
-        return { op: 'install', port };
+        // --deps-source <abs path>: the desktop caller's own dependencies tree.
+        // Under pkexec the env is scrubbed (HOME=/root), so nothing here could
+        // resolve it; ServiceApi passes it. Only an absolute, non-flag value is
+        // taken — root `cp -a`s from it.
+        const dsIdx = argv.indexOf('--deps-source');
+        const dsStr = dsIdx !== -1 ? argv[dsIdx + 1] : undefined;
+        const depsSource = dsStr !== undefined && path.posix.isAbsolute(dsStr) ? dsStr : undefined;
+        return depsSource !== undefined ? { op: 'install', port, depsSource } : { op: 'install', port };
     }
     if (argv.includes('--uninstall-system-service')) {
         return { op: 'uninstall', keepState: argv.includes('--keep-state') };
@@ -185,7 +235,10 @@ type CliDeps = CoreDeps & {
     removeFile: (p: string) => void;
     existsCheck: (p: string) => boolean;
     defaultPort: () => number;
+    /** Output a caller parses (the status JSON): stdout. */
     log: (s: string) => void;
+    /** Why the op failed: stderr, which ServiceApi shows the user (D8). */
+    logError: (s: string) => void;
 };
 
 export async function runSystemServiceCli(parsed: ParsedSystemServiceArgs, deps: CliDeps): Promise<number> {
@@ -193,7 +246,7 @@ export async function runSystemServiceCli(parsed: ParsedSystemServiceArgs, deps:
         switch (parsed.op) {
             case 'install': {
                 const port = parsed.port ?? deps.defaultPort();
-                await installSystemService({ port }, deps);
+                await installSystemService({ port, depsSource: parsed.depsSource }, deps);
                 return 0;
             }
             case 'uninstall': {
@@ -208,8 +261,27 @@ export async function runSystemServiceCli(parsed: ParsedSystemServiceArgs, deps:
         }
     } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
-        deps.log(msg);
+        deps.logError(msg);
         return 1;
+    }
+}
+
+/**
+ * The dependencies tree to fall back on when no `--deps-source` was passed (the
+ * headless `sudo` CLI), resolved from the env alone, or null. Deliberately NOT
+ * `Config.getInstance()`: that opens the store, and under pkexec/sudo the env
+ * resolves the data root to `/root/.local/share/WsScrcpyWeb`, so the one-shot
+ * left a root-owned `wsscrcpy.db` there (D7b, qa-harness L3 on beta.144).
+ */
+export function fallbackDepsSource(
+    env: NodeJS.ProcessEnv,
+    entryScript: string,
+    platform: NodeJS.Platform = process.platform,
+): string | null {
+    try {
+        return resolveDependenciesPath(env, {}, entryScript, fs.existsSync, platform);
+    } catch {
+        return null;
     }
 }
 
@@ -240,7 +312,7 @@ export function makeProductionCoreDeps(): CliDeps {
         writeFile: (p, content, opts) => fs.writeFileSync(p, content, opts),
         lstat: (p) => {
             const s = fs.lstatSync(p);
-            return { uid: s.uid, mode: s.mode, isSymbolicLink: s.isSymbolicLink() };
+            return { uid: s.uid, gid: s.gid, mode: s.mode, isSymbolicLink: s.isSymbolicLink() };
         },
         removeFile: (p) => {
             try {
@@ -251,12 +323,20 @@ export function makeProductionCoreDeps(): CliDeps {
         },
         existsCheck: (p) => fs.existsSync(p),
         appImageSource: process.env['APPIMAGE'] ?? process.execPath,
-        depsSource: Config.getInstance().dependenciesPath,
+        // Neither of these opens Config or the store (D7b): see fallbackDepsSource.
+        depsSource: fallbackDepsSource(process.env, process.argv[1] ?? ''),
         tool: (t) => resolveSystemTool(t),
         sbinTool: (t) => resolveSystemTool(t),
-        defaultPort: () => Config.getInstance().getAppConfig().webPort,
+        // Root's own config.json is not this app's port anyway; the default is.
+        defaultPort: () => APP_CONFIG_DEFAULTS.webPort,
         log: (s) => {
             process.stdout.write(`${s}\n`);
+        },
+        logError: (s) => {
+            process.stderr.write(`${s}\n`);
+        },
+        warn: (s) => {
+            process.stderr.write(`warning: ${s}\n`);
         },
     };
 }

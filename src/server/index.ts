@@ -72,6 +72,11 @@ try {
 // hooks must be registered before any other startup logic per SDK contract).
 const __ssArgs = parseSystemServiceArgs(process.argv);
 if (__ssArgs) {
+    // Root trees must not inherit the desktop user's umask: Ubuntu gives desktop
+    // sessions 0002, pkexec keeps it, and every mkdir/cp this one-shot runs as
+    // root came out group-writable -- which the install's own safety check then
+    // refused (D8). The children it spawns inherit this.
+    process.umask(0o022);
     runSystemServiceCli(__ssArgs, makeProductionCoreDeps())
         .then((code) => process.exit(code))
         .catch((err) => {
