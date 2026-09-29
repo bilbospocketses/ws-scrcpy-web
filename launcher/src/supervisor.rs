@@ -101,7 +101,9 @@ pub fn run() -> Result<(i32, Option<Arc<AtomicBool>>)> {
     // tree another user can change. beta.145's install left one owned by the
     // desktop user; this removes it and the service provisions a fresh one.
     #[cfg(target_os = "linux")]
-    crate::root_deps_guard::guard(&paths.deps_path);
+    crate::root_trust_guard::guard(&paths.deps_path);
+    #[cfg(target_os = "linux")]
+    crate::root_trust_guard::guard_opt_install();
 
     // Stale marker cleanup on startup. Prevents an old marker from a
     // previous crash from triggering an immediate respawn loop.

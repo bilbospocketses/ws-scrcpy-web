@@ -128,10 +128,17 @@ describe('buildMachineWideInstallScript', () => {
             (t) => `/usr/sbin/${t}`,
         );
         expect(s).toContain('mkdir -p -m 0755 /opt/ws-scrcpy-web');
+        // D14b: a fresh root-owned inode renamed in, never a cp onto the /opt binary
+        // (cp onto an existing file keeps that file's owner).
         expect(s).toContain(
-            `cp '/home/u/Downloads/WsScrcpyWeb-linux-beta.AppImage' "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"`,
+            `install -o root -g root -m 0755 '/home/u/Downloads/WsScrcpyWeb-linux-beta.AppImage' "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage.new"`,
         );
-        expect(s).toContain('chmod 0755 "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"');
+        expect(s).toContain(
+            'mv -f "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage.new" "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"',
+        );
+        expect(s).not.toMatch(/\bcp '[^']*' "\/opt\/ws-scrcpy-web\/WsScrcpyWeb\.AppImage"/);
+        expect(s).toContain('rm -f /opt/ws-scrcpy-web/VERSION');
+        expect(s).toContain('chmod 0644 /opt/ws-scrcpy-web/VERSION');
         expect(s).toContain("semanage fcontext -a -t bin_t '/opt/ws-scrcpy-web(/.*)?'");
         expect(s).toContain('restorecon -Rv "/opt/ws-scrcpy-web"');
         expect(s).toContain('/opt/ws-scrcpy-web/VERSION');
@@ -230,26 +237,34 @@ describe('buildMachineWideUpdateScript', () => {
         version: '0.1.31-beta.2',
     };
 
-    it('rename-swaps the /opt AppImage (old→.bak, staged→/opt), chmods, relabels best-effort, writes VERSION', () => {
-        const s = buildMachineWideUpdateScript(
+    it('installs a fresh root-owned copy, rename-swaps it in (old→.bak), relabels best-effort, writes VERSION 0644', () => {
+        const steps = buildMachineWideUpdateScript(
             args,
             (t) => `/usr/bin/${t}`,
             (t) => `/usr/sbin/${t}`,
-        );
-        // 1. back up the RUNNING /opt binary by RENAME (cp would ETXTBSY it).
-        expect(s).toContain(
-            '/usr/bin/mv -f "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage" "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage.bak"',
-        );
-        // 2. move the staged download into place (rename, not cp).
-        expect(s).toContain(`/usr/bin/mv -f '${args.stagedAppImage}' "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"`);
-        // 3. chmod the new binary executable.
-        expect(s).toContain('/usr/bin/chmod 0755 "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"');
-        // 4. re-apply the bin_t label best-effort: restorecon (persistent rule),
-        //    chcon fallback, trailing `|| true` so a non-SELinux host still writes VERSION.
-        expect(s).toContain('/usr/sbin/restorecon -v "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"');
-        expect(s).toContain('/usr/bin/chcon -t bin_t "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"');
-        // 5. write the new VERSION marker.
-        expect(s).toContain(`/usr/bin/printf '%s' '0.1.31-beta.2' > /opt/ws-scrcpy-web/VERSION`);
+        ).split(' && ');
+        const bin = '/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage';
+        expect(steps).toEqual([
+            'umask 022',
+            // D14b: a FRESH root-owned inode from the user's staged download. The old
+            // `mv` of the staged file kept the user as the owner of the /opt binary.
+            `/usr/bin/install -o root -g root -m 0755 '${args.stagedAppImage}' "${bin}.new"`,
+            // Back up the RUNNING binary by rename (cp would ETXTBSY it), then swap.
+            `/usr/bin/mv -f "${bin}" "${bin}.bak"`,
+            `/usr/bin/mv -f "${bin}.new" "${bin}"`,
+            // The rollback copy is never left user-owned either.
+            `/usr/bin/chown root:root "${bin}.bak"`,
+            `/usr/bin/chmod 0755 "${bin}.bak"`,
+            `( /usr/sbin/restorecon -v "${bin}" || /usr/bin/chcon -t bin_t "${bin}" || true )`,
+            '/usr/bin/rm -f /opt/ws-scrcpy-web/VERSION',
+            `/usr/bin/printf '%s' '0.1.31-beta.2' > /opt/ws-scrcpy-web/VERSION`,
+            '/usr/bin/chmod 0644 /opt/ws-scrcpy-web/VERSION',
+        ]);
+    });
+
+    it('never moves the staged download itself into /opt (D14b)', () => {
+        const s = buildMachineWideUpdateScript(args);
+        expect(s).not.toMatch(new RegExp(`mv -f '${args.stagedAppImage.replace(/\./g, '\\.')}'`));
     });
 
     it('NEVER cp the AppImage (cp overwrites in place → ETXTBSY on the running file)', () => {
@@ -261,17 +276,17 @@ describe('buildMachineWideUpdateScript', () => {
         expect(s).not.toMatch(/\bcp\b/);
     });
 
-    it('orders the steps: backup-rename → staged-rename → chmod → relabel → VERSION', () => {
+    it('orders the steps: fresh install → backup-rename → swap-rename → relabel → VERSION', () => {
         const s = buildMachineWideUpdateScript(args);
-        const backup = s.indexOf('.bak');
-        const stagedMove = s.indexOf(args.stagedAppImage);
-        const chmod = s.indexOf('chmod 0755');
+        const fresh = s.indexOf(args.stagedAppImage);
+        const backup = s.indexOf('.bak"');
+        const swap = s.indexOf('.new" "');
         const relabel = s.indexOf('restorecon -v');
         const version = s.indexOf('VERSION');
-        expect(backup).toBeGreaterThanOrEqual(0);
-        expect(backup).toBeLessThan(stagedMove);
-        expect(stagedMove).toBeLessThan(chmod);
-        expect(chmod).toBeLessThan(relabel);
+        expect(fresh).toBeGreaterThanOrEqual(0);
+        expect(fresh).toBeLessThan(backup);
+        expect(backup).toBeLessThan(swap);
+        expect(swap).toBeLessThan(relabel);
         expect(relabel).toBeLessThan(version);
     });
 

@@ -1770,7 +1770,7 @@ describe('ServiceApi', () => {
             Object.defineProperty(process, 'platform', { value: savedPlatform, configurable: true });
         });
 
-        it('POST /api/service/install-system-wide with $APPIMAGE set invokes pkexec runner once with cp + bin_t script, returns 200', async () => {
+        it('POST /api/service/install-system-wide with $APPIMAGE set invokes pkexec runner once with a root-owned install + bin_t script, returns 200', async () => {
             const appImagePath = '/home/jamie/Applications/WsScrcpyWeb.AppImage';
             const savedAppImage = process.env['APPIMAGE'];
             process.env['APPIMAGE'] = appImagePath;
@@ -1786,7 +1786,13 @@ describe('ServiceApi', () => {
 
                 expect(fakePkexec).toHaveBeenCalledTimes(1);
                 const [script, label] = fakePkexec.mock.calls[0]!;
-                expect(script).toContain(`cp '${appImagePath}' "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"`);
+                // D14b: a fresh root-owned inode, never a cp onto the /opt binary.
+                expect(script).toMatch(
+                    new RegExp(
+                        `install -o root -g root -m 0755 '${appImagePath}' "/opt/ws-scrcpy-web/WsScrcpyWeb\\.AppImage\\.new"`,
+                    ),
+                );
+                expect(script).not.toMatch(/\bcp '[^']*' "\/opt\/ws-scrcpy-web\/WsScrcpyWeb\.AppImage"/);
                 expect(script).toContain('bin_t');
                 expect(label).toBe('install-system-wide');
             } finally {

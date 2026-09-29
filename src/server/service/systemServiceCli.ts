@@ -11,6 +11,7 @@ import {
     STAGED_SYSTEM_DEPS_DIR,
     STAGED_SYSTEM_DIR,
     SYSTEM_FCONTEXT_SPEC,
+    SYSTEM_OPT_VERSION_FILE,
     SYSTEM_STATE_DIR,
 } from './SystemdClient';
 import { resolveSystemTool } from './systemTools';
@@ -86,7 +87,6 @@ export async function ensureSafeRootDir(dir: string, d: Pick<CoreDeps, 'lstat' |
 export async function installSystemService(opts: { port: number }, d: CoreDeps): Promise<void> {
     assertRoot(d.getuid);
     const mkdir = d.tool('mkdir');
-    const cp = d.tool('cp');
     const chmod = d.tool('chmod');
     const systemctl = d.tool('systemctl');
     const semanage = d.sbinTool('semanage');
@@ -105,8 +105,18 @@ export async function installSystemService(opts: { port: number }, d: CoreDeps):
     // (status 209) on every clean host (D9).
     await d.run([mkdir, '-p', '-m', '0755', SYSTEM_LOGS_DIR]);
     await ensureSafeRootDir(SYSTEM_LOGS_DIR, d);
-    await d.run([cp, d.appImageSource, STAGED_BIN]);
-    await d.run([chmod, '0755', STAGED_BIN]);
+    // D14b: a FRESH root-owned inode renamed over the ExecStart binary, never a
+    // `cp` onto it: `cp` onto an existing file keeps that file's owner, and a
+    // machine-wide update before this fix left the /opt AppImage owned by the
+    // desktop user -- including when the source IS that /opt copy, as it is for
+    // a desktop install run from /opt. Then check the result like the dirs.
+    await d.run([d.tool('install'), '-o', 'root', '-g', 'root', '-m', '0755', d.appImageSource, `${STAGED_BIN}.new`]);
+    await d.run([d.tool('mv'), '-f', `${STAGED_BIN}.new`, STAGED_BIN]);
+    assertSafeRootDir(STAGED_BIN, d.lstat);
+    // VERSION is written by the machine-wide scripts; an old one may be 664 and
+    // user-owned. Best-effort: it is absent on a headless install.
+    await d.run([d.tool('chown'), 'root:root', SYSTEM_OPT_VERSION_FILE]);
+    await d.run([chmod, '0644', SYSTEM_OPT_VERSION_FILE]);
     // The service's dependencies tree starts EMPTY and root-owned; the service
     // (root) provisions node/adb/scrcpy-server into it itself. NEVER stage the
     // desktop user's tree: beta.145 did (`cp -a` of --deps-source), `-a` kept the

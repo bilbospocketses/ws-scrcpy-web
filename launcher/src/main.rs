@@ -25,7 +25,7 @@ mod linux_service;
 mod linux_tray;
 mod operation_server;
 #[cfg(target_os = "linux")]
-mod root_deps_guard;
+mod root_trust_guard;
 #[cfg(target_os = "linux")]
 mod system_service_cli;
 mod tray_supervisor;

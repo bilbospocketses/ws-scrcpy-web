@@ -264,6 +264,8 @@ export function buildMachineWideInstallScript(
     const restorecon = sbinTool('restorecon');
     const updateDesktopDb = binTool('update-desktop-database');
     const rm = binTool('rm');
+    const install = binTool('install');
+    const mv = binTool('mv');
     const desktop = [
         '[Desktop Entry]',
         'Type=Application',
@@ -279,9 +281,12 @@ export function buildMachineWideInstallScript(
         'umask 022',
         `${mkdir} -p -m 0755 ${STAGED_SYSTEM_DIR}`,
         `${chmod} 0755 ${STAGED_SYSTEM_DIR}`,
-        `${cp} ${shQuote(args.sourceAppImage)} "${staged}"`,
-        `${chmod} 0755 "${staged}"`,
-        `${printf} '%s' ${shQuote(args.version)} > ${SYSTEM_OPT_VERSION_FILE}`,
+        // D14b: a fresh root-owned inode, renamed in. `cp` onto an existing /opt
+        // binary keeps THAT file's owner, and an earlier machine-wide update left
+        // it owned by the user who ran it.
+        `${install} -o root -g root -m 0755 ${shQuote(args.sourceAppImage)} "${staged}.new"`,
+        `${mv} -f "${staged}.new" "${staged}"`,
+        writeVersionFile(args.version, { rm, printf, chmod }),
         // bin_t add + restorecon as INDEPENDENT `;`-separated steps (whole subshell
         // `|| true`) so neither a re-install's "already defined" nor the `-m`-to-
         // unchanged failure can short-circuit the restorecon (beta.61 #9 fix). No chcon.
@@ -351,18 +356,45 @@ export function buildMachineWideUpdateScript(
     sbinTool: (t: string) => string = (t) => resolveSystemTool(t),
 ): string {
     const target = `${STAGED_SYSTEM_DIR}/${STAGED_SYSTEM_APPIMAGE}`;
+    const fresh = `${target}.new`;
     const backup = `${target}.bak`;
     const mv = binTool('mv');
-    const chmod = binTool('chmod');
     const chcon = binTool('chcon');
     const printf = binTool('printf');
     const restorecon = sbinTool('restorecon');
+    const install = binTool('install');
+    const chown = binTool('chown');
+    const chmod = binTool('chmod');
+    const rm = binTool('rm');
     return [
+        'umask 022',
+        // D14b: never `mv` the user's download into /opt. The staged file lives in
+        // the user's data root and is theirs; a rename keeps that owner, so every
+        // later launch -- and a root system service -- ran a binary the user could
+        // rewrite. `install -o root` writes a FRESH root-owned inode (a chown would
+        // leave any fd the user already holds writable), then the rename swaps it in.
+        `${install} -o root -g root -m 0755 ${shQuote(args.stagedAppImage)} "${fresh}"`,
         `${mv} -f "${target}" "${backup}"`,
-        `${mv} -f ${shQuote(args.stagedAppImage)} "${target}"`,
-        `${chmod} 0755 "${target}"`,
+        `${mv} -f "${fresh}" "${target}"`,
+        // The backup is what a rollback restores: never leave it user-owned either.
+        `${chown} root:root "${backup}"`,
+        `${chmod} 0755 "${backup}"`,
         `( ${restorecon} -v "${target}" || ${chcon} -t bin_t "${target}" || true )`,
-        `${printf} '%s' ${shQuote(args.version)} > ${SYSTEM_OPT_VERSION_FILE}`,
+        writeVersionFile(args.version, { rm, printf, chmod }),
+    ].join(' && ');
+}
+
+/**
+ * Replace `/opt/ws-scrcpy-web/VERSION` with a fresh root-owned 0644 file. `>`
+ * into an existing file keeps its owner and mode, which is how a 664 VERSION
+ * written under a desktop umask survived (D14b), so remove it first. Runs after
+ * `umask 022`, as root, in a directory only root can write.
+ */
+function writeVersionFile(version: string, t: { rm: string; printf: string; chmod: string }): string {
+    return [
+        `${t.rm} -f ${SYSTEM_OPT_VERSION_FILE}`,
+        `${t.printf} '%s' ${shQuote(version)} > ${SYSTEM_OPT_VERSION_FILE}`,
+        `${t.chmod} 0644 ${SYSTEM_OPT_VERSION_FILE}`,
     ].join(' && ');
 }
 

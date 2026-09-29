@@ -14,6 +14,13 @@
 // "Exclusively root's": every entry owned by uid 0; no directory or file
 // writable by group or others; no symlink whose target leaves the tree. A walk
 // that fails counts as unsafe: when we cannot tell, the tree goes.
+//
+// D14b, the same class one file over: the ExecStart binary itself. Before its
+// fix, the machine-wide update `mv`'d the user's own download into
+// `/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage`, keeping the user as its owner, and
+// nothing reset it. `guard_opt_install` replaces a non-root-owned or
+// group/other-writable `/opt` AppImage with a FRESH root-owned 0755 copy (a
+// chown would leave any fd the user already holds writable) and resets VERSION.
 use crate::log;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
@@ -49,11 +56,9 @@ fn normalize(p: &Path) -> PathBuf {
 /// own, so checking each one's written target lexically covers a chain.
 pub fn unsafe_reason(e: &EntryMeta, root: &Path, owner_uid: u32) -> Option<String> {
     let shown = e.path.display();
+    // The reason names the path, not the uid: the path is what an admin acts on.
     if e.uid != owner_uid {
-        return Some(format!(
-            "{shown} is owned by uid {}, not {owner_uid}",
-            e.uid
-        ));
+        return Some(format!("{shown} has the wrong owner"));
     }
     match &e.link_target {
         Some(target) => {
@@ -150,6 +155,111 @@ pub fn guard(deps_path: &Path) {
     }
 }
 
+/// The machine-wide install directory: the only place `guard_opt_install`
+/// will ever rewrite a file. A root launcher running from anywhere else (a
+/// developer build, a home AppImage under sudo) is left alone.
+const OPT_DIR: &str = "/opt/ws-scrcpy-web";
+
+/// The `/opt` AppImage this process runs from, when that is where it runs from:
+/// `$APPIMAGE` exactly `/opt/ws-scrcpy-web/<name>.AppImage`, lexically
+/// normalised, no deeper. Pure.
+fn opt_appimage(appimage_env: Option<&str>) -> Option<PathBuf> {
+    let p = normalize(Path::new(appimage_env?));
+    let is_appimage = p
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("AppImage"));
+    (p.parent() == Some(Path::new(OPT_DIR)) && is_appimage).then_some(p)
+}
+
+/// Replace the file at `path` with a fresh copy of its own bytes: a NEW inode
+/// created by this process (so owned by its uid) with `mode`, fsynced, then
+/// renamed over `path`. A running process keeps the old inode, as with every
+/// other swap of the running AppImage. The temp file sits beside `path` so the
+/// rename is atomic and stays in the same labelled directory.
+fn replace_with_fresh_copy(path: &Path, mode: u32) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let bytes = std::fs::read(path)?;
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".root-repair");
+    let tmp = PathBuf::from(tmp);
+    let _ = std::fs::remove_file(&tmp);
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(mode)
+        .open(&tmp)?;
+    f.write_all(&bytes)?;
+    f.sync_all()?;
+    drop(f);
+    // `mode` passed to open() is filtered by the umask; set it exactly.
+    std::fs::set_permissions(&tmp, std::os::unix::fs::PermissionsExt::from_mode(mode))?;
+    std::fs::rename(&tmp, path)
+}
+
+/// Run as root, from the `/opt` AppImage: if that binary (the system unit's
+/// ExecStart) or `/opt/ws-scrcpy-web/VERSION` is not exclusively root's,
+/// repair it (D14b). No-op for any other uid or install location.
+pub fn guard_opt_install() {
+    if !rustix::process::geteuid().is_root() {
+        return;
+    }
+    let Some(bin) = opt_appimage(std::env::var("APPIMAGE").ok().as_deref()) else {
+        return;
+    };
+    let opt = Path::new(OPT_DIR);
+    match meta_of(&bin) {
+        Ok(m) if m.link_target.is_some() => log::error(&format!(
+            "root-trust-guard: {} is a symlink; not following it (D14b)",
+            bin.display()
+        )),
+        Ok(m) => {
+            if let Some(reason) = unsafe_reason(&m, opt, 0) {
+                log::warn(&format!(
+                    "root-trust-guard: replacing {} with a root-owned copy: {reason} (D14b)",
+                    bin.display()
+                ));
+                match replace_with_fresh_copy(&bin, 0o755) {
+                    Ok(()) => log::info(
+                        "root-trust-guard: replaced; the next start runs the root-owned copy",
+                    ),
+                    Err(e) => log::error(&format!(
+                        "root-trust-guard: could not replace {} ({e})",
+                        bin.display()
+                    )),
+                }
+            }
+        }
+        Err(e) => log::error(&format!(
+            "root-trust-guard: could not check {} ({e})",
+            bin.display()
+        )),
+    }
+    // VERSION is data, not code: reset its owner and mode in place.
+    let version = opt.join("VERSION");
+    if let Ok(m) = meta_of(&version) {
+        if m.link_target.is_none() && unsafe_reason(&m, opt, 0).is_some() {
+            let owner = rustix::fs::chown(
+                &version,
+                Some(rustix::process::Uid::ROOT),
+                Some(rustix::process::Gid::ROOT),
+            );
+            let mode = std::fs::set_permissions(
+                &version,
+                std::os::unix::fs::PermissionsExt::from_mode(0o644),
+            );
+            match (owner, mode) {
+                (Ok(()), Ok(())) => {
+                    log::info("root-trust-guard: reset VERSION to root:root 0644 (D14b)")
+                }
+                (o, p) => log::error(&format!(
+                    "root-trust-guard: could not reset VERSION (chown {o:?}, chmod {p:?})"
+                )),
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -184,13 +294,13 @@ mod tests {
         // Measured by qa-harness: qa:qa 775 on the dir, qa:qa 755 on node.
         let r = Path::new(ROOT);
         let dir = unsafe_reason(&e(ROOT, 1000, 0o40775, None), r, 0).unwrap();
-        assert!(dir.contains("uid 1000"), "{dir}");
+        assert!(dir.contains("wrong owner"), "{dir}");
         let node = unsafe_reason(
             &e(&format!("{ROOT}/node/bin/node"), 1000, 0o100755, None),
             r,
             0,
         );
-        assert!(node.unwrap().contains("uid 1000"));
+        assert!(node.unwrap().contains("wrong owner"));
     }
 
     #[test]
@@ -271,6 +381,72 @@ mod tests {
                 .unwrap()
                 .contains("out of the tree")
         );
+    }
+
+    // ── D14b ──
+
+    #[test]
+    fn only_the_opt_appimage_is_ever_a_repair_target() {
+        assert_eq!(
+            opt_appimage(Some("/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage")),
+            Some(PathBuf::from("/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"))
+        );
+        for not_ours in [
+            "/home/qa/Downloads/WsScrcpyWeb-linux-beta.AppImage",
+            "/opt/ws-scrcpy-web/sub/WsScrcpyWeb.AppImage",
+            "/opt/ws-scrcpy-web/../../etc/passwd.AppImage",
+            "/opt/ws-scrcpy-web/VERSION",
+            "/opt/other/WsScrcpyWeb.AppImage",
+        ] {
+            assert_eq!(opt_appimage(Some(not_ours)), None, "{not_ours}");
+        }
+        assert_eq!(opt_appimage(None), None);
+    }
+
+    #[test]
+    fn the_measured_d14b_binary_is_unsafe() {
+        // qa-harness L3 run 2: `-rwxr-xr-x qa qa WsScrcpyWeb.AppImage` in /opt.
+        let opt = Path::new(OPT_DIR);
+        let bin = e(
+            "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage",
+            1000,
+            0o100755,
+            None,
+        );
+        assert!(unsafe_reason(&bin, opt, 0).unwrap().contains("wrong owner"));
+        let version = e("/opt/ws-scrcpy-web/VERSION", 0, 0o100664, None);
+        assert!(
+            unsafe_reason(&version, opt, 0)
+                .unwrap()
+                .contains("writable")
+        );
+    }
+
+    #[test]
+    fn replace_with_fresh_copy_makes_a_new_inode_with_the_same_bytes() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("WsScrcpyWeb.AppImage");
+        std::fs::write(&bin, b"\x7fELF app bytes").unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o775)).unwrap();
+        // A writer that already holds the old file open must not reach the new one.
+        let mut held = std::fs::OpenOptions::new().write(true).open(&bin).unwrap();
+        let before = std::fs::metadata(&bin).unwrap().ino();
+
+        replace_with_fresh_copy(&bin, 0o755).unwrap();
+
+        let after = std::fs::metadata(&bin).unwrap();
+        assert_ne!(
+            after.ino(),
+            before,
+            "must be a fresh inode, not a chmod in place"
+        );
+        assert_eq!(after.mode() & 0o7777, 0o755);
+        assert_eq!(std::fs::read(&bin).unwrap(), b"\x7fELF app bytes");
+        use std::io::Write;
+        held.write_all(b"EVIL").unwrap();
+        assert_eq!(std::fs::read(&bin).unwrap(), b"\x7fELF app bytes");
+        assert!(!dir.path().join("WsScrcpyWeb.AppImage.root-repair").exists());
     }
 
     #[test]

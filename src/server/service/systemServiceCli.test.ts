@@ -37,10 +37,12 @@ describe('installSystemService', () => {
         const flat = calls.map((c) => c.join(' '));
         expect(flat).toContain('/usr/bin/mkdir -p -m 0755 /opt/ws-scrcpy-web');
         expect(flat).toContain('/usr/bin/mkdir -p -m 0755 /var/lib/ws-scrcpy-web');
-        expect(
-            flat.some((c) => c.startsWith('/usr/bin/cp ') && c.includes('/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage')),
-        ).toBe(true);
-        expect(flat).toContain('/usr/bin/chmod 0755 /opt/ws-scrcpy-web/WsScrcpyWeb.AppImage');
+        expect(flat).toContain(
+            '/usr/bin/install -o root -g root -m 0755 /tmp/.mount_x/usr/bin/WsScrcpyWeb.AppImage /opt/ws-scrcpy-web/WsScrcpyWeb.AppImage.new',
+        );
+        expect(flat).toContain(
+            '/usr/bin/mv -f /opt/ws-scrcpy-web/WsScrcpyWeb.AppImage.new /opt/ws-scrcpy-web/WsScrcpyWeb.AppImage',
+        );
         expect(flat).toContain('/usr/sbin/semanage fcontext -a -t bin_t /opt/ws-scrcpy-web(/.*)?');
         expect(flat.some((c) => c.startsWith('/usr/sbin/restorecon -R') && c.includes('/opt/ws-scrcpy-web'))).toBe(
             true,
@@ -189,12 +191,39 @@ describe('installSystemService — D14: root never stages a user-owned tree', ()
         // their ownership, and the root service exec'd a node they could rewrite.
         const { run, calls } = recordingRunner();
         await installSystemService({ port: 8000 }, { ...deps, run });
-        const cps = calls.filter((c) => c[0] === '/usr/bin/cp');
-        expect(cps.map((c) => c.join(' '))).toEqual([
-            '/usr/bin/cp /tmp/.mount_x/usr/bin/WsScrcpyWeb.AppImage /opt/ws-scrcpy-web/WsScrcpyWeb.AppImage',
+        // No cp at all: the one file that lands in /opt goes through `install -o root`.
+        expect(calls.some((c) => c[0] === '/usr/bin/cp')).toBe(false);
+        const installs = calls.filter((c) => c[0] === '/usr/bin/install').map((c) => c.join(' '));
+        expect(installs).toEqual([
+            '/usr/bin/install -o root -g root -m 0755 /tmp/.mount_x/usr/bin/WsScrcpyWeb.AppImage /opt/ws-scrcpy-web/WsScrcpyWeb.AppImage.new',
         ]);
         // …and no step reaches into a user's home.
         expect(calls.some((c) => c.some((a) => a.startsWith('/home/')))).toBe(false);
+    });
+    it('D14b: replaces the /opt binary even when it is the source, and checks the result', async () => {
+        // A desktop install run from /opt copies the /opt AppImage onto itself; a
+        // user-owned one (left by a pre-fix machine-wide update) must still come out
+        // as a fresh root-owned file, and an unsafe result refuses the install.
+        const { run, calls } = recordingRunner();
+        const self = '/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage';
+        await installSystemService({ port: 8000 }, { ...deps, appImageSource: self, run });
+        const flat = calls.map((c) => c.join(' '));
+        expect(flat).toContain(`/usr/bin/install -o root -g root -m 0755 ${self} ${self}.new`);
+        expect(flat.indexOf(`/usr/bin/mv -f ${self}.new ${self}`)).toBeGreaterThan(
+            flat.indexOf(`/usr/bin/install -o root -g root -m 0755 ${self} ${self}.new`),
+        );
+        expect(flat).toContain('/usr/bin/chown root:root /opt/ws-scrcpy-web/VERSION');
+        expect(flat).toContain('/usr/bin/chmod 0644 /opt/ws-scrcpy-web/VERSION');
+
+        const lstat = (p: string) =>
+            p === self
+                ? { uid: 1000, gid: 1000, mode: 0o100755, isSymbolicLink: false }
+                : { uid: 0, gid: 0, mode: 0o755, isSymbolicLink: false };
+        const r2 = recordingRunner();
+        await expect(installSystemService({ port: 8000 }, { ...deps, run: r2.run, lstat })).rejects.toThrow(
+            /not root-owned/,
+        );
+        expect(r2.calls.some((c) => c.join(' ').includes('enable --now'))).toBe(false);
     });
     it('removes any staged dependencies tree, then recreates it empty, 0755 and checked', async () => {
         // A reinstall over a beta.145 install must not keep that user-owned tree.
