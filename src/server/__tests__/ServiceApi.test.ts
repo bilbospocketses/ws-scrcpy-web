@@ -913,11 +913,10 @@ describe('ServiceApi', () => {
                 const expectedPort = String(Config.getInstance().getAppConfig().webPort);
                 expect(argv[portFlagIdx + 1]).toBe(expectedPort);
 
-                // (d2) --deps-source names THIS user's dependencies tree: the root
-                // one-shot's env is scrubbed and cannot find it (D7b).
-                const depsIdx = argv.indexOf('--deps-source');
-                expect(depsIdx).toBeGreaterThanOrEqual(0);
-                expect(argv[depsIdx + 1]).toBe(Config.getInstance().dependenciesPath);
+                // (d2) nothing of this user's is handed to root to stage: no
+                // --deps-source, and no path under the user's data root at all (D14).
+                expect(argv).not.toContain('--deps-source');
+                expect(argv.some((a) => a.startsWith(Config.getInstance().dependenciesPath))).toBe(false);
 
                 // (e) client.install must NOT be called (system scope exits early)
                 expect(installFn).not.toHaveBeenCalled();
@@ -1771,7 +1770,7 @@ describe('ServiceApi', () => {
             Object.defineProperty(process, 'platform', { value: savedPlatform, configurable: true });
         });
 
-        it('POST /api/service/install-system-wide with $APPIMAGE set invokes pkexec runner once with cp + bin_t script, returns 200', async () => {
+        it('POST /api/service/install-system-wide with $APPIMAGE set invokes pkexec runner once with a root-owned install + bin_t script, returns 200', async () => {
             const appImagePath = '/home/jamie/Applications/WsScrcpyWeb.AppImage';
             const savedAppImage = process.env['APPIMAGE'];
             process.env['APPIMAGE'] = appImagePath;
@@ -1787,7 +1786,11 @@ describe('ServiceApi', () => {
 
                 expect(fakePkexec).toHaveBeenCalledTimes(1);
                 const [script, label] = fakePkexec.mock.calls[0]!;
-                expect(script).toContain(`cp '${appImagePath}' "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"`);
+                // D14b: a fresh root-owned inode, never a cp onto the /opt binary.
+                expect(script).toContain(
+                    `install -o root -g root -m 0755 '${appImagePath}' "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage.new"`,
+                );
+                expect(script).not.toMatch(/\bcp '[^']*' "\/opt\/ws-scrcpy-web\/WsScrcpyWeb\.AppImage"/);
                 expect(script).toContain('bin_t');
                 expect(label).toBe('install-system-wide');
             } finally {

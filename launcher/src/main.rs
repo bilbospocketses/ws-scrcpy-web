@@ -25,6 +25,8 @@ mod linux_service;
 mod linux_tray;
 mod operation_server;
 #[cfg(target_os = "linux")]
+mod root_trust_guard;
+#[cfg(target_os = "linux")]
 mod system_service_cli;
 mod tray_supervisor;
 mod uac_requester;
