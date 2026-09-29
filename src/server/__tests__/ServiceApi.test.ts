@@ -1975,10 +1975,29 @@ describe('ServiceApi', () => {
                 keep: false,
                 ...base,
             });
-            // Root → system manager: leading --collect (no --user).
-            expect(args.slice(0, 4)).toEqual(['--collect', base.unit, base.helper, '--linux-app-uninstall']);
+            // Root → system manager: leading --collect (no --user), then DATA_ROOT for
+            // the unit: a system transient unit has no HOME/XDG, and without it the
+            // helper panicked at startup and removed nothing (D13, row 14.5).
+            expect(args.slice(0, 5)).toEqual([
+                '--collect',
+                `--setenv=DATA_ROOT=${base.dataRoot}`,
+                base.unit,
+                base.helper,
+                '--linux-app-uninstall',
+            ]);
             expect(args).not.toContain('--user');
             expect(args[args.indexOf('--scope') + 1]).toBe('system');
+        });
+
+        it('non-root: no --setenv (the user manager supplies HOME)', () => {
+            const args = buildUninstallHelperArgs({
+                isRoot: false,
+                scope: 'user',
+                machineWide: false,
+                keep: false,
+                ...base,
+            });
+            expect(args.some((a) => a.startsWith('--setenv='))).toBe(false);
         });
     });
 

@@ -30,6 +30,11 @@ import { cookieSecurity } from './cookiePolicy';
  * It returns a public certificate, and it does not bypass sign-in: AuthGate and
  * TlsApi's admin gate still apply in locked mode — see `requiresToken`.
  *
+ * A fifth, `GET /api/updates/status`, also reaches off-box (D15): after an
+ * in-app update the page that clicked "apply" holds the old process's token.
+ * UpdatesApi answers a caller without a valid token with the running version
+ * ONLY; the full status still needs the token.
+ *
  * The shutdown exemption is a fix, not a widening (item 114, 2026-09-06): the
  * tray has POSTed that path cookieless since v0.1.8, and once this token landed
  * the gate answered it 403 — measured, with the handler's own log line absent —
@@ -133,6 +138,16 @@ export function requiresToken(method: string | undefined, pathname: string): boo
     // runs, and TlsApi's admin gate answers a signed-in non-admin 403.
     // Rate-limited and logged by TlsApi as before.
     if (m === 'GET' && pathname === '/api/tls/ca-root') {
+        return false;
+    }
+    // The in-app update's reconnect poll (D15; user decision 2026-09-29). The
+    // relaunched server mints a new token, so the page that clicked "apply" holds
+    // a dead one, and every build before the D15 client fix only reloads on a 200
+    // carrying a new currentVersion. UpdatesApi answers a caller WITHOUT a valid
+    // token with `{ currentVersion }` and nothing else; the full status still
+    // needs the token. Like /api/tls/ca-root this is reachable off-box: what it
+    // discloses is the running version. The Origin check and AuthGate still apply.
+    if (m === 'GET' && pathname === '/api/updates/status') {
         return false;
     }
     return true;

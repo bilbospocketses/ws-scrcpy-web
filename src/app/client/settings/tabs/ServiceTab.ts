@@ -7,19 +7,19 @@ import { sameOriginUrl } from '../../../sameOriginUrl';
 import { AdminConfirmModal, type AdminConfirmOptions } from '../../AdminConfirmModal';
 import { pollServiceUninstalled } from '../../pollServiceUninstalled';
 import { ServiceOperationModal } from '../../ServiceOperationModal';
+import { isStaleTokenRefusal } from '../../staleToken';
 import type { StagedSettingsStore } from '../StagedSettingsStore';
 import type { TabContext } from './EmbeddingTab';
 
 /**
- * Follow-up copy shown after a Linux service uninstall begins, by scope.
- * User scope: the Rust teardown helper relaunches the home AppImage in local
- * mode, so the page will reconnect. System scope: no relaunch - user is
- * informed the service has been stopped.
+ * The neutral line shown once a Linux system-scope uninstall is confirmed (or
+ * this page's server has gone quiet, which is how it ends). No relaunch follows
+ * a system-scope uninstall (§D5), so the user is told to relaunch. A user-scope
+ * uninstall reconnects on its own through the discovery poll and never shows a
+ * line of its own; its old branch here had no caller and was removed (item 157).
  */
-export function uninstallFollowupMessage(mode: 'user' | 'system'): string {
-    return mode === 'system'
-        ? 'service removed. the system service has been stopped. relaunch the app manually to use local mode.'
-        : 'service removed. relaunching the app in local mode. this page will reconnect shortly.';
+export function uninstallFollowupMessage(): string {
+    return 'service removed. the system service has been stopped. relaunch the app manually to use local mode.';
 }
 
 /**
@@ -45,26 +45,8 @@ export type PollOutcome =
     | { kind: 'reconnect' }
     | { kind: 'timeout' };
 
-/**
- * True when a hand-off poll was refused because this page's instance token
- * belongs to a process that has gone. The token is minted per PROCESS and only
- * handed out with a document response (instanceToken.ts), so once a service
- * hand-off puts a new process on this origin, every API call the old page makes
- * is `403 {"error":"forbidden","reason":"missing or invalid token"}`. That refusal
- * is itself the proof that a DIFFERENT process now answers here, so the poll
- * reloads to pick up the new token. Before this, both hand-off polls read the
- * 403 as "not ready yet" and timed out (qa-harness arc L2, rows 4.2-user / 4.6 /
- * 2b.6 / 5.8, beta.141). Any other 403 (a non-admin's `{"error":"forbidden"}`,
- * the operator gate) is not this and returns false.
- */
-export function isStaleTokenRefusal(status: number, body: unknown): boolean {
-    return (
-        status === 403 &&
-        typeof body === 'object' &&
-        body !== null &&
-        (body as { reason?: unknown }).reason === 'missing or invalid token'
-    );
-}
+// Shared with the in-app update's reconnect poll (D15); lives in its own module.
+export { isStaleTokenRefusal };
 
 export function classifyInstallPoll(args: {
     reachable: boolean;
@@ -730,8 +712,11 @@ export function buildServiceTab(_ctx: TabContext, _store: StagedSettingsStore): 
                     const outcome = await pollServiceUninstalled();
                     btn.disabled = false;
                     btn.textContent = prevText;
-                    if (outcome === 'uninstalled') {
-                        renderServiceInfo(uninstallFollowupMessage('system'));
+                    // 'stopped' is this page's own server going quiet: the service
+                    // served this page and nothing relaunches after a system-scope
+                    // uninstall, so that IS success (D11, item 157).
+                    if (outcome === 'uninstalled' || outcome === 'stopped') {
+                        renderServiceInfo(uninstallFollowupMessage());
                     } else {
                         renderServiceError(
                             'the system service is still running — uninstall may not have completed. check the service logs and try again.',

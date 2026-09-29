@@ -121,4 +121,27 @@ describe('buildDetachedSpawn', () => {
         expect(plan.args).toEqual(['--collect', '--unit=wsscrcpy-apply-1', prog, ...pArgs]);
         expect(plan.viaSystemd).toBe(true);
     });
+
+    it('hands a system-scope helper its DATA_ROOT (a system transient unit has no env; D13 class)', () => {
+        const resolve = (t: string) => (t === 'systemd-run' ? '/usr/bin/systemd-run' : t);
+        const plan = buildDetachedSpawn(
+            prog,
+            pArgs,
+            { unit: 'wsscrcpy-apply-1', system: true, dataRoot: '/var/lib/ws-scrcpy-web' },
+            resolve,
+        );
+        expect(plan.args).toEqual([
+            '--collect',
+            '--setenv=DATA_ROOT=/var/lib/ws-scrcpy-web',
+            '--unit=wsscrcpy-apply-1',
+            prog,
+            ...pArgs,
+        ]);
+    });
+
+    it('never adds --setenv for a user unit, which inherits the user manager env', () => {
+        const resolve = (t: string) => (t === 'systemd-run' ? '/usr/bin/systemd-run' : t);
+        const plan = buildDetachedSpawn(prog, pArgs, { dataRoot: '/home/u/.local/share/WsScrcpyWeb' }, resolve);
+        expect(plan.args.some((a) => a.startsWith('--setenv='))).toBe(false);
+    });
 });

@@ -10,10 +10,20 @@ import type {
 import { requireOperator } from '../auth/requireOperator';
 import { Config } from '../Config';
 import { Logger } from '../Logger';
+import { isValidToken, parseTokenFromCookie } from '../security/instanceToken';
 import type { UpdateService } from '../UpdateService';
 import { readJsonBody } from './utils';
 
 const log = Logger.for('UpdatesApi');
+
+/**
+ * What a caller WITHOUT a valid token may learn from GET /api/updates/status:
+ * the running version, built field by field so nothing else can ride along
+ * (D15). Exported for the test that pins the exact shape.
+ */
+export function versionOnlyStatus(currentVersion: string): { currentVersion: string } {
+    return { currentVersion };
+}
 
 const APPLY_EXIT_DELAY_MS = 100;
 
@@ -42,6 +52,20 @@ export class UpdatesApi {
         if (!url.startsWith('/api/updates/')) return false;
 
         res.setHeader('Content-Type', 'application/json');
+
+        // D15: requestGate lets a token-less GET of the status through (see
+        // requiresToken). Such a caller -- a page whose token died with the process
+        // an update replaced -- gets the running version and NOTHING else, before
+        // the operator gate, so a stale page on any build can see the update land.
+        if (
+            req.method === 'GET' &&
+            url === '/api/updates/status' &&
+            !isValidToken(parseTokenFromCookie(req.headers.cookie))
+        ) {
+            res.writeHead(200);
+            res.end(JSON.stringify(versionOnlyStatus(this.svc.getStatus().currentVersion)));
+            return true;
+        }
 
         if (!requireOperator(req, res)) return true;
 

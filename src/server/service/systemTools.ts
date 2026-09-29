@@ -90,7 +90,7 @@ export interface DetachedSpawnPlan {
 export function buildDetachedSpawn(
     program: string,
     programArgs: string[],
-    opts: { unit?: string; system?: boolean } = {},
+    opts: { unit?: string; system?: boolean; dataRoot?: string } = {},
     resolve: (t: string) => string = (t) => resolveSystemTool(t),
 ): DetachedSpawnPlan {
     const systemdRun = resolve('systemd-run');
@@ -99,9 +99,14 @@ export function buildDetachedSpawn(
         // scope keeps --user (a user-manager-owned transient unit).
         const scopeArg = opts.system ? [] : ['--user'];
         const unitArg = opts.unit ? [`--unit=${opts.unit}`] : [];
+        // A system transient unit inherits no environment: no HOME, no XDG, no
+        // DATA_ROOT. The launcher resolves its data root from the env before it
+        // reads any argument and panics without one (config.rs) -- the beta.60
+        // 5.1 core-dump and D13. So a system-scope launcher helper must be told.
+        const envArg = opts.system && opts.dataRoot ? [`--setenv=DATA_ROOT=${opts.dataRoot}`] : [];
         return {
             cmd: systemdRun,
-            args: [...scopeArg, '--collect', ...unitArg, program, ...programArgs],
+            args: [...scopeArg, '--collect', ...envArg, ...unitArg, program, ...programArgs],
             viaSystemd: true,
         };
     }

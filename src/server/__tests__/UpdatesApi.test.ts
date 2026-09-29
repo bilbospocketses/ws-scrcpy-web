@@ -4,10 +4,12 @@ import * as os from 'os';
 import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { defaultChannelForVersion } from '../../common/ConfigEvents';
-import { UpdatesApi } from '../api/UpdatesApi';
+import { UpdatesApi, versionOnlyStatus } from '../api/UpdatesApi';
 import { getAppVersion } from '../appVersion';
 import { Config } from '../Config';
 import { EnvName } from '../EnvName';
+import { getInstanceToken, requiresToken } from '../security/instanceToken';
+import { evaluateHttpRequest } from '../security/requestGate';
 import type { UpdateService, UpdateServiceState } from '../UpdateService';
 
 // An empty config.json starts on the channel THIS BUILD defaults to (a beta build
@@ -19,11 +21,17 @@ const OTHER_CHANNEL = BUILD_CHANNEL === 'beta' ? 'stable' : 'beta';
 // ──────────────────────────────────────────────────────────────────────────
 // Helpers
 
-function makeReqRes(url: string, method = 'GET', body?: string) {
+/** The cookie a page served by THIS process carries. */
+const VALID_TOKEN_COOKIE = `ws_scrcpy_token=${getInstanceToken()}`;
+
+function makeReqRes(url: string, method = 'GET', body?: string, cookie: string | null = VALID_TOKEN_COOKIE) {
     const listeners: Record<string, Array<(...args: unknown[]) => void>> = {};
     const req = {
         url,
         method,
+        // A real page: it carries this process's token (requestGate checks it
+        // before any handler; UpdatesApi reads it for the D15 version-only reply).
+        headers: cookie === null ? {} : { cookie },
         // Loopback: requireOperator refuses an off-box caller in open mode, and a
         // req with no socket is not loopback -- without this every case below would
         // 403 for the wrong reason while still asserting 403.
@@ -136,6 +144,67 @@ describe('UpdatesApi', () => {
         const api = new UpdatesApi(fakeService());
         const { req, res } = makeReqRes('/api/devices');
         expect(await api.handle(req, res)).toBe(false);
+    });
+
+    // ── D15: a page whose token died with the replaced process ─────────────
+
+    describe('D15: token-less GET /status answers the running version and nothing else', () => {
+        it('the request gate lets exactly GET /api/updates/status through without a token', () => {
+            expect(requiresToken('GET', '/api/updates/status')).toBe(false);
+            // Every other update route, and any other method on this one, still needs it.
+            for (const [m, p] of [
+                ['POST', '/api/updates/status'],
+                ['HEAD', '/api/updates/status'],
+                ['POST', '/api/updates/check'],
+                ['POST', '/api/updates/apply'],
+                ['PATCH', '/api/updates/config'],
+                ['GET', '/api/updates/status/'],
+                ['GET', '/api/updates/statusx'],
+            ] as const) {
+                expect(requiresToken(m, p), `${m} ${p}`).toBe(true);
+            }
+            // …and the composed gate agrees for a stale cookie (control: another route 403s).
+            const stale = 'ws_scrcpy_token=deadbeef';
+            const host = '127.0.0.1:8000';
+            const origin = 'http://127.0.0.1:8000';
+            expect(evaluateHttpRequest('GET', '/api/updates/status', origin, host, stale, false).allowed).toBe(true);
+            const other = evaluateHttpRequest('POST', '/api/updates/check', origin, host, stale, false);
+            expect(other).toEqual({ allowed: false, status: 403, reason: 'missing or invalid token' });
+        });
+
+        it('a caller with a stale or no token gets 200 { currentVersion } only (what a pre-fix page needs)', async () => {
+            Config.getInstance().updateAppConfig({ channel: 'beta', githubOwner: 'forky' });
+            const svc = fakeService({ currentVersion: '0.1.30-beta.147', status: 'error' });
+            for (const cookie of ['ws_scrcpy_token=deadbeef', null]) {
+                const api = new UpdatesApi(svc);
+                const { req, res } = makeReqRes('/api/updates/status', 'GET', undefined, cookie);
+                expect(await api.handle(req, res)).toBe(true);
+                expect(res.getStatus()).toBe(200);
+                expect(JSON.parse(res.getBody())).toEqual({ currentVersion: '0.1.30-beta.147' });
+            }
+            expect(versionOnlyStatus('x')).toEqual({ currentVersion: 'x' });
+        });
+
+        it('a caller with the valid token still gets the full status (control)', async () => {
+            const svc = fakeService({ currentVersion: '0.1.30-beta.147' });
+            const api = new UpdatesApi(svc);
+            const { req, res } = makeReqRes('/api/updates/status');
+            await api.handle(req, res);
+            const body = JSON.parse(res.getBody());
+            expect(body.currentVersion).toBe('0.1.30-beta.147');
+            expect(Object.keys(body).length).toBeGreaterThan(1);
+        });
+
+        it('the version-only answer comes before the operator gate, so it never needs admin rights', async () => {
+            const svc = fakeService({ currentVersion: '0.1.30-beta.147' });
+            const api = new UpdatesApi(svc);
+            const { req, res } = makeReqRes('/api/updates/status', 'GET', undefined, null);
+            // An off-box caller: requireOperator would refuse this in open mode.
+            (req as unknown as { socket: { remoteAddress: string } }).socket.remoteAddress = '192.168.1.50';
+            await api.handle(req, res);
+            expect(res.getStatus()).toBe(200);
+            expect(JSON.parse(res.getBody())).toEqual({ currentVersion: '0.1.30-beta.147' });
+        });
     });
 
     // ── GET /status ──────────────────────────────────────────────────────

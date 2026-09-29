@@ -579,6 +579,9 @@ export class UpdateService {
             const plan = buildDetachedSpawn(helperPath, helperArgs, {
                 unit: `wsscrcpy-apply-${Date.now()}`,
                 system: spawnSystem,
+                // The root service's own data root (/var/lib/ws-scrcpy-web): a
+                // system transient unit has none, and the helper panics without one.
+                dataRoot,
             });
             if (plan.viaSystemd) {
                 // systemd-run registers the transient unit then exits promptly.

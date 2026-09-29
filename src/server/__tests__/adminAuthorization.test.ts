@@ -13,6 +13,7 @@ import { UpdatesApi } from '../api/UpdatesApi';
 import { requireAdmin } from '../auth/requireAdmin';
 import { Config } from '../Config';
 import { EnvName } from '../EnvName';
+import { getInstanceToken } from '../security/instanceToken';
 import type { CertService } from '../tls/CertService';
 import { HTTP_EXPOSURE_KEY } from '../tls/httpExposure';
 import { makeReqRes } from './helpers/httpMock';
@@ -21,6 +22,8 @@ import { makeReqRes } from './helpers/httpMock';
 // Harness (matches authApi.test.ts pattern)
 
 const tmpDirs: string[] = [];
+/** The cookie a page served by this process carries. */
+const PAGE_TOKEN = { cookie: `ws_scrcpy_token=${getInstanceToken()}` };
 const saved = { CONFIG: process.env[EnvName.CONFIG_PATH], DEPS: process.env['DEPS_PATH'] };
 
 function setup(): void {
@@ -135,7 +138,9 @@ describe('UpdatesApi admin authorization', () => {
         // Stub UpdateService — won't be called on 403 path
         const stubSvc = {} as any;
         const api = new UpdatesApi(stubSvc);
-        const r = makeReqRes('GET', '/api/updates/status', undefined, {}, { remoteAddress: '127.0.0.1' });
+        // A real page carries this process's token: without it the D15 version-only
+        // reply answers first and the operator gate under test is never reached.
+        const r = makeReqRes('GET', '/api/updates/status', undefined, PAGE_TOKEN, { remoteAddress: '127.0.0.1' });
         (r.req as any).user = { id: bob.id };
         await api.handle(r.req, r.res);
         expect(r.getStatus()).toBe(403);
@@ -189,7 +194,7 @@ describe('off-box callers are refused in open mode', () => {
 
     it('GET /api/updates/status', async () => {
         setup();
-        const r = makeReqRes('GET', '/api/updates/status', undefined, {}, OFF_BOX);
+        const r = makeReqRes('GET', '/api/updates/status', undefined, PAGE_TOKEN, OFF_BOX);
         await new UpdatesApi({} as any).handle(r.req, r.res);
         expect(r.getStatus()).toBe(403);
         expect(r.getJson()).toEqual(OFF_BOX_ERROR);

@@ -5,6 +5,7 @@ import {
     type CommandRunner,
     ensureSafeRootDir,
     installSystemService,
+    keptWebPort,
     makeProductionCoreDeps,
     parseSystemServiceArgs,
     runSystemServiceCli,
@@ -28,6 +29,7 @@ const deps = {
     sbinTool: (t: string) => `/usr/sbin/${t}`,
     writeFile: vi.fn(),
     lstat: () => ({ uid: 0, gid: 0, mode: 0o755, isSymbolicLink: false }),
+    readFile: () => null,
 };
 
 describe('installSystemService', () => {
@@ -254,6 +256,71 @@ describe('the one-shot never opens Config or the store (D7b)', () => {
         d.defaultPort();
         expect(spy).not.toHaveBeenCalled();
         spy.mockRestore();
+    });
+});
+
+describe('D12: a reinstall after --keep-state reuses what was kept', () => {
+    const cliDeps = (readFile: (p: string) => string | null, writeFile = vi.fn()) => ({
+        ...deps,
+        run: recordingRunner().run,
+        writeFile,
+        readFile,
+        removeFile: vi.fn(),
+        existsCheck: () => false,
+        defaultPort: () => 8000,
+        log: () => undefined,
+        logError: () => undefined,
+    });
+    const writtenConfig = (writeFile: ReturnType<typeof vi.fn>) =>
+        JSON.parse(writeFile.mock.calls.find((c) => c[0] === '/var/lib/ws-scrcpy-web/config.json')?.[1] as string);
+
+    it('without --port, takes webPort from the kept config and keeps the other keys', async () => {
+        // qa-harness L3 on beta.145: kept "webPort": 8123, reinstall came up on 8000.
+        const kept = JSON.stringify({ webPort: 8123, theme: 'dark', installMode: 'system' });
+        const writeFile = vi.fn();
+        const code = await runSystemServiceCli(
+            { op: 'install', port: undefined },
+            cliDeps((p) => (p === '/var/lib/ws-scrcpy-web/config.json' ? kept : null), writeFile),
+        );
+        expect(code).toBe(0);
+        expect(writtenConfig(writeFile)).toEqual({
+            webPort: 8123,
+            theme: 'dark',
+            installMode: 'system-service',
+            firstRunComplete: true,
+        });
+        const unit = writeFile.mock.calls.find((c) => c[0] === '/etc/systemd/system/WsScrcpyWeb.service')?.[1];
+        expect(unit).toContain('WS_SCRCPY_WEB_PORT=8123');
+    });
+    it('an explicit --port still wins over the kept one', async () => {
+        const writeFile = vi.fn();
+        await runSystemServiceCli(
+            { op: 'install', port: 9001 },
+            cliDeps(() => JSON.stringify({ webPort: 8123 }), writeFile),
+        );
+        expect(writtenConfig(writeFile).webPort).toBe(9001);
+    });
+    it('falls back to the default when nothing usable was kept', async () => {
+        for (const raw of [
+            null,
+            'not json',
+            '[8123]',
+            JSON.stringify({ webPort: 80 }),
+            JSON.stringify({ webPort: '8123' }),
+        ]) {
+            const writeFile = vi.fn();
+            await runSystemServiceCli(
+                { op: 'install', port: undefined },
+                cliDeps(() => raw, writeFile),
+            );
+            expect(writtenConfig(writeFile).webPort).toBe(8000);
+        }
+    });
+    it('keptWebPort accepts only an integer port in 1024-65535', () => {
+        expect(keptWebPort({ webPort: 1024 })).toBe(1024);
+        expect(keptWebPort({ webPort: 65535 })).toBe(65535);
+        for (const bad of [1023, 65536, 8123.5, '8123', null]) expect(keptWebPort({ webPort: bad })).toBeUndefined();
+        expect(keptWebPort(null)).toBeUndefined();
     });
 });
 

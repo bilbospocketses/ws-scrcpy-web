@@ -33,6 +33,30 @@ export interface CoreDeps {
     tool: (t: string) => string; // /usr/bin resolver
     sbinTool: (t: string) => string; // /usr/sbin resolver (semanage/restorecon)
     lstat: (path: string) => { uid: number; gid: number; mode: number; isSymbolicLink: boolean };
+    /** The file's text, or null when it cannot be read. */
+    readFile: (path: string) => string | null;
+}
+
+const SYSTEM_CONFIG = `${SYSTEM_STATE_DIR}/config.json`;
+
+/**
+ * The config a `--uninstall-system-service --keep-state` left behind, as an
+ * object, or null (absent, unreadable, not a JSON object). Pure.
+ */
+export function parseKeptConfig(raw: string | null): Record<string, unknown> | null {
+    if (raw === null) return null;
+    try {
+        const v: unknown = JSON.parse(raw);
+        return v !== null && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+    } catch {
+        return null;
+    }
+}
+
+/** The kept config's `webPort` when it is a usable port (1024-65535), else undefined. Pure. */
+export function keptWebPort(kept: Record<string, unknown> | null): number | undefined {
+    const p = kept?.['webPort'];
+    return typeof p === 'number' && Number.isInteger(p) && p >= 1024 && p <= 65535 ? p : undefined;
 }
 
 const UNIT_PATH = `/etc/systemd/system/${WS_SCRCPY_SERVICE_NAME}.service`;
@@ -135,8 +159,12 @@ export async function installSystemService(opts: { port: number }, d: CoreDeps):
     await d.run([restorecon, '-R', STAGED_SYSTEM_DIR]).catch(() => undefined);
     await d.run([restorecon, '-R', SYSTEM_STATE_DIR]).catch(() => undefined);
 
-    const seed = buildSystemSeedConfig(opts.port);
-    d.writeFile(`${SYSTEM_STATE_DIR}/config.json`, `${JSON.stringify(seed, null, 2)}\n`, { mode: 0o644 });
+    // Merge the seed INTO what a `--keep-state` uninstall kept, never over it
+    // (D12): the seed owns installMode/firstRunComplete/webPort, everything else
+    // the admin had set survives. Read only after SYSTEM_STATE_DIR was checked.
+    const kept = parseKeptConfig(d.readFile(SYSTEM_CONFIG)) ?? {};
+    const seed = { ...kept, ...buildSystemSeedConfig(opts.port) };
+    d.writeFile(SYSTEM_CONFIG, `${JSON.stringify(seed, null, 2)}\n`, { mode: 0o644 });
     const envVars = {
         ...buildServiceUnitEnv('linux', 'system', STAGED_SYSTEM_DEPS_DIR),
         WS_SCRCPY_WEB_PORT: String(opts.port),
@@ -237,7 +265,9 @@ export async function runSystemServiceCli(parsed: ParsedSystemServiceArgs, deps:
     try {
         switch (parsed.op) {
             case 'install': {
-                const port = parsed.port ?? deps.defaultPort();
+                // --port, else the port a --keep-state uninstall kept, else the default (D12).
+                const port =
+                    parsed.port ?? keptWebPort(parseKeptConfig(deps.readFile(SYSTEM_CONFIG))) ?? deps.defaultPort();
                 await installSystemService({ port }, deps);
                 return 0;
             }
@@ -283,6 +313,13 @@ export function makeProductionCoreDeps(): CliDeps {
         getuid: () => process.getuid?.() ?? 0,
         run,
         writeFile: (p, content, opts) => fs.writeFileSync(p, content, opts),
+        readFile: (p) => {
+            try {
+                return fs.readFileSync(p, 'utf8');
+            } catch {
+                return null;
+            }
+        },
         lstat: (p) => {
             const s = fs.lstatSync(p);
             return { uid: s.uid, gid: s.gid, mode: s.mode, isSymbolicLink: s.isSymbolicLink() };
