@@ -32,7 +32,7 @@ import {
     SYSTEM_STATE_DIR,
 } from '../service/SystemdClient';
 import type { CommandRunner } from '../service/systemServiceCli';
-import { resolveSystemTool } from '../service/systemTools';
+import { buildDetachedSpawn, type DetachedSpawnPlan, resolveSystemTool } from '../service/systemTools';
 import { copyFileAtomicSync, writeFileAtomicSync } from '../util/atomicFile';
 import { readJsonBody } from './utils';
 
@@ -83,6 +83,34 @@ export function buildUninstallHelperArgs(o: {
         '--relaunch',
         o.relaunch,
     ];
+}
+
+/**
+ * The spawn for "install for all users"' relaunch-only helper (F5), which waits
+ * for our launcher to exit and then starts the app again from /opt.
+ *
+ * It goes through `buildDetachedSpawn`, so on systemd it runs in its OWN
+ * `systemd-run --user --collect` unit. A plain detached spawn is a new session
+ * but NOT a new cgroup: when this instance itself runs inside a transient unit
+ * (it was relaunched by the app, e.g. after a user-scope service uninstall),
+ * systemd kills that unit's whole cgroup the moment our process exits, helper
+ * included, and the app never came back from /opt (qa-harness arc L2, beta.141).
+ * The updater's apply helper has gone this way since bug #27; this one was
+ * missed. Pure (tool resolution injectable) so the shape is unit-testable.
+ */
+export function systemWideRelaunchPlan(
+    helper: string,
+    optBin: string,
+    waitPid: number,
+    now: number,
+    resolve?: (t: string) => string,
+): DetachedSpawnPlan {
+    return buildDetachedSpawn(
+        helper,
+        ['--linux-apply', '--target', optBin, '--wait-pid', String(waitPid)],
+        { unit: `wsscrcpy-relaunch-${now}` },
+        resolve,
+    );
 }
 
 /**
@@ -1017,13 +1045,8 @@ export class ServiceApi {
             if (this.existsCheck(relaunchHelper)) {
                 // process.ppid is the launcher (the flock holder); the helper waits
                 // for it to exit before relaunching /opt.
-                this.spawnDetached(relaunchHelper, [
-                    '--linux-apply',
-                    '--target',
-                    optBin,
-                    '--wait-pid',
-                    String(process.ppid),
-                ]);
+                const plan = systemWideRelaunchPlan(relaunchHelper, optBin, process.ppid, Date.now());
+                this.spawnDetached(plan.cmd, plan.args);
                 this.scheduleExit(() => {
                     log.info('install-system-wide: local instance exiting → relaunch from /opt');
                     process.exit(0);

@@ -20,6 +20,7 @@ import {
     applySystemInstallGate,
     buildServiceInfoRow,
     classifyInstallPoll,
+    isStaleTokenRefusal,
     lockScopeRadioControl,
     scopeRadioState,
     systemServiceInstallGate,
@@ -77,6 +78,7 @@ describe('classifyInstallPoll', () => {
     // timed out" race (beta.47).
     const served = {
         reachable: true,
+        tokenRejected: false,
         servedByService: true,
         configMtime: 100,
         baselineMtime: 100,
@@ -182,6 +184,50 @@ describe('classifyInstallPoll', () => {
     });
     it('times out only when the service never takes over', () => {
         expect(classifyInstallPoll({ ...served, servedByService: false, iterations: 31 })).toEqual({ kind: 'timeout' });
+    });
+
+    // qa-harness arc L2 (beta.141, rows 4.2-user / 4.6 / 2b.6 / 5.8): once the
+    // service holds the port, the page's token belongs to the process that exited,
+    // so every tick was a 403 and the poll timed out without ever seeing
+    // servedByService. The refusal itself says a new process answers here.
+    it('reconnects when our token is refused, although servedByService is unknowable', () => {
+        const refused = {
+            ...served,
+            tokenRejected: true,
+            servedByService: false,
+            configMtime: null,
+            diskWebPort: null,
+        };
+        expect(classifyInstallPoll(refused)).toEqual({ kind: 'reconnect' });
+        // ...and still before the cap would have timed it out.
+        expect(classifyInstallPoll({ ...refused, iterations: 31 })).toEqual({ kind: 'reconnect' });
+    });
+
+    it('a known port shift still navigates rather than reloading the old origin', () => {
+        expect(
+            classifyInstallPoll({
+                ...served,
+                tokenRejected: true,
+                servedByService: false,
+                diskWebPort: 8001,
+                currentPort: 8000,
+                serviceSeenRunning: true,
+            }),
+        ).toEqual({ kind: 'navigate', port: 8001 });
+    });
+});
+
+describe('isStaleTokenRefusal', () => {
+    it("is the request gate's own 403 body", () => {
+        expect(isStaleTokenRefusal(403, { error: 'forbidden', reason: 'missing or invalid token' })).toBe(true);
+    });
+
+    it('is not any other 403 (a non-admin, the operator gate) or another status', () => {
+        expect(isStaleTokenRefusal(403, { error: 'forbidden' })).toBe(false);
+        expect(isStaleTokenRefusal(403, { error: 'admin actions are limited to this machine' })).toBe(false);
+        expect(isStaleTokenRefusal(401, { error: 'forbidden', reason: 'missing or invalid token' })).toBe(false);
+        expect(isStaleTokenRefusal(403, null)).toBe(false);
+        expect(isStaleTokenRefusal(403, 'missing or invalid token')).toBe(false);
     });
 });
 
