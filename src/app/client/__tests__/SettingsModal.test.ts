@@ -44,11 +44,10 @@ afterEach(() => {
 });
 
 describe('uninstallFollowupMessage', () => {
-    it('user scope -> reconnect/relaunch message', () => {
-        expect(uninstallFollowupMessage('user')).toMatch(/relaunch|reconnect|local/i);
-    });
-    it('system scope -> service removed message', () => {
-        expect(uninstallFollowupMessage('system')).toMatch(/removed|stopped/i);
+    it('says the system service was removed and that the app needs a manual relaunch', () => {
+        // A system-scope uninstall is never followed by a relaunch (§D5).
+        expect(uninstallFollowupMessage()).toMatch(/removed|stopped/i);
+        expect(uninstallFollowupMessage()).toMatch(/relaunch the app manually/i);
     });
 });
 

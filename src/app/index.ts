@@ -169,9 +169,14 @@ function maybeShowWelcomeModal(): void {
  */
 function showStatusBanner(text: string, actionLabel: string, onAction: () => void): HTMLElement {
     const banner = document.createElement('div');
+    // Pinned to the BOTTOM edge. At the top it sat over the fixed header controls
+    // (settings gear, theme toggle, indicators -- all `top:12px`, z-index 100) and
+    // swallowed the click on Settings: 32 of the gear's 36px were under it
+    // (qa-harness L3 on beta.145). The page reserves room below its content so
+    // the banner never hides the last row either.
     banner.style.cssText =
-        'position:fixed;top:0;left:0;right:0;z-index:9000;background:var(--bg-color,#1e1e2e);' +
-        'color:var(--text-color,#cdd6f4);border-bottom:1px solid var(--border-color,#45475a);' +
+        'position:fixed;bottom:0;left:0;right:0;z-index:9000;background:var(--bg-color,#1e1e2e);' +
+        'color:var(--text-color,#cdd6f4);border-top:1px solid var(--border-color,#45475a);' +
         'padding:0.6rem 1rem;display:flex;align-items:center;gap:1rem;font-size:0.9rem;';
     const msg = document.createElement('span');
     msg.textContent = text;
@@ -184,7 +189,8 @@ function showStatusBanner(text: string, actionLabel: string, onAction: () => voi
         'background:transparent;color:inherit;cursor:pointer;white-space:nowrap;';
     btn.addEventListener('click', onAction);
     banner.appendChild(btn);
-    document.body.insertBefore(banner, document.body.firstChild);
+    document.body.appendChild(banner);
+    document.body.style.paddingBottom = `${banner.offsetHeight}px`;
     return banner;
 }
 

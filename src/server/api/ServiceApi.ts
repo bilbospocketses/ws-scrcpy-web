@@ -67,7 +67,11 @@ export function buildUninstallHelperArgs(o: {
     relaunch: string;
 }): string[] {
     // root → system transient unit (`--collect`); non-root → user manager (`--user --collect`).
-    const prefix = o.isRoot ? ['--collect'] : ['--user', '--collect'];
+    // A system transient unit has no HOME/XDG, and the launcher resolves its data
+    // root from the env at startup, before it reads --data-root: without DATA_ROOT
+    // it panics in data_root_for_linux (config.rs) and removes nothing (D13, the
+    // beta.60 #9 5.1 core-dump the teardown path fixed the same way).
+    const prefix = o.isRoot ? ['--collect', `--setenv=DATA_ROOT=${o.dataRoot}`] : ['--user', '--collect'];
     return [
         ...prefix,
         o.unit,

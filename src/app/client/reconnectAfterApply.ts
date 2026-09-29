@@ -1,3 +1,5 @@
+import { isStaleTokenRefusal } from './staleToken';
+
 export interface ReconnectOptions {
     /** The version running before apply; resolve once /status reports a different one. */
     previousVersion: string;
@@ -12,11 +14,21 @@ export interface ReconnectOptions {
 }
 
 /**
- * Poll GET /api/updates/status on the same origin until it answers with a
- * currentVersion different from previousVersion (-> 'updated'), or the deadline
- * elapses (-> 'timeout'). Fetch errors are expected during the Velopack swap
- * (the server is down) and are swallowed — keep polling. No DOM here; the
- * caller owns the UI. Linux in-app update reconnect (see the apply handlers).
+ * Poll GET /api/updates/status on the same origin until the updated process
+ * answers (-> 'updated'), or the deadline elapses (-> 'timeout'). Fetch errors
+ * are expected during the swap (the server is down) and are swallowed. No DOM
+ * here; the caller owns the UI and reloads on 'updated'.
+ *
+ * "The updated process answers" is either of:
+ * - a 200 whose currentVersion differs from previousVersion; or
+ * - the stale-token 403. The relaunched server mints a new instance token and
+ *   refuses this page's old one, so that refusal proves a different process now
+ *   holds the origin, and the caller's reload fetches its token (D15, like D4).
+ *   Before this the poll read it as "not yet" for 60 s and gave up.
+ *
+ * Pages served by a build BEFORE this fix still carry the old poll, which only
+ * accepts the 200. For them the server answers a token-less GET of this route
+ * with `{ currentVersion }` alone (UpdatesApi), so they reconnect too.
  */
 export async function reconnectAfterApply(opts: ReconnectOptions): Promise<'updated' | 'timeout'> {
     const fetchFn = opts.fetchFn ?? fetch;
@@ -32,6 +44,8 @@ export async function reconnectAfterApply(opts: ReconnectOptions): Promise<'upda
                 if (s.currentVersion && s.currentVersion !== opts.previousVersion) {
                     return 'updated';
                 }
+            } else if (isStaleTokenRefusal(r.status, await r.json().catch(() => null))) {
+                return 'updated';
             }
         } catch {
             // server down during the swap — expected; keep polling
