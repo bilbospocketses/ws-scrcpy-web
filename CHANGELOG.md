@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.145] - 2026-09-29
+
 ### Fixed
 - **Installing the system service from Settings works on Ubuntu.** Ubuntu gives desktop users a file-permission default (umask 0002) that makes new folders group-writable, and the password prompt passes it on to the install. The install then refused `/opt/ws-scrcpy-web` and `/var/lib/ws-scrcpy-web` as unsafe, although it had just created them itself. It now creates them as 755 whatever that default is. It also tightens a 775 `/opt/ws-scrcpy-web` that "Install for all users" left on earlier builds; anything else unsafe is still refused. When the install does fail, the page now shows the actual reason instead of only "system-service install failed". Found by qa-harness on Ubuntu 26.04 (row 4.2-system-gui).
 - **A newly installed system service starts.** Its log file lives in `/var/lib/ws-scrcpy-web/logs`, which nothing created, and systemd will not create it either, so on a fresh machine the service failed before the app even ran while the install reported success. The install now creates the folder. Found by qa-harness on Ubuntu 26.04 (row 4.2-system-cli).
