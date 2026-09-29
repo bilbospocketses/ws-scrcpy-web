@@ -336,7 +336,22 @@ fn teardown_failure_is_benign(argv: &[String]) -> bool {
     argv.iter().any(|a| a == "reset-failed")
 }
 
+/// Whether a teardown must log to stderr (the transient unit's journal) instead
+/// of a file (D10). A system teardown runs with `DATA_ROOT=/var/lib/ws-scrcpy-web`
+/// and always `rm -rf`s that tree, so every line written after the wipe — the
+/// step's own "ok", the no-relaunch line, main's exit line — re-created
+/// `/var/lib/ws-scrcpy-web/logs/launcher.log` (the D6 mechanism, on this path),
+/// and any line before it was deleted with the tree. On stderr they land in
+/// `journalctl -u 'wsscrcpy-teardown-*'`. A user teardown never removes its data
+/// root, so it keeps its file log.
+fn teardown_logs_to_stderr(scope: Scope) -> bool {
+    scope == Scope::System
+}
+
 fn run(scope: Scope, unit: &str) -> i32 {
+    if teardown_logs_to_stderr(scope) {
+        log::route_to_stderr(true);
+    }
     let bd = tool_dir("systemctl");
     log::info(&format!(
         "linux-service-teardown: scope={scope:?} unit={unit}"
@@ -582,6 +597,23 @@ fn read_local_appimage_marker() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_system_teardown_logs_to_stderr_because_it_wipes_its_own_log_root() {
+        // D10: the system teardown's DATA_ROOT is /var/lib/ws-scrcpy-web, which it
+        // always removes; a user teardown never removes its data root.
+        assert!(teardown_logs_to_stderr(Scope::System));
+        assert!(!teardown_logs_to_stderr(Scope::User));
+        let removes_own_root = |s| {
+            teardown_commands(s, "WsScrcpyWeb", "/usr/bin")
+                .iter()
+                .any(|c| c.join(" ") == "/usr/bin/rm -rf /var/lib/ws-scrcpy-web")
+        };
+        // The decision tracks the plan: stderr exactly when the plan wipes /var/lib.
+        for s in [Scope::System, Scope::User] {
+            assert_eq!(teardown_logs_to_stderr(s), removes_own_root(s), "{s:?}");
+        }
+    }
 
     #[test]
     fn reset_failed_nonzero_is_benign() {
