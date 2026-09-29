@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **The technical guide, README and smoke register describe how beta.141 and beta.142 behave.** §19.4 explains why a Settings page reloads after a service hand-off (the per-instance token belongs to one process); §24's token layer points there; the complete-uninstall paragraph and key-files row name the in-process stray kill that replaced `pkill -f`; the `install-system-wide` route and a new §20.8 row describe the relaunch-only `--linux-apply` helper and why it runs in its own `systemd-run --user` unit. The README's list of what lives in `config.json` now includes `allowRemoteAdmin`. Smoke row 4.2-user credits #772 alongside beta.48, and the register's 14.1 line records its new clause.
+
 ## [0.1.30-beta.142] - 2026-09-29
 
 ### Fixed

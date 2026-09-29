@@ -271,7 +271,7 @@ Sorted by module, then by row number, which is not the doc's execution order.
 | 13.5 | `[Both]` | Unsaved-changes prompt on close | automatable: no spec yet | Fast tier. The cancel / discard / save choice is `performDirtyClose` in `SettingsModal.ts`; no e2e closes a dirty dialog. |
 | 13.6 | `[Both]` | Updates settings are staged | automatable: no spec yet | Fast tier. Unit-tested only (`updatesTab.test.ts`, `settingsSummaryModal.test.ts`). |
 | 13.7 | `[Both]` | Dependencies tab + home-page alert | automatable: no spec yet | Fast tier. Unit-tested only (`dependencyAlertCard.test.ts`: the alert opens Settings on the Dependencies tab). The container half is 20.17. |
-| 14.1 | `[Linux]` | Install-for-all-users button | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
+| 14.1 | `[Linux]` | Install-for-all-users button | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. The self-relaunched-instance clause was added 2026-09-29: qa-harness arc L2 found the relaunch helper dying with a transient unit's cgroup, so nothing came back from `/opt` (#772). |
 | 14.2 | `[Linux]` | Start-menu icon | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
 | 14.3 | `[Linux]` | Complete uninstall — local | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
 | 14.4 | `[Linux]` | Uninstall — user-service cascade | residual: linux-desktop | Residual. Linux installer and desktop integration; no phase builds a Linux desktop. |
