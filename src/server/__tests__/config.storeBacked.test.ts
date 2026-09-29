@@ -77,6 +77,41 @@ describe('Config store-backed composition', () => {
         expect(onDisk.webPort).toBe(8200);
     });
 
+    it('persists allowRemoteAdmin set through updateAppConfig across a restart', () => {
+        // The banner's "allow remote admin" writes PATCH /api/config →
+        // updateAppConfig. It lived only in memory: qa-harness (arc L1, beta.140)
+        // measured it gone after every restart and service hand-off.
+        const configPath = setup({ webPort: 8200, installMode: 'user', firstRunComplete: true });
+        Config.getInstance().updateAppConfig({ allowRemoteAdmin: true });
+        expect(JSON.parse(fs.readFileSync(configPath, 'utf-8')).allowRemoteAdmin).toBe(true);
+        Config._resetForTest();
+        expect(Config.getInstance().getAppConfig().allowRemoteAdmin).toBe(true);
+    });
+
+    it('keeps a hand-set allowRemoteAdmin when another field is saved', () => {
+        const configPath = setup({
+            webPort: 8200,
+            installMode: 'user',
+            firstRunComplete: false,
+            allowRemoteAdmin: true,
+        });
+        Config.getInstance().updateAppConfig({ firstRunComplete: true });
+        expect(JSON.parse(fs.readFileSync(configPath, 'utf-8')).allowRemoteAdmin).toBe(true);
+    });
+
+    it('writes no allowRemoteAdmin key once it is turned off', () => {
+        const configPath = setup({
+            webPort: 8200,
+            installMode: 'user',
+            firstRunComplete: true,
+            allowRemoteAdmin: true,
+        });
+        Config.getInstance().updateAppConfig({ allowRemoteAdmin: false });
+        expect(JSON.parse(fs.readFileSync(configPath, 'utf-8'))).not.toHaveProperty('allowRemoteAdmin');
+        Config._resetForTest();
+        expect(Config.getInstance().getAppConfig().allowRemoteAdmin).toBe(false);
+    });
+
     it('rejects an out-of-range stored global and keeps the default (compose validation)', () => {
         // updateCheckIntervalMinutes is a validated global; an out-of-range stored
         // value must fall back to the default rather than surfacing the bad value.
