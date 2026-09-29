@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Steps that ask for the root password on Linux no longer leave a folder in root's home.** pkexec starts those steps with a stripped environment in which the app's data folder resolves to `/root/.local/share/WsScrcpyWeb`, so every one of them wrote a root-owned `logs/launcher.log` there that nothing ever removed. A step started through pkexec now logs to its error output instead of a file. For the complete uninstall, those lines are copied into the uninstall's own log, marked `elevated:`. Elsewhere, such as "install as a system service", only warnings and errors are written, since that output becomes the error message you see if the step fails. A complete uninstall that needs the root password also removes the folder earlier builds left behind. Found by qa-harness on Ubuntu 26.04 (row 14.4); row 14.4 now checks for it.
+
 ### Changed
 - **The smoke test names beta.143 as its target.** It still said beta.92, 51 releases behind the build qa-harness's Linux desktop runs are pinned to.
 

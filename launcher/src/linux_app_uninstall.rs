@@ -34,6 +34,12 @@
 // (D6, qa-harness row 14.3 on beta.142). Same fix as the Windows cleaner:
 // `log::disable()`, plus a report BESIDE the data root if the wipe fell short.
 //
+// The pkexec'd child logs to stderr, never a file (`main.rs` routes it on
+// `PKEXEC_UID`), and the parent relays those lines into its own log as
+// `elevated: …`. pkexec scrubs the env, so a file would land in
+// `/root/.local/share/WsScrcpyWeb`; the privileged group also removes that
+// stray tree, left by every pkexec'd run before the fix (D7).
+//
 // Local-Dependencies-Only: every tool is resolved under `bindir` (sbin tools via
 // `sbindir_from(bindir)`) — never a bare name and never via PATH.
 use crate::linux_service::{
@@ -69,6 +75,11 @@ const SYS_ICON: &str = "/usr/share/icons/hicolor/256x256/apps/ws-scrcpy-web.png"
 /// rule never lingers). The /var/lib state needs NO rule (var_lib_t by the policy
 /// default `/var/lib(/.*)?`), so it is not listed. Matches clear-install.sh.
 const FCONTEXT_SPECS: [&str; 2] = ["/opt/ws-scrcpy-web(/.*)?", "/opt/ws-scrcpy-web/data(/.*)?"];
+/// Where every pkexec'd launcher run before D7's fix wrote its log: pkexec
+/// scrubs `DATA_ROOT` and sets `HOME=/root`, so the log root resolved here and
+/// left a root-owned `logs/launcher.log` nothing removed (D7). The privileged
+/// group removes it. Never when it IS the data root (the app run as root).
+const ROOT_STRAY_DATA_ROOT: &str = "/root/.local/share/WsScrcpyWeb";
 
 /// Ordered teardown argv-vectors for a complete app uninstall, split by
 /// privilege. `privileged` is meant to run under ONE elevation (pkexec, Task 2);
@@ -241,6 +252,15 @@ pub fn app_uninstall_commands(
                 "fcontext".into(),
                 "-d".into(),
                 spec.to_string(),
+            ]);
+        }
+        // 5. the stray log root earlier pkexec'd runs left in root's home (D7).
+        //    Skipped when it is the data root itself, so --keep still keeps it.
+        if data_root != ROOT_STRAY_DATA_ROOT {
+            privileged.push(vec![
+                rm.clone(),
+                "-rf".into(),
+                ROOT_STRAY_DATA_ROOT.to_string(),
             ]);
         }
     }
@@ -439,20 +459,18 @@ fn run_unelevated(a: &UninstallArgs) -> i32 {
             let keep_arg = if a.keep { "--keep" } else { "--wipe" };
             // argv all the way (no `sh -c`): re-invoke ourselves under pkexec with
             // the same inputs MINUS --relaunch (the elevated half never relaunches).
-            match std::process::Command::new(&pkexec)
-                .arg(&exe)
-                .args([
-                    "--linux-app-uninstall-elevated",
-                    "--scope",
-                    scope_arg,
-                    "--machine-wide",
-                    mw_arg,
-                    keep_arg,
-                    "--data-root",
-                    a.data_root.as_str(),
-                ])
-                .status()
-            {
+            // The child logs to stderr, not a file (D7: under pkexec its log root
+            // would be /root/.local/share/WsScrcpyWeb), so relay its lines here.
+            match run_relaying_stderr(std::process::Command::new(&pkexec).arg(&exe).args([
+                "--linux-app-uninstall-elevated",
+                "--scope",
+                scope_arg,
+                "--machine-wide",
+                mw_arg,
+                keep_arg,
+                "--data-root",
+                a.data_root.as_str(),
+            ])) {
                 Ok(s) if s.success() => log::info("uninstall: privileged group complete (pkexec)"),
                 Ok(s) if declined(s) => {
                     log::error("uninstall: pkexec declined — aborting + relaunching local");
@@ -723,6 +741,30 @@ fn run_data_root_wipe(argv: &[String], label: &str, data_root: &str) {
     ) {
         let _ = std::fs::write(path, body);
     }
+}
+
+/// Run `cmd` with its stderr piped, copying each line into this process's log
+/// as it arrives, then wait for it. pkexec's own messages (a failed auth, a
+/// missing agent) arrive the same way, so they are logged too.
+fn run_relaying_stderr(
+    cmd: &mut std::process::Command,
+) -> std::io::Result<std::process::ExitStatus> {
+    use std::io::BufRead;
+    let mut child = cmd.stderr(std::process::Stdio::piped()).spawn()?;
+    if let Some(stderr) = child.stderr.take() {
+        for line in std::io::BufReader::new(stderr)
+            .lines()
+            .map_while(Result::ok)
+        {
+            log::info(&relayed_line(&line));
+        }
+    }
+    child.wait()
+}
+
+/// How a relayed child line reads in the parent's log.
+fn relayed_line(line: &str) -> String {
+    format!("elevated: {line}")
 }
 
 /// Spawn one argv-vector and wait for it.
@@ -1515,6 +1557,66 @@ mod tests {
         assert!(body.contains("45 entries"));
         assert!(body.contains("… and 5 more"));
         assert!(!body.contains("e44"));
+    }
+
+    // ── D7: the root-owned log root earlier pkexec'd runs left behind ──
+
+    #[test]
+    fn privileged_group_removes_the_root_stray_log_root() {
+        let stray = "/usr/bin/rm -rf /root/.local/share/WsScrcpyWeb";
+        for (svc, mw, dr) in [
+            (None, true, DR_LOCAL),
+            (Some(Scope::User), true, DR_LOCAL),
+            (Some(Scope::System), true, "/var/lib/ws-scrcpy-web"),
+            (Some(Scope::System), false, "/var/lib/ws-scrcpy-web"),
+        ] {
+            for keep in [false, true] {
+                let plan = app_uninstall_commands(svc, mw, keep, "/usr/bin", dr, None);
+                let p = joined(&plan.privileged);
+                assert!(p.iter().any(|c| c == stray), "{svc:?} mw={mw} keep={keep}");
+                assert!(!joined(&plan.user_owned).iter().any(|c| c == stray));
+            }
+        }
+    }
+
+    #[test]
+    fn the_root_stray_is_never_removed_when_it_is_the_data_root() {
+        // The app run AS root: /root/.local/share/WsScrcpyWeb is its real data
+        // root, so --keep must keep it and --wipe removes it once, as the data root.
+        let dr = "/root/.local/share/WsScrcpyWeb";
+        let keep = app_uninstall_commands(None, true, true, "/usr/bin", dr, None);
+        assert!(
+            !joined(&keep.privileged)
+                .iter()
+                .chain(joined(&keep.user_owned).iter())
+                .any(|c| c.as_str() == "/usr/bin/rm -rf /root/.local/share/WsScrcpyWeb")
+        );
+        let wipe = app_uninstall_commands(None, true, false, "/usr/bin", dr, None);
+        let all: Vec<String> = joined(&wipe.privileged)
+            .into_iter()
+            .chain(joined(&wipe.user_owned))
+            .collect();
+        assert_eq!(
+            all.iter()
+                .filter(|c| c.as_str() == "/usr/bin/rm -rf /root/.local/share/WsScrcpyWeb")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn a_local_uninstall_still_needs_no_elevation() {
+        // The stray clean-up rides the privileged group; it must not create one.
+        let plan = app_uninstall_commands(None, false, false, "/usr/bin", DR_LOCAL, None);
+        assert!(plan.privileged.is_empty());
+    }
+
+    #[test]
+    fn relayed_child_lines_are_marked_elevated() {
+        assert_eq!(
+            relayed_line("2026-09-29 13:27:56.016 [INFO] uninstall (root) ok: x"),
+            "elevated: 2026-09-29 13:27:56.016 [INFO] uninstall (root) ok: x"
+        );
     }
 
     #[test]
