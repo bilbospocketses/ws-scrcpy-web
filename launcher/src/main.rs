@@ -73,6 +73,18 @@ fn main() {
         log::disable();
     }
 
+    // Under pkexec the env is scrubbed (no DATA_ROOT, HOME=/root), so the log
+    // file would land in /root/.local/share/WsScrcpyWeb/logs — a root-owned tree
+    // nothing removes (D7, qa-harness row 14.4 on beta.142). Log to stderr
+    // instead, and set it HERE, before the first log line. The elevated
+    // uninstall's parent relays every line into its own log; Node's
+    // system-service install shows the child's stderr to the user as the failure
+    // text, so there only WARN/ERROR are written.
+    #[cfg(target_os = "linux")]
+    if log::is_pkexec_child(std::env::var("PKEXEC_UID").ok().as_deref()) {
+        log::route_to_stderr(args.iter().any(|a| a == "--linux-app-uninstall-elevated"));
+    }
+
     // Rotate the Linux systemd service.log (the launcher's own stderr captured
     // by `StandardError=append:`). systemd holds the O_APPEND fd, so we MUST
     // copy-truncate (a rename would orphan that fd). No-op off-Linux, when the

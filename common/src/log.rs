@@ -46,6 +46,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 static LOG_NAME: OnceLock<String> = OnceLock::new();
 static LOG_DISABLED: AtomicBool = AtomicBool::new(false);
+static STDERR_ONLY: AtomicBool = AtomicBool::new(false);
+static STDERR_INFO: AtomicBool = AtomicBool::new(false);
 
 const MAX_LOG_SIZE: u64 = 10 * 1024 * 1024; // 10MB
 
@@ -71,6 +73,30 @@ pub fn enable() {
 /// True once `disable()` has been called in this process.
 pub fn is_disabled() -> bool {
     LOG_DISABLED.load(Ordering::Relaxed)
+}
+
+/// Whether this process was started by `pkexec`, which always sets
+/// `PKEXEC_UID` to the invoking user's uid. Pure: the caller passes the env value.
+pub fn is_pkexec_child(pkexec_uid: Option<&str>) -> bool {
+    pkexec_uid.is_some_and(|s| !s.is_empty())
+}
+
+/// Send log lines to stderr and never to a file, for a process `pkexec`
+/// started. pkexec scrubs the environment (no `DATA_ROOT`, `HOME=/root`), so
+/// the file would land in `/root/.local/share/WsScrcpyWeb/logs` — a root-owned
+/// tree nothing ever removes (D7). `include_info` keeps INFO lines, for a caller
+/// that relays the child's stderr into its own log; without it only WARN/ERROR
+/// are written, for callers that show the child's stderr to the user as a
+/// failure message. Idempotent; `disable()` still silences everything.
+pub fn route_to_stderr(include_info: bool) {
+    STDERR_INFO.store(include_info, Ordering::Relaxed);
+    STDERR_ONLY.store(true, Ordering::Relaxed);
+}
+
+/// Where one line goes once `route_to_stderr` is in effect: `true` = write it
+/// to stderr, `false` = drop it. Pure, so the level filter is unit-testable.
+fn stderr_route_keeps(prefix: &str, include_info: bool) -> bool {
+    include_info || prefix != "INFO"
 }
 
 /// Whether the launcher/tray should echo a log line to stderr. True only when
@@ -156,6 +182,12 @@ fn append(prefix: &str, msg: &str) {
         return;
     }
     let ts = format_timestamp_utc(SystemTime::now());
+    if STDERR_ONLY.load(Ordering::Relaxed) {
+        if stderr_route_keeps(prefix, STDERR_INFO.load(Ordering::Relaxed)) {
+            eprintln!("{ts} [{prefix}] {msg}");
+        }
+        return;
+    }
     if let Some(path) = log_path() {
         rotate_by_rename_if_large(&path, MAX_LOG_SIZE);
         if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&path) {
@@ -264,6 +296,26 @@ mod tests {
         assert!(!is_disabled(), "logging starts enabled");
         disable();
         assert!(is_disabled(), "disable() must set the gate");
+    }
+
+    #[test]
+    fn pkexec_child_is_keyed_on_a_non_empty_pkexec_uid() {
+        assert!(is_pkexec_child(Some("1000")));
+        assert!(is_pkexec_child(Some("0")));
+        assert!(!is_pkexec_child(None));
+        assert!(!is_pkexec_child(Some("")));
+    }
+
+    #[test]
+    fn stderr_route_drops_info_unless_relayed() {
+        // Relayed (the elevated uninstall): every level reaches the parent.
+        for p in ["INFO", "WARN", "ERROR"] {
+            assert!(stderr_route_keeps(p, true), "{p}");
+        }
+        // Shown to the user as a failure message: INFO would be noise there.
+        assert!(!stderr_route_keeps("INFO", false));
+        assert!(stderr_route_keeps("WARN", false));
+        assert!(stderr_route_keeps("ERROR", false));
     }
 
     #[test]
