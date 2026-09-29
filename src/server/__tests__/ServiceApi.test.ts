@@ -4,7 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WS_SCRCPY_SERVICE_NAME } from '../../common/ServiceEvents';
-import { buildUninstallHelperArgs, defaultRunElevated, ServiceApi } from '../api/ServiceApi';
+import { buildUninstallHelperArgs, defaultRunElevated, ServiceApi, systemWideRelaunchPlan } from '../api/ServiceApi';
 import { Config } from '../Config';
 import { EnvName } from '../EnvName';
 import type { ServiceClient, ServiceClientFactoryResult } from '../service/ServiceClient';
@@ -14,6 +14,7 @@ import {
     STAGED_SYSTEM_DIR,
     SYSTEM_STATE_DIR,
 } from '../service/SystemdClient';
+import { resolveSystemTool } from '../service/systemTools';
 
 function makeReqRes(url: string, method = 'GET', body?: string, headers?: Record<string, string>) {
     // Minimal IncomingMessage: only the on('data')/on('end') hooks readJsonBody
@@ -1763,8 +1764,10 @@ describe('ServiceApi', () => {
             try {
                 const fakePkexec = vi.fn(async (_cmd: string, _label: string) => '');
                 const scheduleExit = vi.fn();
+                let spawnedCmd = '';
                 let spawnedArgs: string[] = [];
-                const spawnDetached = vi.fn((_cmd: string, args: string[]) => {
+                const spawnDetached = vi.fn((cmd: string, args: string[]) => {
+                    spawnedCmd = cmd;
                     spawnedArgs = args;
                 });
                 // existsCheck → true for the relaunch helper (F5 hands off + exits) but FALSE for
@@ -1791,11 +1794,49 @@ describe('ServiceApi', () => {
                 expect(spawnedArgs).toContain('--target');
                 expect(spawnedArgs.some((a) => a.endsWith('/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage'))).toBe(true);
                 expect(spawnedArgs).toContain('--wait-pid');
+                // Wiring: where systemd-run exists (the Linux CI leg) the helper
+                // must go through it, not a plain detached spawn of the helper.
+                if (resolveSystemTool('systemd-run').startsWith('/')) {
+                    expect(spawnedCmd.endsWith('/systemd-run')).toBe(true);
+                    expect(spawnedArgs.slice(0, 2)).toEqual(['--user', '--collect']);
+                }
                 expect(scheduleExit).toHaveBeenCalledTimes(1);
             } finally {
                 if (savedAppImage === undefined) delete process.env['APPIMAGE'];
                 else process.env['APPIMAGE'] = savedAppImage;
             }
+        });
+
+        it('the F5 relaunch helper runs in its OWN systemd-run --user unit, not as a plain detached child', () => {
+            // qa-harness arc L2 (beta.141): from an instance the app had relaunched
+            // itself (inside a `systemd-run --collect` unit), a plain detached
+            // helper shared that unit's cgroup and died with it, so nothing came
+            // back from /opt. Same shape as the updater's apply helper (bug #27).
+            const withSystemd = (t: string) => (t === 'systemd-run' ? '/usr/bin/systemd-run' : t);
+            const plan = systemWideRelaunchPlan(
+                '/d/helper.exe',
+                '/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage',
+                4242,
+                7,
+                withSystemd,
+            );
+            expect(plan).toEqual({
+                cmd: '/usr/bin/systemd-run',
+                args: [
+                    '--user',
+                    '--collect',
+                    '--unit=wsscrcpy-relaunch-7',
+                    '/d/helper.exe',
+                    '--linux-apply',
+                    '--target',
+                    '/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage',
+                    '--wait-pid',
+                    '4242',
+                ],
+                viaSystemd: true,
+            });
+            // Never the system manager: the relaunch must come back as the user.
+            expect(plan.args).not.toContain('--system');
         });
 
         it('POST /api/service/install-system-wide with $APPIMAGE unset returns 400, pkexec NOT called', async () => {
