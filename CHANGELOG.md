@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.147] - 2026-09-29
+
 ### Fixed
 - **After a Linux in-app update, the page comes back on its own.** The updated app starts with a new access token, and the old page's check kept being refused with "missing or invalid token" until it gave up after a minute and asked you to reopen the page. The page now takes that refusal as the sign that the new version is running, and reloads. Pages from builds before this one don't have that fix, so the updated server also answers their check without a token, but with nothing except the version number; everything else still needs the token. So updating from an older build reconnects too. Found by qa-harness on Ubuntu 26.04 (rows 6.2, 6.3 and 6.5).
 - **Uninstalling the system service shows "service removed" instead of a red error.** The page waited for its server to confirm the uninstall. The service was that server, and nothing restarts after a system-service uninstall, so the confirmation never came and every successful uninstall ended in "the system service is still running". The page now treats its server going quiet as the uninstall finishing. A service that is genuinely still running keeps answering, so it still shows the error. Found by qa-harness on Ubuntu 26.04 (row 5.9).
