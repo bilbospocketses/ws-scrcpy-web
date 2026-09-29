@@ -264,7 +264,9 @@ describe('buildMachineWideUpdateScript', () => {
 
     it('never moves the staged download itself into /opt (D14b)', () => {
         const s = buildMachineWideUpdateScript(args);
-        expect(s).not.toMatch(new RegExp(`mv -f '${args.stagedAppImage.replace(/\./g, '\\.')}'`));
+        expect(s).not.toContain(`mv -f '${args.stagedAppImage}'`);
+        // The staged download is only ever the SOURCE of `install -o root`.
+        expect(s.split(`'${args.stagedAppImage}'`).length - 1).toBe(1);
     });
 
     it('NEVER cp the AppImage (cp overwrites in place → ETXTBSY on the running file)', () => {
