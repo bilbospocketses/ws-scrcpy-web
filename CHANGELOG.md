@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.153] - 2026-09-30
+
 ### Fixed
 - **Cancelling the password prompt on KDE no longer reports an error** (item 160). GNOME's polkit agent exits 126 when you cancel; KDE's (polkit-kde 6.6.4, Fedora 44) exits 127 with "Not authorized", which the app only knew as a failure: installing the system service answered 500 instead of "privileges were declined", and install-for-all-users and the machine-wide update showed a failure. New `pkexecDeclined` treats 126, and any 127 except a real error (no authentication agent, the app's own elevation refusal, a command or program not found), as declined, so it keeps working if the "Not authorized" text is translated. On KDE a real denial also exits 127 "Not authorized", so the two read the same: "cancelled or not authorized". Measured by qa-harness on stock Fedora 44 KDE; the translated-text and non-admin-denial cases are confirmed later in its Fedora KDE round.
 
