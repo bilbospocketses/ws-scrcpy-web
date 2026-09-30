@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **The technical guide explains why no in-app repair was built for a user-owned `/opt` binary** (item 161). Only machines that took a machine-wide in-app update before beta.146 and have no system service still carry one. Their next machine-wide update or install-for-all-users replaces it with a fresh root-owned file from a clean download. A repair from the running app could only change the owner, not show the file is unmodified. TECHNICAL_GUIDE §19.5, D14b.
+
 ## [0.1.30-beta.150] - 2026-09-30
 
 ### Fixed
