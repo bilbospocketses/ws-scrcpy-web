@@ -26,6 +26,7 @@ import {
     buildMachineWideInstallScript,
     buildServiceUnitEnv,
     DECLINE_MARKER_NAME,
+    pkexecDeclined,
     runPkexec,
     STAGED_SYSTEM_APPIMAGE,
     STAGED_SYSTEM_DIR,
@@ -567,11 +568,11 @@ export class ServiceApi {
                 } catch (e) {
                     log.warn(`installMode revert failed after pkexec install: ${(e as Error).message}`);
                 }
-                // pkexec exit 126 == polkit auth dismissed/declined → UAC-style retry prompt
-                if (r.code === 126) {
+                // A declined prompt (GNOME 126, KDE 127 "Not authorized": item 160) → UAC-style retry prompt
+                if (pkexecDeclined(r.code, r.stderr)) {
                     const body: ServiceActionFailure = {
                         ok: false,
-                        error: 'install was cancelled at the authentication prompt',
+                        error: 'install was cancelled or not authorized at the authentication prompt',
                         reason: 'uac-declined',
                     };
                     res.writeHead(403);

@@ -979,6 +979,47 @@ describe('ServiceApi', () => {
             expect(installFn).not.toHaveBeenCalled();
         });
 
+        it.each([
+            [
+                'a KDE cancel (127 "Not authorized", item 160)',
+                127,
+                'Error executing command as another user: Not authorized\n',
+                403,
+                'uac-declined',
+            ],
+            [
+                "the app's own elevation refusal (127)",
+                127,
+                'refusing to run elevated: argv[0] is not an absolute, existing path: "x"',
+                500,
+                'servy-failure',
+            ],
+        ])('POST /install Linux system scope: %s', async (_label, code, stderr, status, reason) => {
+            const client = fakeClient({ status: vi.fn(async () => 'not-installed' as const) });
+            const factoryResult: ServiceClientFactoryResult = { client, supported: true, platform: 'linux' };
+            const runElevated = vi.fn(async (_argv: string[]) => ({ code, stdout: '', stderr }));
+            const api = new ServiceApi(
+                () => factoryResult,
+                () => 'user',
+                () => false,
+                () => {
+                    /* no spawn */
+                },
+                () => {
+                    /* no-op scheduleExit */
+                },
+                async () => '',
+                async () => true,
+                runElevated,
+            );
+            Config.getInstance().updateAppConfig({ installMode: 'user' });
+            const { req, res } = makeReqRes('/api/service/install', 'POST', JSON.stringify({ scope: 'system' }));
+            await api.handle(req, res);
+            expect((res as any).getStatus()).toBe(status);
+            expect(JSON.parse((res as any).getBody()).reason).toBe(reason);
+            expect(Config.getInstance().getAppConfig().installMode).toBe('user');
+        });
+
         it('POST /install Linux system scope: runElevated returns code 1 with stderr → 500 servy-failure + installMode reverted', async () => {
             const installFn = vi.fn<(opts: Parameters<ServiceClient['install']>[0]) => Promise<void>>(
                 async () => undefined,

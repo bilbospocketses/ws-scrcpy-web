@@ -4,12 +4,44 @@ import {
     buildMachineWideUpdateScript,
     buildServiceUnitEnv,
     buildSystemUninstallScript,
+    pkexecDeclined,
     renderUnitFile,
     STAGED_SYSTEM_DIR,
     SystemdClient,
     systemctlArgv,
 } from './SystemdClient';
 import { shQuote } from './shellEscape';
+
+// item 160: measured by qa-harness on stock Fedora 44 KDE (polkit-kde 6.6.4), run wssw-20260929T172816Z-811b.
+const KDE_CANCEL_STDERR =
+    'Error executing command as another user: Not authorized\n\nThis incident has been reported.\n';
+const NO_AGENT_STDERR =
+    "Error creating textual authentication agent: Error opening current controlling terminal for the process (`/dev/tty'): No such device or address\n";
+
+describe('pkexecDeclined (item 160)', () => {
+    it('GNOME: exit 126 is a dismissed prompt', () => {
+        expect(pkexecDeclined(126, '')).toBe(true);
+    });
+    it('KDE: a cancel exits 127 "Not authorized", which is declined too', () => {
+        expect(pkexecDeclined(127, KDE_CANCEL_STDERR)).toBe(true);
+    });
+    it('127 with an unrecognised or localised text still reads as declined', () => {
+        expect(pkexecDeclined(127, 'Fehler beim Ausführen des Befehls als anderer Benutzer: Nicht autorisiert')).toBe(
+            true,
+        );
+    });
+    it.each([
+        ['no authentication agent (pkexec from a shell with no desktop)', NO_AGENT_STDERR],
+        ["the app's own refusal", 'refusing to run elevated: argv[0] is not an absolute, existing path: "pkexec"'],
+        ['a command missing inside the elevated sh -c script', 'sh: 1: /usr/bin/update-desktop-database: not found'],
+        ['a program pkexec cannot run', 'pkexec: cannot run program /opt/x: No such file or directory'],
+    ])('127 from %s stays an error', (_label, stderr) => {
+        expect(pkexecDeclined(127, stderr)).toBe(false);
+    });
+    it('any other exit code is an error', () => {
+        for (const code of [0, 1, 2, 125, 128, undefined]) expect(pkexecDeclined(code, KDE_CANCEL_STDERR)).toBe(false);
+    });
+});
 
 describe('system-scope staging', () => {
     const baseOpts = {
