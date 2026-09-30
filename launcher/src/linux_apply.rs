@@ -153,7 +153,10 @@ fn run_service_restart(
     if relabel {
         let restorecon = format!("{}/restorecon", linux_service::sbindir_from(&bindir));
         let present = Path::new(&restorecon).exists();
-        run_cmd(&relabel_command(target, &bindir, present));
+        match relabel_command(target, &bindir, present, selinux_active()) {
+            Some(argv) => run_cmd(&argv),
+            None => log::info("linux-apply(service): SELinux is not active; no label to apply"),
+        }
     }
 
     // 4. Start the unit on the new version (rebinds the same web port).
@@ -336,15 +339,31 @@ pub fn service_unit_command(scope: Scope, action: &str, unit: &str, bindir: &str
 /// Re-apply the `bin_t` SELinux label to the system-staged target after a swap,
 /// so `init_t` may exec it. `restorecon` (sbin) re-applies the persistent
 /// fcontext rule set at install; when absent, fall back to `chcon -t bin_t`
-/// (bin). `restorecon_present` is the availability the caller probed. Pure.
-pub fn relabel_command(target: &Path, bindir: &str, restorecon_present: bool) -> Vec<String> {
+/// (bin). `restorecon_present` is the availability the caller probed. `None`
+/// when SELinux is not active: there is no label to apply, and `chcon` on an
+/// unlabeled file only logs an error (Ubuntu, qa-harness T13 row 6.6). Pure.
+pub fn relabel_command(
+    target: &Path,
+    bindir: &str,
+    restorecon_present: bool,
+    selinux_active: bool,
+) -> Option<Vec<String>> {
+    if !selinux_active {
+        return None;
+    }
     let t = target.to_string_lossy().into_owned();
-    if restorecon_present {
+    Some(if restorecon_present {
         let sbindir = linux_service::sbindir_from(bindir);
         vec![format!("{sbindir}/restorecon"), "-v".into(), t]
     } else {
         vec![format!("{bindir}/chcon"), "-t".into(), "bin_t".into(), t]
-    }
+    })
+}
+
+/// Whether SELinux is active on this host: selinuxfs is mounted only when it
+/// is enabled (the check libselinux's `is_selinux_enabled` makes).
+fn selinux_active() -> bool {
+    Path::new("/sys/fs/selinux/enforce").exists()
 }
 
 /// Parse `--service-restart <user|system> --unit <name> [--relabel]`. Returns
@@ -517,28 +536,56 @@ mod tests {
             relabel_command(
                 Path::new("/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"),
                 "/usr/bin",
+                true,
                 true
             ),
-            vec![
-                "/usr/sbin/restorecon",
-                "-v",
-                "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"
-            ]
+            Some(
+                [
+                    "/usr/sbin/restorecon",
+                    "-v",
+                    "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"
+                ]
+                .map(String::from)
+                .to_vec()
+            )
         );
         // restorecon absent -> chcon -t bin_t fallback (bin dir).
         assert_eq!(
             relabel_command(
                 Path::new("/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"),
                 "/usr/bin",
-                false
+                false,
+                true
             ),
-            vec![
-                "/usr/bin/chcon",
-                "-t",
-                "bin_t",
-                "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"
-            ]
+            Some(
+                [
+                    "/usr/bin/chcon",
+                    "-t",
+                    "bin_t",
+                    "/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"
+                ]
+                .map(String::from)
+                .to_vec()
+            )
         );
+    }
+
+    #[test]
+    fn relabel_command_is_nothing_without_selinux() {
+        // qa-harness T13 row 6.6 on Ubuntu 26.04 (no SELinux, no restorecon): the
+        // chcon fallback logged "Applying partial security context to unlabeled
+        // file failed". There is no label to apply, so nothing runs.
+        for restorecon in [true, false] {
+            assert_eq!(
+                relabel_command(
+                    Path::new("/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage"),
+                    "/usr/bin",
+                    restorecon,
+                    false
+                ),
+                None
+            );
+        }
     }
 
     #[test]
