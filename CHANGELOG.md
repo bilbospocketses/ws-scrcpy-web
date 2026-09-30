@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.151] - 2026-09-30
+
 ### Fixed
 - **A complete uninstall on Linux no longer leaves the app's folder behind right after a first launch** (D17). When the app was still running on its bundled Node (every first launch, and every relaunch after a "keep my settings" uninstall), the uninstall helper did not recognise that process: it matches app processes by name, and the AppImage's mount point shortens the name to `WsScrc`. The server then wrote its last log line after the folder had been deleted, re-creating `~/.local/share/WsScrcpyWeb`, or wrote its dependencies into it while the delete ran. The page now tells the helper its process id, and the helper waits for that process to exit (up to 10 s, then stops it) before deleting anything. Found by qa-harness on Ubuntu 26.04 (row 14.3), and reproduced on beta.143 and beta.148.
 
