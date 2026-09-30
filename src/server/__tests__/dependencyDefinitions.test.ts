@@ -44,6 +44,18 @@ describe('getDependencyDefinitions', () => {
         }
     });
 
+    it('in a container, only the hostOnly definitions go, and Node.js is the one', () => {
+        const host = getDependencyDefinitions('/tmp/test-deps').map((d) => d.name);
+        const container = getDependencyDefinitions('/tmp/test-deps', { inContainer: true }).map((d) => d.name);
+        expect(host).toContain('nodejs');
+        expect(container).toEqual(host.filter((n) => n !== 'nodejs'));
+        expect(
+            getDependencyDefinitions('/tmp/test-deps')
+                .filter((d) => d.hostOnly)
+                .map((d) => d.name),
+        ).toEqual(['nodejs']);
+    });
+
     it('nodejs definition includes node-pty pairing', () => {
         const defs = getDependencyDefinitions('/tmp/test-deps');
         const node = defs.find((d) => d.name === 'nodejs');

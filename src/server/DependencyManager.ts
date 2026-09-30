@@ -93,6 +93,8 @@ export class DependencyManager {
             restartMarkerPath?: string;
             /** A seam for tests; production always takes the default. */
             verifyMkcertManifest?: (manifest: string, tag: string) => Promise<void>;
+            /** Config.dockerMode: leave out the definitions the image provides itself. */
+            inContainer?: boolean;
         } = {},
     ) {
         // Default to <depsPath>/.restart preserves pre-Phase-1 behavior for
@@ -106,7 +108,7 @@ export class DependencyManager {
         const provenance = defaultMkcertProvenanceDeps(path.join(depsPath, '.sigstore'));
         this.verifyMkcertManifest =
             opts.verifyMkcertManifest ?? ((manifest, tag) => verifyMkcertManifestProvenance(manifest, tag, provenance));
-        this.definitions = getDependencyDefinitions(depsPath);
+        this.definitions = getDependencyDefinitions(depsPath, { inContainer: opts.inContainer === true });
         this.state = new Map();
 
         for (const def of this.definitions) {
@@ -820,7 +822,7 @@ export class DependencyManager {
 }
 
 let depManagerInstance: DependencyManager | undefined;
-let depManagerOpts: { dependenciesPath: string; restartMarkerPath?: string } | undefined;
+let depManagerOpts: { dependenciesPath: string; restartMarkerPath?: string; inContainer?: boolean } | undefined;
 
 /**
  * Composition-root singleton, mirroring `createCertService.ts`'s
@@ -843,17 +845,20 @@ let depManagerOpts: { dependenciesPath: string; restartMarkerPath?: string } | u
 export function getDependencyManager(opts: {
     dependenciesPath: string;
     restartMarkerPath?: string;
+    inContainer?: boolean;
 }): DependencyManager {
     if (!depManagerInstance) {
         depManagerOpts = opts;
         depManagerInstance = new DependencyManager(opts.dependenciesPath, {
             ...(opts.restartMarkerPath !== undefined ? { restartMarkerPath: opts.restartMarkerPath } : {}),
+            inContainer: opts.inContainer === true,
         });
         return depManagerInstance;
     }
     if (
         opts.dependenciesPath !== depManagerOpts!.dependenciesPath ||
-        opts.restartMarkerPath !== depManagerOpts!.restartMarkerPath
+        opts.restartMarkerPath !== depManagerOpts!.restartMarkerPath ||
+        (opts.inContainer === true) !== (depManagerOpts!.inContainer === true)
     ) {
         throw new Error(
             'getDependencyManager() was already initialized with a different configuration ' +

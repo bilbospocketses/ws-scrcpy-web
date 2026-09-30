@@ -171,9 +171,11 @@ if (__ssArgs) {
     // exact instance's `state`/`lookupRefused` -- a second, independently
     // constructed manager would track mkcert's install status separately from
     // what this API and the dependency panel read.
+    // inContainer drops what the image provides itself (Node.js) from the set.
     const depManager = getDependencyManager({
         dependenciesPath: config.dependenciesPath,
         restartMarkerPath: config.restartMarkerPath,
+        inContainer: config.dockerMode === true,
     });
     const depApi = new DependencyApi(depManager);
     HttpServer.addApiHandler(depApi);

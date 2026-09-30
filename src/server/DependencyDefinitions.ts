@@ -125,6 +125,12 @@ export interface DependencyDefinition {
      * would call the retired build "newer" and keep it forever.
      */
     latestIsAuthoritative?: boolean;
+    /**
+     * Managed on a host install only. In a container the image provides it, so
+     * `getDependencyDefinitions(…, { inContainer: true })` leaves it out
+     * entirely — see the one definition that carries it.
+     */
+    hostOnly?: boolean;
 }
 
 async function runVersionCommand(exe: string, args: string[], pattern: RegExp): Promise<string | null> {
@@ -137,17 +143,32 @@ async function runVersionCommand(exe: string, args: string[], pattern: RegExp): 
     }
 }
 
-export function getDependencyDefinitions(depsPath: string): DependencyDefinition[] {
+/**
+ * `inContainer` (← Config.dockerMode) drops every `hostOnly` definition: the
+ * image supplies those itself, so the container never lists, checks, downloads
+ * or offers to update them.
+ */
+export function getDependencyDefinitions(
+    depsPath: string,
+    opts: { inContainer?: boolean } = {},
+): DependencyDefinition[] {
     const platform = getPlatform();
     const arch = getArch();
 
-    return [
+    const defs: DependencyDefinition[] = [
         {
             name: 'nodejs',
             displayName: 'Node.js',
             description: 'JavaScript runtime that runs the ws-scrcpy-web server',
             requiresRestart: true,
             pairedWith: 'node-pty',
+            // The image runs its own interpreter (the Dockerfile links
+            // seed/node/node to /usr/local/bin/node): Node is the image's
+            // execution environment there, not an app dependency. A copy on the
+            // volume was ~50 MB downloaded on every fresh volume and never run —
+            // the Linux tarball lands at node/bin/node, and start.sh only looks
+            // for node/node.
+            hostOnly: true,
             checkInstalled: async (depsPath) => {
                 const ext = platform === 'win32' ? '.exe' : '';
                 // Linux tarball extracts with bin/ subdirectory; Windows zip is flat.
@@ -320,4 +341,5 @@ export function getDependencyDefinitions(depsPath: string): DependencyDefinition
                 `https://github.com/bilbospocketses/mkcert/releases/download/${version}/${mkcertAssetName(version)}`,
         },
     ];
+    return opts.inContainer ? defs.filter((d) => !d.hostOnly) : defs;
 }
