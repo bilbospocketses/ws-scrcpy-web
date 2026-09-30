@@ -17,8 +17,7 @@ services:
       # unchanged and 8000 stays free for a developer's own instance.
       #
       # Bound to 127.0.0.1 deliberately. A bare "8123:8000" publishes the app on
-      # every interface the host has — docs/traps.md records the general form of
-      # that mistake.
+      # every interface the host has, the LAN included.
       - "127.0.0.1:8123:8000"
     environment:
       # Pass-through, NOT a default. With no value Compose forwards the host's

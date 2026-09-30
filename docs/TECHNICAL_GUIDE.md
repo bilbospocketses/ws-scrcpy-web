@@ -1037,6 +1037,8 @@ Shows all npm packages (1-17) with available updates. For runtime dependencies (
 
 The dependency updater manages runtime dependencies (Node.js + node-pty, ADB, scrcpy-server, mkcert) through Settings → Dependencies; the home page keeps only an alert card, shown when an update is waiting. It allows users to check for updates and install them without leaving the browser.
 
+**In a container the set is smaller and read-only.** `getDependencyDefinitions(…, { inContainer: true })` (← `Config.dockerMode`) drops every definition marked `hostOnly`, which today is Node.js: the image runs its own interpreter (the Dockerfile links `seed/node/node` to `/usr/local/bin/node`), so a copy on the volume would be downloaded and never run. The check and update routes answer 409 there (§26.5).
+
 **Components:**
 
 | File | Responsibility |
@@ -1058,6 +1060,8 @@ The dependency updater manages runtime dependencies (Node.js + node-pty, ADB, sc
 | POST | `/api/dependencies/:name/update` | Download and install update for named dependency |
 | POST | `/api/dependencies/restart` | Restart the server (via launcher script) |
 | POST | `/api/dependencies/retry-install` | Re-run `checkAll` + `autoInstallMissing`; returns `{ success, installed, stillMissing, errors }`. Used by `FirstRunBanner`'s Retry button. Always responds 200 regardless of `success` value — client reads banner state by re-fetching `/api/dependencies`. |
+
+In a container, `POST /api/dependencies/check` and `POST /api/dependencies/:name/update` answer 409 `reason: unsupported` (`refuseInContainer`, §26.5): the image owns the dependency set, and a newer one arrives by pulling a newer image. `GET /api/dependencies` and `retry-install` stay open, because the first boot on a fresh volume still has to hydrate it.
 
 ### 13.3 Restart Flow
 
@@ -1130,6 +1134,7 @@ ws-scrcpy-web/                           -- installFolder (depsPath parent)
 To add a new dependency to the updater:
 
 1. Add a new `DependencyDefinition` entry in `src/server/DependencyDefinitions.ts` with:
+   - `hostOnly: true` if the container image provides it itself, so a container never lists, checks, downloads or offers to update it (Node.js is the one such definition today)
    - `checkInstalled()` -- how to detect the installed version
    - `checkLatest()` -- how to check for the latest version online
    - `getDownloadUrl()` -- platform-aware download URL
@@ -1226,7 +1231,7 @@ A two-channel discovery model: **mDNS** advertisement (modern devices) plus a **
 **User flow:**
 
 1. Click **scan network** -> `ScanNetworkModal` opens.
-2. Dialog shows the auto-detected gateway subnet plus any user-added subnets (restored from the per-user settings store via `SettingsService.loadGlobal()` → `scanSubnets`, not `localStorage`).
+2. Dialog shows the auto-detected gateway subnet plus any user-added subnets (restored from the per-user settings store via `SettingsService.loadGlobal()` → `scanSubnets`, not `localStorage`). In a container nothing is proposed as detected: the server answers `{ container: true }` (below) and the dialog shows `CONTAINER_SCAN_NOTE` instead, asking for the LAN subnet and naming `network_mode: host` for mDNS.
 3. User can add subnets via `AddSubnetModal` (CIDR, bare IP, or IP range), edit an existing row via the **✎** icon (opens `AddSubnetModal` in edit mode with the current value pre-filled), or remove via **×**.
 4. If the combined scan size exceeds 2,048 hosts, `LargeSubnetWarningModal` prompts for confirmation with a per-subnet breakdown.
 5. Scan streams over a WebSocket; hits render as cards under "Available Network Devices" with an optional name input and Connect button.
@@ -1238,7 +1243,7 @@ A **manually add** button sits next to **scan network** and opens an inline form
 | Method | Path | Purpose |
 |--------|------|---------|
 | POST | `/api/devices/scan` | **Legacy.** Kept as a REST compatibility shim returning mDNS-only results with the pre-rewrite behavior. External consumers that pre-date `/ws-scan` still work. |
-| GET | `/api/devices/scan/subnet` | Returns the auto-detected gateway subnet as `{ cidr, hostCount }`, or `null` if detection failed. Called by `ScanNetworkModal` on open. |
+| GET | `/api/devices/scan/subnet` | Returns the auto-detected gateway subnet as `{ cidr, hostCount }`, or `null` if detection failed. Called by `ScanNetworkModal` on open. **In a container it returns `{ container: true }`** without detecting anything: a bridge container's only interface is docker's own (`172.17.0.0/16`, 65,534 hosts, measured), which is never the subnet the devices are on. |
 | POST | `/api/devices/connect` | JSON body `{ address, serial?, label? }`. `address` is validated by `isConnectAddress` (HOST / HOST:PORT / bracketed IPv6 — the shapes `adb connect` documents) and a malformed one is a 400 that does not echo the input. On success, label is persisted keyed by both `ro.serialno` AND MAC (see 14.2.3). |
 | POST | `/api/devices/disconnect` | JSON body `{ address }`, validated by the same `isConnectAddress`. |
 | GET | `/api/devices/labels` | All labels as `{ key: label }` where key is serial or MAC. |
@@ -1279,7 +1284,7 @@ Lifecycle: `scan.started -> [progress | hit]* -> (complete | draining -> cancell
 | `src/server/network/NetworkScanner.ts` | Singleton orchestrator. State machine `idle -> scanning -> draining -> idle`. Bounded-concurrency probe pool sized by `scanConcurrency`. Cancel drains in-flight probes instead of killing them. Emits the full server message stream plus snapshot replay for mid-scan reconnects. |
 | `src/server/network/AdbHandshakeProbe.ts` | Single-socket CNXN handshake probe: TCP connect -> write CNXN -> read reply header -> close. Replaced an earlier two-socket path (`adb connect` for liveness then `adb disconnect`) that older embedded adbd stacks (notably the SM-T550) silently dropped on the second connection. CNXN packet matches AOSP byte-for-byte: version `0x01000001`, `max_data` `0x00100000`, full `host::features=shell_v2,cmd,stat_v2,...` banner, byte-sum `data_check` (the field is misnamed `data_crc32` in the AOSP struct — historical). Successful replies (`CNXN` or `AUTH`) are logged as hits. **Close behavior:** confirmed-ADB hits are shut down with `socket.end()` (FIN) plus a 250 ms safety-net `destroy()`, so adbd sees a clean teardown; closed-port and timeout paths call `destroy()` immediately to stay fast. The RST-on-probe behavior it replaced caused intermittent `adb connect` failures right after a scan — embedded adbd treated the abort as an in-progress session and refused new connections for its cleanup window. |
 | `src/server/network/SubnetDetector.ts` | Gateway subnet auto-detection with a three-level fallback: (1) parse `route print` (Windows) / `ip route` (Linux) for the default route, filtering Windows' synthetic `On-link` and `0.0.0.0` rows; (2) enumerate RFC1918 interfaces and pick the first usable; (3) return null. Exposed via `GET /api/devices/scan/subnet`. |
-| `src/server/network/MacResolver.ts` | ARP-cache lookup after probe traffic primes the table: `arp -a <ip>` on Windows, `ip neigh show to <ip>` on Linux (2s command timeout). Returns a lowercase colon-normalized MAC or `null`. Stateless — each `resolveMac()` call spawns the OS command fresh. |
+| `src/server/network/MacResolver.ts` | ARP-cache lookup after probe traffic primes the table: `arp -a <ip>` on Windows, `ip neigh show to <ip>` on Linux (2s command timeout). Returns a lowercase colon-normalized MAC or `null`. Stateless — each `resolveMac()` call spawns the OS command fresh. **Skipped in a container** (`DeviceDiscoveryApi.connect()` and the scanner's `resolveMac` wiring): `ip neigh` is not in the image, and through docker's NAT it could not see a LAN device anyway, so a label there is keyed by serial alone. |
 | `src/server/db/DeviceStore.ts` | Per-user label persistence (the `device_labels` table in `wsscrcpy.db`, keyed `(user, serial)`), reached via `Config.getInstance().db.devices`. The store is a per-user keyed map — the **dual-key storage** is a call-site pattern in `DeviceDiscoveryApi.connect()`: on a successful network connect, the label is written under *both* the device's real serial (`getprop ro.serialno`) and its MAC (resolved via `MacResolver`). Scanner hit lookup then does `labelFor(mac) ?? labelFor(serial)` — MAC-first catches TCP hits (where serial isn't known until after a follow-up connect), serial-fallback catches mDNS hits. Also owns the shared `devices` observed-metadata table. |
 | `src/server/api/DeviceDiscoveryApi.ts` | HTTP endpoint handler (scan, scan/subnet, connect, disconnect, labels, screen-state, sleep-wake). |
 | `src/server/AdbClient.ts` | `mdnsServices()`, `connect()`, `disconnect()`, plus `parseMdnsOutput()` and `parseSerialFromMdnsName()` parsers. mDNS display name normalizes to `adb-{parsedSerial}` format across `_adb._tcp` and `_adb-tls-connect._tcp` service types. |
@@ -1366,7 +1371,7 @@ Two of those are easy to get wrong. **`expiresInMs` is a duration, deliberately 
 
 ### 14.3 Dependencies
 
-The dependency updater panel (section 13) now lives in **Settings → Dependencies** (section 27), not on the home page. It shows installed vs. latest versions for Node.js + node-pty, ADB, and scrcpy-server with update controls. See section 13 for full details.
+The dependency updater panel (section 13) now lives in **Settings → Dependencies** (section 27), not on the home page. It shows installed vs. latest versions for Node.js + node-pty, ADB, scrcpy-server and mkcert with update controls. In a container the tab is replaced by a note and Node.js is not in the set at all (§13.1, §26.5). See section 13 for full details.
 
 What is left is `DependencyAlertCard` — an alert, not a list. It stays hidden until something actually needs updating, says only which dependency that is, and its button opens the Settings dialog **on the Dependencies tab**. It lives in the **top bar**, in the same fixed cluster as the theme toggle, the settings gear and the app-update pill, and is deliberately shaped unlike that pill — a 36 px icon circle in `--warning-color` against a text badge — so the two kinds of update are told apart without opening either. It was a `home-section` card appended after the device list until 2026-09-18, which put it at the bottom of the page while app updates announced themselves at the top, so a user watching the top bar never learned a dependency needed updating at all. The name of the dependency is carried in a visually-hidden span plus `title`/`aria-label`, because an icon-only control would otherwise throw away the one detail the alert exists to give. Its wrapper deliberately sets **no `display`** — a class rule outranks the UA stylesheet's `[hidden] { display: none }`, and a `display: flex` there silently defeated the `hidden` attribute the card hides itself with. It polls `/api/dependencies` every 15 s, and mounts inert (no fetch, no interval) unless all three of its predicates hold: the caller's role may see the section, the admin API will answer this caller at all — polling regardless 403-spams a healthy app — and this is **not** a container, where the image owns the dependency set and the tab the card's button opens is itself replaced by a note (§26.5). All three are the card's own, read off one `/api/config` runtime envelope, so there is exactly one copy of the decision. Any non-OK response or error **hides** the card rather than replacing it with an error box.
 
@@ -1872,6 +1877,8 @@ refused uninstall gutted the install and reported success.
 | POST | `/api/service/install-system-wide` | (Linux) Relocate a local install to a machine-wide `/opt` install under one `pkexec` prompt; re-execs from `/opt` through a relaunch-only `--linux-apply` helper started in its own `systemd-run --user` unit (`systemWideRelaunchPlan`), so it survives this instance's exit even when the instance itself runs in a transient unit (#772). |
 | POST | `/api/service/uninstall-app` `{keep}` | **(Linux + Windows)** Complete app uninstall — see 19.2b. On Linux it cascades through any service + `/opt` in one pass. `keep` preserves `config.json` + logs. |
 
+**In a container** `GET /api/service/status` answers at once with `{ supported: false, docker: true }`, without probing the host for a unit, an `/opt` install or a decline marker, and every POST above answers 409 `reason: unsupported` naming `docker rm` (§26.5).
+
 ### 19.4 Config.json Port Discovery
 
 The mtime-based discovery mechanism replaces the old `discoverServicePort` approach. Both install and uninstall flows use it:
@@ -2157,6 +2164,8 @@ else
 
 Only the WelcomeModal is a modal. The reminder card is in-flow at the top of the page container and never blocks the app (item 113, 2026-09-06).
 
+**In a container** (`runtime.docker === true`) neither the WelcomeModal nor the Linux "update the system-wide install?" offer ever opens. `src/app/client/containerGate.ts` decides both (`showsWelcomeWizard`, `offersSystemWideUpdate`) and answers false for `docker: true` explicitly, rather than relying on the read-time `firstRunComplete: true` overlay (§26.5) to keep the wizard quiet.
+
 ### 23.2 WelcomeModal
 
 Shown on the first page load of a local-mode (non-service) instance. Lets the user choose their install mode:
@@ -2238,7 +2247,7 @@ return requireAdmin(req, res);
 - **`GET /api/config` is never gated.** It is the launcher's readiness probe, the Docker image's `HEALTHCHECK` and the test harness's ready path. Gating it breaks all three at once, and it discloses nothing sensitive. Only the PATCH branch is guarded.
 - **`ServerShutdownApi` keeps its own ladder** rather than adopting `requireOperator`, because its off-box branch must stay token-first (403) then session (401) for the cookieless tray helper. It gained one clause: in **open** mode an off-box caller now also needs the opt-out.
 
-**The opt-out.** `WS_SCRCPY_ALLOW_REMOTE_ADMIN=1` (exact string `'1'` — a loose truthiness check would admit `''` or `'false'`) or `allowRemoteAdmin: true` in `config.json`. The env var is first-class and checked first: a container has nobody at a loopback browser, so it is the only path that does not need `docker exec`. The config key is what the banner's confirmation modal writes, and that PATCH is itself operator-gated, so the switch cannot be thrown from off-box.
+**The opt-out.** `WS_SCRCPY_ALLOW_REMOTE_ADMIN=1` (exact string `'1'` — a loose truthiness check would admit `''` or `'false'`) or `allowRemoteAdmin: true` in `config.json`. The env var is first-class and checked first: a container has nobody at a loopback browser, so it is the way into a container's admin routes, including the one-time setup of sign-in (`SECURITY.md` § Containers). There is no `docker exec` route: the image has no `curl` or `wget`, every `/api` call needs the per-launch token, and `POST /api/auth/enable` refuses until an admin with a password exists. The config key is what the banner's confirmation modal writes, and that PATCH is itself operator-gated, so the switch cannot be thrown from off-box.
 
 **`runtime.adminScope` and `runtime.callerIsLocal` on `GET /api/config`.** Two fields, not one: `adminScope` (`'local' | 'remote' | 'authenticated'`) is the **policy in force**, `callerIsLocal` is whether **this** request can act under it. The client needs both — a `local` policy shows buttons to a loopback caller and instructions to everyone else. Both are optional on the wire, so an older server reads as "no opinion" and the banner stays hidden rather than claiming a posture it cannot verify.
 
@@ -2732,7 +2741,8 @@ once published; the variability lives only between builds.
 
 ```
 PID 1  tini -g
-         └─ /usr/local/bin/entrypoint.sh   (root: chown /data, then setpriv → uid 1000)
+         └─ /usr/local/bin/entrypoint.sh   (root: chown /data, then setpriv → uid 1000;
+                                            --user: check /data is writable, then exec)
               └─ /app/start.sh             (bash restart loop: exit 75 / .restart marker)
                    └─ node dist/index.js
 ```
@@ -2753,6 +2763,15 @@ PID 1  tini -g
   `HOME` lives on the volume because adb creates `$HOME/.android` on **every**
   invocation and aborts when it cannot — and because the key pair in it is the
   device-authorization identity, which should survive `docker rm`.
+- **Started as another uid** (`docker run --user`, compose `user:`), the entrypoint
+  has nothing to drop and cannot chown, so it checks instead: if `/data`,
+  `/data/dependencies`, `/data/home` or `/data/logs` exists and is not writable by
+  that uid, it exits 1 with a message naming the one-off `--entrypoint chown` command
+  and the alternative (drop `--user`). Otherwise it creates the three subdirectories,
+  exports `HOME=/data/home` and `exec`s the app. Before 2026-09-30 this branch just
+  `exec`ed: a fresh (root-owned) volume died at boot with nothing naming the cause,
+  and Docker's `HOME=/` for a uid with no passwd entry made adb abort on
+  `Cannot mkdir '//.android'`. Row 20.21.
 - **`start.sh` is reused unchanged**, restart loop included: exit code 75 or the
   `.restart` marker (a dependency-driven Node update) respawns node inside the
   container; a clean exit 0 ends the loop, the shell exits, and so does the
@@ -2789,8 +2808,10 @@ data root exactly:
   `tests/e2e/support/dockerStack.ts` uses). Finding 20.14: until 2026-09-04 the path
   resolved under root-owned `/app` and the container wrote no log at all.
 - **A bind mount works too**; the shim chowns whatever arrives. `docker run --user`
-  bypasses the shim entirely (it `exec`s the app as whoever it already is), in which
-  case ownership is yours to get right.
+  skips the chown (nothing can chown from a non-root uid), so ownership is yours to
+  get right: the entrypoint's non-root branch (§26.3) checks `/data` is writable,
+  stops with exit 1 naming the chown when it is not, creates the subdirectories and
+  sets `HOME=/data/home` when it is. Row 20.21.
 
 ### 26.5 Docker awareness
 
@@ -2826,28 +2847,67 @@ in `Config` (§23 has the modal side):
    of the page (§36). The unit assertion that no `/api/dependencies` request is made
    in a container is what pins that order.
 
+**The container audit (2026-09-30) added the half that holds when a route is called
+directly.** Hiding the UI is cosmetic; the server refuses too, so the UI gating never
+has to be a security boundary. Each item is asserted by `docker-gating.spec.ts`
+(rows 20.18 and 20.19) and unit-tested with a host control:
+
+- **Host-only writes answer 409** `{ ok: false, error, reason: 'unsupported' }`
+  through one helper, `refuseInContainer()` in `src/server/api/containerGuard.ts`.
+  409 rather than 403, because the caller is permitted and the action simply does not
+  apply; the copy names the container and the real remedy (`docker rm`, a reverse
+  proxy, pulling a newer image, or docker's own port mapping). The routes: service
+  install / uninstall / install-for-all-users / decline / app uninstall (§19.3); the
+  updater's check, apply and settings (§22); dependency check and update (§13.2);
+  every `/api/tls/*` write (§28); and a `PATCH /api/config` or `/api/settings/batch`
+  that names a host-only key (`CONTAINER_HOST_ONLY_CONFIG_KEYS`: `installMode`,
+  `firstRunComplete`, `webPort` and the four updater keys; §27.7).
+- **`GET /api/service/status` short-circuits** to `{ supported: false, docker: true }`
+  without probing the host for a unit, an `/opt` install or a decline marker.
+- **The updater is never started** (`src/server/index.ts` skips
+  `updateService.init()`). Before this it bailed only because `$APPIMAGE` happens to be
+  unset in the image.
+- **No update pill and no update poll** on the home page, and **no first-run wizard
+  and no system-wide-update banner**: `src/app/client/containerGate.ts` answers each
+  question false for `docker: true` explicitly (`mountsUpdateButton`,
+  `showsWelcomeWizard`, `offersSystemWideUpdate`) instead of relying on the server's
+  replies happening to keep the control quiet.
+- **Settings → Server** (`applyServerContainerMode`, §27.3) hides the web-port row,
+  replaces the Local HTTPS panel with a note naming the reverse proxy, and makes
+  "reset all my settings" send the per-user reset only, with no first-run `PATCH`.
+- **No browser is auto-opened** (`openBrowser.ts`, `inContainer`): there is no desktop.
+- **Node.js is not a managed dependency** (`hostOnly`, §13.1).
+- **Local HTTPS is not supported in a container** (user decision, 2026-09-30). A
+  reverse proxy in front of the container is the only supported HTTPS (§26.6).
+
 ### 26.6 Networking
 
 - **Wireless ADB only.** No `--device`, no usbip. `adb connect <ip>:<port>` after the
   device's wireless debugging is on; the Android 11+ pairing hole (todo item 73)
   applies here exactly as on the desktop.
-- **Reachability is the host's problem.** The image is network-agnostic; the default
-  bridge frequently cannot reach the device's LAN, and `--network host` is the usual
-  answer. The compose file publishes on `127.0.0.1` only, deliberately.
+- **Reachability is the host's problem.** The image is network-agnostic. On the
+  default bridge, `adb connect` and the scan's port-5555 probe reach the LAN through
+  Docker's NAT, but the container sees only Docker's own subnet, so network scan asks
+  for the LAN subnet (`GET /api/devices/scan/subnet` answers `{ container: true }`,
+  §14.2.1; row 20.20). mDNS (quick scan, and pairing by QR) needs the container on
+  the host's network: `--network host`, or `network_mode: host` in compose. The
+  compose file publishes on `127.0.0.1` only, deliberately.
 - **Streaming needs a secure context.** WebCodecs exists only on `https://` or
   `localhost`, so `http://<lan-ip>:8000` lists devices and refuses to stream (finding
   8.10; the device card says so). The README's *Serving the container over HTTPS*
   section gives the reverse-proxy recipe; the three rules it states — `allowedHosts`
   lists the name, `Host` is forwarded unchanged, WebSocket upgrades pass — are §24's
-  layers seen from the proxy's side.
+  layers seen from the proxy's side. **The app's own Local HTTPS (§28) is off in a
+  container**: every `/api/tls/*` write answers 409 and the Server tab shows a note,
+  so the reverse proxy is the only supported HTTPS.
 
 ### 26.7 Verification
 
 - **`build-and-test` builds the image on every PR** (`docker buildx build --load`,
   no push) and runs the `@docker` tier against it (`npm run test:e2e:docker`, the
-  same specs as the fast tier plus the container rows). The six `@docker-host` rows
+  same specs as the fast tier plus the container rows). The seven `@docker-host` rows
   drive the docker CLI on the host — compose stacks of their own, a `docker stop`, a
-  `docker pull` — and run in CI only; qa-harness's runner has no docker CLI by design
+  `docker pull`, a `docker run --user` — and run in CI only; qa-harness's runner has no docker CLI by design
   (`tests/e2e/README.md`).
 - **Smoke module 20** is the container path's manual checklist; the coverage register
   carries each row's status.
@@ -2859,13 +2919,17 @@ in `Config` (§23 has the modal side):
 | File | Purpose |
 |------|---------|
 | `Dockerfile` | Two stages, digest-pinned trixie base, seed symlinks, `HEALTHCHECK`, `tini -g` entrypoint |
-| `docker/entrypoint.sh` | Root shim: `/data` ownership, `HOME=/data/home`, `setpriv` step-down |
+| `docker/entrypoint.sh` | Root shim: `/data` ownership, `HOME=/data/home`, `setpriv` step-down; the `--user` branch's writability check |
 | `start.sh` | The reused restart loop (exit 75 / `.restart` marker) |
 | `scripts/fetch-tini.mjs` | Downloads the pinned static `tini` and verifies its SHA256 |
 | `docker-compose.yml` | The developer / CI quickstart; the stack `playwright.docker.config.ts` starts |
 | `.github/workflows/docker-publish.yml` | Tag-push trigger, Scout gate, channel-tag rule, push |
 | `src/server/Config.ts` | `dockerMode` — the `WS_SCRCPY_DOCKER` overlay and the `docker: true` envelope field |
+| `src/server/api/containerGuard.ts` | `inContainer()`, `refuseInContainer()` (the 409s) and `CONTAINER_HOST_ONLY_CONFIG_KEYS` |
+| `src/app/client/containerGate.ts` | The home page's container decisions: wizard, system-wide banner, update pill |
 | `tests/docker/*.yml`, `tests/e2e/support/dockerStack.ts` | Spec-owned stacks and the docker helpers for the `@docker-host` rows |
+| `tests/e2e/docker-gating.spec.ts` | Rows 20.1, 20.2, 20.4, 20.5, 20.7, 20.9 and 20.17-20.20: the container's gated UI, its 409s and first-boot hydration |
+| `tests/e2e/container-user.spec.ts` | Row 20.21: `docker run --user`, refused and chowned |
 | `docs/specs/2026-06-09-sp4-docker-image-design.md` | The design, with §16's amendments (trixie, registry, arm64, adb's URL) |
 
 ---
@@ -2938,10 +3002,14 @@ for a starting tab (`new SettingsModal({ initialTab: 'dependencies' })`), which
 is what the home page's dependency alert uses; an id that was never built is a
 no-op and lands on the first tab.
 
-Container mode swaps the Updates and Service bodies for the locked copy through
-`TabStrip.replaceTabBody()`, not a direct `replaceWith` — a fresh node carries no
-`hidden` attribute, so a direct swap rendered visible beside whatever tab was
-actually active and orphaned the strip's cache.
+Container mode swaps the Updates, Service and Dependencies bodies for the locked
+copy through `TabStrip.replaceTabBody()`, not a direct `replaceWith` — a fresh node
+carries no `hidden` attribute, so a direct swap rendered visible beside whatever tab
+was actually active and orphaned the strip's cache. The Server tab stays, and
+`applyServerContainerMode()` (`ServerTab.ts`) applies its three container decisions:
+the web-port row is hidden (the port inside the image is always 8000), Local HTTPS is
+replaced by a note naming the reverse proxy, and "reset all my settings" stops
+sending the first-run reset (§26.5).
 
 ### 27.4 What stages, and what still writes immediately
 
@@ -2964,7 +3032,8 @@ Two things the allowlist implies, both easy to state wrongly:
   used to write immediately on blur via `PATCH /api/updates/config`; it now
   registers with the store and rides the batch, so closing the dialog without
   Save leaves it untouched. `PATCH /api/updates/config` still accepts the field —
-  nothing was removed from the endpoint — the tab simply no longer calls it.
+  nothing was removed from the endpoint — the tab simply no longer calls it. In a
+  container it answers 409, as every updater route does (§26.5).
 - **"check for updates now" and "apply update" are actions**, as are everything
   on Users, Embedding and Service and the Server tab's reset / change password /
   log out / install for all users / stop & exit / uninstall. They fire on click
@@ -2982,7 +3051,9 @@ batch endpoint turns into a 400 for the whole batch at Save time.
 `PATCH /api/config` **still exists and still accepts `webPort`**, restart
 scheduling included (`src/server/api/ConfigApi.ts`). What the tabs work removed
 is the Server tab's own per-field Save button and the call it made; the endpoint
-underneath is unchanged.
+underneath is unchanged. In a container a `PATCH` naming `webPort` (or any other
+key in `CONTAINER_HOST_ONLY_CONFIG_KEYS`) answers 409: docker's port mapping owns
+the port there (§26.5).
 
 ### 27.5 Save
 
@@ -3049,7 +3120,16 @@ way it was not before, because the per-field Save that used to pre-screen the po
 is gone.
 
 A batch naming an id outside `STAGEABLE_IDS` is refused **before** the WAL row is
-written, so a rejected batch leaves no trace to reason about later.
+written, so a rejected batch leaves no trace to reason about later. In a container,
+so is a batch naming a host-only key (`webPort` or an updater key): 409
+`reason: unsupported`, the same refusal `PATCH /api/config` gives (§26.5).
+
+**Routing: the per-user `SettingsApi` must yield this path.** It is registered
+first and used to claim every `/api/settings…` URL, answering 404 for a path it did
+not know, so Save was answered 404 on every install from the tabbed dialog (#692,
+2026-09-14) until #804 (beta.156). The batch tests called this handler directly and
+no end-to-end test drove Save; the container tier found it while testing row 20.18.
+A test now runs the two handlers in the server's own order.
 
 ### 27.8 The write-ahead log
 
@@ -3132,6 +3212,11 @@ live in `docs/superpowers/specs/2026-09-18-local-https-design.md` — this secti
 code actually does. That spec is the design as of 2026-09-18: its mkcert pin, its Windows TLS path and
 its token-gated CA download have since changed, and §28.2, §28.4 and the route list below supersede it
 on each.
+
+**Host installs only.** Local HTTPS is not supported in a container (user decision, 2026-09-30):
+every `/api/tls/*` write answers 409 there, naming the reverse proxy, and the Server tab shows a note
+in place of the panel. A reverse proxy in front of the container is the only supported HTTPS for the
+image (§26.5, §26.6).
 
 The admin-gated `/api/tls/*` routes (`src/server/api/TlsApi.ts`) are the whole server-side surface:
 `GET /state`, `POST /generate`, `POST /revoke`, `GET /ca-root` (rate-limited to 10 downloads per 60
@@ -3514,7 +3599,7 @@ degrades to HTTP-only, logged, never a crash.
 | `src/server/tls/certPaths.ts` | `resolveCertPaths` — POSIX vs. per-user-Windows CAROOT/leaf placement, the containment guard |
 | `src/server/tls/createCertService.ts` | The composition root: binds `CertServiceDeps` to real `fs`/`child_process`; memoized `getCertService()`; `ensureMkcertInstalled()`'s on-demand-fetch trigger |
 | `src/server/tls/httpExposure.ts` | `HttpExposure`, `HTTP_EXPOSURE_KEY`, the pure `decideHttpRequest` decision function |
-| `src/server/api/TlsApi.ts` | The `/api/tls/*` routes: reads admin-gated, writes operator-gated (item 153); CA-root rate limiting; the hostname-only `allowedHosts` auto-add (issue #691); `buildHttpsListenerField`'s `httpsListener` contract on `/state` and `/generate`, including the stale-leaf `restart-required` case |
+| `src/server/api/TlsApi.ts` | The `/api/tls/*` routes: reads admin-gated, writes operator-gated (item 153) and refused with 409 in a container (§26.5); CA-root rate limiting; the hostname-only `allowedHosts` auto-add (issue #691); `buildHttpsListenerField`'s `httpsListener` contract on `/state` and `/generate`, including the stale-leaf `restart-required` case |
 | `src/server/network/candidateLanIps.ts` | RFC1918 LAN-IP candidates for the subject picker, excluding CGNAT (`100.64.0.0/10`) and link-local |
 | `src/server/services/HttpServer.ts` | Exposure enforcement on the plain-HTTP listener, the listen-error handler, `getHttpsListenerStatus`, the bound leaf's `leafFingerprint` capture |
 | `src/server/Config.ts` | `buildServerList`, `readCertMaterial`, `sanitizeHttpsPort` / `validateHttpsPortInput` / `setHttpsPort`, `DEFAULT_HTTPS_PORT` |
@@ -3522,5 +3607,5 @@ degrades to HTTP-only, logged, never a crash.
 | `src/server/mkcertProvenance.ts` | The attested-manifest gate: fetch GitHub's attestations for the manifest digest, verify them (`createSigstoreVerifier`: `@sigstore/tuf` + `@sigstore/verify`) against the tag-pinned release-workflow identity, and check the statement names the manifest |
 | `tests/e2e/support/githubRefusal.ts` | The e2e spent-quota rule as pure functions (`quotaFromRateLimit`, `partitionRetryErrors`, `partitionDependencyStates`, `isExcusableNullLatest`), unit-tested in `tests/unit/githubRefusal.test.ts` so the spent-quota branch runs on every build |
 | `src/server/DependencyManager.ts` | `installMkcert()` — the install handler; `fetchAttestedMkcertManifest()` (manifest provenance, via `mkcertProvenance.ts`) and `verifyMkcertBinaryAgainstManifest()` (binary-vs-manifest), reusing `parseSha256Sums`/`verifySha256` |
-| `src/app/client/settings/tabs/ServerTab.ts` | The Settings → Server → Local HTTPS panel; `listenerStatusNotice()`; the exposure-radio gate on `httpsListener.bound` |
+| `src/app/client/settings/tabs/ServerTab.ts` | The Settings → Server → Local HTTPS panel; `listenerStatusNotice()`; the exposure-radio gate on `httpsListener.bound`; `buildLocalHttpsContainerNote()`, the reverse-proxy note a container shows instead |
 | `docs/superpowers/specs/2026-09-18-local-https-design.md` | The full design as of 2026-09-18: measured facts, rejected alternatives, the UI notification table. §28.4, §28.2 and §28's route list supersede its mkcert pin, its Windows TLS path and its token-gated CA download |
