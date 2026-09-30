@@ -67,7 +67,20 @@ test.describe('the container run as another user (smoke §20.21)', () => {
         const ctx = await request.newContext({ baseURL: BASE });
         try {
             // The documented fix, run exactly as the entrypoint's message gives it.
-            dockerCli(['run', '--rm', '-u', '0', '-v', `${VOLUME}:/data`, '--entrypoint', 'chown', appImage(), '-R', UID, '/data']);
+            dockerCli([
+                'run',
+                '--rm',
+                '-u',
+                '0',
+                '-v',
+                `${VOLUME}:/data`,
+                '--entrypoint',
+                'chown',
+                appImage(),
+                '-R',
+                UID,
+                '/data',
+            ]);
             dockerCli([
                 'run',
                 '-d',
