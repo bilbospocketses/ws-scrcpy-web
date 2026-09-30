@@ -365,10 +365,27 @@ export class DependencyManager {
         // if the dest already exists, the promotion is a no-op.
         // Network download still runs after, in case the seed is
         // missing or the user has an updater-managed newer version.
+        let promoted = false;
         try {
-            this.promoteSeedScrcpyServer();
+            promoted = this.promoteSeedScrcpyServer();
         } catch (err) {
             log.warn(`seed-promote scrcpy-server failed: ${(err as Error).message}`);
+        }
+        // Re-read what is installed once the seed has landed. checkAll() ran
+        // before the promote and recorded scrcpy-server as not installed, so
+        // the loop below downloaded the same version over the copy just made
+        // (measured on beta.160: "promoted seed" then "Updating scrcpy-server:
+        // not installed → 4.1" 0.8 s later, on every fresh volume and every
+        // first run). A newer release is still offered, as an update.
+        if (promoted) {
+            await this.checkInstalled('scrcpy-server');
+            // An offline first boot left checkLatest's "not installed" error on
+            // it. Installed, a failed lookup is advisory (checkLatest's own
+            // rule), so the error no longer describes this dependency.
+            const scrcpy = this.state.get('scrcpy-server');
+            if (scrcpy && scrcpy.installedVersion !== null) {
+                scrcpy.errorMessage = undefined;
+            }
         }
 
         for (const info of this.state.values()) {
@@ -436,19 +453,26 @@ export class DependencyManager {
      * root that contains seed/. This mirrors the Rust launcher's
      * `exe_dir.join("seed")` resolution for seed/node.
      */
-    private promoteSeedScrcpyServer(): void {
+    /** @returns true when this call copied the seed in. */
+    private promoteSeedScrcpyServer(): boolean {
+        const seedFile = DependencyManager.seedScrcpyServerPath();
         const destDir = path.join(this.depsPath, 'scrcpy-server');
         const destFile = path.join(destDir, 'scrcpy-server');
         if (fs.existsSync(destFile)) {
-            return; // already promoted or updater-installed
+            return false; // already promoted or updater-installed
         }
-        const seedFile = path.join(__dirname, '..', 'seed', 'scrcpy-server', 'scrcpy-server');
         if (!fs.existsSync(seedFile)) {
-            return; // no seed available — autoInstallMissing will fall through to network download
+            return false; // no seed available — autoInstallMissing will fall through to network download
         }
         fs.mkdirSync(destDir, { recursive: true });
         copyFileAtomicSync(seedFile, destFile);
         log.info(`promoted seed scrcpy-server → ${destFile}`);
+        return true;
+    }
+
+    /** `<image>/seed/scrcpy-server/scrcpy-server`; `__dirname` is always `<image>/dist/`. */
+    public static seedScrcpyServerPath(): string {
+        return path.join(__dirname, '..', 'seed', 'scrcpy-server', 'scrcpy-server');
     }
 
     public requestRestart(): void {

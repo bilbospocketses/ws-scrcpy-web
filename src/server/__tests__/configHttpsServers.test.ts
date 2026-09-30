@@ -386,6 +386,31 @@ describe('Config.buildServers (exercised via _buildServersForTest)', () => {
         expect(servers[1]!.options).toMatchObject({ cert: MATCHED_CERT_PEM, key: MATCHED_KEY_PEM });
     });
 
+    // D8 (2026-09-30): Local HTTPS is not supported in a container, so a valid
+    // certificate on the volume must not bind a listener there. The test above
+    // is the control: the same files on a host DO bind one.
+    it('in a container, serves HTTP only from the same valid certificate, and says why', () => {
+        const { dataRoot, env } = setupCertFiles(MATCHED_CERT_PEM, MATCHED_KEY_PEM);
+        const warnings: string[] = [];
+        const servers = Config._buildServersForTest({}, 8000, dataRoot, { ...env, WS_SCRCPY_DOCKER: '1' }, (m) =>
+            warnings.push(m),
+        );
+        expect(servers).toHaveLength(1);
+        expect(servers[0]!.secure).toBe(false);
+        expect(warnings.join('\n')).toContain('not supported in a container');
+        expect(warnings.join('\n')).toContain('reverse proxy');
+    });
+
+    it('in a container with no certificate, serves HTTP only and warns about nothing', () => {
+        const { dataRoot, env } = setupCertFiles(null, null);
+        const warnings: string[] = [];
+        const servers = Config._buildServersForTest({}, 8000, dataRoot, { ...env, WS_SCRCPY_DOCKER: '1' }, (m) =>
+            warnings.push(m),
+        );
+        expect(servers).toHaveLength(1);
+        expect(warnings).toEqual([]);
+    });
+
     // Windows only: the pre-2026-09-27 home (%LOCALAPPDATA%\WsScrcpyWeb\tls) never
     // existed on POSIX, and Config resolves paths with the real process.platform.
     it.runIf(process.platform === 'win32')(
