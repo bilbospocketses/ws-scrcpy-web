@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **The container no longer downloads its own copy of Node.js.** The image runs its own Node, the one it was built with, and the copy the first boot fetched onto the volume (about 50 MB) was never run: the Linux archive unpacks to `node/bin/node` and `start.sh` looks for `node/node`. In a container, the server now leaves Node.js out of its dependency set entirely (a `hostOnly` flag on the definition), so it is not listed, checked, downloaded or offered as an update. Host installs are unchanged. A volume that already holds the copy keeps it; nothing uses it, and deleting `/data/dependencies/node` frees the space.
+### Fixed
+- **The Linux tray's stand-down line now matches smoke row 14.9.** A system-scope service logged `installMode=Some("system-service")`, which is Rust's debug form of an optional value, where the row (and qa-harness) read `installMode="system-service"`. The line is now built by `tray_stand_down_line` in `common::tray_policy`, with a test on every platform, and reads `installMode=none` when no mode is set. Behaviour is unchanged: a system-scope service still spawns no tray. Reported by qa-harness.
 
 ## [0.1.30-beta.157] - 2026-09-30
 
@@ -35,8 +37,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **Opening a browser at startup could crash the server.** A missing opener (`xdg-open` on a machine without one) is reported by `spawn` as an `error` event after the call returns, outside the code's try/catch, and nothing listened for it. Every platform's opener now has an error listener, so a failed open is logged and the server carries on, as the code always said it would.
-### Fixed
-- **The Linux tray's stand-down line now matches smoke row 14.9.** A system-scope service logged `installMode=Some("system-service")`, which is Rust's debug form of an optional value, where the row (and qa-harness) read `installMode="system-service"`. The line is now built by `tray_stand_down_line` in `common::tray_policy`, with a test on every platform, and reads `installMode=none` when no mode is set. Behaviour is unchanged: a system-scope service still spawns no tray. Reported by qa-harness.
 
 ## [0.1.30-beta.156] - 2026-09-30
 
