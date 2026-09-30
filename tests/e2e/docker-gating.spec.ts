@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { openSettingsTab } from './support/auth';
+import { openSettingsTab, settingsRow } from './support/auth';
 import { githubCoreQuota, partitionDependencyStates } from './support/githubQuota';
 import { BOOT_INSTALLED_DEPENDENCIES } from './support/privateServer';
 
@@ -18,7 +18,7 @@ import { BOOT_INSTALLED_DEPENDENCIES } from './support/privateServer';
  * these cover the wiring between it and an actual image.
  */
 test.describe('container mode', () => {
-    test('@docker the server reports itself as containerised', async ({ request }) => {
+    test('@docker precondition (no register row): the server reports itself as containerised', async ({ request }) => {
         const res = await request.get('/api/config');
         expect(res.ok()).toBe(true);
         const body = (await res.json()) as { runtime: { docker?: boolean; firstRunComplete: boolean } };
@@ -29,14 +29,14 @@ test.describe('container mode', () => {
         expect(body.runtime.firstRunComplete).toBe(true);
     });
 
-    test('@docker the first-run wizard never opens', async ({ page }) => {
+    test('@docker precondition (no register row): the first-run wizard never opens', async ({ page }) => {
         await page.goto('/');
         // The welcome modal gates on !firstRunComplete. If the implication were
         // missing, this dialog would open on every boot of a good image.
         await expect(page.locator('dialog.welcome-modal')).toHaveCount(0);
     });
 
-    test('@docker the Linux system-wide install offer never opens', async ({ page }) => {
+    test('@docker 20.7 the Linux system-wide install offer never opens', async ({ page }) => {
         // Distinct from the welcome modal and gated differently: offerMachineWide
         // keys off the per-data-root decline MARKER, which a fresh volume does not
         // have — so before this was gated on container mode, the modal opened on
@@ -55,7 +55,9 @@ test.describe('container mode', () => {
         await expect(page.getByRole('button', { name: 'Open settings' })).toBeEnabled();
     });
 
-    test('@docker Settings replaces Service, Updates and Dependencies with the container copy', async ({ page }) => {
+    test('@docker 20.1 20.2 20.17 Settings replaces Service, Updates and Dependencies with the container copy', async ({
+        page,
+    }) => {
         await page.goto('/');
         await page.getByRole('button', { name: 'Open settings' }).click();
         const settings = page.locator('dialog.settings-modal');
@@ -120,7 +122,7 @@ test.describe('container mode', () => {
         ).toHaveCount(1);
     });
 
-    test('@docker the home page raises no dependency-update alert', async ({ page }) => {
+    test('@docker 20.17 the home page raises no dependency-update alert', async ({ page }) => {
         // Item 135, the other half of the Dependencies gate. The card polls
         // /api/dependencies every 15 s and, when something is pending, says
         // "adb has an update available" next to a button into the tab the test
@@ -177,7 +179,7 @@ test.describe('container mode', () => {
         expect(hits, 'the alert card asked for dependencies in a container').toBe(1);
     });
 
-    test('@docker first boot hydrates every dependency onto the volume, adb included', async ({ request }) => {
+    test('@docker 20.9 first boot hydrates every dependency onto the volume, adb included', async ({ request }) => {
         // Smoke row 20.9. `up --wait` only proves the HEALTHCHECK (GET /api/config
         // on loopback); nothing had asked whether the hydrate the 180 s start
         // period exists for actually produced a usable adb. It had not: the
@@ -235,7 +237,10 @@ test.describe('container mode', () => {
         expect(final.find((d) => d.name === 'adb')?.installedVersion).toMatch(/^\d+\.\d+\.\d+$/);
     });
 
-    test('@docker the implication is never written to the volume', async ({ page, request }) => {
+    test('@docker precondition (no register row): the implication is never written to the volume', async ({
+        page,
+        request,
+    }) => {
         // The end-to-end form of the unit-level persistence guard. The flag is an
         // env implication; if it were baked into the saved config it would outlive
         // WS_SCRCPY_DOCKER and suppress the welcome modal on any host that later
@@ -253,5 +258,61 @@ test.describe('container mode', () => {
         // installMode is supplied by the overlay, not by the file.
         expect(after.config.installMode).toBe('user');
         expect(after.runtime.firstRunComplete).toBe(true);
+    });
+
+    // Rows 20.4 and 20.5 (findings 20.4 and 20.5, fixed 2026-09-04). Last in the file
+    // on purpose: if either server-side refusal were missing, its POST would start a
+    // real pkexec install or a real uninstall inside the container, and only the tests
+    // AFTER it would pay for that.
+    test('@docker 20.4 20.5 Settings → Server hides "install for all users" and "uninstall ws-scrcpy-web"', async ({
+        page,
+    }) => {
+        await page.goto('/');
+        await page.getByRole('button', { name: 'Open settings' }).click();
+        const settings = page.locator('dialog.settings-modal');
+        await expect(settings).toBeVisible();
+        const server = await openSettingsTab(settings, 'Server');
+
+        // The positive control: the server-controls block rendered for this role,
+        // and "stop server & exit" in it is NOT gated in a container (row 20.6), so
+        // the hidden rows below are hidden by container mode rather than missing
+        // because the block never built.
+        await expect(server.getByRole('button', { name: 'stop server & exit' })).toBeVisible();
+
+        // Both rows exist and are not shown. In a container nothing ever reveals
+        // them: `applyServiceStatus` runs only after `refreshService()`, which
+        // container mode skips, so they keep their initial `display: none`
+        // (`appSectionButtonsState` would say the same if it were reached). This is
+        // the user-facing outcome; the refusals below are the guard.
+        for (const label of ['install for all users', 'uninstall ws-scrcpy-web']) {
+            const row = settingsRow(server, label);
+            await expect(row, label).toHaveCount(1);
+            await expect(row.locator('.settings-label'), label).not.toBeVisible();
+            await expect(row.getByRole('button'), label).not.toBeVisible();
+        }
+    });
+
+    test('@docker 20.4 20.5 the server refuses "install for all users" and "uninstall" with 409 naming docker rm', async ({
+        page,
+    }) => {
+        // page.request carries the instance token the document GET minted.
+        await page.goto('/');
+        for (const [route, action] of [
+            ['/api/service/install-system-wide', 'install for all users'],
+            ['/api/service/uninstall-app', 'uninstall'],
+        ] as const) {
+            const res = await page.request.post(route, {
+                data: route.endsWith('uninstall-app') ? { keep: false } : {},
+            });
+            expect(res.status(), route).toBe(409);
+            const body = (await res.json()) as { ok: boolean; reason: string; error: string };
+            expect(body.ok, route).toBe(false);
+            expect(body.reason, route).toBe('unsupported');
+            expect(body.error, route).toContain(`"${action}" does not apply in a container`);
+            expect(body.error, route).toContain('docker rm');
+        }
+        // And nothing happened: the server is still up and still containerised.
+        const config = (await (await page.request.get('/api/config')).json()) as { runtime: { docker?: boolean } };
+        expect(config.runtime.docker).toBe(true);
     });
 });

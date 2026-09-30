@@ -17,6 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Container tier: rows 20.4 and 20.5 now have a spec, and every container test names its register row.** Two new `@docker` tests in `docker-gating.spec.ts`:
+  - Settings → Server shows no "install for all users" or "uninstall ws-scrcpy-web" row in a container, with "stop server & exit" visible as the positive control.
+  - `POST /api/service/install-system-wide` and `POST /api/service/uninstall-app` both answer 409 `reason: unsupported` naming `docker rm`, and the server is still up afterwards. These two run last in the file, so a missing guard can only take down the stack after every other test.
+
+  Every `@docker` title now starts with its row ids (`20.1 20.2 20.17`, `20.9`, …), or says it is a precondition with no register row, so qa-harness's container tier can record a verdict per row. The coverage register moves 20.4 and 20.5 to the container tier (automated 95 of 163 = 58 %), and notes that 13.7's container half is fully covered by 20.17. Passed 9/9 against a locally built image.
+
 ## [0.1.30-beta.153] - 2026-09-30
 
 ### Fixed
