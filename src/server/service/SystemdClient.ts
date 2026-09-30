@@ -148,9 +148,31 @@ export function buildSystemSeedConfig(currentWebPort: number): Record<string, un
 export const DECLINE_MARKER_NAME = 'system-install-declined';
 
 /**
+ * A pkexec 127 whose stderr names one of these is a real error, not a declined
+ * prompt: no authentication agent (pkexec from a shell with no desktop), the
+ * app's own elevation refusal (`defaultRunElevated`), a command missing inside
+ * an elevated `sh -c` script, and a program pkexec cannot run.
+ */
+const PKEXEC_127_ERRORS = [/textual authentication agent/i, /refusing to run elevated/i, /not found/i, /No such file/i];
+
+/**
+ * Whether pkexec's exit means the user did not authorize the action (item 160).
+ * GNOME's agent exits 126 on a cancel. KDE's (polkit-kde 6.6.4, Fedora 44)
+ * exits 127 with "Not authorized", exactly as for a real denial, so the two read
+ * alike: "cancelled or not authorized". Every other 127 counts as declined too,
+ * unless its stderr names one of the errors above. That keeps working if the
+ * "Not authorized" text is translated, which is unmeasured. Pure.
+ */
+export function pkexecDeclined(code: number | undefined, stderr: string): boolean {
+    if (code === 126) return true;
+    if (code !== 127) return false;
+    return !PKEXEC_127_ERRORS.some((re) => re.test(stderr));
+}
+
+/**
  * Run a command via pkexec for graphical privilege escalation. The user
  * sees a single password prompt for the entire shell command. Throws on
- * auth-cancel (exit 126), pkexec-not-found, or command failure.
+ * a declined prompt ({@link pkexecDeclined}), pkexec-not-found, or command failure.
  */
 export async function runPkexec(shellCmd: string, label: string): Promise<string> {
     try {
@@ -167,8 +189,9 @@ export async function runPkexec(shellCmd: string, label: string): Promise<string
         }
         const stderr = typeof e.stderr === 'string' ? e.stderr.trim() : '';
         const exitCode = typeof e.code === 'number' ? e.code : (e as { status?: number }).status;
-        if (exitCode === 126) {
-            throw new Error('authentication was dismissed. service install cancelled.');
+        if (pkexecDeclined(exitCode, stderr)) {
+            // "dismissed" is what ServiceApi's install-system-wide handler keys 403 on.
+            throw new Error(`authentication was dismissed or not authorized. ${label} cancelled.`);
         }
         throw new Error(`pkexec ${label} failed: ${stderr || e.message}`);
     }
