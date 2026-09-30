@@ -732,7 +732,32 @@ export class Config {
         // optional, so that just means no usable per-user TLS directory and
         // HTTP alone, same as resolveCertPaths throwing for any other reason.
         let certMaterial: CertMaterial | null = null;
-        if (dataRoot) {
+        // Local HTTPS is not supported in a container (user decision
+        // 2026-09-30): a reverse proxy in front of it is the only HTTPS. The
+        // /api/tls writes refuse there, but a certificate can still reach the
+        // volume another way (one carried over from a host install, or placed
+        // by hand), and it used to bind a listener regardless. Same test as
+        // Config.dockerMode, read off the injected env.
+        const inContainer = env['WS_SCRCPY_DOCKER'] === '1';
+        if (dataRoot && inContainer) {
+            try {
+                const paths = resolveCertPaths({
+                    platform: process.platform,
+                    dataRoot,
+                    localAppData: env['LOCALAPPDATA'],
+                    home: env['HOME'] || env['USERPROFILE'],
+                });
+                if (fs.existsSync(paths.certFile)) {
+                    warn(
+                        `a Local HTTPS certificate is on the data volume (${paths.certFile}), but Local HTTPS ` +
+                            'is not supported in a container: serving HTTP only. Put a reverse proxy in front of ' +
+                            'the container for HTTPS.',
+                    );
+                }
+            } catch {
+                // No usable TLS directory: nothing to warn about.
+            }
+        } else if (dataRoot) {
             try {
                 const paths = resolveCertPaths({
                     platform: process.platform,

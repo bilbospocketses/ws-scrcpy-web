@@ -101,13 +101,6 @@ export const common = () => {
                     test: /\.(png|jpe?g|gif)$/i,
                     type: 'asset/resource',
                 },
-                {
-                    test: /[\\/]assets[\\/]scrcpy-server/,
-                    type: 'asset/resource',
-                    generator: {
-                        filename: 'assets/scrcpy-server',
-                    },
-                },
             ],
         },
         resolve: {
