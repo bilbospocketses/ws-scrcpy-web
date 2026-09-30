@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Updating the Linux system service no longer logs a `chcon` error on hosts without SELinux.** After swapping the binary, the self-update re-applies its SELinux label. On Ubuntu there is no SELinux, so the `chcon` fallback failed ("Applying partial security context to unlabeled file failed") even though the update itself succeeded. The relabel now runs only when SELinux is active, and otherwise logs that there is no label to apply. Found by qa-harness on Ubuntu 26.04 (row 6.6, update from beta.147).
+
 ## [0.1.30-beta.151] - 2026-09-30
 
 ### Fixed
