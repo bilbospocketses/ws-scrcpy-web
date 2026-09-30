@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **The system service's own copy of Node is owned by root.** When the service downloaded Node for itself, it unpacked nodejs.org's archive as root, and the archive records its files as owned by user 1001, which is a real account on many machines. That user could replace the `node` program the root service runs. Archives are now unpacked with the owner and permissions of whoever unpacks them, and a service running as root checks the unpacked files before using them, fixing any that aren't root's and refusing to continue if that fails. The same applies to the terminal component (node-pty). Beta.146's startup check already removed such a folder, but the service then downloaded it again the same way; now it comes out right the first time. Found by qa-harness on Ubuntu 26.04 (row 4.2-system-gui).
+
 ## [0.1.30-beta.147] - 2026-09-29
 
 ### Fixed

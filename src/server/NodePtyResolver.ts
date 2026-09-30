@@ -6,6 +6,8 @@ import { detectLibc, type LibcFlavor } from './libcDetect';
 import { resolveSystemTool } from './service/systemTools';
 import { writeFileAtomicSync } from './util/atomicFile';
 import { fetchWithRetry } from './util/fetchWithRetry';
+import { ensureRootOwnedTreeIfRoot } from './util/rootOwnedTree';
+import { tarExtractArgs } from './util/tarExtract';
 
 /*
  * Pre-beta.23: this resolver tried two webpack escape hatches:
@@ -306,17 +308,21 @@ export async function downloadAndOverlayPtyNode(version: string, host: HostInfo,
         // would resolve through $PATH (Local-Dependencies-Only) -- and on Windows it
         // pins System32's bsdtar instead of whichever GNU tar a Git Bash install
         // happens to put ahead of it, which is what the note above is about.
-        execFileSync(resolveSystemTool('tar'), ['-xzf', path.basename(tarPath), '--strip-components=1'], {
+        // Never the archive's owners or modes (D16): as root, tar would restore
+        // whatever uid built the prebuild, and the cpSync below keeps it.
+        execFileSync(resolveSystemTool('tar'), tarExtractArgs(path.basename(tarPath), ['--strip-components=1']), {
             stdio: 'inherit',
             cwd: stagingDir,
         });
         fs.rmSync(tarPath, { force: true });
+        await ensureRootOwnedTreeIfRoot(stagingDir);
 
         // Overlay extracted files into build/Release/.
         const buildReleaseDir = path.join(packageDir, 'node_modules', 'node-pty', 'build', 'Release');
         fs.mkdirSync(buildReleaseDir, { recursive: true });
         fs.cpSync(stagingDir, buildReleaseDir, { recursive: true, force: true });
         fs.rmSync(stagingDir, { recursive: true, force: true });
+        await ensureRootOwnedTreeIfRoot(buildReleaseDir);
 
         return packageHasBinary(packageDir);
     } catch (err) {
