@@ -65,6 +65,13 @@ export function buildUninstallHelperArgs(o: {
     keep: boolean;
     dataRoot: string;
     relaunch: string;
+    /**
+     * This server's pid. It exits 1.5 s after spawning the helper and logs one
+     * line into the data root as it goes, so the helper waits for it before the
+     * wipe. The helper's name-based stray kill cannot find the seed node, whose
+     * command line is under `/tmp/.mount_WsScrc<rand>/` (D17).
+     */
+    serverPid?: number;
 }): string[] {
     // root → system transient unit (`--collect`); non-root → user manager (`--user --collect`).
     // A system transient unit has no HOME/XDG, and the launcher resolves its data
@@ -86,6 +93,7 @@ export function buildUninstallHelperArgs(o: {
         o.dataRoot,
         '--relaunch',
         o.relaunch,
+        ...(o.serverPid !== undefined ? ['--server-pid', String(o.serverPid)] : []),
     ];
 }
 
@@ -1322,7 +1330,17 @@ export class ServiceApi {
         const unit = `--unit=wsscrcpy-uninstall-${Date.now()}`;
         this.spawnDetached(
             systemdRun,
-            buildUninstallHelperArgs({ isRoot, unit, helper, scope, machineWide, keep, dataRoot, relaunch }),
+            buildUninstallHelperArgs({
+                isRoot,
+                unit,
+                helper,
+                scope,
+                machineWide,
+                keep,
+                dataRoot,
+                relaunch,
+                serverPid: process.pid,
+            }),
         );
         this.scheduleExit(() => {
             log.info('app-uninstall: local instance exiting → detached teardown');

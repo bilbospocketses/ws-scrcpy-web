@@ -1999,6 +1999,20 @@ describe('ServiceApi', () => {
             });
             expect(args.some((a) => a.startsWith('--setenv='))).toBe(false);
         });
+
+        it('passes the requesting server pid, which the helper waits out before it wipes (D17)', () => {
+            // The seed node's command line carries no name the helper's stray kill matches,
+            // so the helper must know this process by pid.
+            const args = buildUninstallHelperArgs({
+                isRoot: false,
+                scope: 'none',
+                machineWide: false,
+                keep: false,
+                serverPid: 4242,
+                ...base,
+            });
+            expect(args[args.indexOf('--server-pid') + 1]).toBe('4242');
+        });
     });
 
     describe('app-uninstall handler (POST /api/service/uninstall-app)', () => {
@@ -2044,6 +2058,8 @@ describe('ServiceApi', () => {
             expect(helperArg).toBeDefined();
             expect(helperArg).toContain('operation-server');
             expect(client.getInstalledScope).toHaveBeenCalledWith('WsScrcpyWeb');
+            // D17: the helper is told which process asked, so it can wait for it to exit.
+            expect(spawnedArgs[spawnedArgs.indexOf('--server-pid') + 1]).toBe(String(process.pid));
         });
 
         it('POST /uninstall-app {keep:true} resets installMode to null (preserved config returns in local mode)', async () => {
