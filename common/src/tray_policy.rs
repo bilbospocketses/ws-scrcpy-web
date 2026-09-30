@@ -18,6 +18,22 @@ pub fn should_spawn_tray(install_mode: Option<&str>, session_bus_present: bool) 
     session_bus_present && install_mode != Some(SYSTEM_SERVICE_MODE)
 }
 
+/// The launcher-log line for an instance that gets no tray. Smoke row 14.9
+/// quotes it and qa-harness asserts it, so it is built here, testable on every
+/// host, rather than inline in the Linux-only launcher module. The mode is
+/// written as the config value itself (`installMode="system-service"`), never
+/// as Rust's `Debug` form of an `Option` (`Some("system-service")`), which is
+/// what the line printed until 2026-09-30; an absent mode reads `none`.
+pub fn tray_stand_down_line(install_mode: Option<&str>, session_bus_present: bool) -> String {
+    let mode = match install_mode {
+        Some(m) => format!("\"{m}\""),
+        None => "none".to_string(),
+    };
+    format!(
+        "linux-tray: not spawning (installMode={mode}, session bus={session_bus_present}); Settings → Server stops the app"
+    )
+}
+
 /// Whether a D-Bus session bus is reachable: either `DBUS_SESSION_BUS_ADDRESS`
 /// is set (non-blank), or `$XDG_RUNTIME_DIR/bus` exists (systemd's user
 /// manager puts the bus there even when a unit's environment lacks the
@@ -110,6 +126,20 @@ mod tests {
         // No session to draw in, even if a bus address leaked into the env.
         assert!(!should_spawn_tray(Some("system-service"), true));
         assert!(!should_spawn_tray(Some("system-service"), false));
+    }
+
+    #[test]
+    fn the_stand_down_line_quotes_the_mode_as_row_14_9_does() {
+        let line = tray_stand_down_line(Some(SYSTEM_SERVICE_MODE), true);
+        assert!(
+            line.starts_with("linux-tray: not spawning (installMode=\"system-service\""),
+            "{line}"
+        );
+        assert!(!line.contains("Some("), "no Option Debug form: {line}");
+        assert_eq!(
+            tray_stand_down_line(None, false),
+            "linux-tray: not spawning (installMode=none, session bus=false); Settings → Server stops the app"
+        );
     }
 
     #[test]

@@ -23,7 +23,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use common::config::AppConfig;
 use common::tray::TrayAction;
-use common::tray_policy::{TrayLabels, icon_argb_22, session_bus_present, should_spawn_tray};
+use common::tray_policy::{
+    TrayLabels, icon_argb_22, session_bus_present, should_spawn_tray, tray_stand_down_line,
+};
 
 use crate::log;
 
@@ -61,10 +63,7 @@ pub fn spawn_if_eligible(data_root: &Path, stop: Arc<AtomicBool>) {
     let cfg = AppConfig::load(data_root);
     let bus = ensure_session_bus_env();
     if !should_spawn_tray(cfg.install_mode.as_deref(), bus) {
-        log::info(&format!(
-            "linux-tray: not spawning (installMode={:?}, session bus={bus}); Settings → Server stops the app",
-            cfg.install_mode
-        ));
+        log::info(&tray_stand_down_line(cfg.install_mode.as_deref(), bus));
         return;
     }
     let icon = match icon_argb_22() {
