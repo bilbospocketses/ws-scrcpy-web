@@ -12,6 +12,7 @@ import { Config } from '../Config';
 import { Logger } from '../Logger';
 import { isValidToken, parseTokenFromCookie } from '../security/instanceToken';
 import type { UpdateService } from '../UpdateService';
+import { refuseInContainer } from './containerGuard';
 import { readJsonBody } from './utils';
 
 const log = Logger.for('UpdatesApi');
@@ -73,13 +74,19 @@ export class UpdatesApi {
             if (req.method === 'GET' && url === '/api/updates/status') {
                 return await this.handleStatus(res);
             }
+            // A container never self-updates: the image owns the app, so a newer
+            // image is the update (container audit). Refused explicitly rather
+            // than left to fail as "dev mode" because $APPIMAGE happens to be unset.
             if (req.method === 'POST' && url === '/api/updates/check') {
+                if (refuseInContainer(res, 'check for updates', 'pull-image')) return true;
                 return await this.handleCheck(res);
             }
             if (req.method === 'POST' && url === '/api/updates/apply') {
+                if (refuseInContainer(res, 'apply update', 'pull-image')) return true;
                 return await this.handleApply(res);
             }
             if (req.method === 'PATCH' && url === '/api/updates/config') {
+                if (refuseInContainer(res, 'update settings', 'pull-image')) return true;
                 return await this.handleConfig(req, res);
             }
 

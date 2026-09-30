@@ -35,8 +35,13 @@ export class SettingsApi {
         const url = req.url || '';
         if (!url.startsWith('/api/settings')) return false;
 
-        res.setHeader('Content-Type', 'application/json');
         const pathname = url.split('?')[0];
+        // The batch route is SettingsBatchApi's. This handler is registered first
+        // and used to claim every /api/settings* URL, answering 404 for this one,
+        // so the Settings dialog's Save never reached the batch writer.
+        if (pathname === '/api/settings/batch') return false;
+
+        res.setHeader('Content-Type', 'application/json');
 
         try {
             const db = Config.getInstance().db;

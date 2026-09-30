@@ -318,4 +318,82 @@ test.describe('container mode', () => {
         const config = (await (await page.request.get('/api/config')).json()) as { runtime: { docker?: boolean } };
         expect(config.runtime.docker).toBe(true);
     });
+
+    // Row 20.18 (the container audit). Last in the file for the same reason as the
+    // test above: a missing refusal here would restart the server on another port,
+    // download mkcert or write a unit file, and only later tests would pay.
+    test('@docker 20.18 every host-only route answers 409 naming the container and its remedy', async ({ page }) => {
+        await page.goto('/');
+        const cases: { method: 'post' | 'patch'; route: string; data?: unknown; remedy: RegExp }[] = [
+            { method: 'post', route: '/api/service/install', data: { scope: 'user' }, remedy: /docker rm/ },
+            { method: 'post', route: '/api/service/uninstall', remedy: /docker rm/ },
+            { method: 'post', route: '/api/service/decline-system-wide', remedy: /docker rm/ },
+            { method: 'post', route: '/api/updates/check', remedy: /pull a newer image/i },
+            { method: 'post', route: '/api/updates/apply', remedy: /pull a newer image/i },
+            {
+                method: 'patch',
+                route: '/api/updates/config',
+                data: { autoUpdate: true },
+                remedy: /pull a newer image/i,
+            },
+            { method: 'post', route: '/api/dependencies/check', remedy: /pull a newer image/i },
+            { method: 'post', route: '/api/dependencies/adb/update', remedy: /pull a newer image/i },
+            {
+                method: 'post',
+                route: '/api/tls/generate',
+                data: { kind: 'ip', value: '10.0.0.2' },
+                remedy: /reverse proxy/,
+            },
+            { method: 'post', route: '/api/tls/revoke', remedy: /reverse proxy/ },
+            { method: 'post', route: '/api/tls/exposure', data: { mode: 'httpsOnly' }, remedy: /reverse proxy/ },
+            { method: 'post', route: '/api/tls/https-port', data: { port: 8443 }, remedy: /reverse proxy/ },
+            { method: 'patch', route: '/api/config', data: { webPort: 9000 }, remedy: /docker run -p/ },
+            {
+                method: 'patch',
+                route: '/api/config',
+                data: { installMode: 'user-service' },
+                remedy: /docker owns this setting/,
+            },
+            {
+                method: 'patch',
+                route: '/api/config',
+                data: { firstRunComplete: false },
+                remedy: /docker owns this setting/,
+            },
+            {
+                method: 'post',
+                route: '/api/settings/batch',
+                data: { changes: [{ id: 'webPort', from: 8000, to: 9000 }] },
+                remedy: /docker run -p/,
+            },
+        ];
+        for (const c of cases) {
+            const label = `${c.method.toUpperCase()} ${c.route} ${JSON.stringify(c.data ?? {})}`;
+            const res = await page.request[c.method](c.route, c.data === undefined ? {} : { data: c.data });
+            expect(res.status(), label).toBe(409);
+            const body = (await res.json()) as { ok: boolean; reason: string; error: string };
+            expect(body.reason, label).toBe('unsupported');
+            expect(body.error, label).toMatch(/does not apply in a container/);
+            expect(body.error, label).toMatch(c.remedy);
+        }
+
+        // The service status answers without a host probe.
+        const status = (await (await page.request.get('/api/service/status')).json()) as {
+            supported: boolean;
+            docker?: boolean;
+            unsupportedReason?: string;
+        };
+        expect(status).toMatchObject({ supported: false, docker: true });
+        expect(status.unsupportedReason).toMatch(/container/);
+
+        // Nothing moved: still containerised, still first-run-complete, still on 8000.
+        const config = (await (await page.request.get('/api/config')).json()) as {
+            config: { webPort: number; installMode: string | null };
+            runtime: { docker?: boolean; firstRunComplete: boolean };
+        };
+        expect(config.runtime.docker).toBe(true);
+        expect(config.runtime.firstRunComplete).toBe(true);
+        expect(config.config.webPort).toBe(8000);
+        expect(config.config.installMode).toBe('user');
+    });
 });

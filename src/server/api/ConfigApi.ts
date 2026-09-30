@@ -3,6 +3,7 @@ import type { AppConfigEnvelope, AppConfigPatchResponse } from '../../common/Con
 import { callerIsLocal, requireOperator, resolveAdminScope } from '../auth/requireOperator';
 import { Config, ConfigValidationError } from '../Config';
 import { Logger } from '../Logger';
+import { hostOnlyConfigKeys, refuseInContainer } from './containerGuard';
 import { scheduleRestartForPortChange } from './restartRequest';
 import { BodyTooLargeError, readBodyCapped } from './utils';
 
@@ -55,6 +56,13 @@ export class ConfigApi {
                 if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
                     res.writeHead(400);
                     res.end(JSON.stringify({ error: 'Body must be a JSON object', field: '' }));
+                    return true;
+                }
+                // In a container the port, the install mode, first-run and the
+                // updater settings belong to docker and the image (container
+                // audit): refuse the whole write rather than apply part of it.
+                const hostOnly = hostOnlyConfigKeys(Object.keys(parsed));
+                if (hostOnly.length > 0 && refuseInContainer(res, `change ${hostOnly.join(', ')}`, 'docker-settings')) {
                     return true;
                 }
                 try {
