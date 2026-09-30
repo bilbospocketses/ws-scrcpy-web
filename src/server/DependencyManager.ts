@@ -23,6 +23,8 @@ import { writeInstalledScrcpyServerVersion } from './scrcpyServerVersion';
 import { resolveSystemTool } from './service/systemTools';
 import { copyFileAtomic, copyFileAtomicSync, writeFileAtomicSync } from './util/atomicFile';
 import { fetchWithRetry, HttpStatusError, VERSION_CHECK_POLICY } from './util/fetchWithRetry';
+import { ensureRootOwnedTreeIfRoot } from './util/rootOwnedTree';
+import { tarExtractArgs } from './util/tarExtract';
 import { verifySha256 } from './verifySha256';
 import { extractZipTo } from './zipExtract';
 
@@ -643,14 +645,18 @@ export class DependencyManager {
             await this.extractZip(downloadPath, tmpDir);
         } else {
             // Absolute path via resolveSystemTool -- never the bare name, which would
-            // resolve through $PATH (Local-Dependencies-Only).
-            await execFileAsync(resolveSystemTool('tar'), ['xzf', downloadPath, '-C', tmpDir]);
+            // resolve through $PATH (Local-Dependencies-Only). Never the archive's
+            // owners: see tarExtractArgs (D16).
+            await execFileAsync(resolveSystemTool('tar'), tarExtractArgs(downloadPath, ['-C', tmpDir]));
         }
         const archiveDir = fs.readdirSync(tmpDir).find((d) => d.startsWith('node-v'));
         if (!archiveDir) {
             throw new Error('Could not find Node.js directory in extracted archive');
         }
         const extractedPath = path.join(tmpDir, archiveDir);
+        // D16: as root (the system service), the tree must be root's alone BEFORE it
+        // is copied in -- the copy keeps each file's owner. No-op for any other user.
+        await ensureRootOwnedTreeIfRoot(extractedPath);
 
         // 2. Destructive (Windows only): rename + copy with rollback.
         if (platform === 'win32') {
@@ -686,6 +692,8 @@ export class DependencyManager {
             }
         } else {
             await this.copyDirContents(extractedPath, destDir);
+            // …and check what landed, which is what the service will execute.
+            await ensureRootOwnedTreeIfRoot(destDir);
         }
     }
 
