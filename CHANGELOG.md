@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **The container no longer downloads its own copy of Node.js.** The image runs its own Node, the one it was built with, and the copy the first boot fetched onto the volume (about 50 MB) was never run: the Linux archive unpacks to `node/bin/node` and `start.sh` looks for `node/node`. In a container, the server now leaves Node.js out of its dependency set entirely (a `hostOnly` flag on the definition), so it is not listed, checked, downloaded or offered as an update. Host installs are unchanged. A volume that already holds the copy keeps it; nothing uses it, and deleting `/data/dependencies/node` frees the space.
+
 ## [0.1.30-beta.157] - 2026-09-30
 
 ### Changed
