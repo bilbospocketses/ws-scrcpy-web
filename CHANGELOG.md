@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.161] - 2026-09-30
+
 ### Changed
 - **docs: the container audit's behaviour in the docs** (betas 156-160). The technical guide now describes the 409 refusals (`containerGuard.ts`), the service-status short-circuit, the updater that never starts in a container, the page's container decisions (`containerGate.ts`, `applyServerContainerMode`), Node.js leaving the container's dependency set (`hostOnly`), the scan's `{ container: true }` answer, and the `--user` branch of the entrypoint, which the guide still said "bypasses the shim entirely". Local HTTPS is marked host-only in the README and the guide: a reverse proxy is the only supported HTTPS for the image. The e2e README, the coverage register and the guide count seven `@docker-host` rows (20.21 joined).
 - **docs(security): the container sign-in recipe did not work.** `SECURITY.md` told container users to `docker exec <c> curl -X POST …/api/auth/enable`. The image has no `curl`, the call needs the per-launch token, and sign-in refuses to turn on until an admin with a password exists. It now says to start once with `WS_SCRCPY_ALLOW_REMOTE_ADMIN=1`, create the admin, turn sign-in on, and drop the variable.
