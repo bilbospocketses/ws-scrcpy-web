@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.157] - 2026-09-30
+
 ### Changed
 - **In a container, the page stops offering what the image owns** (the container audit's UI half, row 20.19). Each is an explicit container decision rather than something the server's replies happened to keep quiet:
   - the update pill is never mounted, so the page no longer polls `/api/updates/status` every 30 s;
