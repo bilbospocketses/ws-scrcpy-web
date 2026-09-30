@@ -33,7 +33,7 @@ const REMEDY: Record<ContainerRemedy, string> = {
  * failure (TlsApi's N1) must not start throwing here. A real container always
  * has a loaded config, since `Config` is read at boot before any route runs.
  */
-function inContainer(): boolean {
+export function inContainer(): boolean {
     try {
         return Config.getInstance()?.dockerMode === true;
     } catch {

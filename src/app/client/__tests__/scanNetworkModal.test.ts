@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ScanNetworkModal } from '../ScanNetworkModal';
+import { CONTAINER_SCAN_NOTE, ScanNetworkModal } from '../ScanNetworkModal';
 
 // ---------------------------------------------------------------------------
 // Mock the SettingsService singleton so tests control scan-subnets storage
@@ -45,6 +45,36 @@ afterEach(() => {
 async function flush(): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 0));
 }
+
+describe('ScanNetworkModal — in a container (item 11, row 20.20)', () => {
+    it('shows the container note, and the empty notice stops blaming a failed detection', async () => {
+        const modal = new ScanNetworkModal({ gatewaySubnet: null, inContainer: true, onStartScan: vi.fn() });
+        await flush();
+        const note = modal['dialog'].querySelector('[data-scan-container-note]');
+        expect(note?.textContent).toBe(CONTAINER_SCAN_NOTE);
+        expect(CONTAINER_SCAN_NOTE).toMatch(/network_mode: host/);
+        expect(modal['emptyNotice'].textContent).toBe('Add at least one subnet below to scan.');
+        modal.close();
+    });
+
+    it('keeps the note once a subnet is in the list', async () => {
+        seededSubnets = ['192.168.1.0/24'];
+        const modal = new ScanNetworkModal({ gatewaySubnet: null, inContainer: true, onStartScan: vi.fn() });
+        await flush();
+        await flush();
+        expect(modal['emptyNotice'].style.display).toBe('none');
+        expect(modal['dialog'].querySelector('[data-scan-container-note]')).not.toBeNull();
+        modal.close();
+    });
+
+    it('on a host there is no container note', async () => {
+        const modal = new ScanNetworkModal({ gatewaySubnet: null, onStartScan: vi.fn() });
+        await flush();
+        expect(modal['dialog'].querySelector('[data-scan-container-note]')).toBeNull();
+        expect(modal['emptyNotice'].textContent).toContain("Couldn't detect your gateway subnet");
+        modal.close();
+    });
+});
 
 describe('ScanNetworkModal — gateway detection UI', () => {
     it("renders the 'couldn't detect' notice visible when gatewaySubnet is null", async () => {

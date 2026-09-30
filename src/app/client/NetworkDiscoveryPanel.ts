@@ -840,18 +840,23 @@ export class NetworkDiscoveryPanel {
     private async scan(): Promise<void> {
         // Fetch detected gateway subnet first
         let gateway: { cidr: string; hostCount: number } | null = null;
+        // `{ container: true }` is the server saying it runs in a container and
+        // will not guess a subnet (item 11).
+        let inContainer = false;
         try {
             const res = await fetch('/api/devices/scan/subnet');
             const detected = await res.json();
             if (detected?.cidr) {
                 gateway = { cidr: detected.cidr, hostCount: detected.hostCount };
             }
+            inContainer = detected?.container === true;
         } catch {
             gateway = null;
         }
 
         new ScanNetworkModal({
             gatewaySubnet: gateway,
+            inContainer,
             onStartScan: (rawSubnets: string[]) => this.startScanWs(rawSubnets),
         });
     }

@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { test } from '@playwright/test';
 
@@ -53,12 +53,15 @@ export function dockerExecRoot(container: string, script: string): string {
     return docker(['exec', '-u', '0', container, 'sh', '-c', script], 30_000);
 }
 
+/**
+ * Both streams. `docker logs` replays the container's stderr on its OWN stderr,
+ * so the stdout-only `docker()` returned "" for anything the entrypoint wrote
+ * with `>&2` (found by row 20.21, whose refusal message goes there).
+ */
 export function dockerLogs(container: string): string {
-    try {
-        return docker(['logs', container], 30_000);
-    } catch (err) {
-        return `(docker logs failed: ${String(err)})`;
-    }
+    const r = spawnSync('docker', ['logs', container], { encoding: 'utf8', timeout: 30_000 });
+    if (r.error) return `(docker logs failed: ${String(r.error)})`;
+    return `${r.stdout ?? ''}${r.stderr ?? ''}`;
 }
 
 /** Docker's own word for the container's state ('running', 'exited', …) and its exit code. */
@@ -93,8 +96,20 @@ export function composeRecreateKeepingVolume(file: string, opts?: { timeoutMs?: 
  * tier runs, and the tier must not depend on Docker Hub being reachable.
  */
 export function readVolumeFile(volume: string, filePath: string): string {
-    const image = process.env['WSSW_IMAGE'] ?? 'ws-scrcpy-web:local';
-    return docker(['run', '--rm', '--entrypoint', 'cat', '-v', `${volume}:/data:ro`, image, filePath], 60_000);
+    return docker(['run', '--rm', '--entrypoint', 'cat', '-v', `${volume}:/data:ro`, appImage(), filePath], 60_000);
+}
+
+/** The image under test: the tier's `WSSW_IMAGE`, else the compose default. */
+export function appImage(): string {
+    return process.env['WSSW_IMAGE'] ?? 'ws-scrcpy-web:local';
+}
+
+/**
+ * `docker <args>` for a spec that runs its own container with flags compose
+ * cannot vary per run (row 20.21's `--user`). Throws on a non-zero exit.
+ */
+export function dockerCli(args: string[], timeoutMs = 60_000): string {
+    return docker(args, timeoutMs);
 }
 
 /** `docker pull`, generously timed: a first pull of the ~200 MB image on a cold runner. */
