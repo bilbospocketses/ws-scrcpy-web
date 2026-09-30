@@ -9,6 +9,7 @@ import { getHttpsListenerStatus } from '../services/HttpServer';
 import type { CertService, CertState, CertSubjectKind } from '../tls/CertService';
 import type { HttpExposure } from '../tls/httpExposure';
 import { HTTP_EXPOSURE_KEY } from '../tls/httpExposure';
+import { refuseInContainer } from './containerGuard';
 import { scheduleRestartForPortChange } from './restartRequest';
 import { BodyTooLargeError, InvalidJsonError, readJsonBodyStrict, sendInternalError } from './utils';
 
@@ -231,6 +232,12 @@ export class TlsApi {
         // method rather than a route list, so a write added later is gated too.
         const isRead = req.method === 'GET' || req.method === 'HEAD';
         if (!(isRead ? requireAdmin(req, res) : requireOperator(req, res))) return true;
+        // Local HTTPS is not supported in a container (user decision 2026-09-30):
+        // a reverse proxy in front of the container is the only supported way to
+        // serve HTTPS there. Every write refuses; `httpsOnly` exposure in
+        // particular would lock out every client, since nobody reaches a
+        // container over loopback.
+        if (!isRead && refuseInContainer(res, 'Local HTTPS', 'reverse-proxy')) return true;
 
         try {
             // Inside the try (N11): getService() can throw on first use (e.g.

@@ -4,6 +4,7 @@ import { requireOperator } from '../auth/requireOperator';
 import { Config } from '../Config';
 import type { Change } from '../db/PendingSettingsStore';
 import { Logger } from '../Logger';
+import { hostOnlyConfigKeys, refuseInContainer } from './containerGuard';
 import { scheduleRestartForPortChange } from './restartRequest';
 import { BodyTooLargeError, readBodyCapped } from './utils';
 
@@ -106,6 +107,13 @@ export class SettingsBatchApi {
             log.warn(`refusing batch containing non-stageable id ${unknown.id}`);
             res.writeHead(400, { 'content-type': 'application/json' });
             res.end(JSON.stringify({ error: `not a stageable setting: ${unknown.id}` }));
+            return true;
+        }
+
+        // Every stageable setting (the web port and the updater's) is host-only,
+        // so a container refuses the batch before its WAL row (container audit).
+        const hostOnly = hostOnlyConfigKeys(changes.map((c) => c.id));
+        if (hostOnly.length > 0 && refuseInContainer(res, `change ${hostOnly.join(', ')}`, 'docker-settings')) {
             return true;
         }
 

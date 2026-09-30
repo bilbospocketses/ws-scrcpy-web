@@ -35,6 +35,7 @@ import {
 import type { CommandRunner } from '../service/systemServiceCli';
 import { buildDetachedSpawn, type DetachedSpawnPlan, resolveSystemTool } from '../service/systemTools';
 import { copyFileAtomicSync, writeFileAtomicSync } from '../util/atomicFile';
+import { refuseInContainer } from './containerGuard';
 import { readJsonBody } from './utils';
 
 const log = Logger.for('ServiceApi');
@@ -232,21 +233,28 @@ export class ServiceApi {
             if (req.method === 'GET' && url === '/api/service/status') {
                 return await this.handleStatus(res);
             }
+            // Every write here is about a HOST install (a systemd/Servy service, the
+            // /opt copy, the app itself), none of which exists in a container, so
+            // each one refuses there before doing anything (container audit, and
+            // findings 20.4 / 20.5).
             if (req.method === 'POST' && url === '/api/service/install') {
+                if (refuseInContainer(res, 'install service', 'docker-rm')) return true;
                 return await this.handleInstall(req, res);
             }
             if (req.method === 'POST' && url === '/api/service/uninstall') {
+                if (refuseInContainer(res, 'uninstall service', 'docker-rm')) return true;
                 return await this.handleUninstall(req, res);
             }
             if (req.method === 'POST' && url === '/api/service/install-system-wide') {
-                if (this.refuseInContainer(res, 'install for all users')) return true;
+                if (refuseInContainer(res, 'install for all users', 'docker-rm')) return true;
                 return await this.handleInstallSystemWide(res);
             }
             if (req.method === 'POST' && url === '/api/service/decline-system-wide') {
+                if (refuseInContainer(res, 'decline install for all users', 'docker-rm')) return true;
                 return await this.handleDeclineSystemWide(res);
             }
             if (req.method === 'POST' && url === '/api/service/uninstall-app') {
-                if (this.refuseInContainer(res, 'uninstall')) return true;
+                if (refuseInContainer(res, 'uninstall', 'docker-rm')) return true;
                 return await this.handleAppUninstall(req, res);
             }
 
@@ -280,6 +288,21 @@ export class ServiceApi {
     }
 
     private async handleStatus(res: ServerResponse): Promise<boolean> {
+        // A container has no service, no /opt install and no decline marker to
+        // report, so it answers at once instead of probing the host for them
+        // (container audit). `docker: true` is what the home page's machine-wide
+        // offer and the Settings modal gate on.
+        if (Config.getInstance().dockerMode) {
+            const body: ServiceStatusResponse = {
+                supported: false,
+                platform: process.platform,
+                unsupportedReason: 'service mode does not apply in a container; docker owns the lifecycle',
+                docker: true,
+            };
+            res.writeHead(200);
+            res.end(JSON.stringify(body));
+            return true;
+        }
         const result = this.factory();
         if (!result.supported) {
             const body: ServiceStatusResponse = {
@@ -1140,33 +1163,6 @@ export class ServiceApi {
             res.writeHead(500);
             res.end(JSON.stringify({ ok: false, error: (err as Error).message, reason: 'unknown' }));
         }
-        return true;
-    }
-
-    /**
-     * Refuse an install-lifecycle action inside a container, before it can do
-     * any of it.
-     *
-     * "Install for all users" runs pkexec, relocates the app to /opt and
-     * re-execs; a container has no polkit and relocating inside the image is
-     * meaningless. "Uninstall" tears down a service and an install that do not
-     * exist there — the container's equivalent is `docker rm`. Hiding the two
-     * rows in Settings is the cosmetic half; this is the half that holds when
-     * someone POSTs the route directly, which is the only reason the UI gating
-     * is not itself a security boundary.
-     *
-     * 409 rather than 403: the caller is permitted, the action simply does not
-     * apply to this deployment.
-     */
-    private refuseInContainer(res: ServerResponse, action: string): boolean {
-        if (!Config.getInstance().dockerMode) return false;
-        const body: ServiceActionFailure = {
-            ok: false,
-            error: `"${action}" does not apply in a container — this image's lifecycle belongs to docker. Use \`docker rm\` to remove it.`,
-            reason: 'unsupported',
-        };
-        res.writeHead(409);
-        res.end(JSON.stringify(body));
         return true;
     }
 

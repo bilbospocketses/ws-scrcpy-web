@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 // state with no DOM and no network, so it runs here unchanged.
 import { type BatchResult, runSave } from '../../app/client/settings/SaveRunner';
 import { StagedSettingsStore } from '../../app/client/settings/StagedSettingsStore';
+import { SettingsApi } from '../api/SettingsApi';
 import { orderChanges, SettingsBatchApi, type SettingsBatchApiOptions, STAGEABLE_IDS } from '../api/SettingsBatchApi';
 import { Config } from '../Config';
 import type { Change } from '../db/PendingSettingsStore';
@@ -83,6 +84,31 @@ describe('STAGEABLE_IDS', () => {
         // Actions must never be stageable: they fire UAC, delete users, etc.
         expect(STAGEABLE_IDS.has('installService')).toBe(false);
         expect(STAGEABLE_IDS.has('deleteUser')).toBe(false);
+    });
+});
+
+describe('POST /api/settings/batch through the server handler chain', () => {
+    // src/server/index.ts registers SettingsApi BEFORE SettingsBatchApi, and
+    // HttpServer asks each handler in turn until one claims the request. SettingsApi
+    // used to claim every /api/settings* URL and answer 404 for a path it did not
+    // know, so the batch route was never reached and the Settings dialog's Save
+    // 404'd on every install (found 2026-09-30 by the container tier's row 20.18).
+    // Every other test here calls SettingsBatchApi directly, which is why none saw it.
+    it('is answered by SettingsBatchApi, not swallowed by SettingsApi', async () => {
+        setup();
+        const r = makeReqRes(
+            'POST',
+            '/api/settings/batch',
+            { changes: [{ id: 'autoUpdate', from: true, to: false }] },
+            {},
+            LOOPBACK,
+        );
+        const chain = [new SettingsApi(), new SettingsBatchApi()];
+        for (const handler of chain) {
+            if (await handler.handle(r.req, r.res)) break;
+        }
+        expect(r.getStatus()).toBe(200);
+        expect((r.getJson() as { applied: string[] }).applied).toEqual(['autoUpdate']);
     });
 });
 

@@ -17,6 +17,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Save in the Settings dialog was answered 404 on every install.** Save sends the staged changes (web port, update channel, auto-update, check interval, GitHub owner) to `POST /api/settings/batch`. The per-user settings handler is registered first and claimed every `/api/settings…` URL, answering 404 for a path it did not know, so the batch writer was never reached. It had been this way since the tabbed Settings dialog (#692, 2026-09-14): the batch tests called its handler directly, and no end-to-end test drove Save. The settings handler now leaves that path to the batch writer, with a test that runs the two handlers in the server's own order. Found by the container tier while testing row 20.18.
+
+### Security
+- **In a container, the server refuses every action that belongs to a host install** (the container audit, row 20.18). Each answers 409 `reason: unsupported` with copy naming the container and the real remedy:
+  - service install, uninstall and "decline install for all users" → `docker rm`;
+  - the updater's check, apply and settings → pull a newer image, and the updater is no longer started at boot;
+  - dependency check and update → pull a newer image;
+  - every Local HTTPS write → a reverse proxy in front of the container, which is the only supported way to add HTTPS to the image;
+  - `webPort`, `installMode`, `firstRunComplete` and the updater keys through `PATCH /api/config` or the settings batch → docker's port mapping.
+
+  Before this, a direct call could write a systemd unit and a copy of Node onto the volume, restart the server onto a port nothing publishes, or turn on HTTPS-only and lock out every client. `GET /api/service/status` now answers `supported: false, docker: true` in a container without probing the host. Reading dependencies and retry-install stay open, because the first-run banner needs them. The guard lives in `src/server/api/containerGuard.ts`, with a unit test per route that includes its host control, and a container spec that calls every route against a built image.
+
 ## [0.1.30-beta.155] - 2026-09-30
 
 ### Fixed

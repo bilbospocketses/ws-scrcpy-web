@@ -222,7 +222,14 @@ if (__ssArgs) {
     HttpServer.addApiHandler(shutdownApi);
 
     const updateService = new UpdateService();
-    updateService.init();
+    // A container never self-updates (the image is the update), so its updater
+    // is never started; the routes refuse with 409 (container audit). Before
+    // this, init() bailed only because $APPIMAGE happens to be unset in the image.
+    if (config.dockerMode) {
+        Logger.for('Server').info('updates: container mode, the image is the update; in-app updater not started');
+    } else {
+        updateService.init();
+    }
     const updatesApi = new UpdatesApi(updateService);
     HttpServer.addApiHandler(updatesApi);
 

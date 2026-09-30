@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'http';
 import { DependencyStatus } from '../../common/DependencyTypes';
 import { requireOperator } from '../auth/requireOperator';
 import type { DependencyManager } from '../DependencyManager';
+import { refuseInContainer } from './containerGuard';
 
 export class DependencyApi {
     constructor(private readonly manager: DependencyManager) {}
@@ -24,8 +25,12 @@ export class DependencyApi {
                 return true;
             }
 
-            // POST /api/dependencies/check — check all for updates
+            // POST /api/dependencies/check — check all for updates. A container's
+            // dependency set belongs to the image (item 135), so checking for and
+            // installing updates is refused there (container audit). The GET list
+            // and retry-install stay open: the first-run banner needs both.
             if (req.method === 'POST' && url === '/api/dependencies/check') {
+                if (refuseInContainer(res, 'check dependencies for updates', 'pull-image')) return true;
                 await this.manager.checkAll();
                 const deps = await this.manager.getAll();
                 res.writeHead(200);
@@ -37,6 +42,7 @@ export class DependencyApi {
             const updateMatch = url.match(/^\/api\/dependencies\/([a-z-]+)\/update$/);
             if (req.method === 'POST' && updateMatch) {
                 const name = updateMatch[1]!;
+                if (refuseInContainer(res, `update ${name}`, 'pull-image')) return true;
                 const result = await this.manager.update(name);
                 // The 503 "launcher-required" branch is gone: extraction is
                 // in-process now, so no dependency is unupdatable for want of a
