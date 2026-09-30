@@ -35,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **Opening a browser at startup could crash the server.** A missing opener (`xdg-open` on a machine without one) is reported by `spawn` as an `error` event after the call returns, outside the code's try/catch, and nothing listened for it. Every platform's opener now has an error listener, so a failed open is logged and the server carries on, as the code always said it would.
+### Fixed
+- **The Linux tray's stand-down line now matches smoke row 14.9.** A system-scope service logged `installMode=Some("system-service")`, which is Rust's debug form of an optional value, where the row (and qa-harness) read `installMode="system-service"`. The line is now built by `tray_stand_down_line` in `common::tray_policy`, with a test on every platform, and reads `installMode=none` when no mode is set. Behaviour is unchanged: a system-scope service still spawns no tray. Reported by qa-harness.
 
 ## [0.1.30-beta.156] - 2026-09-30
 
