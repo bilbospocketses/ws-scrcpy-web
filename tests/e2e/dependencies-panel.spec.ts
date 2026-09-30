@@ -366,8 +366,16 @@ test.describe('dependencies (smoke §9.4, §9.5, §1.9)', () => {
             ctx = visitor.context;
             const api = visitor.context.request;
 
-            // The failed state, server-side first: nothing installed, each in error.
-            const failed = (await (await api.get('/api/dependencies')).json()) as DependencyInfo[];
+            // The failed state, server-side first. scrcpy-server is the exception:
+            // the image ships it as a seed, and first boot copies it in with no
+            // network at all (D5, 2026-09-30). Before that fix it was reported
+            // not installed here even though the seed copy was on disk.
+            const listedFirst = (await (await api.get('/api/dependencies')).json()) as DependencyInfo[];
+            const seeded = listedFirst.find((d) => d.name === 'scrcpy-server');
+            expect(seeded?.installedVersion, 'scrcpy-server from the seed').not.toBeNull();
+            expect(seeded?.status, 'scrcpy-server').not.toBe('error');
+            expect(seeded?.errorMessage, 'scrcpy-server').toBeUndefined();
+            const failed = listedFirst.filter((d) => d.name !== 'scrcpy-server');
             expect(failed.length).toBeGreaterThan(0);
             for (const dep of failed) {
                 expect(dep.installedVersion, dep.name).toBeNull();

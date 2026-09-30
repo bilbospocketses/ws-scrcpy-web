@@ -379,6 +379,13 @@ export class DependencyManager {
         // first run). A newer release is still offered, as an update.
         if (promoted) {
             await this.checkInstalled('scrcpy-server');
+            // An offline first boot left checkLatest's "not installed" error on
+            // it. Installed, a failed lookup is advisory (checkLatest's own
+            // rule), so the error no longer describes this dependency.
+            const scrcpy = this.state.get('scrcpy-server');
+            if (scrcpy && scrcpy.installedVersion !== null) {
+                scrcpy.errorMessage = undefined;
+            }
         }
 
         for (const info of this.state.values()) {
