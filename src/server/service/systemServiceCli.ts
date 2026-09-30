@@ -1,5 +1,6 @@
 import { execFile } from 'child_process';
 import * as fs from 'fs';
+import * as net from 'net';
 import { APP_CONFIG_DEFAULTS } from '../../common/ConfigEvents';
 import { WS_SCRCPY_SERVICE_DESCRIPTION, WS_SCRCPY_SERVICE_NAME } from '../../common/ServiceEvents';
 import { Logger } from '../Logger';
@@ -35,6 +36,9 @@ export interface CoreDeps {
     lstat: (path: string) => { uid: number; gid: number; mode: number; isSymbolicLink: boolean };
     /** The file's text, or null when it cannot be read. */
     readFile: (path: string) => string | null;
+    /** Whether something accepts a TCP connection on 127.0.0.1:<port>. */
+    portOpen: (port: number) => Promise<boolean>;
+    sleep: (ms: number) => Promise<void>;
 }
 
 const SYSTEM_CONFIG = `${SYSTEM_STATE_DIR}/config.json`;
@@ -59,7 +63,8 @@ export function keptWebPort(kept: Record<string, unknown> | null): number | unde
     return typeof p === 'number' && Number.isInteger(p) && p >= 1024 && p <= 65535 ? p : undefined;
 }
 
-const UNIT_PATH = `/etc/systemd/system/${WS_SCRCPY_SERVICE_NAME}.service`;
+const UNIT_NAME = `${WS_SCRCPY_SERVICE_NAME}.service`;
+const UNIT_PATH = `/etc/systemd/system/${UNIT_NAME}`;
 const STAGED_BIN = `${STAGED_SYSTEM_DIR}/${STAGED_SYSTEM_APPIMAGE}`;
 const SYSTEM_LOGS_DIR = `${SYSTEM_STATE_DIR}/logs`;
 
@@ -182,9 +187,161 @@ export async function installSystemService(opts: { port: number }, d: CoreDeps):
         'system',
     );
     d.writeFile(UNIT_PATH, unit, { mode: 0o644 });
-    await d.run([systemctl, 'daemon-reload']);
-    await d.run([systemctl, 'enable', '--now', `${WS_SCRCPY_SERVICE_NAME}.service`]);
-    log.info('system service installed + enabled');
+    const reload = await d.run([systemctl, 'daemon-reload']);
+    if (reload.code !== 0) {
+        throw new Error(`systemctl daemon-reload failed (exit ${reload.code}): ${reload.stderr.trim()}`);
+    }
+    // Held before the start means the page's install: the user's own copy is still
+    // serving, and exits once this returns (item 159).
+    const portHeldBefore = await d.portOpen(opts.port);
+    const enable = await d.run([systemctl, 'enable', '--now', UNIT_NAME]);
+    if (enable.code !== 0) {
+        throw new Error(`systemctl enable --now failed (exit ${enable.code}): ${enable.stderr.trim()}`);
+    }
+    await verifyServiceStarted({ port: opts.port, portHeldBefore }, d);
+    log.info('system service installed + enabled, and started');
+}
+
+// ---------------------------------------------------------------------------
+// Did the unit start? (item 159)
+// ---------------------------------------------------------------------------
+
+/** One poll per second. */
+const VERIFY_TICK_MS = 1_000;
+/**
+ * Headless install, port free: how long the unit gets to serve its port. The
+ * first start also provisions the service's own dependencies, as root.
+ */
+const HEADLESS_TIMEOUT_TICKS = 120;
+/**
+ * Page install, port held by the user's own copy: the service cannot bind yet,
+ * so only a failure is decidable here. Six seconds is three restarts at
+ * `RestartSec=2`; the page's own poll waits for the service after the hand-off.
+ */
+const TAKEOVER_SETTLE_TICKS = 6;
+
+export interface UnitState {
+    activeState: string;
+    subState: string;
+    result: string;
+    /** `si_code` of the main process's last exit: 1 = exited, 2 = killed, 0 = none yet. */
+    execMainCode: number;
+    execMainStatus: number;
+}
+
+/** `systemctl show -p …` key=value output. Missing keys read as empty / 0. Pure. */
+export function parseUnitState(stdout: string): UnitState {
+    const kv = new Map<string, string>();
+    for (const line of stdout.split('\n')) {
+        const eq = line.indexOf('=');
+        if (eq > 0) kv.set(line.slice(0, eq).trim(), line.slice(eq + 1).trim());
+    }
+    const num = (k: string) => Number.parseInt(kv.get(k) ?? '', 10) || 0;
+    return {
+        activeState: kv.get('ActiveState') ?? '',
+        subState: kv.get('SubState') ?? '',
+        result: kv.get('Result') ?? '',
+        execMainCode: num('ExecMainCode'),
+        execMainStatus: num('ExecMainStatus'),
+    };
+}
+
+/**
+ * Why the unit can never come up, or null. Pure. Exit statuses 200-245 are
+ * systemd's own (systemd.exec(5), "Process Exit Codes"): it failed setting up
+ * the process, so our binary never ran and every restart fails the same way.
+ * D9 was 209/STDOUT. A running unit reads status 0 (code 0), and the app's own
+ * exits (1 on a busy port) are below 200, so neither is taken for a failure.
+ */
+export function unitSetupFailure(s: UnitState): string | null {
+    if (s.execMainCode === 1 && s.execMainStatus >= 200 && s.execMainStatus <= 245) {
+        return `systemd could not start the service (exit status ${s.execMainStatus}, see systemd.exec(5))`;
+    }
+    if (s.activeState === 'failed') {
+        return `the service failed (${s.result || 'unknown result'})`;
+    }
+    return null;
+}
+
+async function readUnitState(d: Pick<CoreDeps, 'run' | 'tool'>): Promise<UnitState> {
+    const r = await d.run([
+        d.tool('systemctl'),
+        'show',
+        UNIT_NAME,
+        '-p',
+        'ActiveState',
+        '-p',
+        'SubState',
+        '-p',
+        'Result',
+        '-p',
+        'ExecMainCode',
+        '-p',
+        'ExecMainStatus',
+    ]);
+    return parseUnitState(r.code === 0 ? r.stdout : '');
+}
+
+/** The last `n` non-empty lines of `text`. Pure. */
+function tail(text: string, n: number): string {
+    return text
+        .split('\n')
+        .filter((l) => l.trim() !== '')
+        .slice(-n)
+        .join('\n');
+}
+
+/** `why`, plus where to look: systemd's journal for the unit and the service's own log. */
+async function failureReport(why: string, d: Pick<CoreDeps, 'run' | 'tool' | 'readFile'>): Promise<string> {
+    const journal = await d.run([d.tool('journalctl'), '-u', UNIT_NAME, '-n', '10', '--no-pager']);
+    const parts = [
+        `${why}. The unit is left installed for inspection: systemctl status ${UNIT_NAME}`,
+        `--- journalctl -u ${UNIT_NAME} ---`,
+        tail(journal.stdout, 10) || '(empty)',
+    ];
+    const serviceLog = d.readFile(`${SYSTEM_LOGS_DIR}/service.log`);
+    if (serviceLog) parts.push(`--- ${SYSTEM_LOGS_DIR}/service.log ---`, tail(serviceLog, 10));
+    return parts.join('\n');
+}
+
+/**
+ * Throw unless the unit has started (item 159). `enable --now` returns as soon
+ * as systemd queues the start, and `Type=simple` reads active the instant it
+ * forks, so neither says the service runs: D9 failed every start at status 209
+ * while the install exited 0. A setup failure or a `failed` unit fails at once,
+ * in both modes. With the port free before the start (headless), success is the
+ * unit running AND serving the port. With it held (the page's install), the
+ * service cannot bind until the user's copy exits, so passing the settle window
+ * without a failure is all this can decide.
+ */
+export async function verifyServiceStarted(
+    opts: { port: number; portHeldBefore: boolean },
+    d: Pick<CoreDeps, 'run' | 'tool' | 'readFile' | 'portOpen' | 'sleep'>,
+): Promise<void> {
+    const ticks = opts.portHeldBefore ? TAKEOVER_SETTLE_TICKS : HEADLESS_TIMEOUT_TICKS;
+    let last: UnitState | null = null;
+    for (let i = 0; i < ticks; i++) {
+        await d.sleep(VERIFY_TICK_MS);
+        last = await readUnitState(d);
+        const why = unitSetupFailure(last);
+        if (why) throw new Error(await failureReport(why, d));
+        if (
+            !opts.portHeldBefore &&
+            last.activeState === 'active' &&
+            last.subState === 'running' &&
+            (await d.portOpen(opts.port))
+        ) {
+            return;
+        }
+    }
+    if (opts.portHeldBefore) return;
+    const seen = last ? `${last.activeState}/${last.subState}` : 'unknown';
+    throw new Error(
+        await failureReport(
+            `the service did not start serving port ${opts.port} within ${HEADLESS_TIMEOUT_TICKS} s (last state ${seen})`,
+            d,
+        ),
+    );
 }
 
 export async function uninstallSystemService(
@@ -332,6 +489,19 @@ export function makeProductionCoreDeps(): CliDeps {
             }
         },
         existsCheck: (p) => fs.existsSync(p),
+        // The app listens on every interface (`server.listen(port)`), so loopback reaches it.
+        portOpen: (port) =>
+            new Promise((resolve) => {
+                const socket = net.connect({ host: '127.0.0.1', port });
+                const done = (open: boolean) => {
+                    socket.destroy();
+                    resolve(open);
+                };
+                socket.setTimeout(500, () => done(false));
+                socket.once('connect', () => done(true));
+                socket.once('error', () => done(false));
+            }),
+        sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
         appImageSource: process.env['APPIMAGE'] ?? process.execPath,
         tool: (t) => resolveSystemTool(t),
         sbinTool: (t) => resolveSystemTool(t),
