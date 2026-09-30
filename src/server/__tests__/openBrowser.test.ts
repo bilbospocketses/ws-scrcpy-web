@@ -27,7 +27,15 @@ describe('shouldAutoOpenBrowser', () => {
         suppressBrowser: false,
         launcherFreshLaunch: false,
         launcherManaged: false,
+        inContainer: false,
     };
+
+    it('never opens in a container, whatever signal asks for it (row 20.19)', () => {
+        // Every open signal at once: first run incomplete AND a fresh launch.
+        const opens = { ...base, firstRunComplete: false, launcherFreshLaunch: true };
+        expect(shouldAutoOpenBrowser(opens)).toBe(true);
+        expect(shouldAutoOpenBrowser({ ...opens, inContainer: true })).toBe(false);
+    });
 
     it('opens on a fresh launcher launch even past first-run (the D1 fix)', () => {
         expect(shouldAutoOpenBrowser({ ...base, launcherManaged: true, launcherFreshLaunch: true })).toBe(true);

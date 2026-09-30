@@ -17,6 +17,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **In a container, the page stops offering what the image owns** (the container audit's UI half, row 20.19). Each is an explicit container decision rather than something the server's replies happened to keep quiet:
+  - the update pill is never mounted, so the page no longer polls `/api/updates/status` every 30 s;
+  - Settings → Server hides the **web port** row: the port inside the image is always 8000, and docker's port mapping picks the one people reach;
+  - **Local HTTPS** is replaced by a note: serve HTTPS from a reverse proxy in front of the container, the only supported way to add HTTPS to the image;
+  - **reset all my settings** clears your settings but no longer asks to reset first run, which a container does not have;
+  - the first-run wizard and the "update the system-wide install?" banner check container mode themselves;
+  - the server never tries to open a browser at startup.
+
+### Fixed
+- **Opening a browser at startup could crash the server.** A missing opener (`xdg-open` on a machine without one) is reported by `spawn` as an `error` event after the call returns, outside the code's try/catch, and nothing listened for it. Every platform's opener now has an error listener, so a failed open is logged and the server carries on, as the code always said it would.
+
 ## [0.1.30-beta.156] - 2026-09-30
 
 ### Fixed

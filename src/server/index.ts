@@ -378,6 +378,7 @@ if (__ssArgs) {
                         suppressBrowser,
                         launcherFreshLaunch,
                         launcherManaged,
+                        inContainer: config.dockerMode,
                     })
                 ) {
                     const port = config.servers[0]?.port ?? appCfg.webPort;
