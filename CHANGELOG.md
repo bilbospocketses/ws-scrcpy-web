@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.156] - 2026-09-30
+
 ### Fixed
 - **Save in the Settings dialog was answered 404 on every install.** Save sends the staged changes (web port, update channel, auto-update, check interval, GitHub owner) to `POST /api/settings/batch`. The per-user settings handler is registered first and claimed every `/api/settings…` URL, answering 404 for a path it did not know, so the batch writer was never reached. It had been this way since the tabbed Settings dialog (#692, 2026-09-14): the batch tests called its handler directly, and no end-to-end test drove Save. The settings handler now leaves that path to the batch writer, with a test that runs the two handlers in the server's own order. Found by the container tier while testing row 20.18.
 
