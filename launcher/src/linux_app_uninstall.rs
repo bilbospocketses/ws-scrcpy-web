@@ -276,7 +276,8 @@ pub fn app_uninstall_commands(
 /// Parsed `--linux-app-uninstall[-elevated]` invocation. `relaunch` is only
 /// meaningful on the unelevated path (the currently-running `$APPIMAGE` to
 /// restart if the user declines the pkexec prompt); it defaults to `""` on the
-/// elevated path, which never relaunches.
+/// elevated path, which never relaunches. `server_pid` is the Node server that
+/// asked for the uninstall (D17); only the unelevated path reads it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UninstallArgs {
     pub svc_scope: Option<Scope>,
@@ -284,6 +285,7 @@ pub struct UninstallArgs {
     pub keep: bool,
     pub data_root: String,
     pub relaunch: String,
+    pub server_pid: Option<i32>,
 }
 
 /// Validate a `--data-root` before it is forwarded across pkexec into a root
@@ -356,12 +358,21 @@ pub fn parse_args(args: &[String]) -> Option<UninstallArgs> {
         .and_then(|i| args.get(i + 1))
         .cloned()
         .unwrap_or_default();
+    // --server-pid <pid>  (optional; present but not a pid > 1 = parse error)
+    let server_pid = match args.iter().position(|a| a == "--server-pid") {
+        None => None,
+        Some(i) => match args.get(i + 1).and_then(|v| v.parse::<i32>().ok()) {
+            Some(pid) if pid > 1 => Some(pid),
+            _ => return None,
+        },
+    };
     Some(UninstallArgs {
         svc_scope,
         machine_wide,
         keep,
         data_root,
         relaunch,
+        server_pid,
     })
 }
 
@@ -417,6 +428,9 @@ fn run_unelevated(a: &UninstallArgs) -> i32 {
         a.svc_scope, a.machine_wide, a.keep
     ));
     let plan = plan_for(a);
+    // Identify the requesting server NOW, before a pkexec prompt gives its pid
+    // time to be reused (D17).
+    let server = a.server_pid.map(|pid| (pid, start_time_of(pid)));
     // Whole-data-root wipes held back until every other step has run and logged.
     let mut wipes: Vec<(Vec<String>, &str)> = Vec::new();
 
@@ -498,6 +512,12 @@ fn run_unelevated(a: &UninstallArgs) -> i32 {
 
     // 2. Unelevated group (kills our own processes + tears down the user data
     //    root). Best-effort: log non-zero, KEEP GOING (mirrors linux_service::run).
+    //    The requesting server goes first, by pid: its command line need not
+    //    carry any PROC_NAMES entry (D17), and it logs one last line into the
+    //    data root as it exits, so it must be gone before anything is wiped.
+    if let Some((pid, start)) = server {
+        wait_for_server_exit(pid, start);
+    }
     kill_strays();
     let (steps, wipe) = split_data_root_wipe(&plan.user_owned, &a.data_root);
     run_best_effort(&steps, "uninstall");
@@ -589,6 +609,94 @@ fn kill_strays() {
             Err(e) => log::error(&format!("uninstall: kill stray pid {pid} failed: {e}")),
         }
     }
+}
+
+/// How long the requesting server gets to exit by itself. It schedules its own
+/// exit 1.5 s after spawning this helper (`ServiceApi`, app-uninstall).
+const SERVER_EXIT_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+const SERVER_EXIT_POLL: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// `(state, starttime)` from `/proc/<pid>/stat`. As in `parse_stat_ppid`, the
+/// fields after the LAST `)` start at field 3 (state); starttime is field 22.
+fn parse_stat_state_start(stat: &str) -> Option<(char, u64)> {
+    let mut rest = stat[stat.rfind(')')? + 1..].split_whitespace();
+    let state = rest.next()?.chars().next()?;
+    let start = rest.nth(18)?.parse().ok()?;
+    Some((state, start))
+}
+
+/// Whether the process recorded as `(pid, start)` has exited, given its
+/// current `/proc/<pid>/stat` (`None`: no such pid). A zombie has exited (its
+/// parent has not reaped it yet), and a different starttime means the pid now
+/// belongs to someone else. An unreadable start at record time falls back to
+/// "the pid exists". Pure.
+fn server_gone(stat_now: Option<&str>, start: Option<u64>) -> bool {
+    let Some((state, now)) = stat_now.and_then(parse_stat_state_start) else {
+        return true;
+    };
+    matches!(state, 'Z' | 'X') || start.is_some_and(|s| s != now)
+}
+
+fn read_stat(pid: i32) -> Option<String> {
+    std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()
+}
+
+fn start_time_of(pid: i32) -> Option<u64> {
+    read_stat(pid)
+        .as_deref()
+        .and_then(parse_stat_state_start)
+        .map(|(_, s)| s)
+}
+
+/// Wait for the server that requested the uninstall to exit by itself, then
+/// SIGKILL it if it has not (D17). Matching it by name is not enough: the seed
+/// node runs as `/tmp/.mount_WsScrc<rand>/usr/bin/seed/node/node ...`, which
+/// carries no `PROC_NAMES` entry, so the stray kill missed it, the wipe ran
+/// inside its 1.5 s exit delay, and its exit line re-created the data root.
+fn wait_for_server_exit(pid: i32, start: Option<u64>) {
+    wait_or_kill(pid, start, SERVER_EXIT_WAIT);
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum ServerExit {
+    Exited,
+    Killed,
+    KillFailed,
+}
+
+fn wait_or_kill(pid: i32, start: Option<u64>, wait: std::time::Duration) -> ServerExit {
+    let deadline = std::time::Instant::now() + wait;
+    loop {
+        if server_gone(read_stat(pid).as_deref(), start) {
+            log::info(&format!(
+                "uninstall: requesting server pid {pid} has exited"
+            ));
+            return ServerExit::Exited;
+        }
+        if std::time::Instant::now() >= deadline {
+            break;
+        }
+        std::thread::sleep(SERVER_EXIT_POLL);
+    }
+    let Some(p) = rustix::process::Pid::from_raw(pid) else {
+        return ServerExit::KillFailed;
+    };
+    if let Err(e) = rustix::process::kill_process(p, rustix::process::Signal::KILL) {
+        log::error(&format!("uninstall: kill server pid {pid} failed: {e}"));
+        return ServerExit::KillFailed;
+    }
+    log::info(&format!(
+        "uninstall ok: requesting server pid {pid} did not exit in {}s; killed it",
+        wait.as_secs()
+    ));
+    // A SIGKILL is delivered asynchronously; give it a moment to land.
+    for _ in 0..10 {
+        if server_gone(read_stat(pid).as_deref(), start) {
+            break;
+        }
+        std::thread::sleep(SERVER_EXIT_POLL);
+    }
+    ServerExit::Killed
 }
 
 /// Elevated run (under pkexec, as root): the privileged group ONLY, best-effort
@@ -1200,8 +1308,123 @@ mod tests {
                 keep: false,
                 data_root: "/var/lib/ws-scrcpy-web".to_string(),
                 relaunch: "/home/u/Apps/App.AppImage".to_string(),
+                server_pid: None,
             })
         );
+    }
+
+    // ── D17: the requesting server, by pid ──
+
+    fn valid_with(extra: &[&str]) -> Vec<String> {
+        [
+            "--linux-app-uninstall",
+            "--scope",
+            "none",
+            "--machine-wide",
+            "0",
+            "--wipe",
+            "--data-root",
+            "/home/qa/.local/share/WsScrcpyWeb",
+        ]
+        .iter()
+        .chain(extra)
+        .map(|s| s.to_string())
+        .collect()
+    }
+
+    #[test]
+    fn parse_args_takes_an_optional_server_pid() {
+        assert_eq!(parse_args(&valid_with(&[])).unwrap().server_pid, None);
+        assert_eq!(
+            parse_args(&valid_with(&["--server-pid", "4242"]))
+                .unwrap()
+                .server_pid,
+            Some(4242)
+        );
+        for bad in [
+            &["--server-pid"][..],
+            &["--server-pid", "x"],
+            &["--server-pid", "1"],
+            &["--server-pid", "-5"],
+        ] {
+            assert_eq!(parse_args(&valid_with(bad)), None, "{bad:?}");
+        }
+    }
+
+    /// A `/proc/<pid>/stat` line with a comm that has a space and a `)` in it.
+    fn stat(state: char, start: u64) -> String {
+        format!(
+            "4242 (node) x) {state} 4200 4242 4242 0 -1 4194304 1 0 0 0 5 3 0 0 20 0 11 0 {start} 1000 200"
+        )
+    }
+
+    #[test]
+    fn parse_stat_reads_state_and_starttime_after_the_last_paren() {
+        assert_eq!(
+            parse_stat_state_start(&stat('S', 987654)),
+            Some(('S', 987654))
+        );
+        assert_eq!(parse_stat_state_start("garbage"), None);
+    }
+
+    #[test]
+    fn server_gone_when_absent_zombie_or_reused_and_not_while_running() {
+        // The seed node still running, as qa-harness caught it: not gone.
+        assert!(!server_gone(Some(&stat('S', 100)), Some(100)));
+        assert!(!server_gone(Some(&stat('R', 100)), None));
+        // Exited: no /proc entry, or a zombie its parent has not reaped.
+        assert!(server_gone(None, Some(100)));
+        assert!(server_gone(Some(&stat('Z', 100)), Some(100)));
+        // The pid now belongs to a different process.
+        assert!(server_gone(Some(&stat('S', 555)), Some(100)));
+    }
+
+    #[test]
+    fn wait_or_kill_waits_for_a_real_exit_and_kills_one_that_hangs() {
+        use std::time::Duration;
+        // Exits by itself: it stays a zombie of this test process, which counts as gone.
+        let mut quick = std::process::Command::new("sleep")
+            .arg("0.3")
+            .spawn()
+            .unwrap();
+        let pid = quick.id() as i32;
+        let t0 = std::time::Instant::now();
+        assert_eq!(
+            wait_or_kill(pid, start_time_of(pid), Duration::from_secs(5)),
+            ServerExit::Exited
+        );
+        assert!(
+            t0.elapsed() >= Duration::from_millis(200),
+            "returned before it exited"
+        );
+        let _ = quick.wait();
+
+        // Never exits in time: killed, and gone afterwards.
+        let mut hung = std::process::Command::new("sleep")
+            .arg("60")
+            .spawn()
+            .unwrap();
+        let pid = hung.id() as i32;
+        let start = start_time_of(pid);
+        assert!(start.is_some());
+        assert_eq!(
+            wait_or_kill(pid, start, Duration::from_millis(300)),
+            ServerExit::Killed
+        );
+        assert!(server_gone(read_stat(pid).as_deref(), start));
+        let _ = hung.wait();
+    }
+
+    #[test]
+    fn the_seed_node_carries_no_proc_name_so_only_the_pid_catches_it() {
+        // Measured by qa-harness (row 14.3, beta.148): the mount point cuts the
+        // app name to `WsScrc`, so the name match alone never selected it.
+        let seed = ProcEntry {
+            pid: 4242,
+            ppid: 4200,
+            cmdline: "/tmp/.mount_WsScrclgObOd/usr/bin/seed/node/node --max-old-space-size=4096 /tmp/.mount_WsScrclgObOd/usr/bin/dist/index.js".into(),
+        };
+        assert_eq!(stray_kill_targets(&[seed], 1000), Vec::<i32>::new());
     }
 
     #[test]
