@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **In a container, the Server tab's "install for all users" and "uninstall ws-scrcpy-web" rows are hidden by a decision, not by accident** (findings 20.4, 20.5). They are built hidden and were only ever revealed or hidden from the service-status response, which a container never fetches, so they stayed hidden because nothing touched them. The container branch of Settings now calls `applyServerContainerMode`, which runs the same `appSectionButtonsState` decision with `docker: true` and marks the section `data-app-rows-decided="container"`. The container spec waits for that mark. Mutation-tested against a locally built image: removing the container check makes that test fail while the other 8 pass.
+
 ## [0.1.30-beta.154] - 2026-09-30
 
 ### Changed
