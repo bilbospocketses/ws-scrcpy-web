@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.149] - 2026-09-30
+
 ### Changed
 - **The smoke test targets beta.148, and the docs no longer say the system install copies your dependencies.** The technical guide's system-scope section and smoke row 4.2-system-cli still described the install staging the desktop user's `dependencies/` into `/opt`, which beta.146 removed (the service provisions its own, as root). The smoke doc's target line moves from beta.143 to beta.148, the build qa-harness's Linux runs are now pinned to.
 - **Velopack upgraded 1.2.158 → 1.2.161**: the npm SDK in `package.json`, the Rust crate in `Cargo.lock`, and the `vpk` CLI, which `scripts/vpk-path.mjs` derives from the npm SDK's resolved version. The one upstream change is Windows-only: the OS architecture check no longer fails on systems that lack `IsWow64Process2` (velopack#1072). Nothing in the MSI or packaging changed.
