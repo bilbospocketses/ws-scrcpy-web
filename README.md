@@ -193,7 +193,7 @@ Required for building from source. See [Self-Contained Deployment](#self-contain
 - **Node.js** 24 LTS or later
 - **ADB** — nothing to install. The dependency manager downloads ADB into the app's own `dependencies/` folder on first run and invokes it by absolute path; **`PATH` is deliberately never consulted**, so putting ADB on `PATH` will not make the app find it (see [CONTRIBUTING](CONTRIBUTING.md))
 - **Android device** with USB debugging or wireless debugging enabled
-- **A secure browsing context for streaming** — `https://`, or `http://localhost` / `http://127.0.0.1`. The video decoder the player uses (WebCodecs) is exposed only in a secure context, so reaching the app at `http://<lan-ip>:8000` lists devices but offers no connect link; the device card explains this and names the loopback URL to open instead. Browser flags do not work around it — Chromium's `--unsafely-treat-insecure-origin-as-secure` was measured not to restore `VideoDecoder`. To stream from another machine, turn on **Local HTTPS** (Settings → Server → Local HTTPS) for the quickest fix on your own LAN, or put the app behind a real TLS reverse proxy for anything beyond one.
+- **A secure browsing context for streaming** — `https://`, or `http://localhost` / `http://127.0.0.1`. The video decoder the player uses (WebCodecs) is exposed only in a secure context, so reaching the app at `http://<lan-ip>:8000` lists devices but offers no connect link; the device card explains this and names the loopback URL to open instead. Browser flags do not work around it — Chromium's `--unsafely-treat-insecure-origin-as-secure` was measured not to restore `VideoDecoder`. To stream from another machine, turn on **Local HTTPS** (Settings → Server → Local HTTPS) for the quickest fix on your own LAN (host installs only; a container uses a reverse proxy), or put the app behind a real TLS reverse proxy for anything beyond one.
 
 ## Quick Start (Developer Mode)
 
@@ -232,13 +232,14 @@ ws-scrcpy-web ships as a fully self-contained app with no system-wide installati
 ```
 ws-scrcpy-web/
   dist/                    -- compiled application (server + browser bundles)
-    assets/
-      scrcpy-server        -- Android-side binary, pushed to devices via ADB
     public/                -- browser UI (HTML, JS, CSS)
     index.js               -- server entry point
+  seed/
+    scrcpy-server/         -- the scrcpy-server this build vouches for, copied into dependencies/ on first run
   dependencies/            -- populated automatically on first run
     node/                  -- Node.js runtime + node-pty native files
     adb/                   -- ADB platform-tools
+    scrcpy-server/         -- Android-side binary, pushed to devices via ADB
   start.cmd                -- Windows launcher
   start.sh                 -- Linux launcher
 ```
@@ -258,7 +259,7 @@ If you prefer to avoid the network fetch on first run (air-gapped setups, slow c
 
 - **Node.js** — extract a Node.js LTS Windows / Linux build into `<deps>/node/` (the binary should be at `<deps>/node/node.exe` or `<deps>/node/node`).
 - **ADB** — extract Android `platform-tools` into `<deps>/adb/`.
-- **scrcpy-server** — drop the appropriate `scrcpy-server-vX.Y.Z` binary into `dist/assets/`.
+- **scrcpy-server** — save the appropriate `scrcpy-server-vX.Y.Z` binary as `<deps>/scrcpy-server/scrcpy-server`.
 
 The dependency manager skips downloads when it finds an existing valid copy.
 
@@ -270,7 +271,7 @@ The Dependencies tab in Settings lets you check for updates and install them wit
 |------------|-------------|----------------|
 | **Node.js + node-pty** | Runs the server; provides ADB shell terminal | Downloads new binary from nodejs.org. Paired update -- both must match. Requires app restart (handled automatically by the launcher script). |
 | **ADB (platform-tools)** | Communicates with Android devices | Downloads latest zip from Google, extracts, swaps files. ADB server is stopped and restarted automatically. No app restart needed. |
-| **scrcpy-server** | Runs on Android devices to capture screen and audio | Downloads new binary from Genymobile/scrcpy releases. Replaces file in `dist/assets/`. No restart needed -- new binary is pushed to devices on next connection. |
+| **scrcpy-server** | Runs on Android devices to capture screen and audio | Downloads new binary from Genymobile/scrcpy releases. Replaces `<deps>/scrcpy-server/scrcpy-server`. No restart needed -- new binary is pushed to devices on next connection. |
 
 ### What Requires a New Release (Build-Time Dependencies)
 
@@ -381,11 +382,11 @@ With login off, the LAN is trusted **for the device surface**. The server blocks
 
 **Access and STREAMING are two different gates, and only one of them is ours.** Everything in this section is about who the *server* will answer. Whether the *browser* will play video is decided separately, by the browser, from the address bar alone: the WebCodecs decoder exists only in a secure context (`https://`, `http://localhost`, `http://127.0.0.1`). So a signed-in admin on `http://<lan-ip>:8000` gets the full device list, settings and pairing — and still no video, because no server-side setting can reach that decision. If what you want is to *watch a screen* from another machine, none of the options below are the answer — see the secure-context entry under [Requirements](#requirements), and [Serving the container over HTTPS (reverse proxy)](#serving-the-container-over-https-reverse-proxy) for the setup.
 
-**A third option now exists for a home LAN: Local HTTPS** (Settings → Server → Local HTTPS). It generates a certificate for this machine's LAN IP or a hostname you choose — using a vendored, locally-run `mkcert`, with nothing sent anywhere and no elevation required — and starts an HTTPS listener next to the existing plain-HTTP one. Install the CA it hands you and the browser's certificate warning goes away; even without installing it, clicking through that warning is still a secure context, so streaming works from another machine either way. It does **not** replace [the reverse-proxy path](#serving-the-container-over-https-reverse-proxy) for anything beyond a home LAN: there is no ACME, no publicly trusted certificate, and every device that should stop warning needs the CA installed on it by hand. See `docs/TECHNICAL_GUIDE.md` for how the certificate is stored and what narrowing plain HTTP afterwards does.
+**A third option now exists for a home LAN: Local HTTPS** (Settings → Server → Local HTTPS). It generates a certificate for this machine's LAN IP or a hostname you choose — using a vendored, locally-run `mkcert`, with nothing sent anywhere and no elevation required — and starts an HTTPS listener next to the existing plain-HTTP one. Install the CA it hands you and the browser's certificate warning goes away; even without installing it, clicking through that warning is still a secure context, so streaming works from another machine either way. It does **not** replace [the reverse-proxy path](#serving-the-container-over-https-reverse-proxy) for anything beyond a home LAN: there is no ACME, no publicly trusted certificate, and every device that should stop warning needs the CA installed on it by hand. See `docs/TECHNICAL_GUIDE.md` for how the certificate is stored and what narrowing plain HTTP afterwards does. Local HTTPS is a host-install feature: in a container it is switched off, and a reverse proxy is the only supported way to add HTTPS.
 
 **Administering the server is separate, and needs proof that you are the operator** — you are on the machine itself (loopback), or you are a signed-in admin. Otherwise the admin routes answer `403`: users, configuration, service control, dependencies, updates, shutdown, and any Local HTTPS change (generating or revoking the certificate, the HTTPS port, plain-HTTP exposure). Another machine can still open the Local HTTPS panel and download the CA, since installing it there is the point. The app shows a banner explaining which state it is in, with a **Set up sign-in** button; that banner is informational everywhere but actionable only from the machine itself, so it cannot be used to open the server up from off-box.
 
-To allow admin from another machine **without** setting up sign-in, set `WS_SCRCPY_ALLOW_REMOTE_ADMIN=1` in the server's environment (or `"allowRemoteAdmin": true` in `config.json`). That makes anyone who can reach the server an administrator, so use it only on a network you fully control. **In a container nobody is ever on loopback**, so a Dockerised deployment needs either that variable or sign-in enabled — see [`SECURITY.md`](SECURITY.md) for the `docker exec` one-liner.
+To allow admin from another machine **without** setting up sign-in, set `WS_SCRCPY_ALLOW_REMOTE_ADMIN=1` in the server's environment (or `"allowRemoteAdmin": true` in `config.json`). That makes anyone who can reach the server an administrator, so use it only on a network you fully control. **In a container nobody is ever on loopback**, so a Dockerised deployment needs either that variable or sign-in enabled — see [`SECURITY.md`](SECURITY.md#containers) for how to set up sign-in in a container.
 
 Both cookies the app issues — the per-launch token and the login session — are `HttpOnly` and site-scoped (`SameSite=Strict` and `Lax` respectively). Allow-listing an embedder in `frameAncestors` relaxes both to `SameSite=None; Secure; Partitioned`, because a site-scoped cookie is never sent from a cross-site frame. **This does not weaken the CSRF defence**, which is the Origin/Host match, not `SameSite`: a cross-origin page still fails the Origin check on every `/api` call and every handshake. `Partitioned` (CHIPS) keys each cookie to the embedding top-level site, so an embedded session is its own session and does not ride on the one in your own tab.
 
@@ -482,7 +483,7 @@ server {
 
 and, in either case, `{ "allowedHosts": ["devices.example.com"] }` in the container's `config.json` (1). Keep the container itself on `127.0.0.1:8000` as in the `docker run` above — the proxy is the only thing that should reach it. Traefik, HAProxy and the rest work the same way; the three rules are the whole contract.
 
-Every published image passes a [Docker Scout](https://docs.docker.com/scout/) gate in the publish workflow — a fixable critical or high CVE fails the publish — and the Hub repository has Scout analysis enabled, so already-published images are re-evaluated as advisories land. For now, use the MSI, AppImage, or portable ZIP.
+Every published image passes a [Docker Scout](https://docs.docker.com/scout/) gate in the publish workflow — a fixable critical or high CVE fails the publish — and the Hub repository has Scout analysis enabled, so already-published images are re-evaluated as advisories land.
 
 ## Acknowledgments
 

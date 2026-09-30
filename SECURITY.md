@@ -81,13 +81,9 @@ The opt-out is **ignored entirely once sign-in is on** — then a session is the
 **In a container nobody is ever on loopback**: the browser reaches the server through the Docker gateway, so a containerised deployment has no operator by the loopback test. There are two supported paths:
 
 - set `WS_SCRCPY_ALLOW_REMOTE_ADMIN=1` on the container. `docker-compose.yml` already forwards it from your shell, so `WS_SCRCPY_ALLOW_REMOTE_ADMIN=1 docker compose up` is enough; with plain `docker run`, pass `-e WS_SCRCPY_ALLOW_REMOTE_ADMIN=1`. Unset, nothing is forwarded and the container keeps the refusing default; or
-- turn sign-in on once from inside the container, which *is* loopback:
+- turn sign-in on, using that variable once to get there: start the container with `WS_SCRCPY_ALLOW_REMOTE_ADMIN=1`, create an admin account with a password in Settings → Users, turn sign-in on, then re-create the container without the variable. Sign-in refuses to turn on until an admin with a password exists, and once it is on the variable is ignored anyway, so dropping it only matters if sign-in is ever turned off again.
 
-  ```sh
-  docker exec <container> curl -X POST http://127.0.0.1:8000/api/auth/enable
-  ```
-
-Then create the admin account in Settings → Users. After that, a signed-in admin can administer it from anywhere.
+After that, a signed-in admin can administer it from anywhere. (There is no `docker exec` shortcut: the image carries no `curl` or `wget`, and every `/api` call needs the per-launch token a browser gets by loading the page.)
 
 **Serving on a domain / behind a reverse proxy.** Because the default rejects domain `Host` headers, a TLS-terminating reverse proxy on a domain name must be opted in via the server-only `allowedHosts` array in `config.json`:
 

@@ -79,12 +79,13 @@ states both halves on its own line below: 8.5, 8.8 and 9.5, whose remainder
 `smoke-test.md` itself calls residual, and 9.4, 10.3, 12.4 and 13.3, whose
 remainder it calls manual. They are counted once, in the tier that covers their
 automated half, so a reader adding the buckets up does not count them twice — but
-the residual set is larger than its 60 rows by these seven halves. (It said 57
-rows until 2026-09-25; the two residual buckets have summed to 60 since item 68's
-rows landed.)
+the residual set is larger than its 58 rows by these seven halves. (It said 57
+rows until 2026-09-25; the two residual buckets summed to 60 from item 68's rows
+until 2026-09-27, when 21.2 and 21.3 moved to the Windows guest tier.)
 
 **The Windows guest tier is counted the same way, and most of it is partial.** Of
-its 26 rows, a clause-by-clause reading (2026-09-25, item 148) found only a
+its 29 rows (26 when this reading was made; 21.1-21.3 joined on 2026-09-27), a
+clause-by-clause reading (2026-09-25, item 148) found only a
 handful that prove every clause of Expected: 11.4, 6.8, 1.8 across two arcs, and
 5.6 against its reworded text. qa-harness's own reading calls 16 of its 27
 row-halves full, and the difference is mostly how literally a stated time or a
@@ -129,9 +130,10 @@ Buckets, once each, no row in two:
 
 - **fast** — an untagged spec in `tests/e2e/`, run by `build-and-test` on every PR.
 - **container** — a `@docker` spec. CI's docker step runs all of them; qa-harness's
-  nightly docker tier runs all but the six marked `@docker-host` (1.9, 9.5, 20.6,
-  20.8, 20.11, 20.12), which drive the docker CLI on the host — compose stacks of
-  their own, a `docker stop`, a `docker pull` — and need a CLI the runner does not have.
+  nightly docker tier runs all but the seven marked `@docker-host` (1.9, 9.5, 20.6,
+  20.8, 20.11, 20.12, 20.21), which drive the docker CLI on the host — compose stacks
+  of their own, a `docker stop`, a `docker pull`, a `docker run --user` — and need a
+  CLI the runner does not have.
 - **device** — a `@device` spec under `tests/e2e/device/`, or a spec in qa-harness's own
   virtual-device tier (`suites/wssw-virtual/`, since 2026-09-25: row 8.15 on an emulator, row 8.17 on redroid). qa-harness only,
   nightly, against an Android emulator on the run network. Widened rather than split: both run
@@ -323,9 +325,9 @@ Sorted by module, then by row number, which is not the doc's execution order.
 | 20.13 | `[Both]` | `HEALTHCHECK` healthy | container | `tests/e2e/support/dockerStack.ts` — `composeUpFresh` brings the stack up with `--wait`, which refuses to proceed unless the image reports healthy. |
 | 20.17 | `[Both]` | Dependencies in a container | container | `docker-gating.spec.ts`: the Dependencies tab carries the container note and no buttons, and the home-page alert is mounted but hidden with an update waiting. (Numbered 20.17 because 20.14-20.16 are finding ids.) |
 | 20.18 | `[Both]` | Host-only routes refused in a container | container | `docker-gating.spec.ts` (2026-09-30, the container audit). Every host-only write (service install / uninstall / decline, the updater's three routes, dependency check and update, every `/api/tls/*` write, and host-only config keys through `PATCH /api/config` and `/api/settings/batch`) answers 409 `reason: unsupported` naming its remedy, and `GET /api/service/status` answers `supported: false, docker: true` without a host probe. The shared guard is `src/server/api/containerGuard.ts`, unit-tested with a host control per route in `containerGuard.routes.test.ts`. |
+| 20.19 | `[Both]` | The page's container decisions | container | `docker-gating.spec.ts` (2026-09-30, the container audit's UI half), two tests. The home page never mounts the update pill (`.update-button-container` count 0 — a mounted pill is in the DOM even while hidden) and sends no `/api/updates/status` poll; Settings → Server keeps the web-port row BUILT but not shown, and fills the Local HTTPS slot with a note naming the reverse proxy instead of the panel. "reset all my settings" sends the per-user reset and reloads, with no `PATCH /api/config`, and first run stays complete. Each decision is unit-tested in both directions (`containerGate.test.ts`, `serverTab.test.ts`, `openBrowser.test.ts`), and each of those tests was run against the code with its container check removed and failed. |
 | 20.20 | `[Both]` | Network scan in a container asks for the LAN subnet | container | `docker-gating.spec.ts` (2026-09-30, container audit item 11). `GET /api/devices/scan/subnet` answers `{ container: true }` rather than docker's bridge subnet (measured before the fix: `172.17.0.0/16`, 65,534 hosts), and the Scan Network dialog shows the container note (LAN subnet, `network_mode: host` for mDNS) with nothing proposed as a detected subnet. Unit-tested both ways in `deviceDiscoveryApi.container.test.ts` and `scanNetworkModal.test.ts`. |
 | 20.21 | `[Both]` | The image run as another user (`--user`) | container | `container-user.spec.ts` `@docker-host`, **CI only** (2026-09-30, container audit item 12). On a volume that uid does not own the container exits 1 at once, and its log names the `chown` fix and the alternative; with the volume chowned exactly as that message says, it boots as the requested uid, `/data/home/.android` exists, adb reports a real version, and the server log has no `Cannot mkdir`. Before the fix the first case died with no cause named, and the second ran with `HOME=/`, where adb aborted on every invocation. |
-| 20.19 | `[Both]` | The page's container decisions | container | `docker-gating.spec.ts` (2026-09-30, the container audit's UI half), two tests. The home page never mounts the update pill (`.update-button-container` count 0 — a mounted pill is in the DOM even while hidden) and sends no `/api/updates/status` poll; Settings → Server keeps the web-port row BUILT but not shown, and fills the Local HTTPS slot with a note naming the reverse proxy instead of the panel. "reset all my settings" sends the per-user reset and reloads, with no `PATCH /api/config`, and first run stays complete. Each decision is unit-tested in both directions (`containerGate.test.ts`, `serverTab.test.ts`, `openBrowser.test.ts`), and each of those tests was run against the code with its container check removed and failed. |
 | 21.1 | `[Both]` | Generate a certificate for this machine's LAN IP, restart, then stream from another machine over the generated HTTPS origin | windows guest | qa-harness P4 Arc 5, `arcs/05-local-https.ps1` + `localhttps.spec.ts` (the Windows half), on a fresh install. `POST /api/tls/generate` runs for the address a second machine dials, and on a fresh install that call is also mkcert's first install (the app logs `Updated mkcert to <version>`, attestation-gated; run `win-20260927T095130Z` on beta.138 installed v0.1.0 in 7 s, and `win-20260927T110335Z` on beta.139 in 5.3 s through the slimmed verifier). Since beta.139 the files must land in `%LOCALAPPDATA%\WsScrcpyWeb-tls` with no `WsScrcpyWeb\tls` created; as a labelled extra, the arc stages an upgraded install's old folder beside an empty new one, restarts, and checks the logged boot-time move keeps the same served certificate. Before the restart the https port refuses a connection and `/api/tls/state` reports no bound listener; after it the listener is bound. Then qa-harness's runner, a second machine on the run network, finds the https origin a secure context with `VideoDecoder` and h264 `isConfigSupported`, and the same address over plain http none of them. **Partial:** the stream itself from the second machine is not driven (no device on that lane), and the Linux half is not measured. Before qa-harness supplied the second machine this row was manual/conditional: `tests/e2e/local-https.spec.ts`'s default tests prove the secure-context + WebCodecs half against a real, already-generated, already-restarted certificate — `isSecureContext`, `VideoDecoder` and an `isConfigSupported` h264 check, each contrasted against the same LAN address over plain http — but `test.skip`s unless `QA_LAN_HTTPS_ORIGIN` names a non-loopback LAN origin; it FAILS rather than skips if that origin is loopback (`http://localhost` is a secure context on its own and would prove nothing). They deliberately never click generate (it deletes the installed CA — see 21.2); a separate opt-in test in the same file, gated behind `QA_LAN_HTTPS_ALLOW_REGENERATE`, covers the generate click and its destructive consequence instead. The "restart, then stream from another machine" half is not driven by the spec and stays manual. |
 | 21.2 | `[Both]` | Install the CA on a second machine and confirm the browser's untrusted-certificate warning disappears | windows guest | qa-harness P4 Arc 5 (the Windows half). The second machine downloads the CA from the loaded page (`GET /api/tls/ca-root`) and, since beta.139, cold (no page, no token), which must be the same PEM as `ws-scrcpy-web-local-ca.pem`, while a cold `GET /api/tls/state` still gets 403. A verified TLS handshake succeeds against that CA and fails without it, on a trust error. On the Windows machine, `X509Chain` rejects the served certificate (`PartialChain`) until the CA is added to `LocalMachine\Root`, then chains it to that same CA. **Partial:** the browser's own warning banner and the per-OS install dialog are not observed, though the trust decision they rest on is. Locked mode's 401 / 403 on the cold download is not measured, because the arc runs in open mode. |
 | 21.3 | `[Both]` | Each plain-http exposure mode (open / https only / redirect), including that `localhost` on this machine still answers in every mode | windows guest | qa-harness P4 Arc 5 (the Windows half). Each mode is set through `POST /api/tls/exposure`. From the second machine, plain http gets 200 under open, 421 with the "https only" text under httpsOnly, and a 302 to the https origin under redirect. `http://localhost` on the Windows machine answers 200 in every mode, and the web port's listening pid is the same before and after the cycle, so no restart happened. |
@@ -497,9 +499,9 @@ namespace — see finding 8.10 for why that is not a convenience.
 
 ---
 
-## Why 57, and what would move most of them
+## Why 58, and what would move most of them
 
-50 of the 57 are Linux **installer** and **desktop-integration** rows, and two more
+50 of the 58 are Linux **installer** and **desktop-integration** rows, and two more
 contribute their Linux halves: AppImage launch under Ubuntu's unprivileged-userns
 restriction and with no `libfuse2` on the host, AppArmor denials, polkit dialogs
 under both GNOME and KDE, desktop menu entries and icon caches, systemd user- and
@@ -510,7 +512,7 @@ Testing the container does not test the AppImage — they are two distribution
 channels that share only a codebase.
 
 The design has an asymmetry it does not name: P1 builds a Windows desktop, which is
-what makes the 25 W rows reachable. It builds no Linux desktop, so the Linux
+what makes the 29 W rows reachable. It builds no Linux desktop, so the Linux
 installer half has no phase at all. Spec §3.5's "ships on Windows AND Linux, so it
 needs both a Linux container suite and a Windows guest suite" reads as though the
 container suite covers the Linux side. It covers a THIRD channel that did not exist
@@ -555,13 +557,15 @@ the distinction matters to anyone deciding what to fix:
 - **A tombstone.** 20.3 — the libfuse2 gate it checked no longer exists. (20.4 and
   20.5 left this list on 2026-09-04, #601, when the app decided their behaviour: both
   rows are hidden in a container and their endpoints answer 409 — see "Module 20 —
-  container (Docker) behaviour" above. They are counted under *Automatable, no spec
-  written yet*, because the behaviour exists and no container spec asserts it.)
+  container (Docker) behaviour" above. They were then *Automatable, no spec written
+  yet* until 2026-09-30, when `docker-gating.spec.ts` asserted both, and they count in
+  the container tier now.)
 
-Six further rows are automatable with the tiers already built and simply have no
-spec yet: **15.6** (the Windows tray's Exit, end to end), **20.4 and 20.5** (the
-container's hidden install/uninstall rows and their 409s), **8.10 and 8.11** (item
-24's rotation rows) and **8.16** (Opus on redroid's legacy OMX stack). They are the
-cheapest coverage left anywhere in this document and are listed as their own bucket
-so they cannot be mistaken for residual manual work. (Until 2026-09-27 this sentence
-named 4.5, 20.6, 20.8, 20.10, 20.11 and 20.12, all of which have specs now.)
+Nine further rows are automatable with the tiers already built and simply have no
+spec yet: **18.13** (allowRemoteAdmin surviving a restart and an unrelated save),
+**13.4-13.7** (four of the tabbed Settings dialog's behaviours), **15.6** (the Windows
+tray's Exit, end to end), **8.10 and 8.11** (item 24's rotation rows) and **8.16**
+(Opus on redroid's legacy OMX stack). They are the cheapest coverage left anywhere in
+this document and are listed as their own bucket so they cannot be mistaken for
+residual manual work. (Until 2026-09-27 this sentence named 4.5, 20.6, 20.8, 20.10,
+20.11 and 20.12, and until 2026-09-30 20.4 and 20.5, all of which have specs now.)
