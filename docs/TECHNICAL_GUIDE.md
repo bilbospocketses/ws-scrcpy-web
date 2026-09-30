@@ -2878,7 +2878,10 @@ has to be a security boundary. Each item is asserted by `docker-gating.spec.ts`
 - **No browser is auto-opened** (`openBrowser.ts`, `inContainer`): there is no desktop.
 - **Node.js is not a managed dependency** (`hostOnly`, §13.1).
 - **Local HTTPS is not supported in a container** (user decision, 2026-09-30). A
-  reverse proxy in front of the container is the only supported HTTPS (§26.6).
+  reverse proxy in front of the container is the only supported HTTPS (§26.6). Beyond
+  the refused writes, `Config.buildServers` binds no HTTPS listener in a container
+  even when a certificate is on the volume (one carried over from a host install, or
+  placed by hand); it logs a warning naming the certificate and serves HTTP only (D8).
 
 ### 26.6 Networking
 

@@ -23,6 +23,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **docs: smaller corrections.** scrcpy-server lives in `<deps>/scrcpy-server/` (seeded from `seed/scrcpy-server/`), not `dist/assets/` (README). The README's Docker section no longer ends with "for now, use the MSI, AppImage, or portable ZIP". The guide's networking note no longer says the default bridge "cannot reach the device's LAN"; it matches the README and row 20.20. The coverage register's residual count reads 58 and its Windows guest count 29, 20.4 and 20.5 leave the "no spec yet" list, and row 20.19 is back in order. `docker-compose.yml` no longer cites a `docs/traps.md` that does not exist.
 - **docs(smoke): target `v0.1.30-beta.160`.**
 
+### Fixed
+- **No HTTPS listener in a container, even with a certificate on the volume** (D8). Local HTTPS is not supported in a container; a reverse proxy in front of it is the only HTTPS. The `/api/tls` writes already refused there, but a certificate that reached `/data` another way (carried over from a host install, or placed by hand) still bound an HTTPS listener at boot. In a container the server now serves HTTP only and logs a warning naming the certificate and the reverse proxy.
+- **First run no longer downloads scrcpy-server over the copy it just installed** (D5). The app copies the scrcpy-server it ships into the dependencies folder, then read a status taken before the copy and downloaded the same version again (measured on beta.160 in a container: `promoted seed scrcpy-server`, then `Updating scrcpy-server: not installed → 4.1`). Host installs took the same path, so an offline first run no longer depends on that download. A newer scrcpy-server is still offered as an update. Smoke row 20.9 now says scrcpy-server and node-pty come from the image's seed.
+
+### Removed
+- The webpack rule that emitted `dist/assets/scrcpy-server`. Nothing has imported it since v0.1.10, when scrcpy-server moved to `<deps>/scrcpy-server/`.
+
 ## [0.1.30-beta.160] - 2026-09-30
 
 ### Changed
