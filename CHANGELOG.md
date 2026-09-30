@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.154] - 2026-09-30
+
 ### Changed
 - **Container tier: rows 20.4 and 20.5 now have a spec, and every container test names its register row.** Two new `@docker` tests in `docker-gating.spec.ts`:
   - Settings → Server shows no "install for all users" or "uninstall ws-scrcpy-web" row in a container, with "stop server & exit" visible as the positive control.
