@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **The smoke test targets beta.148, and the docs no longer say the system install copies your dependencies.** The technical guide's system-scope section and smoke row 4.2-system-cli still described the install staging the desktop user's `dependencies/` into `/opt`, which beta.146 removed (the service provisions its own, as root). The smoke doc's target line moves from beta.143 to beta.148, the build qa-harness's Linux runs are now pinned to.
+
 ## [0.1.30-beta.148] - 2026-09-30
 
 ### Security
