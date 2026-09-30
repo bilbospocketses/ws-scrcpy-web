@@ -18,8 +18,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ## [0.1.30-beta.156] - 2026-09-30
+### Changed
+- **In a container, the page stops offering what the image owns** (the container audit's UI half, row 20.19). Each is an explicit container decision rather than something the server's replies happened to keep quiet:
+  - the update pill is never mounted, so the page no longer polls `/api/updates/status` every 30 s;
+  - Settings → Server hides the **web port** row: the port inside the image is always 8000, and docker's port mapping picks the one people reach;
+  - **Local HTTPS** is replaced by a note: serve HTTPS from a reverse proxy in front of the container, the only supported way to add HTTPS to the image;
+  - **reset all my settings** clears your settings but no longer asks to reset first run, which a container does not have;
+  - the first-run wizard and the "update the system-wide install?" banner check container mode themselves;
+  - the server never tries to open a browser at startup.
 
 ### Fixed
+- **Opening a browser at startup could crash the server.** A missing opener (`xdg-open` on a machine without one) is reported by `spawn` as an `error` event after the call returns, outside the code's try/catch, and nothing listened for it. Every platform's opener now has an error listener, so a failed open is logged and the server carries on, as the code always said it would.
 - **Save in the Settings dialog was answered 404 on every install.** Save sends the staged changes (web port, update channel, auto-update, check interval, GitHub owner) to `POST /api/settings/batch`. The per-user settings handler is registered first and claimed every `/api/settings…` URL, answering 404 for a path it did not know, so the batch writer was never reached. It had been this way since the tabbed Settings dialog (#692, 2026-09-14): the batch tests called its handler directly, and no end-to-end test drove Save. The settings handler now leaves that path to the batch writer, with a test that runs the two handlers in the server's own order. Found by the container tier while testing row 20.18.
 
 ### Security

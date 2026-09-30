@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { openSettingsTab, settingsRow } from './support/auth';
+import { dismissPromptsFor, openSettingsTab, settingsRow } from './support/auth';
 import { githubCoreQuota, partitionDependencyStates } from './support/githubQuota';
 import { BOOT_INSTALLED_DEPENDENCIES } from './support/privateServer';
 
@@ -337,6 +337,11 @@ test.describe('container mode', () => {
         expect(config.runtime.docker).toBe(true);
         expect(config.runtime.firstRunComplete).toBe(true);
         await expect(page.locator('dialog.welcome-modal')).toHaveCount(0);
+
+        // The reset cleared the prompt dismissals global-setup seeded, so put them
+        // back: otherwise the bookmark reminder opens over "Open settings" in the
+        // next test and swallows its click.
+        await dismissPromptsFor(page.request);
     });
 
     // Rows 20.4 and 20.5 (findings 20.4 and 20.5, fixed 2026-09-04). Last in the file
