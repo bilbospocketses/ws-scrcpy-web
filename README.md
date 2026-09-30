@@ -431,10 +431,16 @@ docker run -d --name ws-scrcpy-web -p 127.0.0.1:8000:8000 -v wsdata:/data bilbos
 
 (Bound to loopback on purpose; see the second note below before publishing it on a LAN interface.) The repo's `docker-compose.yml` is the developer and CI quickstart instead — it builds the image from source and publishes it on `127.0.0.1:8123`. Everything mutable lives on `/data` — `config.json`, the SQLite store, and the dependencies the container downloads on first boot (adb, ~9 MB; the health check allows 180 s for that). Update with `docker pull` and re-create the container; the volume carries your state across.
 
-Two things to know before relying on it:
+Four things to know before relying on it:
 
 - **Wireless ADB only.** The container connects to devices over the network (`adb connect <ip>:<port>`); there is no USB pass-through, by design.
-- **Streaming needs a secure context.** The browser's video decoder (WebCodecs) is only available on `https://` or `localhost`, so opening the container over plain `http://<lan-ip>:8000` shows the device list but no connect link. The device card says so, and names the loopback URL to use instead. Open it on the serving machine, or put it behind a TLS reverse proxy.
+- **Streaming needs a secure context.** The browser's video decoder (WebCodecs) is only available on `https://` or `localhost`, so opening the container over plain `http://<lan-ip>:8000` shows the device list but no connect link. The device card says so, and names the loopback URL to use instead. Open it on the serving machine, or put it behind a TLS reverse proxy. A reverse proxy is the only supported way to add HTTPS to the image: the app's own Local HTTPS is a host-install feature and is switched off in a container.
+- **Network discovery needs your LAN subnet.** On Docker's default bridge network the container sees only Docker's own subnet, so **Scan Network** asks you to add your LAN's (for example `192.168.1.0/24`). The port-5555 probe reaches your LAN through Docker; finding devices over mDNS (Quick Scan, and pairing by QR) needs the container on the host's network (`--network host`, or `network_mode: host` in compose).
+- **Running as another user.** The image starts as root only long enough to take ownership of `/data`, then runs as uid 1000. To run it as a different uid (`--user 1234:1234`, or compose `user:`), `/data` has to belong to that uid first. The container stops at once and prints this command if it does not:
+
+  ```bash
+  docker run --rm -u 0 -v wsdata:/data --entrypoint chown bilbospocketses/ws-scrcpy-web:beta -R 1234:1234 /data
+  ```
 
 ### Serving the container over HTTPS (reverse proxy)
 

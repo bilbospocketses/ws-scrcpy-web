@@ -22,8 +22,20 @@ export interface ScanNetworkModalOptions {
         cidr: string;
         hostCount: number;
     } | null;
+    /**
+     * The server runs in a container, so it cannot see the user's network: the
+     * dialog asks for the LAN subnet instead of apologising for a failed
+     * detection (item 11, row 20.20).
+     */
+    inContainer?: boolean;
     onStartScan: (rawSubnets: string[]) => void;
 }
+
+/** The note a container shows above the subnet list. Exported for its test. */
+export const CONTAINER_SCAN_NOTE =
+    "ws-scrcpy-web is running in a container, so it can't see your network's subnet. Add it below " +
+    '(for example 192.168.1.0/24): the port-5555 probe reaches your LAN through docker. ' +
+    "Finding devices over mDNS needs the container on the host's network (network_mode: host).";
 
 export class ScanNetworkModal extends Modal {
     private readonly opts: ScanNetworkModalOptions;
@@ -75,9 +87,22 @@ export class ScanNetworkModal extends Modal {
         listHeader.style.cssText = 'margin-top: 8px; font-weight: 600;';
         container.appendChild(listHeader);
 
+        if (this.opts.inContainer === true) {
+            // Always shown, not only while the list is empty: the mDNS half of
+            // it stays true after a subnet is added.
+            const note = document.createElement('div');
+            note.setAttribute('data-scan-container-note', '');
+            note.style.cssText = 'font-size: 13px; padding: 6px 0;';
+            note.textContent = CONTAINER_SCAN_NOTE;
+            container.appendChild(note);
+        }
+
         this.emptyNotice = document.createElement('div');
         this.emptyNotice.style.cssText = 'color: #d0a050; font-size: 13px; padding: 6px 0;';
-        this.emptyNotice.textContent = "Couldn't detect your gateway subnet. Add at least one subnet below to scan.";
+        this.emptyNotice.textContent =
+            this.opts.inContainer === true
+                ? 'Add at least one subnet below to scan.'
+                : "Couldn't detect your gateway subnet. Add at least one subnet below to scan.";
         container.appendChild(this.emptyNotice);
 
         this.subnetListEl = document.createElement('ul');

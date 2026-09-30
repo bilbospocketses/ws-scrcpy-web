@@ -274,7 +274,9 @@ if (__ssArgs) {
         // call shares the spawn with the module-load pre-warm above — no second
         // adb process is launched.
         adbStartServer: () => adbDaemon.ensureReady({ waitMs: 5_000 }),
-        resolveMac,
+        // Not in a container: the image has no `ip`, and through docker's NAT a
+        // LAN device's MAC is not visible anyway (item 11).
+        ...(config.dockerMode ? {} : { resolveMac }),
         labelFor: (userId: number, key: string) => config.db.devices.getLabel(userId, key),
         lookupHost: async (hostname: string) => {
             try {

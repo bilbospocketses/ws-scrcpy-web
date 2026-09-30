@@ -7,6 +7,7 @@ import { Logger } from '../Logger';
 import { resolveMac } from '../network/MacResolver';
 import { detectSubnet } from '../network/SubnetDetector';
 import { assertDeletablePaths, isConnectAddress, shArg } from '../security/deviceInput';
+import { inContainer } from './containerGuard';
 import { upsertObservedDevices } from './deviceObserved';
 import { BodyTooLargeError, InvalidJsonError, readJsonBodyStrict, sendInternalError } from './utils';
 
@@ -85,6 +86,16 @@ export class DeviceDiscoveryApi {
             }
 
             if (req.method === 'GET' && url === '/api/devices/scan/subnet') {
+                // In a container the only interface is docker's (172.17.0.0/16 on
+                // the default bridge: 65,534 hosts and never the user's phones), and
+                // the image has no `ip` to ask for a gateway. Say so instead of
+                // proposing it; the scan dialog then asks for the LAN subnet
+                // (item 11, row 20.20).
+                if (inContainer()) {
+                    res.writeHead(200);
+                    res.end(JSON.stringify({ container: true }));
+                    return true;
+                }
                 const detected = await detectSubnet();
                 res.writeHead(200);
                 res.end(JSON.stringify(detected));
@@ -148,7 +159,9 @@ export class DeviceDiscoveryApi {
                             db.devices.setLabel(userId, realSerial, label);
                         }
                         const ip = address.split(':')[0]!;
-                        const mac = await resolveMac(ip);
+                        // No MAC in a container: `ip neigh` is not in the image, and
+                        // through docker's NAT it could not see a LAN device anyway.
+                        const mac = inContainer() ? null : await resolveMac(ip);
                         if (mac) {
                             db.devices.setLabel(userId, mac, label);
                         }

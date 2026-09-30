@@ -93,8 +93,20 @@ export function composeRecreateKeepingVolume(file: string, opts?: { timeoutMs?: 
  * tier runs, and the tier must not depend on Docker Hub being reachable.
  */
 export function readVolumeFile(volume: string, filePath: string): string {
-    const image = process.env['WSSW_IMAGE'] ?? 'ws-scrcpy-web:local';
-    return docker(['run', '--rm', '--entrypoint', 'cat', '-v', `${volume}:/data:ro`, image, filePath], 60_000);
+    return docker(['run', '--rm', '--entrypoint', 'cat', '-v', `${volume}:/data:ro`, appImage(), filePath], 60_000);
+}
+
+/** The image under test: the tier's `WSSW_IMAGE`, else the compose default. */
+export function appImage(): string {
+    return process.env['WSSW_IMAGE'] ?? 'ws-scrcpy-web:local';
+}
+
+/**
+ * `docker <args>` for a spec that runs its own container with flags compose
+ * cannot vary per run (row 20.21's `--user`). Throws on a non-zero exit.
+ */
+export function dockerCli(args: string[], timeoutMs = 60_000): string {
+    return docker(args, timeoutMs);
 }
 
 /** `docker pull`, generously timed: a first pull of the ~200 MB image on a cold runner. */

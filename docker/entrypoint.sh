@@ -48,5 +48,23 @@ if [ "$(id -u)" = '0' ]; then
     exec setpriv --reuid="$APP_UID" --regid="$APP_GID" --init-groups --inh-caps=-all -- "$@"
 fi
 
-# Already non-root (docker run --user). Nothing to drop; just run.
+# Already non-root: `docker run --user` or compose `user:`. Nothing to drop, but
+# the two things the root branch sets up still have to be true, because this
+# path used to just exec and got neither (measured 2026-09-30):
+#   - /data writable by this uid. A fresh named volume is root-owned, so the
+#     server died at boot with exit 1 and nothing naming the cause.
+#   - HOME on the volume. Docker sets HOME=/ for a uid with no passwd entry;
+#     adb then aborted on "Cannot mkdir '//.android'" and no device appeared.
+# Nothing can chown from here, so an unwritable /data stops with the fix named.
+for dir in /data /data/dependencies /data/home /data/logs; do
+    if [ -e "$dir" ] && [ ! -w "$dir" ]; then
+        echo "[entrypoint] $dir is not writable by uid $(id -u):$(id -g)." >&2
+        echo "[entrypoint] Running with --user needs a /data that uid owns. Either chown the volume once:" >&2
+        echo "[entrypoint]   docker run --rm -u 0 -v <volume>:/data --entrypoint chown <image> -R $(id -u):$(id -g) /data" >&2
+        echo "[entrypoint] or drop --user and let the image step down to uid $APP_UID itself." >&2
+        exit 1
+    fi
+done
+mkdir -p /data/dependencies /data/home /data/logs
+export HOME=/data/home
 exec "$@"

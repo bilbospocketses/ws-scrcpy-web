@@ -346,6 +346,31 @@ test.describe('container mode', () => {
         await dismissPromptsFor(page.request);
     });
 
+    // Row 20.20 (item 11 of the container audit). Measured 2026-09-30: in a
+    // bridge-networked container the subnet route proposed docker's own
+    // 172.17.0.0/16, 65,534 hosts and never the user's phones.
+    test('@docker 20.20 the scan dialog asks for the LAN subnet instead of proposing the docker bridge', async ({
+        page,
+    }) => {
+        await page.goto('/');
+        const res = await page.request.get('/api/devices/scan/subnet');
+        expect(res.status()).toBe(200);
+        expect(await res.json()).toEqual({ container: true });
+
+        await page.locator('#discovery-panel .discovery-scan-btn').click();
+        const scanModal = page.locator('dialog.scan-network-modal');
+        await expect(scanModal).toBeVisible();
+        const note = scanModal.locator('[data-scan-container-note]');
+        await expect(note).toBeVisible();
+        await expect(note).toContainText('network_mode: host');
+        // Nothing proposed as "detected": the only way a subnet reaches the list
+        // here is the user adding it.
+        await expect(scanModal.getByText('detected gateway subnet')).toHaveCount(0);
+        await expect(scanModal.getByText('172.17.')).toHaveCount(0);
+        await scanModal.getByRole('button', { name: 'cancel', exact: true }).click();
+        await expect(scanModal).not.toBeVisible();
+    });
+
     // Rows 20.4 and 20.5 (findings 20.4 and 20.5, fixed 2026-09-04). Last in the file
     // on purpose: if either server-side refusal were missing, its POST would start a
     // real pkexec install or a real uninstall inside the container, and only the tests
