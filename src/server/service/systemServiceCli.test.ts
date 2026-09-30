@@ -8,20 +8,28 @@ import {
     keptWebPort,
     makeProductionCoreDeps,
     parseSystemServiceArgs,
+    parseUnitState,
     runSystemServiceCli,
     systemServiceStatus,
     uninstallSystemService,
+    unitSetupFailure,
 } from './systemServiceCli';
+
+/** `systemctl show` output for a unit that started and is running. */
+const HEALTHY = 'ActiveState=active\nSubState=running\nResult=success\nExecMainCode=0\nExecMainStatus=0\n';
 
 function recordingRunner() {
     const calls: string[][] = [];
     const run: CommandRunner = vi.fn(async (argv: string[]) => {
         calls.push(argv);
-        return { code: 0, stdout: '', stderr: '' };
+        const stdout = argv[1] === 'show' ? HEALTHY : '';
+        return { code: 0, stdout, stderr: '' };
     });
     return { run, calls };
 }
 
+// portOpen answers true, so these installs take the page's path (the port was
+// already held when the unit started) and pass once the settle window is clean.
 const deps = {
     getuid: () => 0,
     appImageSource: '/tmp/.mount_x/usr/bin/WsScrcpyWeb.AppImage',
@@ -30,6 +38,8 @@ const deps = {
     writeFile: vi.fn(),
     lstat: () => ({ uid: 0, gid: 0, mode: 0o755, isSymbolicLink: false }),
     readFile: () => null,
+    portOpen: async () => true,
+    sleep: async () => undefined,
 };
 
 describe('installSystemService', () => {
@@ -246,6 +256,164 @@ describe('installSystemService — D14: root never stages a user-owned tree', ()
         const { run, calls } = recordingRunner();
         await expect(installSystemService({ port: 8000 }, { ...deps, run, lstat })).rejects.toThrow(/not root-owned/);
         expect(calls.some((c) => c.join(' ').includes('enable --now'))).toBe(false);
+    });
+});
+
+// ── item 159: `--install-system-service` exited 0 while the unit never started ──
+
+/**
+ * A host whose unit reports `states[i]` on the i-th `systemctl show` (the last
+ * one repeats), and whose web port reads `portBefore` until `enable --now` and
+ * then `portAfter(showCount)`.
+ */
+function fakeHost(opts: {
+    states: string[];
+    portBefore: boolean;
+    portAfter?: (shows: number) => boolean;
+    enable?: { code: number; stderr: string };
+}) {
+    const calls: string[][] = [];
+    let shows = 0;
+    let enabled = false;
+    const run: CommandRunner = vi.fn(async (argv: string[]) => {
+        calls.push(argv);
+        if (argv[1] === 'enable') {
+            enabled = true;
+            return { code: opts.enable?.code ?? 0, stdout: '', stderr: opts.enable?.stderr ?? '' };
+        }
+        if (argv[1] === 'show') {
+            const s = opts.states[Math.min(shows, opts.states.length - 1)]!;
+            shows++;
+            return { code: 0, stdout: s, stderr: '' };
+        }
+        if (argv[0] === '/usr/bin/journalctl') {
+            return { code: 0, stdout: 'systemd[1]: WsScrcpyWeb.service: Failed at step STDOUT\n', stderr: '' };
+        }
+        return { code: 0, stdout: '', stderr: '' };
+    });
+    const portOpen = vi.fn(async () => (enabled ? (opts.portAfter?.(shows) ?? false) : opts.portBefore));
+    const sleep = vi.fn(async () => undefined);
+    return { run, calls, portOpen, sleep, shows: () => shows };
+}
+
+const unitState = (active: string, sub: string, result: string, code: number, status: number) =>
+    `ActiveState=${active}\nSubState=${sub}\nResult=${result}\nExecMainCode=${code}\nExecMainStatus=${status}\n`;
+/** D9 as measured: systemd could not open the `append:` log, status 209/STDOUT, restarting. */
+const D9 = unitState('activating', 'auto-restart', 'exit-code', 1, 209);
+/** The page's install: the user's own copy still holds the port, so Node exits 1 and systemd retries. */
+const EADDRINUSE = unitState('activating', 'auto-restart', 'exit-code', 1, 1);
+const STARTING = unitState('active', 'running', 'success', 0, 0);
+
+describe('installSystemService — item 159: the unit must actually start', () => {
+    it('headless (port free before): passes once the unit is running AND serves the port', async () => {
+        // Type=simple reads active the instant it forks, so the port is what proves it.
+        const h = fakeHost({ states: [STARTING], portBefore: false, portAfter: (n) => n >= 3 });
+        await installSystemService({ port: 8000 }, { ...deps, ...h });
+        expect(h.shows()).toBe(3);
+        expect(h.portOpen).toHaveBeenCalledWith(8000);
+    });
+
+    it('headless: fails fast on a systemd setup failure (D9, status 209) and shows the journal', async () => {
+        const h = fakeHost({ states: [D9], portBefore: false });
+        await expect(installSystemService({ port: 8000 }, { ...deps, ...h })).rejects.toThrow(
+            /status 209[\s\S]*Failed at step STDOUT/,
+        );
+        expect(h.shows()).toBe(1);
+    });
+
+    it('headless: fails when the unit runs but never serves the port, after the full wait', async () => {
+        const h = fakeHost({ states: [STARTING], portBefore: false, portAfter: () => false });
+        await expect(installSystemService({ port: 8000 }, { ...deps, ...h })).rejects.toThrow(
+            /did not start serving port 8000 within 120 s/,
+        );
+        expect(h.sleep).toHaveBeenCalledTimes(120);
+    });
+
+    it('fails when the unit lands in `failed` (the restart limit), naming the result', async () => {
+        const h = fakeHost({
+            states: [EADDRINUSE, unitState('failed', 'failed', 'start-limit-hit', 1, 1)],
+            portBefore: false,
+        });
+        await expect(installSystemService({ port: 8000 }, { ...deps, ...h })).rejects.toThrow(/start-limit-hit/);
+    });
+
+    it('page install (port held before): a unit retrying on the busy port passes the settle window', async () => {
+        // The user's own copy exits after this returns; the page's poll then waits for the service.
+        const h = fakeHost({ states: [EADDRINUSE], portBefore: true });
+        await installSystemService({ port: 8000 }, { ...deps, ...h });
+        expect(h.shows()).toBe(6);
+        // Before the start only: once the port was held, it proves nothing about the service.
+        expect(h.portOpen).toHaveBeenCalledTimes(1);
+    });
+
+    it('page install: still fails on a setup failure, so the user keeps their running copy', async () => {
+        const h = fakeHost({
+            states: [EADDRINUSE, unitState('activating', 'auto-restart', 'exit-code', 1, 203)],
+            portBefore: true,
+        });
+        await expect(installSystemService({ port: 8000 }, { ...deps, ...h })).rejects.toThrow(/status 203/);
+    });
+
+    it('fails on a non-zero `enable --now`, with its stderr, without polling', async () => {
+        const h = fakeHost({
+            states: [STARTING],
+            portBefore: false,
+            enable: { code: 1, stderr: 'Failed to enable unit: Unit file WsScrcpyWeb.service is masked.' },
+        });
+        await expect(installSystemService({ port: 8000 }, { ...deps, ...h })).rejects.toThrow(/is masked/);
+        expect(h.shows()).toBe(0);
+    });
+
+    it('the CLI exits 1 and puts the reason on stderr, which the page shows (D8)', async () => {
+        const h = fakeHost({ states: [D9], portBefore: false });
+        const err: string[] = [];
+        const code = await runSystemServiceCli(
+            { op: 'install', port: 8000 },
+            {
+                ...deps,
+                ...h,
+                removeFile: vi.fn(),
+                existsCheck: () => false,
+                defaultPort: () => 8000,
+                log: () => undefined,
+                logError: (s: string) => err.push(s),
+            },
+        );
+        expect(code).toBe(1);
+        expect(err.join('\n')).toMatch(/status 209/);
+        expect(err.join('\n')).toMatch(/systemctl status WsScrcpyWeb\.service/);
+    });
+});
+
+describe('parseUnitState / unitSetupFailure', () => {
+    it('parses `systemctl show` key=value output', () => {
+        expect(parseUnitState(D9)).toEqual({
+            activeState: 'activating',
+            subState: 'auto-restart',
+            result: 'exit-code',
+            execMainCode: 1,
+            execMainStatus: 209,
+        });
+    });
+    it('treats unreadable output as unknown, not as a failure', () => {
+        const s = parseUnitState('');
+        expect(unitSetupFailure(s)).toBeNull();
+    });
+    it('a running unit reads status 0 and is no failure; our own exit codes are not setup codes', () => {
+        expect(unitSetupFailure(parseUnitState(STARTING))).toBeNull();
+        expect(unitSetupFailure(parseUnitState(EADDRINUSE))).toBeNull();
+    });
+    it('systemd setup statuses 200-245 are failures, whatever the unit is doing now', () => {
+        for (const status of [200, 203, 209, 245]) {
+            expect(
+                unitSetupFailure(parseUnitState(unitState('activating', 'auto-restart', 'exit-code', 1, status))),
+            ).toMatch(new RegExp(`status ${status}`));
+        }
+        expect(
+            unitSetupFailure(parseUnitState(unitState('activating', 'auto-restart', 'exit-code', 1, 246))),
+        ).toBeNull();
+        // Killed by signal 9 is code 2 (CLD_KILLED), not an exit status.
+        expect(unitSetupFailure(parseUnitState(unitState('activating', 'auto-restart', 'signal', 2, 209)))).toBeNull();
     });
 });
 
