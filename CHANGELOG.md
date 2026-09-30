@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.150] - 2026-09-30
+
 ### Fixed
 - **Installing the Linux system service no longer reports success for a service that never starts** (item 159). `--install-system-service` exited 0 as soon as systemd accepted the start, so D9's unit, which failed every start before the app ran, installed "successfully". The install now watches the unit. If systemd cannot start the process, or the unit gives up, it exits 1 with the reason and the last lines of the unit's journal and `service.log`, and the page shows that instead of switching over. From a terminal it also waits for the service to answer on its port, for up to 2 minutes. From the page, the app's own copy is still using the port, so the page keeps waiting for the service as before. qa-harness row 4.2-system-cli caught D9 only because it never trusted the exit code.
 
