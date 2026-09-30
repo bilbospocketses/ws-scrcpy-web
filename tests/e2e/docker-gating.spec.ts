@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { dismissPromptsFor, openSettingsTab, settingsRow } from './support/auth';
 import { githubCoreQuota, partitionDependencyStates } from './support/githubQuota';
-import { BOOT_INSTALLED_DEPENDENCIES } from './support/privateServer';
+import { CONTAINER_BOOT_INSTALLED_DEPENDENCIES } from './support/privateServer';
 
 /**
  * The container tier (SP4 E4).
@@ -201,7 +201,7 @@ test.describe('container mode', () => {
             .poll(
                 async () =>
                     (await deps())
-                        .filter((d) => (BOOT_INSTALLED_DEPENDENCIES as readonly string[]).includes(d.name))
+                        .filter((d) => (CONTAINER_BOOT_INSTALLED_DEPENDENCIES as readonly string[]).includes(d.name))
                         .every((d) => d.installedVersion !== null),
                 {
                     timeout: 180_000,
@@ -210,7 +210,9 @@ test.describe('container mode', () => {
             )
             .toBe(true);
         const final = await deps();
-        expect(final.map((d) => d.name).sort()).toEqual(['adb', 'mkcert', 'nodejs', 'scrcpy-server']);
+        // No nodejs: the image runs its own Node, so the container never lists,
+        // downloads or offers to update one (row 20.9, 2026-09-30).
+        expect(final.map((d) => d.name).sort()).toEqual(['adb', 'mkcert', 'scrcpy-server']);
         // mkcert is fetched on first use, so nothing installs it here; if
         // api.github.com refused its version lookup, the server reports it in
         // Error with that refusal as its message. That is the network's state,

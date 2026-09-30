@@ -248,8 +248,26 @@ describe('ensureMkcertInstalled (M2 -- fetched on first use)', () => {
         expect(getDependencyManager).toHaveBeenCalledWith({
             dependenciesPath: '/fake/deps',
             restartMarkerPath: '/fake/deps/.restart',
+            inContainer: false,
         });
         expect(update).toHaveBeenCalledWith('mkcert');
+    });
+
+    it('asks for the container-mode manager in a container, matching what index.ts asked for at boot', async () => {
+        // The singleton THROWS when a second caller's options differ from the
+        // first, so this call must carry the same inContainer index.ts passes.
+        const missingExe = path.join(os.tmpdir(), 'ws-mkcert-missing-ctr-', 'mkcert.exe');
+        vi.mocked(Config.getInstance).mockReturnValue({
+            dependenciesPath: '/fake/deps',
+            restartMarkerPath: '/fake/deps/.restart',
+            dockerMode: true,
+        } as never);
+        const update = vi.fn().mockResolvedValue({ success: true, newVersion: 'v0.1.0', requiresRestart: false });
+        vi.mocked(getDependencyManager).mockReturnValue({ update } as never);
+
+        await expect(ensureMkcertInstalled(missingExe)).resolves.toBeUndefined();
+
+        expect(getDependencyManager).toHaveBeenCalledWith(expect.objectContaining({ inContainer: true }));
     });
 
     it('throws (surfacing the real reason) when the on-demand install fails -- never a silent spawn of a missing binary', async () => {

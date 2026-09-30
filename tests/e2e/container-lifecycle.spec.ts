@@ -9,7 +9,7 @@ import {
     dockerStop,
     readVolumeFile,
 } from './support/dockerStack';
-import { BOOT_INSTALLED_DEPENDENCIES } from './support/privateServer';
+import { CONTAINER_BOOT_INSTALLED_DEPENDENCIES } from './support/privateServer';
 
 /**
  * Smoke rows 20.6, 20.12 and 20.11 — the container's lifecycle from the
@@ -67,7 +67,9 @@ async function waitForHydrate(baseURL: string, timeoutMs: number): Promise<Depen
         let deps: DependencyInfo[] = [];
         while (Date.now() < deadline) {
             deps = (await (await ctx.get('/api/dependencies')).json()) as DependencyInfo[];
-            const boot = deps.filter((d) => (BOOT_INSTALLED_DEPENDENCIES as readonly string[]).includes(d.name));
+            const boot = deps.filter((d) =>
+                (CONTAINER_BOOT_INSTALLED_DEPENDENCIES as readonly string[]).includes(d.name),
+            );
             if (boot.length > 0 && boot.every((d) => d.installedVersion !== null)) return deps;
             await new Promise((r) => setTimeout(r, 1_000));
         }

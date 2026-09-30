@@ -99,9 +99,12 @@ export function ensureCaRootDirSync(caRoot: string): void {
 export async function ensureMkcertInstalled(exe: string): Promise<void> {
     if (fs.existsSync(exe)) return;
     const config = Config.getInstance();
+    // The same three options index.ts passes: the singleton refuses a second
+    // caller whose configuration differs from the first.
     const depManager = getDependencyManager({
         dependenciesPath: config.dependenciesPath,
         restartMarkerPath: config.restartMarkerPath,
+        inContainer: config.dockerMode === true,
     });
     const result = await depManager.update('mkcert');
     if (!result.success) {

@@ -183,6 +183,13 @@ export async function waitForServer(handle: ServerHandle, baseURL: string, timeo
 export const BOOT_INSTALLED_DEPENDENCIES = ['nodejs', 'adb', 'scrcpy-server'] as const;
 
 /**
+ * The same, for the container image. Node.js is not in it: the image runs its
+ * own interpreter, so the server built with `inContainer` does not manage Node
+ * at all (the `hostOnly` flag in DependencyDefinitions.ts).
+ */
+export const CONTAINER_BOOT_INSTALLED_DEPENDENCIES = ['adb', 'scrcpy-server'] as const;
+
+/**
  * Wait until every BOOT-INSTALLED dependency reports an installed version.
  *
  * **Budget it against the caller's `test.setTimeout`, not against nothing.**

@@ -38,6 +38,14 @@ describe('DependencyManager', () => {
         const scrcpy = mgr.getByName('scrcpy-server');
         expect(scrcpy!.requiresRestart).toBe(false);
     });
+
+    it('in a container, Node.js is not managed at all: not listed, not installable', async () => {
+        const mgr = new DependencyManager('/tmp/test-deps', { inContainer: true });
+        expect((await mgr.getAll()).map((d) => d.name).sort()).toEqual(['adb', 'mkcert', 'scrcpy-server']);
+        expect(mgr.getByName('nodejs')).toBeUndefined();
+        // The same manager on a host keeps it, so the list above is the container's doing.
+        expect(new DependencyManager('/tmp/test-deps').getByName('nodejs')).toBeDefined();
+    });
 });
 
 describe('DependencyManager.getAll() canUpdate', () => {
@@ -444,6 +452,11 @@ describe('getDependencyManager (composition-root singleton)', () => {
         // be refused, not silently handed a manager configured for someone
         // else. Seeded by THIS test's own calls above, not by a neighbour's.
         expect(() => getDependencyManager({ dependenciesPath: '/tmp/test-deps-singleton-DIFFERENT' })).toThrow();
+        // So must a caller that disagrees about container mode: it would be
+        // handed a manager whose dependency set is not the one it asked for.
+        expect(() => getDependencyManager({ ...opts, inContainer: true })).toThrow();
+        // An explicit false is the same configuration as an omitted flag.
+        expect(getDependencyManager({ ...opts, inContainer: false })).toBe(a);
     });
 });
 
