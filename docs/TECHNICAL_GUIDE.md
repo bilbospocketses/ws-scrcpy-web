@@ -2881,7 +2881,8 @@ has to be a security boundary. Each item is asserted by `docker-gating.spec.ts`
   reverse proxy in front of the container is the only supported HTTPS (§26.6). Beyond
   the refused writes, `Config.buildServers` binds no HTTPS listener in a container
   even when a certificate is on the volume (one carried over from a host install, or
-  placed by hand); it logs a warning naming the certificate and serves HTTP only (D8).
+  placed by hand); it logs a warning naming the certificate and serves HTTP only (D8,
+  row 20.22).
 
 ### 26.6 Networking
 
@@ -2908,9 +2909,10 @@ has to be a security boundary. Each item is asserted by `docker-gating.spec.ts`
 
 - **`build-and-test` builds the image on every PR** (`docker buildx build --load`,
   no push) and runs the `@docker` tier against it (`npm run test:e2e:docker`, the
-  same specs as the fast tier plus the container rows). The seven `@docker-host` rows
+  same specs as the fast tier plus the container rows). The eight `@docker-host` rows
   drive the docker CLI on the host — compose stacks of their own, a `docker stop`, a
-  `docker pull`, a `docker run --user` — and run in CI only; qa-harness's runner has no docker CLI by design
+  `docker pull`, a `docker run --user`, a container recreated over a planted certificate
+  — and run in CI only; qa-harness's runner has no docker CLI by design
   (`tests/e2e/README.md`).
 - **Smoke module 20** is the container path's manual checklist; the coverage register
   carries each row's status.
@@ -2933,6 +2935,7 @@ has to be a security boundary. Each item is asserted by `docker-gating.spec.ts`
 | `tests/docker/*.yml`, `tests/e2e/support/dockerStack.ts` | Spec-owned stacks and the docker helpers for the `@docker-host` rows |
 | `tests/e2e/docker-gating.spec.ts` | Rows 20.1, 20.2, 20.4, 20.5, 20.7, 20.9 and 20.17-20.20: the container's gated UI, its 409s and first-boot hydration |
 | `tests/e2e/container-user.spec.ts` | Row 20.21: `docker run --user`, refused and chowned |
+| `tests/e2e/container-https.spec.ts` | Row 20.22: a certificate on `/data` binds no HTTPS listener in a container (D8) |
 | `docs/specs/2026-06-09-sp4-docker-image-design.md` | The design, with §16's amendments (trixie, registry, arm64, adb's URL) |
 
 ---
