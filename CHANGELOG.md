@@ -32,6 +32,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **The image now runs as another user** (`docker run --user`, compose `user:`; container audit item 12, row 20.21). Measured before the fix: on a fresh volume the server died at boot with exit 1 and no cause named, and on a volume that uid owned it started with `HOME=/`, where adb aborted on every call (`Cannot mkdir '//.android'`) and no device could connect. The entrypoint now checks that `/data` is writable by that uid, and if it is not, stops with the one-line `chown` that fixes it (or: drop `--user`); otherwise it puts `HOME` on the volume as it already did for the default uid. The README covers both, and the container's HTTPS story.
 
+## [0.1.30-beta.158] - 2026-09-30
+
+### Changed
+- **The container no longer downloads its own copy of Node.js.** The image runs its own Node, the one it was built with, and the copy the first boot fetched onto the volume (about 50 MB) was never run: the Linux archive unpacks to `node/bin/node` and `start.sh` looks for `node/node`. In a container, the server now leaves Node.js out of its dependency set entirely (a `hostOnly` flag on the definition), so it is not listed, checked, downloaded or offered as an update. Host installs are unchanged. A volume that already holds the copy keeps it; nothing uses it, and deleting `/data/dependencies/node` frees the space.
+
 ## [0.1.30-beta.157] - 2026-09-30
 
 ### Changed
