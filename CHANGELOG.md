@@ -17,20 +17,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.1.30-beta.159] - 2026-09-30
-
-### Fixed
-- **The Linux tray's stand-down line now matches smoke row 14.9.** A system-scope service logged `installMode=Some("system-service")`, which is Rust's debug form of an optional value, where the row (and qa-harness) read `installMode="system-service"`. The line is now built by `tray_stand_down_line` in `common::tray_policy`, with a test on every platform, and reads `installMode=none` when no mode is set. Behaviour is unchanged: a system-scope service still spawns no tray. Reported by qa-harness.
-
-## [0.1.30-beta.158] - 2026-09-30
-
-### Changed
-- **The container no longer downloads its own copy of Node.js.** The image runs its own Node, the one it was built with, and the copy the first boot fetched onto the volume (about 50 MB) was never run: the Linux archive unpacks to `node/bin/node` and `start.sh` looks for `node/node`. In a container, the server now leaves Node.js out of its dependency set entirely (a `hostOnly` flag on the definition), so it is not listed, checked, downloaded or offered as an update. Host installs are unchanged. A volume that already holds the copy keeps it; nothing uses it, and deleting `/data/dependencies/node` frees the space.
 ### Changed
 - **Scan Network in a container asks for your LAN subnet** (container audit item 11, row 20.20). On Docker's default bridge network the container sees only Docker's own subnet, and the dialog used to propose it as the "detected gateway subnet": `172.17.0.0/16`, 65,534 hosts, none of them your phones. In a container the server now says so instead (`GET /api/devices/scan/subnet` answers `{ "container": true }`), and the dialog asks you to add your LAN subnet, noting that the port-5555 probe reaches the LAN through Docker while mDNS discovery needs `network_mode: host`. The MAC lookup is skipped there too: the image has no `ip`, and a LAN device's MAC is not visible through Docker's NAT.
 
 ### Fixed
 - **The image now runs as another user** (`docker run --user`, compose `user:`; container audit item 12, row 20.21). Measured before the fix: on a fresh volume the server died at boot with exit 1 and no cause named, and on a volume that uid owned it started with `HOME=/`, where adb aborted on every call (`Cannot mkdir '//.android'`) and no device could connect. The entrypoint now checks that `/data` is writable by that uid, and if it is not, stops with the one-line `chown` that fixes it (or: drop `--user`); otherwise it puts `HOME` on the volume as it already did for the default uid. The README covers both, and the container's HTTPS story.
+
+## [0.1.30-beta.159] - 2026-09-30
+
+### Fixed
+- **The Linux tray's stand-down line now matches smoke row 14.9.** A system-scope service logged `installMode=Some("system-service")`, which is Rust's debug form of an optional value, where the row (and qa-harness) read `installMode="system-service"`. The line is now built by `tray_stand_down_line` in `common::tray_policy`, with a test on every platform, and reads `installMode=none` when no mode is set. Behaviour is unchanged: a system-scope service still spawns no tray. Reported by qa-harness.
 
 ## [0.1.30-beta.158] - 2026-09-30
 
