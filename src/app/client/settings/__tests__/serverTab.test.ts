@@ -1,11 +1,14 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { ResetConfirmModal } from '../../ResetConfirmModal';
+import { settingsService } from '../../SettingsService';
 import { StagedSettingsStore } from '../StagedSettingsStore';
 import { applyServerContainerMode, applyServerServiceStatus, buildServerTab, refreshServer } from '../tabs/ServerTab';
 
 afterEach(() => {
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
 });
 
 const ctx = { role: 'admin' as const, authEnabled: false, reload: () => undefined };
@@ -55,6 +58,79 @@ describe('ServerTab: the install-lifecycle rows are a DECISION, never the defaul
         applyServerServiceStatus(el, { supported: true, platform: 'linux', status: 'not-installed' });
         expect(el.dataset['appRowsDecided']).toBe('service-status');
         for (const label of APP_ROWS) expect(rowOf(el, label).style.display).toBe('');
+    });
+});
+
+describe('ServerTab: container decisions for port, HTTPS and reset (row 20.19)', () => {
+    const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+
+    it('container mode hides the web-port row and its status line', () => {
+        const el = buildServerTab(ctx, new StagedSettingsStore());
+        applyServerContainerMode(el);
+        expect(rowOf(el, 'web port').style.display).toBe('none');
+        expect(webPortStatusOf(el).hidden).toBe(true);
+    });
+
+    it('the desktop path leaves the web-port row visible', () => {
+        const el = buildServerTab(ctx, new StagedSettingsStore());
+        vi.stubGlobal('fetch', vi.fn().mockReturnValue(new Promise(() => undefined)));
+        applyServerServiceStatus(el, { supported: true, platform: 'linux', status: 'not-installed' });
+        expect(rowOf(el, 'web port').style.display).toBe('');
+    });
+
+    it('container mode replaces Local HTTPS with a note naming the reverse proxy, and fetches nothing', () => {
+        const fetchMock = vi.fn();
+        vi.stubGlobal('fetch', fetchMock);
+        const el = buildServerTab(ctx, new StagedSettingsStore());
+        applyServerContainerMode(el);
+        const note = el.querySelector('[data-local-https-container-note]');
+        expect(note).not.toBeNull();
+        expect(note?.textContent).toMatch(/reverse proxy/);
+        expect(el.querySelector('[data-tls-subject]')).toBeNull();
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('a later service status does not rebuild Local HTTPS over the container note', () => {
+        const fetchMock = vi.fn().mockReturnValue(new Promise(() => undefined));
+        vi.stubGlobal('fetch', fetchMock);
+        const el = buildServerTab(ctx, new StagedSettingsStore());
+        applyServerContainerMode(el);
+        applyServerServiceStatus(el, { supported: false, platform: 'linux', docker: true });
+        expect(el.querySelector('[data-local-https-container-note]')).not.toBeNull();
+        expect(fetchMock).not.toHaveBeenCalledWith('/api/tls/state', expect.anything());
+    });
+
+    it('"reset all my settings" in a container clears user settings but never PATCHes firstRunComplete', async () => {
+        const resetSpy = vi.spyOn(settingsService, 'reset').mockResolvedValue(undefined);
+        vi.spyOn(ResetConfirmModal, 'confirm').mockResolvedValue(true);
+        const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({}) });
+        vi.stubGlobal('fetch', fetchMock);
+        const reload = vi.fn();
+        const el = buildServerTab({ ...ctx, reload }, new StagedSettingsStore());
+        applyServerContainerMode(el);
+
+        const button = [...el.querySelectorAll('button')].find((b) => b.textContent === 'reset');
+        button?.click();
+        await flush();
+
+        expect(resetSpy).toHaveBeenCalledTimes(1);
+        expect(fetchMock.mock.calls.find(([url]) => url === '/api/config')).toBeUndefined();
+        expect(reload).toHaveBeenCalledTimes(1);
+    });
+
+    it('"reset all my settings" on the desktop still PATCHes firstRunComplete', async () => {
+        vi.spyOn(settingsService, 'reset').mockResolvedValue(undefined);
+        vi.spyOn(ResetConfirmModal, 'confirm').mockResolvedValue(true);
+        const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({}) });
+        vi.stubGlobal('fetch', fetchMock);
+        const el = buildServerTab(ctx, new StagedSettingsStore());
+
+        const button = [...el.querySelectorAll('button')].find((b) => b.textContent === 'reset');
+        button?.click();
+        await flush();
+
+        const configCall = fetchMock.mock.calls.find(([url]) => url === '/api/config');
+        expect(JSON.parse(configCall?.[1].body as string)).toEqual({ firstRunComplete: false });
     });
 });
 

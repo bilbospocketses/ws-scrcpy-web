@@ -1,4 +1,4 @@
-import { spawn } from 'child_process';
+import { type ChildProcess, spawn } from 'child_process';
 import { rmSync, statSync } from 'fs';
 import { Logger } from './Logger';
 import { resolveSystemTool } from './service/systemTools';
@@ -62,7 +62,7 @@ export function openBrowser(url: string): void {
                 stdio: 'ignore',
                 windowsHide: true,
             });
-            child.unref();
+            release(child, url);
             log.info(`opened ${url} via ${WINDOWS_CMD} start`);
             return;
         }
@@ -72,14 +72,14 @@ export function openBrowser(url: string): void {
                 detached: true,
                 stdio: 'ignore',
             });
-            child.unref();
+            release(child, url);
             log.info(`opened ${url} via ${xdgOpen}`);
             return;
         }
         if (process.platform === 'darwin') {
             const macOpen = resolveSystemTool('open');
             const child = spawn(macOpen, [url], { detached: true, stdio: 'ignore' });
-            child.unref();
+            release(child, url);
             log.info(`opened ${url} via ${macOpen}`);
             return;
         }
@@ -87,6 +87,21 @@ export function openBrowser(url: string): void {
     } catch (err) {
         log.info(`browser open failed (best-effort): ${(err as Error).message}`);
     }
+}
+
+/**
+ * Detach from a spawned opener. The `'error'` listener is what makes the
+ * function's "best-effort" promise true: a missing binary (ENOENT) is not thrown
+ * by `spawn` but EMITTED on the child afterwards, outside the try/catch above,
+ * and an unhandled `'error'` event crashes the server. That is the path a
+ * container took when a reset cleared `firstRunComplete` and the next start
+ * tried `xdg-open` in an image that has none.
+ */
+function release(child: ChildProcess, url: string): void {
+    child.on('error', (err) => {
+        log.info(`browser open failed for ${url} (best-effort): ${err.message}`);
+    });
+    child.unref();
 }
 
 /**
@@ -116,6 +131,10 @@ export function openBrowser(url: string): void {
  * (`suppressBrowser` ← WS_SCRCPY_NO_BROWSER=1 — the user already has a
  * reconnecting tab). Suppression overrides every open signal, so a relaunch
  * that happens to also carry the fresh-launch flag still won't double-pop.
+ *
+ * NEVER opens in a container (`inContainer` ← Config.dockerMode): there is no
+ * desktop and no browser in the image, and whoever started it reaches the page
+ * through docker's published port.
  */
 export function shouldAutoOpenBrowser(opts: {
     firstRunComplete: boolean | undefined;
@@ -123,8 +142,9 @@ export function shouldAutoOpenBrowser(opts: {
     suppressBrowser: boolean;
     launcherFreshLaunch: boolean;
     launcherManaged: boolean;
+    inContainer: boolean;
 }): boolean {
-    if (opts.isServiceMode || opts.suppressBrowser) {
+    if (opts.inContainer || opts.isServiceMode || opts.suppressBrowser) {
         return false;
     }
     if (opts.launcherManaged) {

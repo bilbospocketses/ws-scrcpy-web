@@ -1383,6 +1383,23 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
 }
 
 /**
+ * What a container shows in place of the Local HTTPS panel. The copy names the
+ * one supported way (a reverse proxy in front of the container), matching the
+ * server's refusal of every `/api/tls/*` write in a container.
+ */
+export function buildLocalHttpsContainerNote(): HTMLElement {
+    const { section, body } = buildSection('Local HTTPS');
+    section.setAttribute('data-local-https-container-note', '');
+    const note = document.createElement('p');
+    note.className = 'settings-status';
+    note.style.gridColumn = '1 / -1';
+    note.textContent =
+        "local HTTPS doesn't apply in a container. serve HTTPS from a reverse proxy in front of the container — that is the only supported way to add HTTPS to the image.";
+    body.appendChild(note);
+    return section;
+}
+
+/**
  * Build the "reset all my settings" trigger button. When clicked, opens
  * ResetConfirmModal (a top-layer <dialog>). On confirmation, calls
  * settingsService.reset() (POST /api/settings/reset — clears all user_settings,
@@ -1395,8 +1412,13 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
  *
  * An ACTION, deliberately not staged: it destroys data the moment it is
  * confirmed, so there is nothing for a later Save to apply.
+ *
+ * `sendFirstRunReset` is asked at click time, not build time, because container
+ * mode is only known after the tab is built. It answers false in a container:
+ * there is no first-run to go back to (the image is the install, and the server
+ * refuses the field), so the per-user reset is sent alone.
  */
-export function buildResetControl(opts: { reload: () => void }): {
+export function buildResetControl(opts: { reload: () => void; sendFirstRunReset?: () => boolean }): {
     button: HTMLButtonElement;
 } {
     const button = document.createElement('button');
@@ -1412,13 +1434,16 @@ export function buildResetControl(opts: { reload: () => void }): {
             // device_settings via settingsService.reset(); and firstRunComplete
             // → /api/config (boot-trio field, re-triggers first-run on reload).
             // Both fire-and-forget; the page reload re-reads both endpoints.
+            const sendFirstRunReset = opts.sendFirstRunReset?.() ?? true;
             await Promise.all([
                 settingsService.reset().catch(() => undefined),
-                fetch('/api/config', {
-                    method: 'PATCH',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(resetPromptsPayload()),
-                }).catch(() => undefined),
+                sendFirstRunReset
+                    ? fetch('/api/config', {
+                          method: 'PATCH',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify(resetPromptsPayload()),
+                      }).catch(() => undefined)
+                    : undefined,
             ]);
             opts.reload();
         })();
@@ -1608,6 +1633,7 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
     // row was never built (role-gated out), and every consumer below guards on
     // that exactly as the old `if (this.x)` checks did.
     let webPortInput: HTMLInputElement | null = null;
+    let webPortRow: HTMLElement | null = null;
     let webPortStatus: HTMLElement | null = null;
     let stopServerButton: HTMLButtonElement | null = null;
     let stopServerNote: HTMLElement | null = null;
@@ -1621,13 +1647,16 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
     // (see its call below) -- platform isn't known synchronously at tab-build
     // time, same category as docker/adminReachable per TabContext's own doc.
     let localHttpsBuilt = false;
+    // Set by applyContainerMode. Read at click time by the reset control, which
+    // is built before container mode is known.
+    let containerMode = false;
 
     // 1. reset all my settings — user-level, always visible. Opens
     //    ResetConfirmModal, then clears all user settings (theme, device
     //    names, per-device stream/audio prefs, icon size, scan subnets,
     //    dismissed prompts) and reloads so first-run re-triggers and all
-    //    prefs are read fresh.
-    const reset = buildResetControl({ reload: () => ctx.reload() });
+    //    prefs are read fresh. In a container only the per-user half is sent.
+    const reset = buildResetControl({ reload: () => ctx.reload(), sendFirstRunReset: () => !containerMode });
     body.appendChild(buildRow('reset all my settings', reset.button));
 
     // 1b. change password — user-level, only shown when auth is enabled
@@ -1827,7 +1856,8 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
         // fill-in from being reported as a change the user never made.
         store.register({ id: WEB_PORT_ID, label: WEB_PORT_LABEL, initial: null });
 
-        body.appendChild(buildRow('web port', input));
+        webPortRow = buildRow('web port', input);
+        body.appendChild(webPortRow);
 
         const status = document.createElement('p');
         status.className = 'settings-status';
@@ -1969,9 +1999,25 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
      * (the image is Linux by construction) with `docker: true`, so removing its
      * container check would reveal the rows, and the container spec would see it.
      * "stop server & exit" is left alone: it is correct in a container (row 20.6).
+     *
+     * Three more container decisions live here (row 20.19):
+     * - the web-port row is hidden: the port inside the image is always 8000,
+     *   docker's port mapping picks the one users reach, and the server refuses
+     *   the field;
+     * - Local HTTPS is replaced by a note: a reverse proxy in front of the
+     *   container is the only supported way to serve HTTPS from the image;
+     * - "reset all my settings" stops sending the first-run reset (see
+     *   buildResetControl).
      */
     function applyContainerMode(): void {
+        containerMode = true;
         applyAppRows(appSectionButtonsState({ platform: 'linux', docker: true }), 'container');
+        if (webPortRow) webPortRow.style.display = 'none';
+        if (webPortStatus) webPortStatus.hidden = true;
+        if (localHttpsContainer && !localHttpsBuilt) {
+            localHttpsBuilt = true;
+            localHttpsContainer.replaceChildren(buildLocalHttpsContainerNote());
+        }
     }
 
     /**

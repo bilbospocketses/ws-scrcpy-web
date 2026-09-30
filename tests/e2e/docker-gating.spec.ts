@@ -260,6 +260,85 @@ test.describe('container mode', () => {
         expect(after.runtime.firstRunComplete).toBe(true);
     });
 
+    // Row 20.19: the page's container decisions. Each one is asserted against a
+    // control that proves the thing it looks for would be there on a host: the
+    // update pill's container is in the DOM (hidden) whenever it is mounted, the
+    // web-port row is still BUILT, and the Local HTTPS slot is filled with a note
+    // rather than left empty.
+    test('@docker 20.19 no update pill, no web-port row, Local HTTPS names the reverse proxy', async ({ page }) => {
+        const updatePolls: string[] = [];
+        page.on('request', (req) => {
+            if (new URL(req.url()).pathname === '/api/updates/status') updatePolls.push(req.url());
+        });
+        const configRead = page.waitForResponse((res) => new URL(res.url()).pathname === '/api/config');
+        await page.goto('/');
+        await configRead;
+        await expect(page.getByRole('button', { name: 'Open settings' })).toBeEnabled();
+
+        // Never mounted, not merely hidden: the pill's container sits in the DOM
+        // with display:none whenever it is mounted, so a count separates the two.
+        await expect(page.locator('.top-bar-indicators')).toHaveCount(1);
+        await expect(page.locator('.update-button-container')).toHaveCount(0);
+
+        await page.getByRole('button', { name: 'Open settings' }).click();
+        const settings = page.locator('dialog.settings-modal');
+        await expect(settings).toBeVisible();
+        const server = await openSettingsTab(settings, 'Server');
+        // The container decision has run (the same attribute 20.4 / 20.5 wait on).
+        await expect(server).toHaveAttribute('data-app-rows-decided', 'container');
+
+        const webPort = settingsRow(server, 'web port');
+        await expect(webPort, 'the row is built, so hiding it is a decision').toHaveCount(1);
+        await expect(webPort.locator('.settings-label')).not.toBeVisible();
+        await expect(webPort.locator('input[type="number"]')).not.toBeVisible();
+
+        const note = server.locator('[data-local-https-container-note]');
+        await expect(note).toBeVisible();
+        await expect(note).toContainText('reverse proxy');
+        await expect(server.locator('[data-tls-subject]')).toHaveCount(0);
+
+        // Checked last, after the modal work gave any stray poll time to fire.
+        expect(updatePolls, 'no /api/updates/status poll from the page').toEqual([]);
+    });
+
+    test('@docker 20.19 "reset all my settings" never asks to reset first run', async ({ page }) => {
+        await page.goto('/');
+        await page.getByRole('button', { name: 'Open settings' }).click();
+        const settings = page.locator('dialog.settings-modal');
+        await expect(settings).toBeVisible();
+        const server = await openSettingsTab(settings, 'Server');
+        await expect(server).toHaveAttribute('data-app-rows-decided', 'container');
+
+        const configWrites: string[] = [];
+        page.on('request', (req) => {
+            if (req.method() === 'PATCH' && new URL(req.url()).pathname === '/api/config') {
+                configWrites.push(req.postData() ?? '');
+            }
+        });
+
+        // The per-user half still runs: the reset POST is the positive control
+        // that the confirm went through and the click did something. The reload
+        // comes after BOTH requests have settled, so once it has happened any
+        // PATCH the reset was going to send has been seen.
+        const userReset = page.waitForRequest(
+            (req) => req.method() === 'POST' && new URL(req.url()).pathname === '/api/settings/reset',
+        );
+        const reloaded = page.waitForEvent('framenavigated', (frame) => frame === page.mainFrame());
+        await settingsRow(server, 'reset all my settings').getByRole('button', { name: 'reset' }).click();
+        await page.getByRole('button', { name: 'confirm reset' }).click();
+        await userReset;
+        await reloaded;
+        await page.waitForLoadState('load');
+
+        expect(configWrites, 'no PATCH /api/config from the reset').toEqual([]);
+        const config = (await (await page.request.get('/api/config')).json()) as {
+            runtime: { docker?: boolean; firstRunComplete: boolean };
+        };
+        expect(config.runtime.docker).toBe(true);
+        expect(config.runtime.firstRunComplete).toBe(true);
+        await expect(page.locator('dialog.welcome-modal')).toHaveCount(0);
+    });
+
     // Rows 20.4 and 20.5 (findings 20.4 and 20.5, fixed 2026-09-04). Last in the file
     // on purpose: if either server-side refusal were missing, its POST would start a
     // real pkexec install or a real uninstall inside the container, and only the tests

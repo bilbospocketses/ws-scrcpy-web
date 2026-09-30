@@ -9,6 +9,7 @@ import type { ServiceStatusResponse } from '../common/ServiceEvents';
 import { AdminScopeBanner } from './client/AdminScopeBanner';
 import { authClient, type Role } from './client/AuthClient';
 import { shouldShowBookmark } from './client/bookmarkGate';
+import { mountsUpdateButton, offersSystemWideUpdate, showsWelcomeWizard } from './client/containerGate';
 import { DependencyAlertCard } from './client/DependencyAlertCard';
 import { startEmbedRequestWatch, stopEmbedRequestWatch } from './client/EmbedRequestPrompt';
 import { FirstRunBanner } from './client/FirstRunBanner';
@@ -141,7 +142,7 @@ function maybeShowWelcomeModal(): void {
                 return;
             }
 
-            if (!config.firstRunComplete) {
+            if (showsWelcomeWizard({ docker: runtime.docker, firstRunComplete: config.firstRunComplete })) {
                 new WelcomeModal({
                     webPort: runtime.webPort,
                     portWasAutoShifted: runtime.portWasAutoShifted,
@@ -216,7 +217,7 @@ function maybeShowFirstRunModal(): void {
             if (status != null && status.platform === 'linux') {
                 // System-wide update offer (P3c-2): a newer home AppImage is running
                 // over an older /opt copy → offer to update the system-wide install.
-                if (status.optUpdateAvailable === true) {
+                if (offersSystemWideUpdate(status)) {
                     showStatusBanner('update the system-wide install?', 'update', () => {
                         void fetch('/api/service/install-system-wide', { method: 'POST' })
                             .then((r) => {
@@ -370,7 +371,6 @@ window.onload = async (): Promise<void> => {
     // `.top-bar-indicators` in home.css.
     const topBarIndicators = document.createElement('div');
     topBarIndicators.className = 'top-bar-indicators';
-    topBarIndicators.appendChild(createUpdateButton());
     document.body.appendChild(topBarIndicators);
 
     const pageContainer = document.createElement('div');
@@ -398,6 +398,14 @@ window.onload = async (): Promise<void> => {
     const adminScopeBanner = new AdminScopeBanner();
     pageContainer.appendChild(adminScopeBanner.getElement());
     adminScopeBanner.start();
+
+    // The update pill waits for the runtime envelope: a container has no in-app
+    // updater, so the pill is never mounted there (and never starts its 30 s
+    // /api/updates/status poll). Prepended, so it stays left of the dependency
+    // badge whichever of the two resolves first.
+    void runtimeFetch.then((runtime) => {
+        if (mountsUpdateButton(runtime)) topBarIndicators.prepend(createUpdateButton());
+    });
 
     void runtimeFetch.then(async (runtime) => {
         const banner = await FirstRunBanner.create(runtime ?? undefined);
