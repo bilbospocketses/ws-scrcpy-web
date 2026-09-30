@@ -279,11 +279,14 @@ test.describe('container mode', () => {
         // because the block never built.
         await expect(server.getByRole('button', { name: 'stop server & exit' })).toBeVisible();
 
-        // Both rows exist and are not shown. In a container nothing ever reveals
-        // them: `applyServiceStatus` runs only after `refreshService()`, which
-        // container mode skips, so they keep their initial `display: none`
-        // (`appSectionButtonsState` would say the same if it were reached). This is
-        // the user-facing outcome; the refusals below are the guard.
+        // The rows are HIDDEN BY A DECISION, not by default. They are built hidden,
+        // so "not visible" alone cannot tell the two apart; `data-app-rows-decided`
+        // can. SettingsModal's container branch calls `applyServerContainerMode`,
+        // which asks `appSectionButtonsState` with `platform: 'linux'` and
+        // `docker: true`, so removing either that call (the attribute never
+        // appears) or the container check inside it (the rows are revealed) fails
+        // this test.
+        await expect(server).toHaveAttribute('data-app-rows-decided', 'container');
         for (const label of ['install for all users', 'uninstall ws-scrcpy-web']) {
             const row = settingsRow(server, label);
             await expect(row, label).toHaveCount(1);

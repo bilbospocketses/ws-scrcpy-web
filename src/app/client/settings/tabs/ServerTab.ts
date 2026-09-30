@@ -1579,6 +1579,7 @@ async function onStopServerExit(btn: HTMLButtonElement): Promise<void> {
  */
 const refreshers = new WeakMap<HTMLElement, () => Promise<void>>();
 const serviceStatusAppliers = new WeakMap<HTMLElement, (resp: ServiceStatusResponse) => void>();
+const containerModeAppliers = new WeakMap<HTMLElement, () => void>();
 
 /**
  * The Server tab — the consolidated app/server section (beta.62 folded the old
@@ -1926,32 +1927,17 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
     }
 
     /**
-     * Reflect the (unit-tested) stopServerButtonState and appSectionButtonsState
-     * decisions onto this tab's rows, from the /api/service/status response the
-     * SERVICE tab fetched. Disables "stop server & exit" with a note in service
-     * mode; reveals the two Linux-only rows (an inline display overrides the
-     * `.settings-row { display: contents }` rule), disables "install for all
-     * users" with an explanatory note once the machine-wide /opt install exists,
-     * and keeps the uninstall row enabled whenever it is shown.
-     *
-     * /api/service/status already reports container mode, so these rows read the
-     * same fact the Service and Updates sections gate on (findings 20.4, 20.5).
-     * Today they also happen to stay hidden in a container because this is only
-     * reached after refreshService(), which container mode skips — but that is an
-     * accident of ordering, not a decision, and it would break the moment
-     * anything else called this.
+     * Apply one `appSectionButtonsState` decision to the two install-lifecycle
+     * rows (an inline display overrides the `.settings-row { display: contents }`
+     * rule), and record WHICH path decided on the section as
+     * `data-app-rows-decided`. The rows are built hidden; the attribute is what
+     * tells "decided hidden" apart from "never decided", which the container spec
+     * relies on (findings 20.4, 20.5).
      */
-    function applyServiceStatus(resp: ServiceStatusResponse): void {
-        if (stopServerButton) {
-            const stop = stopServerButtonState(resp);
-            stopServerButton.disabled = stop.disabled;
-            if (stopServerNote) {
-                stopServerNote.textContent = stop.note ?? '';
-                stopServerNote.hidden = stop.note === null;
-            }
-        }
-
-        const state = appSectionButtonsState(resp);
+    function applyAppRows(
+        state: ReturnType<typeof appSectionButtonsState>,
+        decidedBy: 'service-status' | 'container',
+    ): void {
         if (installAllUsersRow) {
             installAllUsersRow.style.display = state.showInstallAllUsers ? '' : 'none';
         }
@@ -1971,6 +1957,43 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
             // down. Asserting it here documents and enforces that invariant.
             uninstallButton.disabled = false;
         }
+        section.dataset['appRowsDecided'] = decidedBy;
+    }
+
+    /**
+     * Container mode's decision for the install-lifecycle rows, made explicitly.
+     * A container never fetches /api/service/status (SettingsModal gates Service
+     * and Updates first and returns), so `applyServiceStatus` is never reached
+     * there; the rows used to stay hidden only because they are built hidden.
+     * This asks `appSectionButtonsState` the question a Linux host would ask
+     * (the image is Linux by construction) with `docker: true`, so removing its
+     * container check would reveal the rows, and the container spec would see it.
+     * "stop server & exit" is left alone: it is correct in a container (row 20.6).
+     */
+    function applyContainerMode(): void {
+        applyAppRows(appSectionButtonsState({ platform: 'linux', docker: true }), 'container');
+    }
+
+    /**
+     * Reflect the (unit-tested) stopServerButtonState and appSectionButtonsState
+     * decisions onto this tab's rows, from the /api/service/status response the
+     * SERVICE tab fetched (desktop and host installs; a container decides through
+     * `applyContainerMode` instead). Disables "stop server & exit" with a note in
+     * service mode; reveals the two Linux-only rows, disables "install for all
+     * users" with an explanatory note once the machine-wide /opt install exists,
+     * and keeps the uninstall row enabled whenever it is shown.
+     */
+    function applyServiceStatus(resp: ServiceStatusResponse): void {
+        if (stopServerButton) {
+            const stop = stopServerButtonState(resp);
+            stopServerButton.disabled = stop.disabled;
+            if (stopServerNote) {
+                stopServerNote.textContent = stop.note ?? '';
+                stopServerNote.hidden = stop.note === null;
+            }
+        }
+
+        applyAppRows(appSectionButtonsState(resp), 'service-status');
 
         // Local HTTPS panel: built once, the first time a real platform is
         // available. Rebuilding on every later service-status refresh would
@@ -2005,6 +2028,7 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
 
     refreshers.set(section, runRefresh);
     serviceStatusAppliers.set(section, applyServiceStatus);
+    containerModeAppliers.set(section, applyContainerMode);
     return section;
 }
 
@@ -2029,4 +2053,15 @@ export function applyServerServiceStatus(section: HTMLElement, resp: ServiceStat
     const apply = serviceStatusAppliers.get(section);
     if (!apply) return;
     apply(resp);
+}
+
+/**
+ * Tell a Server tab it is running in a container, so its install-lifecycle rows
+ * are hidden by an explicit container decision rather than left at their built
+ * default (findings 20.4, 20.5). SettingsModal's container branch calls this in
+ * place of the service-status path. A no-op if `section` was never built through
+ * `buildServerTab`.
+ */
+export function applyServerContainerMode(section: HTMLElement): void {
+    containerModeAppliers.get(section)?.();
 }

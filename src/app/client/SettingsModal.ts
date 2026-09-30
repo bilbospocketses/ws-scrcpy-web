@@ -10,7 +10,12 @@ import { type Change, StagedSettingsStore } from './settings/StagedSettingsStore
 import { type TabDef, TabStrip } from './settings/TabStrip';
 import { buildDependenciesTab, destroyDependenciesTab, refreshDependencies } from './settings/tabs/DependenciesTab';
 import { buildEmbeddingTab, type TabContext } from './settings/tabs/EmbeddingTab';
-import { applyServerServiceStatus, buildServerTab, refreshServer } from './settings/tabs/ServerTab';
+import {
+    applyServerContainerMode,
+    applyServerServiceStatus,
+    buildServerTab,
+    refreshServer,
+} from './settings/tabs/ServerTab';
 import { buildServiceTab, refreshService } from './settings/tabs/ServiceTab';
 import { buildUpdatesTab, refreshUpdates } from './settings/tabs/UpdatesTab';
 import { buildUsersTab } from './settings/tabs/UsersTab';
@@ -542,6 +547,11 @@ export class SettingsModal extends Modal {
                     // (the §36 leak). Never started, never leaked.
                     if (this.docker) {
                         this.applyDockerGating();
+                        // The Server tab's install-lifecycle rows are decided here
+                        // too, explicitly, instead of being left at their built
+                        // default because the service-status path below never runs
+                        // in a container (findings 20.4, 20.5).
+                        if (this.serverTabEl) applyServerContainerMode(this.serverTabEl);
                         return;
                     }
                     if (this.canUse('dependencies') && this.dependenciesTabEl) {

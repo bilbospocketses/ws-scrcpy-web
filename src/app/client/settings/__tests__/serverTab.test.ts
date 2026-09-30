@@ -2,7 +2,7 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { StagedSettingsStore } from '../StagedSettingsStore';
-import { buildServerTab, refreshServer } from '../tabs/ServerTab';
+import { applyServerContainerMode, applyServerServiceStatus, buildServerTab, refreshServer } from '../tabs/ServerTab';
 
 afterEach(() => {
     vi.unstubAllGlobals();
@@ -21,6 +21,42 @@ function webPortStatusOf(el: HTMLElement): HTMLElement {
     );
     return row?.nextElementSibling as HTMLElement;
 }
+
+/** A Server-tab row's element, found by its label. */
+function rowOf(el: HTMLElement, label: string): HTMLElement {
+    const row = [...el.querySelectorAll<HTMLElement>('.settings-row')].find(
+        (r) => r.querySelector('.settings-label')?.textContent === label,
+    );
+    if (!row) throw new Error(`no row labelled "${label}"`);
+    return row;
+}
+
+describe('ServerTab: the install-lifecycle rows are a DECISION, never the default (findings 20.4, 20.5)', () => {
+    const APP_ROWS = ['install for all users', 'uninstall ws-scrcpy-web'];
+
+    it('both rows start hidden and undecided', () => {
+        const el = buildServerTab(ctx, new StagedSettingsStore());
+        expect(el.dataset['appRowsDecided']).toBeUndefined();
+        for (const label of APP_ROWS) expect(rowOf(el, label).style.display).toBe('none');
+    });
+
+    it('container mode decides: hidden, and says so', () => {
+        const el = buildServerTab(ctx, new StagedSettingsStore());
+        applyServerContainerMode(el);
+        expect(el.dataset['appRowsDecided']).toBe('container');
+        for (const label of APP_ROWS) expect(rowOf(el, label).style.display).toBe('none');
+        // "stop server & exit" is untouched: it is correct in a container (row 20.6).
+        const stop = [...el.querySelectorAll('button')].find((b) => b.textContent === 'stop server & exit');
+        expect(stop?.disabled).toBe(false);
+    });
+
+    it('the desktop path decides from the service status: shown on Linux, marked as such', () => {
+        const el = buildServerTab(ctx, new StagedSettingsStore());
+        applyServerServiceStatus(el, { supported: true, platform: 'linux', status: 'not-installed' });
+        expect(el.dataset['appRowsDecided']).toBe('service-status');
+        for (const label of APP_ROWS) expect(rowOf(el, label).style.display).toBe('');
+    });
+});
 
 describe('ServerTab', () => {
     it('registers webPort so it can be staged', () => {
