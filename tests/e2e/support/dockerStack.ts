@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { test } from '@playwright/test';
 
@@ -53,12 +53,15 @@ export function dockerExecRoot(container: string, script: string): string {
     return docker(['exec', '-u', '0', container, 'sh', '-c', script], 30_000);
 }
 
+/**
+ * Both streams. `docker logs` replays the container's stderr on its OWN stderr,
+ * so the stdout-only `docker()` returned "" for anything the entrypoint wrote
+ * with `>&2` (found by row 20.21, whose refusal message goes there).
+ */
 export function dockerLogs(container: string): string {
-    try {
-        return docker(['logs', container], 30_000);
-    } catch (err) {
-        return `(docker logs failed: ${String(err)})`;
-    }
+    const r = spawnSync('docker', ['logs', container], { encoding: 'utf8', timeout: 30_000 });
+    if (r.error) return `(docker logs failed: ${String(r.error)})`;
+    return `${r.stdout ?? ''}${r.stderr ?? ''}`;
 }
 
 /** Docker's own word for the container's state ('running', 'exited', …) and its exit code. */
