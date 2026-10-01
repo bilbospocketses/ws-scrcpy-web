@@ -1,7 +1,22 @@
 import { expect, test } from '@playwright/test';
 import { dismissPromptsFor, openSettingsTab, settingsRow } from './support/auth';
-import { githubCoreQuota, partitionDependencyStates } from './support/githubQuota';
+import { dockerCli } from './support/dockerStack';
 import { CONTAINER_BOOT_INSTALLED_DEPENDENCIES } from './support/privateServer';
+
+/**
+ * The suite container's log, for a failure message. The config starts it with
+ * `docker compose up --wait ws-scrcpy-web` from the repo root, which is this
+ * process's cwd. An external stack (QA_EXTERNAL_STACK) is not ours to read, and
+ * a failed read must never mask the assertion it is there to explain.
+ */
+function composeServiceLog(): string {
+    if (process.env['QA_EXTERNAL_STACK'] === '1') return '(external stack: read its log where it runs)';
+    try {
+        return dockerCli(['compose', 'logs', '--no-color', '--tail', '300', 'ws-scrcpy-web'], 30_000);
+    } catch (err) {
+        return `(docker compose logs failed: ${(err as Error).message})`;
+    }
+}
 
 /**
  * The container tier (SP4 E4).
@@ -210,33 +225,24 @@ test.describe('container mode', () => {
             )
             .toBe(true);
         const final = await deps();
-        // No nodejs: the image runs its own Node, so the container never lists,
-        // downloads or offers to update one (row 20.9, 2026-09-30).
-        expect(final.map((d) => d.name).sort()).toEqual(['adb', 'mkcert', 'scrcpy-server']);
-        // mkcert is fetched on first use, so nothing installs it here; if
-        // api.github.com refused its version lookup, the server reports it in
-        // Error with that refusal as its message. That is the network's state,
-        // not the app's, and it is excused ONLY when /rate_limit proves the
-        // quota spent (the item-149 rule). Every other error still fails. The
-        // decision is `partitionDependencyStates`, unit-tested with this exact
-        // list in tests/unit/githubRefusal.test.ts. /rate_limit is not counted
-        // against the quota, so asking whenever anything errored costs nothing.
-        const quota = final.some((d) => d.status === 'error') ? await githubCoreQuota() : undefined;
-        const { excused, checked } = partitionDependencyStates(final, quota);
-        for (const d of excused) {
-            test.info().annotations.push({
-                type: 'partial',
-                description: `${d.name}: api.github.com quota exhausted for this IP (${quota?.detail}); Error is the refused lookup`,
-            });
-            expect(d.installedVersion, d.name).toBeNull();
-        }
-        for (const d of checked) {
-            const why = quota ? `${d.name} (api.github.com: ${quota.detail})` : d.name;
-            expect(d.status, why).not.toBe('error');
-            expect(d.errorMessage, why).toBeUndefined();
-        }
+        // Exactly the two the container hydrates. No nodejs: the image runs its
+        // own Node (2026-09-30). No mkcert: it only issues the Local HTTPS
+        // certificate, which a container never serves, so the container does not
+        // list it or look it up on api.github.com (2026-10-01; that lookup failed
+        // this row on #819's CI with quota left, for a reason nothing recorded).
+        expect(final.map((d) => d.name).sort()).toEqual(['adb', 'scrcpy-server']);
+        // Every listed dependency is fine, and a failure says WHY: the server's own
+        // status and message for each, then the container's log. The #819 failure
+        // stopped at "status error" and never showed the message.
+        const report = final
+            .map((d) => `${d.name}: status=${d.status} installed=${d.installedVersion} error=${d.errorMessage ?? '-'}`)
+            .join('\n');
+        const failing = final.filter((d) => d.status === 'error' || d.errorMessage !== undefined);
+        // Constant first argument: a log is external data, never a format string.
+        if (failing.length > 0) console.warn('20.9 container log:\n', composeServiceLog().slice(-4000));
+        expect(failing, `dependency states:\n${report}`).toEqual([]);
         // adb specifically: a real version, which only a run that did not abort can produce.
-        expect(final.find((d) => d.name === 'adb')?.installedVersion).toMatch(/^\d+\.\d+\.\d+$/);
+        expect(final.find((d) => d.name === 'adb')?.installedVersion, report).toMatch(/^\d+\.\d+\.\d+$/);
     });
 
     test('@docker precondition (no register row): the implication is never written to the volume', async ({
@@ -432,10 +438,10 @@ test.describe('container mode', () => {
 
     // Row 20.18 (the container audit). Last in the file for the same reason as the
     // test above: a missing refusal here would restart the server on another port,
-    // download mkcert or write a unit file, and only later tests would pay.
+    // mint a certificate or write a unit file, and only later tests would pay.
     test('@docker 20.18 every host-only route answers 409 naming the container and its remedy', async ({ page }) => {
         await page.goto('/');
-        const cases: { method: 'post' | 'patch'; route: string; data?: unknown; remedy: RegExp }[] = [
+        const cases: { method: 'get' | 'post' | 'patch'; route: string; data?: unknown; remedy: RegExp }[] = [
             { method: 'post', route: '/api/service/install', data: { scope: 'user' }, remedy: /docker rm/ },
             { method: 'post', route: '/api/service/uninstall', remedy: /docker rm/ },
             { method: 'post', route: '/api/service/decline-system-wide', remedy: /docker rm/ },
@@ -458,6 +464,9 @@ test.describe('container mode', () => {
             { method: 'post', route: '/api/tls/revoke', remedy: /reverse proxy/ },
             { method: 'post', route: '/api/tls/exposure', data: { mode: 'httpsOnly' }, remedy: /reverse proxy/ },
             { method: 'post', route: '/api/tls/https-port', data: { port: 8443 }, remedy: /reverse proxy/ },
+            // The reads too (2026-10-01): a container carries no hint of the local CA.
+            { method: 'get', route: '/api/tls/state', remedy: /reverse proxy/ },
+            { method: 'get', route: '/api/tls/ca-root', remedy: /reverse proxy/ },
             { method: 'patch', route: '/api/config', data: { webPort: 9000 }, remedy: /docker run -p/ },
             {
                 method: 'patch',

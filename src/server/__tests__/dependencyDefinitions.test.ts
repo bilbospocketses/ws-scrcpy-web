@@ -44,16 +44,24 @@ describe('getDependencyDefinitions', () => {
         }
     });
 
-    it('in a container, only the hostOnly definitions go, and Node.js is the one', () => {
+    it('in a container, only the hostOnly definitions go: Node.js and mkcert', () => {
         const host = getDependencyDefinitions('/tmp/test-deps').map((d) => d.name);
         const container = getDependencyDefinitions('/tmp/test-deps', { inContainer: true }).map((d) => d.name);
-        expect(host).toContain('nodejs');
-        expect(container).toEqual(host.filter((n) => n !== 'nodejs'));
+        expect(host).toEqual(expect.arrayContaining(['nodejs', 'mkcert']));
+        expect(container).toEqual(host.filter((n) => n !== 'nodejs' && n !== 'mkcert'));
         expect(
             getDependencyDefinitions('/tmp/test-deps')
                 .filter((d) => d.hostOnly)
                 .map((d) => d.name),
-        ).toEqual(['nodejs']);
+        ).toEqual(['nodejs', 'mkcert']);
+    });
+
+    it('a container has no hint of mkcert: no definition names it and none looks it up', () => {
+        const container = getDependencyDefinitions('/tmp/test-deps', { inContainer: true });
+        expect(container.map((d) => d.name).sort()).toEqual(['adb', 'scrcpy-server']);
+        for (const def of container) {
+            expect(`${def.name} ${def.displayName} ${def.description}`).not.toMatch(/mkcert|certificate|HTTPS/i);
+        }
     });
 
     it('nodejs definition includes node-pty pairing', () => {
