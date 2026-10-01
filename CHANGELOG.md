@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **test: smoke row 20.22, a certificate on the volume does not turn on HTTPS in a container** (`container-https.spec.ts`, `@docker-host`, CI only). It writes a valid certificate into `/data/tls/`, recreates the container on that volume, and asserts that 8000 answers, 8443 refuses, and the log names the reverse proxy. It fails on beta.160 and passes on beta.161, which carries the D8 fix. The coverage register reads 168 rows, 100 automated (60 %), and there are eight `@docker-host` rows.
 
+### Fixed
+- **The system-service uninstall runs on SELinux** (FD1). On stock Fedora 44 (enforcing) the in-app uninstall of a system-scope service never started: its helper unit died with `status=203/EXEC` and the AVC `{ execute } scontext=init_t tcontext=var_lib_t`, so the unit, `/opt/ws-scrcpy-web` and `/var/lib/ws-scrcpy-web` all stayed (smoke row 14.5, measured by qa-harness on beta.152).
+- **The in-app update of a system service no longer leaves it stopped on Fedora** (FD2). The root self-update's apply helper failed the same way. The server had already exited for the helper to restart it, and `Restart=on-failure` does not restart an exit 0, so the service stayed down on the old version (rows 6.6 and 11.3).
+- Both came from where the helper ran. A system unit runs as `init_t`, which may not execute the `var_lib_t` copy the launcher keeps in `/var/lib/ws-scrcpy-web/control/operation-server/`. A root helper is now copied to `/opt/ws-scrcpy-web/control/ws-scrcpy-web-launcher` first, which the app's own `/opt` rule labels `bin_t` (`stageSystemHelper`). Where the copy fails, the helper runs from the old path with a warning.
+
 ## [0.1.30-beta.161] - 2026-09-30
 
 ### Changed
