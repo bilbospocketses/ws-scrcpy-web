@@ -734,7 +734,7 @@ export class Config {
         let certMaterial: CertMaterial | null = null;
         // Local HTTPS is not supported in a container (user decision
         // 2026-09-30): a reverse proxy in front of it is the only HTTPS. The
-        // /api/tls writes refuse there, but a certificate can still reach the
+        // /api/tls routes refuse there, but a certificate can still reach the
         // volume another way (one carried over from a host install, or placed
         // by hand), and it used to bind a listener regardless. Same test as
         // Config.dockerMode, read off the injected env.
