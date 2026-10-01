@@ -56,8 +56,8 @@ async function waitForExit(timeoutMs: number): Promise<{ status: string; exitCod
 
 /**
  * Every BOOT-INSTALLED dependency installed, polled: the first boot on a fresh
- * volume hydrates them. mkcert is excluded because it is fetched on first use,
- * never at boot, so waiting for it would burn the whole budget and throw.
+ * volume hydrates them. The container lists only adb and scrcpy-server: Node.js
+ * and mkcert are `hostOnly`, so it does not manage them at all.
  */
 async function waitForHydrate(baseURL: string, timeoutMs: number): Promise<DependencyInfo[]> {
     const ctx = await request.newContext({ baseURL });

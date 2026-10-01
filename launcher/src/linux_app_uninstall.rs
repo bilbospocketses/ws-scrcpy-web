@@ -53,7 +53,8 @@ const UNIT_NAME: &str = "WsScrcpyWeb";
 /// spawn (server, launcher, the standalone tray, and an escaped scrcpy-server).
 /// Matched in-process by `stray_kill_targets`, NOT handed to `pkill -f`: this
 /// helper's own argv (`.../control/operation-server/ws-scrcpy-web-launcher.exe
-/// ... --data-root .../WsScrcpyWeb`) matches the pattern, and procps `pkill`
+/// ... --data-root .../WsScrcpyWeb`, or as root since beta.162
+/// `/opt/ws-scrcpy-web/control/ws-scrcpy-web-launcher ...`) matches the pattern, and procps `pkill`
 /// spares only ITSELF — so a `pkill -f` step SIGKILLed its parent, this helper,
 /// before any later step ran (qa-harness arc L1, rows 14.3 / 14.6 on beta.140).
 const PROC_NAMES: [&str; 4] = [

@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **docs: the betas 162–164 changes, everywhere they are described.** The coverage register's rows 1.9 and 20.9 still described the spent-quota excuse and a container that lists mkcert; rows 20.18, the technical guide's §26.5 and its key-files row still said only the `/api/tls` writes refuse in a container. The D14b paragraph and smoke rows 2.1 and 4.2-system-gui said every `/opt` install has a `VERSION`, though a system-service-only install has none. `PRIVACY.md` said the mkcert lookup runs on every start, now true of a host install only. §28.2 no longer says the cert layout makes "the container case work", and §14.3 and three code comments no longer name Node.js as the container's only missing dependency or the operation-server copy as the root helper's only path. Found by the wrap-up's doc sweep and a second pass set to refute it.
+
 ### Removed
 - **docs: the README's Local HTTPS notice for betas 130–137.** It told users of those betas, which pinned mkcert `v1.4.4-bt.2` and can no longer install it, to update to beta.138 or later. It was due to come down after 2026-10-11 and is retired early (user decision 2026-10-01); with mkcert gone from containers in beta.164, its "in Docker, pull the newer image" was also the last line of user docs tying Docker to mkcert.
 
