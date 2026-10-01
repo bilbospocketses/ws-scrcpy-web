@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **docs(smoke): target `v0.1.30-beta.163`.** The target line had stayed at beta.160 through three releases.
+
 ## [0.1.30-beta.163] - 2026-10-01
 
 ### Fixed
