@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.164] - 2026-10-01
+
 ### Changed
 - **A container has no trace of mkcert.** mkcert only issues the Local HTTPS certificate, and a container has no Local HTTPS: a reverse proxy is its only HTTPS. Yet every container boot still listed mkcert in `/api/dependencies` and looked up its latest release on api.github.com. When that lookup failed, the container reported mkcert in Error and logged a warning naming it. On the beta.162 bump PR this failed smoke row 20.9 with the GitHub quota not spent, for a reason nothing recorded. mkcert is now host-only, like Node.js. A container lists only adb and scrcpy-server, makes no mkcert lookup, and no log line names it. Hosts are unchanged.
 - **In a container, the Local HTTPS reads refuse too.** `GET /api/tls/state` and `GET /api/tls/ca-root` now answer 409 with the reverse-proxy remedy, like every `/api/tls/*` write already did. The container's page never asks for them, and `ca-root`'s "no certificate has been generated yet" was the last hint of a local CA.
