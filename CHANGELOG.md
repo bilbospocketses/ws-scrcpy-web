@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.162] - 2026-10-01
+
 ### Added
 - **test: smoke row 20.22, a certificate on the volume does not turn on HTTPS in a container** (`container-https.spec.ts`, `@docker-host`, CI only). It writes a valid certificate into `/data/tls/`, recreates the container on that volume, and asserts that 8000 answers, 8443 refuses, and the log names the reverse proxy. It fails on beta.160 and passes on beta.161, which carries the D8 fix. The coverage register reads 168 rows, 100 automated (60 %), and there are eight `@docker-host` rows.
 
