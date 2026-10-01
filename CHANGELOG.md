@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`/opt/ws-scrcpy-web/VERSION` no longer goes stale after a system service updates itself.** The in-app update of a system service replaced the `/opt` binary but left VERSION naming the version installed before. On a machine that had a machine-wide install first, a home AppImage newer than that old version, but older than what `/opt` really held, was offered as an `/opt` update, which would have downgraded it. The root launcher now rewrites a stale VERSION to its own version whenever it starts from `/opt`, so the restart after the update corrects it. A missing VERSION is left missing; a headless system install has none, as before, and that is expected (smoke row 4.2-system-cli now says so; qa-harness asked).
+
 ## [0.1.30-beta.162] - 2026-10-01
 
 ### Added
