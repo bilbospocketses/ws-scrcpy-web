@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- **docs: the README's Local HTTPS notice for betas 130–137.** It told users of those betas, which pinned mkcert `v1.4.4-bt.2` and can no longer install it, to update to beta.138 or later. It was due to come down after 2026-10-11 and is retired early (user decision 2026-10-01); with mkcert gone from containers in beta.164, its "in Docker, pull the newer image" was also the last line of user docs tying Docker to mkcert.
+
 ## [0.1.30-beta.164] - 2026-10-01
 
 ### Changed
