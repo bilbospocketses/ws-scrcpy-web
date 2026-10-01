@@ -1,14 +1,7 @@
 import { request } from '@playwright/test';
 import { type GithubQuota, quotaFromRateLimit } from './githubRefusal';
 
-export {
-    GITHUB_BACKED_DEPENDENCIES,
-    type GithubQuota,
-    isDeferredGithubLookupRefusal,
-    isExcusableNullLatest,
-    partitionDependencyStates,
-    partitionRetryErrors,
-} from './githubRefusal';
+export { GITHUB_BACKED_DEPENDENCIES, type GithubQuota, isExcusableNullLatest } from './githubRefusal';
 
 /**
  * This runner's remaining api.github.com core quota, read from `/rate_limit`,

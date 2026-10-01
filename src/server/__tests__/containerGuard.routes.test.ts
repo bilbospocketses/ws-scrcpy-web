@@ -195,6 +195,9 @@ const REFUSED: Case[] = [
         remedy: /reverse proxy/,
         run: () => call(tlsApi(), 'POST', '/api/tls/https-port', { port: 8443 }),
     },
+    // The reads too (2026-10-01): a container carries no hint of the local CA.
+    { name: 'GET /api/tls/state', remedy: /reverse proxy/, run: () => call(tlsApi(), 'GET', '/api/tls/state') },
+    { name: 'GET /api/tls/ca-root', remedy: /reverse proxy/, run: () => call(tlsApi(), 'GET', '/api/tls/ca-root') },
     {
         name: 'PATCH /api/config { webPort }',
         remedy: /docker run -p/,

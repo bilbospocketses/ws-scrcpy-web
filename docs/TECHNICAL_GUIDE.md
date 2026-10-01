@@ -1037,7 +1037,7 @@ Shows all npm packages (1-17) with available updates. For runtime dependencies (
 
 The dependency updater manages runtime dependencies (Node.js + node-pty, ADB, scrcpy-server, mkcert) through Settings → Dependencies; the home page keeps only an alert card, shown when an update is waiting. It allows users to check for updates and install them without leaving the browser.
 
-**In a container the set is smaller and read-only.** `getDependencyDefinitions(…, { inContainer: true })` (← `Config.dockerMode`) drops every definition marked `hostOnly`, which today is Node.js: the image runs its own interpreter (the Dockerfile links `seed/node/node` to `/usr/local/bin/node`), so a copy on the volume would be downloaded and never run. The check and update routes answer 409 there (§26.5).
+**In a container the set is smaller and read-only.** `getDependencyDefinitions(…, { inContainer: true })` (← `Config.dockerMode`) drops every definition marked `hostOnly`. That is Node.js, because the image runs its own interpreter (the Dockerfile links `seed/node/node` to `/usr/local/bin/node`), so a copy on the volume would be downloaded and never run. It is also mkcert (since 2026-10-01), because its only job is the Local HTTPS certificate and a container has no Local HTTPS (§26.5). So a container never lists mkcert, never looks up its latest release on api.github.com, and never reports it in Error when that lookup fails; a failed lookup had failed smoke row 20.9 on a bump PR with the quota not spent. The container's list is adb and scrcpy-server. The check and update routes answer 409 there (§26.5).
 
 **Components:**
 
@@ -1134,7 +1134,7 @@ ws-scrcpy-web/                           -- installFolder (depsPath parent)
 To add a new dependency to the updater:
 
 1. Add a new `DependencyDefinition` entry in `src/server/DependencyDefinitions.ts` with:
-   - `hostOnly: true` if the container image provides it itself, so a container never lists, checks, downloads or offers to update it (Node.js is the one such definition today)
+   - `hostOnly: true` if the container image provides it itself, so a container never lists, checks, downloads or offers to update it (Node.js, which the image provides, and mkcert, which a container never uses)
    - `checkInstalled()` -- how to detect the installed version
    - `checkLatest()` -- how to check for the latest version online
    - `getDownloadUrl()` -- platform-aware download URL
@@ -2878,7 +2878,7 @@ has to be a security boundary. Each item is asserted by `docker-gating.spec.ts`
   replaces the Local HTTPS panel with a note naming the reverse proxy, and makes
   "reset all my settings" send the per-user reset only, with no first-run `PATCH`.
 - **No browser is auto-opened** (`openBrowser.ts`, `inContainer`): there is no desktop.
-- **Node.js is not a managed dependency** (`hostOnly`, §13.1).
+- **Node.js and mkcert are not managed dependencies** (`hostOnly`, §13.1). The container's list is adb and scrcpy-server, and nothing in it names mkcert.
 - **Local HTTPS is not supported in a container** (user decision, 2026-09-30). A
   reverse proxy in front of the container is the only supported HTTPS (§26.6). Beyond
   the refused writes, `Config.buildServers` binds no HTTPS listener in a container
@@ -2904,7 +2904,7 @@ has to be a security boundary. Each item is asserted by `docker-gating.spec.ts`
   section gives the reverse-proxy recipe; the three rules it states — `allowedHosts`
   lists the name, `Host` is forwarded unchanged, WebSocket upgrades pass — are §24's
   layers seen from the proxy's side. **The app's own Local HTTPS (§28) is off in a
-  container**: every `/api/tls/*` write answers 409 and the Server tab shows a note,
+  container**: every `/api/tls/*` route answers 409, the two reads included (since 2026-10-01; the page never asks for them there, and a container carries no hint of the local CA), and the Server tab shows a note,
   so the reverse proxy is the only supported HTTPS.
 
 ### 26.7 Verification
@@ -3222,7 +3222,7 @@ its token-gated CA download have since changed, and §28.2, §28.4 and the route
 on each.
 
 **Host installs only.** Local HTTPS is not supported in a container (user decision, 2026-09-30):
-every `/api/tls/*` write answers 409 there, naming the reverse proxy, and the Server tab shows a note
+every `/api/tls/*` route answers 409 there, the reads included (2026-10-01), naming the reverse proxy, and the Server tab shows a note
 in place of the panel. A reverse proxy in front of the container is the only supported HTTPS for the
 image (§26.5, §26.6).
 
@@ -3607,7 +3607,7 @@ degrades to HTTP-only, logged, never a crash.
 | `src/server/tls/certPaths.ts` | `resolveCertPaths` — POSIX vs. per-user-Windows CAROOT/leaf placement, the containment guard |
 | `src/server/tls/createCertService.ts` | The composition root: binds `CertServiceDeps` to real `fs`/`child_process`; memoized `getCertService()`; `ensureMkcertInstalled()`'s on-demand-fetch trigger |
 | `src/server/tls/httpExposure.ts` | `HttpExposure`, `HTTP_EXPOSURE_KEY`, the pure `decideHttpRequest` decision function |
-| `src/server/api/TlsApi.ts` | The `/api/tls/*` routes: reads admin-gated, writes operator-gated (item 153) and refused with 409 in a container (§26.5); CA-root rate limiting; the hostname-only `allowedHosts` auto-add (issue #691); `buildHttpsListenerField`'s `httpsListener` contract on `/state` and `/generate`, including the stale-leaf `restart-required` case |
+| `src/server/api/TlsApi.ts` | The `/api/tls/*` routes: reads admin-gated, writes operator-gated (item 153), and every route refused with 409 in a container, reads included (§26.5); CA-root rate limiting; the hostname-only `allowedHosts` auto-add (issue #691); `buildHttpsListenerField`'s `httpsListener` contract on `/state` and `/generate`, including the stale-leaf `restart-required` case |
 | `src/server/network/candidateLanIps.ts` | RFC1918 LAN-IP candidates for the subject picker, excluding CGNAT (`100.64.0.0/10`) and link-local |
 | `src/server/services/HttpServer.ts` | Exposure enforcement on the plain-HTTP listener, the listen-error handler, `getHttpsListenerStatus`, the bound leaf's `leafFingerprint` capture |
 | `src/server/Config.ts` | `buildServerList`, `readCertMaterial`, `sanitizeHttpsPort` / `validateHttpsPortInput` / `setHttpsPort`, `DEFAULT_HTTPS_PORT` |

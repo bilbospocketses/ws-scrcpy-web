@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **A container has no trace of mkcert.** mkcert only issues the Local HTTPS certificate, and a container has no Local HTTPS: a reverse proxy is its only HTTPS. Yet every container boot still listed mkcert in `/api/dependencies` and looked up its latest release on api.github.com. When that lookup failed, the container reported mkcert in Error and logged a warning naming it. On the beta.162 bump PR this failed smoke row 20.9 with the GitHub quota not spent, for a reason nothing recorded. mkcert is now host-only, like Node.js. A container lists only adb and scrcpy-server, makes no mkcert lookup, and no log line names it. Hosts are unchanged.
+- **In a container, the Local HTTPS reads refuse too.** `GET /api/tls/state` and `GET /api/tls/ca-root` now answer 409 with the reverse-proxy remedy, like every `/api/tls/*` write already did. The container's page never asks for them, and `ca-root`'s "no certificate has been generated yet" was the last hint of a local CA.
+- **test: rows 20.9 and 1.9 excuse nothing.** Both used to excuse an mkcert lookup error once `/rate_limit` proved the quota spent. With mkcert gone from the container, they now fail on any dependency error. A 20.9 failure now names each dependency's status and error message and prints the container's log; the #819 failure stopped at "status error" and never showed why. The excuse helpers (`partitionDependencyStates`, `partitionRetryErrors`, `isDeferredGithubLookupRefusal`) and their unit tests are removed; row 9.4's host-side rule stays.
 - **docs(smoke): target `v0.1.30-beta.163`.** The target line had stayed at beta.160 through three releases.
 
 ## [0.1.30-beta.163] - 2026-10-01

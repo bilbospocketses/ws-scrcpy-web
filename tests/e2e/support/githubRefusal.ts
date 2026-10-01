@@ -1,7 +1,9 @@
 /**
- * The decision half of the e2e rule for a spent api.github.com quota (item 149
- * for 9.4, #753 for 20.9 and 1.9): which dependency states are the network's
- * rather than the app's. Pure on purpose -- no Playwright import -- so
+ * The decision half of the e2e rule for a spent api.github.com quota (item 149,
+ * row 9.4 on a host): which dependency states are the network's rather than the
+ * app's. Rows 20.9 and 1.9 used it too until 2026-10-01, when a container stopped
+ * listing mkcert, its only GitHub-backed dependency fetched on first use; those
+ * rows now excuse nothing. Pure on purpose -- no Playwright import -- so
  * `tests/unit/githubRefusal.test.ts` can run every branch on every build. The
  * quota-exhausted branch otherwise runs only on a rate-limited CI runner,
  * which cannot be arranged on demand. The one network call, `githubCoreQuota`,
@@ -35,83 +37,6 @@ export function quotaFromRateLimit(status: number, body: unknown): GithubQuota {
     const remaining = core?.remaining;
     const reset = core?.reset ? new Date(core.reset * 1000).toISOString() : 'unknown';
     return { exhausted: remaining === 0, detail: `core remaining=${remaining ?? 'unknown'}, resets ${reset}` };
-}
-
-/**
- * A refused lookup exactly as the server words it (`HttpStatusError` in
- * `src/server/util/fetchWithRetry.ts`), e.g. `HTTP 403 rate limit exceeded from
- * https://api.github.com/repos/bilbospocketses/mkcert/releases/latest`.
- */
-const REFUSED_GITHUB_LOOKUP = /^HTTP (?:403|429)\b.* from https:\/\/api\.github\.com\//;
-
-/**
- * True when `dep` is in `error` for ONE reason: api.github.com refused its
- * version lookup. Only a GitHub-backed dependency fetched on first use
- * (`deferInstall`, i.e. mkcert) qualifies: nothing installs it at boot or on a
- * retry, so a refused lookup legitimately leaves it in the Error state the
- * server reports for "not installed, latest unknown" (DependencyManager
- * `checkLatest`). scrcpy-server never qualifies, because a refused lookup makes
- * it install its bundled fallback, so an error there is a real failure.
- *
- * This is the shape of the excuse, not the excuse itself: the quota must also
- * be proven spent -- see the partition functions below.
- */
-export function isDeferredGithubLookupRefusal(dep: {
-    name: string;
-    deferInstall?: boolean | undefined;
-    status?: string | undefined;
-    errorMessage?: string | undefined;
-}): boolean {
-    return (
-        dep.deferInstall === true &&
-        GITHUB_BACKED_DEPENDENCIES.includes(dep.name) &&
-        dep.status === 'error' &&
-        REFUSED_GITHUB_LOOKUP.test(dep.errorMessage ?? '')
-    );
-}
-
-/**
- * 1.9: splits a `retry-install` reply's `errors` into the ones a proven-spent
- * quota explains and the ones that must still fail the test. `listed` is
- * `/api/dependencies`, which is where `deferInstall` comes from. With no quota
- * answer, or one with calls left, nothing is excused.
- */
-export function partitionRetryErrors(
-    errors: Record<string, string>,
-    listed: { name: string; deferInstall?: boolean | undefined }[],
-    quota: GithubQuota | undefined,
-): { excused: string[]; unexplained: Record<string, string> } {
-    const excused = Object.entries(errors)
-        .filter(
-            ([name, errorMessage]) =>
-                quota?.exhausted === true &&
-                isDeferredGithubLookupRefusal({
-                    name,
-                    errorMessage,
-                    status: 'error',
-                    deferInstall: listed.find((d) => d.name === name)?.deferInstall,
-                }),
-        )
-        .map(([name]) => name);
-    const unexplained = Object.fromEntries(Object.entries(errors).filter(([name]) => !excused.includes(name)));
-    return { excused, unexplained };
-}
-
-/**
- * 20.9: splits the first-boot dependency list into the entries a proven-spent
- * quota explains and the ones whose status must still be checked. With no
- * quota answer, or one with calls left, everything is checked.
- */
-export function partitionDependencyStates<
-    T extends {
-        name: string;
-        deferInstall?: boolean | undefined;
-        status?: string | undefined;
-        errorMessage?: string | undefined;
-    },
->(deps: T[], quota: GithubQuota | undefined): { excused: T[]; checked: T[] } {
-    const excused = deps.filter((d) => quota?.exhausted === true && isDeferredGithubLookupRefusal(d));
-    return { excused, checked: deps.filter((d) => !excused.includes(d)) };
 }
 
 /**

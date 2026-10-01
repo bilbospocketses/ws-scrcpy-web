@@ -14,12 +14,7 @@ import {
 } from './support/auth';
 import { gotoHome } from './support/consent';
 import { composeDown, composeUpFresh, dockerExecRoot, dockerLogs } from './support/dockerStack';
-import {
-    GITHUB_BACKED_DEPENDENCIES,
-    githubCoreQuota,
-    isExcusableNullLatest,
-    partitionRetryErrors,
-} from './support/githubQuota';
+import { GITHUB_BACKED_DEPENDENCIES, githubCoreQuota, isExcusableNullLatest } from './support/githubQuota';
 import {
     BOOT_INSTALLED_DEPENDENCIES,
     privateServerPaths,
@@ -371,6 +366,9 @@ test.describe('dependencies (smoke §9.4, §9.5, §1.9)', () => {
             // network at all (D5, 2026-09-30). Before that fix it was reported
             // not installed here even though the seed copy was on disk.
             const listedFirst = (await (await api.get('/api/dependencies')).json()) as DependencyInfo[];
+            // The container's whole list: no nodejs (the image's own) and no
+            // mkcert (no Local HTTPS in a container, 2026-10-01).
+            expect(listedFirst.map((d) => d.name).sort()).toEqual(['adb', 'scrcpy-server']);
             const seeded = listedFirst.find((d) => d.name === 'scrcpy-server');
             expect(seeded?.installedVersion, 'scrcpy-server from the seed').not.toBeNull();
             expect(seeded?.status, 'scrcpy-server').not.toBe('error');
@@ -412,24 +410,10 @@ test.describe('dependencies (smoke §9.4, §9.5, §1.9)', () => {
                 errors: Record<string, string>;
             };
             // adb can still be mid-download when the reply is written; what must
-            // not happen is an error. One error is the network's, not the app's:
-            // mkcert is fetched on first use, so a retry never installs it, and a
-            // refused api.github.com lookup leaves it in Error with that refusal
-            // as its message. Excused ONLY when /rate_limit proves the quota is
-            // spent (the item-149 rule). The decision is `partitionRetryErrors`,
-            // unit-tested with this exact reply in tests/unit/githubRefusal.test.ts.
-            const listed = (await (await api.get('/api/dependencies')).json()) as DependencyInfo[];
-            // /rate_limit is not counted against the quota, so asking whenever
-            // anything errored costs nothing.
-            const quota = Object.keys(body.errors).length > 0 ? await githubCoreQuota() : undefined;
-            const { excused, unexplained } = partitionRetryErrors(body.errors, listed, quota);
-            for (const name of excused) {
-                test.info().annotations.push({
-                    type: 'partial',
-                    description: `${name}: api.github.com quota exhausted for this IP (${quota?.detail}); its retry error is the refused lookup`,
-                });
-            }
-            expect(unexplained, quota ? `retry errors (api.github.com: ${quota.detail})` : 'retry errors').toEqual({});
+            // not happen is an error, of any kind. (mkcert's refused GitHub lookup
+            // used to be excused here when the quota was proven spent; a container
+            // no longer lists mkcert, so nothing here depends on api.github.com.)
+            expect(body.errors, 'retry errors').toEqual({});
             expect(body.installed.length + body.stillMissing.length).toBeGreaterThan(0);
 
             // Then everything lands, and the banner clears on its own poll.
@@ -437,9 +421,7 @@ test.describe('dependencies (smoke §9.4, §9.5, §1.9)', () => {
                 .poll(
                     async () => {
                         const deps = (await (await api.get('/api/dependencies')).json()) as DependencyInfo[];
-                        // Boot-installed only: mkcert is fetched on first use, so
-                        // it is legitimately never installed here and would hold
-                        // this poll open for its whole 180 s budget.
+                        // Boot-installed only, the same filter the host rows use.
                         return deps
                             .filter((d) => (BOOT_INSTALLED_DEPENDENCIES as readonly string[]).includes(d.name))
                             .every((d) => d.installedVersion !== null && d.status !== 'error');

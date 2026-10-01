@@ -39,12 +39,20 @@ describe('DependencyManager', () => {
         expect(scrcpy!.requiresRestart).toBe(false);
     });
 
-    it('in a container, Node.js is not managed at all: not listed, not installable', async () => {
+    it('in a container, Node.js and mkcert are not managed at all: not listed, not installable', async () => {
         const mgr = new DependencyManager('/tmp/test-deps', { inContainer: true });
-        expect((await mgr.getAll()).map((d) => d.name).sort()).toEqual(['adb', 'mkcert', 'scrcpy-server']);
+        expect((await mgr.getAll()).map((d) => d.name).sort()).toEqual(['adb', 'scrcpy-server']);
         expect(mgr.getByName('nodejs')).toBeUndefined();
-        // The same manager on a host keeps it, so the list above is the container's doing.
-        expect(new DependencyManager('/tmp/test-deps').getByName('nodejs')).toBeDefined();
+        expect(mgr.getByName('mkcert')).toBeUndefined();
+        // Unknown to the manager, so an update cannot fetch it either.
+        expect(await mgr.update('mkcert')).toMatchObject({
+            success: false,
+            errorMessage: 'Unknown dependency: mkcert',
+        });
+        // The same manager on a host keeps both, so the list above is the container's doing.
+        const host = new DependencyManager('/tmp/test-deps');
+        expect(host.getByName('nodejs')).toBeDefined();
+        expect(host.getByName('mkcert')).toBeDefined();
     });
 });
 

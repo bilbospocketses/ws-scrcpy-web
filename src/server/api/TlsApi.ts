@@ -234,10 +234,14 @@ export class TlsApi {
         if (!(isRead ? requireAdmin(req, res) : requireOperator(req, res))) return true;
         // Local HTTPS is not supported in a container (user decision 2026-09-30):
         // a reverse proxy in front of the container is the only supported way to
-        // serve HTTPS there. Every write refuses; `httpsOnly` exposure in
-        // particular would lock out every client, since nobody reaches a
-        // container over loopback.
-        if (!isRead && refuseInContainer(res, 'Local HTTPS', 'reverse-proxy')) return true;
+        // serve HTTPS there. Every route refuses, reads included. A write could
+        // do harm (`httpsOnly` exposure would lock out every client, since
+        // nobody reaches a container over loopback). A read could only describe
+        // a local CA that cannot exist there, and the container page never asks
+        // (its Local HTTPS section is the reverse-proxy note): a container
+        // carries no hint of the certificate machinery (user decision
+        // 2026-10-01).
+        if (refuseInContainer(res, 'Local HTTPS', 'reverse-proxy')) return true;
 
         try {
             // Inside the try (N11): getService() can throw on first use (e.g.

@@ -126,9 +126,11 @@ export interface DependencyDefinition {
      */
     latestIsAuthoritative?: boolean;
     /**
-     * Managed on a host install only. In a container the image provides it, so
+     * Managed on a host install only, so
      * `getDependencyDefinitions(…, { inContainer: true })` leaves it out
-     * entirely — see the one definition that carries it.
+     * entirely. Two definitions carry it: Node.js, which the image provides
+     * itself, and mkcert, whose only job (Local HTTPS) does not exist in a
+     * container.
      */
     hostOnly?: boolean;
 }
@@ -144,9 +146,9 @@ async function runVersionCommand(exe: string, args: string[], pattern: RegExp): 
 }
 
 /**
- * `inContainer` (← Config.dockerMode) drops every `hostOnly` definition: the
- * image supplies those itself, so the container never lists, checks, downloads
- * or offers to update them.
+ * `inContainer` (← Config.dockerMode) drops every `hostOnly` definition (Node.js,
+ * which the image supplies itself, and mkcert, which a container has no use
+ * for), so the container never lists, checks, downloads or offers to update them.
  */
 export function getDependencyDefinitions(
     depsPath: string,
@@ -311,6 +313,13 @@ export function getDependencyDefinitions(
             // stores), so a download nobody asked for yet is a cost with no
             // consent, unlike the other three which the app needs unconditionally.
             deferInstall: true,
+            // mkcert only issues the Local HTTPS certificate, and Local HTTPS is
+            // not supported in a container (D8): a reverse proxy is the only
+            // HTTPS there, and every /api/tls route refuses. So a container
+            // never lists it, never looks up its latest release on
+            // api.github.com, and never reports it in Error when that lookup
+            // fails (the row 20.9 failure on #819's CI, 2026-10-01).
+            hostOnly: true,
             checkInstalled: async (depsPath) => {
                 const exe = path.join(depsPath, 'mkcert', mkcertExeName());
                 if (!fs.existsSync(exe)) return null;
