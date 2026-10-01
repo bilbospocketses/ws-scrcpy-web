@@ -44,7 +44,9 @@ The dependency manager checks each standalone runtime dependency for a newer ver
   `https://github.com/Genymobile/scrcpy/releases/...` -- the scrcpy-server version lookup and binary.
 - `https://github.com/<owner>/ws-scrcpy-web/releases/...` -- our own node-pty prebuilts.
 - `https://api.github.com/repos/bilbospocketses/mkcert/releases/latest` -- the version lookup for our
-  `mkcert` fork. Like the lookups above, it runs on every start, whether or not Local HTTPS is in use.
+  `mkcert` fork. Like the lookups above, it runs on every start of a host install, whether or not Local
+  HTTPS is in use. The container image never makes it: Local HTTPS is host-only, so a container does not
+  manage `mkcert` at all.
 - `https://github.com/bilbospocketses/mkcert/releases/download/...`,
   `https://api.github.com/repos/bilbospocketses/mkcert/attestations/...` and
   `https://tuf-repo-cdn.sigstore.dev/` -- installing or updating `mkcert`: the checksum manifest and the

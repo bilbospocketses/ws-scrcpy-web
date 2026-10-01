@@ -183,9 +183,9 @@ export async function waitForServer(handle: ServerHandle, baseURL: string, timeo
 export const BOOT_INSTALLED_DEPENDENCIES = ['nodejs', 'adb', 'scrcpy-server'] as const;
 
 /**
- * The same, for the container image. Node.js is not in it: the image runs its
- * own interpreter, so the server built with `inContainer` does not manage Node
- * at all (the `hostOnly` flag in DependencyDefinitions.ts).
+ * The same, for the container image. Node.js and mkcert are not in it, the two
+ * `hostOnly` definitions in DependencyDefinitions.ts: the image runs its own
+ * interpreter, and a container has no Local HTTPS for mkcert to serve.
  */
 export const CONTAINER_BOOT_INSTALLED_DEPENDENCIES = ['adb', 'scrcpy-server'] as const;
 
