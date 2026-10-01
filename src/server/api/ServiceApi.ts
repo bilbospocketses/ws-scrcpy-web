@@ -32,6 +32,7 @@ import {
     STAGED_SYSTEM_DIR,
     SYSTEM_STATE_DIR,
 } from '../service/SystemdClient';
+import { stageSystemHelper } from '../service/systemHelper';
 import type { CommandRunner } from '../service/systemServiceCli';
 import { buildDetachedSpawn, type DetachedSpawnPlan, resolveSystemTool } from '../service/systemTools';
 import { copyFileAtomicSync, writeFileAtomicSync } from '../util/atomicFile';
@@ -1330,7 +1331,10 @@ export class ServiceApi {
             buildUninstallHelperArgs({
                 isRoot,
                 unit,
-                helper,
+                // As root the helper runs as a SYSTEM unit, as init_t, which may
+                // not exec the var_lib_t data-root copy (FD1: the system-service
+                // uninstall died 203/EXEC); stage a bin_t copy under /opt first.
+                helper: isRoot ? stageSystemHelper(helper) : helper,
                 scope,
                 machineWide,
                 keep,

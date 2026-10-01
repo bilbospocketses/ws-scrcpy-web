@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import type { IncomingMessage, ServerResponse } from 'http';
 import * as os from 'os';
 import * as path from 'path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { WS_SCRCPY_SERVICE_NAME } from '../../common/ServiceEvents';
 import { buildUninstallHelperArgs, defaultRunElevated, ServiceApi, systemWideRelaunchPlan } from '../api/ServiceApi';
 import { Config } from '../Config';
@@ -14,7 +14,14 @@ import {
     STAGED_SYSTEM_DIR,
     SYSTEM_STATE_DIR,
 } from '../service/SystemdClient';
+import { stageSystemHelper } from '../service/systemHelper';
 import { resolveSystemTool } from '../service/systemTools';
+
+// FD1: a root (system-unit) app uninstall must spawn a bin_t copy under /opt.
+// The stager is unit-tested beside it; here it returns its real destination so
+// the spawn's argv shows which copy was used.
+const STAGED_HELPER = '/opt/ws-scrcpy-web/control/ws-scrcpy-web-launcher';
+vi.mock('../service/systemHelper', () => ({ stageSystemHelper: vi.fn(() => STAGED_HELPER) }));
 
 function makeReqRes(url: string, method = 'GET', body?: string, headers?: Record<string, string>) {
     // Minimal IncomingMessage: only the on('data')/on('end') hooks readJsonBody
@@ -2058,6 +2065,14 @@ describe('ServiceApi', () => {
 
     describe('app-uninstall handler (POST /api/service/uninstall-app)', () => {
         it('POST /uninstall-app {keep:true} on linux → 200 uninstalling, spawns systemd-run helper with --keep + --scope user', async () => {
+            // Unprivileged, stated rather than assumed: an earlier test in this file
+            // leaves getuid() returning 0, and as root the helper is the staged /opt copy.
+            const savedUid = Object.getOwnPropertyDescriptor(process, 'getuid');
+            Object.defineProperty(process, 'getuid', { value: () => 1000, configurable: true });
+            onTestFinished(() => {
+                if (savedUid) Object.defineProperty(process, 'getuid', savedUid);
+                else delete (process as { getuid?: unknown }).getuid;
+            });
             const client = fakeClient({
                 getInstalledScope: vi.fn(async () => 'user' as const),
             });
@@ -2101,6 +2116,66 @@ describe('ServiceApi', () => {
             expect(client.getInstalledScope).toHaveBeenCalledWith('WsScrcpyWeb');
             // D17: the helper is told which process asked, so it can wait for it to exit.
             expect(spawnedArgs[spawnedArgs.indexOf('--server-pid') + 1]).toBe(String(process.pid));
+        });
+
+        it('as root (system unit), the uninstall helper is the staged bin_t /opt copy, not the var_lib_t one (FD1)', async () => {
+            const saved = Object.getOwnPropertyDescriptor(process, 'getuid');
+            Object.defineProperty(process, 'getuid', { value: () => 0, configurable: true });
+            try {
+                const stageMock = vi.mocked(stageSystemHelper);
+                stageMock.mockClear();
+                const client = fakeClient({ getInstalledScope: vi.fn(async () => 'system' as const) });
+                let spawnedArgs: string[] = [];
+                const api = new ServiceApi(
+                    () => ({ client, supported: true, platform: 'linux' }),
+                    () => 'system',
+                    () => true,
+                    vi.fn((_cmd: string, args: string[]) => {
+                        spawnedArgs = args;
+                    }),
+                    () => {},
+                );
+                const { req, res } = makeReqRes('/api/service/uninstall-app', 'POST', JSON.stringify({ keep: false }));
+                await api.handle(req, res);
+
+                expect((res as any).getStatus()).toBe(200);
+                expect(stageMock).toHaveBeenCalledWith(
+                    expect.stringMatching(/control[\\/]operation-server[\\/]ws-scrcpy-web-launcher\.exe$/),
+                );
+                // A system transient unit (no --user), running the staged copy.
+                expect(spawnedArgs).not.toContain('--user');
+                expect(spawnedArgs[spawnedArgs.indexOf('--linux-app-uninstall') - 1]).toBe(STAGED_HELPER);
+            } finally {
+                if (saved) Object.defineProperty(process, 'getuid', saved);
+                else delete (process as { getuid?: unknown }).getuid;
+            }
+        });
+
+        it('unprivileged (user unit), the data-root helper runs as before and nothing is staged', async () => {
+            const stageMock = vi.mocked(stageSystemHelper);
+            stageMock.mockClear();
+            const saved = Object.getOwnPropertyDescriptor(process, 'getuid');
+            Object.defineProperty(process, 'getuid', { value: () => 1000, configurable: true });
+            try {
+                const client = fakeClient({ getInstalledScope: vi.fn(async () => 'user' as const) });
+                let spawnedArgs: string[] = [];
+                const api = new ServiceApi(
+                    () => ({ client, supported: true, platform: 'linux' }),
+                    () => 'user',
+                    () => true,
+                    vi.fn((_cmd: string, args: string[]) => {
+                        spawnedArgs = args;
+                    }),
+                    () => {},
+                );
+                const { req, res } = makeReqRes('/api/service/uninstall-app', 'POST', JSON.stringify({ keep: true }));
+                await api.handle(req, res);
+                expect(stageMock).not.toHaveBeenCalled();
+                expect(spawnedArgs[spawnedArgs.indexOf('--linux-app-uninstall') - 1]).toMatch(/operation-server/);
+            } finally {
+                if (saved) Object.defineProperty(process, 'getuid', saved);
+                else delete (process as { getuid?: unknown }).getuid;
+            }
         });
 
         it('POST /uninstall-app {keep:true} resets installMode to null (preserved config returns in local mode)', async () => {
