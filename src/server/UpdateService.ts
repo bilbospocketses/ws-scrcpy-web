@@ -13,6 +13,7 @@ import { downloadToFile, fetchText } from './downloadToFile';
 import { Logger } from './Logger';
 import { linuxAppImageAssetName, parseSha256Sums, releaseAssetUrl } from './linuxUpdateAssets';
 import { buildMachineWideUpdateScript, runPkexec, STAGED_SYSTEM_DIR } from './service/SystemdClient';
+import { stageSystemHelper } from './service/systemHelper';
 import { buildDetachedSpawn } from './service/systemTools';
 import { verifySha256 } from './verifySha256';
 
@@ -576,7 +577,11 @@ export class UpdateService {
                     String(process.pid),
                 ];
             }
-            const plan = buildDetachedSpawn(helperPath, helperArgs, {
+            // A SYSTEM unit runs the helper as init_t, which may not exec the
+            // var_lib_t data-root copy (FD2: the root self-update died 203/EXEC
+            // and left the service down); stage a bin_t copy under /opt first.
+            const spawnHelper = spawnSystem ? stageSystemHelper(helperPath) : helperPath;
+            const plan = buildDetachedSpawn(spawnHelper, helperArgs, {
                 unit: `wsscrcpy-apply-${Date.now()}`,
                 system: spawnSystem,
                 // The root service's own data root (/var/lib/ws-scrcpy-web): a

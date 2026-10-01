@@ -6,7 +6,14 @@ import type { UpdateInfo, UpdateOptions, VelopackAsset } from 'velopack';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Config } from '../Config';
 import { EnvName } from '../EnvName';
+import { stageSystemHelper } from '../service/systemHelper';
 import { type UpdateManagerLike, UpdateService } from '../UpdateService';
+
+// FD2: the system-service apply must spawn a bin_t copy under /opt, not the
+// var_lib_t data-root helper. The stager itself is unit-tested beside it; here
+// it returns its real destination so the spawn's argv shows which was used.
+const STAGED = '/opt/ws-scrcpy-web/control/ws-scrcpy-web-launcher';
+vi.mock('../service/systemHelper', () => ({ stageSystemHelper: vi.fn(() => STAGED) }));
 
 // Mock child_process.spawn so local-mode applyUpdate doesn't try to exec
 // the real operation-server helper binary (which doesn't exist in test).
@@ -928,6 +935,8 @@ describe('UpdateService', () => {
             });
             const spawnMock = vi.mocked(child_process.spawn);
             spawnMock.mockClear();
+            const stageMock = vi.mocked(stageSystemHelper);
+            stageMock.mockClear();
             const svc = new UpdateService({
                 platform: 'linux',
                 installRoot: path.join('/fake', 'mount', 'usr'),
@@ -949,7 +958,18 @@ describe('UpdateService', () => {
             expect(spawnMock).toHaveBeenCalledTimes(1);
             const [bin, argv] = spawnMock.mock.calls[0]!;
             const cmdline = [String(bin), ...(argv as string[]).map(String)].join(' ');
-            expect(cmdline).toMatch(/control[\\/]operation-server[\\/]ws-scrcpy-web-launcher\.exe/);
+            if (scope === 'system') {
+                // FD2: staged from the data-root copy, and the staged bin_t copy is what runs.
+                expect(stageMock).toHaveBeenCalledWith(
+                    expect.stringMatching(/control[\\/]operation-server[\\/]ws-scrcpy-web-launcher\.exe$/),
+                );
+                expect(cmdline).toContain(STAGED);
+                expect(cmdline).not.toMatch(/operation-server[\\/]ws-scrcpy-web-launcher\.exe/);
+            } else {
+                // The user manager runs it as the user: no SELinux exec rule applies.
+                expect(stageMock).not.toHaveBeenCalled();
+                expect(cmdline).toMatch(/control[\\/]operation-server[\\/]ws-scrcpy-web-launcher\.exe/);
+            }
             expect(cmdline).toContain('--linux-apply');
             expect(cmdline).toContain(`--service-restart ${scope}`);
             expect(cmdline).toContain('--unit WsScrcpyWeb');
