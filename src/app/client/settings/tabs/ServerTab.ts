@@ -1385,7 +1385,8 @@ export async function buildLocalHttpsPanel(deps: LocalHttpsPanelDeps): Promise<H
 /**
  * What a container shows in place of the Local HTTPS panel. The copy names the
  * one supported way (a reverse proxy in front of the container), matching the
- * server's refusal of every `/api/tls/*` write in a container.
+ * server's refusal of every `/api/tls/*` route in a container, reads included
+ * (since beta.164). The panel is never built there, so nothing here asks.
  */
 export function buildLocalHttpsContainerNote(): HTMLElement {
     const { section, body } = buildSection('Local HTTPS');
