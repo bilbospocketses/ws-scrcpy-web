@@ -21,6 +21,10 @@
 // nothing reset it. `guard_opt_install` replaces a non-root-owned or
 // group/other-writable `/opt` AppImage with a FRESH root-owned 0755 copy (a
 // chown would leave any fd the user already holds writable) and resets VERSION.
+//
+// It also keeps VERSION truthful: a VERSION that names another version than the
+// running `/opt` binary is rewritten to it (the system-service update swapped
+// the binary without touching VERSION). A missing VERSION is left missing.
 use crate::log;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
@@ -177,9 +181,15 @@ fn opt_appimage(appimage_env: Option<&str>) -> Option<PathBuf> {
 /// other swap of the running AppImage. The temp file sits beside `path` so the
 /// rename is atomic and stays in the same labelled directory.
 fn replace_with_fresh_copy(path: &Path, mode: u32) -> std::io::Result<()> {
+    let bytes = std::fs::read(path)?;
+    write_fresh(path, &bytes, mode)
+}
+
+/// Write `bytes` to `path` as a NEW inode owned by this process, with `mode`:
+/// a temp file beside it, fsynced, then renamed over it.
+fn write_fresh(path: &Path, bytes: &[u8], mode: u32) -> std::io::Result<()> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
-    let bytes = std::fs::read(path)?;
     let mut tmp = path.as_os_str().to_owned();
     tmp.push(".root-repair");
     let tmp = PathBuf::from(tmp);
@@ -189,7 +199,7 @@ fn replace_with_fresh_copy(path: &Path, mode: u32) -> std::io::Result<()> {
         .create_new(true)
         .mode(mode)
         .open(&tmp)?;
-    f.write_all(&bytes)?;
+    f.write_all(bytes)?;
     f.sync_all()?;
     drop(f);
     // `mode` passed to open() is filtered by the umask; set it exactly.
@@ -257,7 +267,41 @@ pub fn guard_opt_install() {
                 )),
             }
         }
+        if m.link_target.is_none() {
+            let recorded = std::fs::read_to_string(&version).ok();
+            if let Some(v) = version_rewrite(recorded.as_deref(), env!("CARGO_PKG_VERSION")) {
+                match write_fresh(&version, v.as_bytes(), 0o644) {
+                    Ok(()) => log::info(&format!(
+                        "root-trust-guard: VERSION read {:?}, the /opt binary is {v}; rewrote it",
+                        recorded.as_deref().unwrap_or("").trim()
+                    )),
+                    Err(e) => log::error(&format!(
+                        "root-trust-guard: could not rewrite VERSION to {v} ({e})"
+                    )),
+                }
+            }
+        }
     }
+}
+
+/// What `/opt/ws-scrcpy-web/VERSION` should be rewritten to, or `None` to leave
+/// it. Called only from the `/opt` binary running as root, which is by
+/// definition what `/opt` holds. Pure.
+///
+/// The in-app update of a system service swaps the `/opt` binary and never
+/// wrote VERSION, so after one it still named the version installed before.
+/// The bootstrapper (`linux_service::bootstrap_decision`) compares a home
+/// AppImage against it: a home build newer than the stale VERSION but older
+/// than the real binary was offered as an `/opt` update, which is a downgrade.
+///
+/// A missing VERSION stays missing, and so does an empty one, which the
+/// bootstrapper reads as missing. A headless system install never writes one
+/// and the bootstrapper then always runs the `/opt` copy; creating the file
+/// here would start offering home builds as `/opt` updates on hosts that never
+/// had a machine-wide desktop install.
+fn version_rewrite(recorded: Option<&str>, running: &str) -> Option<String> {
+    let r = recorded?.trim();
+    (!r.is_empty() && r != running).then(|| running.to_string())
 }
 
 #[cfg(test)]
@@ -447,6 +491,70 @@ mod tests {
         held.write_all(b"EVIL").unwrap();
         assert_eq!(std::fs::read(&bin).unwrap(), b"\x7fELF app bytes");
         assert!(!dir.path().join("WsScrcpyWeb.AppImage.root-repair").exists());
+    }
+
+    // ── VERSION kept truthful ──
+
+    #[test]
+    fn a_stale_version_is_rewritten_to_the_running_opt_binary() {
+        // A machine-wide install at 147, then the system service updated itself to 162.
+        assert_eq!(
+            version_rewrite(Some("0.1.30-beta.147"), "0.1.30-beta.162"),
+            Some("0.1.30-beta.162".to_string())
+        );
+        // The machine-wide scripts write it with no newline; tolerate one anyway.
+        assert_eq!(
+            version_rewrite(Some("0.1.30-beta.162\n"), "0.1.30-beta.162"),
+            None
+        );
+        assert_eq!(
+            version_rewrite(Some("0.1.30-beta.162"), "0.1.30-beta.162"),
+            None
+        );
+    }
+
+    #[test]
+    fn a_missing_or_empty_version_stays_that_way() {
+        // A headless system install writes none; the bootstrapper then always
+        // runs /opt, and creating the file would change that.
+        assert_eq!(version_rewrite(None, "0.1.30-beta.162"), None);
+        assert_eq!(version_rewrite(Some(""), "0.1.30-beta.162"), None);
+        assert_eq!(version_rewrite(Some(" \n"), "0.1.30-beta.162"), None);
+    }
+
+    #[test]
+    fn the_stale_version_offered_a_downgrade_and_the_rewrite_stops_it() {
+        use crate::linux_service::{BootstrapAction, bootstrap_decision};
+        let home = Some("/home/qa/Downloads/WsScrcpyWeb-linux-beta.AppImage");
+        // /opt really holds 162; VERSION still says 147; the user runs a 150 home build.
+        assert_eq!(
+            bootstrap_decision(true, home, "0.1.30-beta.150", Some("0.1.30-beta.147")),
+            BootstrapAction::RunHomeOfferUpdate,
+            "the defect: 150 is offered as an /opt update over 162"
+        );
+        let fixed = version_rewrite(Some("0.1.30-beta.147"), "0.1.30-beta.162");
+        assert!(matches!(
+            bootstrap_decision(true, home, "0.1.30-beta.150", fixed.as_deref()),
+            BootstrapAction::ExecOpt(_)
+        ));
+    }
+
+    #[test]
+    fn write_fresh_replaces_version_with_a_new_0644_inode() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let version = dir.path().join("VERSION");
+        std::fs::write(&version, b"0.1.30-beta.147").unwrap();
+        std::fs::set_permissions(&version, std::fs::Permissions::from_mode(0o664)).unwrap();
+        let before = std::fs::metadata(&version).unwrap().ino();
+
+        write_fresh(&version, b"0.1.30-beta.162", 0o644).unwrap();
+
+        let after = std::fs::metadata(&version).unwrap();
+        assert_ne!(after.ino(), before);
+        assert_eq!(after.mode() & 0o7777, 0o644);
+        assert_eq!(std::fs::read(&version).unwrap(), b"0.1.30-beta.162");
+        assert!(!dir.path().join("VERSION.root-repair").exists());
     }
 
     #[test]
