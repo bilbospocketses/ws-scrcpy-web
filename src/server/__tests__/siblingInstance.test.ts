@@ -1,7 +1,7 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
-import { isServiceInstance, isSiblingInstance } from '../siblingInstance';
+import { isLinuxSystemServiceInstance, isServiceInstance, isSiblingInstance } from '../siblingInstance';
 
 /**
  * The resolver must not persist an auto-shift when the configured port is held
@@ -18,6 +18,43 @@ describe('isServiceInstance', () => {
         expect(isServiceInstance({ WS_SCRCPY_SERVICE: '1' })).toBe(true);
         expect(isServiceInstance({ WS_SCRCPY_SERVICE: 'true' })).toBe(false);
         expect(isServiceInstance({})).toBe(false);
+    });
+});
+
+describe('isLinuxSystemServiceInstance', () => {
+    // The system unit's own environment (SystemdClient.buildServiceUnitEnv,
+    // linux + system scope), which the launcher hands to Node unchanged.
+    const systemUnitEnv = {
+        DATA_ROOT: '/var/lib/ws-scrcpy-web',
+        DEPS_PATH: '/opt/ws-scrcpy-web/dependencies',
+        WS_SCRCPY_SERVICE: '1',
+    };
+
+    it('is true for the Linux system unit: a service whose DATA_ROOT is the system state dir', () => {
+        expect(isLinuxSystemServiceInstance(systemUnitEnv, 'linux')).toBe(true);
+        expect(isLinuxSystemServiceInstance({ ...systemUnitEnv, DATA_ROOT: '/var/lib/ws-scrcpy-web/' }, 'linux')).toBe(
+            true,
+        );
+    });
+
+    it('is false for the Linux USER service, the Windows service, and anything that is not a service', () => {
+        // User unit: the launcher bridges DATA_ROOT to the user's XDG/HOME data root.
+        expect(
+            isLinuxSystemServiceInstance(
+                { WS_SCRCPY_SERVICE: '1', DATA_ROOT: '/home/u/.local/share/WsScrcpyWeb' },
+                'linux',
+            ),
+        ).toBe(false);
+        expect(
+            isLinuxSystemServiceInstance(
+                { WS_SCRCPY_SERVICE: '1', DATA_ROOT: 'C:\\ProgramData\\WsScrcpyWeb' },
+                'win32',
+            ),
+        ).toBe(false);
+        // The system-scope teardown helper sets DATA_ROOT=/var/lib/... but is no service.
+        expect(isLinuxSystemServiceInstance({ DATA_ROOT: '/var/lib/ws-scrcpy-web' }, 'linux')).toBe(false);
+        expect(isLinuxSystemServiceInstance(systemUnitEnv, 'win32')).toBe(false);
+        expect(isLinuxSystemServiceInstance({}, 'linux')).toBe(false);
     });
 });
 

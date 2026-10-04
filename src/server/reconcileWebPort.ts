@@ -3,6 +3,7 @@ import { httpsCollisionWarning } from './Config';
 import { Logger } from './Logger';
 import { findAvailablePort as realFindAvailablePort, webPortOverride } from './PortPicker';
 import {
+    isLinuxSystemServiceInstance as realIsLinuxSystemServiceInstance,
     isServiceInstance as realIsServiceInstance,
     isSiblingInstance as realIsSiblingInstance,
 } from './siblingInstance';
@@ -20,6 +21,7 @@ export interface ReconcileWebPortDeps {
     env: NodeJS.ProcessEnv;
     findAvailablePort: (start: number, end: number) => Promise<number | null>;
     isServiceInstance: () => boolean;
+    isLinuxSystemServiceInstance: () => boolean;
     isSiblingInstance: (port: number) => Promise<boolean>;
     log: { info(msg: string): void; warn(msg: string): void; error(msg: string): void };
 }
@@ -28,12 +30,13 @@ export interface ReconcileWebPortDeps {
  * Settle the port the first HTTP listener binds, before HttpServer starts.
  *
  * WS_SCRCPY_WEB_PORT is the ONE port override (`PORT` was retired 2026-10-04).
- * It forces that EXACT port, with no walk forward. Set by the Linux
- * system-uninstall relaunch, the systemd system unit, the Dockerfile and the
- * e2e harness.
+ * It forces that EXACT port, with no walk forward. In production only the
+ * Docker image sets it (Dockerfile); the e2e harness sets it too. The Linux
+ * system unit set it until 2026-10-04, and units installed before then still
+ * do (next paragraph).
  *   - Free: the listener binds it, and it is reported and persisted as a CHOSEN
- *     port (`portWasAutoShifted: false`) -- persisted because the handoffs read
- *     the served port back out of config.json.
+ *     port (`portWasAutoShifted: false`) -- persisted so config.json names the
+ *     port this boot serves.
  *   - Busy: the error is logged and the listener STILL targets it, so its bind
  *     fails. The exact port is the contract; falling back to config.json's port
  *     would serve somewhere the caller did not ask for. With nothing else able
@@ -41,7 +44,24 @@ export interface ReconcileWebPortDeps {
  *     the app degrades to HTTPS only, as for any refused HTTP bind. Reported as
  *     the port asked for, never persisted.
  *
- * Without it: detect port collision by walking forward from the configured
+ * The Linux SYSTEM service, with no override: config.json's webPort is exact in
+ * the same way. Its unit used to pin WS_SCRCPY_WEB_PORT to the install port,
+ * so a Settings port change (ConfigApi: write config.json, exit 75, the
+ * launcher respawns Node with the unit's env) came back on the install port and
+ * wrote it over the user's choice. The pin had one job, kept here: during the
+ * page's install the user's own copy still holds the port for a moment (it
+ * exits ~1.5 s after pkexec returns, ServiceApi), and the service must not walk
+ * to port+1 and persist that. Busy, it fails its bind and exits non-zero, and
+ * the unit's Restart=on-failure (RestartSec=2, 10 starts in 60 s) retries until
+ * the port is free -- as the pinned unit did. Free, it binds exactly webPort.
+ * A unit that still carries the pin keeps the override's precedence until it
+ * is rewritten without it (a reinstall; linux_apply.rs strips it on an update).
+ * "System service" is isLinuxSystemServiceInstance (siblingInstance.ts): the
+ * unit's own WS_SCRCPY_SERVICE=1 + DATA_ROOT=/var/lib/ws-scrcpy-web.
+ * The Windows service and the Linux user service keep the walk below: the
+ * Windows handoff depends on the service persisting a shift.
+ *
+ * Otherwise: detect port collision by walking forward from the configured
  * webPort until a free port is found (range = configured..+99). On shift,
  * persist the new port and flip portWasAutoShifted in firstRunStatus.
  *
@@ -66,29 +86,38 @@ export async function reconcileWebPort(
     const env = deps.env ?? process.env;
     const findAvailablePort = deps.findAvailablePort ?? realFindAvailablePort;
     const isServiceInstance = deps.isServiceInstance ?? (() => realIsServiceInstance(env));
+    const isLinuxSystemServiceInstance =
+        deps.isLinuxSystemServiceInstance ?? (() => realIsLinuxSystemServiceInstance(env));
     const isSiblingInstance = deps.isSiblingInstance ?? ((port: number) => realIsSiblingInstance(port));
     const log = deps.log ?? Logger.for('Server');
 
     const override = webPortOverride(env['WS_SCRCPY_WEB_PORT']);
-    const desired = override ?? config.getAppConfig().webPort;
-    // An override (Phase 2 relaunch) forces the EXACT free port; else walk forward to auto-shift.
-    const found = await findAvailablePort(desired, override !== null ? desired : desired + 99);
+    const webPort = config.getAppConfig().webPort;
+    // The port this boot must bind EXACTLY, or null to walk forward from webPort.
+    const exact = override ?? (isLinuxSystemServiceInstance() ? webPort : null);
+    const desired = exact ?? webPort;
+    const found = await findAvailablePort(desired, exact !== null ? desired : desired + 99);
     if (found === null) {
-        if (override !== null) {
-            log.error(`WS_SCRCPY_WEB_PORT ${override} is busy; not walking forward (the override is exact)`);
-            config.setActualWebPort(override, { persist: false, autoShifted: false });
-            bindFirstListener(config, override, log);
+        if (exact !== null) {
+            log.error(
+                override !== null
+                    ? `WS_SCRCPY_WEB_PORT ${override} is busy; not walking forward (the override is exact)`
+                    : `webPort ${desired} is busy; the system service does not walk forward ` +
+                          '(it exits, and systemd restarts it until the port is free)',
+            );
+            config.setActualWebPort(desired, { persist: false, autoShifted: false });
+            bindFirstListener(config, desired, log);
         } else {
             log.error(`No free port available in range ${desired}..${desired + 99}`);
         }
         return null;
     }
     if (found === desired) {
-        if (override !== null) {
-            // Chosen, not shifted -- even when it differs from config.json.
+        if (exact !== null) {
+            // Chosen, not shifted -- even when an override differs from config.json.
             config.setActualWebPort(found, { autoShifted: false });
-            // The override is the port this boot LISTENS on, not only the one
-            // it reports.
+            // The exact port is the port this boot LISTENS on, not only the one
+            // it reports (for an advanced array too, as the pinned unit had it).
             bindFirstListener(config, found, log);
         } else {
             // found === webPort, which the flat config's servers[0] already

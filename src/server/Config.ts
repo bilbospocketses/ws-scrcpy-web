@@ -1561,9 +1561,10 @@ export class Config {
      *
      * `autoShifted: false` is the WS_SCRCPY_WEB_PORT case: the port differs from
      * `webPort` because the caller CHOSE it, not because the configured one was
-     * busy, so `portWasAutoShifted` stays false. It still persists by default --
-     * the service handoff and the Phase 2 relaunch read the served port back out
-     * of config.json. Omitted, a port that differs from `webPort` is a shift.
+     * busy, so `portWasAutoShifted` stays false. It still persists by default,
+     * so config.json names the port this boot serves (the override's one shipped
+     * caller is the Docker image). Omitted, a port that differs from `webPort`
+     * is a shift.
      */
     public setActualWebPort(actualPort: number, opts: { persist?: boolean; autoShifted?: boolean } = {}): void {
         const changed = actualPort !== this._appConfig.webPort;

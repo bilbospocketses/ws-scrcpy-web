@@ -170,10 +170,12 @@ export async function installSystemService(opts: { port: number }, d: CoreDeps):
     const kept = parseKeptConfig(d.readFile(SYSTEM_CONFIG)) ?? {};
     const seed = { ...kept, ...buildSystemSeedConfig(opts.port) };
     d.writeFile(SYSTEM_CONFIG, `${JSON.stringify(seed, null, 2)}\n`, { mode: 0o644 });
-    const envVars = {
-        ...buildServiceUnitEnv('linux', 'system', STAGED_SYSTEM_DEPS_DIR),
-        WS_SCRCPY_WEB_PORT: String(opts.port),
-    };
+    // No WS_SCRCPY_WEB_PORT: the port lives in config.json (seeded above), so a
+    // Settings port change survives the restart. The pin used to come back on
+    // the install port (user decision 2026-10-04). While the user's own copy
+    // still holds the port, the service fails its bind and systemd restarts it
+    // (reconcileWebPort.ts: a Linux system service never walks forward).
+    const envVars = buildServiceUnitEnv('linux', 'system', STAGED_SYSTEM_DEPS_DIR);
     const unit = renderUnitFile(
         {
             name: WS_SCRCPY_SERVICE_NAME,

@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ServerItem } from '../../types/Configuration';
 import { Config, httpsCollisionWarning } from '../Config';
 import { EnvName } from '../EnvName';
+import { findAvailablePort as realFindAvailablePort } from '../PortPicker';
 import { reconcileWebPort, type WebPortConfig } from '../reconcileWebPort';
 
 /**
@@ -107,9 +108,9 @@ describe('reconcileWebPort -- WS_SCRCPY_WEB_PORT against a real Config', () => {
     });
 
     it('override differs from config.json webPort: persisted, but reported as CHOSEN, not auto-shifted', async () => {
-        // Persisted because the handoffs read the served port back out of
-        // config.json (ServiceTab's diskWebPort poll, the Phase 2 relaunch's
-        // "stable afterward"). Not a shift: nothing was busy, the caller asked.
+        // Persisted so config.json names the port this boot serves (the Docker
+        // image's WS_SCRCPY_WEB_PORT=8000 against a /data/config.json naming
+        // another). Not a shift: nothing was busy, the caller asked.
         const [configured, override] = await twoFreePorts();
         const { configPath, config } = setup({ webPort: configured });
 
@@ -231,6 +232,93 @@ describe('reconcileWebPort -- WS_SCRCPY_WEB_PORT against a real Config', () => {
 
         expect(config.servers[0]!.port).toBe(7123);
     });
+
+    // ── The Linux SYSTEM service: config.json's webPort is exact ──
+    //
+    // User decision 2026-10-04: the system unit no longer pins
+    // WS_SCRCPY_WEB_PORT, so a Settings port change survives the restart. The
+    // pin's one job moves here: during the page's install the user's own copy
+    // still holds the port for a moment, and the service must fail its bind
+    // (systemd restarts it) rather than walk to port+1 and persist that.
+
+    it('Linux system service, webPort busy (the install handoff): no walk forward, the bind fails, nothing persisted', async () => {
+        const configured = await freePort();
+        held.push(await holdPort(configured));
+        const { configPath, config } = setup({ webPort: configured, installMode: 'system-service' });
+        const before = fs.readFileSync(configPath, 'utf-8');
+        const log = silentLog();
+        const isSiblingInstance = vi.fn(async () => false);
+
+        const settled = await reconcileWebPort(config, {
+            env: {},
+            isServiceInstance: () => true,
+            isLinuxSystemServiceInstance: () => true,
+            isSiblingInstance,
+            log,
+        });
+
+        expect(settled).toBeNull();
+        expect(log.error).toHaveBeenCalledWith(
+            `webPort ${configured} is busy; the system service does not walk forward ` +
+                '(it exits, and systemd restarts it until the port is free)',
+        );
+        expect(isSiblingInstance).not.toHaveBeenCalled();
+        expect(config.servers[0]!.port).toBe(configured);
+        expect(config.getFirstRunStatus()).toMatchObject({ webPort: configured, portWasAutoShifted: false });
+        expect(fs.readFileSync(configPath, 'utf-8')).toBe(before);
+
+        // What HttpServer.start() does with servers[0]: its bind fails.
+        const probe = net.createServer();
+        const outcome = await new Promise<string>((resolve) => {
+            probe.once('error', (err: NodeJS.ErrnoException) => resolve(err.code ?? 'error'));
+            probe.listen(config.servers[0]!.port, () => resolve('listening'));
+        });
+        if (outcome === 'listening') await new Promise<void>((r) => probe.close(() => r()));
+        expect(outcome).toBe('EADDRINUSE');
+    });
+
+    it('Linux system service after a Settings port change: the respawn binds the NEW config.json port exactly', async () => {
+        // ConfigApi wrote Q and exited 75; the launcher respawned Node with the
+        // unit's env, which no longer carries a port.
+        const [installPort, chosen] = await twoFreePorts();
+        const { configPath, config } = setup({ webPort: installPort, installMode: 'system-service' });
+        config.updateAppConfig({ webPort: chosen });
+        Config._resetForTest();
+        const respawned = Config.getInstance();
+        const before = fs.readFileSync(configPath, 'utf-8');
+        const findAvailablePort = vi.fn(realFindAvailablePort);
+
+        const settled = await reconcileWebPort(respawned, {
+            env: {},
+            findAvailablePort,
+            isServiceInstance: () => true,
+            isLinuxSystemServiceInstance: () => true,
+            log: silentLog(),
+        });
+
+        expect(findAvailablePort).toHaveBeenCalledWith(chosen, chosen);
+        expect(settled).toBe(chosen);
+        expect(respawned.servers[0]!.port).toBe(chosen);
+        expect(respawned.getFirstRunStatus()).toMatchObject({ webPort: chosen, portWasAutoShifted: false });
+        expect(fs.readFileSync(configPath, 'utf-8')).toBe(before);
+    });
+
+    it('Linux system service, a unit that still pins WS_SCRCPY_WEB_PORT (installed before the pin was dropped): the pin wins', async () => {
+        // Why such an install must be reinstalled or updated before a Settings
+        // change sticks: the explicit override keeps its contract.
+        const [configured, pinned] = await twoFreePorts();
+        const { config } = setup({ webPort: configured, installMode: 'system-service' });
+
+        const settled = await reconcileWebPort(config, {
+            env: { WS_SCRCPY_WEB_PORT: String(pinned) },
+            isServiceInstance: () => true,
+            isLinuxSystemServiceInstance: () => true,
+            log: silentLog(),
+        });
+
+        expect(settled).toBe(pinned);
+        expect(config.servers[0]!.port).toBe(pinned);
+    });
 });
 
 describe('reconcileWebPort -- seams', () => {
@@ -327,6 +415,47 @@ describe('reconcileWebPort -- seams', () => {
         });
 
         expect(findAvailablePort).toHaveBeenCalledWith(8000, 8099);
+        expect(config.setActualWebPort).toHaveBeenCalledWith(8001, { persist: true });
+        expect(config.servers[0]!.port).toBe(8001);
+    });
+
+    it('Linux system service: the walk range is the configured port alone, and an advanced array binds it too', async () => {
+        // As the pinned unit did: its override applied to servers[0] of an advanced array.
+        const config = fakeConfig(8000, [{ secure: false, port: 7000 }], true);
+        const findAvailablePort = vi.fn(async (start: number) => start);
+
+        const settled = await reconcileWebPort(config, {
+            env: {},
+            findAvailablePort,
+            isServiceInstance: () => true,
+            isLinuxSystemServiceInstance: () => true,
+            log: silentLog(),
+        });
+
+        expect(findAvailablePort).toHaveBeenCalledWith(8000, 8000);
+        expect(settled).toBe(8000);
+        expect(config.servers[0]!.port).toBe(8000);
+        expect(config.setActualWebPort).toHaveBeenCalledWith(8000, { autoShifted: false });
+    });
+
+    it('the Windows service and the Linux USER service still walk forward and persist the shift', async () => {
+        // The Windows ~15 s handoff depends on the service persisting the port
+        // it actually serves (isServiceInstance); unchanged by the system rule.
+        const config = fakeConfig(8000, [{ secure: false, port: 8000 }]);
+        const findAvailablePort = vi.fn(async (start: number) => start + 1);
+        const isSiblingInstance = vi.fn(async () => true);
+
+        await reconcileWebPort(config, {
+            env: {},
+            findAvailablePort,
+            isServiceInstance: () => true,
+            isLinuxSystemServiceInstance: () => false,
+            isSiblingInstance,
+            log: silentLog(),
+        });
+
+        expect(findAvailablePort).toHaveBeenCalledWith(8000, 8099);
+        expect(isSiblingInstance).not.toHaveBeenCalled();
         expect(config.setActualWebPort).toHaveBeenCalledWith(8001, { persist: true });
         expect(config.servers[0]!.port).toBe(8001);
     });

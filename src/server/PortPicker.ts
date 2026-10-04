@@ -33,9 +33,9 @@ function tryPort(port: number): Promise<boolean> {
     });
 }
 
-/** Parse the one-shot WS_SCRCPY_WEB_PORT override into a valid port, or null.
- *  Set by the Phase 2 system-uninstall relaunch to force the exact (free) service
- *  port so the user's browser reconnects. */
+/** Parse the WS_SCRCPY_WEB_PORT override into a valid port, or null. It forces
+ *  the exact port the server listens on (reconcileWebPort.ts). The Docker image
+ *  sets it, and so does the e2e harness. */
 export function webPortOverride(env: string | undefined): number | null {
     const n = Number(env);
     return Number.isInteger(n) && n > 0 && n < 65536 ? n : null;

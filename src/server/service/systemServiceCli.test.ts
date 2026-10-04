@@ -457,8 +457,18 @@ describe('D12: a reinstall after --keep-state reuses what was kept', () => {
             installMode: 'system-service',
             firstRunComplete: true,
         });
+        // The port lives in config.json only. The unit used to pin it with
+        // WS_SCRCPY_WEB_PORT, so a Settings port change came back on the
+        // install port after the restart (user decision 2026-10-04).
         const unit = writeFile.mock.calls.find((c) => c[0] === '/etc/systemd/system/WsScrcpyWeb.service')?.[1];
-        expect(unit).toContain('WS_SCRCPY_WEB_PORT=8123');
+        expect(unit).toContain('Environment=WS_SCRCPY_SERVICE=1');
+        expect(unit).not.toContain('WS_SCRCPY_WEB_PORT');
+        // What replaces the pin during the page's install: the service finds
+        // the port still held by the user's copy, exits non-zero, and systemd
+        // restarts it -- up to 10 starts in 60 s, 2 s apart.
+        for (const line of ['Restart=on-failure', 'RestartSec=2', 'StartLimitIntervalSec=60', 'StartLimitBurst=10']) {
+            expect(unit).toContain(line);
+        }
     });
     it('an explicit --port still wins over the kept one', async () => {
         const writeFile = vi.fn();

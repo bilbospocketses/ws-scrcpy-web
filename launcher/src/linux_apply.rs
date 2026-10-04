@@ -159,10 +159,73 @@ fn run_service_restart(
         }
     }
 
+    // 3b. System scope only: drop the WS_SCRCPY_WEB_PORT pin a unit installed
+    //     before 2026-10-04 carries, while the unit is stopped, so the start
+    //     below reads config.json's port and a Settings change sticks.
+    if scope == Scope::System {
+        unpin_system_unit(&linux_service::unit_path(scope, unit), &bindir);
+    }
+
     // 4. Start the unit on the new version (rebinds the same web port).
     run_cmd(&service_unit_command(scope, "start", unit, &bindir));
     cleanup_apply_artifacts(staged);
     0
+}
+
+/// The pin line `--install-system-service` wrote into the system unit before
+/// 2026-10-04. It forced the install port on every start, so a Settings port
+/// change came back on the install port (user decision 2026-10-04: the port
+/// lives in config.json only).
+const WEB_PORT_PIN: &str = "Environment=WS_SCRCPY_WEB_PORT=";
+
+/// `unit` without its WS_SCRCPY_WEB_PORT pin line, or None when it has none
+/// (nothing to rewrite). Every other line is kept byte for byte. Pure.
+pub fn strip_web_port_pin(unit: &str) -> Option<String> {
+    let lines: Vec<&str> = unit.split_inclusive('\n').collect();
+    let kept: Vec<&str> = lines
+        .iter()
+        .copied()
+        .filter(|l| !l.trim_start().starts_with(WEB_PORT_PIN))
+        .collect();
+    (kept.len() != lines.len()).then(|| kept.concat())
+}
+
+/// Rewrite the stopped system unit without its pin (a fresh 0644 file renamed
+/// over it), then `daemon-reload` so the next start reads it. Best-effort: a
+/// failure is logged and the unit starts as it was. A symlinked unit is left
+/// alone; `--install-system-service` writes a regular file.
+fn unpin_system_unit(unit_file: &Path, bindir: &str) {
+    use std::os::unix::fs::PermissionsExt;
+    match std::fs::symlink_metadata(unit_file) {
+        Ok(m) if m.is_file() => {}
+        _ => return,
+    }
+    let Some(text) = std::fs::read_to_string(unit_file)
+        .ok()
+        .and_then(|t| strip_web_port_pin(&t))
+    else {
+        return;
+    };
+    let mut tmp = unit_file.as_os_str().to_owned();
+    tmp.push(".new");
+    let tmp = PathBuf::from(tmp);
+    let written = std::fs::write(&tmp, text)
+        .and_then(|()| std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o644)))
+        .and_then(|()| std::fs::rename(&tmp, unit_file));
+    match written {
+        Ok(()) => {
+            log::info(&format!(
+                "linux-apply(service): removed the WS_SCRCPY_WEB_PORT pin from {unit_file:?}"
+            ));
+            run_cmd(&[format!("{bindir}/systemctl"), "daemon-reload".to_string()]);
+        }
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp);
+            log::error(&format!(
+                "linux-apply(service): could not remove the WS_SCRCPY_WEB_PORT pin from {unit_file:?} ({e})"
+            ));
+        }
+    }
 }
 
 /// Run one argv vector, logging the outcome (best-effort). Shared by the service path.
@@ -419,6 +482,70 @@ mod tests {
         assert_eq!(std::fs::read(&target).unwrap(), b"NEW");
         assert_eq!(std::fs::read(backup_path(&target)).unwrap(), b"OLD");
         assert!(!staged.exists(), "staged file consumed");
+    }
+
+    /// A system unit as `--install-system-service` rendered it before 2026-10-04
+    /// (SystemdClient.renderUnitFile, system scope), pin included.
+    const PINNED_UNIT: &str = "[Unit]\nDescription=ws-scrcpy-web\nAfter=network-online.target\nWants=network-online.target\nStartLimitIntervalSec=60\nStartLimitBurst=10\n\n[Service]\nType=simple\nExecStart=/opt/ws-scrcpy-web/WsScrcpyWeb.AppImage\nWorkingDirectory=/opt/ws-scrcpy-web\nRestart=on-failure\nRestartSec=2\nLimitNOFILE=65536\nEnvironment=DATA_ROOT=/var/lib/ws-scrcpy-web\nEnvironment=DEPS_PATH=/opt/ws-scrcpy-web/dependencies\nEnvironment=WS_SCRCPY_SERVICE=1\nEnvironment=WS_SCRCPY_WEB_PORT=8123\nStandardOutput=append:/var/lib/ws-scrcpy-web/logs/service.log\nStandardError=append:/var/lib/ws-scrcpy-web/logs/service.log\n\n[Install]\nWantedBy=multi-user.target\n";
+
+    #[test]
+    fn strip_web_port_pin_drops_only_the_pin_line() {
+        let stripped = strip_web_port_pin(PINNED_UNIT).expect("the pinned unit has a pin");
+        assert!(!stripped.contains("WS_SCRCPY_WEB_PORT"), "{stripped}");
+        assert_eq!(
+            stripped,
+            PINNED_UNIT.replace("Environment=WS_SCRCPY_WEB_PORT=8123\n", "")
+        );
+        // Nothing to rewrite in a unit installed without the pin.
+        assert_eq!(strip_web_port_pin(&stripped), None);
+    }
+
+    #[test]
+    fn unpin_system_unit_rewrites_the_file_without_the_pin() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let unit = tmp.path().join("WsScrcpyWeb.service");
+        std::fs::write(&unit, PINNED_UNIT).unwrap();
+        // The tools dir holds no systemctl: daemon-reload only logs its spawn failure.
+        unpin_system_unit(&unit, tmp.path().to_str().unwrap());
+        let after = std::fs::read_to_string(&unit).unwrap();
+        assert_eq!(
+            after,
+            PINNED_UNIT.replace("Environment=WS_SCRCPY_WEB_PORT=8123\n", "")
+        );
+        assert_eq!(
+            std::fs::metadata(&unit).unwrap().permissions().mode() & 0o7777,
+            0o644
+        );
+        assert!(!tmp.path().join("WsScrcpyWeb.service.new").exists());
+    }
+
+    #[test]
+    fn unpin_system_unit_leaves_an_unpinned_unit_and_a_symlink_alone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let clean = PINNED_UNIT.replace("Environment=WS_SCRCPY_WEB_PORT=8123\n", "");
+        let unit = tmp.path().join("WsScrcpyWeb.service");
+        std::fs::write(&unit, &clean).unwrap();
+        let before = std::fs::metadata(&unit).unwrap().modified().unwrap();
+        unpin_system_unit(&unit, "/nonexistent");
+        assert_eq!(std::fs::read_to_string(&unit).unwrap(), clean);
+        assert_eq!(
+            std::fs::metadata(&unit).unwrap().modified().unwrap(),
+            before
+        );
+
+        let target = tmp.path().join("elsewhere.service");
+        std::fs::write(&target, PINNED_UNIT).unwrap();
+        let link = tmp.path().join("Linked.service");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        unpin_system_unit(&link, "/nonexistent");
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), PINNED_UNIT);
+        assert!(
+            std::fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
     }
 
     #[test]
