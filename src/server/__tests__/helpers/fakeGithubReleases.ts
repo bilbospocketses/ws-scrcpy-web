@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { vi } from 'vitest';
 
 /**
@@ -37,7 +38,11 @@ export function betas(count: number, top: number): FakeRelease[] {
 export interface FakeGithubApi {
     fetchFn: typeof fetch;
     calls: { url: string; ifNoneMatch: string | null }[];
-    /** Replace the listing (newest first); changes every page's ETag. */
+    /**
+     * Replace the listing (newest first). Each page's ETag is derived from that
+     * page's own content, as GitHub's is: a page whose releases did not change
+     * keeps its ETag, so an edit further back leaves page 1's untouched.
+     */
     set(list: FakeRelease[]): void;
     /** Answer every request with this status instead of a listing (`null` to stop). */
     refuse(status: number | null): void;
@@ -45,7 +50,6 @@ export interface FakeGithubApi {
 
 export function fakeGithubApi(initial: FakeRelease[]): FakeGithubApi {
     let list = initial;
-    let version = 1;
     let refusal: number | null = null;
     const calls: FakeGithubApi['calls'] = [];
     const fetchFn = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
@@ -58,21 +62,21 @@ export function fakeGithubApi(initial: FakeRelease[]): FakeGithubApi {
         }
         const perPage = Number(url.searchParams.get('per_page') ?? '30');
         const page = Number(url.searchParams.get('page') ?? '1');
-        const etag = `"v${version}-p${page}"`;
-        if (headers.get('If-None-Match') === etag) return new Response(null, { status: 304 });
         const start = (page - 1) * perPage;
         const slice = list.slice(start, start + perPage).map((r, i) => ({
             ...r,
             published_at: r.published_at ?? new Date(NEWEST - (start + i) * 60_000).toISOString(),
         }));
-        return new Response(JSON.stringify(slice), { status: 200, headers: { ETag: etag } });
+        const body = JSON.stringify(slice);
+        const etag = `"p${page}-${createHash('sha1').update(body).digest('hex').slice(0, 12)}"`;
+        if (headers.get('If-None-Match') === etag) return new Response(null, { status: 304 });
+        return new Response(body, { status: 200, headers: { ETag: etag } });
     }) as unknown as typeof fetch;
     return {
         fetchFn,
         calls,
         set(next) {
             list = next;
-            version++;
         },
         refuse(status) {
             refusal = status;

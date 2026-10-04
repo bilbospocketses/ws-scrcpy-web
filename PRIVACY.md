@@ -1,6 +1,6 @@
 # Privacy Policy
 
-**Effective: 2026-09-27**
+**Effective: 2026-10-04**
 
 ## TL;DR
 
@@ -22,14 +22,32 @@ Three categories of outbound traffic. All are opt-in or operationally necessary,
 
 ### 1. Update checks (Velopack)
 
-The app checks GitHub for new releases. By default each check makes:
+The app checks GitHub for new releases. `<owner>` is the repository owner set in Settings → Updates (`bilbospocketses` by default), and `<channel>` is `stable` or `beta` on Windows, `linux-stable` or `linux-beta` on Linux. Each check makes these requests, all of them to GitHub:
 
-```
-https://api.github.com/repos/<owner>/ws-scrcpy-web/releases?per_page=100   (the release list, to find the newest release on your channel)
-https://github.com/<owner>/ws-scrcpy-web/releases/download/<tag>/releases.<channel>.json   (that release's update feed)
-```
+1. **The release list**, read by the app itself:
+   ```
+   https://api.github.com/repos/<owner>/ws-scrcpy-web/releases?per_page=100&page=<n>
+   ```
+   One request per page, to the end of the list (two pages today), sent with `User-Agent: ws-scrcpy-web`. From the second check on, each page is asked for conditionally (`If-None-Match` with the ETag GitHub gave last time). Nothing about you or your install is in these requests.
+2. **The update feed** of the release the list pointed to, read by Velopack (the update library), only when your channel has a release:
+   ```
+   https://github.com/<owner>/ws-scrcpy-web/releases/download/<tag>/releases.<channel>.json?localVersion=<installed version>&id=WsScrcpyWeb&stagingId=<random id>
+   ```
+   Velopack adds the three query parameters itself (velopack 1.2.161 `sources/http.rs:38-46`): `localVersion` is the version you are running, `id` is the app's package id (the same for every install), and `stagingId` is explained below. The request is sent with `User-Agent: ureq/3.4.2`, the default of the HTTP library inside Velopack, which sets none of its own. GitHub answers with a redirect to its own asset host, `release-assets.githubusercontent.com`.
+3. **The update itself**, only when one is downloaded:
+   - **Windows:** Velopack downloads the package from the same release folder (`.../releases/download/<tag>/<package>.nupkg`, no query parameters, `User-Agent: ureq/3.4.2`) — ahead of time if automatic updates are on, otherwise when you apply it.
+   - **Linux:** when you apply, the app downloads `.../releases/download/v<version>/WsScrcpyWeb-linux-<channel>.AppImage` and that release's `SHA256SUMS`, with the `User-Agent: node` that the app's Node.js runtime sends by default.
 
-and, when you apply an update, a download of the package from that same release. The requests reveal your IP address and User-Agent string to GitHub, nothing else. You can:
+**The `stagingId`.** Velopack sends it so that a feed can roll a release out to a fraction of installs at a time. Our feeds are static files on GitHub and do not use it, so it changes nothing about what you are offered. It is a random UUID (version 4) that Velopack generates; it is not derived from your hardware, your account, your IP address or anything else, and the app does not record or send it anywhere else, so nothing links it to you. Velopack keeps it in a file named `.betaId` in its packages folder and reuses it while that file exists (`locator.rs`, `get_or_create_staged_user_id`):
+
+- **Windows:** the packages folder is `<install folder>\packages`, or `%LOCALAPPDATA%\WsScrcpyWeb\packages` when the account running the app cannot write to the install folder. Velopack creates the file on the first check and sends the same id on every later check from that install, until the file is deleted.
+- **Linux:** the packages folder is `/var/tmp/velopack/WsScrcpyWeb/packages`. Velopack creates that folder only when it downloads a package itself, which the app never asks it to do on Linux (it fetches the AppImage directly), so the folder normally does not exist, the file cannot be written, and every check sends a newly generated id. If the folder does exist, the id is kept there like on Windows until it is deleted.
+
+Releases up to v0.1.30-beta.166 read the feed through a different Velopack source, which sent none of these three parameters.
+
+What GitHub receives from these requests is your IP address, the User-Agent strings above, and the query parameters in request 2.
+
+**Setting the `VELOPACK_FEED_URL` environment variable changes the destination.** No release list is read, and Velopack reads its feed and downloads the Windows package from the location you set instead (`sources/mod.rs`, `AutoSource`): a local folder involves no network at all; any other `http(s)` server receives request 2 with the same three parameters and request 3 as above; a `github.com` URL goes back to the older GitHub source, which sends no parameters. The Linux download in request 3 is not covered by it — it always comes from the owner's GitHub releases. You can:
 
 - **Disable updates entirely** in Settings → Updates → "automatically download updates" off + skip the manual check button.
 - **Switch channels** between stable and beta.

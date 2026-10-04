@@ -88,7 +88,7 @@ describe('GithubReleaseFeedResolver', () => {
         expect(sleep).toHaveBeenCalled();
     });
 
-    it('caches the answer: an unchanged listing costs one conditional request (304)', async () => {
+    it('caches the answer: an unchanged listing costs one conditional request per page (304)', async () => {
         const api = fakeGithubApi([...betas(3, 10), release('v0.1.30', ['stable'])]);
         const r = new GithubReleaseFeedResolver({ fetchFn: api.fetchFn, sleep: noSleep });
         const first = await r.resolve('bilbospocketses', 'stable');
@@ -96,7 +96,99 @@ describe('GithubReleaseFeedResolver', () => {
         expect(second).toEqual(first);
         expect(api.calls).toHaveLength(2);
         expect(api.calls[0]!.ifNoneMatch).toBeNull();
-        expect(api.calls[1]!.ifNoneMatch).toBe('"v1-p1"');
+        expect(api.calls[1]!.ifNoneMatch).toMatch(/^"p1-/);
+    });
+
+    it('a two-page listing that has not changed is revalidated page by page, all 304', async () => {
+        const api = fakeGithubApi([...betas(RELEASES_PER_PAGE, 200), release('v0.1.30', ['stable'])]);
+        const r = new GithubReleaseFeedResolver({ fetchFn: api.fetchFn, sleep: noSleep });
+        expect((await r.resolve('bilbospocketses', 'stable'))?.tag).toBe('v0.1.30');
+        expect((await r.resolve('bilbospocketses', 'stable'))?.tag).toBe('v0.1.30');
+        expect(api.calls).toHaveLength(4);
+        expect(api.calls[2]!.ifNoneMatch).toMatch(/^"p1-/);
+        expect(api.calls[3]!.ifNoneMatch).toMatch(/^"p2-/);
+    });
+
+    // ── Which release wins: the highest version, wherever it is listed ──
+    //
+    // GitHub's list is not ordered by publication or by version (measured
+    // 2026-10-04: beta.92 listed above beta.102), so neither "first match" nor
+    // "newest published_at" is the newest version.
+
+    it('picks the highest version, not the one listed first or published last', async () => {
+        const api = fakeGithubApi([
+            release('v0.1.30-beta.92', ['beta']),
+            release('v0.1.30-beta.102', ['beta']),
+            release('v0.1.30-beta.101', ['beta']),
+        ]);
+        const r = new GithubReleaseFeedResolver({ fetchFn: api.fetchFn, sleep: noSleep });
+        expect((await r.resolve('bilbospocketses', 'beta'))?.tag).toBe('v0.1.30-beta.102');
+    });
+
+    it('a match on page 2 with a higher version than page 1 wins', async () => {
+        const api = fakeGithubApi([
+            release('v0.1.30-beta.10', ['beta']),
+            ...Array.from({ length: RELEASES_PER_PAGE - 1 }, (_, i) => release(`v0.0.${i}`, ['stable'])),
+            release('v0.1.30-beta.200', ['beta']),
+        ]);
+        const r = new GithubReleaseFeedResolver({ fetchFn: api.fetchFn, sleep: noSleep });
+        expect((await r.resolve('bilbospocketses', 'beta'))?.tag).toBe('v0.1.30-beta.200');
+        expect(api.calls.map((c) => new URL(c.url).searchParams.get('page'))).toEqual(['1', '2']);
+    });
+
+    it('an edit on page 2 is noticed though page 1 did not change', async () => {
+        const page1 = betas(RELEASES_PER_PAGE, 200);
+        const api = fakeGithubApi([...page1, release('v0.1.30', ['stable'])]);
+        const r = new GithubReleaseFeedResolver({ fetchFn: api.fetchFn, sleep: noSleep });
+        expect((await r.resolve('bilbospocketses', 'stable'))?.tag).toBe('v0.1.30');
+        // The rollback lever, pulled on a release that sits on page 2.
+        api.set([...page1, { ...release('v0.1.30', ['stable']), prerelease: true }]);
+        expect(await r.resolve('bilbospocketses', 'stable')).toBeNull();
+    });
+
+    // ── The rollback lever: a prerelease is never offered ──
+    //
+    // docs/RELEASING.md's rollback step 1 is `gh release edit vX.Y.Z
+    // --prerelease`. release.yml never sets the flag, so it marks exactly the
+    // releases someone has pulled.
+
+    it('skips prereleases, so marking a bad release prerelease retracts it', async () => {
+        const api = fakeGithubApi([release('v0.1.31', ['stable']), release('v0.1.30', ['stable'])]);
+        const r = new GithubReleaseFeedResolver({ fetchFn: api.fetchFn, sleep: noSleep });
+        expect((await r.resolve('bilbospocketses', 'stable'))?.tag).toBe('v0.1.31');
+        api.set([{ ...release('v0.1.31', ['stable']), prerelease: true }, release('v0.1.30', ['stable'])]);
+        expect((await r.resolve('bilbospocketses', 'stable'))?.tag).toBe('v0.1.30');
+    });
+
+    // ── A refusal with an answer already in hand ──
+
+    it.each([403, 429])(
+        'a %i with a cached answer for the same owner and channel serves that answer',
+        async (status) => {
+            const api = fakeGithubApi([...betas(3, 10), release('v0.1.30', ['stable'])]);
+            const r = new GithubReleaseFeedResolver({ fetchFn: api.fetchFn, sleep: noSleep });
+            expect((await r.resolve('bilbospocketses', 'stable'))?.tag).toBe('v0.1.30');
+            api.refuse(status);
+            expect((await r.resolve('bilbospocketses', 'stable'))?.tag).toBe('v0.1.30');
+        },
+    );
+
+    it('a refusal with only another channel cached still throws', async () => {
+        const api = fakeGithubApi([...betas(3, 10), release('v0.1.30', ['stable'])]);
+        const r = new GithubReleaseFeedResolver({ fetchFn: api.fetchFn, sleep: noSleep });
+        await r.resolve('bilbospocketses', 'stable');
+        api.refuse(403);
+        const err = await r.resolve('bilbospocketses', 'beta').catch((e: unknown) => e);
+        expect((err as HttpStatusError).status).toBe(403);
+    });
+
+    it('a 503 with a cached answer still throws: only a refusal falls back', async () => {
+        const api = fakeGithubApi([release('v0.1.30', ['stable'])]);
+        const r = new GithubReleaseFeedResolver({ fetchFn: api.fetchFn, sleep: noSleep });
+        await r.resolve('bilbospocketses', 'stable');
+        api.refuse(503);
+        const err = await r.resolve('bilbospocketses', 'stable').catch((e: unknown) => e);
+        expect((err as HttpStatusError).status).toBe(503);
     });
 
     it('caches "none" too, and notices when the channel gets its first release', async () => {

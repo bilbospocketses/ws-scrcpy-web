@@ -129,8 +129,10 @@ export class UpdateService {
     /** The channel and owner checks run against, set by init() and reconfigure(). */
     private channel: UpdateChannel = 'stable';
     private githubOwner = '';
-    /** Bumped by reconfigure(), so a check still running for the old channel discards its answer. */
+    /** Bumped by reconfigure(), so a check or download still running for the old channel discards its answer. */
     private generation = 0;
+    /** The Velopack download in flight, if any, and the generation it was started for. */
+    private download: { generation: number; done: Promise<void> } | null = null;
     private readonly resolver: ReleaseFeedResolver;
     private state: UpdateServiceState;
     private timer: NodeJS.Timeout | null = null;
@@ -421,8 +423,8 @@ export class UpdateService {
         this.state.errorMessage = undefined;
         let resolved = false;
         try {
-            // One resolution per check. The resolver caches its answer, so an
-            // unchanged release listing costs a single conditional request.
+            // One resolution per check. The resolver caches each page of the
+            // listing by ETag, so an unchanged listing is answered with 304s.
             let feed = this.overrideFeed();
             if (feed === null) {
                 const release = await this.resolver.resolve(this.githubOwner, explicitChannel);
@@ -489,20 +491,70 @@ export class UpdateService {
         return this.state;
     }
 
-    /** Download the pending update. Updates progress. Idempotent during 'downloading'. */
+    /**
+     * Download the pending update. Updates progress.
+     *
+     * One download at a time, and only the current channel's result counts:
+     *
+     *  - A download already running for the SAME generation is joined, not
+     *    duplicated.
+     *  - A download still running for an OLDER generation (the channel or owner
+     *    changed under it) is waited out first, then this generation's package
+     *    is downloaded. It cannot be cancelled, and starting a second one beside
+     *    it would fail: Velopack's download takes an exclusive lock on the
+     *    packages folder (velopack 1.2.161 `manager.rs:406`). Waiting, rather
+     *    than skipping the pre-download, leaves the new channel's package on
+     *    disk for apply the same as any other auto-download.
+     *  - A download whose generation was overtaken while it ran discards its
+     *    result: it writes no progress, no `ready`, no `error` into the new
+     *    channel's state.
+     */
     public async downloadIfNeeded(): Promise<void> {
+        const generation = this.generation;
         if (!this.mgr || !this.state.pendingUpdate) return;
-        if (this.state.status === 'downloading') return;
+
+        while (this.download && this.download.generation !== generation) {
+            this.state.status = 'downloading';
+            this.state.progress = 0;
+            log.info('waiting for the previous channel download to finish before starting this one');
+            await this.download.done;
+        }
+        if (generation !== this.generation || !this.mgr || !this.state.pendingUpdate) return;
+        if (this.download) {
+            this.state.status = 'downloading';
+            await this.download.done;
+            return;
+        }
 
         this.state.status = 'downloading';
         this.state.progress = 0;
+        const done: Promise<void> = this.runDownload(this.mgr, this.state.pendingUpdate, generation).finally(() => {
+            if (this.download?.done === done) this.download = null;
+        });
+        this.download = { generation, done };
+        await done;
+    }
+
+    /** One Velopack download; never rejects. See {@link downloadIfNeeded}. */
+    private async runDownload(mgr: UpdateManagerLike, update: UpdateInfo, generation: number): Promise<void> {
         try {
-            await this.mgr.downloadUpdateAsync(this.state.pendingUpdate, (perc: number) => {
+            await mgr.downloadUpdateAsync(update, (perc: number) => {
+                if (generation !== this.generation) return;
                 this.state.progress = Math.min(100, Math.max(0, Math.round(perc)));
             });
+            if (generation !== this.generation) {
+                log.info(
+                    `discarding the finished download of v${update.TargetFullRelease.Version}: the channel changed`,
+                );
+                return;
+            }
             this.state.progress = 100;
             this.state.status = 'ready';
         } catch (err) {
+            if (generation !== this.generation) {
+                log.info(`discarding a failed download for the previous channel: ${(err as Error).message}`);
+                return;
+            }
             this.state.status = 'error';
             this.state.errorMessage = (err as Error).message ?? 'download failed';
             log.warn(`download failed: ${this.state.errorMessage}`);

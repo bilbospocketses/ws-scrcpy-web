@@ -323,8 +323,9 @@ jobs:
           # channel's newest release through the releases API itself and reads
           # that release's download folder (src/server/updateFeedResolver.ts).
           # Channel separation is the per-channel releases.<channel>.json feed
-          # file (see the `files:` block below), and the app ignores the
-          # prerelease flag; leaving it off keeps the Releases page uniform.
+          # file (see the `files:` block below). The app SKIPS any release
+          # flagged prerelease -- that flag is the rollback lever
+          # (docs/RELEASING.md) -- so it must stay off here.
           #
           # make_latest: true — every published release claims the Latest
           # badge. Neither Velopack nor the app reads /releases/latest, so the
