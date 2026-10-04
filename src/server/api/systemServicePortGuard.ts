@@ -32,5 +32,5 @@ export async function systemServicePortRefusal(
     const findAvailablePort = deps.findAvailablePort ?? realFindAvailablePort;
     if (!isSystemService() || !isValidWebPort(requested) || ownPorts.includes(requested)) return null;
     if ((await findAvailablePort(requested, requested)) === requested) return null;
-    return `port ${requested} is in use by another program; the system service binds its port exactly, so pick a free one`;
+    return `port ${requested} is in use; the system service binds its port exactly, so pick a free one`;
 }

@@ -85,8 +85,7 @@ async function heldPort(): Promise<number> {
 const LOOPBACK = { remoteAddress: '127.0.0.1' };
 const systemService = { isLinuxSystemServiceInstance: () => true };
 const otherMode = { isLinuxSystemServiceInstance: () => false };
-const inUse = (port: number) =>
-    `port ${port} is in use by another program; the system service binds its port exactly, so pick a free one`;
+const inUse = (port: number) => `port ${port} is in use; the system service binds its port exactly, so pick a free one`;
 
 /** Fake the restart timer and stub exit, so a 200 never ends the vitest worker. */
 function noRealRestart() {

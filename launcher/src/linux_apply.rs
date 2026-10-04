@@ -150,10 +150,11 @@ fn run_service_restart(
 
     // 3. System scope only: re-apply the bin_t label so init_t may exec the
     //    swapped /opt copy. restorecon (persistent rule) preferred, else chcon.
+    let restorecon = format!("{}/restorecon", linux_service::sbindir_from(&bindir));
+    let restorecon_present = Path::new(&restorecon).exists();
+    let selinux = selinux_active();
     if relabel {
-        let restorecon = format!("{}/restorecon", linux_service::sbindir_from(&bindir));
-        let present = Path::new(&restorecon).exists();
-        match relabel_command(target, &bindir, present, selinux_active()) {
+        match relabel_command(target, &bindir, restorecon_present, selinux) {
             Some(argv) => run_cmd(&argv),
             None => log::info("linux-apply(service): SELinux is not active; no label to apply"),
         }
@@ -163,7 +164,12 @@ fn run_service_restart(
     //     before 2026-10-04 carries, while the unit is stopped, so the start
     //     below reads config.json's port and a Settings change sticks.
     if scope == Scope::System {
-        unpin_system_unit(&linux_service::unit_path(scope, unit), &bindir);
+        unpin_system_unit(
+            &linux_service::unit_path(scope, unit),
+            &bindir,
+            restorecon_present,
+            selinux,
+        );
     }
 
     // 4. Start the unit on the new version (rebinds the same web port).
@@ -190,11 +196,34 @@ pub fn strip_web_port_pin(unit: &str) -> Option<String> {
     (kept.len() != lines.len()).then(|| kept.concat())
 }
 
-/// Rewrite the stopped system unit without its pin (a fresh 0644 file renamed
-/// over it), then `daemon-reload` so the next start reads it. Best-effort: a
+/// `restorecon` for the rewritten system unit, or None. The rewrite is a new
+/// inode, so it carries the label its creation gave it, not the old file's;
+/// `restorecon` puts the policy's label back. Only with SELinux active and
+/// `restorecon` present: there is no `chcon` fallback, because the policy's
+/// default is the label a unit file should have. Pure.
+pub fn unit_restorecon_command(
+    unit_file: &Path,
+    bindir: &str,
+    restorecon_present: bool,
+    selinux_active: bool,
+) -> Option<Vec<String>> {
+    if !(selinux_active && restorecon_present) {
+        return None;
+    }
+    Some(vec![
+        format!("{}/restorecon", linux_service::sbindir_from(bindir)),
+        "-v".into(),
+        unit_file.to_string_lossy().into_owned(),
+    ])
+}
+
+/// Rewrite the stopped system unit without its pin (a fresh 0644 file, synced,
+/// renamed over it), restore its SELinux label where `unit_restorecon_command`
+/// says so, then `daemon-reload` so the next start reads it. Best-effort: a
 /// failure is logged and the unit starts as it was. A symlinked unit is left
 /// alone; `--install-system-service` writes a regular file.
-fn unpin_system_unit(unit_file: &Path, bindir: &str) {
+fn unpin_system_unit(unit_file: &Path, bindir: &str, restorecon_present: bool, selinux: bool) {
+    use std::io::Write;
     use std::os::unix::fs::PermissionsExt;
     match std::fs::symlink_metadata(unit_file) {
         Ok(m) if m.is_file() => {}
@@ -209,14 +238,24 @@ fn unpin_system_unit(unit_file: &Path, bindir: &str) {
     let mut tmp = unit_file.as_os_str().to_owned();
     tmp.push(".new");
     let tmp = PathBuf::from(tmp);
-    let written = std::fs::write(&tmp, text)
-        .and_then(|()| std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o644)))
+    // Synced before the rename, so a crash after it cannot leave the unit's name
+    // on an empty or partial file.
+    let written = std::fs::File::create(&tmp)
+        .and_then(|mut f| {
+            f.write_all(text.as_bytes())?;
+            f.set_permissions(std::fs::Permissions::from_mode(0o644))?;
+            f.sync_all()
+        })
         .and_then(|()| std::fs::rename(&tmp, unit_file));
     match written {
         Ok(()) => {
             log::info(&format!(
                 "linux-apply(service): removed the WS_SCRCPY_WEB_PORT pin from {unit_file:?}"
             ));
+            let relabel = unit_restorecon_command(unit_file, bindir, restorecon_present, selinux);
+            if let Some(argv) = relabel {
+                run_cmd(&argv);
+            }
             run_cmd(&[format!("{bindir}/systemctl"), "daemon-reload".to_string()]);
         }
         Err(e) => {
@@ -506,8 +545,9 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let unit = tmp.path().join("WsScrcpyWeb.service");
         std::fs::write(&unit, PINNED_UNIT).unwrap();
-        // The tools dir holds no systemctl: daemon-reload only logs its spawn failure.
-        unpin_system_unit(&unit, tmp.path().to_str().unwrap());
+        // The tools dir holds no restorecon or systemctl: the relabel and the
+        // daemon-reload only log their spawn failures.
+        unpin_system_unit(&unit, tmp.path().to_str().unwrap(), true, true);
         let after = std::fs::read_to_string(&unit).unwrap();
         assert_eq!(
             after,
@@ -521,13 +561,38 @@ mod tests {
     }
 
     #[test]
+    fn unit_restorecon_command_needs_selinux_and_restorecon() {
+        let unit = Path::new("/etc/systemd/system/WsScrcpyWeb.service");
+        assert_eq!(
+            unit_restorecon_command(unit, "/usr/bin", true, true),
+            Some(
+                [
+                    "/usr/sbin/restorecon",
+                    "-v",
+                    "/etc/systemd/system/WsScrcpyWeb.service"
+                ]
+                .map(String::from)
+                .to_vec()
+            )
+        );
+        // No chcon fallback for the unit: without restorecon, or without
+        // SELinux, nothing runs.
+        for (present, selinux) in [(false, true), (true, false), (false, false)] {
+            assert_eq!(
+                unit_restorecon_command(unit, "/usr/bin", present, selinux),
+                None
+            );
+        }
+    }
+
+    #[test]
     fn unpin_system_unit_leaves_an_unpinned_unit_and_a_symlink_alone() {
         let tmp = tempfile::tempdir().unwrap();
         let clean = PINNED_UNIT.replace("Environment=WS_SCRCPY_WEB_PORT=8123\n", "");
         let unit = tmp.path().join("WsScrcpyWeb.service");
         std::fs::write(&unit, &clean).unwrap();
         let before = std::fs::metadata(&unit).unwrap().modified().unwrap();
-        unpin_system_unit(&unit, "/nonexistent");
+        unpin_system_unit(&unit, "/nonexistent", false, false);
         assert_eq!(std::fs::read_to_string(&unit).unwrap(), clean);
         assert_eq!(
             std::fs::metadata(&unit).unwrap().modified().unwrap(),
@@ -538,7 +603,7 @@ mod tests {
         std::fs::write(&target, PINNED_UNIT).unwrap();
         let link = tmp.path().join("Linked.service");
         std::os::unix::fs::symlink(&target, &link).unwrap();
-        unpin_system_unit(&link, "/nonexistent");
+        unpin_system_unit(&link, "/nonexistent", false, false);
         assert_eq!(std::fs::read_to_string(&target).unwrap(), PINNED_UNIT);
         assert!(
             std::fs::symlink_metadata(&link)

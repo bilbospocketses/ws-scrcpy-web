@@ -259,8 +259,7 @@ describe('performStagedSave', () => {
         // SettingsBatchApi refuses a busy port on the Linux system service
         // before anything is written (systemServicePortGuard.ts). The body is
         // the rejected-apply shape, so runSave reads it like any other refusal.
-        const message =
-            'port 8123 is in use by another program; the system service binds its port exactly, so pick a free one';
+        const message = 'port 8123 is in use; the system service binds its port exactly, so pick a free one';
         stubFetch(409, { ok: false, applied: [], failed: { id: 'webPort', error: message } });
         const store = new StagedSettingsStore();
         store.register({ id: 'webPort', label: 'Web port', initial: 8000 });
