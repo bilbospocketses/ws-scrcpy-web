@@ -1,14 +1,16 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { UsersApi } from '../api/UsersApi';
 import { isAuthEnabled } from '../auth/authState';
 import { hashPassword } from '../auth/password';
 import { SessionStore } from '../auth/session';
+import { type ClosableSocket, WS_SESSION_REVOKED } from '../auth/socketRegistry';
 import { Config } from '../Config';
 import { IMPLICIT_ADMIN_ID } from '../db/constants';
 import { EnvName } from '../EnvName';
+import { liveSockets } from '../services/WebSocketServer';
 import { makeReqRes } from './helpers/httpMock';
 
 const tmpDirs: string[] = [];
@@ -152,5 +154,86 @@ describe('UsersApi', () => {
         await new UsersApi().handle(r.req, r.res);
         expect(r.getStatus()).toBe(200);
         expect(db.users.getById(bob.id)).toBeUndefined();
+    });
+});
+
+// Finding 18.14, reopened 2026-10-03: deleting a user's sessions refuses their
+// NEXT connection, but a stream or shell they already had open kept running.
+// Logout revoked its own sockets; disable and delete revoked none.
+describe('UsersApi closes the live sockets of a user it disables or deletes', () => {
+    const tracked: ClosableSocket[] = [];
+    function openSocket(userId: number, token: string): ClosableSocket & { close: ReturnType<typeof vi.fn> } {
+        const socket = { close: vi.fn() };
+        liveSockets.add(socket, userId, token);
+        tracked.push(socket);
+        return socket;
+    }
+    afterEach(() => {
+        while (tracked.length) liveSockets.remove(tracked.pop()!);
+    });
+
+    it('disabling a user closes their open sockets with 4401 and leaves other users alone', async () => {
+        setup();
+        const db = Config.getInstance().db;
+        db.users.setPasswordHash(IMPLICIT_ADMIN_ID, hashPassword('adminpw'));
+        const bob = db.users.create({ username: 'bob', role: 'user', passwordHash: hashPassword('x') });
+        const carol = db.users.create({ username: 'carol', role: 'user', passwordHash: hashPassword('y') });
+        const bobStream = openSocket(bob.id, 'bob-session-1');
+        const bobShell = openSocket(bob.id, 'bob-session-2');
+        const carolStream = openSocket(carol.id, 'carol-session');
+
+        const r = makeReqRes('PATCH', `/api/users/${bob.id}`, { disabled: true }, {}, { remoteAddress: '127.0.0.1' });
+        await new UsersApi().handle(r.req, r.res);
+
+        expect(r.getStatus()).toBe(200);
+        expect(bobStream.close).toHaveBeenCalledWith(WS_SESSION_REVOKED, 'session ended');
+        expect(bobShell.close).toHaveBeenCalledWith(WS_SESSION_REVOKED, 'session ended');
+        expect(carolStream.close).not.toHaveBeenCalled();
+    });
+
+    it('re-enabling a user closes nothing', async () => {
+        setup();
+        const db = Config.getInstance().db;
+        db.users.setPasswordHash(IMPLICIT_ADMIN_ID, hashPassword('adminpw'));
+        const bob = db.users.create({ username: 'bob', role: 'user', passwordHash: hashPassword('x') });
+        const bobStream = openSocket(bob.id, 'bob-session');
+
+        const r = makeReqRes('PATCH', `/api/users/${bob.id}`, { disabled: false }, {}, { remoteAddress: '127.0.0.1' });
+        await new UsersApi().handle(r.req, r.res);
+
+        expect(r.getStatus()).toBe(200);
+        expect(bobStream.close).not.toHaveBeenCalled();
+    });
+
+    it('a refused disable (the last enabled admin) closes nothing', async () => {
+        setup();
+        const adminStream = openSocket(IMPLICIT_ADMIN_ID, 'admin-session');
+        const r = makeReqRes(
+            'PATCH',
+            `/api/users/${IMPLICIT_ADMIN_ID}`,
+            { disabled: true },
+            {},
+            { remoteAddress: '127.0.0.1' },
+        );
+        await new UsersApi().handle(r.req, r.res);
+
+        expect(r.getStatus()).toBe(409);
+        expect(adminStream.close).not.toHaveBeenCalled();
+    });
+
+    it('deleting a user closes their open sockets with 4401 and leaves other users alone', async () => {
+        setup();
+        const db = Config.getInstance().db;
+        const bob = db.users.create({ username: 'bob', role: 'user', passwordHash: hashPassword('x') });
+        const carol = db.users.create({ username: 'carol', role: 'user', passwordHash: hashPassword('y') });
+        const bobStream = openSocket(bob.id, 'bob-session');
+        const carolStream = openSocket(carol.id, 'carol-session');
+
+        const r = makeReqRes('DELETE', `/api/users/${bob.id}`, undefined, {}, { remoteAddress: '127.0.0.1' });
+        await new UsersApi().handle(r.req, r.res);
+
+        expect(r.getStatus()).toBe(200);
+        expect(bobStream.close).toHaveBeenCalledWith(WS_SESSION_REVOKED, 'session ended');
+        expect(carolStream.close).not.toHaveBeenCalled();
     });
 });

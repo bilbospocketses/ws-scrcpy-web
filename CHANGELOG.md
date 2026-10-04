@@ -26,6 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A busy `WS_SCRCPY_WEB_PORT` fails on that port instead of serving `config.json`'s.** The log claimed `No free port available in range X..X+99` for an override that never walks, and the HTTP listener then bound `config.json`'s port, so the app could come up on a port nobody asked for. The log now reads `WS_SCRCPY_WEB_PORT <X> is busy; not walking forward (the override is exact)` and the HTTP bind is attempted on X and fails; with nothing else listening the server exits non-zero, as when no listener can bind (smoke row 12.6).
 - **An HTTP port that settles on the Local HTTPS port disables HTTPS for that boot.** The collision was caught only for `config.json`'s `webPort`. A `WS_SCRCPY_WEB_PORT` override, or an auto-shift, landing on `httpsPort` sent both listeners at one port, so one of them failed to bind. Both cases now get the same rule and warning: HTTP takes the port and HTTPS is off until restart.
 - **docs: the technical guide's environment table names the real variables.** It listed `ADB_PATH`, which nothing reads (the `adbPath` key in `config.json` is the override), and `CONFIG_PATH`, whose real name is `WS_SCRCPY_CONFIG`.
+## [0.1.30-beta.166] - 2026-10-04
+
+### Fixed
+- **Disabling or deleting a user now closes their open streams and shells.** Since 2026-09-04 logging out has closed the sockets that login opened (4401), but disabling or deleting an account only ended its sessions: that refused the user's next connection while a stream or adb shell they already had open kept running until its next HTTP request. `SocketRegistry.revokeUser` was written for exactly this case and nothing called it. `PATCH /api/users/<id>` with `disabled: true` and `DELETE /api/users/<id>` now close every live socket the user holds, from any browser, with 4401; other users' sockets are untouched, and a refused disable (the last enabled admin) closes nothing. Found by the 2026-10-03 coverage audit's row review (register finding 18.14, reopened; smoke row 18.17).
 
 ## [0.1.30-beta.165] - 2026-10-04
 
