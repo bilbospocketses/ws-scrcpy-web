@@ -5,6 +5,7 @@ import { requireOperator } from '../auth/requireOperator';
 import { SessionStore } from '../auth/session';
 import { Config } from '../Config';
 import type { Role } from '../db/UserStore';
+import { liveSockets } from '../services/WebSocketServer';
 import { readJsonBody } from './utils';
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
@@ -108,7 +109,13 @@ export class UsersApi {
             }
             if (typeof body['disabled'] === 'boolean') {
                 db.users.setDisabled(id, body['disabled']);
-                if (body['disabled']) new SessionStore(db.sqlite).deleteForUser(id);
+                if (body['disabled']) {
+                    // Deleting the sessions refuses the NEXT connection; the
+                    // streams and shells already open have to be closed too, or
+                    // a disabled user keeps using the device (finding 18.14).
+                    new SessionStore(db.sqlite).deleteForUser(id);
+                    liveSockets.revokeUser(id);
+                }
             }
             if (body['unlock'] === true) db.users.clearLockout(id);
             sendJson(res, 200, { ok: true });
@@ -132,6 +139,7 @@ export class UsersApi {
                 return true;
             }
             db.users.delete(id); // sessions cascade via FK
+            liveSockets.revokeUser(id); // the cascade refuses new sockets; close the open ones (finding 18.14)
             sendJson(res, 200, { ok: true });
             return true;
         }
