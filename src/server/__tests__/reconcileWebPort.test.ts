@@ -4,7 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ServerItem } from '../../types/Configuration';
-import { Config } from '../Config';
+import { Config, httpsCollisionWarning } from '../Config';
 import { EnvName } from '../EnvName';
 import { reconcileWebPort, type WebPortConfig } from '../reconcileWebPort';
 
@@ -47,7 +47,7 @@ async function holdPort(port: number): Promise<net.Server> {
 }
 
 function silentLog() {
-    return { info: vi.fn(), error: vi.fn() };
+    return { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
 }
 
 describe('reconcileWebPort -- WS_SCRCPY_WEB_PORT against a real Config', () => {
@@ -106,6 +106,39 @@ describe('reconcileWebPort -- WS_SCRCPY_WEB_PORT against a real Config', () => {
         expect(config.servers[0]!.port).toBe(override);
     });
 
+    it('override differs from config.json webPort: persisted, but reported as CHOSEN, not auto-shifted', async () => {
+        // Persisted because the handoffs read the served port back out of
+        // config.json (ServiceTab's diskWebPort poll, the Phase 2 relaunch's
+        // "stable afterward"). Not a shift: nothing was busy, the caller asked.
+        const [configured, override] = await twoFreePorts();
+        const { configPath, config } = setup({ webPort: configured });
+
+        await reconcileWebPort(config, { env: { WS_SCRCPY_WEB_PORT: String(override) }, log: silentLog() });
+
+        expect(config.getFirstRunStatus()).toMatchObject({ webPort: override, portWasAutoShifted: false });
+        expect(JSON.parse(fs.readFileSync(configPath, 'utf-8')).webPort).toBe(override);
+        expect(config.getAppConfig().webPort).toBe(override);
+    });
+
+    it('no override, configured port held by another program: still reports portWasAutoShifted (smoke 1.12)', async () => {
+        const configured = await freePort();
+        held.push(await holdPort(configured));
+        const { configPath, config } = setup({ webPort: configured });
+
+        const settled = await reconcileWebPort(config, {
+            env: {},
+            isServiceInstance: () => false,
+            isSiblingInstance: async () => false,
+            log: silentLog(),
+        });
+
+        expect(settled).not.toBeNull();
+        expect(settled).toBeGreaterThan(configured);
+        expect(config.servers[0]!.port).toBe(settled);
+        expect(config.getFirstRunStatus()).toMatchObject({ webPort: settled, portWasAutoShifted: true });
+        expect(JSON.parse(fs.readFileSync(configPath, 'utf-8')).webPort).toBe(settled);
+    });
+
     it('override equals config.json webPort: the listener binds it and nothing reads as shifted', async () => {
         const port = await freePort();
         const { configPath, config } = setup({ webPort: port });
@@ -122,7 +155,11 @@ describe('reconcileWebPort -- WS_SCRCPY_WEB_PORT against a real Config', () => {
         expect(fs.readFileSync(configPath, 'utf-8')).toBe(before);
     });
 
-    it('override port busy: logs the error, does not walk forward, leaves the listener and the report alone', async () => {
+    it('override port busy: says so without a walk range, and the listener still targets the override, not config.json', async () => {
+        // The exact port is the contract. Falling back to config.json's port
+        // would serve somewhere the caller did not ask for; instead HttpServer
+        // tries the override, its bind fails, and with nothing else listening
+        // the process exits non-zero (smoke row 12.6).
         const [configured, override] = await twoFreePorts();
         held.push(await holdPort(override));
         const { configPath, config } = setup({ webPort: configured });
@@ -139,11 +176,41 @@ describe('reconcileWebPort -- WS_SCRCPY_WEB_PORT against a real Config', () => {
         // No walk forward: override+1 is almost certainly free, and it was not taken.
         expect(settled).toBeNull();
         expect(log.error).toHaveBeenCalledTimes(1);
-        expect(log.error.mock.calls[0]![0]).toContain(String(override));
+        expect(log.error).toHaveBeenCalledWith(
+            `WS_SCRCPY_WEB_PORT ${override} is busy; not walking forward (the override is exact)`,
+        );
         expect(isSiblingInstance).not.toHaveBeenCalled();
-        expect(config.servers[0]!.port).toBe(configured);
-        expect(config.getFirstRunStatus()).toMatchObject({ webPort: configured, portWasAutoShifted: false });
+        expect(config.servers[0]!.port).toBe(override);
+        // Reported as the port asked for, never persisted: nothing bound it.
+        expect(config.getFirstRunStatus()).toMatchObject({ webPort: override, portWasAutoShifted: false });
+        expect(config.getAppConfig().webPort).toBe(configured);
         expect(fs.readFileSync(configPath, 'utf-8')).toBe(before);
+    });
+
+    it('override port busy: a real HTTP bind on the settled port fails rather than serving config.json', async () => {
+        const [configured, override] = await twoFreePorts();
+        held.push(await holdPort(override));
+        const { config } = setup({ webPort: configured });
+
+        await reconcileWebPort(config, { env: { WS_SCRCPY_WEB_PORT: String(override) }, log: silentLog() });
+
+        // What HttpServer.start() does with servers[0]: listen on its port.
+        const probe = net.createServer();
+        const outcome = await new Promise<string>((resolve) => {
+            probe.once('error', (err: NodeJS.ErrnoException) => resolve(err.code ?? 'error'));
+            probe.listen(config.servers[0]!.port, () => resolve('listening'));
+        });
+        if (outcome === 'listening') await new Promise<void>((r) => probe.close(() => r()));
+        expect(outcome).toBe('EADDRINUSE');
+    });
+
+    it('no override and nothing free in the walk: the range message is unchanged', async () => {
+        const { config } = setup({ webPort: 8000 });
+        const log = silentLog();
+
+        await reconcileWebPort(config, { env: {}, findAvailablePort: async () => null, log });
+
+        expect(log.error).toHaveBeenCalledWith('No free port available in range 8000..8099');
     });
 
     it('advanced server[] array: the override applies to its FIRST entry, as PORT used to', async () => {
@@ -167,11 +234,69 @@ describe('reconcileWebPort -- WS_SCRCPY_WEB_PORT against a real Config', () => {
 });
 
 describe('reconcileWebPort -- seams', () => {
-    function fakeConfig(webPort: number, servers: ServerItem[]) {
+    function fakeConfig(webPort: number, servers: ServerItem[], usesAdvancedServerConfig = false) {
         const setActualWebPort = vi.fn<WebPortConfig['setActualWebPort']>();
-        const config: WebPortConfig = { getAppConfig: () => ({ webPort }), servers, setActualWebPort };
+        const config: WebPortConfig = {
+            getAppConfig: () => ({ webPort }),
+            servers,
+            usesAdvancedServerConfig,
+            setActualWebPort,
+        };
         return Object.assign(config, { setActualWebPort });
     }
+
+    const tlsEntry = (port: number): ServerItem => ({ secure: true, port, options: { cert: 'C', key: 'K' } });
+    const exactOnly = (port: number) => async (start: number, end: number) =>
+        start === port && end === port ? port : null;
+
+    it('override equal to httpsPort: HTTPS is disabled for this boot, with the build-time warning', async () => {
+        const config = fakeConfig(8000, [{ secure: false, port: 8000 }, tlsEntry(8443)]);
+        const log = silentLog();
+
+        await reconcileWebPort(config, {
+            env: { WS_SCRCPY_WEB_PORT: '8443' },
+            findAvailablePort: exactOnly(8443),
+            log,
+        });
+
+        expect(config.servers).toEqual([{ secure: false, port: 8443 }]);
+        expect(log.warn).toHaveBeenCalledWith(httpsCollisionWarning(8443, 8443));
+        // The same text Config.buildServers emits for a webPort that collides.
+        expect(httpsCollisionWarning(8443, 8443)).toBe(
+            'config.json: httpsPort (8443) collides with the http port (8443); ' +
+                'HTTPS is disabled for this boot -- set httpsPort to a different port to enable it',
+        );
+    });
+
+    it('an auto-shift that lands on httpsPort disables HTTPS the same way', async () => {
+        const config = fakeConfig(8000, [{ secure: false, port: 8000 }, tlsEntry(8001)]);
+        const log = silentLog();
+
+        await reconcileWebPort(config, {
+            env: {},
+            findAvailablePort: async (start) => start + 1,
+            isServiceInstance: () => false,
+            isSiblingInstance: async () => false,
+            log,
+        });
+
+        expect(config.servers).toEqual([{ secure: false, port: 8001 }]);
+        expect(log.warn).toHaveBeenCalledWith(httpsCollisionWarning(8001, 8001));
+    });
+
+    it('an advanced server[] array is used as written: no HTTPS entry is dropped', async () => {
+        const config = fakeConfig(8000, [{ secure: false, port: 7000 }, tlsEntry(8443)], true);
+        const log = silentLog();
+
+        await reconcileWebPort(config, {
+            env: { WS_SCRCPY_WEB_PORT: '8443' },
+            findAvailablePort: exactOnly(8443),
+            log,
+        });
+
+        expect(config.servers.map((s) => s.port)).toEqual([8443, 8443]);
+        expect(log.warn).not.toHaveBeenCalled();
+    });
 
     it('the override moves only the HTTP entry; the Local HTTPS listener keeps httpsPort', async () => {
         const config = fakeConfig(8000, [
@@ -186,7 +311,7 @@ describe('reconcileWebPort -- seams', () => {
         });
 
         expect(config.servers.map((s) => s.port)).toEqual([8123, 8443]);
-        expect(config.setActualWebPort).toHaveBeenCalledWith(8123);
+        expect(config.setActualWebPort).toHaveBeenCalledWith(8123, { autoShifted: false });
     });
 
     it('no override, configured port busy by another program: walks forward, persists, and binds the shift', async () => {

@@ -663,6 +663,19 @@ export function validateHttpsPortInput(raw: unknown): ValidationResult<number> {
     return { ok: true, value: raw };
 }
 
+/**
+ * The warning for an HTTP listener that landed on the HTTPS port: HTTP wins and
+ * the HTTPS entry is dropped for this boot. One text for both places that apply
+ * the rule -- Config.buildServers (config.json's webPort) and reconcileWebPort.ts
+ * (the port HTTP actually settles on).
+ */
+export function httpsCollisionWarning(httpsPort: number, httpPort: number): string {
+    return (
+        `config.json: httpsPort (${httpsPort}) collides with the http port (${httpPort}); ` +
+        'HTTPS is disabled for this boot -- set httpsPort to a different port to enable it'
+    );
+}
+
 export class Config {
     private static instance?: Config | undefined;
 
@@ -780,11 +793,11 @@ export class Config {
         // the HTTPS entry rather than let two listeners silently fight over
         // one port; httpsPort is the first user-settable way to reach this
         // (webPort and httpsPort are otherwise resolved independently).
+        // reconcileWebPort.ts applies the same rule once the HTTP port settles,
+        // for a WS_SCRCPY_WEB_PORT override or an auto-shift that lands on
+        // httpsPort -- with this same text.
         if (certMaterial && webPort === httpsPort) {
-            warn(
-                `config.json: httpsPort (${httpsPort}) collides with the http port (${webPort}); ` +
-                    'HTTPS is disabled for this boot -- set httpsPort to a different port to enable it',
-            );
+            warn(httpsCollisionWarning(httpsPort, webPort));
             certMaterial = null;
         }
 
@@ -1545,16 +1558,22 @@ export class Config {
      * row 3.7, case b): an elevated second instance wrote 8001 while the
      * user-level server kept serving 8000. The bound port is still reported
      * through firstRunStatus, and HttpServer binds it via `servers[0].port`.
+     *
+     * `autoShifted: false` is the WS_SCRCPY_WEB_PORT case: the port differs from
+     * `webPort` because the caller CHOSE it, not because the configured one was
+     * busy, so `portWasAutoShifted` stays false. It still persists by default --
+     * the service handoff and the Phase 2 relaunch read the served port back out
+     * of config.json. Omitted, a port that differs from `webPort` is a shift.
      */
-    public setActualWebPort(actualPort: number, opts: { persist?: boolean } = {}): void {
-        const shifted = actualPort !== this._appConfig.webPort;
-        if (shifted && (opts.persist ?? true)) {
+    public setActualWebPort(actualPort: number, opts: { persist?: boolean; autoShifted?: boolean } = {}): void {
+        const changed = actualPort !== this._appConfig.webPort;
+        if (changed && (opts.persist ?? true)) {
             this._appConfig = { ...this._appConfig, webPort: actualPort };
             this.saveToDisk();
         }
         this._firstRunStatus = {
             firstRunComplete: this.effectiveAppConfig().firstRunComplete,
-            portWasAutoShifted: shifted,
+            portWasAutoShifted: opts.autoShifted ?? changed,
             webPort: actualPort,
             ...(this._dockerMode ? { docker: true } : {}),
         };

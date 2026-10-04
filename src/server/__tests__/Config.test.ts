@@ -170,6 +170,16 @@ describe('Config — AppConfig extension', () => {
         expect(fs.readFileSync(configPath, 'utf-8')).toBe(before);
     });
 
+    it('setActualWebPort with autoShifted:false persists a CHOSEN port without reporting a shift', () => {
+        // The WS_SCRCPY_WEB_PORT case: the port differs from config.json because
+        // the caller asked for it, not because the configured one was busy.
+        const configPath = setup({ webPort: 8000 });
+        const cfg = Config.getInstance();
+        cfg.setActualWebPort(8123, { autoShifted: false });
+        expect(cfg.getFirstRunStatus()).toMatchObject({ webPort: 8123, portWasAutoShifted: false });
+        expect(JSON.parse(fs.readFileSync(configPath, 'utf-8')).webPort).toBe(8123);
+    });
+
     it('setActualWebPort with same port leaves portWasAutoShifted=false and does not rewrite file', () => {
         const configPath = setup({ webPort: 8000 });
         const cfg = Config.getInstance();

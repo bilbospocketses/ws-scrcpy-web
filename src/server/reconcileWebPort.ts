@@ -1,4 +1,5 @@
 import type { ServerItem } from '../types/Configuration';
+import { httpsCollisionWarning } from './Config';
 import { Logger } from './Logger';
 import { findAvailablePort as realFindAvailablePort, webPortOverride } from './PortPicker';
 import {
@@ -10,7 +11,8 @@ import {
 export interface WebPortConfig {
     getAppConfig(): { webPort: number };
     readonly servers: ServerItem[];
-    setActualWebPort(actualPort: number, opts?: { persist?: boolean }): void;
+    readonly usesAdvancedServerConfig: boolean;
+    setActualWebPort(actualPort: number, opts?: { persist?: boolean; autoShifted?: boolean }): void;
 }
 
 /** Injectable seams; every one defaults to the production implementation. */
@@ -19,16 +21,25 @@ export interface ReconcileWebPortDeps {
     findAvailablePort: (start: number, end: number) => Promise<number | null>;
     isServiceInstance: () => boolean;
     isSiblingInstance: (port: number) => Promise<boolean>;
-    log: { info(msg: string): void; error(msg: string): void };
+    log: { info(msg: string): void; warn(msg: string): void; error(msg: string): void };
 }
 
 /**
  * Settle the port the first HTTP listener binds, before HttpServer starts.
  *
  * WS_SCRCPY_WEB_PORT is the ONE port override (`PORT` was retired 2026-10-04).
- * It forces that EXACT port, with no walk forward; when it is busy the error is
- * logged and nothing changes. Set by the Linux system-uninstall relaunch, the
- * systemd system unit, the Dockerfile and the e2e harness.
+ * It forces that EXACT port, with no walk forward. Set by the Linux
+ * system-uninstall relaunch, the systemd system unit, the Dockerfile and the
+ * e2e harness.
+ *   - Free: the listener binds it, and it is reported and persisted as a CHOSEN
+ *     port (`portWasAutoShifted: false`) -- persisted because the handoffs read
+ *     the served port back out of config.json.
+ *   - Busy: the error is logged and the listener STILL targets it, so its bind
+ *     fails. The exact port is the contract; falling back to config.json's port
+ *     would serve somewhere the caller did not ask for. With nothing else able
+ *     to bind, HttpServer exits non-zero (smoke row 12.6); with Local HTTPS up,
+ *     the app degrades to HTTPS only, as for any refused HTTP bind. Reported as
+ *     the port asked for, never persisted.
  *
  * Without it: detect port collision by walking forward from the configured
  * webPort until a free port is found (range = configured..+99). On shift,
@@ -63,16 +74,26 @@ export async function reconcileWebPort(
     // An override (Phase 2 relaunch) forces the EXACT free port; else walk forward to auto-shift.
     const found = await findAvailablePort(desired, override !== null ? desired : desired + 99);
     if (found === null) {
-        log.error(`No free port available in range ${desired}..${desired + 99}`);
+        if (override !== null) {
+            log.error(`WS_SCRCPY_WEB_PORT ${override} is busy; not walking forward (the override is exact)`);
+            config.setActualWebPort(override, { persist: false, autoShifted: false });
+            bindFirstListener(config, override, log);
+        } else {
+            log.error(`No free port available in range ${desired}..${desired + 99}`);
+        }
         return null;
     }
     if (found === desired) {
-        config.setActualWebPort(found);
-        // The override is the port this boot LISTENS on, not only the one it
-        // reports. (Without an override, found === webPort, which the flat
-        // config's servers[0] already carries; an advanced array keeps its own.)
-        if (override !== null && config.servers.length > 0) {
-            config.servers[0]!.port = found;
+        if (override !== null) {
+            // Chosen, not shifted -- even when it differs from config.json.
+            config.setActualWebPort(found, { autoShifted: false });
+            // The override is the port this boot LISTENS on, not only the one
+            // it reports.
+            bindFirstListener(config, found, log);
+        } else {
+            // found === webPort, which the flat config's servers[0] already
+            // carries; an advanced array keeps its own first port.
+            config.setActualWebPort(found);
         }
         return found;
     }
@@ -98,9 +119,25 @@ export async function reconcileWebPort(
             ? `webPort ${desired} is held by another ws-scrcpy-web instance; using ${found} for this instance without persisting it`
             : `webPort ${desired} busy; auto-shifted to ${found}`,
     );
-    // Mutate the first server entry so HttpServer binds to the new port.
-    if (config.servers.length > 0) {
-        config.servers[0]!.port = found;
-    }
+    bindFirstListener(config, found, log);
     return found;
+}
+
+/**
+ * Point the first listener at `port`. In the flat config, an HTTPS entry already
+ * on that port is dropped for this boot, with the warning Config.buildServers
+ * gives when config.json's webPort collides with httpsPort: HTTP wins, since only
+ * one of the two could bind. An advanced `server[]` array is used as written.
+ */
+function bindFirstListener(config: WebPortConfig, port: number, log: Pick<ReconcileWebPortDeps['log'], 'warn'>): void {
+    const servers = config.servers;
+    if (servers.length === 0) return;
+    servers[0]!.port = port;
+    if (config.usesAdvancedServerConfig) return;
+    for (let i = servers.length - 1; i >= 1; i--) {
+        if (servers[i]!.secure && servers[i]!.port === port) {
+            log.warn(httpsCollisionWarning(port, port));
+            servers.splice(i, 1);
+        }
+    }
 }
