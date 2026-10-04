@@ -312,27 +312,28 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
-          # v0.1.23 (item 8 of §1e): no prerelease flag for beta tags. GitHub's
-          # /releases/latest API endpoint EXCLUDES prereleases, and Velopack's
-          # GithubSource queries that endpoint to find the latest release in
-          # the configured channel — so flagging beta tags as prereleases
-          # broke discovery for beta-channel users (they could never receive
-          # in-app updates). Channel separation is already handled by
-          # Velopack's per-channel releases.<channel>.json feed file (see
-          # the `files:` block below); the prerelease flag was redundant
-          # gating that ALSO broke discovery. Stable users on the stable
-          # channel won't see beta releases because their feed file lists
-          # only stable assets. See feedback_velopack_permachine_lessons.md
-          # Gotcha 5 for the full diagnosis.
+          # v0.1.23 (item 8 of §1e): no prerelease flag for beta tags. Velopack
+          # does NOT query /releases/latest (an earlier version of this comment
+          # said it did). Its GithubSource lists /releases?per_page=10&page=1
+          # and, created without prerelease (as AutoSource creates it), DROPS
+          # every release flagged prerelease (velopack 1.2.161
+          # sources/github.rs:77-89) — so flagging beta tags as prereleases
+          # broke discovery for beta-channel users. Since 2026-10-04 the app no
+          # longer uses GithubSource at all: it finds the selected
+          # channel's newest release through the releases API itself and reads
+          # that release's download folder (src/server/updateFeedResolver.ts).
+          # Channel separation is the per-channel releases.<channel>.json feed
+          # file (see the `files:` block below). The app SKIPS any release
+          # flagged prerelease -- that flag is the rollback lever
+          # (docs/RELEASING.md) -- so it must stay off here.
           #
-          # make_latest: true — every published release explicitly claims the
-          # Latest badge. Velopack's GithubSource queries /releases/latest to
-          # discover the newest release in the configured channel, so the
-          # Latest badge MUST track the most recent tag or in-app updates
-          # silently no-op. The earlier 'legacy' value (intended to fix
-          # releases-page sort drift) caused the Latest badge to stick at
-          # v0.1.30-beta.9 across the entire beta.10-18 push on 2026-05-28,
-          # making 9 newer betas invisible to auto-update.
+          # make_latest: true — every published release claims the Latest
+          # badge. Neither Velopack nor the app reads /releases/latest, so the
+          # badge does not decide what updates are found; it is the release
+          # the Releases page and the README's download links lead with. The
+          # earlier 'legacy' value (meant to fix releases-page sort drift) left
+          # the badge stuck at v0.1.30-beta.9 across the beta.10-18 push on
+          # 2026-05-28.
           make_latest: true
           body_path: release-notes.md
           files: |

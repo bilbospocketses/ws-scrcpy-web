@@ -8,6 +8,7 @@ import { Config } from '../Config';
 import { EnvName } from '../EnvName';
 import { stageSystemHelper } from '../service/systemHelper';
 import { type UpdateManagerLike, UpdateService } from '../UpdateService';
+import { betas, type FakeGithubApi, fakeGithubApi, release } from './helpers/fakeGithubReleases';
 
 // FD2: the system-service apply must spawn a bin_t copy under /opt, not the
 // var_lib_t data-root helper. The stager itself is unit-tested beside it; here
@@ -63,6 +64,14 @@ function fakeUpdateInfo(version = '0.2.0'): UpdateInfo {
     };
 }
 
+/**
+ * Wait out init()'s fire-and-forget check. init() leaves the status at
+ * 'checking' synchronously, and that check now awaits a GitHub lookup first.
+ */
+async function settled(svc: UpdateService): Promise<void> {
+    await vi.waitFor(() => expect(['checking', 'downloading']).not.toContain(svc.getStatus().status));
+}
+
 function fakeMgr(overrides: Partial<UpdateManagerLike> = {}): UpdateManagerLike {
     return {
         getCurrentVersion: () => '0.1.0',
@@ -86,7 +95,14 @@ describe('UpdateService', () => {
     // instantly in local-mode tests instead of waiting 5s for a real file.
     let readFileSpy: ReturnType<typeof vi.spyOn> | undefined;
 
+    // Every update check resolves the selected channel's newest release through
+    // api.github.com first. Global fetch is the fake for EVERY test, so nothing
+    // here reaches the network; by default one release carries every feed.
+    let api: FakeGithubApi;
+
     beforeEach(() => {
+        api = fakeGithubApi([release('v9.9.9', ['beta', 'stable', 'linux-beta', 'linux-stable'])]);
+        vi.stubGlobal('fetch', api.fetchFn);
         const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-update-svc-'));
         tmpDirs.push(tmpRoot);
         const configPath = path.join(tmpRoot, 'config.json');
@@ -111,6 +127,7 @@ describe('UpdateService', () => {
     });
 
     afterEach(() => {
+        vi.unstubAllGlobals();
         readFileSpy?.mockRestore();
         Config._resetForTest();
         if (savedEnv.CONFIG === undefined) delete process.env[EnvName.CONFIG_PATH];
@@ -168,11 +185,11 @@ describe('UpdateService', () => {
         expect(factory).toHaveBeenCalledTimes(1);
     });
 
-    it('init: installed mode constructs feed URL from githubOwner', () => {
+    it('a check points Velopack at the githubOwner repo release that carries the channel', async () => {
         Config.getInstance().updateAppConfig({ githubOwner: 'someone-else' });
-        const captured: string[] = [];
-        const factory = vi.fn((feedUrl: string, _opts: UpdateOptions) => {
-            captured.push(feedUrl);
+        const captured: unknown[] = [];
+        const factory = vi.fn((feed: unknown, _opts: UpdateOptions) => {
+            captured.push(feed);
             return fakeMgr();
         });
         const svc = new UpdateService({
@@ -184,15 +201,21 @@ describe('UpdateService', () => {
             clearIntervalFn: () => undefined,
         });
         svc.init();
-        expect(captured[0]).toBe('https://github.com/someone-else/ws-scrcpy-web');
+        await svc.checkForUpdates();
+        expect(api.calls[0]!.url).toContain('https://api.github.com/repos/someone-else/ws-scrcpy-web/releases');
+        expect(captured.at(-1)).toEqual({
+            kind: 'release',
+            tag: 'v9.9.9',
+            url: 'https://github.com/someone-else/ws-scrcpy-web/releases/download/v9.9.9/',
+        });
     });
 
     it('init: VELOPACK_FEED_URL env override wins over githubOwner', () => {
         process.env['VELOPACK_FEED_URL'] = 'https://internal.example/feed/';
         Config.getInstance().updateAppConfig({ githubOwner: 'someone-else' });
-        const captured: string[] = [];
-        const factory = vi.fn((feedUrl: string) => {
-            captured.push(feedUrl);
+        const captured: unknown[] = [];
+        const factory = vi.fn((feed: unknown) => {
+            captured.push(feed);
             return fakeMgr();
         });
         const svc = new UpdateService({
@@ -203,7 +226,393 @@ describe('UpdateService', () => {
             clearIntervalFn: () => undefined,
         });
         svc.init();
-        expect(captured[0]).toBe('https://internal.example/feed/');
+        expect(captured[0]).toEqual({ kind: 'override', url: 'https://internal.example/feed/' });
+    });
+
+    // ── Feed resolution: the selected channel's newest release ─────────────
+    //
+    // The rule (user, 2026-10-04): a higher version in the SELECTED channel
+    // installs, whichever channel the running build came from. Handing Velopack
+    // the bare repo URL broke that: its GithubSource reads only the 10 newest
+    // releases (velopack 1.2.161 sources/github.rs:77-89), and betas ship many a
+    // day, so a stable release went invisible about ten betas after it shipped.
+    // The service now finds the channel's newest release itself and gives
+    // Velopack THAT release's download folder.
+
+    const quietTimers = {
+        setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
+        clearIntervalFn: () => undefined,
+    };
+
+    it('channel=stable with 15 newer betas: Velopack reads the stable release, not the 10 newest', async () => {
+        api.set([...betas(15, 30), release('v0.1.30', ['stable', 'linux-stable']), ...betas(3, 15)]);
+        Config.getInstance().updateAppConfig({ channel: 'stable', githubOwner: 'bilbospocketses' });
+        const feeds: unknown[] = [];
+        const factory = vi.fn((feed: unknown, _opts: UpdateOptions) => {
+            feeds.push(feed);
+            return fakeMgr();
+        });
+        const svc = new UpdateService({
+            platform: 'win32',
+            installRoot: '/fake',
+            existsSync: () => true,
+            updateManagerFactory: factory,
+            ...quietTimers,
+        });
+        svc.init();
+        await svc.checkForUpdates();
+        expect(feeds.at(-1)).toEqual({
+            kind: 'release',
+            tag: 'v0.1.30',
+            url: 'https://github.com/bilbospocketses/ws-scrcpy-web/releases/download/v0.1.30/',
+        });
+        expect(factory.mock.calls.at(-1)![1].ExplicitChannel).toBe('stable');
+    });
+
+    it('channel=beta resolves to the newest beta', async () => {
+        api.set([...betas(15, 30), release('v0.1.30', ['stable', 'linux-stable'])]);
+        Config.getInstance().updateAppConfig({ channel: 'beta', githubOwner: 'bilbospocketses' });
+        const feeds: unknown[] = [];
+        const svc = new UpdateService({
+            platform: 'win32',
+            installRoot: '/fake',
+            existsSync: () => true,
+            updateManagerFactory: (feed) => {
+                feeds.push(feed);
+                return fakeMgr();
+            },
+            ...quietTimers,
+        });
+        svc.init();
+        await svc.checkForUpdates();
+        expect(feeds.at(-1)).toMatchObject({ kind: 'release', tag: 'v0.1.30-beta.30' });
+    });
+
+    it('linux resolves the linux-<channel> feed', async () => {
+        api.set([release('v0.1.31', ['stable']), release('v0.1.30', ['stable', 'linux-stable'])]);
+        Config.getInstance().updateAppConfig({ channel: 'stable', githubOwner: 'bilbospocketses' });
+        const feeds: unknown[] = [];
+        const svc = new UpdateService({
+            platform: 'linux',
+            installRoot: path.join('/fake', 'mount', 'usr'),
+            existsSync: () => true,
+            updateManagerFactory: (feed) => {
+                feeds.push(feed);
+                return fakeMgr();
+            },
+            ...quietTimers,
+        });
+        svc.init();
+        await svc.checkForUpdates();
+        expect(feeds.at(-1)).toMatchObject({ kind: 'release', tag: 'v0.1.30' });
+    });
+
+    it('no release carries the channel: idle, not an error, and Velopack is never asked', async () => {
+        // Today's repo: betas only, no stable release at all.
+        api.set(betas(14, 166));
+        Config.getInstance().updateAppConfig({ channel: 'stable', githubOwner: 'bilbospocketses' });
+        const checkFn = vi.fn(async () => null as UpdateInfo | null);
+        const svc = new UpdateService({
+            platform: 'win32',
+            installRoot: '/fake',
+            existsSync: () => true,
+            updateManagerFactory: () => fakeMgr({ checkForUpdatesAsync: checkFn }),
+            ...quietTimers,
+        });
+        svc.init();
+        await svc.checkForUpdates();
+        const s = svc.getStatus();
+        expect(s.status).toBe('idle');
+        expect(s.errorMessage).toBeUndefined();
+        expect(s.availableVersion).toBeUndefined();
+        expect(s.lastCheckedAt).toBeInstanceOf(Date);
+        expect(checkFn).not.toHaveBeenCalled();
+    });
+
+    it('a refused GitHub lookup (403) is reported as an error status, not a crash', async () => {
+        api.refuse(403);
+        const svc = new UpdateService({
+            platform: 'win32',
+            installRoot: '/fake',
+            existsSync: () => true,
+            updateManagerFactory: () => fakeMgr(),
+            ...quietTimers,
+        });
+        svc.init();
+        const s = await svc.checkForUpdates();
+        expect(s.status).toBe('error');
+        expect(s.errorMessage).toMatch(/HTTP 403/);
+    });
+
+    it('VELOPACK_FEED_URL set: no GitHub lookup, the URL goes to Velopack as-is', async () => {
+        process.env['VELOPACK_FEED_URL'] = 'file:///C:/sandbox/feed';
+        const feeds: unknown[] = [];
+        const checkFn = vi.fn(async () => null as UpdateInfo | null);
+        const svc = new UpdateService({
+            platform: 'win32',
+            installRoot: '/fake',
+            existsSync: () => true,
+            updateManagerFactory: (feed) => {
+                feeds.push(feed);
+                return fakeMgr({ checkForUpdatesAsync: checkFn });
+            },
+            ...quietTimers,
+        });
+        svc.init();
+        await svc.checkForUpdates();
+        expect(api.calls).toHaveLength(0);
+        expect(checkFn).toHaveBeenCalled();
+        expect(feeds.length).toBeGreaterThan(0);
+        for (const f of feeds) expect(f).toEqual({ kind: 'override', url: 'file:///C:/sandbox/feed' });
+    });
+
+    it('a channel switch re-resolves against the new channel', async () => {
+        api.set([...betas(15, 30), release('v0.1.30', ['stable', 'linux-stable'])]);
+        Config.getInstance().updateAppConfig({ channel: 'beta', githubOwner: 'bilbospocketses' });
+        const factory = vi.fn((_feed: unknown, _opts: UpdateOptions) => fakeMgr());
+        const svc = new UpdateService({
+            platform: 'win32',
+            installRoot: '/fake',
+            existsSync: () => true,
+            updateManagerFactory: factory,
+            ...quietTimers,
+        });
+        svc.init();
+        await svc.checkForUpdates();
+        expect(factory.mock.calls.at(-1)![0]).toMatchObject({ tag: 'v0.1.30-beta.30' });
+        await svc.reconfigure('stable', 'bilbospocketses');
+        const [feed, opts] = factory.mock.calls.at(-1)!;
+        expect(feed).toMatchObject({ kind: 'release', tag: 'v0.1.30' });
+        expect(opts.ExplicitChannel).toBe('stable');
+    });
+
+    it('the resolved release is cached across checks and refreshed when a newer one appears', async () => {
+        api.set([...betas(3, 30), release('v0.1.30', ['stable'])]);
+        Config.getInstance().updateAppConfig({ channel: 'beta', githubOwner: 'bilbospocketses' });
+        const factory = vi.fn((_feed: unknown, _opts: UpdateOptions) => fakeMgr());
+        const svc = new UpdateService({
+            platform: 'win32',
+            installRoot: '/fake',
+            existsSync: () => true,
+            updateManagerFactory: factory,
+            ...quietTimers,
+        });
+        svc.init();
+        await svc.checkForUpdates();
+        await svc.checkForUpdates();
+        const builtFor = (tag: string) =>
+            factory.mock.calls.filter(([f]) => (f as { tag?: string }).tag === tag).length;
+        // Built once for beta.30 however many checks ran; later checks were
+        // conditional requests the unchanged listing answered with 304.
+        expect(builtFor('v0.1.30-beta.30')).toBe(1);
+        expect(api.calls.at(-1)!.ifNoneMatch).not.toBeNull();
+
+        api.set([...betas(1, 31), ...betas(3, 30), release('v0.1.30', ['stable'])]);
+        await svc.checkForUpdates();
+        expect(factory.mock.calls.at(-1)![0]).toMatchObject({ tag: 'v0.1.30-beta.31' });
+    });
+
+    it('a check that fails after resolving forgets the cached release', async () => {
+        const svc = new UpdateService({
+            platform: 'win32',
+            installRoot: '/fake',
+            existsSync: () => true,
+            updateManagerFactory: () =>
+                fakeMgr({
+                    checkForUpdatesAsync: async () => {
+                        throw new Error('Network error: Http error: http status: 404');
+                    },
+                }),
+            ...quietTimers,
+        });
+        svc.init();
+        await svc.checkForUpdates();
+        // Let init()'s own fire-and-forget check finish too.
+        await settled(svc);
+        expect(svc.getStatus().status).toBe('error');
+        const before = api.calls.length;
+        await svc.checkForUpdates();
+        // A full walk, not a conditional request that would re-serve the same release.
+        expect(api.calls[before]!.ifNoneMatch).toBeNull();
+    });
+
+    it('a refused lookup (403) with an answer already cached keeps the check working', async () => {
+        const svc = new UpdateService({
+            platform: 'win32',
+            installRoot: '/fake',
+            existsSync: () => true,
+            updateManagerFactory: () => fakeMgr(),
+            ...quietTimers,
+        });
+        svc.init();
+        await settled(svc);
+        expect(svc.getStatus().status).toBe('idle');
+        api.refuse(403);
+        const s = await svc.checkForUpdates();
+        expect(s.status).toBe('idle');
+        expect(s.errorMessage).toBeUndefined();
+    });
+
+    // ── A channel switch while work for the old channel is still running ──
+    //
+    // reconfigure() bumps a generation; anything still running for the old
+    // channel must not write its answer into the new channel's state.
+
+    it('a Velopack check still running for the old channel drops its answer after a switch', async () => {
+        Config.getInstance().updateAppConfig({ channel: 'beta', githubOwner: 'bilbospocketses', autoUpdate: false });
+        let hold = false;
+        let answerBeta: ((info: UpdateInfo | null) => void) | undefined;
+        const factory = vi.fn((_feed: unknown, opts: UpdateOptions) =>
+            fakeMgr({
+                checkForUpdatesAsync: () =>
+                    hold && opts.ExplicitChannel === 'beta'
+                        ? new Promise<UpdateInfo | null>((resolve) => {
+                              answerBeta = resolve;
+                          })
+                        : Promise.resolve(null),
+            }),
+        );
+        const svc = new UpdateService({
+            platform: 'win32',
+            installRoot: '/fake',
+            existsSync: () => true,
+            updateManagerFactory: factory,
+            ...quietTimers,
+        });
+        svc.init();
+        await settled(svc);
+        hold = true;
+        const oldCheck = svc.checkForUpdates();
+        await vi.waitFor(() => expect(answerBeta).toBeDefined());
+        await svc.reconfigure('stable', 'bilbospocketses');
+        expect(svc.getStatus().status).toBe('idle');
+
+        answerBeta!(fakeUpdateInfo('0.2.0'));
+        await oldCheck;
+        const s = svc.getStatus();
+        expect(s.status).toBe('idle');
+        expect(s.availableVersion).toBeUndefined();
+        expect(s.pendingUpdate).toBeUndefined();
+    });
+
+    it('a release lookup still running for the old channel does not rebuild the manager after a switch', async () => {
+        Config.getInstance().updateAppConfig({ channel: 'beta', githubOwner: 'bilbospocketses', autoUpdate: false });
+        let hold = false;
+        let answerBeta: ((r: { tag: string; url: string }) => void) | undefined;
+        const resolver = {
+            resolve: vi.fn((_owner: string, channel: string) =>
+                hold && channel === 'beta'
+                    ? new Promise<{ tag: string; url: string }>((resolve) => {
+                          answerBeta = resolve;
+                      })
+                    : Promise.resolve({ tag: `v-${channel}`, url: `https://feeds.example/${channel}/` }),
+            ),
+        };
+        const factory = vi.fn((_feed: unknown, _opts: UpdateOptions) => fakeMgr());
+        const svc = new UpdateService({
+            platform: 'win32',
+            installRoot: '/fake',
+            existsSync: () => true,
+            updateManagerFactory: factory,
+            releaseFeedResolver: resolver,
+            ...quietTimers,
+        });
+        svc.init();
+        await settled(svc);
+        hold = true;
+        const oldCheck = svc.checkForUpdates();
+        await vi.waitFor(() => expect(answerBeta).toBeDefined());
+        await svc.reconfigure('stable', 'bilbospocketses');
+        expect(factory.mock.calls.at(-1)![1].ExplicitChannel).toBe('stable');
+        const builds = factory.mock.calls.length;
+
+        answerBeta!({ tag: 'v-beta-late', url: 'https://feeds.example/beta-late/' });
+        await oldCheck;
+        expect(factory.mock.calls.length).toBe(builds);
+        expect(factory.mock.calls.at(-1)![1].ExplicitChannel).toBe('stable');
+        expect(svc.getStatus().status).toBe('idle');
+    });
+
+    it('a download still running for the old channel does not report ready after a switch', async () => {
+        Config.getInstance().updateAppConfig({ channel: 'beta', githubOwner: 'bilbospocketses', autoUpdate: true });
+        let finishDownload: (() => void) | undefined;
+        const downloadFn = vi.fn(
+            (_u: UpdateInfo) =>
+                new Promise<void>((resolve) => {
+                    finishDownload = resolve;
+                }),
+        );
+        const svc = new UpdateService({
+            platform: 'win32',
+            installRoot: '/fake',
+            existsSync: () => true,
+            updateManagerFactory: (_feed, opts) =>
+                fakeMgr({
+                    checkForUpdatesAsync: async () =>
+                        opts.ExplicitChannel === 'beta' ? fakeUpdateInfo('0.2.0') : null,
+                    downloadUpdateAsync: downloadFn,
+                }),
+            ...quietTimers,
+        });
+        svc.init();
+        await vi.waitFor(() => expect(finishDownload).toBeDefined());
+        await svc.reconfigure('stable', 'bilbospocketses');
+        expect(svc.getStatus().status).toBe('idle');
+
+        finishDownload!();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        const s = svc.getStatus();
+        expect(s.status).toBe('idle');
+        expect(s.availableVersion).toBeUndefined();
+        expect(s.pendingUpdate).toBeUndefined();
+    });
+
+    it('a switch never starts a second download while the old channel still holds the lock', async () => {
+        Config.getInstance().updateAppConfig({ channel: 'beta', githubOwner: 'bilbospocketses', autoUpdate: true });
+        let active = 0;
+        let maxActive = 0;
+        const finishers: (() => void)[] = [];
+        const downloaded: string[] = [];
+        const downloadFn = vi.fn((u: UpdateInfo) => {
+            active++;
+            maxActive = Math.max(maxActive, active);
+            downloaded.push(u.TargetFullRelease.Version);
+            return new Promise<void>((resolve) => {
+                finishers.push(() => {
+                    active--;
+                    resolve();
+                });
+            });
+        });
+        const svc = new UpdateService({
+            platform: 'win32',
+            installRoot: '/fake',
+            existsSync: () => true,
+            updateManagerFactory: (_feed, opts) =>
+                fakeMgr({
+                    checkForUpdatesAsync: async () =>
+                        fakeUpdateInfo(opts.ExplicitChannel === 'beta' ? '0.2.0' : '0.3.0'),
+                    downloadUpdateAsync: downloadFn,
+                }),
+            ...quietTimers,
+        });
+        svc.init();
+        await vi.waitFor(() => expect(finishers).toHaveLength(1));
+        const switching = svc.reconfigure('stable', 'bilbospocketses');
+        await vi.waitFor(() => expect(svc.getStatus().availableVersion).toBe('0.3.0'));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(downloadFn).toHaveBeenCalledTimes(1);
+
+        finishers[0]!();
+        await vi.waitFor(() => expect(finishers).toHaveLength(2));
+        finishers[1]!();
+        await switching;
+        expect(maxActive).toBe(1);
+        expect(downloaded).toEqual(['0.2.0', '0.3.0']);
+        const s = svc.getStatus();
+        expect(s.status).toBe('ready');
+        expect(s.availableVersion).toBe('0.3.0');
+        expect(s.progress).toBe(100);
     });
 
     // ── VelopackLocator strategy (platform-split) ──────────────────────────
@@ -227,7 +636,7 @@ describe('UpdateService', () => {
     it('init (win32): passes an explicit Windows VelopackLocatorConfig', () => {
         const installRoot = path.join('/fake', 'install', 'root');
         let receivedLocator: unknown;
-        const factory = vi.fn((_feed: string, _opts: UpdateOptions, locator?: unknown) => {
+        const factory = vi.fn((_feed: unknown, _opts: UpdateOptions, locator?: unknown) => {
             receivedLocator = locator;
             return fakeMgr();
         });
@@ -257,7 +666,7 @@ describe('UpdateService', () => {
         // installRoot stands in for resolve(__dirname,'..','..') = <mount>/usr.
         const installRoot = path.join('/fake', 'mount', 'usr');
         let receivedLocator: unknown;
-        const factory = vi.fn((_feed: string, _opts: UpdateOptions, locator?: unknown) => {
+        const factory = vi.fn((_feed: unknown, _opts: UpdateOptions, locator?: unknown) => {
             receivedLocator = locator;
             return fakeMgr();
         });
@@ -288,7 +697,7 @@ describe('UpdateService', () => {
         for (const platform of ['win32', 'linux'] as const) {
             const installRoot = path.join('/fake', 'install', 'root');
             const captured: unknown[] = [];
-            const factory = vi.fn((_feed: string, _opts: UpdateOptions, locator?: unknown) => {
+            const factory = vi.fn((_feed: unknown, _opts: UpdateOptions, locator?: unknown) => {
                 captured.push(locator);
                 return fakeMgr();
             });
@@ -334,7 +743,7 @@ describe('UpdateService', () => {
     it('init (linux): ExplicitChannel is prefixed linux-<channel>', () => {
         Config.getInstance().updateAppConfig({ channel: 'beta' });
         let opts: UpdateOptions | undefined;
-        const factory = vi.fn((_feed: string, o: UpdateOptions) => {
+        const factory = vi.fn((_feed: unknown, o: UpdateOptions) => {
             opts = o;
             return fakeMgr();
         });
@@ -353,7 +762,7 @@ describe('UpdateService', () => {
     it('init (win32): ExplicitChannel is the raw channel (no prefix)', () => {
         Config.getInstance().updateAppConfig({ channel: 'beta' });
         let opts: UpdateOptions | undefined;
-        const factory = vi.fn((_feed: string, o: UpdateOptions) => {
+        const factory = vi.fn((_feed: unknown, o: UpdateOptions) => {
             opts = o;
             return fakeMgr();
         });
@@ -371,7 +780,7 @@ describe('UpdateService', () => {
 
     it('reconfigure (linux): ExplicitChannel is prefixed linux-<channel>', async () => {
         let lastOpts: UpdateOptions | undefined;
-        const factory = vi.fn((_feed: string, o: UpdateOptions) => {
+        const factory = vi.fn((_feed: unknown, o: UpdateOptions) => {
             lastOpts = o;
             return fakeMgr();
         });
@@ -534,6 +943,8 @@ describe('UpdateService', () => {
             clearIntervalFn: () => undefined,
         });
         svc.init();
+        // Let init()'s own fire-and-forget check (which downloads via `mgr`) finish.
+        await settled(svc);
         // Spy on getStatus to capture progress at each callback step is tricky;
         // instead, drive download via callback that records the live state value.
         const liveMgr = fakeMgr({
@@ -547,7 +958,9 @@ describe('UpdateService', () => {
                 progresses.push(svc.getStatus().progress ?? -1);
             },
         });
-        // Replace mgr after init so we can inspect progress live.
+        // Replace mgr after init so we can inspect progress live. The resolved
+        // release is unchanged, so the check keeps this manager rather than
+        // building a new one.
         (svc as any).mgr = liveMgr;
         await svc.checkForUpdates();
         expect(progresses).toEqual([0, 42, 100]);
@@ -1076,9 +1489,8 @@ describe('UpdateService', () => {
             getCurrentVersion: () => '0.1.0',
         });
         const factory = vi
-            .fn<(feedUrl: string, opts: UpdateOptions) => UpdateManagerLike>()
-            .mockReturnValueOnce(oldMgr)
-            .mockReturnValueOnce(newMgr);
+            .fn<(feed: unknown, opts: UpdateOptions) => UpdateManagerLike>()
+            .mockImplementation((feed) => ((feed as { url: string }).url.includes('/forky/') ? newMgr : oldMgr));
 
         const svc = new UpdateService({
             // Pin platform so ExplicitChannel stays 'beta' (Linux would prefix
@@ -1091,25 +1503,29 @@ describe('UpdateService', () => {
             clearIntervalFn: () => undefined,
         });
         svc.init();
+        await settled(svc);
         await svc.reconfigure('beta', 'forky');
-        expect(factory).toHaveBeenCalledTimes(2);
-        const secondCall = factory.mock.calls[1]!;
-        expect(secondCall[0]).toBe('https://github.com/forky/ws-scrcpy-web');
-        expect(secondCall[1].ExplicitChannel).toBe('beta');
+        const lastCall = factory.mock.calls.at(-1)!;
+        expect(lastCall[0]).toEqual({
+            kind: 'release',
+            tag: 'v9.9.9',
+            url: 'https://github.com/forky/ws-scrcpy-web/releases/download/v9.9.9/',
+        });
+        expect(lastCall[1].ExplicitChannel).toBe('beta');
         expect(newCheckFn).toHaveBeenCalled();
     });
 
-    it('reconfigure: factory throws → state=error, old mgr preserved', async () => {
+    it('reconfigure: factory throws → state=error, old mgr kept, the next check tries again', async () => {
         const oldCheckFn = vi.fn(async () => null as UpdateInfo | null);
         const oldMgr = fakeMgr({
             checkForUpdatesAsync: oldCheckFn,
             getCurrentVersion: () => '0.1.0',
         });
         const factory = vi
-            .fn<(feedUrl: string, opts: UpdateOptions) => UpdateManagerLike>()
-            .mockReturnValueOnce(oldMgr)
-            .mockImplementationOnce(() => {
-                throw new Error('bad channel name');
+            .fn<(feed: unknown, opts: UpdateOptions) => UpdateManagerLike>()
+            .mockImplementation((feed) => {
+                if ((feed as { url: string }).url.includes('/forky/')) throw new Error('bad channel name');
+                return oldMgr;
             });
 
         const svc = new UpdateService({
@@ -1122,17 +1538,23 @@ describe('UpdateService', () => {
         svc.init();
         // Drain init()'s fire-and-forget immediate check so it doesn't race
         // with our reconfigure assertion below.
-        await svc.checkForUpdates();
+        await settled(svc);
         oldCheckFn.mockClear();
+        const callsBefore = factory.mock.calls.length;
         await svc.reconfigure('beta', 'forky');
-        // Assert error state BEFORE the verification check (which would reset status).
         const sAfterReconfigure = svc.getStatus();
         expect(sAfterReconfigure.status).toBe('error');
         expect(sAfterReconfigure.errorMessage).toMatch(/reconfigure failed/);
         expect(sAfterReconfigure.errorMessage).toMatch(/bad channel name/);
-        // Verify old mgr still wired in: a manual checkForUpdates call hits it.
+        // The failed build did not replace the manager, and the old one was not
+        // used to check the new owner's feed.
+        expect((svc as any).mgr).toBe(oldMgr);
+        expect(oldCheckFn).not.toHaveBeenCalled();
+        // A later check builds for the configured owner again rather than
+        // silently checking the old feed.
         await svc.checkForUpdates();
-        expect(oldCheckFn).toHaveBeenCalled();
+        expect(factory.mock.calls.length).toBeGreaterThan(callsBefore + 1);
+        expect(svc.getStatus().status).toBe('error');
     });
 
     it('reconfigure: dev mode → no-op (no factory call)', async () => {
@@ -1176,7 +1598,7 @@ describe('UpdateService', () => {
         expect(ms).toBe(60 * 60 * 1000);
     });
 
-    it('restartTimer: fires checkForUpdates after intervalMinutes', () => {
+    it('restartTimer: fires checkForUpdates after intervalMinutes', async () => {
         let scheduled: (() => void) | undefined;
         const setFn = vi.fn((cb: () => void) => {
             scheduled = cb;
@@ -1193,10 +1615,12 @@ describe('UpdateService', () => {
             clearIntervalFn: clearFn,
         });
         svc.init();
-        // The init's immediate void check may or may not have fired the mock
-        // by now — clear so we observe only the timer callback.
+        // Drain init()'s immediate void check, then clear so we observe only
+        // the timer callback.
+        await settled(svc);
         checkFn.mockClear();
         scheduled?.();
+        await settled(svc);
         expect(checkFn).toHaveBeenCalledTimes(1);
     });
 

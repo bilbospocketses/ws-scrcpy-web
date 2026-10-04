@@ -83,9 +83,9 @@ gh pr merge --squash --delete-branch --auto
 
 The release workflow detects `*-beta*` in the tag name, sets `channel=beta`, and uses a separate Velopack feed file (`releases.beta.json`) so beta and stable channels are independent.
 
-**Note (post-v0.1.23):** `softprops/action-gh-release` is NOT invoked with `prerelease: true`. GitHub's `/releases/latest` API endpoint excludes prereleases, and Velopack's GithubSource queries that endpoint to find the latest release in the configured channel — flagging beta tags as prereleases broke in-app updater discovery for beta-channel users. Channel separation is handled by the per-channel feed file alone.
+**Note (post-v0.1.23):** `softprops/action-gh-release` is NOT invoked with `prerelease: true`. Channel separation is handled by the per-channel feed file alone. When the in-app updater still used Velopack's `GithubSource`, a prerelease flag hid the build: that source drops prereleases from the 10 newest releases it reads. Since the 2026-10-04 feed fix the app finds the selected channel's newest release itself (`src/server/updateFeedResolver.ts`, paging the releases API) and hands Velopack that release's download folder, and the resolver skips every release marked prerelease, as it skips drafts.
 
-**Do not "fix" this by adding `prerelease: true` back.** The failure is silent from the release side — the tag publishes, the assets upload, the Release page looks correct — and only shows up as beta installs never seeing an update, because Velopack's `GithubSource` asks `/releases/latest`, which skips prereleases entirely. If you need a build hidden from the Releases banner, that is what the rollback procedure below does deliberately, and it has the same consequence.
+**Never add `prerelease: true` back.** The resolver treats a prerelease as a retracted release and never offers it, so flagging betas would hide every beta from beta-channel installs. The flag is reserved for the rollback procedure below, which relies on exactly that skip.
 
 Beta users opt in by setting `channel=beta` in Settings (writes to `config.json`).
 
@@ -95,7 +95,7 @@ Beta users opt in by setting `channel=beta` in Settings (writes to `config.json`
 
 **Never delete a release** -- existing installs may have already pulled it. Instead, fix-forward:
 
-1. **Mark the bad release as a pre-release** so it disappears from the default Releases banner and won't be picked up as the latest stable feed entry:
+1. **Mark the bad release as a pre-release.** The in-app update check skips prereleases (`src/server/updateFeedResolver.ts`), so from the next check no install is offered it; the channel falls back to its highest-versioned release that is not marked. Installs that already took it stay on it until the fix-forward release in step 2 ships, because Velopack never offers a lower version. It also drops off the default Releases banner:
    ```bash
    gh release edit vX.Y.Z --prerelease
    ```

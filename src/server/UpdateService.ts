@@ -2,7 +2,7 @@ import { execFile, spawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { promisify } from 'util';
-import { type UpdateInfo, UpdateManager, type UpdateOptions, type VelopackLocatorConfig } from 'velopack';
+import { HttpSource, type UpdateInfo, UpdateManager, type UpdateOptions, type VelopackLocatorConfig } from 'velopack';
 import type { UpdateChannel } from '../common/ConfigEvents';
 import { WS_SCRCPY_SERVICE_NAME } from '../common/ServiceEvents';
 import type { UpdateState } from '../common/UpdateEvents';
@@ -15,6 +15,7 @@ import { linuxAppImageAssetName, parseSha256Sums, releaseAssetUrl } from './linu
 import { buildMachineWideUpdateScript, runPkexec, STAGED_SYSTEM_DIR } from './service/SystemdClient';
 import { stageSystemHelper } from './service/systemHelper';
 import { buildDetachedSpawn } from './service/systemTools';
+import { GithubReleaseFeedResolver, type ReleaseFeedResolver, releaseFeedUrl } from './updateFeedResolver';
 import { verifySha256 } from './verifySha256';
 
 const execFileAsync = promisify(execFile);
@@ -32,8 +33,26 @@ export interface UpdateManagerLike {
     waitExitThenApplyUpdate(update: UpdateInfo, silent?: boolean, restart?: boolean, restartArgs?: string[]): void;
 }
 
+/**
+ * Where Velopack reads the feed from.
+ *
+ *  - `release`: ONE GitHub release's download folder, the newest release that
+ *    carries the selected channel's feed (see updateFeedResolver.ts). Handed to
+ *    Velopack as an explicit HttpSource -- a github.com URL given as a plain
+ *    string would be turned into a GithubSource (velopack 1.2.161
+ *    `sources/mod.rs:64-69`), which reads only the 10 newest releases.
+ *    Velopack's HTTP client follows GitHub's redirect from the release
+ *    download URL to release-assets.githubusercontent.com (measured
+ *    2026-10-04: an HttpSource on the v0.1.30-beta.166 folder offered
+ *    0.1.30-beta.166 to a beta.160 manifest).
+ *  - `override`: `VELOPACK_FEED_URL` (or the test override), handed over as-is
+ *    so Velopack picks the source from it: a `file:///` sandbox feed, a local
+ *    mirror, the qa-harness feed.
+ */
+export type UpdateFeed = { kind: 'release'; tag: string; url: string } | { kind: 'override'; url: string };
+
 export type UpdateManagerFactory = (
-    feedUrl: string,
+    feed: UpdateFeed,
     opts: UpdateOptions,
     locator?: VelopackLocatorConfig,
 ) => UpdateManagerLike;
@@ -43,8 +62,10 @@ export interface UpdateServiceOptions {
     installRoot?: string;
     /** Override the UpdateManager constructor for tests. Default: real velopack import. */
     updateManagerFactory?: UpdateManagerFactory;
-    /** Override the feed URL builder for tests / VELOPACK_FEED_URL env override. */
+    /** Override the feed URL for tests; VELOPACK_FEED_URL wins over it. Either one skips release resolution. */
     feedUrlOverride?: string;
+    /** Override how the selected channel's newest release is found. Default: GitHub's releases API. */
+    releaseFeedResolver?: ReleaseFeedResolver;
     /** Override fs.existsSync for tests. */
     existsSync?: (p: string) => boolean;
     /** Override timer scheduling for tests. */
@@ -80,8 +101,12 @@ export interface UpdateServiceState {
     pendingUpdate?: UpdateInfo | undefined;
 }
 
-const defaultUpdateManagerFactory: UpdateManagerFactory = (feedUrl, opts, locator) =>
-    new UpdateManager(feedUrl, opts, locator);
+const defaultUpdateManagerFactory: UpdateManagerFactory = (feed, opts, locator) =>
+    new UpdateManager(feed.kind === 'release' ? new HttpSource(feed.url) : feed.url, opts, locator);
+
+function feedKey(feed: UpdateFeed, explicitChannel: string): string {
+    return `${feed.kind}\n${feed.url}\n${explicitChannel}`;
+}
 
 /**
  * Backend-owned state machine for SP3 P5 update flow. Singleton-style — one
@@ -99,6 +124,16 @@ const defaultUpdateManagerFactory: UpdateManagerFactory = (feedUrl, opts, locato
  */
 export class UpdateService {
     private mgr: UpdateManagerLike | null = null;
+    /** The feed + channel `mgr` was built for; a check rebuilds `mgr` when they change. */
+    private mgrKey: string | null = null;
+    /** The channel and owner checks run against, set by init() and reconfigure(). */
+    private channel: UpdateChannel = 'stable';
+    private githubOwner = '';
+    /** Bumped by reconfigure(), so a check or download still running for the old channel discards its answer. */
+    private generation = 0;
+    /** The Velopack download in flight, if any, and the generation it was started for. */
+    private download: { generation: number; done: Promise<void> } | null = null;
+    private readonly resolver: ReleaseFeedResolver;
     private state: UpdateServiceState;
     private timer: NodeJS.Timeout | null = null;
     private readonly installRoot: string;
@@ -201,6 +236,9 @@ export class UpdateService {
         }
         this.factory = opts.updateManagerFactory ?? defaultUpdateManagerFactory;
         this.feedUrlOverride = opts.feedUrlOverride;
+        // Not handed `opts.fetchFn`: that one is the apply path's asset
+        // download; this one talks to api.github.com.
+        this.resolver = opts.releaseFeedResolver ?? new GithubReleaseFeedResolver();
         this.existsSync = opts.existsSync ?? fs.existsSync;
         this.setIntervalFn = opts.setIntervalFn ?? ((cb, ms) => setInterval(cb, ms));
         this.clearIntervalFn = opts.clearIntervalFn ?? ((handle) => clearInterval(handle));
@@ -209,25 +247,46 @@ export class UpdateService {
         this.state = { isInstalled: false, currentVersion: '', status: 'idle' };
     }
 
-    /** Build feed URL — env override > opts override > default github repo URL. */
-    private buildFeedUrl(githubOwner: string): string {
-        const envOverride = process.env['VELOPACK_FEED_URL'];
-        if (envOverride) return envOverride;
-        if (this.feedUrlOverride) return this.feedUrlOverride;
-        // v0.1.18: use the bare GitHub repo URL. Velopack's GitHub source
-        // detects this form and queries the GitHub API
-        // (api.github.com/repos/<owner>/<repo>/releases) to enumerate
-        // releases for the configured channel — no redirect chain, no
-        // static-URL probing.
-        //
-        // Pre-v0.1.18 this was `https://github.com/<owner>/<repo>/releases/latest/download/`.
-        // The trailing `/releases/latest/download/` form is GitHub's
-        // browser-friendly redirect alias for asset URLs, but Velopack
-        // doesn't recognize it as a GitHub source — it falls through
-        // to its static-URL HTTP client, which can't navigate the
-        // 302→302→release-assets.githubusercontent.com chain GitHub
-        // serves and returns "404" for the asset fetch.
-        return `https://github.com/${githubOwner}/ws-scrcpy-web`;
+    /**
+     * The feed override, if any: env `VELOPACK_FEED_URL` > opts override. With
+     * one set, no release is resolved -- the update-flow sandbox
+     * (scripts/test-update-flow.ps1) and the qa-harness pin their own feed this
+     * way.
+     */
+    private overrideFeed(): UpdateFeed | null {
+        const url = process.env['VELOPACK_FEED_URL'] || this.feedUrlOverride;
+        return url ? { kind: 'override', url } : null;
+    }
+
+    /**
+     * The feed the manager is first built with, before any check has resolved
+     * the channel's newest release: the running version's own release. Velopack
+     * needs a source to construct the manager that reports the current version,
+     * but no check ever reads this one -- every check resolves first and
+     * rebuilds the manager when the answer differs. A running build that IS
+     * its channel's newest keeps this manager, since the resolution lands on
+     * the same release.
+     *
+     * History: v0.1.18 to v0.1.30-beta.166 handed Velopack the bare repo URL,
+     * which it reads as a GithubSource limited to the 10 newest releases (see
+     * updateFeedResolver.ts); before v0.1.18 it was
+     * `https://github.com/<owner>/<repo>/releases/latest/download/`.
+     */
+    private ownReleaseFeed(githubOwner: string): UpdateFeed {
+        const tag = `v${getAppVersion()}`;
+        return { kind: 'release', tag, url: releaseFeedUrl(githubOwner, tag) };
+    }
+
+    private buildManager(feed: UpdateFeed, channel: UpdateChannel): UpdateManagerLike {
+        return this.factory(
+            feed,
+            {
+                ExplicitChannel: this.resolveExplicitChannel(channel),
+                AllowVersionDowngrade: false,
+                MaximumDeltasBeforeFallback: 10,
+            },
+            this.locator,
+        );
     }
 
     /**
@@ -287,16 +346,11 @@ export class UpdateService {
 
         try {
             const cfg = Config.getInstance().getAppConfig();
-            const feedUrl = this.buildFeedUrl(cfg.githubOwner);
-            this.mgr = this.factory(
-                feedUrl,
-                {
-                    ExplicitChannel: this.resolveExplicitChannel(cfg.channel),
-                    AllowVersionDowngrade: false,
-                    MaximumDeltasBeforeFallback: 10,
-                },
-                this.locator,
-            );
+            this.channel = cfg.channel;
+            this.githubOwner = cfg.githubOwner;
+            const feed = this.overrideFeed() ?? this.ownReleaseFeed(cfg.githubOwner);
+            this.mgr = this.buildManager(feed, cfg.channel);
+            this.mgrKey = feedKey(feed, this.resolveExplicitChannel(cfg.channel));
             const currentVersion = this.mgr.getCurrentVersion();
             this.state = { isInstalled: true, currentVersion, status: 'idle' };
             log.info(`initialized for v${currentVersion} on ${cfg.channel} channel`);
@@ -316,9 +370,11 @@ export class UpdateService {
     }
 
     /**
-     * Re-create the internal mgr with new channel/owner. Triggers an immediate
-     * check. On factory failure, keeps the old mgr (if any) and surfaces the
-     * error in state — caller's PATCH still returns 200 per decision 7.
+     * Switch to a new channel/owner and check at once. The check resolves the
+     * new channel's newest release and builds a manager for it. On factory
+     * failure, keeps the old mgr (if any) and surfaces the error in state —
+     * caller's PATCH still returns 200 per decision 7 — and the next check
+     * tries the build again.
      */
     public async reconfigure(channel: UpdateChannel, githubOwner: string): Promise<void> {
         if (!this.state.isInstalled) {
@@ -334,42 +390,74 @@ export class UpdateService {
             // is now defensive only.
             return;
         }
-        const feedUrl = this.buildFeedUrl(githubOwner);
-        try {
-            const newMgr = this.factory(
-                feedUrl,
-                {
-                    ExplicitChannel: this.resolveExplicitChannel(channel),
-                    AllowVersionDowngrade: false,
-                    MaximumDeltasBeforeFallback: 10,
-                },
-                this.locator,
-            );
-            // Only swap if construction succeeded — keep the old mgr otherwise.
-            this.mgr = newMgr;
-            this.state.pendingUpdate = undefined;
-            this.state.availableVersion = undefined;
-            this.state.errorMessage = undefined;
-            this.state.status = 'idle';
-            await this.checkForUpdates();
-        } catch (err) {
-            this.state.status = 'error';
-            this.state.errorMessage = `reconfigure failed: ${(err as Error).message}`;
-            log.warn(`reconfigure failed (keeping previous mgr): ${this.state.errorMessage}`);
-        }
+        this.generation++;
+        this.channel = channel;
+        this.githubOwner = githubOwner;
+        this.state.pendingUpdate = undefined;
+        this.state.availableVersion = undefined;
+        this.state.errorMessage = undefined;
+        this.state.status = 'idle';
+        await this.runCheck('reconfigure failed');
     }
 
     /** Manual + auto-triggered check. Updates this.state. */
     public async checkForUpdates(): Promise<UpdateServiceState> {
+        return this.runCheck('update source setup failed');
+    }
+
+    /**
+     * One update check: find the feed, (re)build the manager if the feed or
+     * channel changed, ask Velopack. `buildFailurePrefix` labels a failed
+     * manager build, so a reconfigure that cannot build says so.
+     */
+    private async runCheck(buildFailurePrefix: string): Promise<UpdateServiceState> {
         if (!this.mgr) {
             this.state.status = 'idle';
             return this.state;
         }
 
+        const generation = this.generation;
+        const channel = this.channel;
+        const explicitChannel = this.resolveExplicitChannel(channel);
         this.state.status = 'checking';
         this.state.errorMessage = undefined;
+        let resolved = false;
         try {
+            // One resolution per check. The resolver caches each page of the
+            // listing by ETag, so an unchanged listing is answered with 304s.
+            let feed = this.overrideFeed();
+            if (feed === null) {
+                const release = await this.resolver.resolve(this.githubOwner, explicitChannel);
+                feed = release && { kind: 'release', tag: release.tag, url: release.url };
+                resolved = true;
+            }
+            if (generation !== this.generation) return this.state; // reconfigured meanwhile
+            if (feed === null) {
+                // No release carries this channel's feed (today: stable, before
+                // the first stable ships). Nothing to install -- not an error.
+                this.state.lastCheckedAt = new Date();
+                this.state.status = 'idle';
+                this.state.availableVersion = undefined;
+                this.state.pendingUpdate = undefined;
+                return this.state;
+            }
+
+            const key = feedKey(feed, explicitChannel);
+            if (key !== this.mgrKey) {
+                let built: UpdateManagerLike;
+                try {
+                    built = this.buildManager(feed, channel);
+                } catch (err) {
+                    throw new Error(`${buildFailurePrefix}: ${(err as Error).message}`);
+                }
+                // Only swap once construction succeeded — keep the old mgr otherwise.
+                this.mgr = built;
+                this.mgrKey = key;
+                if (feed.kind === 'release') log.info(`reading the ${channel} channel from release ${feed.tag}`);
+            }
+
             const info = await this.mgr.checkForUpdatesAsync();
+            if (generation !== this.generation) return this.state;
             this.state.lastCheckedAt = new Date();
             if (info === null) {
                 this.state.status = 'idle';
@@ -392,6 +480,10 @@ export class UpdateService {
                 this.state.status = 'ready';
             }
         } catch (err) {
+            if (generation !== this.generation) return this.state;
+            // A resolved release that then failed (deleted, or its feed gone)
+            // must not be re-served from cache: walk the listing next time.
+            if (resolved) this.resolver.forget?.();
             this.state.status = 'error';
             this.state.errorMessage = (err as Error).message ?? 'check failed';
             log.warn(`check failed: ${this.state.errorMessage}`);
@@ -399,20 +491,73 @@ export class UpdateService {
         return this.state;
     }
 
-    /** Download the pending update. Updates progress. Idempotent during 'downloading'. */
+    /**
+     * Download the pending update. Updates progress.
+     *
+     * One download at a time, and only the current channel's result counts:
+     *
+     *  - A download already running for the SAME generation is joined, not
+     *    duplicated.
+     *  - A download still running for an OLDER generation (the channel or owner
+     *    changed under it) is waited out first, then this generation's package
+     *    is downloaded. It cannot be cancelled, and starting a second one beside
+     *    it would fail: Velopack's download takes an exclusive lock on the
+     *    packages folder (velopack 1.2.161 `manager.rs:406`). Waiting, rather
+     *    than skipping the pre-download, leaves the new channel's package on
+     *    disk for apply the same as any other auto-download.
+     *  - A download whose generation was overtaken while it ran discards its
+     *    result: it writes no progress, no `ready`, no `error` into the new
+     *    channel's state.
+     */
     public async downloadIfNeeded(): Promise<void> {
+        const generation = this.generation;
         if (!this.mgr || !this.state.pendingUpdate) return;
-        if (this.state.status === 'downloading') return;
+
+        while (this.download && this.download.generation !== generation) {
+            // A waiter whose own channel was itself superseded must not touch the
+            // state: a newer generation's download may already be reporting progress.
+            if (generation !== this.generation) return;
+            this.state.status = 'downloading';
+            this.state.progress = 0;
+            log.info('waiting for the previous channel download to finish before starting this one');
+            await this.download.done;
+        }
+        if (generation !== this.generation || !this.mgr || !this.state.pendingUpdate) return;
+        if (this.download) {
+            this.state.status = 'downloading';
+            await this.download.done;
+            return;
+        }
 
         this.state.status = 'downloading';
         this.state.progress = 0;
+        const done: Promise<void> = this.runDownload(this.mgr, this.state.pendingUpdate, generation).finally(() => {
+            if (this.download?.done === done) this.download = null;
+        });
+        this.download = { generation, done };
+        await done;
+    }
+
+    /** One Velopack download; never rejects. See {@link downloadIfNeeded}. */
+    private async runDownload(mgr: UpdateManagerLike, update: UpdateInfo, generation: number): Promise<void> {
         try {
-            await this.mgr.downloadUpdateAsync(this.state.pendingUpdate, (perc: number) => {
+            await mgr.downloadUpdateAsync(update, (perc: number) => {
+                if (generation !== this.generation) return;
                 this.state.progress = Math.min(100, Math.max(0, Math.round(perc)));
             });
+            if (generation !== this.generation) {
+                log.info(
+                    `discarding the finished download of v${update.TargetFullRelease.Version}: the channel changed`,
+                );
+                return;
+            }
             this.state.progress = 100;
             this.state.status = 'ready';
         } catch (err) {
+            if (generation !== this.generation) {
+                log.info(`discarding a failed download for the previous channel: ${(err as Error).message}`);
+                return;
+            }
             this.state.status = 'error';
             this.state.errorMessage = (err as Error).message ?? 'download failed';
             log.warn(`download failed: ${this.state.errorMessage}`);
