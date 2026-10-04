@@ -54,21 +54,9 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
     }
 
     public static buildLink(q: any, text: string, params: ParamsDeviceTracker): HTMLAnchorElement {
-        let { hostname } = params;
-        let port: string | number | undefined = params.port;
-        let pathname = params.pathname ?? location.pathname;
-        let protocol = params.secure ? 'https:' : 'http:';
-        if (params.useProxy) {
-            q.hostname = hostname;
-            q.port = port;
-            q.pathname = pathname;
-            q.secure = params.secure;
-            q.useProxy = true;
-            protocol = location.protocol;
-            hostname = location.hostname;
-            port = location.port;
-            pathname = location.pathname;
-        }
+        const { hostname, port } = params;
+        const pathname = params.pathname ?? location.pathname;
+        const protocol = params.secure ? 'https:' : 'http:';
         const hash = `#!${new URLSearchParams(q).toString()}`;
         const a = document.createElement('a');
         a.setAttribute('href', `${protocol}//${hostname}:${port}${pathname}${hash}`);

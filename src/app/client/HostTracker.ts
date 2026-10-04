@@ -79,13 +79,8 @@ export class HostTracker extends ManagerClient<ParamsBase, HostTrackerEvents> {
                             console.warn(TAG, `Unsupported host type: "${type}"`);
                             return;
                         }
-                        const hostItem: HostItem = { useProxy: false, secure, port, hostname, pathname, type };
+                        const hostItem: HostItem = { secure, port, hostname, pathname, type };
                         this.startTracker(hostItem);
-                    });
-                }
-                if (msg.data.remote) {
-                    msg.data.remote.forEach((item) => {
-                        this.startTracker(item);
                     });
                 }
                 break;

@@ -10,7 +10,6 @@
 [data-theme="dark"] {
     --main-bg-color: #2a2a2a;
     --stream-bg-color: #333333;
-    --shell-bg-color: #000000;
     --text-shadow-color: hsl(218, 17%, 18%);
     --header-bg-color: #333333;
     --controls-bg-color: rgba(45, 55, 65, 0.8);
@@ -44,7 +43,6 @@
 [data-theme="light"] {
     --main-bg-color: #ffffff;
     --stream-bg-color: #f0f2f5;
-    --shell-bg-color: #000000;
     --text-shadow-color: hsl(218, 67%, 95%);
     --header-bg-color: #f8f9fa;
     --controls-bg-color: rgba(248, 249, 250, 0.8);
@@ -113,10 +111,6 @@ body {
     height: 100%;
     width: 100%;
     overflow: hidden;
-}
-
-body.shell {
-    background-color: var(--shell-bg-color);
 }
 
 body.stream {

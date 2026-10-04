@@ -8,7 +8,6 @@ export interface HostItem {
     hostname: string;
     port: number;
     pathname?: string | undefined;
-    useProxy?: boolean | undefined;
 }
 
 export interface HostsItem {
@@ -17,7 +16,6 @@ export interface HostsItem {
     hostname: string;
     port: number;
     pathname?: string | undefined;
-    useProxy?: boolean | undefined;
 }
 
 export type ExtendedServerOption = https.ServerOptions & {

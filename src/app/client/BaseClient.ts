@@ -17,7 +17,6 @@ export class BaseClient<P extends ParamsBase, TE extends EventMap> extends Typed
         }
         return {
             action: action,
-            useProxy: Util.parseBooleanEnv(query.get('useProxy')),
             secure: Util.parseBooleanEnv(query.get('secure')),
             hostname: Util.parseStringEnv(query.get('hostname')),
             port: Util.parseIntEnv(query.get('port')),

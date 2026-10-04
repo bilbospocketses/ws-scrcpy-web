@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { UninstallConfirmModal } from '../UninstallConfirmModal';
+import { UninstallConfirmModal, WINDOWS_CA_KEPT_NOTE } from '../UninstallConfirmModal';
 
 // Mirror the AdminConfirmModal test stub: showModal throws InvalidStateError
 // if the dialog already has the 'open' attribute (spec-realistic).
@@ -150,5 +150,63 @@ describe('UninstallConfirmModal.confirm', () => {
         getButton('uninstall').click();
         getButton('cancel').click();
         await expect(promise).resolves.toEqual({ confirmed: true, keep: true });
+    });
+});
+
+describe('UninstallConfirmModal kept-CA note', () => {
+    function getCaNote(): HTMLElement | null {
+        return getDialog().querySelector<HTMLElement>('.uninstall-ca-note');
+    }
+
+    function setKeep(checked: boolean): void {
+        const cb = getCheckbox();
+        cb.checked = checked;
+        cb.dispatchEvent(new Event('change'));
+    }
+
+    it('on Windows, is hidden while keep is checked and shown once it is unchecked', async () => {
+        const promise = UninstallConfirmModal.confirm({ platform: 'win32' });
+        await Promise.resolve();
+        const note = getCaNote();
+        expect(note).toBeTruthy();
+        expect(note!.hidden).toBe(true);
+
+        setKeep(false);
+        expect(note!.hidden).toBe(false);
+        expect(note!.textContent).toBe(WINDOWS_CA_KEPT_NOTE);
+
+        setKeep(true);
+        expect(note!.hidden).toBe(true);
+
+        getButton('cancel').click();
+        await promise;
+    });
+
+    it('names the folder and how to remove it, in lowercase', () => {
+        expect(WINDOWS_CA_KEPT_NOTE).toBe(
+            'the local https certificate authority is kept, in %LOCALAPPDATA%\\WsScrcpyWeb-tls, ' +
+                'so devices that already trust it keep trusting a reinstall. delete that folder to remove it.',
+        );
+    });
+
+    it.each([
+        ['linux', 'linux' as const],
+        ['an unknown platform', undefined],
+    ])('is not rendered on %s, even with keep unchecked', async (_label, platform) => {
+        const promise = UninstallConfirmModal.confirm({ platform });
+        await Promise.resolve();
+        setKeep(false);
+        expect(getCaNote()).toBeNull();
+        expect(getDialog().textContent).not.toContain('certificate authority');
+        getButton('cancel').click();
+        await promise;
+    });
+
+    it('does not change what confirm resolves with', async () => {
+        const promise = UninstallConfirmModal.confirm({ platform: 'win32' });
+        await Promise.resolve();
+        setKeep(false);
+        getButton('uninstall').click();
+        await expect(promise).resolves.toEqual({ confirmed: true, keep: false });
     });
 });

@@ -480,6 +480,18 @@ describe('buildUninstallControl', () => {
         expect(confirmSpy).toHaveBeenCalledTimes(1);
     });
 
+    it('hands the modal the platform as it stands at click time, not at build time', async () => {
+        const confirmSpy = vi
+            .spyOn(UninstallConfirmModalModule.UninstallConfirmModal, 'confirm')
+            .mockResolvedValue({ confirmed: false, keep: true });
+        let platform: NodeJS.Platform | undefined;
+        const { button } = buildUninstallControl({ onUninstalled: vi.fn(), platform: () => platform });
+        platform = 'win32';
+        button.click();
+        await flush();
+        expect(confirmSpy).toHaveBeenCalledWith({ platform: 'win32' });
+    });
+
     it('on confirmed=true,keep=true POSTs /api/service/uninstall-app with {keep:true} and calls onUninstalled', async () => {
         const fetchMock = vi.fn().mockResolvedValue({ ok: true });
         vi.stubGlobal('fetch', fetchMock);

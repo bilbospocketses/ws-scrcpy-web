@@ -78,11 +78,7 @@ export abstract class ManagerClient<P extends ParamsBase, TE extends EventMap> e
     }
 
     protected buildWebSocketUrl(): URL {
-        const directUrl = this.buildDirectWebSocketUrl();
-        if (this.params.useProxy && !this.supportMultiplexing()) {
-            return this.wrapInProxy(directUrl);
-        }
-        return directUrl;
+        return this.buildDirectWebSocketUrl();
     }
 
     protected buildDirectWebSocketUrl(): URL {
@@ -107,14 +103,6 @@ export abstract class ManagerClient<P extends ParamsBase, TE extends EventMap> e
             }
         }
         return directUrl;
-    }
-
-    protected wrapInProxy(directUrl: URL): URL {
-        const localProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const localUrl = new URL(`${localProtocol}//${location.host}`);
-        localUrl.searchParams.set('action', ACTION.PROXY_WS);
-        localUrl.searchParams.set('ws', directUrl.toString());
-        return localUrl;
     }
 
     protected supportMultiplexing(): boolean {
