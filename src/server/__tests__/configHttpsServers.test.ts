@@ -100,8 +100,9 @@ describe('buildServerList', () => {
     });
 
     // I2 (review fix round 2): the previous tests used .find(), so reversing
-    // the array order passed all of them -- index.ts:154 and :364 both rely
-    // on servers[0] being the HTTP entry (`config.servers[0]!.port = found`).
+    // the array order passed all of them -- reconcileWebPort.ts and index.ts's
+    // browser open both rely on servers[0] being the HTTP entry
+    // (`config.servers[0]!.port = found`).
     it('keeps HTTP at index 0 and HTTPS at index 1', () => {
         const servers = buildServerList({
             httpPort: 8000,

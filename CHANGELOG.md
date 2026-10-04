@@ -17,6 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- **The `PORT` environment variable.** It came from upstream ws-scrcpy and nothing of ours ever set it: not the launcher, the service units, the Dockerfile, the start scripts or the e2e harness. It moved the first listener without moving the port the app reported or persisted, so a server started with it listened on one port while `/api/config` named another. `WS_SCRCPY_WEB_PORT` is now the one port override (user decision 2026-10-04); with an advanced `server` array in `config.json` it applies to the array's first entry, as `PORT` did. The technical guide's environment table and smoke row 12.9 say so.
+
+### Fixed
+- **`WS_SCRCPY_WEB_PORT` now sets the port the server listens on, even when `config.json` disagrees.** With the override free and different from `config.json`'s `webPort`, the app persisted and reported the override but this boot still listened on the config port, because only an auto-shift ever moved the listener. The override now moves it too, and still forces the exact port with no walk forward when it is busy. Callers that hit it: the Linux system-uninstall relaunch, the systemd system unit and the Docker image (`WS_SCRCPY_WEB_PORT=8000` against a `/data/config.json` naming another port). The e2e harness seeds `webPort` equal to the override, which hid it; `reconcileWebPort.test.ts` pins both cases and the busy one.
+
 ## [0.1.30-beta.165] - 2026-10-04
 
 ### Added

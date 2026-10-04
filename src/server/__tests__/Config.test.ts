@@ -18,7 +18,6 @@ describe('Config — AppConfig extension', () => {
     const savedEnv = {
         CONFIG: process.env[EnvName.CONFIG_PATH],
         DEPS: process.env['DEPS_PATH'],
-        PORT: process.env['PORT'],
     };
 
     afterEach(() => {
@@ -27,8 +26,6 @@ describe('Config — AppConfig extension', () => {
         else process.env[EnvName.CONFIG_PATH] = savedEnv.CONFIG;
         if (savedEnv.DEPS === undefined) delete process.env['DEPS_PATH'];
         else process.env['DEPS_PATH'] = savedEnv.DEPS;
-        if (savedEnv.PORT === undefined) delete process.env['PORT'];
-        else process.env['PORT'] = savedEnv.PORT;
         while (tmpDirs.length) {
             const d = tmpDirs.pop()!;
             try {
@@ -51,7 +48,6 @@ describe('Config — AppConfig extension', () => {
         fs.writeFileSync(configPath, JSON.stringify(initialConfig));
         process.env[EnvName.CONFIG_PATH] = configPath;
         process.env['DEPS_PATH'] = path.join(tmpRoot, 'deps');
-        delete process.env['PORT'];
         Config._resetForTest();
         return configPath;
     }

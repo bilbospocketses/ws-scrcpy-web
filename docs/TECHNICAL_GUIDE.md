@@ -839,7 +839,7 @@ Browser WS connect (action=stream, udid=xxx, videoCodec=h265, ...)
 
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
-| `PORT` | `8000` | HTTP/WS server port |
+| `WS_SCRCPY_WEB_PORT` | unset | Forces the exact HTTP/WS port the server listens on and reports, overriding `config.json` `webPort` (default `8000`); no walk forward when it is busy. `PORT` is not read. |
 | `ADB_PATH` | `adb` | Path to ADB executable |
 | `CONFIG_PATH` | `config.json` | Path to config file |
 | `DEPS_PATH` | see below | Absolute path to the dep-manager's writable folder. Resolution priority: env → `config.json` `dependenciesPath` → `<dataRoot>/dependencies/` on Windows (where `<dataRoot>` defaults to `%PROGRAMDATA%\WsScrcpyWeb\`) or `<entryDir>/../dependencies/` on Linux. Production deployments (Velopack, Docker) must set it explicitly. Dev mode on Windows resolves automatically via `<dataRoot>`; on Linux, place the repo such that `<entry>/../dependencies` is writable. Hard-fail with instructive startup error if unset and the platform fallback is unavailable. |

@@ -34,7 +34,7 @@ import { probeAdb } from './network/AdbHandshakeProbe';
 import { resolveMac } from './network/MacResolver';
 import { NetworkScanner } from './network/NetworkScanner';
 import { consumeSuppressBrowserMarker, openBrowser, shouldAutoOpenBrowser } from './openBrowser';
-import { findAvailablePort, webPortOverride } from './PortPicker';
+import { reconcileWebPort } from './reconcileWebPort';
 import { ScrcpyConnection } from './ScrcpyConnection';
 import { setFrameAncestors } from './security/frameGuard';
 import { setAllowedHosts } from './security/originGuard';
@@ -43,7 +43,6 @@ import { HttpServer } from './services/HttpServer';
 import type { Service, ServiceClass } from './services/Service';
 import { WebSocketServer } from './services/WebSocketServer';
 import { reapStrayAdbOnWindows } from './shutdownHelpers';
-import { isServiceInstance, isSiblingInstance } from './siblingInstance';
 import { getCertService } from './tls/createCertService';
 import { UpdateService } from './UpdateService';
 import { forceBlockingStdio } from './util/forceBlockingStdio';
@@ -115,50 +114,6 @@ if (__ssArgs) {
     // default (SAMEORIGIN only); a config.json `frameAncestors` opts a specific
     // local embedder in. See SECURITY.md.
     setFrameAncestors(config.frameAncestors);
-
-    // Detect port collision: walk forward from the configured webPort until a free
-    // port is found (range = configured..+99). On shift, persist the new port and
-    // flip portWasAutoShifted in firstRunStatus.
-    async function reconcileWebPort(): Promise<void> {
-        const override = webPortOverride(process.env['WS_SCRCPY_WEB_PORT']);
-        const desired = override ?? config.getAppConfig().webPort;
-        // An override (Phase 2 relaunch) forces the EXACT free port; else walk forward to auto-shift.
-        const found = await findAvailablePort(desired, override !== null ? desired : desired + 99);
-        if (found === null) {
-            Logger.for('Server').error(`No free port available in range ${desired}..${desired + 99}`);
-            return;
-        }
-        if (found === desired) {
-            config.setActualWebPort(found);
-            return;
-        }
-        // The configured port is busy, and WHO holds it decides whether the shift
-        // is persisted. Another program: yes, the user's config should follow the
-        // port that works. A SIBLING instance of this app (an elevated second
-        // instance): no — the configured port is right and the sibling is serving
-        // it; persisting rewrote the shared config.json to a port the surviving
-        // instance did not serve (measured 2026-09-06, smoke row 3.7 case b). See
-        // siblingInstance.ts.
-        //
-        // EXCEPT when THIS process is the service instance. On the Windows
-        // service-install handoff the sibling on the configured port is the
-        // OUTGOING local node (ServiceApi keeps it alive ~15 s after the service
-        // reports running; supervisor.rs waits only 5 s for the port), and the
-        // documented handoff depends on the service PERSISTING the port it will
-        // actually serve: the tray and the install poll read it from config.json.
-        // So a service instance persists its shift exactly as before.
-        const sibling = !isServiceInstance() && (await isSiblingInstance(desired));
-        config.setActualWebPort(found, { persist: !sibling });
-        Logger.for('Server').info(
-            sibling
-                ? `webPort ${desired} is held by another ws-scrcpy-web instance; using ${found} for this instance without persisting it`
-                : `webPort ${desired} busy; auto-shifted to ${found}`,
-        );
-        // Mutate the first server entry so HttpServer binds to the new port.
-        if (config.servers.length > 0) {
-            config.servers[0]!.port = found;
-        }
-    }
 
     HttpServer.addFirstApiHandler(new AuthGate(() => Config.getInstance().db));
 
@@ -322,7 +277,9 @@ if (__ssArgs) {
         mw2List.push(FileListing);
     }
 
-    reconcileWebPort()
+    // Settles the port the first HTTP listener binds (WS_SCRCPY_WEB_PORT, else
+    // config.json webPort walked forward on a collision). See reconcileWebPort.ts.
+    reconcileWebPort(config)
         .then(() => loadGoogModules())
         .then(() => {
             return servicesToStart.map((serviceClass: ServiceClass) => {

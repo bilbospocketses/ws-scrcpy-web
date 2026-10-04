@@ -713,17 +713,14 @@ export class Config {
         env: NodeJS.ProcessEnv = process.env,
         warn: (msg: string) => void = () => {},
     ): ServerItem[] {
-        // Env var PORT takes highest priority
-        const envPort = env['PORT'];
-        const port = envPort ? Number.parseInt(envPort, 10) : webPort;
-
+        // No environment variable is read for the port here. The one port
+        // override is WS_SCRCPY_WEB_PORT, applied by reconcileWebPort.ts once
+        // the server list exists. (`PORT`, inherited from upstream ws-scrcpy,
+        // was retired 2026-10-04: nothing set it, and it moved the listener
+        // without moving the port the app reported.)
         if (fileConfig.server && fileConfig.server.length > 0) {
-            // Advanced multi-server config: still honour PORT env override on first server
-            const servers = fileConfig.server.map((item) => Config.parseServerItem(item));
-            if (envPort) {
-                servers[0]!.port = port;
-            }
-            return servers;
+            // Advanced multi-server config: used as written.
+            return fileConfig.server.map((item) => Config.parseServerItem(item));
         }
 
         // Simple flat config: HTTP always; HTTPS joins it once a readable
@@ -783,15 +780,15 @@ export class Config {
         // the HTTPS entry rather than let two listeners silently fight over
         // one port; httpsPort is the first user-settable way to reach this
         // (webPort and httpsPort are otherwise resolved independently).
-        if (certMaterial && port === httpsPort) {
+        if (certMaterial && webPort === httpsPort) {
             warn(
-                `config.json: httpsPort (${httpsPort}) collides with the http port (${port}); ` +
+                `config.json: httpsPort (${httpsPort}) collides with the http port (${webPort}); ` +
                     'HTTPS is disabled for this boot -- set httpsPort to a different port to enable it',
             );
             certMaterial = null;
         }
 
-        return buildServerList({ httpPort: port, httpsPort, certMaterial });
+        return buildServerList({ httpPort: webPort, httpsPort, certMaterial });
     }
 
     /**
@@ -1538,7 +1535,7 @@ export class Config {
      * default — persists the new port to disk so the next launch starts where
      * this one ended up.
      *
-     * `persist: false` is the SIBLING case (index.ts reconcileWebPort): the
+     * `persist: false` is the SIBLING case (reconcileWebPort.ts): the
      * configured port is busy because another instance of THIS app owns it.
      * Then the configured port is right and the sibling is serving it, so this
      * instance binds the shifted port for its own lifetime and leaves both the

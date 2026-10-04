@@ -3,7 +3,7 @@ import { APP_IDENTITY } from './api/WhoamiApi';
 /**
  * Is the process listening on loopback `port` ANOTHER INSTANCE OF THIS APP?
  *
- * Asked by the port resolver (index.ts reconcileWebPort) before it persists an
+ * Asked by the port resolver (reconcileWebPort.ts) before it persists an
  * auto-shift. The configured port being busy has two very different causes:
  *
  *   - some other program owns it → persist the shift; the user's config should
