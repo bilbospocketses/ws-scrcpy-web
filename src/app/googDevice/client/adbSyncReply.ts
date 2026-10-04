@@ -1,10 +1,9 @@
 import { Entry } from '../Entry';
 
-// View-agnostic parsers for the ADB sync-protocol replies. FileListingClient and
-// ListFilesModal both implement the file browser over the same wire protocol;
-// the reply byte-parsing below was byte-identical in both (their dispatch and
-// view rendering legitimately differ and stay in each class). These pure helpers
-// remove that duplication and are unit-tested in isolation.
+// View-agnostic parsers for the ADB sync-protocol replies, used by ListFilesModal.
+// They were split out when a second, full-page file browser (since removed)
+// carried a byte-identical copy; the dispatch and view rendering stay in the
+// modal. These pure helpers are unit-tested in isolation.
 
 /** The 4-byte ascii reply code at the head of a sync reply (DENT/STAT/DATA/DONE/FAIL). */
 export function readSyncReplyCode(data: Uint8Array): string {

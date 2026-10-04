@@ -103,7 +103,7 @@ src/
 │   ├── client/
 │   │   ├── BaseClient.ts             # URL parameter parsing, session setup
 │   │   ├── DeviceProbeClient.ts      # Browser-side probe: WebSocket to server DeviceProbe
-│   │   └── HostTracker.ts            # Multi-host device discovery
+│   │   └── HostTracker.ts            # Starts the device list for this server's local tracker
 │   ├── ScrcpyDemuxer.ts              # WebSocket channel demultiplexer (browser-side)
 │   └── index.ts                      # Browser entry point
 ├── server/                            # Node.js server
@@ -117,7 +117,7 @@ src/
 │   ├── mw/
 │   │   ├── Mw.ts                     # Middleware base class
 │   │   ├── WebsocketMultiplexer.ts   # Multiplexes sub-protocols over a single WS
-│   │   └── HostTracker.ts            # Server-side device tracker broadcast
+│   │   └── HostTracker.ts            # Announces the local device tracker (HSTS channel)
 │   └── services/
 │       ├── HttpServer.ts             # Static file server
 │       └── WebSocketServer.ts        # WS upgrade handler, routes to middleware
@@ -798,7 +798,7 @@ In production (MSI/AppImage), the Rust launcher (`ws-scrcpy-web-launcher.exe`) s
    - `DeviceProbe` -- handles `action=probe` (encoder enumeration)
    - `WebsocketMultiplexer` -- handles `action=multiplex` (sub-protocol multiplexing)
 3. **Multiplexed middleware** (registered on `WebsocketMultiplexer`):
-   - `HostTracker` -- device discovery
+   - `HostTracker` -- announces the local device tracker (this server only; there are no remote hosts)
    - `DeviceTracker` -- ADB device list broadcast
    - `RemoteShell` -- terminal access via node-pty (messages: `start`, `resize`, `stop`)
    - `FileListing` -- file manager operations
@@ -995,7 +995,7 @@ Run `npm outdated` to check all at once. Update one at a time, build + test afte
 | 9 | `@types/node` | TypeScript type definitions for Node.js APIs | **Must match the major of the Node runtime we actually ship** (`NODE_VERSION` in `scripts/fetch-node.mjs`), not the newest types on npm — types ahead of the runtime type-check APIs the shipped Node doesn't have. `.github/dependabot.yml` ignores majors for this package to hold the line; lift that ignore in the same PR that bumps the bundled runtime to the next even-numbered LTS |
 | 10 | `@types/ws` | TypeScript type definitions for ws library | Must match `ws` major version |
 | 11 | `vitest` | Test runner for unit and integration tests | Usually safe to update |
-| 12 | `@xterm/xterm` | Terminal emulator rendered in the browser (Microsoft) | Major versions may have API changes affecting `ShellClient.ts` and `ShellModal.ts` |
+| 12 | `@xterm/xterm` | Terminal emulator rendered in the browser (Microsoft) | Major versions may have API changes affecting `ShellModal.ts` |
 | 13 | `@xterm/addon-attach` | Connects xterm to a WebSocket for remote shell | Must match `@xterm/xterm` major version |
 | 14 | `@xterm/addon-fit` | Auto-resizes terminal to fit its container | Must match `@xterm/xterm` major version |
 
@@ -1210,11 +1210,7 @@ Rendered by `DeviceTracker` via WebSocket updates from `ControlCenter`. The serv
 
 Both buttons are built via DOM manipulation (not the `html` template tag) because the template's XSS protection escapes raw HTML strings.
 
-**Interface auto-selection:** The interface dropdown was removed; the connection path is chosen automatically by `pickDeviceInterface()` (`src/app/googDevice/client/pickDeviceInterface.ts`), falling back to the ADB proxy when the device reports no usable interface.
-
-An explicit `wifi.interface` property still wins when the device sets one. ⚠️ **Modern Android does not** — `getprop wifi.interface` returns empty on Android 17 — and the old fallback was simply `interfaces[0]` over an alphabetically-sorted list. On a phone with mobile data that picks `rmnet16` over `wlan0`, so the app advertised the device's **carrier CGNAT address** (`100.90.22.137`), which nothing on the LAN can route to. Single-homed devices such as TV boxes hid this completely, since there was nothing to choose between.
-
-Candidates are now ranked by interface-name family — `wlan*`/`wifi*` first, then `eth*`, then USB tethering, then tunnels, then cellular (`rmnet*`, `ccmni*`, `pdp_ip*`) — plus a bonus for an RFC1918 address, which deliberately **excludes** 100.64.0.0/10. That range is shared by Tailscale and every mobile carrier, so treating CGNAT as "private" would defeat the whole check.
+**No interface selection:** The interface dropdown was removed, and so was the automatic pick that replaced it. Every stream goes to this server, which reaches the device over adb (`StreamClientScrcpy.buildStreamUrl()`), so which network interfaces a device reports does not change where the browser connects. A USB-only device gets a connect link like any other. The picked interface used to ride in the connect link as a `ws=` parameter, with an `action=proxy-adb` URL as the fallback for a device with no interface; nothing ever dialled either, and the server's proxy handlers went in the April 2026 fork cleanup.
 
 **Removed legacy features:**
 - Interface dropdown (replaced by auto-selection)

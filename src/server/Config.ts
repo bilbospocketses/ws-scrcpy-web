@@ -1424,11 +1424,6 @@ export class Config {
         return true;
     }
 
-    /** No remote host list in the simplified config. */
-    public getHostList(): [] {
-        return [];
-    }
-
     /**
      * Returns the resolved AppConfig (with defaults filled in, and the Docker
      * implication overlaid when WS_SCRCPY_DOCKER=1 — see effectiveAppConfig).

@@ -9,8 +9,8 @@ import { FilePushStream } from './FilePushStream';
 
 /**
  * Minimal contract AdbkitFilePushStream needs from its host — just the current
- * remote directory to resolve upload paths against. Both FileListingClient and
- * ListFilesModal satisfy it structurally, so neither needs an `as any`. (#87)
+ * remote directory to resolve upload paths against. ListFilesModal satisfies it
+ * structurally, so it needs no `as any`. (#87)
  */
 export interface FilePushTarget {
     getPath(): string;

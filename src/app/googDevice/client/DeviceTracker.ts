@@ -2,11 +2,9 @@ import '../../../style/devicelist.css';
 import { ACTION } from '../../../common/Action';
 import { audioCaptureSupported, audioEnabledDefault, defaultAudioSourceForSdk } from '../../../common/AudioDefaults';
 import { ChannelCode } from '../../../common/ChannelCode';
-import { SERVER_PORT } from '../../../common/Constants';
 import { DeviceState } from '../../../common/DeviceState';
 import type { HostItem } from '../../../types/Configuration';
 import type GoogDeviceDescriptor from '../../../types/GoogDeviceDescriptor';
-import type { ParamsDeviceTracker } from '../../../types/ParamsDeviceTracker';
 import { AudioSettingsStore } from '../../client/AudioSettingsStore';
 import { BaseDeviceTracker } from '../../client/BaseDeviceTracker';
 import { settingsService } from '../../client/SettingsService';
@@ -15,7 +13,6 @@ import { insecureOriginNotice } from '../../secureContext';
 import Util from '../../Util';
 import { html } from '../../ui/HtmlTag';
 import SvgImage from '../../ui/SvgImage';
-import { pickDeviceInterface } from './pickDeviceInterface';
 import { StreamClientScrcpy } from './StreamClientScrcpy';
 
 // ---------- capability gating ----------
@@ -136,12 +133,11 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
     }
 
     private updateLink(params: {
-        url: string;
         fullName: string;
         udid: string;
         deviceKind?: 'phone' | 'tablet' | 'tv' | undefined;
     }): void {
-        const { url, fullName, udid, deviceKind } = params;
+        const { fullName, udid, deviceKind } = params;
         const playerTds = document.getElementsByName(
             encodeURIComponent(`${DeviceTracker.AttributePrefixPlayerFor}${fullName}`),
         );
@@ -161,7 +157,6 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
                     action,
                     udid,
                     player: decodeURIComponent(playerCodeName),
-                    ws: url,
                 },
                 decodeURIComponent(playerFullName),
                 this.params,
@@ -174,20 +169,6 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
                 link.appendChild(icon);
             }
         });
-    }
-
-    protected static createUrl(params: ParamsDeviceTracker, udid = ''): URL {
-        const secure = !!params.secure;
-        const hostname = params.hostname || location.hostname;
-        const port = typeof params.port === 'number' ? params.port : secure ? 443 : 80;
-        const pathname = params.pathname || location.pathname;
-        const urlObject = this.buildUrl({ ...params, secure, hostname, port, pathname });
-        if (udid) {
-            urlObject.searchParams.set('action', ACTION.PROXY_ADB);
-            urlObject.searchParams.set('remote', `tcp:${SERVER_PORT.toString(10)}`);
-            urlObject.searchParams.set('udid', udid);
-        }
-        return urlObject;
     }
 
     protected override buildDeviceRow(tbody: Element, device: GoogDeviceDescriptor, context?: unknown): void {
@@ -314,24 +295,6 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
             sleepCell.appendChild(sleepBtn);
         }
 
-        // Auto-select best interface: prefer wifi/direct IP, fallback to proxy
-        let selectedInterfaceUrl = '';
-        if (isActive) {
-            const bestInterface = pickDeviceInterface(device.interfaces, device['wifi.interface']);
-            if (bestInterface) {
-                const params = {
-                    ...this.params,
-                    secure: false,
-                    hostname: bestInterface.ipv4,
-                    port: SERVER_PORT,
-                };
-                selectedInterfaceUrl = DeviceTracker.createUrl(params).toString();
-            }
-            if (!selectedInterfaceUrl) {
-                selectedInterfaceUrl = DeviceTracker.createUrl(this.params, device.udid).toString();
-            }
-        }
-
         // Overlay 2x2 grid filled column-first via CSS `grid-auto-flow: column`:
         // left column = [shell, list files], right column = [connect, configure stream]
         DeviceTracker.tools.forEach((tool) => {
@@ -416,10 +379,11 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
 
         tbody.appendChild(row);
 
-        // Populate connect link with auto-selected interface
-        if (DeviceTracker.CREATE_DIRECT_LINKS && isActive && selectedInterfaceUrl) {
+        // Populate the connect link. The stream itself goes to this server
+        // (StreamClientScrcpy.buildStreamUrl), whatever interfaces the device
+        // reports, so a USB-only device gets a link like any other.
+        if (DeviceTracker.CREATE_DIRECT_LINKS && isActive) {
             this.updateLink({
-                url: selectedInterfaceUrl,
                 fullName,
                 udid: device.udid,
                 deviceKind: device.deviceKind,

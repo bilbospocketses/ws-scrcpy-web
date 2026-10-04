@@ -1,4 +1,3 @@
-import type { HostItem } from '../types/Configuration';
 import type { Message } from '../types/Message';
 
 export enum MessageType {
@@ -10,7 +9,6 @@ export interface MessageHosts extends Message {
     type: 'hosts';
     data: {
         local?: { type: string }[];
-        remote?: HostItem[];
     };
 }
 

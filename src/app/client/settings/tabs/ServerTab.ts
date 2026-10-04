@@ -1515,8 +1515,15 @@ export function buildInstallAllUsersControl(opts: { reload: () => void }): {
  *
  * Lives here rather than in ServiceTab.ts for the same reason as
  * buildInstallAllUsersControl: this tab's uninstall row is its only caller.
+ *
+ * `platform` is read at click time, because the tab builds this row before the
+ * /api/service/status response that carries the platform arrives. The modal
+ * uses it for its Windows-only note about the kept certificate authority.
  */
-export function buildUninstallControl(opts: { onUninstalled: () => void }): {
+export function buildUninstallControl(opts: {
+    onUninstalled: () => void;
+    platform?: () => NodeJS.Platform | undefined;
+}): {
     button: HTMLButtonElement;
 } {
     const button = document.createElement('button');
@@ -1526,7 +1533,7 @@ export function buildUninstallControl(opts: { onUninstalled: () => void }): {
 
     button.addEventListener('click', () => {
         void (async () => {
-            const r = await UninstallConfirmModal.confirm();
+            const r = await UninstallConfirmModal.confirm({ platform: opts.platform?.() });
             if (!r.confirmed) return;
             button.disabled = true;
             button.textContent = 'uninstalling…';
@@ -1651,6 +1658,9 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
     // Set by applyContainerMode. Read at click time by the reset control, which
     // is built before container mode is known.
     let containerMode = false;
+    // Set by applyServiceStatus. Read at click time by the uninstall control,
+    // for the same reason.
+    let servicePlatform: NodeJS.Platform | undefined;
 
     // 1. reset all my settings — user-level, always visible. Opens
     //    ResetConfirmModal, then clears all user settings (theme, device
@@ -1904,7 +1914,10 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
         //    Always enabled when shown (uninstalling is how you remove a
         //    service). Opens UninstallConfirmModal; confirm POSTs
         //    /api/service/uninstall-app { keep }.
-        const uninstall = buildUninstallControl({ onUninstalled: () => showUninstalledOverlay() });
+        const uninstall = buildUninstallControl({
+            onUninstalled: () => showUninstalledOverlay(),
+            platform: () => servicePlatform,
+        });
         uninstallButton = uninstall.button;
         const row = buildRow('uninstall ws-scrcpy-web', uninstall.button);
         row.style.display = 'none';
@@ -2031,6 +2044,7 @@ export function buildServerTab(ctx: TabContext, store: StagedSettingsStore): HTM
      * and keeps the uninstall row enabled whenever it is shown.
      */
     function applyServiceStatus(resp: ServiceStatusResponse): void {
+        servicePlatform = resp.platform;
         if (stopServerButton) {
             const stop = stopServerButtonState(resp);
             stopServerButton.disabled = stop.disabled;

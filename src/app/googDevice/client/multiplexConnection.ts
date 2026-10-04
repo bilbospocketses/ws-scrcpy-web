@@ -3,8 +3,9 @@ import { ChannelCode } from '../../../common/ChannelCode';
 import { BinaryWriter } from '../../BinaryWriter';
 
 // Shared multiplex-WebSocket helpers. ListFilesModal and ShellModal previously
-// each carried a byte-identical copy of the URL builder (and ListFilesModal /
-// FileListingClient a copy of the FSLS channel-init builder); centralising them
+// each carried a byte-identical copy of the URL builder (and ListFilesModal and
+// the since-removed full-page file browser a copy of the FSLS channel-init
+// builder); centralising them
 // removes the duplication and gives the security-sensitive URL construction a
 // single place to validate its inputs.
 

@@ -220,8 +220,6 @@ function reasonToUserMessage(reason: string | undefined, fallbackError: string):
             return 'Administrative privileges were declined. Try again and approve the prompt.';
         case 'handoff-no-target':
             return "Couldn't identify a user session to relay the action to.";
-        case 'invalid-token':
-            return 'Resume token is invalid or expired. Refresh the page and try again.';
         case 'servy-failure':
             return `Service install/uninstall failed: ${fallbackError}`;
         case 'service-start-failed':
