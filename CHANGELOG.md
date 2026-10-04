@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Disabling or deleting a user now closes their open streams and shells.** Since 2026-09-04 logging out has closed the sockets that login opened (4401), but disabling or deleting an account only ended its sessions: that refused the user's next connection while a stream or adb shell they already had open kept running until its next HTTP request. `SocketRegistry.revokeUser` was written for exactly this case and nothing called it. `PATCH /api/users/<id>` with `disabled: true` and `DELETE /api/users/<id>` now close every live socket the user holds, from any browser, with 4401; other users' sockets are untouched, and a refused disable (the last enabled admin) closes nothing. Found by the 2026-10-03 coverage audit's row review (register finding 18.14, reopened; smoke row 18.17).
+
 ## [0.1.30-beta.165] - 2026-10-04
 
 ### Added
@@ -35,7 +38,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **docs: the README's Local HTTPS notice for betas 130–137.** It told users of those betas, which pinned mkcert `v1.4.4-bt.2` and can no longer install it, to update to beta.138 or later. It was due to come down after 2026-10-11 and is retired early (user decision 2026-10-01); with mkcert gone from containers in beta.164, its "in Docker, pull the newer image" was also the last line of user docs tying Docker to mkcert.
 
 ### Fixed
-- **Disabling or deleting a user now closes their open streams and shells.** Since 2026-09-04 logging out has closed the sockets that login opened (4401), but disabling or deleting an account only ended its sessions: that refused the user's next connection while a stream or adb shell they already had open kept running until its next HTTP request. `SocketRegistry.revokeUser` was written for exactly this case and nothing called it. `PATCH /api/users/<id>` with `disabled: true` and `DELETE /api/users/<id>` now close every live socket the user holds, from any browser, with 4401; other users' sockets are untouched, and a refused disable (the last enabled admin) closes nothing. Found by the 2026-10-03 coverage audit's row review (register finding 18.14, reopened; smoke row 18.17).
 - **docs: the README no longer lists an `ADB_PATH` environment variable.** Nothing reads it (`config.adbPath.test.ts` asserts as much), so a user who set it got the managed adb with no sign anything was ignored. The working override, the `adbPath` key in `config.json`, is now in the README's configuration table. Found by the 2026-10-03 coverage audit.
 
 ## [0.1.30-beta.164] - 2026-10-01
