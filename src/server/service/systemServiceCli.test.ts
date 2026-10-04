@@ -28,8 +28,9 @@ function recordingRunner() {
     return { run, calls };
 }
 
-// portOpen answers true, so these installs take the page's path (the port was
-// already held when the unit started) and pass once the settle window is clean.
+// portOpen answers true and the holder is this app's own copy (isSibling), so
+// these installs take the page's path (the port was already held when the unit
+// started) and pass once the settle window is clean.
 const deps = {
     getuid: () => 0,
     appImageSource: '/tmp/.mount_x/usr/bin/WsScrcpyWeb.AppImage',
@@ -39,6 +40,7 @@ const deps = {
     lstat: () => ({ uid: 0, gid: 0, mode: 0o755, isSymbolicLink: false }),
     readFile: () => null,
     portOpen: async () => true,
+    isSibling: async () => true,
     sleep: async () => undefined,
 };
 
@@ -385,6 +387,60 @@ describe('installSystemService — item 159: the unit must actually start', () =
     });
 });
 
+describe('installSystemService — who holds the port before the install', () => {
+    const cli = (h: ReturnType<typeof fakeHost>, isSibling: (port: number) => Promise<boolean>) => {
+        const err: string[] = [];
+        const writeFile = vi.fn();
+        const d = {
+            ...deps,
+            ...h,
+            isSibling: vi.fn(isSibling),
+            writeFile,
+            removeFile: vi.fn(),
+            existsCheck: () => false,
+            defaultPort: () => 8000,
+            log: () => undefined,
+            logError: (s: string) => err.push(s),
+        };
+        return { d, err, writeFile };
+    };
+
+    it('an UNRELATED program on the port: exits 1 before writing config or the unit', async () => {
+        // A headless install used to read any held port as the page's hand-off,
+        // settle 6 s, exit 0, and leave a unit crash-looping to `failed`.
+        const h = fakeHost({ states: [EADDRINUSE], portBefore: true });
+        const { d, err, writeFile } = cli(h, async () => false);
+        const code = await runSystemServiceCli({ op: 'install', port: 8123 }, d);
+        expect(code).toBe(1);
+        expect(err.join('\n')).toBe('port 8123 is in use by another program; pick a free one with --port');
+        expect(d.isSibling).toHaveBeenCalledWith(8123);
+        expect(writeFile).not.toHaveBeenCalled();
+        expect(h.calls).toEqual([]);
+    });
+
+    it("this app's own copy on the port: the page's hand-off, exit 0 after the settle", async () => {
+        const h = fakeHost({ states: [EADDRINUSE], portBefore: true });
+        const { d, err, writeFile } = cli(h, async () => true);
+        const code = await runSystemServiceCli({ op: 'install', port: 8123 }, d);
+        expect(code).toBe(0);
+        expect(err).toEqual([]);
+        expect(d.isSibling).toHaveBeenCalledWith(8123);
+        expect(writeFile).toHaveBeenCalledWith(
+            '/etc/systemd/system/WsScrcpyWeb.service',
+            expect.any(String),
+            expect.anything(),
+        );
+        expect(h.shows()).toBe(6);
+    });
+
+    it('a free port never asks who holds it', async () => {
+        const h = fakeHost({ states: [STARTING], portBefore: false, portAfter: () => true });
+        const { d } = cli(h, async () => false);
+        expect(await runSystemServiceCli({ op: 'install', port: 8123 }, d)).toBe(0);
+        expect(d.isSibling).not.toHaveBeenCalled();
+    });
+});
+
 describe('parseUnitState / unitSetupFailure', () => {
     it('parses `systemctl show` key=value output', () => {
         expect(parseUnitState(D9)).toEqual({
@@ -457,8 +513,18 @@ describe('D12: a reinstall after --keep-state reuses what was kept', () => {
             installMode: 'system-service',
             firstRunComplete: true,
         });
+        // The port lives in config.json only. The unit used to pin it with
+        // WS_SCRCPY_WEB_PORT, so a Settings port change came back on the
+        // install port after the restart (user decision 2026-10-04).
         const unit = writeFile.mock.calls.find((c) => c[0] === '/etc/systemd/system/WsScrcpyWeb.service')?.[1];
-        expect(unit).toContain('WS_SCRCPY_WEB_PORT=8123');
+        expect(unit).toContain('Environment=WS_SCRCPY_SERVICE=1');
+        expect(unit).not.toContain('WS_SCRCPY_WEB_PORT');
+        // What replaces the pin during the page's install: the service finds
+        // the port still held by the user's copy, exits non-zero, and systemd
+        // restarts it -- up to 10 starts in 60 s, 2 s apart.
+        for (const line of ['Restart=on-failure', 'RestartSec=2', 'StartLimitIntervalSec=60', 'StartLimitBurst=10']) {
+            expect(unit).toContain(line);
+        }
     });
     it('an explicit --port still wins over the kept one', async () => {
         const writeFile = vi.fn();

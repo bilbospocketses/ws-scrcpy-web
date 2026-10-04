@@ -6,6 +6,7 @@ import type { Change } from '../db/PendingSettingsStore';
 import { Logger } from '../Logger';
 import { hostOnlyConfigKeys, refuseInContainer } from './containerGuard';
 import { scheduleRestartForPortChange } from './restartRequest';
+import { type SystemServicePortGuardDeps, systemServicePortRefusal } from './systemServicePortGuard';
 import { BodyTooLargeError, readBodyCapped } from './utils';
 
 const log = Logger.for('SettingsBatchApi');
@@ -44,7 +45,7 @@ export function orderChanges(changes: Change[]): Change[] {
  * `setTimeout` / `process.exit`; tests inject both so a webPort batch never
  * actually schedules a real timer or kills the vitest worker.
  */
-export interface SettingsBatchApiOptions {
+export interface SettingsBatchApiOptions extends SystemServicePortGuardDeps {
     /** setTimeout seam -- tests inject to capture the scheduled callback. */
     schedule?: (cb: () => void, ms: number) => unknown;
     /** process.exit seam -- tests inject to avoid killing the worker. */
@@ -118,6 +119,27 @@ export class SettingsBatchApi {
         }
 
         const cfg = Config.getInstance();
+
+        // The Linux system service binds its port exactly, so a busy one is
+        // refused here, BEFORE the WAL row and before any sibling change is
+        // applied: webPort is applied last, and refusing it there would leave the
+        // rest of the batch half-landed. Answered in the rejected-apply shape,
+        // which the Settings dialog shows as "couldn't save Web port: <why>".
+        const portChange = changes.find((c) => c.id === 'webPort');
+        if (portChange) {
+            const refusal = await systemServicePortRefusal(
+                portChange.to,
+                cfg.servers.map((s) => s.port),
+                this.seams,
+            );
+            if (refusal) {
+                log.warn(`refusing batch: ${refusal}`);
+                res.writeHead(409, { 'content-type': 'application/json' });
+                res.end(JSON.stringify({ ok: false, applied: [], failed: { id: 'webPort', error: refusal } }));
+                return true;
+            }
+        }
+
         const batchId = cfg.db.pendingSettings.create(resolveUserId(req), changes);
         const ordered = orderChanges(changes);
         const applied: string[] = [];

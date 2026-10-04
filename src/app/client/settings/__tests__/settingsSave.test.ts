@@ -255,6 +255,22 @@ describe('performStagedSave', () => {
         expect(store.changes()).toHaveLength(1);
     });
 
+    it("shows the system service's 409 for a busy port in the dialog, with the server's own words", async () => {
+        // SettingsBatchApi refuses a busy port on the Linux system service
+        // before anything is written (systemServicePortGuard.ts). The body is
+        // the rejected-apply shape, so runSave reads it like any other refusal.
+        const message = 'port 8123 is in use; the system service binds its port exactly, so pick a free one';
+        stubFetch(409, { ok: false, applied: [], failed: { id: 'webPort', error: message } });
+        const store = new StagedSettingsStore();
+        store.register({ id: 'webPort', label: 'Web port', initial: 8000 });
+        store.set('webPort', 8123);
+
+        const action = await performStagedSave(store, mockDeps({ save: runSave }));
+
+        expect(action).toEqual({ kind: 'failed', message: `couldn't save Web port: ${message}` });
+        expect(store.changes()).toHaveLength(1);
+    });
+
     it('names the failing change and the server reason', async () => {
         const deps = mockDeps({
             save: vi.fn(async () => ({

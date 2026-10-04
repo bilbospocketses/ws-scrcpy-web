@@ -30,7 +30,7 @@ import {
  *
  * So the suite runs its own server, on its own port, against its own throwaway
  * config: WS_SCRCPY_CONFIG overrides the config path (see `src/server/Config.ts`)
- * and WS_SCRCPY_WEB_PORT overrides the port (see `src/server/index.ts`). Neither the
+ * and WS_SCRCPY_WEB_PORT overrides the port (see `src/server/reconcileWebPort.ts`). Neither the
  * installed config nor anything under the real data root is touched.
  */
 /**
