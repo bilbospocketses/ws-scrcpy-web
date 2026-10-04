@@ -303,10 +303,38 @@ describe('reconcileWebPort -- WS_SCRCPY_WEB_PORT against a real Config', () => {
         expect(fs.readFileSync(configPath, 'utf-8')).toBe(before);
     });
 
-    it('Linux system service, a unit that still pins WS_SCRCPY_WEB_PORT (installed before the pin was dropped): the pin wins', async () => {
-        // Why such an install must be reinstalled or updated before a Settings
-        // change sticks: the explicit override keeps its contract.
+    it('Linux system service, a unit that still pins WS_SCRCPY_WEB_PORT (installed before the pin was dropped): the pin is IGNORED', async () => {
+        // So a pinned install heals on its first update to this build: the
+        // Settings port in config.json wins, and the respawn after a change
+        // binds it. Said once, at info.
         const [configured, pinned] = await twoFreePorts();
+        const { configPath, config } = setup({ webPort: configured, installMode: 'system-service' });
+        const before = fs.readFileSync(configPath, 'utf-8');
+        const log = silentLog();
+        const findAvailablePort = vi.fn(realFindAvailablePort);
+
+        const settled = await reconcileWebPort(config, {
+            env: { WS_SCRCPY_WEB_PORT: String(pinned) },
+            findAvailablePort,
+            isServiceInstance: () => true,
+            isLinuxSystemServiceInstance: () => true,
+            log,
+        });
+
+        expect(settled).toBe(configured);
+        expect(findAvailablePort).toHaveBeenCalledWith(configured, configured);
+        expect(config.servers[0]!.port).toBe(configured);
+        expect(fs.readFileSync(configPath, 'utf-8')).toBe(before);
+        expect(log.info).toHaveBeenCalledTimes(1);
+        expect(log.info).toHaveBeenCalledWith(
+            `ignoring WS_SCRCPY_WEB_PORT=${pinned} on the system service; the port comes from config.json ` +
+                '(a unit installed before 2026-10-04 still sets it until its next update)',
+        );
+    });
+
+    it('Linux system service, pinned unit, config.json port busy: still exact on config.json, never the pin', async () => {
+        const [configured, pinned] = await twoFreePorts();
+        held.push(await holdPort(configured));
         const { config } = setup({ webPort: configured, installMode: 'system-service' });
 
         const settled = await reconcileWebPort(config, {
@@ -316,8 +344,8 @@ describe('reconcileWebPort -- WS_SCRCPY_WEB_PORT against a real Config', () => {
             log: silentLog(),
         });
 
-        expect(settled).toBe(pinned);
-        expect(config.servers[0]!.port).toBe(pinned);
+        expect(settled).toBeNull();
+        expect(config.servers[0]!.port).toBe(configured);
     });
 });
 

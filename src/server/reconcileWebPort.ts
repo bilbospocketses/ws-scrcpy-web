@@ -30,10 +30,9 @@ export interface ReconcileWebPortDeps {
  * Settle the port the first HTTP listener binds, before HttpServer starts.
  *
  * WS_SCRCPY_WEB_PORT is the ONE port override (`PORT` was retired 2026-10-04).
- * It forces that EXACT port, with no walk forward. In production only the
- * Docker image sets it (Dockerfile); the e2e harness sets it too. The Linux
- * system unit set it until 2026-10-04, and units installed before then still
- * do (next paragraph).
+ * It forces that EXACT port, with no walk forward -- on every instance EXCEPT
+ * the Linux system service, which ignores it (next paragraph). In production
+ * only the Docker image sets it (Dockerfile); the e2e harness sets it too.
  *   - Free: the listener binds it, and it is reported and persisted as a CHOSEN
  *     port (`portWasAutoShifted: false`) -- persisted so config.json names the
  *     port this boot serves.
@@ -44,8 +43,8 @@ export interface ReconcileWebPortDeps {
  *     the app degrades to HTTPS only, as for any refused HTTP bind. Reported as
  *     the port asked for, never persisted.
  *
- * The Linux SYSTEM service, with no override: config.json's webPort is exact in
- * the same way. Its unit used to pin WS_SCRCPY_WEB_PORT to the install port,
+ * The Linux SYSTEM service: config.json's webPort is exact in the same way, and
+ * WS_SCRCPY_WEB_PORT is ignored (logged once at info). Its unit used to pin WS_SCRCPY_WEB_PORT to the install port,
  * so a Settings port change (ConfigApi: write config.json, exit 75, the
  * launcher respawns Node with the unit's env) came back on the install port and
  * wrote it over the user's choice. The pin had one job, kept here: during the
@@ -54,9 +53,11 @@ export interface ReconcileWebPortDeps {
  * to port+1 and persist that. Busy, it fails its bind and exits non-zero, and
  * the unit's Restart=on-failure (RestartSec=2, 10 starts in 60 s) retries until
  * the port is free -- as the pinned unit did. Free, it binds exactly webPort.
- * A unit that still carries the pin keeps the override's precedence until it
- * is rewritten without it (a reinstall; linux_apply.rs strips it on an update).
- * "System service" is isLinuxSystemServiceInstance (siblingInstance.ts): the
+ * A unit installed before 2026-10-04 still carries the pin; ignoring it here
+ * heals such an install on its first update to this build, and linux_apply.rs
+ * strips the line on the update after. Settings refuses a busy port for this
+ * instance before writing anything (api/systemServicePortGuard.ts), since an
+ * exact bind on it would keep the service down. "System service" is isLinuxSystemServiceInstance (siblingInstance.ts): the
  * unit's own WS_SCRCPY_SERVICE=1 + DATA_ROOT=/var/lib/ws-scrcpy-web.
  * The Windows service and the Linux user service keep the walk below: the
  * Windows handoff depends on the service persisting a shift.
@@ -91,10 +92,21 @@ export async function reconcileWebPort(
     const isSiblingInstance = deps.isSiblingInstance ?? ((port: number) => realIsSiblingInstance(port));
     const log = deps.log ?? Logger.for('Server');
 
-    const override = webPortOverride(env['WS_SCRCPY_WEB_PORT']);
+    const systemService = isLinuxSystemServiceInstance();
+    const requested = webPortOverride(env['WS_SCRCPY_WEB_PORT']);
+    // The system service's port is config.json's alone: a pin left in a unit
+    // installed before 2026-10-04 is ignored, so the first update to this
+    // build heals it (linux_apply.rs also strips the line on a later update).
+    if (systemService && requested !== null) {
+        log.info(
+            `ignoring WS_SCRCPY_WEB_PORT=${requested} on the system service; the port comes from config.json ` +
+                '(a unit installed before 2026-10-04 still sets it until its next update)',
+        );
+    }
+    const override = systemService ? null : requested;
     const webPort = config.getAppConfig().webPort;
     // The port this boot must bind EXACTLY, or null to walk forward from webPort.
-    const exact = override ?? (isLinuxSystemServiceInstance() ? webPort : null);
+    const exact = override ?? (systemService ? webPort : null);
     const desired = exact ?? webPort;
     const found = await findAvailablePort(desired, exact !== null ? desired : desired + 99);
     if (found === null) {

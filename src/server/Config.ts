@@ -407,6 +407,11 @@ type ValidationResult<T> = { ok: true; value: T } | { ok: false; error: string }
  */
 const KNOWN_CONFIG_KEYS: ReadonlySet<string> = new Set(Object.keys(APP_CONFIG_DEFAULTS));
 
+/** Whether `value` passes the same `webPort` validation `updateAppConfig` applies. */
+export function isValidWebPort(value: unknown): value is number {
+    return validateField('webPort', value).ok;
+}
+
 function validateField<K extends keyof AppConfig>(key: K, value: unknown): ValidationResult<AppConfig[K]> {
     switch (key) {
         case 'webPort': {

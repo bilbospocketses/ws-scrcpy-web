@@ -5,11 +5,15 @@ import { Config, ConfigValidationError } from '../Config';
 import { Logger } from '../Logger';
 import { hostOnlyConfigKeys, refuseInContainer } from './containerGuard';
 import { scheduleRestartForPortChange } from './restartRequest';
+import { type SystemServicePortGuardDeps, systemServicePortRefusal } from './systemServicePortGuard';
 import { BodyTooLargeError, readBodyCapped } from './utils';
 
 const log = Logger.for('ConfigApi');
 
 export class ConfigApi {
+    /** `portGuard` is a test seam; production uses the real probe and instance check. */
+    constructor(private readonly portGuard: SystemServicePortGuardDeps = {}) {}
+
     async handle(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
         const url = req.url || '';
         if (!url.startsWith('/api/config')) return false;
@@ -65,8 +69,21 @@ export class ConfigApi {
                 if (hostOnly.length > 0 && refuseInContainer(res, `change ${hostOnly.join(', ')}`, 'docker-settings')) {
                     return true;
                 }
+                const cfg = Config.getInstance();
+                // The Linux system service binds its port exactly: refuse a busy
+                // one before anything is written (systemServicePortGuard.ts).
+                const refusal = await systemServicePortRefusal(
+                    (parsed as Record<string, unknown>)['webPort'],
+                    cfg.servers.map((s) => s.port),
+                    this.portGuard,
+                );
+                if (refusal) {
+                    log.warn(`PATCH /api/config refused: ${refusal}`);
+                    res.writeHead(409);
+                    res.end(JSON.stringify({ error: refusal, field: 'webPort' }));
+                    return true;
+                }
                 try {
-                    const cfg = Config.getInstance();
                     const result = cfg.updateAppConfig(parsed as Record<string, unknown>);
                     const response: AppConfigPatchResponse = {
                         config: result.config,
