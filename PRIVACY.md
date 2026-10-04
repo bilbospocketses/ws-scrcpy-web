@@ -22,13 +22,14 @@ Three categories of outbound traffic. All are opt-in or operationally necessary,
 
 ### 1. Update checks (Velopack)
 
-The app polls a Velopack feed for new releases. By default this is:
+The app checks GitHub for new releases. By default each check makes:
 
 ```
-https://github.com/<owner>/ws-scrcpy-web/releases/latest/download/releases.<channel>.json
+https://api.github.com/repos/<owner>/ws-scrcpy-web/releases?per_page=100   (the release list, to find the newest release on your channel)
+https://github.com/<owner>/ws-scrcpy-web/releases/download/<tag>/releases.<channel>.json   (that release's update feed)
 ```
 
-The request reveals your IP address and User-Agent string to GitHub (the file host), nothing else. You can:
+and, when you apply an update, a download of the package from that same release. The requests reveal your IP address and User-Agent string to GitHub, nothing else. You can:
 
 - **Disable updates entirely** in Settings → Updates → "automatically download updates" off + skip the manual check button.
 - **Switch channels** between stable and beta.

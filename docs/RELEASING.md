@@ -83,9 +83,9 @@ gh pr merge --squash --delete-branch --auto
 
 The release workflow detects `*-beta*` in the tag name, sets `channel=beta`, and uses a separate Velopack feed file (`releases.beta.json`) so beta and stable channels are independent.
 
-**Note (post-v0.1.23):** `softprops/action-gh-release` is NOT invoked with `prerelease: true`. GitHub's `/releases/latest` API endpoint excludes prereleases, and Velopack's GithubSource queries that endpoint to find the latest release in the configured channel — flagging beta tags as prereleases broke in-app updater discovery for beta-channel users. Channel separation is handled by the per-channel feed file alone.
+**Note (post-v0.1.23):** `softprops/action-gh-release` is NOT invoked with `prerelease: true`. Channel separation is handled by the per-channel feed file alone. When the in-app updater still used Velopack's `GithubSource`, a prerelease flag hid the build: that source drops prereleases from the 10 newest releases it reads. Since the 2026-10-04 feed fix the app finds the selected channel's newest release itself (`src/server/updateFeedResolver.ts`, paging the releases API) and hands Velopack that release's download folder, so the flag no longer decides discovery — but nothing needs it either, so leave it off.
 
-**Do not "fix" this by adding `prerelease: true` back.** The failure is silent from the release side — the tag publishes, the assets upload, the Release page looks correct — and only shows up as beta installs never seeing an update, because Velopack's `GithubSource` asks `/releases/latest`, which skips prereleases entirely. If you need a build hidden from the Releases banner, that is what the rollback procedure below does deliberately, and it has the same consequence.
+**Do not "fix" anything by adding `prerelease: true` back** without re-reading the resolver: it skips drafts, not prereleases, so a prerelease would now be offered. If you need a build hidden from the Releases banner, that is what the rollback procedure below does deliberately.
 
 Beta users opt in by setting `channel=beta` in Settings (writes to `config.json`).
 
