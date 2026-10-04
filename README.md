@@ -343,6 +343,7 @@ Almost all configuration is managed through the in-app **Settings** dialog (gear
 | `githubOwner` | `bilbospocketses` | Settings → Updates → GitHub owner (override for forks) |
 | `frameAncestors` | `[]` (nothing may frame the app) | Settings → Embedding, or edit `config.json` |
 | `allowedHosts` | `[]` (localhost + IP literals only) | `config.json` only — server-only, never exposed via the API. **For domain names only — adding an IP address does nothing**, because raw IPs already pass; see [Access control](#access-control) |
+| `adbPath` | (the managed adb under `dependencies/`) | `config.json` only — the path to a different adb executable. Rarely needed; the log's `adbPath=… (source=…)` line says which one is in use. There is no `ADB_PATH` environment variable |
 
 **Where these are stored depends on which one it is**, which matters if you ever go looking for one by hand. `webPort`, `installMode` and `firstRunComplete` live in `config.json` next to the running app, because the launcher has to read them before the server — and the database — is up; `frameAncestors` and `allowedHosts` are in that file too, and so is `allowRemoteAdmin` once remote admin is turned on (it is written only while on). The four update settings (`autoUpdate`, `updateCheckIntervalMinutes`, `channel`, `githubOwner`) are stored in the database instead, in the `app_settings` table of `wsscrcpy.db` under the data root. A value for one of those in `config.json` is still read as the starting point, but once it has been set in Settings the stored value wins — so editing `config.json` alone may appear to do nothing.
 
@@ -364,7 +365,6 @@ A few advanced switches are only available via environment variables:
 |----------|---------|
 | `DEPS_PATH` | Override the location of the `dependencies/` folder (used by the installer to point at the per-user data dir while the app itself lives under `current/`). |
 | `VELOPACK_FEED_URL` | Force the Velopack auto-updater to use a custom feed URL (mostly useful for the local update-flow sandbox test). |
-| `ADB_PATH` | Override the path to the ADB executable (rarely needed; the dependency manager handles ADB by default). |
 
 ### Access control
 
