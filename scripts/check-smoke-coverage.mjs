@@ -46,8 +46,10 @@ export const SMOKE_DOC = 'docs/smoke-tests/smoke-test.md';
  *   and `start.cmd` are how a container or a source checkout starts. A container
  *   user never sees `src/` change; they see the image boot differently.
  * - `.github/workflows/release.yml` builds and publishes every artifact a user
- *   installs. `ci.yml` and the other workflows are not here: they decide what
- *   gets checked, not what gets shipped.
+ *   installs, and `.github/workflows/docker-publish.yml` builds and pushes the
+ *   container image on every release tag. `ci.yml` and the other workflows are
+ *   not here: they decide what gets checked, or push a tag, not what gets
+ *   shipped.
  *
  * Each entry is a plain prefix, so a file entry such as `Dockerfile` also covers
  * a sibling like `Dockerfile.dev` if one is ever added. That is the right
@@ -65,6 +67,7 @@ export const WATCHED_PREFIXES = [
     'start.sh',
     'start.cmd',
     '.github/workflows/release.yml',
+    '.github/workflows/docker-publish.yml',
 ];
 
 /** Test-only files change no behaviour anyone can smoke-test. */

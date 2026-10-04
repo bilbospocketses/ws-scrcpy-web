@@ -26,11 +26,14 @@ describe('isWatched', () => {
         'tray/src/main.rs',
         'common/src/tray.rs',
         'Dockerfile',
+        // A plain prefix: a sibling Dockerfile defines an image too.
+        'Dockerfile.dev',
         'docker/entrypoint.sh',
         'docker-compose.yml',
         'start.sh',
         'start.cmd',
         '.github/workflows/release.yml',
+        '.github/workflows/docker-publish.yml',
     ])('watches the shipped file %s', (p) => {
         expect(isWatched(p)).toBe(true);
     });
@@ -46,7 +49,7 @@ describe('isWatched', () => {
         expect(isWatched(p)).toBe(false);
     });
 
-    it.each(['tray/Cargo.toml', 'common/Cargo.toml', 'docker-compose.override.example', '.github/workflows/smoke-coverage.yml'])(
+    it.each(['tray/Cargo.toml', 'common/Cargo.toml', 'docker-compose.override.example', '.github/workflows/smoke-coverage.yml', '.github/workflows/auto-release.yml'])(
         'stays off its neighbour %s',
         (p) => {
             expect(isWatched(p)).toBe(false);

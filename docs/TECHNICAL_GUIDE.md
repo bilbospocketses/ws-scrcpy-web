@@ -1213,7 +1213,7 @@ Both buttons are built via DOM manipulation (not the `html` template tag) becaus
 **No interface selection:** The interface dropdown was removed, and so was the automatic pick that replaced it. Every stream goes to this server, which reaches the device over adb (`StreamClientScrcpy.buildStreamUrl()`), so which network interfaces a device reports does not change where the browser connects. A USB-only device gets a connect link like any other. The picked interface used to ride in the connect link as a `ws=` parameter, with an `action=proxy-adb` URL as the fallback for a device with no interface; nothing ever dialled either, and the server's proxy handlers went in the April 2026 fork cleanup.
 
 **Removed legacy features:**
-- Interface dropdown (replaced by auto-selection)
+- Interface dropdown, and later the automatic pick that replaced it (no interface selection remains)
 - Server PID button (was a no-op -- server lifecycle is managed by `ScrcpyConnection`)
 - "WebCodecs" link label (renamed to "connect")
 - "opens in new tab" section (all buttons unified into single "opens in overlay" section)
