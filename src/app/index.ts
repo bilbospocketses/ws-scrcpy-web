@@ -24,74 +24,7 @@ import { StreamClientScrcpy } from './googDevice/client/StreamClientScrcpy';
 import { installThemeEmbedListener, notifyThemeReady } from './public/themeEmbed';
 import { onPageTeardown } from './util/onPageTeardown';
 
-function isResumingUninstall(): boolean {
-    const params = new URLSearchParams(location.search);
-    return params.get('resume') === 'uninstall-service' && Boolean(params.get('token'));
-}
-
-function maybeResumeUninstall(): void {
-    const params = new URLSearchParams(location.search);
-    if (params.get('resume') !== 'uninstall-service') return;
-    const token = params.get('token') ?? '';
-    if (!token) return;
-
-    // Strip the resume params from the URL bar so a refresh doesn't
-    // re-fire the action (the server-side token is single-use, but
-    // the visual URL would still be confusing).
-    const cleanUrl = `${location.origin}${location.pathname}${location.hash}`;
-    history.replaceState(null, '', cleanUrl);
-
-    // Show a status overlay while the uninstall runs.
-    const overlay = document.createElement('div');
-    overlay.style.cssText =
-        'position:fixed;inset:0;background:rgba(0,0,0,0.85);color:#fff;' +
-        'display:flex;align-items:center;justify-content:center;z-index:99999;' +
-        'font-family:system-ui,sans-serif;font-size:1.1rem;padding:2rem;text-align:center;';
-    overlay.textContent = 'finishing service uninstall…';
-    document.body.appendChild(overlay);
-
-    fetch('/api/service/uninstall', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Resume-Token': token },
-    })
-        .then(async (r) => {
-            const data = (await r.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
-            if (!r.ok || !data?.ok) {
-                overlay.textContent = `uninstall failed: ${data?.error ?? `HTTP ${r.status}`}`;
-                setTimeout(() => overlay.remove(), 4000);
-                return;
-            }
-            // v0.1.23 §1c bug 1.b fix: full-page reload after uninstall
-            // succeeds so the post-uninstall page re-evaluates from
-            // scratch with the now-canonical installMode='user'. Pre-fix,
-            // the ServiceFirstRunModal had been mounted by
-            // maybeShowWelcomeModal racing against this fetch (see
-            // bug 1.a fix below) — even with that race fixed, we still
-            // want a clean slate so the WelcomeModal / port reminder
-            // logic runs on the now-correct config.
-            overlay.textContent =
-                `service uninstalled. ws-scrcpy-web is running in user mode now (port ${location.port || '80'}). ` +
-                'reloading…';
-            setTimeout(() => location.reload(), 3000);
-        })
-        .catch((err) => {
-            overlay.textContent = `uninstall failed: ${(err as Error).message}`;
-            setTimeout(() => overlay.remove(), 4000);
-        });
-}
-
 function maybeShowWelcomeModal(): void {
-    // v0.1.23 §1c bug 1.a fix: skip modal display entirely while the
-    // resume-uninstall flow is in flight. Pre-fix, this would race
-    // against maybeResumeUninstall: /api/config still reflected the
-    // OUTGOING service mode at this moment (the resume flow flips
-    // installMode AFTER the uninstall succeeds), so the racing fetch
-    // would mount ServiceFirstRunModal which then covered the
-    // uninstall progress overlay. maybeResumeUninstall reloads the
-    // page on success, which re-runs maybeShowWelcomeModal cleanly
-    // against the now-canonical post-uninstall state.
-    if (isResumingUninstall()) return;
-
     // Dual-source: /api/config for runtime + installMode + firstRunComplete;
     // /api/settings for the three per-user prompt-dismissal flags which are
     // no longer part of AppConfig. Both are already warm from the boot sequence
@@ -209,8 +142,6 @@ function showStatusBanner(text: string, actionLabel: string, onAction: () => voi
  * - optUpdateAvailable → system-wide update banner (POST install-system-wide → reload)
  */
 function maybeShowFirstRunModal(): void {
-    // Never cover the uninstall-progress overlay (mirrors maybeShowWelcomeModal).
-    if (isResumingUninstall()) return;
     fetch('/api/service/status')
         .then((r) => (r.ok ? (r.json() as Promise<ServiceStatusResponse>) : null))
         .then((status) => {
@@ -321,13 +252,8 @@ installThemeEmbedListener({ allowedOrigins: () => themeEmbedOrigins });
 notifyThemeReady();
 
 window.onload = async (): Promise<void> => {
-    const hash = location.hash.replace(/^#!/, '');
-    const parsedQuery = new URLSearchParams(hash);
-    const action = parsedQuery.get('action');
-
     // Apply the stored theme + warm the global settings cache (iconSize,
-    // scanSubnets the settings modals read). Placed ABOVE the deep-link early-
-    // returns so shell / file-listing sessions warm it on first load too.
+    // scanSubnets the settings modals read).
     // applyStoredTheme awaits loadGlobal internally; initTheme already did the
     // synchronous OS first paint at module-eval, and the .catch keeps a boot-time
     // /api/settings failure from rejecting onload.
@@ -339,18 +265,12 @@ window.onload = async (): Promise<void> => {
 
     const tools: Tool[] = [];
 
+    // The device card's shell and list-files entries. Their clicks open
+    // ShellModal / ListFilesModal (see DeviceTracker.buildDeviceRow).
     const { ShellClient } = await import('./googDevice/client/ShellClient');
-    if (action === ShellClient.ACTION && typeof parsedQuery.get('udid') === 'string') {
-        ShellClient.start(ShellClient.parseParameters(parsedQuery));
-        return;
-    }
     tools.push(ShellClient);
 
     const { FileListingClient } = await import('./googDevice/client/FileListingClient');
-    if (action === FileListingClient.ACTION) {
-        FileListingClient.start(FileListingClient.parseParameters(parsedQuery));
-        return;
-    }
     tools.push(FileListingClient);
 
     if (tools.length) {
@@ -385,7 +305,7 @@ window.onload = async (): Promise<void> => {
     // One read of the runtime envelope, shared by everything below that needs to
     // know whether the admin API will answer THIS caller at all (item 81).
     // Deliberately its own fetch rather than reusing maybeShowWelcomeModal's:
-    // that one is entangled with the resume-uninstall race documented above, and
+    // that one runs only on the first-run path, behind /api/service/status, and
     // /api/config is the cheap, unauthenticated readiness probe by design.
     const runtimeFetch: Promise<FirstRunStatus | null> = fetch('/api/config')
         .then((r) => (r.ok ? (r.json() as Promise<Partial<AppConfigEnvelope>>) : null))
@@ -414,15 +334,6 @@ window.onload = async (): Promise<void> => {
     });
 
     maybeShowFirstRunModal();
-
-    // v0.1.8 uninstall handoff: if we arrived with
-    // ?resume=uninstall-service&token=..., the previous (service)
-    // instance is asking us to auto-fire the uninstall. Validate the
-    // token server-side via the existing uninstall endpoint
-    // (server consumes the token; the API call only succeeds if it
-    // matches a recently-issued one). On success, the user is
-    // dropped on a clean home page.
-    maybeResumeUninstall();
 
     const devicesDiv = document.createElement('div');
     devicesDiv.id = 'devices';
@@ -471,8 +382,7 @@ window.onload = async (): Promise<void> => {
     // bfcache/unload. destroy() (= stopPolling) is idempotent.
     // Another local app can ask permission to embed this one; the prompt is
     // raised here and nowhere else, because approving is what writes the origin
-    // to config. Home page only — a shell or file-listing deep link returned
-    // long before this point.
+    // to config.
     startEmbedRequestWatch();
 
     onPageTeardown(() => {

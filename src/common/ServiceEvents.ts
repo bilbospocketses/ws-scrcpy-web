@@ -80,20 +80,6 @@ export interface ServiceActionSuccess {
     ok: true;
     status: ServiceStatus;
     installMode: 'user' | 'system' | 'user-service' | 'system-service';
-    /**
-     * v0.1.8 uninstall-flow Path A handoff: present when the request
-     * came from a service-context API and the server has spawned a
-     * fresh user-session local launcher to take over. Frontend
-     * navigates to the fresh instance with this token in the URL params;
-     * the new local instance reads `?resume=uninstall-service&token=...`,
-     * validates it, and auto-fires the uninstall click.
-     *
-     * (The v0.1.8 `redirectTo` URL that used to sit beside this field was
-     * retired by the §39 mtime-poll discovery — the server stopped
-     * producing it in May 2026 — and the type followed on 2026-09-06 when
-     * every remaining server-built `http://localhost` URL was removed.)
-     */
-    resumeToken?: string;
     /** config.json mtime snapshot at response time (epoch ms). Frontend uses as baseline for polling. */
     configMtime?: number;
     /** webPort from config.json on disk at response time. */
@@ -123,8 +109,6 @@ export interface ServiceActionSuccess {
  * - `handoff-no-target`: active session resolution failed AND no fallback
  *   path is available. Reserved; not currently emitted but type-stable for
  *   future granularity.
- * - `invalid-token`: the X-Resume-Token header was missing or didn't match
- *   a recently-issued token for the requested action.
  * - `servy-failure`: servy-cli (or systemd-side equivalent) exited non-zero
  *   on the actual install/uninstall operation.
  * - `service-start-failed`: the unit installed without error but never reached
@@ -136,7 +120,6 @@ export type ServiceFailureReason =
     | 'unsupported'
     | 'uac-declined'
     | 'handoff-no-target'
-    | 'invalid-token'
     | 'servy-failure'
     | 'service-start-failed'
     | 'unknown';

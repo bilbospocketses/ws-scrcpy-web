@@ -19,6 +19,42 @@ describe('isWatched', () => {
     ])('ignores %s', (p) => {
         expect(isWatched(p)).toBe(false);
     });
+
+    // The shipped trees outside src/ and launcher/src/: the tray, the shared
+    // Rust crate, the container and source start-up, and the release build.
+    it.each([
+        'tray/src/main.rs',
+        'common/src/tray.rs',
+        'Dockerfile',
+        // A plain prefix: a sibling Dockerfile defines an image too.
+        'Dockerfile.dev',
+        'docker/entrypoint.sh',
+        'docker-compose.yml',
+        'start.sh',
+        'start.cmd',
+        '.github/workflows/release.yml',
+        '.github/workflows/docker-publish.yml',
+    ])('watches the shipped file %s', (p) => {
+        expect(isWatched(p)).toBe(true);
+    });
+
+    // A test file under a newly watched directory changes nothing anyone can
+    // smoke-test, exactly as under src/. (The single-file entries have no
+    // directory to hold a test.)
+    it.each([
+        'tray/src/tests/menu.rs',
+        'common/src/__tests__/control_marker.test.ts',
+        'docker/tests/entrypoint.test.ts',
+    ])('ignores the test file %s', (p) => {
+        expect(isWatched(p)).toBe(false);
+    });
+
+    it.each(['tray/Cargo.toml', 'common/Cargo.toml', 'docker-compose.override.example', '.github/workflows/smoke-coverage.yml', '.github/workflows/auto-release.yml'])(
+        'stays off its neighbour %s',
+        (p) => {
+            expect(isWatched(p)).toBe(false);
+        },
+    );
 });
 
 describe('parseOptOut', () => {

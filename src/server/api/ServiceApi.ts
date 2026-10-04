@@ -20,7 +20,6 @@ import { Config } from '../Config';
 import { detectInstallScope } from '../InstallScope';
 import { Logger } from '../Logger';
 import { getServiceClient, type ServiceClientFactoryResult } from '../service';
-import { consumeToken } from '../service/resumeToken';
 import { ServiceInstallError } from '../service/ServyClient';
 import {
     buildMachineWideInstallScript,
@@ -784,7 +783,7 @@ export class ServiceApi {
         return true;
     }
 
-    private async handleUninstall(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+    private async handleUninstall(_req: IncomingMessage, res: ServerResponse): Promise<boolean> {
         const result = this.factory();
         if (!result.supported) {
             const body: ServiceActionFailure = {
@@ -890,107 +889,78 @@ export class ServiceApi {
             return true;
         }
 
-        // v0.1.8: if a resume token is present in the request headers,
-        // validate it before doing anything else. The token comes from
-        // the service-instance handoff (frontend reads it from the
-        // URL params and forwards it as `X-Resume-Token`). Valid
-        // token → consume + proceed with uninstall. Invalid → 401
-        // (don't proceed; the request is unauthenticated for this
-        // sensitive action). Absent → normal uninstall click from a
-        // local instance, no token required.
-        const headerToken = req.headers?.['x-resume-token'];
-        const tokenStr = Array.isArray(headerToken) ? headerToken[0] : headerToken;
-        if (typeof tokenStr === 'string' && tokenStr.length > 0) {
-            const consumed = consumeToken(cfg.dependenciesPath, tokenStr, 'uninstall-service');
-            if (!consumed) {
+        const installMode = cfg.getAppConfig().installMode;
+        const runningAsService = installMode === 'user-service' || installMode === 'system-service';
+        const isWindows = result.platform === 'win32';
+
+        if (isWindows && runningAsService && this.isLikelyLocalSystem()) {
+            // Revert installMode BEFORE exiting so the freshly spawned
+            // launcher (from --spawn-user-launcher in post-stop.bat)
+            // reads local mode from config.json, not the stale service
+            // mode. Without this, the fresh launcher enters service mode,
+            // its tray supervisor tries WTSQueryUserToken (needs
+            // SeTcbPrivilege), but the launcher runs as the regular user
+            // → tray spawn fails forever with 0x80070522.
+            let newMode: InstallMode = 'user';
+            if (installMode === 'system-service') newMode = 'system';
+            try {
+                cfg.updateAppConfig({ installMode: newMode });
+                log.info(`uninstall: reverted installMode ${installMode} → ${newMode}`);
+            } catch (err) {
+                log.warn(`uninstall: installMode revert failed (continuing): ${(err as Error).message}`);
+            }
+
+            try {
+                await fs.promises.mkdir(path.dirname(cfg.uninstallPendingMarkerPath), { recursive: true });
+                await fs.promises.writeFile(cfg.uninstallPendingMarkerPath, '', 'utf8');
+                log.info(`uninstall: wrote uninstall-pending marker at ${cfg.uninstallPendingMarkerPath}`);
+            } catch (err) {
+                log.error(`uninstall: failed to write uninstall-pending marker: ${(err as Error).message}`);
                 const body: ServiceActionFailure = {
                     ok: false,
-                    error: 'invalid or expired resume token',
-                    reason: 'invalid-token',
+                    error: `failed to write uninstall-pending marker: ${(err as Error).message}`,
+                    reason: 'unknown',
                 };
-                res.writeHead(401);
+                res.writeHead(500);
                 res.end(JSON.stringify(body));
                 return true;
             }
-            // Valid resume token → caller is the redirected local
-            // instance from the service-context handoff. Proceed
-            // directly with the uninstall (no second handoff).
-        } else {
-            const installMode = cfg.getAppConfig().installMode;
-            const runningAsService = installMode === 'user-service' || installMode === 'system-service';
-            const isWindows = result.platform === 'win32';
 
-            if (isWindows && runningAsService && this.isLikelyLocalSystem()) {
-                // Revert installMode BEFORE exiting so the freshly spawned
-                // launcher (from --spawn-user-launcher in post-stop.bat)
-                // reads local mode from config.json, not the stale service
-                // mode. Without this, the fresh launcher enters service mode,
-                // its tray supervisor tries WTSQueryUserToken (needs
-                // SeTcbPrivilege), but the launcher runs as the regular user
-                // → tray spawn fails forever with 0x80070522.
-                let newMode: InstallMode = 'user';
-                if (installMode === 'system-service') newMode = 'system';
-                try {
-                    cfg.updateAppConfig({ installMode: newMode });
-                    log.info(`uninstall: reverted installMode ${installMode} → ${newMode}`);
-                } catch (err) {
-                    log.warn(`uninstall: installMode revert failed (continuing): ${(err as Error).message}`);
-                }
-
-                try {
-                    await fs.promises.mkdir(path.dirname(cfg.uninstallPendingMarkerPath), { recursive: true });
-                    await fs.promises.writeFile(cfg.uninstallPendingMarkerPath, '', 'utf8');
-                    log.info(`uninstall: wrote uninstall-pending marker at ${cfg.uninstallPendingMarkerPath}`);
-                } catch (err) {
-                    log.error(`uninstall: failed to write uninstall-pending marker: ${(err as Error).message}`);
-                    const body: ServiceActionFailure = {
-                        ok: false,
-                        error: `failed to write uninstall-pending marker: ${(err as Error).message}`,
-                        reason: 'unknown',
-                    };
-                    res.writeHead(500);
-                    res.end(JSON.stringify(body));
-                    return true;
-                }
-
-                const dataRoot = cfg.dataRoot ?? path.dirname(cfg.dependenciesPath);
-                const helperPath = path.join(dataRoot, 'control', 'operation-server', 'ws-scrcpy-web-launcher.exe');
-                try {
-                    const child = spawn(helperPath, ['--operation-server'], {
-                        detached: true,
-                        stdio: 'ignore',
-                        windowsHide: true,
-                        env: { ...process.env, WS_SCRCPY_DATA_ROOT: dataRoot },
-                    });
-                    // Absorb the async 'error' event (e.g. ENOENT when the helper
-                    // isn't yet on disk) so it doesn't become an unhandled rejection.
-                    child.on('error', (err) => {
-                        log.warn(`uninstall: operation-server child error (bat will handle it): ${err.message}`);
-                    });
-                    child.unref();
-                    log.info(`uninstall: spawned operation-server at ${helperPath}`);
-                } catch (err) {
-                    log.warn(
-                        `uninstall: failed to spawn operation-server (bat will handle it): ${(err as Error).message}`,
-                    );
-                }
-
-                setTimeout(() => {
-                    log.info('uninstall: scheduled exit firing (post-stop.bat takes over)');
-                    process.exit(0);
-                }, 5000).unref();
-
-                const disk = this.readDiskConfig();
-                const body: ServiceActionSuccess = {
-                    ok: true,
-                    status: 'shutting-down',
-                    installMode: newMode,
-                    ...(disk.configMtime != null ? { configMtime: disk.configMtime } : {}),
-                };
-                res.writeHead(200);
-                res.end(JSON.stringify(body));
-                return true;
+            const dataRoot = cfg.dataRoot ?? path.dirname(cfg.dependenciesPath);
+            const helperPath = path.join(dataRoot, 'control', 'operation-server', 'ws-scrcpy-web-launcher.exe');
+            try {
+                const child = spawn(helperPath, ['--operation-server'], {
+                    detached: true,
+                    stdio: 'ignore',
+                    windowsHide: true,
+                    env: { ...process.env, WS_SCRCPY_DATA_ROOT: dataRoot },
+                });
+                // Absorb the async 'error' event (e.g. ENOENT when the helper
+                // isn't yet on disk) so it doesn't become an unhandled rejection.
+                child.on('error', (err) => {
+                    log.warn(`uninstall: operation-server child error (bat will handle it): ${err.message}`);
+                });
+                child.unref();
+                log.info(`uninstall: spawned operation-server at ${helperPath}`);
+            } catch (err) {
+                log.warn(`uninstall: failed to spawn operation-server (bat will handle it): ${(err as Error).message}`);
             }
+
+            setTimeout(() => {
+                log.info('uninstall: scheduled exit firing (post-stop.bat takes over)');
+                process.exit(0);
+            }, 5000).unref();
+
+            const disk = this.readDiskConfig();
+            const body: ServiceActionSuccess = {
+                ok: true,
+                status: 'shutting-down',
+                installMode: newMode,
+                ...(disk.configMtime != null ? { configMtime: disk.configMtime } : {}),
+            };
+            res.writeHead(200);
+            res.end(JSON.stringify(body));
+            return true;
         }
 
         try {

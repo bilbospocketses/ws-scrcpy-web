@@ -35,8 +35,40 @@ export const SMOKE_DOC = 'docs/smoke-tests/smoke-test.md';
  * Trees whose changes a user or an operator can see. `launcher/src/**` is here
  * because #727 lived there -- service-install timing and `launcher.log` lines
  * are exactly what row 4.3 checks.
+ *
+ * The rest were added together, because each one is shipped to users and was
+ * invisible to this gate until then:
+ *
+ * - `tray/src/` is the tray icon and its menu, the thing a desktop user clicks.
+ * - `common/src/` is the Rust crate the launcher and the tray both link, so a
+ *   change there is a launcher change and a tray change at once.
+ * - `Dockerfile`, `docker/` (the entrypoint), `docker-compose.yml`, `start.sh`
+ *   and `start.cmd` are how a container or a source checkout starts. A container
+ *   user never sees `src/` change; they see the image boot differently.
+ * - `.github/workflows/release.yml` builds and publishes every artifact a user
+ *   installs, and `.github/workflows/docker-publish.yml` builds and pushes the
+ *   container image on every release tag. `ci.yml` and the other workflows are
+ *   not here: they decide what gets checked, or push a tag, not what gets
+ *   shipped.
+ *
+ * Each entry is a plain prefix, so a file entry such as `Dockerfile` also covers
+ * a sibling like `Dockerfile.dev` if one is ever added. That is the right
+ * default for a file that defines the image.
  */
-export const WATCHED_PREFIXES = ['src/server/', 'src/app/', 'launcher/src/'];
+export const WATCHED_PREFIXES = [
+    'src/server/',
+    'src/app/',
+    'launcher/src/',
+    'tray/src/',
+    'common/src/',
+    'Dockerfile',
+    'docker/',
+    'docker-compose.yml',
+    'start.sh',
+    'start.cmd',
+    '.github/workflows/release.yml',
+    '.github/workflows/docker-publish.yml',
+];
 
 /** Test-only files change no behaviour anyone can smoke-test. */
 export function isTestFile(path) {

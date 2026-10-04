@@ -1,5 +1,4 @@
 import { ACTION } from '../../../common/Action';
-import { SERVER_PORT } from '../../../common/Constants';
 import { ControlCenterCommand } from '../../../common/ControlCenterCommand';
 import { applyStreamParams } from '../../../common/StreamUrlParams';
 import type GoogDeviceDescriptor from '../../../types/GoogDeviceDescriptor';
@@ -233,7 +232,6 @@ export class StreamClientScrcpy
             action,
             player: Util.parseString(params, 'player', true),
             udid: Util.parseString(params, 'udid', true),
-            ws: Util.parseString(params, 'ws') || '',
         };
     }
 
@@ -767,7 +765,6 @@ export class StreamClientScrcpy
                     ${Attribute.HOSTNAME}="${params.hostname}"
                     ${Attribute.PORT}="${params.port}"
                     ${Attribute.PATHNAME}="${params.pathname}"
-                    ${Attribute.USE_PROXY}="${params.useProxy}"
                     id="${configureButtonId}"
                     class="active action-button"
                 >
@@ -788,7 +785,6 @@ export class StreamClientScrcpy
         const hostname = Util.parseStringEnv(button.getAttribute(Attribute.HOSTNAME) || undefined) || '';
         const port = Util.parseIntEnv(button.getAttribute(Attribute.PORT) || undefined);
         const pathname = Util.parseStringEnv(button.getAttribute(Attribute.PATHNAME) || undefined) || '';
-        const useProxy = Util.parseBooleanEnv(button.getAttribute(Attribute.USE_PROXY) || undefined);
         if (!udid) {
             throw Error(`Invalid udid value: "${udid}"`);
         }
@@ -801,43 +797,19 @@ export class StreamClientScrcpy
             hostname,
             port,
             pathname,
-            useProxy,
         });
         const descriptor = tracker.getDescriptorByUdid(udid);
         if (!descriptor) return;
         event.preventDefault();
 
-        // Auto-select best interface (same logic as DeviceTracker.buildDeviceRow)
-        let ws = '';
-        const wifiInterface = descriptor.interfaces?.find((i) => i.name === descriptor['wifi.interface']);
-        const bestInterface = wifiInterface || descriptor.interfaces?.[0];
-        if (bestInterface) {
-            const url = DeviceTracker.buildUrl({
-                secure: false,
-                hostname: bestInterface.ipv4,
-                port: SERVER_PORT,
-                pathname,
-            });
-            ws = url.toString();
-        }
-        if (!ws) {
-            const url = DeviceTracker.buildUrl({ secure, hostname, port, pathname });
-            url.searchParams.set('action', ACTION.PROXY_ADB);
-            url.searchParams.set('remote', `tcp:${SERVER_PORT.toString(10)}`);
-            url.searchParams.set('udid', udid);
-            ws = url.toString();
-        }
-
         const options: ParamsStreamScrcpy = {
             udid,
-            ws,
             player: '',
             action: ACTION.STREAM_SCRCPY,
             secure,
             hostname,
             port,
             pathname,
-            useProxy,
         };
         // Use device label (user-assigned name) for the modal title, falling back to model
         const nameEl = button.closest('.device')?.querySelector('.device-name-text');

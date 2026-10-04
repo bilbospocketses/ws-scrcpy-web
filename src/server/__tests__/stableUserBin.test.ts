@@ -4,7 +4,7 @@ import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Call-through fs.promises spies so #31 can assert the atomic tmp→rename staging
-// OS-independently (same pattern as resumeToken.test.ts). #32: staging is async,
+// OS-independently. #32: staging is async,
 // so the spies sit on fs.promises.copyFile/rename, not the sync variants.
 const fsSpies = vi.hoisted(() => ({
     copyFile: vi.fn(),

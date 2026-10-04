@@ -492,7 +492,7 @@ export class ListFilesModal extends Modal implements DragAndPushListener {
         }
         this.multiplexer = mux;
 
-        // Create the FSLS channel on the root multiplexer (like ManagerClient does for FileListingClient).
+        // Create the FSLS channel on the root multiplexer.
         // This gives us a sub-multiplexer that the server routes to the FileListing handler.
         // Command sub-channels (STAT/LIST/RECV) are created on THIS channel.
         const initChannel = (): void => {
@@ -540,7 +540,7 @@ export class ListFilesModal extends Modal implements DragAndPushListener {
         }
     }
 
-    // Required by AdbkitFilePushStream (duck-typed as FileListingClient)
+    // Required by AdbkitFilePushStream (its FilePushTarget contract)
     public getPath(): string {
         return this.currentPath;
     }
@@ -624,7 +624,7 @@ export class ListFilesModal extends Modal implements DragAndPushListener {
             .toUint8Array();
 
         // Create a sub-channel on the FSLS channel with the command as channel init data
-        // (same pattern as FileListingClient.loadContent — this.ws.createChannel(payload))
+        // (this.ws.createChannel(payload))
         try {
             const channel = this.fsChannel.createChannel(payload);
             debugLog(TAG, 'Sub-channel created for', cmd, 'readyState:', channel.readyState);

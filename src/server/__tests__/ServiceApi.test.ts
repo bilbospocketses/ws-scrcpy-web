@@ -2564,28 +2564,6 @@ describe('ServiceApi', () => {
         expect(body.reason).toBe('uac-declined');
     });
 
-    it('returns reason=invalid-token when resume token is invalid', async () => {
-        const factoryResult: ServiceClientFactoryResult = {
-            client: fakeClient(),
-            supported: true,
-            platform: 'win32',
-        };
-        const api = new ServiceApi(
-            () => factoryResult,
-            () => 'user',
-        );
-        // Provide a token that will fail consumeToken validation (it won't match
-        // any issued token in the temp dir, so consumeToken returns false).
-        const { req, res } = makeReqRes('/api/service/uninstall', 'POST', undefined, {
-            'x-resume-token': 'bogus-token-value',
-        });
-        await api.handle(req, res);
-        expect((res as any).getStatus()).toBe(401);
-        const body = JSON.parse((res as any).getBody());
-        expect(body.ok).toBe(false);
-        expect(body.reason).toBe('invalid-token');
-    });
-
     it('returns reason=servy-failure when client.uninstall throws a generic Error', async () => {
         const client = fakeClient({
             uninstall: vi.fn(async () => {
