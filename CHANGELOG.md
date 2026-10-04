@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.165] - 2026-10-04
+
 ### Added
 - **docs(smoke): 83 rows for what the app does that no row checked.** A coverage audit (2026-10-03) read the CHANGELOG back to beta.83 and inventoried the client, the server API, config and environment, the launcher, tray and service, packaging and Docker, and found 85 behaviours with no row or only part of one. Each is now a row or a clause, tagged with its gap number: the Windows Portable ZIP, the stream toolbar (screenshot, clipboard, UHID, the stats overlay, D-pad ↔ Touch, Refresh), quick scan and the scan progress chip, the file browser's sort, filter, delete and drop zone, `embed.html` and `startStream`, Local HTTPS revoke, https port and hostname mode, remote-admin refusal on every route, cross-origin rejection, sockets closing on logout, and the September robustness fixes. Twelve stale rows were corrected (7.1's controls, 7.5's long-fixed defect, 8.15's log viewer that does not exist, the dependency alert that moved to the top bar, 9.4's restart control, 3.4's tray timing and others), and the coverage register's contradictions were fixed: tray-per-session is implemented (#658), row 18.13 shares its id with a finding, and the Linux desktop guests now exist. Row 15.2 now says plainly that a "remove my data" wipe keeps the Local HTTPS CA in `%LOCALAPPDATA%\WsScrcpyWeb-tls`, and how to delete it. The register now reads 101 of 251 rows automated (40 %), down from 100 of 168 (60 %): the denominator grew, coverage did not shrink.
 
