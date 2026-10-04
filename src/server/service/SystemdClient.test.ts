@@ -133,7 +133,6 @@ describe('renderUnitFile — system scope unit', () => {
             DATA_ROOT: '/var/lib/ws-scrcpy-web',
             DEPS_PATH: '/opt/ws-scrcpy-web/dependencies',
             WS_SCRCPY_SERVICE: '1',
-            WS_SCRCPY_WEB_PORT: '8000',
         },
         logPath: '/var/lib/ws-scrcpy-web/logs/service.log',
     } as unknown as Parameters<typeof renderUnitFile>[0];

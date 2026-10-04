@@ -18,7 +18,6 @@ describe('Config — AppConfig extension', () => {
     const savedEnv = {
         CONFIG: process.env[EnvName.CONFIG_PATH],
         DEPS: process.env['DEPS_PATH'],
-        PORT: process.env['PORT'],
     };
 
     afterEach(() => {
@@ -27,8 +26,6 @@ describe('Config — AppConfig extension', () => {
         else process.env[EnvName.CONFIG_PATH] = savedEnv.CONFIG;
         if (savedEnv.DEPS === undefined) delete process.env['DEPS_PATH'];
         else process.env['DEPS_PATH'] = savedEnv.DEPS;
-        if (savedEnv.PORT === undefined) delete process.env['PORT'];
-        else process.env['PORT'] = savedEnv.PORT;
         while (tmpDirs.length) {
             const d = tmpDirs.pop()!;
             try {
@@ -51,7 +48,6 @@ describe('Config — AppConfig extension', () => {
         fs.writeFileSync(configPath, JSON.stringify(initialConfig));
         process.env[EnvName.CONFIG_PATH] = configPath;
         process.env['DEPS_PATH'] = path.join(tmpRoot, 'deps');
-        delete process.env['PORT'];
         Config._resetForTest();
         return configPath;
     }
@@ -172,6 +168,16 @@ describe('Config — AppConfig extension', () => {
         expect(status.webPort).toBe(8001);
         expect(cfg.getAppConfig().webPort).toBe(8000);
         expect(fs.readFileSync(configPath, 'utf-8')).toBe(before);
+    });
+
+    it('setActualWebPort with autoShifted:false persists a CHOSEN port without reporting a shift', () => {
+        // The WS_SCRCPY_WEB_PORT case: the port differs from config.json because
+        // the caller asked for it, not because the configured one was busy.
+        const configPath = setup({ webPort: 8000 });
+        const cfg = Config.getInstance();
+        cfg.setActualWebPort(8123, { autoShifted: false });
+        expect(cfg.getFirstRunStatus()).toMatchObject({ webPort: 8123, portWasAutoShifted: false });
+        expect(JSON.parse(fs.readFileSync(configPath, 'utf-8')).webPort).toBe(8123);
     });
 
     it('setActualWebPort with same port leaves portWasAutoShifted=false and does not rewrite file', () => {

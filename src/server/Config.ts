@@ -407,6 +407,11 @@ type ValidationResult<T> = { ok: true; value: T } | { ok: false; error: string }
  */
 const KNOWN_CONFIG_KEYS: ReadonlySet<string> = new Set(Object.keys(APP_CONFIG_DEFAULTS));
 
+/** Whether `value` passes the same `webPort` validation `updateAppConfig` applies. */
+export function isValidWebPort(value: unknown): value is number {
+    return validateField('webPort', value).ok;
+}
+
 function validateField<K extends keyof AppConfig>(key: K, value: unknown): ValidationResult<AppConfig[K]> {
     switch (key) {
         case 'webPort': {
@@ -663,6 +668,19 @@ export function validateHttpsPortInput(raw: unknown): ValidationResult<number> {
     return { ok: true, value: raw };
 }
 
+/**
+ * The warning for an HTTP listener that landed on the HTTPS port: HTTP wins and
+ * the HTTPS entry is dropped for this boot. One text for both places that apply
+ * the rule -- Config.buildServers (config.json's webPort) and reconcileWebPort.ts
+ * (the port HTTP actually settles on).
+ */
+export function httpsCollisionWarning(httpsPort: number, httpPort: number): string {
+    return (
+        `config.json: httpsPort (${httpsPort}) collides with the http port (${httpPort}); ` +
+        'HTTPS is disabled for this boot -- set httpsPort to a different port to enable it'
+    );
+}
+
 export class Config {
     private static instance?: Config | undefined;
 
@@ -713,17 +731,14 @@ export class Config {
         env: NodeJS.ProcessEnv = process.env,
         warn: (msg: string) => void = () => {},
     ): ServerItem[] {
-        // Env var PORT takes highest priority
-        const envPort = env['PORT'];
-        const port = envPort ? Number.parseInt(envPort, 10) : webPort;
-
+        // No environment variable is read for the port here. The one port
+        // override is WS_SCRCPY_WEB_PORT, applied by reconcileWebPort.ts once
+        // the server list exists. (`PORT`, inherited from upstream ws-scrcpy,
+        // was retired 2026-10-04: nothing set it, and it moved the listener
+        // without moving the port the app reported.)
         if (fileConfig.server && fileConfig.server.length > 0) {
-            // Advanced multi-server config: still honour PORT env override on first server
-            const servers = fileConfig.server.map((item) => Config.parseServerItem(item));
-            if (envPort) {
-                servers[0]!.port = port;
-            }
-            return servers;
+            // Advanced multi-server config: used as written.
+            return fileConfig.server.map((item) => Config.parseServerItem(item));
         }
 
         // Simple flat config: HTTP always; HTTPS joins it once a readable
@@ -783,15 +798,15 @@ export class Config {
         // the HTTPS entry rather than let two listeners silently fight over
         // one port; httpsPort is the first user-settable way to reach this
         // (webPort and httpsPort are otherwise resolved independently).
-        if (certMaterial && port === httpsPort) {
-            warn(
-                `config.json: httpsPort (${httpsPort}) collides with the http port (${port}); ` +
-                    'HTTPS is disabled for this boot -- set httpsPort to a different port to enable it',
-            );
+        // reconcileWebPort.ts applies the same rule once the HTTP port settles,
+        // for a WS_SCRCPY_WEB_PORT override or an auto-shift that lands on
+        // httpsPort -- with this same text.
+        if (certMaterial && webPort === httpsPort) {
+            warn(httpsCollisionWarning(httpsPort, webPort));
             certMaterial = null;
         }
 
-        return buildServerList({ httpPort: port, httpsPort, certMaterial });
+        return buildServerList({ httpPort: webPort, httpsPort, certMaterial });
     }
 
     /**
@@ -1538,7 +1553,7 @@ export class Config {
      * default — persists the new port to disk so the next launch starts where
      * this one ended up.
      *
-     * `persist: false` is the SIBLING case (index.ts reconcileWebPort): the
+     * `persist: false` is the SIBLING case (reconcileWebPort.ts): the
      * configured port is busy because another instance of THIS app owns it.
      * Then the configured port is right and the sibling is serving it, so this
      * instance binds the shifted port for its own lifetime and leaves both the
@@ -1548,16 +1563,23 @@ export class Config {
      * row 3.7, case b): an elevated second instance wrote 8001 while the
      * user-level server kept serving 8000. The bound port is still reported
      * through firstRunStatus, and HttpServer binds it via `servers[0].port`.
+     *
+     * `autoShifted: false` is the WS_SCRCPY_WEB_PORT case: the port differs from
+     * `webPort` because the caller CHOSE it, not because the configured one was
+     * busy, so `portWasAutoShifted` stays false. It still persists by default,
+     * so config.json names the port this boot serves (the override's one shipped
+     * caller is the Docker image). Omitted, a port that differs from `webPort`
+     * is a shift.
      */
-    public setActualWebPort(actualPort: number, opts: { persist?: boolean } = {}): void {
-        const shifted = actualPort !== this._appConfig.webPort;
-        if (shifted && (opts.persist ?? true)) {
+    public setActualWebPort(actualPort: number, opts: { persist?: boolean; autoShifted?: boolean } = {}): void {
+        const changed = actualPort !== this._appConfig.webPort;
+        if (changed && (opts.persist ?? true)) {
             this._appConfig = { ...this._appConfig, webPort: actualPort };
             this.saveToDisk();
         }
         this._firstRunStatus = {
             firstRunComplete: this.effectiveAppConfig().firstRunComplete,
-            portWasAutoShifted: shifted,
+            portWasAutoShifted: opts.autoShifted ?? changed,
             webPort: actualPort,
             ...(this._dockerMode ? { docker: true } : {}),
         };

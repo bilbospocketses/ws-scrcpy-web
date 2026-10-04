@@ -1,9 +1,11 @@
+import * as path from 'path';
 import { APP_IDENTITY } from './api/WhoamiApi';
+import { SYSTEM_STATE_DIR } from './service/SystemdClient';
 
 /**
  * Is the process listening on loopback `port` ANOTHER INSTANCE OF THIS APP?
  *
- * Asked by the port resolver (index.ts reconcileWebPort) before it persists an
+ * Asked by the port resolver (reconcileWebPort.ts) before it persists an
  * auto-shift. The configured port being busy has two very different causes:
  *
  *   - some other program owns it → persist the shift; the user's config should
@@ -88,4 +90,27 @@ function isEnvelope(body: unknown): boolean {
  */
 export function isServiceInstance(env: NodeJS.ProcessEnv = process.env): boolean {
     return env['WS_SCRCPY_SERVICE'] === '1';
+}
+
+/**
+ * Is THIS process the Linux SYSTEM service? Read from the environment the
+ * system unit itself sets (SystemdClient.buildServiceUnitEnv, linux + system
+ * scope): WS_SCRCPY_SERVICE=1 AND DATA_ROOT=/var/lib/ws-scrcpy-web. The launcher
+ * hands both to Node unchanged. Nothing else has both: the Linux user unit's
+ * DATA_ROOT is the user's own data root, the Windows service's is ProgramData,
+ * and the system teardown helper sets DATA_ROOT but is no service.
+ *
+ * Not `installMode === 'system-service'`: the Windows service install records
+ * that same mode (ServiceApi, scope 'system'), and installMode is the mutable
+ * config value, while the unit's environment is what systemd actually started.
+ *
+ * reconcileWebPort.ts treats config.json's webPort as exact for this instance.
+ */
+export function isLinuxSystemServiceInstance(
+    env: NodeJS.ProcessEnv = process.env,
+    platform: NodeJS.Platform = process.platform,
+): boolean {
+    const dataRoot = env['DATA_ROOT'];
+    if (platform !== 'linux' || !isServiceInstance(env) || !dataRoot) return false;
+    return path.posix.normalize(dataRoot).replace(/\/+$/, '') === SYSTEM_STATE_DIR;
 }

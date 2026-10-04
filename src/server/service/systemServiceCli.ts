@@ -4,6 +4,7 @@ import * as net from 'net';
 import { APP_CONFIG_DEFAULTS } from '../../common/ConfigEvents';
 import { WS_SCRCPY_SERVICE_DESCRIPTION, WS_SCRCPY_SERVICE_NAME } from '../../common/ServiceEvents';
 import { Logger } from '../Logger';
+import { isSiblingInstance } from '../siblingInstance';
 import {
     buildServiceUnitEnv,
     buildSystemSeedConfig,
@@ -38,6 +39,8 @@ export interface CoreDeps {
     readFile: (path: string) => string | null;
     /** Whether something accepts a TCP connection on 127.0.0.1:<port>. */
     portOpen: (port: number) => Promise<boolean>;
+    /** Whether the process on loopback <port> is a copy of this app (siblingInstance.ts). */
+    isSibling: (port: number) => Promise<boolean>;
     sleep: (ms: number) => Promise<void>;
 }
 
@@ -115,6 +118,14 @@ export async function ensureSafeRootDir(dir: string, d: Pick<CoreDeps, 'lstat' |
 
 export async function installSystemService(opts: { port: number }, d: CoreDeps): Promise<void> {
     assertRoot(d.getuid);
+    // Held before the install means the page's install only when the holder is
+    // this app: the user's own copy is still serving, and exits once this
+    // returns (item 159). Any other holder would leave the unit failing its
+    // exact bind until systemd gave up, so refuse before anything is written.
+    const portHeldBefore = await d.portOpen(opts.port);
+    if (portHeldBefore && !(await d.isSibling(opts.port))) {
+        throw new Error(`port ${opts.port} is in use by another program; pick a free one with --port`);
+    }
     const mkdir = d.tool('mkdir');
     const chmod = d.tool('chmod');
     const systemctl = d.tool('systemctl');
@@ -170,10 +181,12 @@ export async function installSystemService(opts: { port: number }, d: CoreDeps):
     const kept = parseKeptConfig(d.readFile(SYSTEM_CONFIG)) ?? {};
     const seed = { ...kept, ...buildSystemSeedConfig(opts.port) };
     d.writeFile(SYSTEM_CONFIG, `${JSON.stringify(seed, null, 2)}\n`, { mode: 0o644 });
-    const envVars = {
-        ...buildServiceUnitEnv('linux', 'system', STAGED_SYSTEM_DEPS_DIR),
-        WS_SCRCPY_WEB_PORT: String(opts.port),
-    };
+    // No WS_SCRCPY_WEB_PORT: the port lives in config.json (seeded above), so a
+    // Settings port change survives the restart. The pin used to come back on
+    // the install port (user decision 2026-10-04). While the user's own copy
+    // still holds the port, the service fails its bind and systemd restarts it
+    // (reconcileWebPort.ts: a Linux system service never walks forward).
+    const envVars = buildServiceUnitEnv('linux', 'system', STAGED_SYSTEM_DEPS_DIR);
     const unit = renderUnitFile(
         {
             name: WS_SCRCPY_SERVICE_NAME,
@@ -191,9 +204,6 @@ export async function installSystemService(opts: { port: number }, d: CoreDeps):
     if (reload.code !== 0) {
         throw new Error(`systemctl daemon-reload failed (exit ${reload.code}): ${reload.stderr.trim()}`);
     }
-    // Held before the start means the page's install: the user's own copy is still
-    // serving, and exits once this returns (item 159).
-    const portHeldBefore = await d.portOpen(opts.port);
     const enable = await d.run([systemctl, 'enable', '--now', UNIT_NAME]);
     if (enable.code !== 0) {
         throw new Error(`systemctl enable --now failed (exit ${enable.code}): ${enable.stderr.trim()}`);
@@ -501,6 +511,7 @@ export function makeProductionCoreDeps(): CliDeps {
                 socket.once('connect', () => done(true));
                 socket.once('error', () => done(false));
             }),
+        isSibling: (port) => isSiblingInstance(port),
         sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
         appImageSource: process.env['APPIMAGE'] ?? process.execPath,
         tool: (t) => resolveSystemTool(t),
