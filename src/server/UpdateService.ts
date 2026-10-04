@@ -514,6 +514,9 @@ export class UpdateService {
         if (!this.mgr || !this.state.pendingUpdate) return;
 
         while (this.download && this.download.generation !== generation) {
+            // A waiter whose own channel was itself superseded must not touch the
+            // state: a newer generation's download may already be reporting progress.
+            if (generation !== this.generation) return;
             this.state.status = 'downloading';
             this.state.progress = 0;
             log.info('waiting for the previous channel download to finish before starting this one');
