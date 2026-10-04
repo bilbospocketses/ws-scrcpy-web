@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.166] - 2026-10-04
+
 ### Fixed
 - **Disabling or deleting a user now closes their open streams and shells.** Since 2026-09-04 logging out has closed the sockets that login opened (4401), but disabling or deleting an account only ended its sessions: that refused the user's next connection while a stream or adb shell they already had open kept running until its next HTTP request. `SocketRegistry.revokeUser` was written for exactly this case and nothing called it. `PATCH /api/users/<id>` with `disabled: true` and `DELETE /api/users/<id>` now close every live socket the user holds, from any browser, with 4401; other users' sockets are untouched, and a refused disable (the last enabled admin) closes nothing. Found by the 2026-10-03 coverage audit's row review (register finding 18.14, reopened; smoke row 18.17).
 
