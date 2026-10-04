@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **The update check now sends Velopack's feed parameters to GitHub.** Reading a single release's folder goes through Velopack's HTTP source, which appends `?localVersion=<installed version>&id=WsScrcpyWeb&stagingId=<random id>` to the `releases.<channel>.json` request (velopack 1.2.161 `sources/http.rs:38-46`); the GitHub source used before sent none of them. The `stagingId` is a random UUID, linked to nothing, that Velopack keeps in `.betaId` in its packages folder — the same on every check from a Windows install, and usually new on every check on Linux, where that folder normally does not exist. `PRIVACY.md` now lists every request the update check makes, its query parameters, the User-Agent each one carries (`ws-scrcpy-web` for the release list, Velopack's `ureq/3.4.2` for the feed and the Windows package, `node` for the Linux AppImage download), and what `VELOPACK_FEED_URL` changes.
 - **docs: the README states the real channel rule.** It said update channels were "baked into the installation" and that a beta install could not apply a stable update without a reinstall — a 2026-05-25 misdiagnosis of the ten-release window above. Smoke row 6.11 now carries the rule as its Expected instead of asking the tester to write down what happens, and `release.yml`'s comments no longer say Velopack reads `/releases/latest`; it never did.
+
 ## [0.1.30-beta.167] - 2026-10-04
 
 ### Changed
