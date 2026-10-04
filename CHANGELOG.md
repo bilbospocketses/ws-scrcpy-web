@@ -17,6 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **The update check finds the selected channel's newest release, however many releases of the other channel came after it.** The rule: with Settings → Updates → Channel on `stable` or `beta`, any release on that channel with a higher version than the running one is offered and installs, whichever channel the running build came from. Nothing in the app or in Velopack gated the channel; what broke it was the feed. The updater was handed the bare repo URL, which Velopack reads as a GitHub source that lists only the **10 newest releases** (velopack 1.2.161 `sources/github.rs:77-89`) and merges the `releases.<channel>.json` it finds among them. Betas are full releases and ship many a day, so about ten betas after a stable release, a stable-channel install stopped seeing it and the check came back "no update". The app now pages the releases API itself (`per_page=100`, one lookup per check, cached with the listing's ETag so an unchanged listing costs one conditional request) and points Velopack at that one release's download folder as an HTTP source (`src/server/updateFeedResolver.ts`). A channel with no release at all, which is stable today, reports no update, not an error; a refused lookup (403/429/5xx) is the error it always was. `VELOPACK_FEED_URL` still bypasses all of it, so the update-flow sandbox and the qa-harness pinned feed are unchanged. The `404` qa-harness recorded on a fresh beta.103 install set to `stable` (2026-09-09) came from that pinned feed, which serves only `releases.beta.json`, not from GitHub; the new path never asks for a feed file a release does not list.
+
+### Changed
+- **docs: the README states the real channel rule.** It said update channels were "baked into the installation" and that a beta install could not apply a stable update without a reinstall — a 2026-05-25 misdiagnosis of the ten-release window above. Smoke row 6.11 now carries the rule as its Expected instead of asking the tester to write down what happens, and `release.yml`'s comments no longer say Velopack reads `/releases/latest`; it never did.
+
 ## [0.1.30-beta.166] - 2026-10-04
 
 ### Fixed
