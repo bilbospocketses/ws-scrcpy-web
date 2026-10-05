@@ -24,6 +24,7 @@ import { Config } from './Config';
 import { getDependencyManager } from './DependencyManager';
 import { DeviceProbe } from './DeviceProbe';
 import { reconcilePendingSettings } from './db/reconcilePendingSettings';
+import { backupAndCloseStore } from './db/shutdownStore';
 import { Logger } from './Logger';
 import { HostTracker } from './mw/HostTracker';
 import type { MwFactory } from './mw/Mw';
@@ -432,14 +433,13 @@ if (__ssArgs) {
             serverLog.info(`Stopping ${serviceName} ...`);
             service.release();
         });
-        // Snapshot the SQLite store on a clean shutdown — the last-good `.bak`
-        // the corrupt-recovery path restores from. Best-effort; never block exit.
-        try {
-            const db = config.db;
-            db.backup(`${db.dbPath}.bak`);
-        } catch (err) {
-            serverLog.warn(`db backup on shutdown failed: ${(err as Error).message}`);
-        }
+        // Snapshot the SQLite store (the last-good `.bak` the corrupt-recovery
+        // path restores from), then close it so SQLite checkpoints the WAL into
+        // wsscrcpy.db (finding 10.21). LAST on purpose: kill-server and the
+        // service releases above do not use the store, and the HTTP and WS
+        // servers are already closed, so no request reaches it afterwards.
+        // Best-effort; never blocks exit.
+        backupAndCloseStore(config.db, serverLog);
     }
 
     let interrupted = false;
