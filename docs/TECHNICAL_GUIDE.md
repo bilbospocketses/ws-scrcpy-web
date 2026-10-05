@@ -2076,7 +2076,7 @@ The in-app updater uses [Velopack](https://velopack.io/) to apply full-applicati
 
 `src/server/UpdateService.ts` wraps the Velopack `UpdateManager`:
 
-- **Check:** Polls the GitHub release feed for new versions. The feed URL is constructed from `config.json` fields (`githubOwner`, `channel`). The `channel` field selects between `releases.json` (stable) and `releases.beta.json` (beta).
+- **Check:** Finds the release to read first (`src/server/updateFeedResolver.ts`). It pages this repo's GitHub releases (`api.github.com/repos/<githubOwner>/ws-scrcpy-web/releases?per_page=100`) and skips drafts and prereleases, so flagging a release as a prerelease is a rollback lever. From what is left it takes the highest version carrying the selected channel's Velopack feed, `releases.<channel>.json` (`releases.stable.json` or `releases.beta.json`; `channel` comes from `config.json`). Velopack is then handed that release's download folder as an explicit `HttpSource`. The repo URL is never given to Velopack directly: it would become a `GithubSource`, which reads only the 10 newest releases, so a stable install went blind to its own release once ten betas followed it (#835). Each page is cached with its ETag, and a 403/429 is answered from the last good result. `HttpSource` adds `localVersion`, `id` and `stagingId` to each feed request; `PRIVACY.md` documents them.
 - **Download:** Downloads the update delta/full package with progress reporting to the browser via WebSocket events.
 - **Apply (Windows):** Calls `UpdateManager.waitExitThenApplyUpdate()`, which signals the launcher to exit, apply the update, and relaunch. **On Linux this Velopack path is inert** — its `UpdateNix apply` aborts before touching any file — so `applyUpdate()` branches to a download-and-swap flow instead (section 22.5).
 
@@ -2131,6 +2131,7 @@ Windows and the Windows-service apply path are unchanged (Velopack `waitExitThen
 | File | Purpose |
 |------|---------|
 | `src/server/UpdateService.ts` | Velopack wrapper (check, download); Windows apply + Linux download-and-swap branch |
+| `src/server/updateFeedResolver.ts` | Picks the release an update check reads: the selected channel's highest non-prerelease release, past Velopack's 10-release window; handed to Velopack as an `HttpSource` |
 | `src/server/api/UpdatesApi.ts` | REST + WebSocket endpoints for the browser update UI |
 | `src/server/Config.ts` | `autoUpdate`, `updateCheckIntervalMinutes`, `channel` fields + control-marker paths |
 | `launcher/src/linux_apply.rs` | Linux AppImage swap + relaunch + `--service-restart` |
@@ -2293,7 +2294,8 @@ By default only `localhost` + IP literals pass layer 1, so terminating TLS at a 
 | `src/server/security/forwardedProto.ts` | `isRequestSecure()` — the browser's scheme, trusting `X-Forwarded-Proto` from a loopback peer only |
 | `src/server/security/loopback.ts` | `isLoopback()` -- the "this machine only" check behind every ungated surface |
 | `src/server/api/WhoamiApi.ts` | `GET /api/whoami` sibling identity probe: token- and auth-exempt, loopback-only |
-| `src/server/siblingInstance.ts` | Asks whoami + config of a busy port before the resolver persists an auto-shift |
+| `src/server/siblingInstance.ts` | Asks whoami + config of a busy port before `reconcileWebPort.ts` persists an auto-shift |
+| `src/server/reconcileWebPort.ts` | Settles the port the first listener binds before HttpServer starts: the `WS_SCRCPY_WEB_PORT` override, the auto-shift off a busy port, and the HTTPS-collision warning |
 | `src/server/Config.ts` | Reads + sanitizes `allowedHosts` from config.json (`sanitizeAllowedHosts`, `Config.allowedHosts`) |
 | `src/server/index.ts` | Applies `allowedHosts` at boot via `setAllowedHosts(config.allowedHosts)` |
 

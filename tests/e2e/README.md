@@ -105,7 +105,7 @@ Because of that isolation you can run the suite while your normal instance is up
 
 `workers: 1` and `fullyParallel: false` are deliberate, not a flake workaround. The
 server holds exactly **one** pending embed request at a time (`current` is
-module-level state in `security/embedRequests.ts`), and every consent spec also
+module-level state in `src/server/security/embedRequests.ts`), and every consent spec also
 mutates the single shared config file. Run concurrently, specs would cancel each
 other's prompts and race each other's writes.
 
