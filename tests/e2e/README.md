@@ -284,9 +284,8 @@ names the finding (the smoke row, or the register finding's id), and traces the
 cause to the file and line that produce it. The `test.fail` description names the
 finding again, so the list reporter's output carries it. Playwright reports such a
 row as passing while it fails; the day the bug is fixed it fails with "expected to
-fail, but passed", which is the cue to delete the line, never to loosen the row. Two
-rows carry one today: 18.17's open-mode logout in `auth-admin.spec.ts`, and 7.9's
-disconnect of a never-connected address in `server-api.spec.ts`.
+fail, but passed", which is the cue to delete the line, never to loosen the row. One
+row carries one today: 18.17's open-mode logout in `auth-admin.spec.ts`.
 
 ## The suite as an artefact: the bundle and the manifest
 
