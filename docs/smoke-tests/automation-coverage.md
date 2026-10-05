@@ -25,10 +25,10 @@ gap number.
 | Automated, container tier | 19 | `build-and-test`'s docker step, and qa-harness nightly |
 | Automated, device tier | 19 | qa-harness, nightly (8.15 and 8.17 run on qa-harness's own virtual-device tier) |
 | Automated, Windows guest tier | 29 | qa-harness P4, nightly, on a Windows 11 guest. Its row set is 30 row-halves: these 29 (6.1, 12.2 and 21.1-21.3 counted by their Windows halves) plus 5.10, which needs a person and sits under manual/conditional. **Most are partial**; each line below names what a pass does not prove. |
-| Automatable, no spec written yet | 85 | — (**75 of the 2026-10-03 coverage audit's rows**, each line naming the tier the audit proposes for it, and **7.5**, an ordinary device row since finding 7.6 was fixed, moved here from un-automatable the same day; then the nine older ones: **18.13**, allowRemoteAdmin surviving a restart and an unrelated save, added 2026-09-29 after qa-harness arc L1 found it did not (#769); unit-tested in `config.storeBacked.test.ts`, and a spec-owned server like 18.12's could drive it end to end; **13.4-13.7**, four of the tabbed Settings dialog's behaviours (beta.125, #692) that ws-scrcpy-web's unit tests cover and no e2e drives yet, added 2026-09-27; **15.6**, the tray's Exit end to end, which the Windows guest tier can reach once it can right-click a real tray icon (qa-harness item 21) but P4 does not claim; 8.10 / 8.11, item 24's rotation rows; the six of 2026-09-04 were written 2026-09-06, item 104; **plus one of item 68's four beta.131 rows — 8.16** (8.15 and 12.6 were automated 2026-09-25, and 8.17 later the same day on qa-harness #95). 8.16 was measured 2026-09-23 on an x86_64 redroid on its **legacy OMX stack** (a guest kernel without `/dev/dma_heap/system`), which had **no Opus encoder at all**. On a kernel with dma_heap, redroid runs Codec2, which has Opus, so 8.16 needs an OMX fixture that qa-harness has decided not to build) |
+| Automatable, no spec written yet | 86 | — (**75 of the 2026-10-03 coverage audit's rows**, each line naming the tier the audit proposes for it, and **12.11**, the audit's crash-restart row, which left un-automatable on 2026-10-05 once item 163 gave it an Expected, and **7.5**, an ordinary device row since finding 7.6 was fixed, moved here from un-automatable the same day; then the nine older ones: **18.13**, allowRemoteAdmin surviving a restart and an unrelated save, added 2026-09-29 after qa-harness arc L1 found it did not (#769); unit-tested in `config.storeBacked.test.ts`, and a spec-owned server like 18.12's could drive it end to end; **13.4-13.7**, four of the tabbed Settings dialog's behaviours (beta.125, #692) that ws-scrcpy-web's unit tests cover and no e2e drives yet, added 2026-09-27; **15.6**, the tray's Exit end to end, which the Windows guest tier can reach once it can right-click a real tray icon (qa-harness item 21) but P4 does not claim; 8.10 / 8.11, item 24's rotation rows; the six of 2026-09-04 were written 2026-09-06, item 104; **plus one of item 68's four beta.131 rows — 8.16** (8.15 and 12.6 were automated 2026-09-25, and 8.17 later the same day on qa-harness #95). 8.16 was measured 2026-09-23 on an x86_64 redroid on its **legacy OMX stack** (a guest kernel without `/dev/dma_heap/system`), which had **no Opus encoder at all**. On a kernel with dma_heap, redroid runs Codec2, which has Opus, so 8.16 needs an OMX fixture that qa-harness has decided not to build) |
 | Automated, manual/conditional | 1 | 5.10 — qa-harness P4 asserts it, but only with a person at the UAC prompt to click No; unattended it Skips. No unattended run proves it, so it does not contribute to "automated today" below. (21.1 sat here until 2026-09-27, when qa-harness Arc 5 supplied the second machine; its own `tests/e2e/local-https.spec.ts` still skips unless a person names an origin.) |
 | **Residual — Linux installer and desktop** | **53** | nobody yet. qa-harness item 14's Fedora 44 and Ubuntu 26.04 desktop guests now exist and are working through these rows; no arc asserts one yet |
-| **Residual — un-automatable** | **11** | nobody, ever (12.11 until the product decision it records is taken) |
+| **Residual — un-automatable** | **10** | nobody, ever |
 | **Total** | **251** | |
 
 **Automated today: 101 of 251 = 40 %.** (100 of 168 = 60 % until 2026-10-03, when the coverage audit added 83 rows: 16.7 arrived with its spec (`responsive-reflow.spec.ts`, which predates the row), 75 arrived without one, three are Linux-desktop residuals and four are un-automatable; the same change moved 7.5 from un-automatable to no-spec. The percentage fell because the denominator now counts what the app does, not because coverage was lost. 99 of 167 / 59 % until later on 2026-09-30, when D8's container spec added 20.22 with its spec. 97 of 165 until later on 2026-09-30, when the container audit's items 11 and 12 added 20.20 and 20.21 with their specs. 96 of 164 until earlier that day, when the container audit's UI half added 20.19 with its spec. 95 of 163 until earlier that day, when the container audit added 20.18 with its spec. 93 / 57 % until 2026-09-30, when 20.4 and 20.5 got their container spec in `docker-gating.spec.ts`. 93 of 162 until 2026-09-29, when 18.13 arrived without a spec. 90 / 56 % until later on 2026-09-27, when qa-harness Arc 5 (Local HTTPS) moved 21.1 from manual/conditional and 21.2-21.3 from un-automatable to the Windows guest tier. Its Playwright runner is its own container on the run network, dialling the guest by IP, so it is the second machine on the LAN those rows were waiting for. Runs `win-20260927T095130Z` (beta.138) and `win-20260927T110335Z` (beta.139) passed all three. 87 of 155 until earlier that day, when qa-harness task 28 added the seven rows for items 35 and 45: 10.10, 10.11 and 20.17 arrive already covered by existing specs, 13.4-13.7 arrive without one. 86 / 55 % until 8.17 moved to the device tier on qa-harness #95,
@@ -335,7 +335,7 @@ Sorted by module, then by row number, which is not the doc's execution order.
 | 12.8 | `[Both]` | 🔐 Who may shut the server down | automatable: no spec yet | Fast tier for the locked-mode halves (401, non-admin 403); the off-box halves need a non-loopback caller, the container tier. Added 2026-10-03 (G5). |
 | 12.9 | `[Both]` | Environment and config overrides | automatable: no spec yet | Fast tier, one spec-owned server per case. Decided 2026-10-04: `PORT` is not read; `WS_SCRCPY_WEB_PORT` sets the exact port the server listens on and reports (as chosen, not `portWasAutoShifted`), even when `config.json` says otherwise, and does not walk forward: busy, its HTTP bind fails rather than falling back to `config.json`'s port; on the Local HTTPS port, HTTPS is disabled for the boot. Since 2026-10-04 the Linux system unit no longer sets it (only the Docker image does), and the Linux system service ignores it. Unit-pinned in `src/server/__tests__/reconcileWebPort.test.ts`; a spec should seed a `config.json` `webPort` that differs from the override (`tests/e2e/support/privateServer.ts` seeds them equal). Added 2026-10-03 (G25). |
 | 12.10 | `[Linux]` | Graceful stop on every stop path | residual: linux-desktop | Residual. Needs systemd user and system units and a terminal-launched AppImage; qa-harness item 14's Linux guests can assert it. Added 2026-10-03 (G73). |
-| 12.11 | `[Both]` | A crashed server under the launcher: record what happens | residual: un-automatable | A product decision nobody has taken: whether the launcher should restart a crashed Node child in local mode. The row records the observed behaviour for that decision, so it has no Expected a spec could assert yet. The service halves are 4.8's (Windows recovery) and systemd's `Restart=on-failure` (Linux). Added 2026-10-03 (G76). |
+| 12.11 | `[Both]` | A crashed local-mode server is restarted, at most 3 times in a row | automatable: no spec yet | Windows guest tier for the Windows half (kill the launcher's Node child, read `launcher.log`); the Linux half needs the AppImage launcher, so qa-harness's Linux desktop guests. The service halves are 4.8's (Windows recovery) and systemd's `Restart=on-failure` (Linux). Added 2026-10-03 (G76) as un-automatable, a record-what-happens row waiting on a product decision; it moved here on 2026-10-05, when item 163 took the decision (restart up to 3 times, the count reset after 60 s up) and gave it an Expected a spec can assert. |
 | 13.1 | `[Both]` | Bookmark global-dismiss | fast | `settings-prompts.spec.ts` |
 | 13.2 | `[Both]` | Reset welcome & bookmark prompts | fast | `settings-prompts.spec.ts` |
 | 13.3 | `[Both]` | Server-tab layout + staged web-port save | fast | `settings-prompts.spec.ts`. **Partial:** the row order, the web port having no save of its own, the range guard and the quiet status are covered; "save, review, restart and reload on the new port" stays manual. |
@@ -598,13 +598,14 @@ namespace — see finding 8.10 for why that is not a convenience.
 
 ---
 
-## Why 64, and what would move most of them
+## Why 63, and what would move most of them
 
 (This section said "Why 58" until 2026-10-03, when the coverage audit added three
 Linux residual rows (4.9, 12.10, 14.10) and four un-automatable ones (5.11, 8.20,
-12.11, 20.26), and 7.5 left the un-automatable list.)
+12.11, 20.26), and 7.5 left the un-automatable list. It said "Why 64" until
+2026-10-05, when item 163 gave 12.11 an Expected and it left the list too.)
 
-53 of the 64 are Linux **installer** and **desktop-integration** rows, and two more
+53 of the 63 are Linux **installer** and **desktop-integration** rows, and two more
 contribute their Linux halves: AppImage launch under Ubuntu's unprivileged-userns
 restriction and with no `libfuse2` on the host, AppArmor denials, polkit dialogs
 under both GNOME and KDE, desktop menu entries and icon caches, systemd user- and
@@ -639,7 +640,7 @@ passed there by hand on beta.140. No row has left the residual bucket yet. Movin
 is qa-harness's call, at its M6, once an arc asserts it, so the counts above still
 read as residual. Its scope is now these 53 rows plus the Linux halves.
 
-The remaining 11 are un-automatable, though not all for the same kind of reason, and
+The remaining 10 are un-automatable, though not all for the same kind of reason, and
 the distinction matters to anyone deciding what to fix:
 
 - **Hardware that does not exist here.** 7.3 and 8.20 (USB, barred by the
@@ -656,11 +657,12 @@ the distinction matters to anyone deciding what to fix:
   machine's own candidate addresses, and in qa-harness the subject is the address the
   runner dials, which is never one of the guest's own. So a run there would show the
   notice every time and prove nothing.
-- **A product decision nobody has taken.** 12.11 records what happens when the
-  launcher's Node child crashes in local mode; whether it should respawn is the
-  user's call, and until it is made the row has no Expected a spec could assert.
-  (7.5 sat here as "an app defect, not a testing limit" until 2026-10-03; finding 7.6
-  was fixed on 2026-09-04, and the row is now automatable with no spec.)
+- **No longer a reason: a product decision nobody had taken.** 12.11 sat here,
+  recording what happened when the launcher's Node child crashed in local mode, until
+  the user decided it on 2026-10-04 (restart up to 3 times; item 163, 2026-10-05) and
+  the row gained an Expected; it is now automatable with no spec. (7.5 sat here as "an
+  app defect, not a testing limit" until 2026-10-03; finding 7.6 was fixed on
+  2026-09-04, and the row is now automatable with no spec.)
 - **A consent dialog left alone for eight minutes.** 5.11 needs the service-install
   UAC up and unanswered past the app's 480 s timeout; the Windows guest tier runs
   with elevation Silent, so no prompt appears.
