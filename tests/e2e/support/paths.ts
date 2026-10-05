@@ -3,6 +3,15 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 /**
+ * `WSSW_E2E_PORT` moves the shared server off 8123 AND gives it a data root of
+ * its own, so two runs of the fast tier can share one machine (and one
+ * checkout, with `--output` set apart) without binding the same port or wiping
+ * each other's database. Unset, nothing changes. Spec-owned servers keep the
+ * fixed ports their specs name, so parallel runs must not run the same spec.
+ */
+const PORT_OVERRIDE = process.env['WSSW_E2E_PORT'];
+
+/**
  * A throwaway data root for the end-to-end server.
  *
  * Deterministic rather than a random `mkdtemp` name on purpose: the Playwright
@@ -15,7 +24,10 @@ import path from 'node:path';
  * platform (see `resolveDataRoot` in `src/server/Config.ts`) —
  * so the suite sets both and works either way.
  */
-export const E2E_PROGRAM_DATA = path.join(tmpdir(), 'ws-scrcpy-web-e2e');
+export const E2E_PROGRAM_DATA = path.join(
+    tmpdir(),
+    PORT_OVERRIDE ? `ws-scrcpy-web-e2e-${PORT_OVERRIDE}` : 'ws-scrcpy-web-e2e',
+);
 export const E2E_DATA_ROOT = path.join(E2E_PROGRAM_DATA, 'WsScrcpyWeb');
 export const E2E_CONFIG_PATH = path.join(E2E_DATA_ROOT, 'config.json');
 
@@ -52,7 +64,7 @@ export function wipeE2EDatabase(): void {
  * Deliberately not 8000 — that is where a developer's real instance listens, and
  * binding there would either collide with it or silently drive it.
  */
-export const E2E_PORT = 8123;
+export const E2E_PORT = PORT_OVERRIDE ? Number(PORT_OVERRIDE) : 8123;
 export const E2E_BASE_URL = `http://localhost:${E2E_PORT}`;
 
 /**

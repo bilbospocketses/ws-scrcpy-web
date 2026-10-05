@@ -42,7 +42,7 @@ vi.mock('fs', async (importOriginal) => {
     };
 });
 
-describe('resolveMkcertExe (Local-Dependencies-Only)', () => {
+describe('resolveMkcertExe (bundled binary, never PATH)', () => {
     it('resolves to an absolute path under the given dependencies directory, never PATH', () => {
         const depsPath = path.resolve('C:/fake-install-root/dependencies');
         const exe = resolveMkcertExe(depsPath);

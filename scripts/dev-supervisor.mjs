@@ -177,7 +177,7 @@ async function main() {
     const nodeResolution = resolveNodeBinary();
     if (!nodeResolution) {
         console.error('[dev-supervisor] FATAL: no Node binary found at <dataRoot>/dependencies/node/ or <repo>/seed/node/');
-        console.error('[dev-supervisor] Run `node scripts/fetch-node.mjs` (or `npm run prestart`, which chains it) to download + stage the pinned Node version. No system-Node fallback per Local-Dependencies-Only.');
+        console.error('[dev-supervisor] Run `node scripts/fetch-node.mjs` (or `npm run prestart`, which chains it) to download + stage the pinned Node version. No system-Node fallback: the pinned Node runs, not whatever the host has.');
         process.exit(1);
     }
     console.log(`[dev-supervisor] starting; node=${nodeResolution.path} (source=${nodeResolution.source}); marker=${markerPath}`);
