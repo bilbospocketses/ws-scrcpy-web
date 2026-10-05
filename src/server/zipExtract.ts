@@ -5,7 +5,7 @@
  * Why this exists: the dependency manager has to unpack two ZIPs (Google's
  * `platform-tools-latest-<os>.zip` and, on Windows, the Node.js distribution).
  * It used to shell out to PowerShell `Expand-Archive` / system `unzip`, which
- * resolved binaries via `PATH` — a Local-Dependencies-Only violation. That was
+ * resolved binaries via `PATH`, so the host chose what ran. That was
  * replaced by shelling out to the Rust launcher's `--unzip` subcommand, which
  * fixed the PATH problem but made extraction depend on a binary that only
  * exists in a packaged install: `resolveLauncherPath()` is
@@ -15,9 +15,9 @@
  * share `%PROGRAMDATA%\WsScrcpyWeb\dependencies\`, and fatal on Linux/macOS,
  * where the dev deps folder starts empty.
  *
- * Doing it in-process solves both: no PATH lookup and no external binary, which
- * is Local-Dependencies-Only compliant in the same way `ws` is — compiled into
- * the app's own artifact rather than resolved from the host.
+ * Doing it in-process solves both: no PATH lookup and no external binary — the
+ * same footing as `ws`, compiled into the app's own artifact rather than
+ * resolved from the host.
  *
  * Scope is deliberately narrow. We read the **central directory** rather than
  * streaming local headers, which means data descriptors (the streaming-writer

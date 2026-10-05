@@ -83,7 +83,7 @@ export interface ServiceInstallOptions {
     /**
      * Linux system-scope only (#36): the installing user's `dependencies/` dir.
      * Copied into `/opt/ws-scrcpy-web/dependencies` at install so the root
-     * service runs the app's OWN deps (Local-Dependencies-Only) rather than
+     * service runs the app's OWN deps rather than
      * reaching into a user's home. Windows + Linux user-scope ignore this.
      */
     sourceDeps?: string | undefined;

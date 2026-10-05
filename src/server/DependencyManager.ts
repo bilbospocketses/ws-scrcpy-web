@@ -671,7 +671,7 @@ export class DependencyManager {
             await this.extractZip(downloadPath, tmpDir);
         } else {
             // Absolute path via resolveSystemTool -- never the bare name, which would
-            // resolve through $PATH (Local-Dependencies-Only). Never the archive's
+            // resolve through $PATH. Never the archive's
             // owners: see tarExtractArgs (D16).
             await execFileAsync(resolveSystemTool('tar'), tarExtractArgs(downloadPath, ['-C', tmpDir]));
         }
@@ -797,8 +797,8 @@ export class DependencyManager {
 
     private async extractZip(zipPath: string, destDir: string): Promise<void> {
         // In-process, pure JS (src/server/zipExtract.ts). No PATH lookup and no
-        // external binary, so this satisfies Local-Dependencies-Only the same way
-        // `ws` does — compiled into the app's own artifact.
+        // external binary, so nothing is resolved from the host — the same way
+        // `ws` is: compiled into the app's own artifact.
         //
         // History worth not repeating: this was PowerShell `Expand-Archive` /
         // system `unzip` (PATH-resolved — the violation), then the Rust

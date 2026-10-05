@@ -9,9 +9,9 @@ import { copyFileAtomic, copyFileAtomicSync, writeFileAtomicSync } from '../atom
 /**
  * Resolved through the repo's own `resolveSystemTool` rather than a hardcoded
  * path: OS tools get an absolute path (System32 on Windows, via `%SystemRoot%`)
- * instead of a bare name that would resolve through `%PATH%`. That is what the
- * Local-Dependencies-Only rule requires and what review #20 added the helper
- * for — `taskkill` and `icacls` already go through it.
+ * instead of a bare name that would resolve through `%PATH%`. That is what
+ * review #20 added the helper for — `taskkill` and `icacls` already go
+ * through it.
  *
  * Test-only scaffolding: this is used to *create* the hidden condition. The fix
  * itself is pure `fs` and shells out to nothing, which is precisely why no

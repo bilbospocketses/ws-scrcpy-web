@@ -11,8 +11,8 @@
 // spawn directly; it writes a result JSON to a known temp path; it
 // exits. (Pre-§30 the UAC prompt was fired by `powershell.exe
 // Start-Process -Verb RunAs`; §30 replaced PowerShell with the
-// launcher's own ShellExecuteExW call for Local-Dependencies-Only
-// compliance.)
+// launcher's own ShellExecuteExW call, so no `powershell.exe` is resolved
+// off PATH.)
 //
 // Argv shape:
 //   ws-scrcpy-web-launcher.exe --elevate-and-run <command> <args-json-path> <result-json-path>
@@ -766,8 +766,8 @@ fn system32_tool(name: &str) -> String {
 }
 
 /// `silent_command` for an OS-provided tool, resolved to an absolute path on
-/// Windows so it cannot be hijacked via `%PATH%` (review #20 /
-/// Local-Dependencies-Only). Cross-platform: non-Windows callers
+/// Windows so it cannot be hijacked via `%PATH%` (review #20).
+/// Cross-platform: non-Windows callers
 /// (`uninstall_service`, `on_uninstall`) compile under `cross`, so the
 /// bare-name fallback exists only to keep those paths compiling — `taskkill` /
 /// `icacls` are Windows-only at run time.
@@ -1202,7 +1202,7 @@ mod tests {
     }
 
     // OS tools (taskkill/icacls) must resolve under <SystemRoot>\System32 with
-    // a .exe suffix — never via %PATH% (#20 / Local-Dependencies-Only). Pure
+    // a .exe suffix — never via %PATH%, which could substitute them (#20). Pure
     // core split out from the env-reading `system32_tool` so it is testable.
     #[cfg(windows)]
     #[test]

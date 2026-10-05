@@ -26,7 +26,7 @@
 //
 // tar is invoked by absolute path only — `C:\Windows\System32\tar.exe` on
 // Windows, `resolvePosixTar()` elsewhere — never the bare name $PATH would
-// resolve (Local-Dependencies-Only, the same policy as fetch-node.mjs).
+// resolve (the same policy as fetch-node.mjs).
 
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';

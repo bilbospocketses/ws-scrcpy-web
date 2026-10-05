@@ -6,9 +6,9 @@
 // and both release.yml legs — goes through here. Five copies of a path
 // expression is how one of them drifts back to PATH later.
 //
-// WHY THIS EXISTS (Local-Dependencies-Only):
-//   Every binary dependency must be invoked from inside the app's own folder,
-//   never from the system PATH, an env var, or a global install. `vpk` used to
+// WHY THIS EXISTS:
+//   The app invokes every binary dependency from inside its own folder, never
+//   from the system PATH, an env var, or a global install. `vpk` used to
 //   be installed with `dotnet tool install -g` and invoked bare, which resolved
 //   through PATH and silently depended on whatever version the host happened to
 //   have. It is now installed with `--tool-path` into

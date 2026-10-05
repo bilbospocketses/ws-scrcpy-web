@@ -624,7 +624,7 @@ describe('UpdateService', () => {
     // Velopack's native auto_locate_app_manifest. That FAILED on real AppImages:
     // auto_locate (lib-rust locator.rs) finds the install by searching
     // `std::env::current_exe()` for "/usr/bin/" — but our server runs under the
-    // Node binary in <dataRoot>/dependencies/node/ (Local-Dependencies-Only),
+    // app's own Node binary in <dataRoot>/dependencies/node/,
     // which has no "/usr/bin/" in its path, so auto_locate returns "Could not
     // locate '/usr/bin/'" → UpdateManager construction throws → mgr=null → every
     // check silently no-ops. The fix hand-builds the locator anchored on

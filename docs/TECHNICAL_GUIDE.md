@@ -1610,10 +1610,10 @@ and caches the result:
 is shipped as a *seed* at
 `<installRoot>/current/seed/node-pty-pkg/node_modules/` and copied out to
 the data root before anything loads it. Pre-v0.1.23 the resolver both read
-from and copied back into `<installRoot>/current/node_modules/`, which is
-the Local-Dependencies-Only violation that surfaced as `EIO Access is
+from and copied back into `<installRoot>/current/node_modules/`, writing
+runtime state into the install image, which surfaced as `EIO Access is
 denied` on conpty in pre-beta.7 logs — beta.7's icacls grant made the
-write *succeed*, which fixed the symptom and left the violation. Approach C
+write *succeed*, which fixed the symptom and left the write. Approach C
 removed it: runtime state lives under the data root, full stop.
 
 0. **Seed version** — read the upstream version from the seed package's
@@ -1762,7 +1762,7 @@ card as disabled-via-CSS + `aria-disabled` + tooltip when
 Service mode lets ws-scrcpy-web run as a Windows service (via [Servy](https://github.com/nicedayzhu/servy)) or a Linux **systemd** unit, so the app starts at boot and survives logouts. Both platforms share the same browser UI and `/api/service/*` endpoints (sections 19.3–19.4) but use different OS mechanics:
 
 - **Windows** (sections 19.1–19.2) uses an **operation-server pattern** — privileged work is deferred to a `post-stop.bat` Servy hook, so uninstall needs no UAC prompt and there is no port-sweep delay.
-- **Linux** (section 19.5) drives **systemd** directly, with an out-of-cgroup `systemd-run` teardown helper so an uninstall can stop the very unit that triggered it. User and system scopes are both supported; system scope is hardened for SELinux and Local-Dependencies-Only.
+- **Linux** (section 19.5) drives **systemd** directly, with an out-of-cgroup `systemd-run` teardown helper so an uninstall can stop the very unit that triggered it. User and system scopes are both supported; system scope is hardened for SELinux and runs only its own, root-owned deps.
 
 ### 19.1 Windows Install Flow (Servy)
 
@@ -1890,11 +1890,11 @@ On Linux the service is a systemd unit managed by `SystemdClient` (`src/server/s
 | Scope | Unit file | Elevation | Starts | Notes |
 |-------|-----------|-----------|--------|-------|
 | **user** | `~/.config/systemd/user/<name>.service` | none | at login | `loginctl enable-linger` (best-effort) keeps it running after logout; a `~/.config/autostart/ws-scrcpy-web-tray.desktop` autostarts the tray |
-| **system** | `/etc/systemd/system/<name>.service` | `pkexec` (one prompt) | at boot | hardened for SELinux + Local-Dependencies-Only (below); no tray autostart (headless-dominant) |
+| **system** | `/etc/systemd/system/<name>.service` | `pkexec` (one prompt) | at boot | hardened for SELinux + own root-owned deps (below); no tray autostart (headless-dominant) |
 
 The unit body (`renderUnitFile`) is `Type=simple`, `Restart=on-failure` / `RestartSec` (5s user, 2s system — the shorter system value drives the desktop port-takeover retry), with `StartLimitIntervalSec`/`StartLimitBurst` in `[Unit]` (systemd silently ignores them in `[Service]`), and `StandardOutput`/`StandardError=append:` to the log. `WantedBy` is `default.target` (user) or `multi-user.target` (system). Running state is read with `systemctl is-active` (machine-readable), not `systemctl status`.
 
-**System scope — SELinux + Local-Dependencies-Only.** A system unit runs under the `init_t` domain, which SELinux (e.g. Fedora enforcing) forbids from exec'ing a `user_home_t` AppImage — and a root service has no `HOME`. So a system install (the `installSystemService` core in `systemServiceCli.ts`, run as root via `sudo … --install-system-service` headless or one awaited `pkexec … --install-system-service` from the desktop) stages everything into a root-owned `/opt/ws-scrcpy-web/` tree:
+**System scope — SELinux + its own deps.** A system unit runs under the `init_t` domain, which SELinux (e.g. Fedora enforcing) forbids from exec'ing a `user_home_t` AppImage — and a root service has no `HOME`. So a system install (the `installSystemService` core in `systemServiceCli.ts`, run as root via `sudo … --install-system-service` headless or one awaited `pkexec … --install-system-service` from the desktop) stages everything into a root-owned `/opt/ws-scrcpy-web/` tree:
 
 - `WsScrcpyWeb.AppImage` → labelled **`bin_t`** (persistent `semanage fcontext` + `restorecon`) so `init_t` may exec it. `dependencies/` beside it starts **empty and root-owned**, and the service provisions node, adb and scrcpy-server into it itself, as root, so it runs its **own** deps instead of reaching into a user's home (never a copy of the user's tree: D14, below).
 - **A root helper runs from `/opt`, never from `/var/lib` (FD1, FD2).** The launcher keeps its helper copy in `<dataRoot>/control/operation-server/`, which for the system service is under `/var/lib`, labelled `var_lib_t`. `init_t` may not *execute* `var_lib_t`, so a `systemd-run --system` unit started from that copy dies `status=203/EXEC` with the AVC `{ execute } … init_t … var_lib_t`. On stock Fedora 44 that broke the system-service uninstall (row 14.5) and the root self-update (row 6.6), and the failed update left the service stopped. The two root call sites (`UpdateService.applyUpdate`'s system-service branch and `ServiceApi.handleAppUninstall`) therefore pass the helper through `stageSystemHelper` (`src/server/service/systemHelper.ts`). It copies the helper to `/opt/ws-scrcpy-web/control/ws-scrcpy-web-launcher` (temp sibling + rename, mode 0755), which inherits the tree's `bin_t`, and runs `restorecon` where SELinux is present. It does nothing unless it is root on Linux, and if the copy fails it returns the old path with a warning. The `/opt` AppImage itself is not used for these helpers, as the service teardown uses it: the app uninstall kills the app's processes and removes `/opt`, and a helper served from the AppImage's FUSE mount could lose that mount mid-run. A plain ELF under `/opt` keeps running after it is deleted.
@@ -1921,7 +1921,7 @@ The unit body (`renderUnitFile`) is `Type=simple`, `Restart=on-failure` / `Resta
 | `src/server/service/ServiceClient.ts` | Cross-platform service interface (`install`/`uninstall`/`status`/scope) |
 | `src/server/service/ServyClient.ts` | Windows implementation (servy-cli) |
 | `src/server/service/SystemdClient.ts` | Linux implementation (systemd; both scopes; `/opt` staging + SELinux labelling) |
-| `src/server/service/systemTools.ts` | Absolute-path resolver for OS tools (`systemctl`, `pkexec`, `semanage`, …) — Local-Dependencies-Only |
+| `src/server/service/systemTools.ts` | Absolute-path resolver for OS tools (`systemctl`, `pkexec`, `semanage`, …) — never a bare-name PATH lookup |
 | `src/app/client/ServiceOperationModal.ts` | Browser-side transition modal with polling |
 | `src/app/client/settings/tabs/ServiceTab.ts` | Service install/uninstall controls + scope radios (Settings → Service; moved out of `SettingsModal.ts`) |
 | `launcher/src/operation_server.rs` | Rust binary that serves the transition page during uninstall/update (Windows) |
@@ -2063,7 +2063,7 @@ Linux has no `ws-scrcpy-web-tray` binary. `common::tray::run`'s Linux implementa
 | No host | `spawn()` fails when no `org.kde.StatusNotifierWatcher` is on the bus (stock GNOME, Fedora Workstation): one info line in `launcher.log`, `TrayAction::Cancelled`, nothing else. Settings → Server is the exit path there. |
 | Icon | `assets/tray-icon-22.argb`, a committed 22×22 ARGB32 pixmap (`assets/TRAY-ICON-ARGB.md`), pinned by a unit test. |
 | Menu | **Open ws-scrcpy-web** · separator · **Exit…** → **stop the server and quit** / **cancel**. The submenu is the confirmation (ksni has no dialog; `zenity` would be an external binary). Left-click = Open. |
-| Open | `/usr/bin/xdg-open http://localhost:<port>` — absolute path (Local-Dependencies-Only); the port is re-read from `config.json` on every click. |
+| Open | `/usr/bin/xdg-open http://localhost:<port>` — absolute path, never PATH; the port is re-read from `config.json` on every click. |
 | Exit | Flips the supervisor's `stop` flag → SIGTERM to Node → graceful teardown → exit 0 → launcher exits → the thread's ksni handle drops and the icon disappears. Not the `/api/server/shutdown` POST: that is behind the per-instance token (see todo item 114). |
 
 ---
@@ -2728,8 +2728,8 @@ once published; the variability lives only between builds.
   list goes stale into a failing gate.
 - **Node is the image's own interpreter.** `/app/seed/node/node` is a symlink to
   `/usr/local/bin/node`: arch- and ABI-correct by construction, no ~50 MB download
-  per build. Local-Dependencies-Only treats the interpreter as the execution
-  environment; adb, scrcpy-server and node-pty remain strictly local (§26.4).
+  per build. The image's interpreter is treated as the execution environment;
+  adb, scrcpy-server and node-pty remain strictly local (§26.4).
 - **`/app/dependencies` → `/data/dependencies`** is a symlink, belt-and-braces: `start.sh`
   used to export `DEPS_PATH=$SCRIPT_DIR/dependencies` unconditionally, which put the
   hydrate (and the log) inside the image layer where `docker rm` threw it away. It
@@ -3527,7 +3527,7 @@ v1.4.4-bt.2's manifest digest in source, and attestation was checked only out of
 the pin. The user moved mkcert to "latest", and a digest pin cannot follow a release that does not
 exist yet, so the pinned anchor became an identity instead of a hash. The reasons once given against
 runtime verification did not survive: the Sigstore verifier is an npm dependency shipped with the app,
-not a PATH-resolved binary, so Local-Dependencies-Only is not in play. Releases v0.1.30-beta.130 to .137
+not a PATH-resolved binary, so no host binary is involved. Releases v0.1.30-beta.130 to .137
 carry the old pin, so they refuse any mkcert release other than v1.4.4-bt.2.
 
 **Status follows the fork across its version reset.** The fork restarted its numbering at v0.1.0 after

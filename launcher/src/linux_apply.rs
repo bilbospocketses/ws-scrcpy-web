@@ -426,7 +426,7 @@ pub fn relaunch_command(target: &Path, under_systemd: bool, systemd_run: &str) -
 }
 
 /// `systemctl [--user] <action> <unit>.service` — `--user` for user scope, the
-/// system manager for system scope. Absolute systemctl path (Local-Deps). Pure.
+/// system manager for system scope. Absolute systemctl path, never PATH. Pure.
 pub fn service_unit_command(scope: Scope, action: &str, unit: &str, bindir: &str) -> Vec<String> {
     let systemctl = format!("{bindir}/systemctl");
     let pre = linux_service::scope_prefix(scope);

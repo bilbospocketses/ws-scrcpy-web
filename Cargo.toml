@@ -17,13 +17,13 @@ serde_json = "1.0"
 # Used by the operation-server (--operation-server) to SHA256-verify the
 # downloaded *-full.nupkg against Velopack's authenticated UpdateInfo before
 # extracting it over current/. Pure-Rust, compiled into the launcher binary
-# (no runtime binary dependency — Local-Dependencies-Only rule does not apply).
+# (no runtime binary dependency, so nothing is resolved off PATH).
 sha2 = "0.10"
 ureq = { version = "2.10", default-features = false, features = ["tls"] }
 velopack = "1.0"
 winresource = "0.1"
 # Used by launcher --unzip to handle dependency-archive extraction without
-# shelling out to PowerShell/unzip (Local-Dependencies-Only compliance).
+# shelling out to PowerShell/unzip, which would resolve via PATH.
 # default-features = false drops the bzip2/zstd/lzma codec features; deflate
 # is the only compression we need for Node.js + ADB platform-tools zips.
 zip = { version = "2", default-features = false, features = ["deflate"] }

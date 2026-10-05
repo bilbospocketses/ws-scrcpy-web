@@ -67,7 +67,7 @@ jobs:
         with:
           dotnet-version: 10.x
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
-      # Local-Dependencies-Only: vpk is installed with --tool-path into the
+      # vpk is installed with --tool-path into the
       # app's own dependencies/vpk/v<version>/ and invoked by absolute path --
       # never `-g` + bare `vpk`, which resolves through PATH. The version is not
       # pinned here: scripts/vpk-path.mjs derives it from the resolved `velopack`
@@ -217,7 +217,7 @@ jobs:
         run: |
           sudo rm -f /etc/apt/sources.list.d/google-chrome.list
           sudo apt-get update && sudo apt-get install -y musl-tools
-      # Local-Dependencies-Only: same app-local vpk as the Windows leg, resolved
+      # Same app-local vpk as the Windows leg, resolved
       # by scripts/vpk-path.mjs into dependencies/vpk/v<version>/ (binary is
       # `vpk`, not `vpk.exe`, here). package-linux.mjs resolves it again at pack
       # time; this step pre-fetches so a NuGet failure surfaces early.

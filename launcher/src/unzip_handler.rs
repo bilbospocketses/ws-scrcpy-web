@@ -4,8 +4,8 @@
 // downloaded archives (Node.js + ADB platform-tools ship as zips on
 // Windows and Linux). Pre-this-fix it shelled out to `powershell.exe`
 // (Expand-Archive) on win32 and `unzip` on linux. Both resolved via
-// system PATH — a CLAUDE.md Local-Dependencies-Only violation that §30
-// missed because §30 only scrubbed the elevation path.
+// system PATH — the same bare-name lookup §30 removed, missed because
+// §30 only scrubbed the elevation path.
 //
 // This module replaces that with a launcher subcommand: Node spawns
 // `<launcher> --unzip <src.zip> <dest-dir>`. The launcher binary is

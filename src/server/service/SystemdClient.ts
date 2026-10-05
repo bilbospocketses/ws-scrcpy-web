@@ -107,13 +107,13 @@ export const SYSTEM_ICON_FILE = `${SYSTEM_ICON_DIR}/ws-scrcpy-web.png`;
  * Root-owned dependencies dir for the system-scope service (node/adb/
  * scrcpy-server). Under the bin_t-labelled /opt tree so init_t may exec them,
  * and so the app runs its OWN deps rather than a copy from a user's home
- * (Local-Dependencies-Only, #36).
+ * (#36).
  */
 export const STAGED_SYSTEM_DEPS_DIR = `${STAGED_SYSTEM_DIR}/dependencies`;
 
 /**
  * The systemd unit's Environment vars for a given platform + scope. Linux
- * system-scope MUST point at the app's own /opt tree (Local-Dependencies-Only)
+ * system-scope MUST point at the app's own /opt tree (not a user's home)
  * and set DATA_ROOT so the root service (which has no HOME) doesn't fall back
  * to ephemeral /tmp (#36). Every other case keeps the caller's deps path and
  * lets the launcher bridge DATA_ROOT (Windows ProgramData, Linux user XDG/HOME).
@@ -271,7 +271,7 @@ export function renderUnitFile(opts: ServiceInstallOptions, scope: SystemdScope)
  * relocate — so the user can't end up running a stale home copy alongside the
  * /opt one.
  * `binTool`/`sbinTool` are injectable for testing; production resolves absolute
- * paths via systemTools (Local-Dependencies-Only — no bare-name $PATH lookup).
+ * paths via systemTools (no bare-name $PATH lookup).
  */
 export function buildMachineWideInstallScript(
     args: { sourceAppImage: string; version: string; iconSource?: string | undefined },
@@ -371,7 +371,7 @@ export function buildMachineWideInstallScript(
  * per-user flock) before relaunching the freshly-swapped `/opt` copy.
  *
  * `binTool`/`sbinTool` are injectable for testing; production resolves absolute
- * paths via systemTools (Local-Dependencies-Only — no bare-name $PATH lookup).
+ * paths via systemTools (no bare-name $PATH lookup).
  */
 export function buildMachineWideUpdateScript(
     args: { stagedAppImage: string; version: string },

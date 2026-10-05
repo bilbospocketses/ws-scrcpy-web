@@ -40,8 +40,8 @@
 // `/root/.local/share/WsScrcpyWeb`; the privileged group also removes that
 // stray tree, left by every pkexec'd run before the fix (D7).
 //
-// Local-Dependencies-Only: every tool is resolved under `bindir` (sbin tools via
-// `sbindir_from(bindir)`) — never a bare name and never via PATH.
+// Every tool is resolved under `bindir` (sbin tools via `sbindir_from(bindir)`)
+// — never a bare name and never via PATH, so PATH cannot substitute a binary.
 use crate::linux_service::{
     Scope, is_safe_relaunch_target, sbindir_from, scope_prefix, tool_dir, unit_path,
 };

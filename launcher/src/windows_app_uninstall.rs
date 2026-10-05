@@ -30,7 +30,7 @@
 // own staged temp copy the same way — Windows cannot delete a running image, and
 // nothing else was ever going to remove it.
 //
-// Local-Dependencies-Only: Update.exe is the absolute path argument, adb is the
+// No PATH lookups: Update.exe is the absolute path argument, adb is the
 // copy bundled under dataRoot, and dataRoot deletion + delete-on-reboot are
 // `std::fs` and Win32 compiled into the binary. No bare cmd/rmdir/powershell on
 // PATH — notably NOT the usual `cmd /c del` self-delete trick, which would
@@ -98,12 +98,12 @@ pub fn windows_app_uninstall_commands(
 // or its whole configuration (wipe) gone.
 //
 // So on an MSI install we uninstall the way Windows itself would: msiexec with
-// the ProductCode. Local-Dependencies-Only: absolute path, never PATH.
+// the ProductCode, by absolute path, never PATH.
 
 /// `msiexec.exe` by absolute path. Same reasoning, and same literal shape, as
 /// the `C:\Windows\System32\cmd.exe` this repo already pins in
-/// `elevated_runner.rs` — OS-stable, and an env var would be a forbidden
-/// resolution path under the same rule.
+/// `elevated_runner.rs` — OS-stable, and an env var would let the caller's
+/// environment choose the binary, just as PATH would.
 pub const MSIEXEC_PATH: &str = r"C:\Windows\System32\msiexec.exe";
 
 /// Does this ARP entry look like the product we are uninstalling?
@@ -633,8 +633,8 @@ fn is_process_elevated() -> bool {
 /// Spawn the staged cleaner WITH an elevated token, via the same
 /// `ShellExecuteExW(verb="runas")` mechanism `uac_requester.rs` already uses for
 /// the service install/uninstall flow (§30 chose it over
-/// `powershell.exe Start-Process -Verb RunAs` for Local-Dependencies-Only
-/// compliance; reusing it inherits that rather than opening a new hole).
+/// `powershell.exe Start-Process -Verb RunAs`, which resolved PowerShell off
+/// PATH; reusing it inherits that rather than opening a new hole).
 ///
 /// The prompt fires HERE, in phase 1, while the app the user just clicked is
 /// still alive — not from a detached temp binary after it has vanished, which is
@@ -712,7 +712,7 @@ pub fn handle(args: &[String]) -> Option<i32> {
 /// --veloapp-uninstall service/tray hook). `update_exe_step` is the argv the
 /// builder produced (`[update_exe, "--uninstall"]`). Best-effort: logs (if
 /// logging is enabled) and returns regardless — the app is being removed
-/// either way. Local-Dependencies-Only: absolute path, no PATH resolution.
+/// either way. Absolute path, no PATH resolution.
 fn run_update_exe(update_exe_step: &[String]) -> bool {
     let (cmd, rest) = update_exe_step
         .split_first()
@@ -914,7 +914,7 @@ impl AdbReap {
 
 /// The bundled adb, inside the tree we are about to delete.
 ///
-/// Local-Dependencies-Only: never a PATH lookup. A system-installed adb is a
+/// Never a PATH lookup. A system-installed adb is a
 /// different binary holding none of our files, and reaping it would stop a
 /// server this app never started.
 fn bundled_adb_path(data_root: &str) -> std::path::PathBuf {
@@ -992,9 +992,9 @@ fn residue_report_body(
 /// `MoveFileExW` with a NULL destination and `MOVEFILE_DELAY_UNTIL_REBOOT` is
 /// the documented way to remove a file that is still open — here, files another
 /// process holds, and (item 130) the cleaner itself. Pure Win32 through the
-/// `windows` crate already in the dependency tree, so it stays
-/// Local-Dependencies-Only clean; the common `cmd /c del` trick would resolve a
-/// binary off PATH and is the wrong answer in this repo regardless.
+/// `windows` crate already in the dependency tree, so no external binary is
+/// spawned; the common `cmd /c del` trick would resolve a binary off PATH and
+/// is the wrong answer in this repo regardless.
 ///
 /// Best-effort by design. The registration writes `PendingFileRenameOperations`
 /// under HKLM, which needs administrator rights — the cleaner HAS them on the
@@ -1875,7 +1875,7 @@ mod tests {
                 "/norestart".to_string(),
             ]
         );
-        // Local-Dependencies-Only: never a bare `msiexec`.
+        // Never a bare `msiexec`, which PATH could substitute.
         assert!(step[0].starts_with(r"C:\"));
     }
 
@@ -1991,7 +1991,7 @@ mod tests {
 
     #[test]
     fn the_adb_we_reap_is_the_one_bundled_under_the_data_root() {
-        // Local-Dependencies-Only: the adb holding the lock is OUR adb, inside
+        // The adb holding the lock is OUR adb, inside
         // the tree we are about to delete. Never a PATH lookup — a system adb is
         // a different process holding nothing of ours.
         assert_eq!(

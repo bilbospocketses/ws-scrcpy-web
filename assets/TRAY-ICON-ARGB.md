@@ -8,4 +8,4 @@ from `tray-icon.png` by hand; regenerate when the icon changes:
 
 `common/src/tray_policy.rs` pins its length and its corner/centre pixels in a
 unit test, so a wrong byte order or size fails `cargo test`. No build or run
-step invokes ImageMagick (Local-Dependencies-Only).
+step invokes ImageMagick, so neither needs it installed on the host.

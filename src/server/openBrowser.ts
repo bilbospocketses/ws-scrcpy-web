@@ -6,9 +6,9 @@ import { resolveSystemTool } from './service/systemTools';
 const log = Logger.for('OpenBrowser');
 
 /**
- * `cmd.exe` by absolute path. Local-Dependencies-Only: nothing here is
- * resolved from `PATH`, and an env var (`%SystemRoot%`) is a forbidden
- * resolution path under the same rule. This exact string is already the
+ * `cmd.exe` by absolute path. Nothing here is resolved from `PATH`, and an
+ * env var (`%SystemRoot%`) is caller-controlled in the same way `PATH` is,
+ * so it is not consulted either. This exact string is already the
  * repo's precedent at `launcher/src/elevated_runner.rs`, whose comment calls
  * it OS-stable and never moving.
  */
@@ -17,9 +17,8 @@ const WINDOWS_CMD = 'C:\\Windows\\System32\\cmd.exe';
 // The URL opener is resolved by the repo's ONE system-tool resolver
 // (`service/systemTools`), not by a local copy. #653 added a second
 // `resolveSystemTool` here while that one already existed for exactly this
-// purpose — its own doc comment says it is "required by the
-// Local-Dependencies-Only rule" — so the two halves of the codebase disagreed
-// about the same problem. Consolidated 2026-09-09 (item 123).
+// purpose, so the two halves of the codebase disagreed about the same
+// problem. Consolidated 2026-09-09 (item 123).
 //
 // The shared resolver is also the better behaviour here: it probes /usr/bin,
 // /bin, /usr/sbin and /sbin, and only then falls back to the bare name, which
@@ -39,8 +38,8 @@ const WINDOWS_CMD = 'C:\\Windows\\System32\\cmd.exe';
  * browser process. Any failure is logged at info level — opening a
  * browser is a UX nicety, not a hard requirement.
  *
- * Implementation per-platform. Every binary is named by ABSOLUTE PATH
- * (Local-Dependencies-Only) — see `WINDOWS_CMD` and `resolveSystemTool`.
+ * Implementation per-platform. Every binary is named by ABSOLUTE PATH, so
+ * `PATH` cannot substitute it — see `WINDOWS_CMD` and `resolveSystemTool`.
  * These three spawns were the last URL-openers in the repo taking whatever
  * `PATH` offered, while the Rust half of the same application had already
  * decided the other way and says so in its own comments:
