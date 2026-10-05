@@ -22,7 +22,14 @@ export const SESSION_COOKIE = 'wsscrcpy_sid';
 // loopback caller may stop the app (the operator's own machine), while an
 // off-box caller still needs the instance token AND, in locked mode, a signed-in
 // admin, which is what this allowlist entry would otherwise have given away.
-// The trade is deliberate and recorded: any local process can stop the server.
+// The trade is deliberate and recorded: any local process WITH NO SESSION can
+// stop the server (the tray).
+// Allow-listed means "never blocked", not "anonymous": AuthGate still resolves
+// the session cookie on these paths and attaches `req.user` when it names a
+// valid, enabled user. So a signed-in non-admin is refused by requireAdmin even
+// on loopback, and a signed-in admin off-box passes the handler's signed-in
+// check (finding 12.12 — the gate used to return before reading the cookie, and
+// requireAdmin then treated every caller here as the implicit admin).
 const ALLOWLIST_EXACT = new Set([
     '/api/auth/login',
     '/api/auth/me',
