@@ -8,8 +8,12 @@
 //      b. Spawn Node child via spawn::spawn_server
 //      c. Wait for child OR Ctrl+C (poll-based, 100ms granularity)
 //      d. Decide restart based on (exit code == 75) || marker present
-//      e. If shutting down or no restart: return child's exit code
-//      f. Otherwise sleep RESTART_DELAY and loop
+//      e. Otherwise, a non-zero exit in local mode is a crash: restart it up to
+//         MAX_CRASH_RESTARTS times in a row (item 163; the count resets once a
+//         server stays up CRASH_COUNT_RESET_UPTIME). The service leaves crashes
+//         to systemd / servy.
+//      f. If shutting down or no restart: return child's exit code
+//      g. Otherwise sleep RESTART_DELAY and loop
 
 use anyhow::Result;
 use std::path::Path;
@@ -56,6 +60,55 @@ pub fn decide_restart(exit_code: i32, marker_exists: bool) -> Option<RestartReas
         Some(RestartReason::ExitCode75)
     } else {
         None
+    }
+}
+
+/// Item 163: in local mode a crashed server is restarted at most this many times
+/// in a row before the launcher gives up and stays down.
+pub(crate) const MAX_CRASH_RESTARTS: u32 = 3;
+/// A server that stayed up this long before crashing was healthy: the crash
+/// count starts again from zero.
+pub(crate) const CRASH_COUNT_RESET_UPTIME: Duration = Duration::from_secs(60);
+/// Logged once the restarts are used up (wording decided by the user, 2026-10-04).
+pub(crate) const CRASH_GIVE_UP_LINE: &str = "3 restart attempts, won't retry, review error logging";
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum CrashDecision {
+    /// Exit 0: the server stopped on purpose.
+    CleanExit,
+    /// We are the installed service: systemd's `Restart=on-failure` and servy's
+    /// recovery decide, so the launcher exits and lets them see the failure.
+    LeaveToServiceManager,
+    /// Restart the server; `attempt` is this restart's number, from 1.
+    Restart { attempt: u32 },
+    /// The restarts are used up: log `CRASH_GIVE_UP_LINE` and stay down.
+    GiveUp,
+}
+
+/// Pure decision for an exit that `decide_restart` did not claim (not 75, no
+/// marker). `restarts_so_far` is the consecutive crash restarts already made;
+/// `uptime` is how long the server that just exited had been running.
+pub(crate) fn decide_crash_restart(
+    exit_code: i32,
+    running_as_service: bool,
+    restarts_so_far: u32,
+    uptime: Duration,
+) -> CrashDecision {
+    if exit_code == 0 {
+        return CrashDecision::CleanExit;
+    }
+    if running_as_service {
+        return CrashDecision::LeaveToServiceManager;
+    }
+    let prior = if uptime >= CRASH_COUNT_RESET_UPTIME {
+        0
+    } else {
+        restarts_so_far
+    };
+    if prior >= MAX_CRASH_RESTARTS {
+        CrashDecision::GiveUp
+    } else {
+        CrashDecision::Restart { attempt: prior + 1 }
     }
 }
 
@@ -257,14 +310,20 @@ pub fn run() -> Result<(i32, Option<Arc<AtomicBool>>)> {
     // iterations are restarts (webPort change, crash) — the user already has a
     // tab, so they must NOT re-pop one.
     let mut first_spawn = true;
+    // Item 163: the installed service (systemd unit or servy, both of which set
+    // WS_SCRCPY_SERVICE=1) leaves crash restarts to its service manager.
+    let running_as_service = matches!(std::env::var("WS_SCRCPY_SERVICE").as_deref(), Ok("1"));
+    let mut crash_restarts: u32 = 0;
     loop {
         cleanup_old_node(&paths.old_node);
 
         let mut child = spawn::spawn_server(&paths.deps_path, &paths.data_root, first_spawn)?;
         first_spawn = false;
+        let started = std::time::Instant::now();
         log::info(&format!("supervisor: server started (pid {})", child.id()));
 
         let status = wait_with_signal(&mut child, &stop)?;
+        let uptime = started.elapsed();
         let code = status.code().unwrap_or(1);
         log::info(&format!("supervisor: server exited with code {code}"));
 
@@ -437,10 +496,29 @@ pub fn run() -> Result<(i32, Option<Arc<AtomicBool>>)> {
         let reason = decide_restart(code, marker_exists);
 
         match reason {
-            None => {
-                log::info("supervisor: clean exit; not restarting");
-                return Ok((code, tray_stop_flag.clone()));
-            }
+            None => match decide_crash_restart(code, running_as_service, crash_restarts, uptime) {
+                CrashDecision::CleanExit => {
+                    log::info("supervisor: clean exit; not restarting");
+                    return Ok((code, tray_stop_flag.clone()));
+                }
+                CrashDecision::LeaveToServiceManager => {
+                    log::info(
+                        "supervisor: running as the service; leaving the restart to the service manager",
+                    );
+                    return Ok((code, tray_stop_flag.clone()));
+                }
+                CrashDecision::GiveUp => {
+                    log::error(&format!("supervisor: {CRASH_GIVE_UP_LINE}"));
+                    return Ok((code, tray_stop_flag.clone()));
+                }
+                CrashDecision::Restart { attempt } => {
+                    crash_restarts = attempt;
+                    log::warn(&format!(
+                        "supervisor: server crashed after {}s up; restarting (attempt {attempt} of {MAX_CRASH_RESTARTS})",
+                        uptime.as_secs()
+                    ));
+                }
+            },
             Some(RestartReason::RestartMarker) => {
                 let _ = std::fs::remove_file(&paths.restart_marker);
                 log::info("supervisor: restart triggered by .restart marker");
@@ -617,6 +695,73 @@ mod tests {
         // Idempotent: a second call on an absent marker is a no-op, not an error.
         cleanup_stale_marker(&marker);
         assert!(!marker.exists());
+    }
+
+    // Item 163 / smoke row 12.11 — the local-mode crash-restart limit.
+    const SHORT: Duration = Duration::from_secs(5);
+
+    #[test]
+    fn crash_restart_clean_exit_is_not_a_crash() {
+        assert_eq!(
+            decide_crash_restart(0, false, 0, SHORT),
+            CrashDecision::CleanExit
+        );
+    }
+
+    #[test]
+    fn crash_restart_service_mode_leaves_it_to_the_service_manager() {
+        // systemd Restart=on-failure and servy recovery own the service paths;
+        // a restart here would hide the failure from them.
+        assert_eq!(
+            decide_crash_restart(1, true, 0, SHORT),
+            CrashDecision::LeaveToServiceManager
+        );
+        assert_eq!(
+            decide_crash_restart(0, true, 0, SHORT),
+            CrashDecision::CleanExit
+        );
+    }
+
+    #[test]
+    fn crash_restart_restarts_three_times_then_gives_up() {
+        assert_eq!(
+            decide_crash_restart(1, false, 0, SHORT),
+            CrashDecision::Restart { attempt: 1 }
+        );
+        assert_eq!(
+            decide_crash_restart(1, false, 1, SHORT),
+            CrashDecision::Restart { attempt: 2 }
+        );
+        assert_eq!(
+            decide_crash_restart(1, false, 2, SHORT),
+            CrashDecision::Restart { attempt: 3 }
+        );
+        assert_eq!(
+            decide_crash_restart(1, false, 3, SHORT),
+            CrashDecision::GiveUp
+        );
+    }
+
+    #[test]
+    fn crash_restart_count_resets_after_sixty_seconds_up() {
+        assert_eq!(
+            decide_crash_restart(1, false, 3, Duration::from_secs(60)),
+            CrashDecision::Restart { attempt: 1 }
+        );
+        assert_eq!(
+            decide_crash_restart(1, false, 3, Duration::from_secs(59)),
+            CrashDecision::GiveUp
+        );
+    }
+
+    #[test]
+    fn crash_restart_limits_are_the_decided_ones() {
+        assert_eq!(MAX_CRASH_RESTARTS, 3);
+        assert_eq!(CRASH_COUNT_RESET_UPTIME, Duration::from_secs(60));
+        assert_eq!(
+            CRASH_GIVE_UP_LINE,
+            "3 restart attempts, won't retry, review error logging"
+        );
     }
 
     #[test]

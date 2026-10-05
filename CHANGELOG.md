@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.169] - 2026-10-05
+
+### Changed
+- **The launcher restarts a crashed server in local mode, up to three times.** Until now any server exit other than 0 or the restart sentinel 75 ended the launcher, so a crash in local mode left the app down until someone started it again. The supervisor (`launcher/src/supervisor.rs`) now restarts a crashed server after its usual 2 s delay, logging `server crashed after <N>s up; restarting (attempt <k> of 3)`. After three restarts in a row it gives up, logs `3 restart attempts, won't retry, review error logging`, and stays down. A server that stayed up 60 s or more before crashing starts the count again, so an occasional crash is always restarted and a crash loop is not. Restarts open no new browser tab. The installed service is unchanged: there the launcher still exits on a crash, logging `running as the service; leaving the restart to the service manager`, so systemd's `Restart=on-failure` and the Windows service's recovery decide, as before. Smoke row 12.11 now has this as its Expected instead of asking the tester to record what happens (user decision 2026-10-04).
+
 ## [0.1.30-beta.168] - 2026-10-04
 
 ### Fixed
