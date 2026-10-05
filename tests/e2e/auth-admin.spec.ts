@@ -374,15 +374,10 @@ test.describe('auth and admin scope (smoke 12.8, 18.16–18.22)', () => {
         browser,
     }) => {
         test.setTimeout(150_000);
-        // PRODUCT FINDING (item 164, batch B), not a test defect: the open-mode
-        // socket is closed 4401 'session ended' by the logout. The handshake
-        // registers every socket under the cookie's session token whatever the
-        // mode (WebSocketServer.ts, `liveSockets.add(ws, userId, sessionToken)`),
-        // so a browser still carrying its cookie after login was turned off has
-        // its open-mode sockets revoked by a logout — contrary to the row and to
-        // socketRegistry.ts:12 ("Sockets opened in open mode carry no token and
-        // are never revoked by logout"). Remove this line with the fix.
-        test.fail(true, 'product finding: an open-mode logout closes the sockets of a browser that kept its cookie');
+        // Finding 18.23 (fixed 2026-10-05): the handshake registered every socket
+        // under the cookie's session token whatever the mode, so this browser's
+        // open-mode socket was closed 4401 by the logout. A socket now carries a
+        // token only when auth is on and the session is valid (wsSession).
         const server = await OwnedServer.start('18-17-open', PORT.r18_17_open);
         let owner: { context: BrowserContext; page: Page } | undefined;
         let anon: BrowserContext | undefined;
