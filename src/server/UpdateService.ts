@@ -9,14 +9,17 @@ import type { UpdateState } from '../common/UpdateEvents';
 import { AdbClient } from './AdbClient';
 import { getAppVersion } from './appVersion';
 import { Config } from './Config';
-import { downloadToFile, fetchText } from './downloadToFile';
 import { Logger } from './Logger';
-import { linuxAppImageAssetName, parseSha256Sums, releaseAssetUrl } from './linuxUpdateAssets';
+import {
+    downloadVerifiedAsset,
+    linuxAppImageAssetName,
+    RELEASE_URL_BASE_ENV,
+    releaseAssetUrl,
+} from './linuxUpdateAssets';
 import { buildMachineWideUpdateScript, runPkexec, STAGED_SYSTEM_DIR } from './service/SystemdClient';
 import { stageSystemHelper } from './service/systemHelper';
 import { buildDetachedSpawn } from './service/systemTools';
 import { GithubReleaseFeedResolver, type ReleaseFeedResolver, releaseFeedUrl } from './updateFeedResolver';
-import { verifySha256 } from './verifySha256';
 
 const execFileAsync = promisify(execFile);
 
@@ -619,8 +622,14 @@ export class UpdateService {
                 throw new Error('apply: no available version resolved');
             }
             const assetName = linuxAppImageAssetName(appCfg.channel);
-            const appImageUrl = releaseAssetUrl(appCfg.githubOwner, version, assetName);
-            const sumsUrl = releaseAssetUrl(appCfg.githubOwner, version, 'SHA256SUMS');
+            // Item 169: WS_SCRCPY_RELEASE_URL_BASE moves both downloads off github.com
+            // (a test / mirror seam). The SHA-256 check below runs either way.
+            const baseOverride = process.env[RELEASE_URL_BASE_ENV]?.trim() || undefined;
+            if (baseOverride) {
+                log.info(`applyUpdate(linux): release assets from ${RELEASE_URL_BASE_ENV}=${baseOverride}`);
+            }
+            const appImageUrl = releaseAssetUrl(appCfg.githubOwner, version, assetName, baseOverride);
+            const sumsUrl = releaseAssetUrl(appCfg.githubOwner, version, 'SHA256SUMS', baseOverride);
 
             const dataRoot = config.dataRoot ?? path.dirname(config.dependenciesPath);
             const stagingDir = path.join(dataRoot, 'control', 'update-staging');
@@ -628,18 +637,13 @@ export class UpdateService {
             const stagedPath = path.join(stagingDir, `${assetName}.new`);
 
             log.info(`applyUpdate(linux): downloading ${appImageUrl}`);
-            await downloadToFile(appImageUrl, stagedPath, this.fetchFn);
-            const sumsText = await fetchText(sumsUrl, this.fetchFn);
-            const expected = parseSha256Sums(sumsText, assetName);
-            if (!expected) {
-                await fs.promises.rm(stagedPath, { force: true });
-                throw new Error(`apply: SHA256SUMS has no entry for ${assetName}`);
-            }
-            const ok = await verifySha256(stagedPath, expected);
-            if (!ok) {
-                await fs.promises.rm(stagedPath, { force: true });
-                throw new Error(`apply: SHA-256 mismatch for ${assetName} — aborting`);
-            }
+            await downloadVerifiedAsset({
+                url: appImageUrl,
+                sumsUrl,
+                assetName,
+                destPath: stagedPath,
+                fetchFn: this.fetchFn,
+            });
 
             const homeAppImage = process.env['APPIMAGE'] ?? '';
             // The launcher stages this helper copy (named *.exe even on Linux) to
