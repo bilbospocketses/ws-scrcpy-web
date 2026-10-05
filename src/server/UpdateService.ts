@@ -175,7 +175,7 @@ export class UpdateService {
         //   installRoot. We do NOT delegate to Velopack's auto_locate_app_manifest:
         //   on Linux (lib-rust/src/locator.rs) auto_locate finds the install by
         //   searching `std::env::current_exe()` for "/usr/bin/" — but our server
-        //   runs inside the Node binary, which (Local-Dependencies-Only) lives at
+        //   runs inside the app's own Node binary, which lives at
         //   <dataRoot>/dependencies/node/node, NOT under the AppImage mount's
         //   /usr/bin/. So current_exe() has no "/usr/bin/" segment, auto_locate
         //   returns "Could not locate '/usr/bin/'", UpdateManager construction

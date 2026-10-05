@@ -1219,10 +1219,10 @@ export class ServiceApi {
             }
 
             // Detached spawn of the staged launcher with the raw uninstall argv
-            // (absolute paths only — Local-Dependencies-Only: no PATH/env binary
-            // resolution). Elevation is delegated to Update.exe; this spawn stays
-            // unelevated, mirroring the linux helper's pkexec self-elevation, and
-            // reuses the same spawnDetached seam the linux teardown uses.
+            // (absolute paths only — no PATH/env binary resolution). Elevation
+            // is delegated to Update.exe; this spawn stays unelevated, mirroring
+            // the linux helper's pkexec self-elevation, and reuses the same
+            // spawnDetached seam the linux teardown uses.
             this.spawnDetached(helper, [
                 '--windows-app-uninstall',
                 keep ? '--keep' : '--wipe',

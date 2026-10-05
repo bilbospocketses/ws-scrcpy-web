@@ -1116,9 +1116,9 @@ mod linux {
         }
     }
 
-    /// Open `url` in the user's default browser. Absolute path on purpose
-    /// (Local-Dependencies-Only): the Linux launcher never resolves a tool
-    /// from PATH. Fire-and-forget, like the Windows `ShellExecuteW` path.
+    /// Open `url` in the user's default browser. Absolute path on purpose:
+    /// the Linux launcher never resolves a tool from PATH, which could
+    /// substitute it. Fire-and-forget, like the Windows `ShellExecuteW` path.
     pub(super) fn open_url(url: &str) {
         match Command::new("/usr/bin/xdg-open")
             .arg(url)

@@ -5,7 +5,7 @@ import { buildServiceUnitEnv, buildSystemSeedConfig } from '../service/SystemdCl
  * Bug #36: the system-scope service ran node/adb from the installing user's
  * home (DEPS_PATH=cfg.dependenciesPath, unconditionally) and landed its config
  * in /tmp (no DATA_ROOT -> Rust /tmp fallback). The unit env must instead point
- * at the app's OWN /opt tree (Local-Dependencies-Only) and set DATA_ROOT so the
+ * at the app's OWN /opt tree and set DATA_ROOT so the
  * root service (no HOME) doesn't fall back to ephemeral /tmp.
  */
 describe('buildServiceUnitEnv (#36 system-scope /opt paths)', () => {

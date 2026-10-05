@@ -20,10 +20,9 @@ import { SEED_CONFIG } from './paths';
  * of the other rows, which can then never reach the spawn API by accident.
  *
  * The child is `process.execPath` — the runner's own interpreter, exactly what
- * playwright.config.ts's `node dist/index.js` resolves to. That is the settled
- * CI-runner exception to Local-Dependencies-Only (the interpreter that runs the
- * suite is its execution environment, not an app dependency); surfaced here for
- * the record, not vendored.
+ * playwright.config.ts's `node dist/index.js` resolves to. It is deliberately
+ * not vendored: the interpreter that runs the suite is its execution
+ * environment, not an app dependency.
  */
 
 export interface PrivateServerPaths {

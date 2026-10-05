@@ -9,8 +9,9 @@
 // launcher, running as root, hands off to the Node one-shot which does the
 // privileged work as root.
 //
-// Local-Dependencies-Only: node is resolved via `resolve_node_with` from the
-// app's own `dependencies/node` or bundled `seed/node` — NEVER from PATH.
+// node is resolved via `resolve_node_with` from the app's own
+// `dependencies/node` or bundled `seed/node` — NEVER from PATH, so the
+// pinned Node runs rather than whatever the host has.
 
 use crate::spawn::{resolve_node_with, resolve_server_entry_with};
 use std::process::Command;
@@ -54,7 +55,7 @@ pub fn handle(args: &[String]) -> Option<i32> {
 /// silently bails. Resolves node via the same path the production server-spawn
 /// uses (Paths::from_env → deps_path, honouring the DEPS_PATH override and
 /// falling back to data_root/dependencies), so the binary comes from the app's
-/// own dependencies/ or seed/ — never the system PATH (Local-Dependencies-Only).
+/// own dependencies/ or seed/ — never the system PATH.
 fn run_owned(_op: Op, args: &[String]) -> i32 {
     let exe = match std::env::current_exe() {
         Ok(e) => e,

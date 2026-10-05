@@ -23,12 +23,12 @@ const MKCERT_TIMEOUT_MS = 30_000;
 
 /**
  * The local-dependency path for the vendored mkcert binary. **Never PATH** —
- * Local-Dependencies-Only. Matches `<depsPath>/mkcert/<exe>` exactly, which is
- * the layout the `mkcert` DependencyDefinition's own `checkInstalled` uses
- * (`DependencyDefinitions.ts`) — unlike `adb`/`node`/`scrcpy-server`, there is
- * no version segment. If these two ever disagree, the manager installs to one
- * path and this service spawns from another, so `mkcertExeName()` is reused
- * rather than re-derived by hand.
+ * the app runs the mkcert it installed. Matches `<depsPath>/mkcert/<exe>`
+ * exactly, which is the layout the `mkcert` DependencyDefinition's own
+ * `checkInstalled` uses (`DependencyDefinitions.ts`) — unlike
+ * `adb`/`node`/`scrcpy-server`, there is no version segment. If these two
+ * ever disagree, the manager installs to one path and this service spawns
+ * from another, so `mkcertExeName()` is reused rather than re-derived by hand.
  */
 export function resolveMkcertExe(depsPath: string): string {
     return path.join(depsPath, 'mkcert', mkcertExeName());

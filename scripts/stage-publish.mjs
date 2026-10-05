@@ -162,8 +162,7 @@ function main() {
 
     // 6a. v0.1.23-stable (item 5 / Approach C): relocate node-pty +
     // node-addon-api out of publish/node_modules/ and into
-    // publish/seed/node-pty-pkg/node_modules/. Per the
-    // Local-Dependencies-Only architecture, runtime mutable state
+    // publish/seed/node-pty-pkg/node_modules/. Runtime mutable state
     // (including any swapped pty.node from a Node ABI auto-update) must
     // not live under the install root's `current/` image. NodePtyResolver
     // copies this seed to <dataRoot>/dependencies/node-pty/<v-host>/ on

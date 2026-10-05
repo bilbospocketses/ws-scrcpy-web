@@ -7,9 +7,9 @@
 //
 // Pre-§30 the Node side invoked PowerShell with `Start-Process -Verb RunAs`
 // to fire the UAC prompt. That worked but relied on `powershell.exe`
-// resolving via system PATH — a violation of CLAUDE.md's
-// Local-Dependencies-Only rule (PowerShell 5.1 is OS-bundled but the rule
-// doesn't carve out OS-bundled binaries). The §30 replacement keeps the
+// resolving via system PATH, so a PATH entry could substitute it
+// (PowerShell 5.1 is OS-bundled, but the bare-name lookup is still
+// PATH-driven). The §30 replacement keeps the
 // elevation entirely inside our own SHA-pinned-to-release launcher binary
 // using Win32 ShellExecuteExW(verb="runas") directly.
 //

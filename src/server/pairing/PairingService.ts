@@ -93,7 +93,7 @@ export class PairingService {
     /** Production singleton: the real adb binary and the real clock. */
     static getInstance(): PairingService {
         if (!PairingService.instance) {
-            // Local-Dependencies-Only: adb resolves from Config, never from PATH.
+            // adb resolves from Config, never from PATH.
             PairingService.instance = new PairingService({
                 adb: new AdbClient(Config.getInstance().adbPath),
                 now: () => Date.now(),

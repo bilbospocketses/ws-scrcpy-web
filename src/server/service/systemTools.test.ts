@@ -48,11 +48,10 @@ describe('resolveSystemTool — Windows', () => {
         expect(resolveSystemTool('arp', () => false, 'win32')).toBe('arp');
     });
 
-    // Item 123. This used to read `%SystemRoot%` / `%windir%`, which is a
-    // forbidden resolution path under the very Local-Dependencies-Only rule the
-    // function exists to serve — an env var is caller-controlled in the same way
-    // $PATH is. The repo pins the literal elsewhere for the same reason
-    // (elevated_runner.rs, and openBrowser.ts since #653).
+    // Item 123. This used to read `%SystemRoot%` / `%windir%`, which defeats the
+    // purpose the function exists to serve — an env var is caller-controlled in
+    // the same way $PATH is. The repo pins the literal elsewhere for the same
+    // reason (elevated_runner.rs, and openBrowser.ts since #653).
     it('probes the literal C:\\Windows, never an environment variable', () => {
         const saved = { SystemRoot: process.env['SystemRoot'], windir: process.env['windir'] };
         try {

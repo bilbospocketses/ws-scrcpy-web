@@ -34,9 +34,9 @@ const SHUTDOWN_GRACE_MS = 10_000;
 
 // Windows-built-in process killer, anchored at its System32 path so PATH
 // shadowing can't redirect us to a different `taskkill` (matches the
-// `WINDOWS_TAR` precedent in scripts/fetch-node.mjs). Not subject to
-// Local-Dependencies-Only since it's part of the Windows OS image — same
-// rationale as tar.exe in the seed-fetch script.
+// `WINDOWS_TAR` precedent in scripts/fetch-node.mjs). Not vendored since
+// it's part of the Windows OS image — same rationale as tar.exe in the
+// seed-fetch script.
 const WINDOWS_TASKKILL = 'C:\\Windows\\System32\\taskkill.exe';
 
 /**
@@ -69,9 +69,9 @@ export function decideRestart(exitCode, markerExists) {
 /**
  * Resolve the Node binary the supervisor will use to spawn the server.
  * Mirrors `launcher/src/spawn.rs::resolve_node_with` exactly: local-deps
- * first, seed second. Strict — no system-Node fallback. Per CLAUDE.md's
- * Local-Dependencies-Only architecture, the runtime Node MUST resolve
- * inside the app folder; the prestart hook (`scripts/fetch-node.mjs`)
+ * first, seed second. Strict — no system-Node fallback: the runtime Node
+ * MUST resolve inside the app folder, so the pinned version runs rather
+ * than whatever the host has; the prestart hook (`scripts/fetch-node.mjs`)
  * guarantees `seed/node/node.exe` exists at v24.15.0 before this runs,
  * so the seed branch always covers the cold-install case.
  *

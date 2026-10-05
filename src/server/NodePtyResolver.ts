@@ -31,7 +31,7 @@ import { tarExtractArgs } from './util/tarExtract';
 const log = Logger.for('NodePtyResolver');
 
 /**
- * NodePtyResolver — Local-Dependencies-Only loader for node-pty.
+ * NodePtyResolver — dataRoot-only loader for node-pty.
  *
  * v0.1.23-stable (item 5 / Approach C): node-pty is NEVER loaded from
  * `<installRoot>/current/node_modules/`. The bundled image ships node-pty
@@ -44,10 +44,11 @@ const log = Logger.for('NodePtyResolver');
  *
  * Pre-v0.1.23 the resolver had two paths: tryBundledImport (read from
  * current/node_modules — read-only OK) and a download path that COPIED
- * back into current/node_modules — the architectural violation that
+ * back into current/node_modules — the architectural mistake that
  * surfaced as `EIO Access is denied` on conpty in pre-beta.7 logs.
- * Even though beta.7's icacls grant made the copy succeed, writing
- * runtime state into the install image violates Local-Dependencies-Only.
+ * Even though beta.7's icacls grant made the copy succeed, runtime state
+ * does not belong in the install image a Velopack swap of `current/`
+ * replaces.
  *
  * Cache-miss flow (Node ABI change after auto-update): download the
  * matching prebuilt tarball, overlay pty.node into the existing
@@ -305,7 +306,7 @@ export async function downloadAndOverlayPtyNode(version: string, host: HostInfo,
         // GNU tar on Windows (Git Bash) interprets 'C:\\...' as 'host:path'.
         // Pass only the filename and cwd into staging so tar uses relative paths.
         // resolveSystemTool gives an absolute path rather than the bare name, which
-        // would resolve through $PATH (Local-Dependencies-Only) -- and on Windows it
+        // would resolve through $PATH -- and on Windows it
         // pins System32's bsdtar instead of whichever GNU tar a Git Bash install
         // happens to put ahead of it, which is what the note above is about.
         // Never the archive's owners or modes (D16): as root, tar would restore

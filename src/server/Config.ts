@@ -150,8 +150,8 @@ export function resolveDependenciesPath(
 
 /**
  * Pure resolver: produces the absolute path the server should use when
- * spawning adb. Per the "Local Dependencies Only" architecture, this MUST
- * resolve to the app's local dependencies folder. There is no system-PATH
+ * spawning adb. This MUST resolve to the app's local dependencies folder,
+ * so the adb the app runs is the one it installed. There is no system-PATH
  * fallback and no host env-var resolution — if adb isn't there, the app
  * fetches it via `DependencyManager`. Until autoInstall populates it,
  * adb-dependent operations (scan, device probe, etc.) will fail visibly

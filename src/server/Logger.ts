@@ -4,10 +4,9 @@ import * as path from 'path';
 const MAX_LOG_SIZE = 10 * 1024 * 1024; // 10MB
 
 /**
- * Compute the log file path. Per Local-Dependencies-Only architecture
- * (CLAUDE.md), runtime mutable state including logs lives in dataRoot,
- * not in the install image — a Velopack swap of `current/` should not
- * wipe accumulated logs.
+ * Compute the log file path. Runtime mutable state including logs lives
+ * in dataRoot, not in the install image — a Velopack swap of `current/`
+ * should not wipe accumulated logs.
  *
  * Resolution order:
  *   1. <DATA_ROOT>/logs/ws-scrcpy-web.log — the data root when it is stated

@@ -78,7 +78,7 @@ Write-Host "  v2 build out : $BuildOutV2"
 Write-Host ''
 
 # -------- Pre-flight: resolve the app-local vpk --------
-# Local-Dependencies-Only: vpk is fetched into dependencies/vpk/v<version>/ by
+# vpk is fetched into dependencies/vpk/v<version>/ by
 # scripts/vpk-path.mjs and invoked by absolute path -- never from PATH.
 # Seed $LASTEXITCODE: it is session-global and only set by a NATIVE command, so
 # an unrelated earlier exit code must not be mistaken for this call's result.

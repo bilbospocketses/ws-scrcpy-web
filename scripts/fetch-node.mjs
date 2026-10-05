@@ -107,7 +107,7 @@ function extract(archivePath, outDir) {
         execFileSync(WINDOWS_TAR, ['-xf', archivePath, '-C', outDir], { stdio: 'inherit' });
     } else {
         // Absolute canonical tar, never the bare name (which $PATH would
-        // resolve) — Local-Dependencies-Only, mirrors WINDOWS_TAR above.
+        // resolve) — mirrors WINDOWS_TAR above.
         const tarBin = resolvePosixTar();
         log(`extracting via ${tarBin}`);
         execFileSync(tarBin, ['-xf', archivePath, '-C', outDir, '--no-same-owner'], { stdio: 'inherit' });

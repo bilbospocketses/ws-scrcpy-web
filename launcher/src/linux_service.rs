@@ -57,7 +57,7 @@ pub(crate) fn sbindir_from(bindir: &str) -> String {
 
 /// Ordered command argv-vectors for the teardown. `bindir` is the resolved
 /// absolute bin dir (e.g. "/usr/bin") so we never invoke tools by bare name
-/// (Local-Dependencies-Only).
+/// and PATH cannot substitute them.
 pub fn teardown_commands(scope: Scope, name: &str, bindir: &str) -> Vec<Vec<String>> {
     let systemctl = format!("{bindir}/systemctl");
     let rm = format!("{bindir}/rm");
@@ -317,7 +317,7 @@ pub fn handle(args: &[String]) -> Option<i32> {
 }
 
 /// Probe for the absolute dir (/usr/bin then /bin) containing `tool`. Falls back
-/// to /usr/bin. Local-Dependencies-Only: never invoke a tool by bare name.
+/// to /usr/bin. Never invoke a tool by bare name, so PATH cannot substitute it.
 pub(crate) fn tool_dir(tool: &str) -> String {
     for d in ["/usr/bin", "/bin"] {
         if Path::new(&format!("{d}/{tool}")).exists() {
@@ -438,7 +438,7 @@ fn run(scope: Scope, unit: &str) -> i32 {
 // STAYS up (active AND serving — not the Type=simple flicker), and on failure
 // rolls back + relaunches local so the user is never stranded. Mirror of `run`.
 
-/// `systemctl [--user] start <unit>.service` argv (absolute systemctl, Local-Deps).
+/// `systemctl [--user] start <unit>.service` argv (absolute systemctl, never PATH).
 pub fn start_command(scope: Scope, name: &str, bindir: &str) -> Vec<String> {
     let systemctl = format!("{bindir}/systemctl");
     [

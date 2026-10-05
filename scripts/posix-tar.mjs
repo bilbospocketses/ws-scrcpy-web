@@ -4,8 +4,8 @@
 // Resolve `tar` to an absolute, canonical system path on Linux/macOS instead of
 // the bare name `tar` (which the OS would resolve via $PATH). Mirrors the
 // Windows `C:\Windows\System32\tar.exe` pin the build scripts already use, and
-// the app's "OS helpers resolve to absolute system paths, never PATH" policy
-// (Local-Dependencies-Only). Build-time only — used by the extract in
+// the app's "OS helpers resolve to absolute system paths, never PATH" policy.
+// Build-time only — used by the extract in
 // fetch-node.mjs.
 
 import * as fs from 'node:fs';

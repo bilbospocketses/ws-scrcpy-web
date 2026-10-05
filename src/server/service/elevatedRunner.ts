@@ -212,7 +212,7 @@ export async function runElevated(
         // itself to fire the UAC prompt + re-spawn elevated with
         // `--elevate-and-run`. Replaces the prior
         // `powershell.exe Start-Process -Verb RunAs` path that resolved
-        // PowerShell via system PATH (local-dependencies-only violation).
+        // PowerShell via system PATH, which could substitute it.
         // The launcher binary is SHA-pinned-to-release
         // and lives in `current/` alongside this Node process, so no
         // external binary discovery is needed.
@@ -439,5 +439,5 @@ export function parseResult(raw: string): ElevatedResult {
 // by the launcher's own `--request-uac` subcommand (see `launcher/src/uac_requester.rs`),
 // which calls `ShellExecuteExW(verb="runas")` directly. The launcher is
 // SHA-pinned to release and lives in `current/` alongside this Node process —
-// no system-PATH binary discovery, no PowerShell layer, no Local-Dependencies-Only
-// rule violation. Argv is passed via execFileAsync's array form (no shell escaping).
+// no system-PATH binary discovery, no PowerShell layer. Argv is passed via
+// execFileAsync's array form (no shell escaping).

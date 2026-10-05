@@ -24,10 +24,10 @@ describe('resolveAdbPath', () => {
     });
 
     it('returns the bundled path even when the file does not yet exist (first-run window)', () => {
-        // Per the local-deps-only architecture, the resolver does NOT fall back
-        // to system PATH when the bundled binary is missing. AdbClient is
-        // expected to throw AdbExecError('spawn',...) cleanly until
-        // autoInstallMissing populates dependencies/adb/.
+        // The resolver does NOT fall back to system PATH when the bundled
+        // binary is missing. AdbClient is expected to throw
+        // AdbExecError('spawn',...) cleanly until autoInstallMissing
+        // populates dependencies/adb/.
         const r = resolveAdbPath({}, '/never/will/exist', 'linux');
         expect(r.source).toBe('bundled');
         expect(r.path).toBe('/never/will/exist/adb/adb');
@@ -42,7 +42,7 @@ describe('resolveAdbPath', () => {
     it('does not consult ADB_PATH env or any process state — pure function', () => {
         // Sanity: call with same inputs twice, get same result, regardless of
         // ambient process.env. (The signature no longer accepts an env object;
-        // env-var resolution was removed per local-deps-only.)
+        // env-var resolution was removed.)
         const a = resolveAdbPath({}, '/install/dependencies', 'linux');
         const b = resolveAdbPath({}, '/install/dependencies', 'linux');
         expect(a).toEqual(b);
