@@ -39,11 +39,21 @@ export class AuthGate {
         if (!isAuthEnabled(db)) return false; // open mode → not our concern
 
         const url = new URL(req.url ?? '/', 'http://localhost');
-        if (isAllowlisted(url.pathname)) return false;
 
         const token = parseCookie(req.headers.cookie)[SESSION_COOKIE];
         const session = token ? new SessionStore(db.sqlite).findValid(token, Date.now()) : undefined;
         const user = session ? db.users.getById(session.userId) : undefined;
+
+        if (isAllowlisted(url.pathname)) {
+            // An allow-listed route is never blocked, but a handler on it may still ask who the
+            // caller is. Attach the user when there is a valid session, exactly as below, so
+            // requireAdmin sees a signed-in non-admin for what it is instead of falling back to
+            // the implicit admin (finding 12.12: a signed-in non-admin could stop the server
+            // through /api/server/shutdown). No session → nothing attached, as before.
+            if (user && !user.disabled) (req as IncomingMessage & { user?: unknown }).user = user;
+            return false;
+        }
+
         // Fail CLOSED: no session, an orphan session (user deleted), or a disabled user → block.
         // (Never fall back to the implicit admin here — resolveUserId would otherwise grant admin.)
         if (!user || user.disabled) {

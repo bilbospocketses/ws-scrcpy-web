@@ -4,8 +4,11 @@ import * as os from 'os';
 import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ServerShutdownApi } from '../api/ServerShutdownApi';
-import { setAuthEnabled } from '../auth/authState';
+import { AuthGate } from '../auth/AuthGate';
+import { SESSION_COOKIE, setAuthEnabled } from '../auth/authState';
+import { SESSION_TTL_MS, SessionStore } from '../auth/session';
 import { Config } from '../Config';
+import { IMPLICIT_ADMIN_ID } from '../db/constants';
 import { EnvName } from '../EnvName';
 import { getInstanceToken } from '../security/instanceToken';
 
@@ -255,6 +258,59 @@ describe('ServerShutdownApi', () => {
         expect(exit).toHaveBeenCalledWith(0);
         // Ordering is the whole point: adb daemon + services torn down first.
         expect(order).toEqual(['cleanup', 'exit']);
+    });
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// Finding 12.12. The "refuses a signed-in non-admin" test above sets `req.user`
+// by hand, which is what AuthGate does on a gated route but did NOT do on this
+// allow-listed one: the gate returned before it read the cookie, so requireAdmin
+// resolved a signed-in non-admin to the implicit admin and the server exited.
+// These go through the real gate, the way a request does in production.
+
+describe('ServerShutdownApi behind AuthGate (locked mode)', () => {
+    async function throughGate(remoteAddress: string, cookie: string | undefined) {
+        const db = Config.getInstance().db;
+        const schedule = vi.fn();
+        const api = new ServerShutdownApi({ schedule, exit: vi.fn() });
+        const { req, res } = makeReqRes('/api/server/shutdown', 'POST', remoteAddress, cookie ? { cookie } : {});
+        const gate = new AuthGate(() => db);
+        const blocked = await gate.handle(req, res);
+        expect(blocked, 'an allow-listed route is never blocked by the gate').toBe(false);
+        expect(await api.handle(req, res)).toBe(true);
+        return { status: (res as any).getStatus() as number, body: JSON.parse((res as any).getBody()), schedule };
+    }
+
+    it('refuses a signed-in non-admin on loopback with 403 and schedules nothing', async () => {
+        const db = Config.getInstance().db;
+        setAuthEnabled(db, true);
+        const viewer = db.users.create({ username: 'viewer', role: 'user', passwordHash: null });
+        const sid = new SessionStore(db.sqlite).create(viewer.id, Date.now(), SESSION_TTL_MS);
+
+        const { status, body, schedule } = await throughGate('127.0.0.1', `${SESSION_COOKIE}=${sid}`);
+        expect(status).toBe(403);
+        expect(body).toEqual({ error: 'forbidden' });
+        expect(schedule).not.toHaveBeenCalled();
+    });
+
+    it('allows a signed-in admin from off-box with the instance token', async () => {
+        const db = Config.getInstance().db;
+        setAuthEnabled(db, true);
+        const sid = new SessionStore(db.sqlite).create(IMPLICIT_ADMIN_ID, Date.now(), SESSION_TTL_MS);
+
+        const { status, schedule } = await throughGate(
+            '192.168.1.50',
+            `${SESSION_COOKIE}=${sid}; ws_scrcpy_token=${getInstanceToken()}`,
+        );
+        expect(status).toBe(200);
+        expect(schedule).toHaveBeenCalledTimes(1);
+    });
+
+    it('still allows the cookieless tray on loopback', async () => {
+        setAuthEnabled(Config.getInstance().db, true);
+        const { status, schedule } = await throughGate('127.0.0.1', undefined);
+        expect(status).toBe(200);
+        expect(schedule).toHaveBeenCalledTimes(1);
     });
 });
 
