@@ -82,7 +82,8 @@ export class AuthApi {
         }
 
         if (req.method === 'GET' && pathname === '/api/auth/me') {
-            // ALLOW-LISTED route → self-validate the cookie (AuthGate did not attach req.user here).
+            // ALLOW-LISTED route → self-validate the cookie. AuthGate attaches req.user here only
+            // when the session is valid and never blocks, so this handler reads the cookie itself.
             // `needsLockdown` is the SERVER's own first-user test, exposed so the
             // client stops guessing at it. UsersModal keyed its "Secure the admin
             // account" block on `!authEnabled`, while POST /api/users takes the

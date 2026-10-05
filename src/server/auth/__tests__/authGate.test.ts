@@ -79,4 +79,71 @@ describe('AuthGate', () => {
         expect(handled).toBe(true);
         expect(status).toBe(401);
     });
+
+    // Finding 12.12. An allow-listed route is never blocked, but its handler
+    // may still need to know WHO is calling: /api/server/shutdown runs
+    // requireAdmin, which falls back to the implicit admin when `req.user` is
+    // missing. The gate used to return before it looked at the cookie, so a
+    // signed-in non-admin was treated as the admin on that route.
+    describe('allow-listed paths in locked mode', () => {
+        it('attaches the user for a valid session and still does not block', async () => {
+            const d = db();
+            setAuthEnabled(d, true);
+            const bob = d.users.create({ username: 'bob', role: 'user', passwordHash: 'x' });
+            const token = new SessionStore(d.sqlite).create(bob.id, Date.now(), SESSION_TTL_MS);
+            const gate = new AuthGate(() => d);
+            const { req, handled, status } = await runGate(
+                gate,
+                'POST',
+                '/api/server/shutdown',
+                `${SESSION_COOKIE}=${token}`,
+            );
+            expect(handled).toBe(false);
+            expect(status).toBe(0);
+            expect((req as { user?: { id: number } }).user?.id).toBe(bob.id);
+        });
+
+        it('attaches nothing and does not block when there is no cookie (the tray)', async () => {
+            const d = db();
+            setAuthEnabled(d, true);
+            const gate = new AuthGate(() => d);
+            const { req, handled, status } = await runGate(gate, 'POST', '/api/server/shutdown', undefined);
+            expect(handled).toBe(false);
+            expect(status).toBe(0);
+            expect((req as { user?: unknown }).user).toBeUndefined();
+        });
+
+        it('attaches nothing and does not block for an unknown session token', async () => {
+            const d = db();
+            setAuthEnabled(d, true);
+            const gate = new AuthGate(() => d);
+            const { req, handled, status } = await runGate(
+                gate,
+                'POST',
+                '/api/server/shutdown',
+                `${SESSION_COOKIE}=${'f'.repeat(64)}`,
+            );
+            expect(handled).toBe(false);
+            expect(status).toBe(0);
+            expect((req as { user?: unknown }).user).toBeUndefined();
+        });
+
+        it("attaches nothing for a disabled user's session and still does not block", async () => {
+            const d = db();
+            setAuthEnabled(d, true);
+            const bob = d.users.create({ username: 'bob', role: 'user', passwordHash: 'x' });
+            const token = new SessionStore(d.sqlite).create(bob.id, Date.now(), SESSION_TTL_MS);
+            d.users.setDisabled(bob.id, true);
+            const gate = new AuthGate(() => d);
+            const { req, handled, status } = await runGate(
+                gate,
+                'POST',
+                '/api/server/shutdown',
+                `${SESSION_COOKIE}=${token}`,
+            );
+            expect(handled).toBe(false);
+            expect(status).toBe(0);
+            expect((req as { user?: unknown }).user).toBeUndefined();
+        });
+    });
 });
