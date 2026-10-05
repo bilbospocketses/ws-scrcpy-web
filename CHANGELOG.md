@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.171] - 2026-10-05
+
 ### Security
 - **A signed-in non-admin can no longer stop the server from this machine.** With login on, a `user`-role account's `POST /api/server/shutdown` from loopback answered 200 and the server exited (finding 12.12). The route is allow-listed in `AuthGate` so the tray's cookieless Exit can reach it, and the gate returned on that list before it read the session, so `req.user` was never set there and `requireAdmin` took every caller for the implicit admin. The gate now resolves the session on allow-listed paths too and attaches the user when it is valid and enabled, while still never blocking those paths (`src/server/auth/AuthGate.ts`). A non-admin is refused 403 `forbidden` and the server stays up; the tray, which has no session, can still stop it from loopback, as decided for item 114. The same cause refused a signed-in admin's shutdown from another machine with 401, because the handler saw no signed-in user; that now succeeds. No other allow-listed route's handler reads `req.user`.
 
