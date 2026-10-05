@@ -788,7 +788,7 @@ A codec that survives this check can still fail to produce frames — see [3.7 D
 
 ### 9.1 Entry Point
 
-In production (MSI/AppImage), the Rust launcher (`ws-scrcpy-web-launcher.exe`) spawns Node as a supervised child process: `node dist/index.js`. The launcher handles restarts (exit code 75 or `.restart` marker), tray supervision, UAC elevation, and the operation-server for service transitions. See sections 20-21 for details. In dev mode, `npm start` runs `node dist/index.js` directly.
+In production (MSI/AppImage), the Rust launcher (`ws-scrcpy-web-launcher.exe`) spawns Node as a supervised child process: `node dist/index.js`. The launcher handles restarts (exit code 75 or `.restart` marker; in local mode also a crashed server, up to 3 times in a row, the count reset once a server stays up 60 s — the installed service leaves crashes to systemd / servy), tray supervision, UAC elevation, and the operation-server for service transitions. See sections 20-21 for details. In dev mode, `npm start` runs `node dist/index.js` directly.
 
 `src/server/index.ts` starts the server:
 
