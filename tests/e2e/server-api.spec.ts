@@ -304,13 +304,10 @@ test.describe('server and API surface (item 164, batch A)', () => {
     });
 
     test('7.9 disconnecting an address that was never connected answers 200 not connected', async () => {
-        // PRODUCT FINDING (item 164 batch A, 2026-10-05): this answers 500
-        // {"error":"internal error"}. adb 37.0.1 prints `error: no such device
-        // '<addr>'` AND exits 1, so AdbClient.exec rejects with AdbExecError('exit')
-        // and classifyDisconnectResult (DeviceDiscoveryApi.ts), which only reads
-        // the stdout of a successful exec, never sees the text. Marked expected-
-        // to-fail so the suite stays green and flips red the day it is fixed.
-        test.fail(true, 'finding 7.8 regressed or never held against real adb: the route answers 500');
+        // Finding 7.8 (reopened by this row, fixed 2026-10-05): adb 37.0.1
+        // prints `error: no such device '<addr>'` AND exits 1, and the route
+        // answered 500 because the exit hid the text from
+        // classifyDisconnectResult. AdbClient.disconnect now hands that text on.
         test.setTimeout(300_000);
         await waitForDependencies(e2eBaseUrl(), 240_000);
         const ctx = await request.newContext({ baseURL: e2eBaseUrl() });
