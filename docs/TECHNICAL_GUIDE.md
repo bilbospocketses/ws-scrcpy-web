@@ -1938,14 +1938,14 @@ The Rust launcher is the production entry point for MSI and AppImage installs â€
 
 ### 20.1 Supervisor Loop
 
-The launcher's main loop in `launcher/src/spawn.rs`:
+The launcher's main loop is `run()` in `launcher/src/supervisor.rs`; `launcher/src/spawn.rs` builds and spawns the Node child:
 
 1. Spawn Node as a child process: `node dist/index.js`
 2. Redirect Node stdout/stderr to `<dataRoot>/logs/server.log` (thin crash-catcher; normal app output is in `ws-scrcpy-web.log`)
 3. Wait for the child to exit
 4. On exit code `75` or `.restart` marker: clean up old binaries, respawn
 5. On normal exit (code 0): shut down
-6. On unexpected exit: log the error and shut down
+6. On any other exit (a crash), in local mode: restart the server after the same 2 s delay, logging `server crashed after <N>s up; restarting (attempt <k> of 3)`, up to **3 times in a row** (`MAX_CRASH_RESTARTS`). A server that stayed up 60 s or more (`CRASH_COUNT_RESET_UPTIME`) starts the count again. After the third restart the launcher logs `3 restart attempts, won't retry, review error logging` and shuts down. The installed service (`WS_SCRCPY_SERVICE=1`, set by both the systemd units and servy) does not restart a crash itself: it logs `running as the service; leaving the restart to the service manager` and exits, so systemd's `Restart=on-failure` or servy's recovery decides (item 163, beta.169; the pure decision is `decide_crash_restart`)
 
 The supervisor also watches for the `.restart` marker at `<depsPath>/.restart`, written by the dependency updater after a Node.js update.
 
@@ -2004,7 +2004,8 @@ The Linux data root is resolved by `common/src/config.rs` (`DATA_ROOT` â†’ `XDG_
 | File | Purpose |
 |------|---------|
 | `launcher/src/main.rs` | Entry point, argument parsing, single-instance mutex |
-| `launcher/src/spawn.rs` | Node supervisor loop, exit-code handling, `.restart` marker |
+| `launcher/src/supervisor.rs` | Node supervisor loop: exit-code handling, `.restart` marker, the local-mode crash-restart limit |
+| `launcher/src/spawn.rs` | Builds the Node child's command line and environment and spawns it |
 | `launcher/src/tray_supervisor.rs` | Tray helper spawn + 10s poll respawn (Windows) |
 | `launcher/src/linux_tray.rs` | Linux tray thread: eligibility, session-bus fix-up, hand-off to the stop flag |
 | `common/src/tray_policy.rs` | Pure tray decisions shared by both trays: eligibility, session bus, labels, the ARGB icon |

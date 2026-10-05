@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **tests: fast-tier Playwright specs for 41 more smoke rows (#846, item 164).** The coverage register now counts 142 of 251 rows automated (57 %), up from 101. Eight new spec files run in `build-and-test` on every PR, each on its own private ports (8151-8195). They found the four bugs fixed in beta.171-174 (findings 12.12, 7.8, 10.21 and 18.23). The e2e harness also changed: every e2e server now runs with `LOCALAPPDATA` pointed into the run's own folder, so a developer's real Local HTTPS certificate is never read, and with `WS_SCRCPY_NO_BROWSER=1`, so a first-run test no longer opens tabs in the desktop browser. `WSSW_E2E_PORT` moves the shared test server's port and data root, which lets two runs share a machine. `spawnServer` gained `env` and `portOverride` options. Two rows stay without a spec: 8.30 needs a device, and 21.12 needs a way to point the mkcert release lookup at a test server.
+- **docs:** the smoke target is now beta.174 (#856). The technical guide's supervisor section, its key-files table and the README's launcher list now describe the local-mode crash-restart limit and name `launcher/src/supervisor.rs` as the supervisor loop's home; `spawn.rs` only spawns the child. The e2e README accounts for ports 8141-8150.
+
 ## [0.1.30-beta.174] - 2026-10-05
 
 ### Fixed
