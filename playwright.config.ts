@@ -5,6 +5,7 @@ import {
     E2E_BASE_URL,
     E2E_CONFIG_PATH,
     E2E_DATA_ROOT,
+    E2E_LOCAL_APP_DATA,
     E2E_PORT,
     E2E_PROGRAM_DATA,
     SEED_CONFIG,
@@ -73,6 +74,7 @@ if (process.env['TEST_WORKER_INDEX'] === undefined) {
      */
     mkdirSync(join(E2E_DATA_ROOT, 'control'), { recursive: true });
     writeFileSync(join(E2E_DATA_ROOT, 'control', 'system-install-declined'), '', 'utf8');
+    mkdirSync(E2E_LOCAL_APP_DATA, { recursive: true });
 }
 
 export default defineConfig({
@@ -148,6 +150,25 @@ export default defineConfig({
             DEPS_PATH: join(E2E_DATA_ROOT, 'dependencies'),
             WS_SCRCPY_CONFIG: E2E_CONFIG_PATH,
             WS_SCRCPY_WEB_PORT: String(E2E_PORT),
+            /**
+             * The Windows TLS home is `%LOCALAPPDATA%\WsScrcpyWeb-tls`, outside
+             * the data root (src/server/tls/certPaths.ts). Inherited, a
+             * developer who has set up Local HTTPS would hand the suite's
+             * server their real certificate, and it would bind a real HTTPS
+             * listener beside 8123. Linux keeps the TLS home under DATA_ROOT
+             * and never reads this. See E2E_LOCAL_APP_DATA for why it sits
+             * beside the data root and not in it.
+             */
+            LOCALAPPDATA: E2E_LOCAL_APP_DATA,
+            /**
+             * A hand-run server (no launcher) that boots with firstRunComplete
+             * false opens the HOST's default browser on itself
+             * (`shouldAutoOpenBrowser`, src/server/index.ts). The seed sets it
+             * true, but a run must never be one config edit away from putting
+             * real tabs on a developer's desktop; this is the product's own
+             * relaunch suppression, the same switch `spawnServer` sets.
+             */
+            WS_SCRCPY_NO_BROWSER: '1',
         },
     },
 });

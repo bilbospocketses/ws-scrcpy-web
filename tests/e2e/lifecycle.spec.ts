@@ -1,6 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
 import https from 'node:https';
-import net from 'node:net';
 import path from 'node:path';
 import { type BrowserContext, expect, request, test } from '@playwright/test';
 import {
@@ -12,6 +11,7 @@ import {
     openSettingsTab,
 } from './support/auth';
 import { E2E_PORT } from './support/paths';
+import { holdPort, releasePort } from './support/ports';
 import {
     privateServerPaths,
     seedPrivateDataRoot,
@@ -21,6 +21,7 @@ import {
     withTimeout,
 } from './support/privateServer';
 import { selfSignedCert } from './support/selfSignedCert';
+import { LOG_REL, NOTHING_SERVES } from './support/serverLog';
 
 /**
  * Smoke module 12 — lifecycle (rows 12.1, 12.4, 12.6).
@@ -31,29 +32,6 @@ import { selfSignedCert } from './support/selfSignedCert';
  * (`logs/ws-scrcpy-web.log`) — the console echo is TTY-only and a spawned
  * child has none.
  */
-const LOG_REL = path.join('logs', 'ws-scrcpy-web.log');
-
-/** The line `exitIfNothingCanServe()` writes just before `process.exit(1)` (HttpServer.ts, #718). */
-const NOTHING_SERVES = 'no listener is serving: every configured listener failed to bind';
-
-/**
- * Hold a port the way another program would. `listen(port)` with no host binds
- * the same dual-stack wildcard the app's own `server.listen(port)` does, so
- * the collision is real on Linux and Windows alike; a blocker on 127.0.0.1
- * alone would not stop a wildcard bind on Windows.
- */
-async function holdPort(port: number): Promise<net.Server> {
-    const blocker = net.createServer();
-    await new Promise<void>((resolve, reject) => {
-        blocker.once('error', reject);
-        blocker.listen(port, () => resolve());
-    });
-    return blocker;
-}
-
-function release(blocker: net.Server | undefined): Promise<void> {
-    return new Promise((resolve) => (blocker ? blocker.close(() => resolve()) : resolve()));
-}
 
 /** GET / over HTTPS, trusting exactly the throwaway certificate: verification stays ON. */
 function httpsStatus(port: number, ca: string): Promise<number> {
@@ -104,7 +82,10 @@ test.describe('lifecycle (smoke §12)', () => {
             // Confirmation first, and cancel leaves the server running — the
             // gate in its failing direction before the affirmative path.
             await stopBtn.click();
-            const confirm = visitor.page.locator('dialog.confirm-modal');
+            // The OPEN confirm only: a cancelled one stays in the DOM for its
+            // 250 ms exit transition (src/app/ui/Modal.ts), and the second click
+            // below reopens the dialog inside that window.
+            const confirm = visitor.page.locator('dialog.confirm-modal[open]');
             await expect(confirm).toBeVisible();
             await expect(confirm).toContainText(
                 'the app will shut down and this browser tab will try to close. any active device connections will end. continue?',
@@ -245,7 +226,7 @@ test.describe('lifecycle (smoke §12)', () => {
             } catch (err) {
                 console.warn(`12.6 cleanup: ${String(err)}`);
             }
-            await release(blocker);
+            await releasePort(blocker);
         }
     });
 
@@ -285,7 +266,7 @@ test.describe('lifecycle (smoke §12)', () => {
                 } catch (err) {
                     console.warn(`12.6 cleanup: ${String(err)}`);
                 }
-                for (const b of blockers) await release(b);
+                for (const b of blockers) await releasePort(b);
             }
         });
     }
@@ -334,7 +315,7 @@ test.describe('lifecycle (smoke §12)', () => {
             } catch (err) {
                 console.warn(`12.6 cleanup: ${String(err)}`);
             }
-            await release(blocker);
+            await releasePort(blocker);
         }
     });
 });

@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { type APIRequestContext, expect, type Page } from '@playwright/test';
+import { mintToken } from './auth';
 import { E2E_CONFIG_PATH } from './paths';
 
 export interface ServerConfig {
@@ -85,4 +86,30 @@ export async function revokeAllOrigins(page: Page): Promise<void> {
             });
         }
     });
+}
+
+/**
+ * Put the shared server's embed state back: cancel whatever request is pending
+ * and revoke every approved origin. Through the app's own API, like
+ * {@link revokeAllOrigins} and for the same reason, but from a request context,
+ * so it runs in a `finally` that has no page left to evaluate in.
+ *
+ * `ctx` must be on loopback; the token is minted here.
+ */
+export async function resetSharedEmbedState(ctx: APIRequestContext): Promise<void> {
+    await mintToken(ctx);
+    const pending = await ctx.get('/api/embed-request');
+    expect(pending.status(), 'GET /api/embed-request (cleanup)').toBe(200);
+    const body = (await pending.json()) as { request: { id: string } | null };
+    if (body.request) {
+        const res = await ctx.post(`/embed-request/${encodeURIComponent(body.request.id)}/cancel`);
+        expect(res.status(), 'cancel the leftover pending embed request').toBe(200);
+    }
+    const listed = await ctx.get('/api/embed-origins');
+    expect(listed.status(), 'GET /api/embed-origins (cleanup)').toBe(200);
+    const { origins } = (await listed.json()) as { origins: string[] };
+    for (const origin of origins) {
+        const res = await ctx.post('/api/embed-origins/revoke', { data: { origin } });
+        expect(res.status(), `revoke ${origin} (cleanup)`).toBe(200);
+    }
 }
