@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **Disconnecting an address that was never connected answers 200 `not connected` again, against real adb.** The 2026-09-04 fix taught `classifyDisconnectResult` that adb's `error: no such device '<addr>'` means the disconnect is already true, but adb 37.0.1 prints that line AND exits 1, so `AdbClient`'s command runner threw on the exit code before the classifier ever saw the text, and `POST /api/devices/disconnect` still answered 500 `internal error` (finding 7.8, reopened by item 164's row 7.9). `AdbClient.disconnect` now hands adb's own output on when adb exits non-zero having printed something, as `pair` already treats the text and not the exit code as the signal (`src/server/AdbClient.ts`). A cleanup step that disconnects an address in either state gets 200 either way; a timeout, a missing binary or an exit with no output still fails as before.
 
+## [0.1.30-beta.171] - 2026-10-05
+
+### Security
+- **A signed-in non-admin can no longer stop the server from this machine.** With login on, a `user`-role account's `POST /api/server/shutdown` from loopback answered 200 and the server exited (finding 12.12). The route is allow-listed in `AuthGate` so the tray's cookieless Exit can reach it, and the gate returned on that list before it read the session, so `req.user` was never set there and `requireAdmin` took every caller for the implicit admin. The gate now resolves the session on allow-listed paths too and attaches the user when it is valid and enabled, while still never blocking those paths (`src/server/auth/AuthGate.ts`). A non-admin is refused 403 `forbidden` and the server stays up; the tray, which has no session, can still stop it from loopback, as decided for item 114. The same cause refused a signed-in admin's shutdown from another machine with 401, because the handler saw no signed-in user; that now succeeds. No other allow-listed route's handler reads `req.user`.
+
 ## [0.1.30-beta.170] - 2026-10-05
 
 ### Fixed
