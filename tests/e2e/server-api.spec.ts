@@ -1,6 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { expect, request, test } from '@playwright/test';
 import { e2eBaseUrl, mintToken, SID_SET_COOKIE_RE, TOKEN_SET_COOKIE_RE } from './support/auth';
 import { holdPort, isListening, releasePort } from './support/ports';
@@ -304,13 +303,10 @@ test.describe('server and API surface (item 164, batch A)', () => {
     });
 
     test('7.9 disconnecting an address that was never connected answers 200 not connected', async () => {
-        // PRODUCT FINDING (item 164 batch A, 2026-10-05): this answers 500
-        // {"error":"internal error"}. adb 37.0.1 prints `error: no such device
-        // '<addr>'` AND exits 1, so AdbClient.exec rejects with AdbExecError('exit')
-        // and classifyDisconnectResult (DeviceDiscoveryApi.ts), which only reads
-        // the stdout of a successful exec, never sees the text. Marked expected-
-        // to-fail so the suite stays green and flips red the day it is fixed.
-        test.fail(true, 'finding 7.8 regressed or never held against real adb: the route answers 500');
+        // Finding 7.8 (reopened by this row, fixed 2026-10-05): adb 37.0.1
+        // prints `error: no such device '<addr>'` AND exits 1, and the route
+        // answered 500 because the exit hid the text from
+        // classifyDisconnectResult. AdbClient.disconnect now hands that text on.
         test.setTimeout(300_000);
         await waitForDependencies(e2eBaseUrl(), 240_000);
         const ctx = await request.newContext({ baseURL: e2eBaseUrl() });
@@ -726,26 +722,15 @@ test.describe('server and API surface (item 164, batch A)', () => {
                 'graceful stop',
             );
             expect((await withTimeout(h.exited, 60_000, () => h.output())).code).toBe(0);
+            // The stop closes the store, so SQLite has checkpointed the WAL into
+            // wsscrcpy.db: the data is in the main file, not the sidecar (finding
+            // 10.21 — before the fix this was a 4 KB header beside a ~119 KB -wal,
+            // and junk over the main file alone was masked by the WAL).
+            const wal = `${paths.dbPath}-wal`;
+            expect(existsSync(wal) ? statSync(wal).size : 0, 'wsscrcpy.db-wal after a graceful stop').toBe(0);
         };
-        /**
-         * Junk over the start of wsscrcpy.db, as a torn write or a bad disk would
-         * leave it.
-         *
-         * Checkpointed first, deliberately. A graceful stop takes the `.bak` but
-         * never closes the store, so it leaves wsscrcpy.db as a bare 4 KB header
-         * with every page — page 1 included — in wsscrcpy.db-wal (measured: 4096 B
-         * beside a 119 KB -wal). SQLite reads page 1 from the WAL, so junk over
-         * the main file alone is never even noticed and the row's recovery path
-         * never runs (reported as a finding). Checkpointing moves the pages into
-         * the main file, which is then the copy the junk lands on.
-         */
+        /** Junk over the start of wsscrcpy.db, as a torn write or a bad disk would leave it. */
         const corrupt = () => {
-            const sqlite = new DatabaseSync(paths.dbPath);
-            try {
-                sqlite.exec('PRAGMA wal_checkpoint(TRUNCATE)');
-            } finally {
-                sqlite.close();
-            }
             const junk = Buffer.alloc(4096, 0x5a);
             const db = readFileSync(paths.dbPath);
             junk.copy(db, 0);

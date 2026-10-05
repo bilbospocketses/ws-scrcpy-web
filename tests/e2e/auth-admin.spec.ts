@@ -108,15 +108,11 @@ function isNavigationTo(pathname: string) {
 test.describe('auth and admin scope (smoke 12.8, 18.16–18.22)', () => {
     test('12.8 shutdown from this machine with login on: a signed-in non-admin is refused 403 forbidden, logs nothing and the server stays up; a signed-in admin is the control that stops it', async () => {
         test.setTimeout(150_000);
-        // PRODUCT FINDING (item 164, batch B), not a test defect: a signed-in
-        // non-admin on loopback is answered 200 {"ok":true} and the server
-        // EXITS. /api/server/shutdown is allow-listed in AuthGate, which returns
-        // at AuthGate.ts:42 before it looks the session up, so `req.user` is
-        // never attached on this route; requireAdmin then resolves the caller to
-        // the implicit admin (currentUser.ts:10) and passes. The unit test
-        // ("refuses a signed-in non-admin, even on loopback") sets `req.user` by
-        // hand, which is why it does not see this. Remove this line with the fix.
-        test.fail(true, 'product finding: a signed-in non-admin can stop the server from loopback (12.8 b)');
+        // Finding 12.12 (fixed 2026-10-05): /api/server/shutdown is allow-listed,
+        // and AuthGate used to return before reading the session there, so
+        // requireAdmin took this signed-in non-admin for the implicit admin and
+        // the server exited. The gate now attaches `req.user` on allow-listed
+        // paths too.
         const server = await OwnedServer.start('12-8', PORT.r12_8);
         let member: APIRequestContext | undefined;
         let owner: APIRequestContext | undefined;
@@ -143,7 +139,11 @@ test.describe('auth and admin scope (smoke 12.8, 18.16–18.22)', () => {
                 new Promise<'alive'>((resolve) => setTimeout(() => resolve('alive'), 2_000)),
             ]);
             expect(outcome, server.handle.output()).toBe('alive');
-            expectLoginHtml(await (await member.get('/')).text());
+            // Still serving, and still serving THIS caller the app: it is signed
+            // in, so `/` is the app shell, not the login page. (This read
+            // `expectLoginHtml` while the row was a `test.fail` and never got
+            // this far.)
+            expectSpaHtml(await (await member.get('/')).text());
             expect((await me(member)).user, 'the refused caller keeps its session').toEqual({
                 username: MEMBER.username,
                 role: 'user',

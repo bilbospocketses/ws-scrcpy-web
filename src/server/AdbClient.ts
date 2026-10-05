@@ -369,8 +369,28 @@ export class AdbClient {
         return out;
     }
 
+    /**
+     * Returns adb's own text for the caller to classify
+     * (`classifyDisconnectResult` in DeviceDiscoveryApi), INCLUDING when adb
+     * exits non-zero. adb 37.0.1 answers a disconnect of an address that was
+     * never connected with `error: no such device '<addr>'` and exit code 1, so
+     * `exec` turns it into AdbExecError('exit') and the text that says "already
+     * done" never reaches the classifier — the route answered 500 for a no-op
+     * (finding 7.8). The same lesson as `pair` above: the exit code is not the
+     * signal here, the text is. An exit that printed nothing, and every other
+     * failure kind (timeout, spawn), is rethrown unchanged.
+     */
     async disconnect(address: string): Promise<string> {
-        return this.exec(['disconnect', address], { timeoutMs: DEFAULT_TIMEOUT_MS.disconnect });
+        try {
+            return await this.exec(['disconnect', address], { timeoutMs: DEFAULT_TIMEOUT_MS.disconnect });
+        } catch (e) {
+            if (e instanceof AdbExecError && e.kind === 'exit') {
+                const cause = e.cause as { stdout?: unknown; stderr?: unknown } | undefined;
+                const text = `${typeof cause?.stdout === 'string' ? cause.stdout : ''}${typeof cause?.stderr === 'string' ? cause.stderr : ''}`;
+                if (text.trim().length > 0) return text;
+            }
+            throw e;
+        }
     }
 
     /**
