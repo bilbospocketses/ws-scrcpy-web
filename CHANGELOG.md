@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.175] - 2026-10-05
+
 ### Added
 - **`WS_SCRCPY_RELEASE_URL_BASE`, a test / mirror seam for the Linux in-app update (item 169).** The Linux apply downloads the release's AppImage and its `SHA256SUMS` itself, always from github.com, and `VELOPACK_FEED_URL` never moved those two requests. So no test could serve a tampered `SHA256SUMS`, and the apply's two aborts could not be reached outside a unit test: no entry for the asset, and a digest mismatch. With the variable set, both files come from `<base>/v<version>/<asset>`, the same layout as GitHub's `releases/download`, so its default IS that prefix. The SHA-256 check runs exactly as before against whatever the base serves, and the apply logs the base it used. Unset, the URLs are unchanged. The download-and-verify step moved into `downloadVerifiedAsset` (`src/server/linuxUpdateAssets.ts`), whose tests now cover the match, the mismatch and the missing entry, and that a failed check removes the staged file. Asked for by qa-harness for smoke row 6.2's clause G69, whose step now names the variable; documented in the technical guide's environment table, the README and `PRIVACY.md`.
 
