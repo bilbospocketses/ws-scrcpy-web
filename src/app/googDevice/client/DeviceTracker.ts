@@ -5,6 +5,7 @@ import { ChannelCode } from '../../../common/ChannelCode';
 import { DeviceState } from '../../../common/DeviceState';
 import type { HostItem } from '../../../types/Configuration';
 import type GoogDeviceDescriptor from '../../../types/GoogDeviceDescriptor';
+import type { ParamsStreamScrcpy } from '../../../types/ParamsStreamScrcpy';
 import { AudioSettingsStore } from '../../client/AudioSettingsStore';
 import { BaseDeviceTracker } from '../../client/BaseDeviceTracker';
 import { settingsService } from '../../client/SettingsService';
@@ -403,7 +404,13 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
                 const url = new URL(href, location.origin);
                 const hash = url.hash.startsWith('#!') ? url.hash.slice(2) : url.hash.slice(1);
                 const query = new URLSearchParams(hash);
-                const params = StreamClientScrcpy.parseParameters(query);
+                const params: ParamsStreamScrcpy = {
+                    ...StreamClientScrcpy.parseParameters(query),
+                    hostname: this.params.hostname,
+                    port: this.params.port,
+                    secure: this.params.secure,
+                    pathname: this.params.pathname,
+                };
 
                 // Hydrate the per-device cache before reading audio prefs.
                 // hydrateDevice covers both audio and video scopes so Task 4c's
