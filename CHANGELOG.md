@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.172] - 2026-10-05
+
 ### Fixed
 - **Disconnecting an address that was never connected answers 200 `not connected` again, against real adb.** The 2026-09-04 fix taught `classifyDisconnectResult` that adb's `error: no such device '<addr>'` means the disconnect is already true, but adb 37.0.1 prints that line AND exits 1, so `AdbClient`'s command runner threw on the exit code before the classifier ever saw the text, and `POST /api/devices/disconnect` still answered 500 `internal error` (finding 7.8, reopened by item 164's row 7.9). `AdbClient.disconnect` now hands adb's own output on when adb exits non-zero having printed something, as `pair` already treats the text and not the exit code as the signal (`src/server/AdbClient.ts`). A cleanup step that disconnects an address in either state gets 200 either way; a timeout, a missing binary or an exit with no output still fails as before.
 
