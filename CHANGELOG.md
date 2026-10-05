@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **A device card's direct connect link streams behind an HTTPS reverse proxy.** Clicking a card's connect link (rather than "config stream" → "connect") built `ws://<host>:80` when the page was served over HTTPS, so the browser refused the insecure WebSocket and nothing streamed. The link's hash carries only the device and the player, and the click handler passed that to the connect modal without the page's own host, port, scheme and path. It now takes them from the device tracker, as the configure dialog already did (`src/app/googDevice/client/DeviceTracker.ts`). Contributed by yegle in #836.
+
 ## [0.1.30-beta.169] - 2026-10-05
 
 ### Changed
