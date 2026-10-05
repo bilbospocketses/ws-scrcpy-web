@@ -1,10 +1,12 @@
 /**
  * Resolve an OS tool to its absolute path, scanning the canonical system
  * locations in priority order (POSIX: /usr/bin,/bin,/usr/sbin,/sbin; Windows:
- * %SystemRoot%\System32). Closes the PATH-hijack surface flagged by review #20
- * and required by the Local-Dependencies-Only rule: OS tools
- * (systemctl/pkexec/taskkill/icacls/ip/arp/route/…) are never invoked by bare
- * name, which would resolve via $PATH / %PATH%.
+ * %SystemRoot%\System32). Closes the PATH-hijack surface flagged by review #20:
+ * OS tools (systemctl/pkexec/taskkill/icacls/ip/arp/route/…) are never invoked
+ * by bare name first, which would resolve via $PATH / %PATH%, a list a caller or
+ * an attacker can change. (This once also cited a "Local-Dependencies-Only rule";
+ * that rule was retired on 2026-09-19, and the PATH-hijack argument stands on
+ * its own.)
  *
  * The last-resort fallback IS the bare name, and that is deliberate — but not
  * for the reason this comment used to give. It claimed the bare name "surfaces
@@ -30,8 +32,7 @@ const POSIX_SEARCH_DIRS = ['/usr/bin', '/bin', '/usr/sbin', '/sbin'] as const;
  * Windows OS tools (taskkill, icacls, arp, route, …) live under System32.
  *
  * The path is a LITERAL, not `%SystemRoot%`. Reading the env var was the older
- * shape here, and it is a forbidden resolution path under the same
- * Local-Dependencies-Only rule this function exists to serve: an env var is
+ * shape here, and it defeats the point of this function: an env var is
  * attacker- and caller-controlled in exactly the way `$PATH` is. The repo
  * already standardises on the literal elsewhere for the same reason —
  * `launcher/src/elevated_runner.rs` pins `C:\Windows\System32\cmd.exe` with the
