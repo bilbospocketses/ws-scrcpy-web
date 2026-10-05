@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **A graceful stop now closes the database, so its data is in `wsscrcpy.db` and not left in the `-wal` sidecar.** The stop took the `wsscrcpy.db.bak` snapshot and never closed the store, so in WAL mode every exit left `wsscrcpy.db` as a 4 KB header beside a ~119 KB `wsscrcpy.db-wal` (finding 10.21). Corruption over the main file alone was then masked by the WAL, and the recovery that restores the `.bak` (smoke row 10.17) never ran. The shared teardown now closes the store after the backup, as its last step, which makes SQLite checkpoint the WAL into the main file and delete it (`src/server/db/shutdownStore.ts`, `Db.close()`). It runs on every graceful stop: Ctrl+C or SIGTERM, Settings → stop server & exit, and the tray's Exit. The restart for an update (exit 75) does not run this teardown and is unchanged.
+
 ## [0.1.30-beta.172] - 2026-10-05
 
 ### Fixed

@@ -40,8 +40,21 @@ export class Db {
     }
 
     static _resetForTest(): void {
-        this.instance?.handle.close();
+        this.instance?.close();
         this.instance = undefined;
+    }
+
+    /**
+     * Close the store's connection. Idempotent: node:sqlite throws on a second
+     * close, and the graceful stop and a test reset can both reach here.
+     *
+     * This is the process's only connection to wsscrcpy.db, so closing it makes
+     * SQLite checkpoint the WAL into the main file and delete `-wal` (finding
+     * 10.21). The singleton is deliberately NOT cleared: anything that touched
+     * the store after this would otherwise re-open it, and a fresh WAL with it.
+     */
+    close(): void {
+        if (this.handle.isOpen) this.handle.close();
     }
 
     get sqlite(): DatabaseSync {
