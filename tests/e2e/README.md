@@ -224,8 +224,10 @@ so a leftover server or data root names the file it came from:
 | `devices-ui.spec.ts` | 8182, 8183 (its adb daemon), 8187 (never bound) | `ws-scrcpy-web-e2e-164d-*` | `lockedServer`, `fetchCounter` |
 | `local-https-fast.spec.ts` | 8191–8195 | `ws-scrcpy-web-e2e-164e-*` | `tlsFixtures`, `tlsPanel` |
 
-8140 is `container-user.spec.ts`'s and 8160, 8170, 8180, 8190 and 8196–8199 are
-free. `lockedServer` can give a server an **adb daemon of its own**
+8140 is `container-user.spec.ts`'s, and 8141–8150, 8160, 8170, 8180, 8190 and
+8196–8199 are free (8150, 8160, 8170, 8180 and 8190 are the shared-server ports the
+item 164 batches used through `WSSW_E2E_PORT` while writing these specs in parallel;
+nothing binds them in a normal run). `lockedServer` can give a server an **adb daemon of its own**
 (`ANDROID_ADB_SERVER_PORT`, mDNS off): a developer's daemon on 5037 auto-connects
 every paired device advertising on the LAN, so "no device connected" is only true
 on a daemon the spec owns. In locked mode `/api/dependencies` needs a signed-in
