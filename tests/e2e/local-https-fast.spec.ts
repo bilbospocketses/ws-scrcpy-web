@@ -4,26 +4,18 @@ import tls from 'node:tls';
 import { type APIRequestContext, type Browser, expect, type Locator, type Page, request, test } from '@playwright/test';
 import { dismissPromptsFor, mintToken } from './support/auth';
 import {
-    countOccurrences,
-    guardTlsWrites,
-    installFailingMkcert,
-    openLocalHttpsPanel,
-    plantCert,
-    readServerLog,
-    removeTlsServerRoot,
-    spawnTlsServer,
-    stubTlsState,
-    type TlsServerPaths,
-    tlsServerPaths,
-} from './support/batchE';
-import {
+    removePrivateRoot,
     type ServerHandle,
     seedPrivateDataRoot,
+    spawnServer,
     stopServer,
     waitForServer,
     withTimeout,
 } from './support/privateServer';
 import { selfSignedCert } from './support/selfSignedCert';
+import { countOccurrences, readServerLog } from './support/serverLog';
+import { installFailingMkcert, plantCert, type TlsServerPaths, tlsServerPaths } from './support/tlsFixtures';
+import { guardTlsWrites, openLocalHttpsPanel, stubTlsState } from './support/tlsPanel';
 
 /**
  * Smoke module 21 (Local HTTPS), the fast-tier halves of rows 21.6, 21.8, 21.9,
@@ -41,10 +33,11 @@ import { selfSignedCert } from './support/selfSignedCert';
  *     21.10, 21.11) and to check that each stubbed state is one the real
  *     server actually reports.
  *
- * On Windows the TLS home lives under LOCALAPPDATA, not under the data root,
- * so the private servers here are spawned with LOCALAPPDATA redirected into
- * their own root (support/batchE.ts). Without that, the 21.11 rows would
- * delete the developer's real CA.
+ * On Windows the TLS home lives under LOCALAPPDATA, not under the data root.
+ * Every private server is spawned with LOCALAPPDATA redirected into its own
+ * root (`spawnServer`, support/privateServer.ts), and the shared server into the
+ * suite's (playwright.config.ts). Without that, the 21.11 rows would delete the
+ * developer's real CA.
  */
 
 // ---------------------------------------------------------------------------
@@ -377,7 +370,7 @@ test.describe('local https fast tier: a spec-owned server (smoke §21)', () => {
         test.setTimeout(150_000);
         seedPrivateDataRoot(A, { httpsPort: HTTPS_PORT });
         installFailingMkcert(A);
-        handle = spawnTlsServer(A);
+        handle = spawnServer(A);
         await waitForServer(handle, A.baseURL);
         await seedPrivateUser(A.baseURL);
         api = await request.newContext({ baseURL: A.baseURL });
@@ -393,7 +386,7 @@ test.describe('local https fast tier: a spec-owned server (smoke §21)', () => {
                 console.warn(`21.x cleanup: ${String(err)}`);
             }
         }
-        removeTlsServerRoot(A);
+        removePrivateRoot(A);
     });
 
     test('21.8 against the real server, no certificate: the panel gates https only and redirect behind "generate a certificate first"', async ({
@@ -644,7 +637,7 @@ test('21.9 against a real bound listener: a new leaf under it reports restart-re
     const SECURE_PORT = 8195;
     seedPrivateDataRoot(B, { httpsPort: SECURE_PORT });
     const first = plantCert(B);
-    const handle = spawnTlsServer(B);
+    const handle = spawnServer(B);
     const api = await request.newContext({ baseURL: B.baseURL });
     try {
         await waitForServer(handle, B.baseURL);
@@ -698,7 +691,7 @@ test('21.9 against a real bound listener: a new leaf under it reports restart-re
         } catch (err) {
             console.warn(`21.9 cleanup: ${String(err)}`);
         }
-        removeTlsServerRoot(B);
+        removePrivateRoot(B);
     }
 });
 

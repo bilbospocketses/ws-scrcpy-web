@@ -8,17 +8,16 @@ import {
     test,
 } from '@playwright/test';
 import { type Credentials, dismissPromptsFor, expectAppShell, loginAs } from './support/auth';
+import { gotoHome } from './support/consent';
+import { countFetches, fetchCount } from './support/fetchCounter';
 import {
-    countFetches,
-    fetchCount,
     isolatedAdb,
     type LockedPrivateServer,
     PRIVATE_ADMIN,
     PRIVATE_USER,
     startLockedPrivateServer,
-    waitForInstalled,
-} from './support/batchD';
-import { gotoHome } from './support/consent';
+} from './support/lockedServer';
+import { waitForDependencies } from './support/privateServer';
 
 /**
  * Smoke rows 7.10, 7.11, 7.13 and 7.14 — the fast-tier halves, with no device.
@@ -312,7 +311,7 @@ test.describe('7.10, 7.11, 7.13 and 7.14 on a spec-owned server with its own adb
         const srv = live();
         const admin = await signedIn(browser, srv.paths.baseURL, PRIVATE_ADMIN);
         contexts.push(admin.context);
-        await waitForInstalled(admin.context.request, ['adb']);
+        await waitForDependencies(admin.context.request, 120_000, ['adb']);
 
         // Out of band, the server's own daemon: nothing attached.
         await expect
@@ -363,7 +362,7 @@ test.describe('7.10, 7.11, 7.13 and 7.14 on a spec-owned server with its own adb
         contexts.push(admin.context);
         const { page } = admin;
         // A scan before adb is on disk answers "adb daemon not ready" — true, but not this row.
-        await waitForInstalled(admin.context.request, ['adb']);
+        await waitForDependencies(admin.context.request, 120_000, ['adb']);
         // Out of band: the server's daemon sees nothing advertising.
         expect(isolatedAdb(srv, 'mdns', 'services').trim()).toBe('List of discovered mdns services');
 

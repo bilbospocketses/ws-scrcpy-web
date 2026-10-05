@@ -21,29 +21,26 @@ import {
     userByName,
     userRow,
 } from './support/auth';
+import { apiContext, lockDown, OwnedServer, REMOTE_ADMIN_ENV } from './support/ownedServer';
+import { withTimeout } from './support/privateServer';
+import { readServerLog } from './support/serverLog';
 import {
-    apiContext,
     backdateSession,
     expectSocketServed,
-    lockDown,
-    OwnedServer,
     openLiveSocket,
-    REMOTE_ADMIN_ENV,
     REVOKED,
-    readServerLog,
     readSession,
     sidOf,
     signedInVisitor,
     signIn,
     socketState,
-} from './support/batchB';
-import { withTimeout } from './support/privateServer';
+} from './support/sessions';
 
 /**
  * Smoke rows 12.8 and 18.16–18.22 — who may administer the server, and what
  * happens to a login's live surfaces when it ends. Fast tier only.
  *
- * Every row runs on a server this file owns (`support/batchB.ts`), one port per
+ * Every row runs on a server this file owns (`OwnedServer`, support/ownedServer.ts), one port per
  * test in 8161–8169, never on the shared server: these rows lock servers down,
  * stop them, rewrite their session clocks and flip their admin posture, and the
  * shared server must stay in open mode with its users untouched for every spec

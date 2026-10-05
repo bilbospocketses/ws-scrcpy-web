@@ -1,20 +1,22 @@
 import { type ChildProcess, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { expect, request, test } from '@playwright/test';
+import { type APIRequestContext, expect, request, test } from '@playwright/test';
 import { SEED_CONFIG } from './paths';
 
 /**
- * A spec-owned server for the one row that must restart one (18.12).
+ * Spec-owned servers: every row that stops, restarts, locks or otherwise
+ * changes a server the rest of the suite depends on.
  *
  * The fast tier's webServer is a bare `node dist/index.js` with no supervisor:
  * POST /api/dependencies/restart exits the process with code 75 and nothing
  * brings it back, so calling it on the shared 8123 server would end the suite.
- * 18.12 therefore spawns its own process on its own port and data root, kills
- * it the product's way, and spawns it again.
+ * Such a row spawns its own process on its own port and data root instead, and
+ * this module is the one way to do that, so every private server gets the same
+ * isolation.
  *
  * Kept apart from auth.ts so the child_process and node:sqlite imports stay out
  * of the other rows, which can then never reach the spawn API by accident.
@@ -31,6 +33,8 @@ export interface PrivateServerPaths {
     configPath: string;
     dbPath: string;
     restartMarkerPath: string;
+    /** Handed to the child as LOCALAPPDATA; see `spawnServer`. */
+    localAppData: string;
     port: number;
     baseURL: string;
 }
@@ -40,6 +44,11 @@ export interface PrivateServerPaths {
  * server resolves its root from DATA_ROOT when set, else PROGRAMDATA on Windows,
  * so both are set to name the same directory. The database and the restart
  * marker live beside config.json.
+ *
+ * LOCALAPPDATA sits beside the data root, not inside it: `resolveCertPaths`
+ * (src/server/tls/certPaths.ts) refuses a CA root that resolves under the data
+ * root, and the refusal would switch Local HTTPS off for every row. Under
+ * `programData` it is still wiped with the rest of the root.
  */
 export function privateServerPaths(name: string, port: number): PrivateServerPaths {
     const programData = path.join(tmpdir(), name);
@@ -50,6 +59,7 @@ export function privateServerPaths(name: string, port: number): PrivateServerPat
         configPath: path.join(dataRoot, 'config.json'),
         dbPath: path.join(dataRoot, 'wsscrcpy.db'),
         restartMarkerPath: path.join(dataRoot, '.restart'),
+        localAppData: path.join(programData, 'LocalAppData'),
         port,
         baseURL: `http://localhost:${port}`,
     };
@@ -81,26 +91,68 @@ export interface ServerHandle {
     output(): string;
 }
 
-/** The same env block the fast tier's webServer uses, pointed at the private root. */
-export function spawnServer(paths: PrivateServerPaths): ServerHandle {
+export interface SpawnOptions {
+    /**
+     * Extra environment for the child, applied after the isolation block. A key
+     * set to `undefined` is REMOVED from the child's environment, which is how a
+     * row starts without a variable the runner (or the block) would hand it.
+     */
+    env?: Record<string, string | undefined>;
+    /**
+     * `false` spawns with no `WS_SCRCPY_WEB_PORT`, not even an inherited one.
+     * The override forces the EXACT port and never walks forward, so a row about
+     * a busy port being auto-shifted (1.11, 1.12) has to start without it.
+     */
+    portOverride?: boolean;
+}
+
+/**
+ * Spawn `node dist/index.js` on a private root: the same env block the fast
+ * tier's webServer uses, pointed at that root.
+ */
+export function spawnServer(paths: PrivateServerPaths, options: SpawnOptions = {}): ServerHandle {
     // The config file lives at the repo root; `config.rootDir` is the test
     // directory, which is not where dist/ is.
     const configFile = test.info().config.configFile;
     const repoRoot = configFile ? path.dirname(configFile) : process.cwd();
     const distIndex = path.resolve(repoRoot, 'dist', 'index.js');
+    // Windows env names are case-insensitive, and an inherited `LocalAppData`
+    // beside our `LOCALAPPDATA` would leave which one the child sees to chance.
+    const env: Record<string, string | undefined> = Object.fromEntries(
+        Object.entries(process.env).filter(([key]) => key.toUpperCase() !== 'LOCALAPPDATA'),
+    );
+    Object.assign(env, {
+        PROGRAMDATA: paths.programData,
+        DATA_ROOT: paths.dataRoot,
+        // The log file and the dependencies folder are keyed on DEPS_PATH,
+        // not on DATA_ROOT (Logger.ts, Config.ts): without it a bare server
+        // logs to the repo root and, on Linux, hydrates into
+        // <repo>/dependencies. The launcher sets both; so does this.
+        DEPS_PATH: path.join(paths.dataRoot, 'dependencies'),
+        WS_SCRCPY_CONFIG: paths.configPath,
+        WS_SCRCPY_WEB_PORT: String(paths.port),
+        // On Windows the TLS home is `%LOCALAPPDATA%\WsScrcpyWeb-tls`, outside
+        // the data root (certPaths.ts). Inherited, every private server would
+        // read the developer's real certificate, bind a real HTTPS listener,
+        // and a generate would replace their real CA. Linux keeps the TLS home
+        // under the data root and never reads this.
+        LOCALAPPDATA: paths.localAppData,
+        // A hand-run server (no launcher) booting with firstRunComplete false
+        // opens the HOST's default browser on itself (src/server/index.ts,
+        // shouldAutoOpenBrowser): every first-run row put a real tab on the
+        // developer's desktop. The relaunch suppression is the product's own
+        // off switch. A row about the open attempt itself (1.14) removes it
+        // through `env`.
+        WS_SCRCPY_NO_BROWSER: '1',
+    });
+    if (options.portOverride === false) delete env['WS_SCRCPY_WEB_PORT'];
+    for (const [key, value] of Object.entries(options.env ?? {})) {
+        if (value === undefined) delete env[key];
+        else env[key] = value;
+    }
+    mkdirSync(paths.localAppData, { recursive: true });
     const child = spawn(process.execPath, [distIndex], {
-        env: {
-            ...process.env,
-            PROGRAMDATA: paths.programData,
-            DATA_ROOT: paths.dataRoot,
-            // The log file and the dependencies folder are keyed on DEPS_PATH,
-            // not on DATA_ROOT (Logger.ts, Config.ts): without it a bare server
-            // logs to the repo root and, on Linux, hydrates into
-            // <repo>/dependencies. The launcher sets both; so does this.
-            DEPS_PATH: path.join(paths.dataRoot, 'dependencies'),
-            WS_SCRCPY_CONFIG: paths.configPath,
-            WS_SCRCPY_WEB_PORT: String(paths.port),
-        },
+        env: env as NodeJS.ProcessEnv,
         stdio: ['ignore', 'pipe', 'pipe'],
     });
     const chunks: string[] = [];
@@ -110,6 +162,43 @@ export function spawnServer(paths: PrivateServerPaths): ServerHandle {
         child.once('exit', (code, signal) => resolve({ code, signal }));
     });
     return { child, exited, output: () => chunks.join('') };
+}
+
+/**
+ * Environment keys a developer's shell (or a CI step) could carry that would
+ * silently change what a row measures: the port, the scan tuning, the
+ * service/docker/launcher detection, the launcher's browser-open request, the
+ * remote-admin opt-out and the update feed.
+ *
+ * Not WS_SCRCPY_NO_BROWSER: `spawnServer` sets that itself, so clearing it
+ * here would put the real browser tabs back on the developer's desktop.
+ */
+const INHERITED_OVERRIDES = [
+    'PORT',
+    'SCAN_CONCURRENCY',
+    'SCAN_TCP_TIMEOUT_MS',
+    'SCAN_ADB_CONNECT_TIMEOUT_MS',
+    'SCAN_PROGRESS_INTERVAL',
+    'WS_SCRCPY_SERVICE',
+    'WS_SCRCPY_DOCKER',
+    'WS_SCRCPY_LAUNCHER',
+    'WS_SCRCPY_OPEN_BROWSER',
+    'WS_SCRCPY_ALLOW_REMOTE_ADMIN',
+    'VELOPACK_FEED_URL',
+] as const;
+
+/**
+ * `env` for `spawnServer`, with every inherited override removed unless `env`
+ * sets it on purpose. For rows whose subject IS one of these variables (12.9
+ * sets and clears `PORT` and `SCAN_CONCURRENCY` case by case), where a stray
+ * value from the runner would decide the result.
+ */
+export function withoutInheritedOverrides(
+    env: Record<string, string | undefined> = {},
+): Record<string, string | undefined> {
+    const cleared: Record<string, string | undefined> = {};
+    for (const key of INHERITED_OVERRIDES) cleared[key] = undefined;
+    return { ...cleared, ...env };
 }
 
 export async function withTimeout<T>(p: Promise<T>, ms: number, label: () => string): Promise<T> {
@@ -158,13 +247,6 @@ export async function waitForServer(handle: ServerHandle, baseURL: string, timeo
 }
 
 /**
- * Wait until the server's first-run install has landed every dependency.
- *
- * A fresh data root downloads adb, scrcpy-server and node-pty at boot; a row
- * that stops the server mid-download would find that abort in the log and
- * blame it on the stop. Rows that read the log wait for this first.
- */
-/**
  * The dependencies a fresh data root installs AT BOOT, and therefore the only
  * ones it makes sense to wait for.
  *
@@ -189,7 +271,18 @@ export const BOOT_INSTALLED_DEPENDENCIES = ['nodejs', 'adb', 'scrcpy-server'] as
 export const CONTAINER_BOOT_INSTALLED_DEPENDENCIES = ['adb', 'scrcpy-server'] as const;
 
 /**
- * Wait until every BOOT-INSTALLED dependency reports an installed version.
+ * Wait until every BOOT-INSTALLED dependency (or only `names`) reports an
+ * installed version.
+ *
+ * A fresh data root downloads them at boot; a row that stops the server
+ * mid-download would find that abort in the log and blame it on the stop, and
+ * a row that drives adb before it lands is answered by a server still fetching
+ * it. Such rows wait for this first.
+ *
+ * `target` is a base URL or a request context. A URL gets a fresh, sessionless
+ * context with the instance token minted, which answers in open mode only. In
+ * locked mode /api/dependencies needs a signed-in admin, so pass that admin's
+ * context; it is used as it is.
  *
  * **Budget it against the caller's `test.setTimeout`, not against nothing.**
  * This waits on a real first-run download (Node + ADB), so on a slow runner it
@@ -202,19 +295,22 @@ export const CONTAINER_BOOT_INSTALLED_DEPENDENCIES = ['adb', 'scrcpy-server'] as
  *
  * The default is deliberately lower than any current caller's test budget.
  */
-export async function waitForDependencies(baseURL: string, timeoutMs = 120_000): Promise<void> {
-    const ctx = await request.newContext({ baseURL });
+export async function waitForDependencies(
+    target: string | APIRequestContext,
+    timeoutMs = 120_000,
+    names: readonly string[] = BOOT_INSTALLED_DEPENDENCIES,
+): Promise<void> {
+    const owned = typeof target === 'string' ? await request.newContext({ baseURL: target }) : undefined;
+    const ctx = owned ?? (target as APIRequestContext);
     try {
-        expect((await ctx.get('/')).status(), 'document GET (mints the token)').toBe(200);
+        if (owned) expect((await owned.get('/')).status(), 'document GET (mints the token)').toBe(200);
         const deadline = Date.now() + timeoutMs;
         let last = '';
         while (Date.now() < deadline) {
             const res = await ctx.get('/api/dependencies');
             if (res.status() === 200) {
                 const deps = (await res.json()) as { name: string; installedVersion: string | null; status: string }[];
-                const required = deps.filter((d) =>
-                    (BOOT_INSTALLED_DEPENDENCIES as readonly string[]).includes(d.name),
-                );
+                const required = deps.filter((d) => names.includes(d.name));
                 // A filter is only as good as the names it matches: rename a
                 // dependency upstream and `required` silently becomes shorter,
                 // `every` over the remainder still returns true, and this
@@ -224,16 +320,18 @@ export async function waitForDependencies(baseURL: string, timeoutMs = 120_000):
                 // mysterious log-noise failure three rows later.
                 expect(
                     required.map((d) => d.name).sort(),
-                    'the boot-installed dependency names must all appear in /api/dependencies',
-                ).toEqual([...BOOT_INSTALLED_DEPENDENCIES].sort());
+                    'the awaited dependency names must all appear in /api/dependencies',
+                ).toEqual([...names].sort());
                 if (required.every((d) => d.installedVersion !== null)) return;
                 last = required.map((d) => `${d.name}=${d.installedVersion ?? d.status}`).join(', ');
+            } else {
+                last = `HTTP ${res.status()}`;
             }
             await new Promise((r) => setTimeout(r, 1_000));
         }
         throw new Error(`dependencies not installed within ${timeoutMs} ms: ${last}`);
     } finally {
-        await ctx.dispose();
+        await owned?.dispose();
     }
 }
 
@@ -242,6 +340,36 @@ export async function stopServer(handle: ServerHandle, timeoutMs = 15_000): Prom
     if (handle.child.exitCode !== null || handle.child.signalCode !== null) return;
     handle.child.kill();
     await withTimeout(handle.exited, timeoutMs, () => `waiting for the private server to exit:\n${handle.output()}`);
+}
+
+/** `stopServer` that never throws out of a `finally`: cleanup must not mask the test's own failure. */
+export async function stopQuietly(handle: ServerHandle | undefined, label: string): Promise<void> {
+    if (!handle) return;
+    try {
+        await stopServer(handle);
+    } catch (err) {
+        console.warn(`${label} cleanup: ${String(err)}`);
+    }
+}
+
+/**
+ * Remove a private root whole: the data root and the LOCALAPPDATA beside it.
+ * Retried because Windows can hold the database a beat after the process is
+ * gone. Throws if it still cannot; callers that must not throw catch it, and
+ * the next run's `seedPrivateDataRoot` wipes the directory regardless.
+ */
+export function removePrivateRoot(paths: PrivateServerPaths): void {
+    rmSync(paths.programData, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+}
+
+/** config.json as the server left it on disk. */
+export function readConfigFile(paths: PrivateServerPaths): Record<string, unknown> {
+    return JSON.parse(readConfigBytes(paths)) as Record<string, unknown>;
+}
+
+/** config.json's exact text, for rows that assert a file was not rewritten at all. */
+export function readConfigBytes(paths: PrivateServerPaths): string {
+    return readFileSync(paths.configPath, 'utf8');
 }
 
 /**

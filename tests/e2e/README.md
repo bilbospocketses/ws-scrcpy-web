@@ -70,14 +70,51 @@ against a **throwaway data root** under the OS temp directory:
 | `PROGRAMDATA` / `DATA_ROOT` | Redirects the whole data root, including `wsscrcpy.db` |
 | `WS_SCRCPY_CONFIG` | Points `config.json` at the throwaway root |
 | `WS_SCRCPY_WEB_PORT` | Binds 8123 instead of the configured port |
+| `LOCALAPPDATA` | Windows only: moves the TLS home into the throwaway root |
+| `WS_SCRCPY_NO_BROWSER=1` | Stops a first-run boot opening the host's browser |
+
+**`WS_SCRCPY_NO_BROWSER` keeps tabs off the developer's desktop.** A server started
+without the launcher that boots with `firstRunComplete: false` opens the host's
+default browser on itself (`shouldAutoOpenBrowser`, `src/server/index.ts`), and the
+first-run rows boot exactly that way: each run put real tabs on the desktop. The
+shared server and every `spawnServer` child set the product's own relaunch
+suppression. Row 1.14, whose subject is the open attempt, removes it through
+`spawnServer`'s `env` (`WS_SCRCPY_NO_BROWSER: undefined`), with `xdg-open` hidden so
+nothing can actually open.
 
 Isolating only the config file is not enough — per-user settings live in
 `<dataRoot>/wsscrcpy.db`, so the suite would otherwise read and write a developer's
 real database. And `reuseExistingServer` is off: a server already on this port is not
 necessarily ours, and attaching to someone else's would write to their config.
 
+**`LOCALAPPDATA` is there because the Windows TLS home is not under the data root.**
+It is `%LOCALAPPDATA%\WsScrcpyWeb-tls` (`src/server/tls/certPaths.ts`), so on a
+machine where Local HTTPS has been set up an inherited `LOCALAPPDATA` hands the
+suite's server the developer's real certificate, and it binds a real HTTPS listener
+beside 8123; a private server told to generate would replace their real CA. The
+shared server (`playwright.config.ts`) and every spec-owned one (`spawnServer`) get a
+`LocalAppData` folder of their own **beside** the data root, not inside it:
+`resolveCertPaths` refuses a CA root under the data root, and that refusal switches
+Local HTTPS off for the boot. Linux keeps the TLS home under the data root and never
+reads the variable.
+
 Because of that isolation you can run the suite while your normal instance is up on
 8000.
+
+**`WSSW_E2E_PORT` moves the shared server, for two runs on one machine.** Set, it
+replaces 8123 *and* gives the shared server a data root of its own
+(`ws-scrcpy-web-e2e-<port>` under the OS temp directory, `support/paths.ts`), so two
+runs neither bind the same port nor wipe each other's database. Unset, nothing
+changes. Two runs from one checkout also need an `--output` folder each, because
+Playwright empties its output folder as a run starts and would delete the other
+run's traces:
+
+```bash
+WSSW_E2E_PORT=8223 npx playwright test --output ../wssw-results-b settings-dialog.spec.ts
+```
+
+It moves only the shared server. The spec-owned servers keep the fixed ports listed
+below, so two parallel runs must never run the same spec file.
 
 ## Two ordering facts worth knowing before editing the config
 
@@ -151,10 +188,49 @@ The same pattern carries the server-surface, lifecycle and dependencies rows
 (smoke §10, §12, §9.4): anything that stops or restarts a server, reads a
 boot-time-only config key (`allowedHosts`), reads the server's own log file, or
 needs locked mode without touching the shared server's auth state runs on a
-spec-owned server from `support/privateServer.ts`, on ports 8126–8131, each with
-its own data root that is wiped and re-seeded per run. The log those rows read
-is `<dataRoot>/logs/ws-scrcpy-web.log`: the console echo is TTY-only, so a
-spawned child's captured stdout never carries it.
+spec-owned server from `support/privateServer.ts`, on ports 8126–8131 and
+8133–8139 (12.6's port blockers), each with its own data root that is wiped and
+re-seeded per run. The log those rows read is `<dataRoot>/logs/ws-scrcpy-web.log`
+(`support/serverLog.ts`): the console echo is TTY-only, so a spawned child's
+captured stdout never carries it.
+
+`spawnServer` is the one way to start such a server, so every one of them gets the
+same isolation block as the shared server. Its options cover what the rows vary:
+`env` adds variables, and a key set to `undefined` is *removed* from the child's
+environment (a runner that exports `WS_SCRCPY_ALLOW_REMOTE_ADMIN` would otherwise make
+every "local" assertion lie); `portOverride: false` drops `WS_SCRCPY_WEB_PORT`,
+because that override is exact and never walks forward, so a row about a busy port
+being auto-shifted cannot have it. Rows whose subject is an environment variable wrap
+their `env` in `withoutInheritedOverrides()`, which clears the port, scan, service and
+feed variables a developer's shell might carry.
+
+A port "held by another program" is `holdPort` (`support/ports.ts`), a wildcard bind
+like the app's own. It accepts and drops every connection: a walking server probes the
+busy port to ask whether a sibling instance holds it, and a blocker with no connection
+handler turns the probe's reset into an uncaught `read ECONNRESET` in the test
+process.
+
+The item-164 specs added these spec-owned servers. Each file keeps to its own range
+so a leftover server or data root names the file it came from:
+
+| Spec | Ports | Data roots | Helpers |
+|---|---|---|---|
+| `server-api.spec.ts` | 8151–8157 | `ws-scrcpy-web-e2e-164a-*` | `rawHttp`, `serverLog`, `ports` |
+| `config-overrides.spec.ts` | 8158–8159 | `ws-scrcpy-web-e2e-164a-*` | `rawHttp`, `serverLog`, `ports`, `tlsFixtures` |
+| `auth-admin.spec.ts` | 8161–8169 | `ws-scrcpy-web-e2e-164b-*` | `ownedServer` (`OwnedServer`), `sessions` |
+| `settings-dialog.spec.ts` | 8171–8175 | `ws-scrcpy-web-e2e-164c-*` | `ownedServer`, `settingsUi`, `pendingSettings` |
+| `first-run-and-reminders.spec.ts` | 8176–8179 | `ws-scrcpy-web-e2e-164c-*` | `ownedServer`, `settingsUi`, `ports` |
+| `embed-trust.spec.ts` | 8181, 8184 (its adb daemon), 8188–8189 (embedding pages) | `ws-scrcpy-web-e2e-164d-*` | `lockedServer`, `rawHttp` (`serveHtml`) |
+| `devices-ui.spec.ts` | 8182, 8183 (its adb daemon), 8187 (never bound) | `ws-scrcpy-web-e2e-164d-*` | `lockedServer`, `fetchCounter` |
+| `local-https-fast.spec.ts` | 8191–8195 | `ws-scrcpy-web-e2e-164e-*` | `tlsFixtures`, `tlsPanel` |
+
+8140 is `container-user.spec.ts`'s and 8160, 8170, 8180, 8190 and 8196–8199 are
+free. `lockedServer` can give a server an **adb daemon of its own**
+(`ANDROID_ADB_SERVER_PORT`, mDNS off): a developer's daemon on 5037 auto-connects
+every paired device advertising on the LAN, so "no device connected" is only true
+on a daemon the spec owns. In locked mode `/api/dependencies` needs a signed-in
+admin, so those rows pass the admin's request context to `waitForDependencies`
+instead of a base URL.
 
 **`@docker-host`.** Eight rows — 1.9's offline stack, 9.5's no-node-pty image, the three
 container-lifecycle rows (20.6, 20.11, 20.12), the published-image row (20.8), the
@@ -191,6 +267,26 @@ stderr on its own stderr, so a stdout-only read comes back empty for an entrypoi
 Both resolve `docker` from the shell, as `playwright.docker.config.ts`'s
 `docker compose up --wait` already does: the daemon is the tier's execution
 environment, not an app dependency.
+
+## A known product bug is `test.fail`, never a weakened assertion
+
+When a row finds that the product is wrong, the row keeps asserting what the smoke
+test says should happen and is marked expected-to-fail:
+
+```ts
+// PRODUCT FINDING (item 164, batch A, 2026-10-05): this answers 500 … Marked
+// expected-to-fail so the suite stays green and flips red the day it is fixed.
+test.fail(true, 'finding 7.8 regressed or never held against real adb: the route answers 500');
+```
+
+The comment above the line says it is a product finding and not a test defect,
+names the finding (the smoke row, or the register finding's id), and traces the
+cause to the file and line that produce it. The `test.fail` description names the
+finding again, so the list reporter's output carries it. Playwright reports such a
+row as passing while it fails; the day the bug is fixed it fails with "expected to
+fail, but passed", which is the cue to delete the line, never to loosen the row. Three
+rows carry one today: 12.8 b and 18.17's open-mode logout in `auth-admin.spec.ts`,
+and 7.9's disconnect of a never-connected address in `server-api.spec.ts`.
 
 ## The suite as an artefact: the bundle and the manifest
 

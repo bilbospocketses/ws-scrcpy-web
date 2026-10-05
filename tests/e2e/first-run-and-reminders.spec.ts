@@ -3,20 +3,24 @@ import type { APIRequestContext, Browser, BrowserContext, Page } from '@playwrig
 import { expect, test } from '@playwright/test';
 import {
     apiContext,
-    DATA_ROOT_PREFIX,
     disposePrivateServer,
     freshPage,
-    holdPort,
-    PROMPT_FLAGS,
+    PRIVATE_ROOT_PREFIX,
     type PrivateServer,
-    readConfigFile,
-    recordApiWrites,
-    releasePort,
-    removeDataRoot,
-    spawnServerWithoutPortOverride,
     startPrivateServer,
-} from './support/batchC';
-import { privateServerPaths, seedPrivateDataRoot, stopServer, waitForServer } from './support/privateServer';
+} from './support/ownedServer';
+import { holdPort, releasePort } from './support/ports';
+import {
+    privateServerPaths,
+    readConfigFile,
+    removePrivateRoot,
+    type ServerHandle,
+    seedPrivateDataRoot,
+    spawnServer,
+    stopServer,
+    waitForServer,
+} from './support/privateServer';
+import { PROMPT_FLAGS, recordApiWrites } from './support/settingsUi';
 
 /**
  * Item 164, batch C: the welcome modal (smoke 1.11) and the reminder cards'
@@ -205,14 +209,14 @@ test.describe('first run: the welcome modal with the port shifted (smoke 1.11 / 
         test.setTimeout(180_000);
         // Configured for 8177, which another program holds: the server walks to
         // 8178. No WS_SCRCPY_WEB_PORT — that override is exact and never walks.
-        const paths = privateServerPaths(`${DATA_ROOT_PREFIX}welcome-shift`, 8177);
+        const paths = privateServerPaths(`${PRIVATE_ROOT_PREFIX}welcome-shift`, 8177);
         seedPrivateDataRoot(paths, { firstRunComplete: false });
         let blocker: net.Server | undefined;
-        let handle: ReturnType<typeof spawnServerWithoutPortOverride> | undefined;
+        let handle: ServerHandle | undefined;
         let context: BrowserContext | undefined;
         try {
             blocker = await holdPort(8177);
-            handle = spawnServerWithoutPortOverride(paths);
+            handle = spawnServer(paths, { portOverride: false });
             const bound = 'http://localhost:8178';
             await waitForServer(handle, bound);
 
@@ -238,7 +242,7 @@ test.describe('first run: the welcome modal with the port shifted (smoke 1.11 / 
             await context?.close();
             if (handle) await stopServer(handle);
             await releasePort(blocker);
-            removeDataRoot(paths);
+            removePrivateRoot(paths);
         }
     });
 });

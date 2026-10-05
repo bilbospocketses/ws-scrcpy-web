@@ -1,32 +1,26 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import https from 'node:https';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { expect, test } from '@playwright/test';
-import {
-    countOccurrences,
-    holdPort,
-    isListening,
-    json,
-    NOTHING_SERVES,
-    placeCertificate,
-    raw,
-    readLog,
-    release,
-    spawnServerWith,
-    stopQuietly,
-    tokenCookieFor,
-} from './support/batchA';
 import { SEED_CONFIG } from './support/paths';
+import { holdPort, isListening, releasePort } from './support/ports';
 import {
     type PrivateServerPaths,
     privateServerPaths,
+    readConfigFile,
     type ServerHandle,
     seedPrivateDataRoot,
+    spawnServer,
+    stopQuietly,
     waitForDependencies,
     waitForServer,
+    withoutInheritedOverrides,
     withTimeout,
 } from './support/privateServer';
+import { json, raw, tokenCookieFor } from './support/rawHttp';
+import { countOccurrences, NOTHING_SERVES, readServerLog } from './support/serverLog';
+import { placeCertificate } from './support/tlsFixtures';
 
 /**
  * Item 164, batch A: rows 10.14 (a hand-edited config.json is validated) and
@@ -68,13 +62,9 @@ function writeConfig(paths: PrivateServerPaths, extra: Record<string, unknown>):
     writeFileSync(paths.configPath, JSON.stringify({ ...SEED_CONFIG, webPort: paths.port, ...extra }, null, 4), 'utf8');
 }
 
-function configFile(paths: PrivateServerPaths): Record<string, unknown> {
-    return JSON.parse(readFileSync(paths.configPath, 'utf8')) as Record<string, unknown>;
-}
-
 /** The WARN lines the config loader wrote about one key. */
 function configWarnings(paths: PrivateServerPaths, key: string): string[] {
-    return readLog(paths)
+    return readServerLog(paths)
         .split(/\r?\n/)
         .filter((l) => l.includes('[Config] WARN') && l.includes(`config.json: ${key}`));
 }
@@ -98,7 +88,7 @@ async function withServer(
     servedOn: number,
     body: (handle: ServerHandle) => Promise<void>,
 ): Promise<void> {
-    const handle = spawnServerWith(paths, env);
+    const handle = spawnServer(paths, { env: withoutInheritedOverrides(env) });
     try {
         await waitForServer(handle, `http://localhost:${servedOn}`);
         await body(handle);
@@ -150,7 +140,7 @@ test.describe('config.json validation and overrides (smoke 10.14, 12.9)', () => 
         // No certificate: there is no HTTPS listener to drop, so nothing is said.
         seedPrivateDataRoot(paths, { httpsPort: CONFIG_PORT });
         await withServer(paths, {}, paths.port, async () => {
-            expect(readLog(paths)).not.toContain('collides with the http port');
+            expect(readServerLog(paths)).not.toContain('collides with the http port');
             const state = await tlsState(paths.port);
             expect(state.httpsPort).toBe(CONFIG_PORT);
             expect(state.httpsListener.bound).toBe(false);
@@ -169,7 +159,7 @@ test.describe('config.json validation and overrides (smoke 10.14, 12.9)', () => 
         seedPrivateDataRoot(paths, { httpsPort: CONFIG_PORT });
         placeCertificate(paths);
         await withServer(paths, {}, paths.port, async () => {
-            expect(countOccurrences(readLog(paths), HTTPS_COLLISION(CONFIG_PORT))).toBe(1);
+            expect(countOccurrences(readServerLog(paths), HTTPS_COLLISION(CONFIG_PORT))).toBe(1);
             expect((await tlsState(paths.port)).httpsListener).toEqual({ bound: false, reason: 'port-collision' });
             expect((await envelope(paths.port)).runtime.webPort).toBe(CONFIG_PORT);
         });
@@ -189,7 +179,7 @@ test.describe('config.json validation and overrides (smoke 10.14, 12.9)', () => 
         const paths = privateServerPaths('ws-scrcpy-web-e2e-164a-scan-clamp', CONFIG_PORT);
         seedPrivateDataRoot(paths, { scanConcurrency: 100000 });
         await withServer(paths, {}, paths.port, async () => {
-            expect(readLog(paths)).toContain(
+            expect(readServerLog(paths)).toContain(
                 '[Config] WARN scanConcurrency 100000 exceeds the file-descriptor budget; using 512',
             );
         });
@@ -205,9 +195,9 @@ test.describe('config.json validation and overrides (smoke 10.14, 12.9)', () => 
         const FILE = 700003;
         const clampLine = (n: number) => `scanConcurrency ${n} exceeds the file-descriptor budget`;
         const boot = async (env: Record<string, string | undefined>, expectWinner: number | null) => {
-            const before = readLog(paths).length;
+            const before = readServerLog(paths).length;
             await withServer(paths, env, paths.port, async () => {
-                const lines = readLog(paths).slice(before);
+                const lines = readServerLog(paths).slice(before);
                 for (const n of [ENV, STORE, FILE]) {
                     if (n === expectWinner) expect(lines).toContain(clampLine(n));
                     else expect(lines).not.toContain(clampLine(n));
@@ -238,7 +228,7 @@ test.describe('config.json validation and overrides (smoke 10.14, 12.9)', () => 
         }
 
         // All three set at once: the environment wins; without it, the store.
-        expect(configFile(paths)['scanConcurrency'], 'the file still carries its value').toBe(FILE);
+        expect(readConfigFile(paths)['scanConcurrency'], 'the file still carries its value').toBe(FILE);
         await boot({ SCAN_CONCURRENCY: String(ENV) }, ENV);
         await boot({}, STORE);
 
@@ -271,7 +261,7 @@ test.describe('config.json validation and overrides (smoke 10.14, 12.9)', () => 
             expect(save.status, save.body).toBe(200);
         });
         writeConfig(paths, { updateCheckIntervalMinutes: 120 });
-        expect(configFile(paths)['updateCheckIntervalMinutes']).toBe(120);
+        expect(readConfigFile(paths)['updateCheckIntervalMinutes']).toBe(120);
         await withServer(paths, {}, paths.port, async () => {
             expect((await envelope(paths.port)).config.updateCheckIntervalMinutes).toBe(360);
         });
@@ -284,12 +274,12 @@ test.describe('config.json validation and overrides (smoke 10.14, 12.9)', () => 
         const custom = path.join(paths.programData, 'custom-adb', exe);
         seedPrivateDataRoot(paths, { adbPath: custom });
         await withServer(paths, {}, paths.port, async () => {
-            expect(readLog(paths)).toContain(`[Config] adbPath=${custom} (source=config)`);
+            expect(readServerLog(paths)).toContain(`[Config] adbPath=${custom} (source=config)`);
         });
         seedPrivateDataRoot(paths);
         await withServer(paths, {}, paths.port, async () => {
             const bundled = path.join(paths.dataRoot, 'dependencies', 'adb', exe);
-            expect(readLog(paths)).toContain(`[Config] adbPath=${bundled} (source=bundled)`);
+            expect(readServerLog(paths)).toContain(`[Config] adbPath=${bundled} (source=bundled)`);
         });
     });
 
@@ -317,7 +307,7 @@ test.describe('config.json validation and overrides (smoke 10.14, 12.9)', () => 
             expect(existsSync(path.join(fromFile, 'adb', exe)), `adb under dependenciesPath ${fromFile}`).toBe(true);
             // dependenciesPath has no log line of its own (the row's point): only
             // where the files land says it was read.
-            expect(readLog(paths)).not.toMatch(/dependenciesPath=/);
+            expect(readServerLog(paths)).not.toMatch(/dependenciesPath=/);
         });
     });
 
@@ -358,14 +348,14 @@ test.describe('config.json validation and overrides (smoke 10.14, 12.9)', () => 
         test.setTimeout(120_000);
         const paths = privateServerPaths('ws-scrcpy-web-e2e-164a-override-free', CONFIG_PORT);
         seedPrivateDataRoot(paths);
-        expect(configFile(paths)['webPort']).toBe(CONFIG_PORT);
+        expect(readConfigFile(paths)['webPort']).toBe(CONFIG_PORT);
         await withServer(paths, { WS_SCRCPY_WEB_PORT: String(OTHER_PORT) }, OTHER_PORT, async () => {
             expect(await isListening(CONFIG_PORT), `nothing on config.json's ${CONFIG_PORT}`).toBe(false);
             const env = await envelope(OTHER_PORT);
             expect(env.runtime.webPort).toBe(OTHER_PORT);
             expect(env.config.webPort).toBe(OTHER_PORT);
             expect(env.runtime.portWasAutoShifted).toBe(false);
-            expect(configFile(paths)['webPort']).toBe(OTHER_PORT);
+            expect(readConfigFile(paths)['webPort']).toBe(OTHER_PORT);
             // The browser URL the page shows is the override's.
             const context = await browser.newContext({ baseURL: `http://localhost:${OTHER_PORT}` });
             try {
@@ -383,7 +373,9 @@ test.describe('config.json validation and overrides (smoke 10.14, 12.9)', () => 
         const paths = privateServerPaths('ws-scrcpy-web-e2e-164a-override-busy', CONFIG_PORT);
         seedPrivateDataRoot(paths);
         const blocker = await holdPort(OTHER_PORT);
-        const handle = spawnServerWith(paths, { WS_SCRCPY_WEB_PORT: String(OTHER_PORT) });
+        const handle = spawnServer(paths, {
+            env: withoutInheritedOverrides({ WS_SCRCPY_WEB_PORT: String(OTHER_PORT) }),
+        });
         // Watch config.json's port for the whole life of the process: it must
         // never serve there instead.
         let configPortServed = false;
@@ -398,18 +390,18 @@ test.describe('config.json validation and overrides (smoke 10.14, 12.9)', () => 
             const exit = await withTimeout(handle.exited, 120_000, () => `waiting for the exit:\n${handle.output()}`);
             expect(exit.code, handle.output()).not.toBe(0);
             expect(exit.code).toBe(1);
-            const log = readLog(paths);
+            const log = readServerLog(paths);
             expect(log).toContain(
                 `WS_SCRCPY_WEB_PORT ${OTHER_PORT} is busy; not walking forward (the override is exact)`,
             );
             expect(log).toContain(`HTTP listener on port ${OTHER_PORT} failed to bind (EADDRINUSE)`);
             expect(log).toContain(NOTHING_SERVES);
-            expect(configFile(paths)['webPort'], 'a busy override is never persisted').toBe(CONFIG_PORT);
+            expect(readConfigFile(paths)['webPort'], 'a busy override is never persisted').toBe(CONFIG_PORT);
         } finally {
             watching = false;
             await watcher;
             await stopQuietly(handle, '12.9 busy override');
-            await release(blocker);
+            await releasePort(blocker);
         }
         expect(configPortServed, `config.json's port ${CONFIG_PORT} was never served`).toBe(false);
     });
@@ -420,7 +412,7 @@ test.describe('config.json validation and overrides (smoke 10.14, 12.9)', () => 
         seedPrivateDataRoot(paths, { httpsPort: OTHER_PORT });
         placeCertificate(paths);
         await withServer(paths, { WS_SCRCPY_WEB_PORT: String(OTHER_PORT) }, OTHER_PORT, async () => {
-            expect(countOccurrences(readLog(paths), HTTPS_COLLISION(OTHER_PORT))).toBe(1);
+            expect(countOccurrences(readServerLog(paths), HTTPS_COLLISION(OTHER_PORT))).toBe(1);
             // Plain HTTP answers on the HTTPS port (waitForServer already got a 200 there).
             const env = await envelope(OTHER_PORT);
             expect(env.runtime.webPort).toBe(OTHER_PORT);

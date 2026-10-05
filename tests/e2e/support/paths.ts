@@ -32,6 +32,16 @@ export const E2E_DATA_ROOT = path.join(E2E_PROGRAM_DATA, 'WsScrcpyWeb');
 export const E2E_CONFIG_PATH = path.join(E2E_DATA_ROOT, 'config.json');
 
 /**
+ * The shared server's LOCALAPPDATA. On Windows the TLS home is
+ * `%LOCALAPPDATA%\WsScrcpyWeb-tls`, outside the data root
+ * (src/server/tls/certPaths.ts), so an inherited LOCALAPPDATA would hand the
+ * suite's server a developer's real Local HTTPS certificate and a real HTTPS
+ * listener. Beside the data root rather than inside it: `resolveCertPaths`
+ * refuses a CA root under the data root, which would turn Local HTTPS off.
+ */
+export const E2E_LOCAL_APP_DATA = path.join(E2E_PROGRAM_DATA, 'LocalAppData');
+
+/**
  * The per-user store the server opens beside config.json. Name mirrors
  * DB_FILENAME in `src/server/db/constants.ts`; copied rather than imported to
  * keep server modules out of the test process.

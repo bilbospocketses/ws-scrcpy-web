@@ -5,27 +5,26 @@ import {
     apiContext,
     dismissPrivatePrompts,
     disposePrivateServer,
-    footerSave,
     freshPage,
-    INSTALLED_VERSION,
     type PrivateServer,
-    plantPendingBatch,
-    readConfigBytes,
-    readConfigFile,
-    readServerLog,
-    recordApiWrites,
     restartOnPort,
+    startPrivateServer,
+} from './support/ownedServer';
+import { plantPendingBatch, walRows } from './support/pendingSettings';
+import { readConfigBytes, readConfigFile, withTimeout } from './support/privateServer';
+import { readServerLog } from './support/serverLog';
+import {
+    footerSave,
+    INSTALLED_VERSION,
+    recordApiWrites,
     reviewDialog,
     reviewLines,
     serverUpdatesState,
-    startPrivateServer,
     stubInstalledUpdates,
     typeAndLeave,
     type UpdatesState,
     unsavedDialog,
-    walRows,
-} from './support/batchC';
-import { withTimeout } from './support/privateServer';
+} from './support/settingsUi';
 
 /**
  * Item 164, batch C: the Settings dialog's staged save (smoke 13.4-13.9), the

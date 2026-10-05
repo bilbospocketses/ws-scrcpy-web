@@ -3,35 +3,30 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { expect, request, test } from '@playwright/test';
 import { e2eBaseUrl, mintToken, SID_SET_COOKIE_RE, TOKEN_SET_COOKIE_RE } from './support/auth';
-import {
-    cookiePair,
-    countOccurrences,
-    holdPort,
-    isListening,
-    json,
-    LOG_REL,
-    lanAddress,
-    logOffset,
-    logSince,
-    type RawResponse,
-    raw,
-    readLog,
-    release,
-    setCookieNamed,
-    spawnServerWith,
-    stopQuietly,
-    TOKEN_REFUSAL,
-    tokenCookieFor,
-    wsHandshake,
-} from './support/batchA';
+import { holdPort, isListening, releasePort } from './support/ports';
 import {
     privateServerPaths,
     type ServerHandle,
     seedPrivateDataRoot,
+    spawnServer,
+    stopQuietly,
     waitForDependencies,
     waitForServer,
+    withoutInheritedOverrides,
     withTimeout,
 } from './support/privateServer';
+import {
+    cookiePair,
+    json,
+    lanAddress,
+    type RawResponse,
+    raw,
+    setCookieNamed,
+    TOKEN_REFUSAL,
+    tokenCookieFor,
+    wsHandshake,
+} from './support/rawHttp';
+import { countOccurrences, LOG_REL, logOffset, logSince, readServerLog } from './support/serverLog';
 
 /**
  * Item 164, batch A: the server and API surface rows the coverage register
@@ -82,7 +77,7 @@ test.describe('server and API surface (item 164, batch A)', () => {
         // override is exact and never walks forward (12.6 / 12.9), so with it set
         // this row would test the opposite rule.
         const blocker = await holdPort(configured);
-        const handle = spawnServerWith(paths, { WS_SCRCPY_WEB_PORT: undefined });
+        const handle = spawnServer(paths, { env: withoutInheritedOverrides(), portOverride: false });
         const shiftedURL = `http://localhost:${next}`;
         try {
             await waitForServer(handle, shiftedURL);
@@ -109,7 +104,7 @@ test.describe('server and API surface (item 164, batch A)', () => {
 
             // Logged in the row's words.
             await expect
-                .poll(() => readLog(paths), { message: 'the auto-shift line' })
+                .poll(() => readServerLog(paths), { message: 'the auto-shift line' })
                 .toContain(`webPort ${configured} busy; auto-shifted to ${next}`);
 
             // The page's own URL shows the new port, and nothing on the page
@@ -133,7 +128,7 @@ test.describe('server and API surface (item 164, batch A)', () => {
             }
         } finally {
             await stopQuietly(handle, '1.12');
-            await release(blocker);
+            await releasePort(blocker);
         }
     });
 
@@ -176,17 +171,22 @@ test.describe('server and API surface (item 164, batch A)', () => {
             .filter((dir) => dir.length > 0 && !existsSync(path.join(dir, 'xdg-open')))
             .join(path.delimiter);
 
-        const handle = spawnServerWith(paths, {
-            NODE_OPTIONS: `--require ${preload}`,
-            PATH: pathWithoutXdgOpen,
+        const handle = spawnServer(paths, {
+            env: withoutInheritedOverrides({
+                NODE_OPTIONS: `--require ${preload}`,
+                PATH: pathWithoutXdgOpen,
+                // The open ATTEMPT is this row's subject, so the harness's
+                // suppression comes off; with xdg-open hidden, no tab can open.
+                WS_SCRCPY_NO_BROWSER: undefined,
+            }),
         });
         try {
             await waitForServer(handle, paths.baseURL);
             const failure = `browser open failed for http://localhost:${paths.port} (best-effort):`;
             await expect
-                .poll(() => readLog(paths), { message: 'the failed browser open is logged', timeout: 30_000 })
+                .poll(() => readServerLog(paths), { message: 'the failed browser open is logged', timeout: 30_000 })
                 .toContain(failure);
-            const line = readLog(paths)
+            const line = readServerLog(paths)
                 .split(/\r?\n/)
                 .find((l) => l.includes(failure));
             expect(line, 'the failure names the missing opener').toMatch(/ENOENT/);
@@ -202,7 +202,7 @@ test.describe('server and API surface (item 164, batch A)', () => {
             } finally {
                 await ctx.dispose();
             }
-            expect(readLog(paths)).not.toMatch(/Uncaught exception|Unhandled rejection/);
+            expect(readServerLog(paths)).not.toMatch(/Uncaught exception|Unhandled rejection/);
             expect(handle.child.exitCode, handle.output()).toBeNull();
         } finally {
             await stopQuietly(handle, '1.14');
@@ -383,7 +383,7 @@ test.describe('server and API surface (item 164, batch A)', () => {
         seedPrivateDataRoot(paths);
         const port = paths.port;
         const host = `localhost:${port}`;
-        const handle = spawnServerWith(paths);
+        const handle = spawnServer(paths, { env: withoutInheritedOverrides() });
         try {
             await waitForServer(handle, paths.baseURL);
             const cookie = await tokenCookieFor(port);
@@ -425,7 +425,7 @@ test.describe('server and API surface (item 164, batch A)', () => {
                 101,
             );
             await expect
-                .poll(() => readLog(paths), { message: 'the WS refusal is logged' })
+                .poll(() => readServerLog(paths), { message: 'the WS refusal is logged' })
                 .toContain(
                     `rejected WS connection (origin="http://evil.test" host="${host}"): cross-origin request rejected`,
                 );
@@ -538,7 +538,7 @@ test.describe('server and API surface (item 164, batch A)', () => {
             );
             const exit = await withTimeout(handle.exited, 60_000, () => `waiting for the stop:\n${handle.output()}`);
             expect(exit.code).toBe(0);
-            expect(readLog(paths)).toContain('shutdown requested via /api/server/shutdown');
+            expect(readServerLog(paths)).toContain('shutdown requested via /api/server/shutdown');
         } finally {
             await stopQuietly(handle, '10.12');
         }
@@ -554,7 +554,7 @@ test.describe('server and API surface (item 164, batch A)', () => {
         const admin = { username: 'e2e-164a-admin', password: 'e2e-164a-admin-pw' };
         const https = { 'x-forwarded-proto': 'https' };
         const WARN = 'frameAncestors is configured but this request is not https';
-        const handle = spawnServerWith(paths);
+        const handle = spawnServer(paths, { env: withoutInheritedOverrides() });
         try {
             await waitForServer(handle, paths.baseURL);
             const token = await tokenCookieFor(port);
@@ -607,7 +607,7 @@ test.describe('server and API surface (item 164, batch A)', () => {
             c = await cookies(https);
             expect(c.token).toMatch(TOKEN_HTTPS_RE);
             expect(c.sid).toMatch(SID_HTTPS_RE);
-            expect(readLog(paths), 'no framing warning while nothing is allowed to frame').not.toContain(WARN);
+            expect(readServerLog(paths), 'no framing warning while nothing is allowed to frame').not.toContain(WARN);
 
             // Approve an embedder the product's way (10.10): the app asks from this
             // machine, an admin approves.
@@ -650,8 +650,10 @@ test.describe('server and API surface (item 164, batch A)', () => {
             expect(c.sid).toMatch(SID_SET_COOKIE_RE);
             c = await cookies({});
             expect(c.token).toMatch(TOKEN_SET_COOKIE_RE);
-            await expect.poll(() => countOccurrences(readLog(paths), WARN), { message: 'the framing WARN' }).toBe(1);
-            expect(readLog(paths)).toMatch(new RegExp(`WARN ${WARN}`));
+            await expect
+                .poll(() => countOccurrences(readServerLog(paths), WARN), { message: 'the framing WARN' })
+                .toBe(1);
+            expect(readServerLog(paths)).toMatch(new RegExp(`WARN ${WARN}`));
 
             // Revoke: back to site-scoped, even over https.
             expectJson(
@@ -669,7 +671,7 @@ test.describe('server and API surface (item 164, batch A)', () => {
             c = await cookies(https);
             expect(c.token).toMatch(TOKEN_HTTPS_RE);
             expect(c.sid).toMatch(SID_HTTPS_RE);
-            expect(countOccurrences(readLog(paths), WARN)).toBe(1);
+            expect(countOccurrences(readServerLog(paths), WARN)).toBe(1);
         } finally {
             await stopQuietly(handle, '10.13');
         }
@@ -684,7 +686,7 @@ test.describe('server and API surface (item 164, batch A)', () => {
         // An embedder approved in config.json, so loopback https WOULD relax the cookie.
         seedPrivateDataRoot(paths, { frameAncestors: [embedder] });
         const port = paths.port;
-        const handle = spawnServerWith(paths);
+        const handle = spawnServer(paths, { env: withoutInheritedOverrides() });
         try {
             await waitForServer(handle, paths.baseURL);
             const https = { 'x-forwarded-proto': 'https' };
@@ -752,7 +754,7 @@ test.describe('server and API surface (item 164, batch A)', () => {
         const corruptMovedAside = () => readdirSync(paths.dataRoot).filter((f) => /^wsscrcpy\.db\.corrupt-/.test(f));
 
         try {
-            handle = spawnServerWith(paths);
+            handle = spawnServer(paths, { env: withoutInheritedOverrides() });
             await waitForServer(handle, paths.baseURL);
             const token = await tokenCookieFor(port);
             expectJson(
@@ -797,7 +799,7 @@ test.describe('server and API surface (item 164, batch A)', () => {
             // Case 1: corrupt, with the backup present.
             corrupt();
             const offset1 = logOffset(paths);
-            handle = spawnServerWith(paths);
+            handle = spawnServer(paths, { env: withoutInheritedOverrides() });
             await waitForServer(handle, paths.baseURL);
             const boot1 = logSince(paths, offset1);
             expect(boot1).toContain('restored wsscrcpy.db from wsscrcpy.db.bak');
@@ -821,7 +823,7 @@ test.describe('server and API surface (item 164, batch A)', () => {
             corrupt();
             const before = corruptMovedAside().length;
             const offset2 = logOffset(paths);
-            handle = spawnServerWith(paths);
+            handle = spawnServer(paths, { env: withoutInheritedOverrides() });
             await waitForServer(handle, paths.baseURL);
             const boot2 = logSince(paths, offset2);
             expect(boot2).toContain('wsscrcpy.db unusable');
@@ -864,7 +866,7 @@ test.describe('server and API surface (item 164, batch A)', () => {
         const oldSize = statSync(live).size;
         expect(oldSize).toBeGreaterThan(MAX);
 
-        const handle = spawnServerWith(paths);
+        const handle = spawnServer(paths, { env: withoutInheritedOverrides() });
         try {
             await waitForServer(handle, paths.baseURL);
             // The old file became the single backup, whole.

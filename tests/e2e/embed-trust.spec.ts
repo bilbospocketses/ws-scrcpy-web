@@ -1,17 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { type APIRequestContext, request as apiRequest, expect, type Frame, type Page, test } from '@playwright/test';
 import { e2eBaseUrl, expectLoginHtml, loginAs, me, mintToken } from './support/auth';
-import {
-    countFetches,
-    fetchCount,
-    nonLoopbackIPv4,
-    PRIVATE_ADMIN,
-    PRIVATE_USER,
-    resetSharedEmbedState,
-    serveHtml,
-    startLockedPrivateServer,
-} from './support/batchD';
-import { askToEmbed, gotoHome, waitForPrompt } from './support/consent';
+import { askToEmbed, gotoHome, resetSharedEmbedState, waitForPrompt } from './support/consent';
+import { countFetches, fetchCount } from './support/fetchCounter';
+import { PRIVATE_ADMIN, PRIVATE_USER, startLockedPrivateServer } from './support/lockedServer';
+import { lanAddress, serveHtml } from './support/rawHttp';
 
 /**
  * Smoke rows 10.15 (the consent flow's trust edges), 10.16 (theme messages from
@@ -161,7 +154,7 @@ test.describe('10.15 embed consent: the trust edges', () => {
     test('10.15 a request from another machine is refused, while the same request from this machine is accepted', async ({
         request,
     }) => {
-        const ip = nonLoopbackIPv4();
+        const ip = lanAddress();
         expect(
             ip,
             'this host needs a non-loopback IPv4 address to stand in for another machine (none found in os.networkInterfaces())',
