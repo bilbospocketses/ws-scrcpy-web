@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **In open mode a logout no longer closes that browser's live sockets.** After login is turned off (smoke 18.11), the browser that turned it off still holds its session cookie, and the WebSocket handshake registered every socket under the cookie's session token whatever the mode, so a logout from that browser closed its open-mode streams and shells with 4401 `session ended` (finding 18.23). That contradicted finding 18.14's decision that open-mode sockets are never revoked by logout. The handshake now registers a socket under a session only when login is on and the session is valid (`wsSession`, `src/server/services/WebSocketServer.ts`); an open-mode socket carries none, so no logout touches it. In locked mode nothing changes: a logout still closes that session's sockets, and disabling or deleting a user still closes all of theirs.
+
 ## [0.1.30-beta.170] - 2026-10-05
 
 ### Fixed

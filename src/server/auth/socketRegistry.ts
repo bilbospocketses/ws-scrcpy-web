@@ -10,7 +10,9 @@
  * A socket is registered with the session token that authorised it, so logging
  * out can revoke exactly that login's sockets and leave a second browser's
  * alone. Sockets opened in open mode carry no token and are never revoked by
- * logout — there was no login to end.
+ * logout — there was no login to end. That holds even for a browser that still
+ * has a valid session cookie from before login was turned off: `wsSession`
+ * (WebSocketServer.ts) hands out a token only in locked mode (finding 18.23).
  */
 
 /** The half of a WebSocket this registry needs. Keeps it testable without a live socket. */

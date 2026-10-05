@@ -24,15 +24,36 @@ import type { Service } from './Service';
  */
 export const liveSockets = new SocketRegistry();
 
-export function wsSessionUserId(db: Db, cookieHeader: string | undefined): number | undefined {
-    if (!isAuthEnabled(db)) return IMPLICIT_ADMIN_ID;
+/**
+ * Who a WS handshake acts as, and which session (if any) the socket belongs to.
+ *
+ * `token` is the session the socket is registered under in `liveSockets`, so it
+ * decides what a logout closes. It is set ONLY in locked mode, for the valid
+ * session that authorised the handshake. In open mode there is no login for a
+ * logout to end, so the socket carries no token even when the browser still
+ * holds a valid session cookie from before login was turned off (finding 18.23:
+ * the handshake used to register under the cookie's token whatever the mode,
+ * and that browser's open-mode sockets were closed 4401 by its logout).
+ *
+ * The rule is applied here, at registration, rather than in the logout handler:
+ * a socket's standing is fixed by the mode it was opened in. A check at close
+ * time would read the mode at LOGOUT, so a socket opened in open mode would
+ * still be closed if login had been turned back on in between, which is the
+ * case socketRegistry.ts says never happens.
+ */
+export function wsSession(db: Db, cookieHeader: string | undefined): { userId: number; token?: string } | undefined {
+    if (!isAuthEnabled(db)) return { userId: IMPLICIT_ADMIN_ID };
     const token = parseCookie(cookieHeader)[SESSION_COOKIE];
     const s = token ? new SessionStore(db.sqlite).findValid(token, Date.now()) : undefined;
-    if (!s) return undefined;
+    if (!token || !s) return undefined;
     const user = db.users.getById(s.userId);
     // Fail CLOSED: an orphan (deleted) or disabled user must not get a live socket.
     if (!user || user.disabled) return undefined;
-    return user.id;
+    return { userId: user.id, token };
+}
+
+export function wsSessionUserId(db: Db, cookieHeader: string | undefined): number | undefined {
+    return wsSession(db, cookieHeader)?.userId;
 }
 
 export class WebSocketServer implements Service {
@@ -101,18 +122,19 @@ export class WebSocketServer implements Service {
             }
             const url = new URL(request.url, 'https://example.org/');
 
-            const userId = wsSessionUserId(Config.getInstance().db, request.headers.cookie);
-            if (userId === undefined) {
+            const session = wsSession(Config.getInstance().db, request.headers.cookie);
+            if (session === undefined) {
                 ws.close(4401, 'unauthorized');
                 return;
             }
+            const { userId } = session;
 
             // Track the socket against the session that authorised it, so ending
             // that session ends the socket too. Refusing the next handshake was
             // never enough on its own: a stream opened while the session was
-            // valid outlived the logout that ended it (finding 18.14).
-            const sessionToken = parseCookie(request.headers.cookie)[SESSION_COOKIE];
-            liveSockets.add(ws, userId, sessionToken);
+            // valid outlived the logout that ended it (finding 18.14). In open
+            // mode `session.token` is absent, so no logout closes it (18.23).
+            liveSockets.add(ws, userId, session.token);
             ws.on('close', () => liveSockets.remove(ws));
 
             // Path-based handlers take priority over action-based MW dispatch.
