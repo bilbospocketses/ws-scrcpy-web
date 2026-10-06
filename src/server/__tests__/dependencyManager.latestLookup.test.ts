@@ -160,9 +160,7 @@ describe('DependencyManager records each latest-version lookup', () => {
 
     it('records a refused lookup inside update() that then falls back to the bundled version', async () => {
         fetchSpy = stubFetch((url) =>
-            isGitHubApi(url)
-                ? new Response('{}', { status: 403 })
-                : new Response('fake-jar-bytes', { status: 200 }),
+            isGitHubApi(url) ? new Response('{}', { status: 403 }) : new Response('fake-jar-bytes', { status: 200 }),
         );
         const mgr = new DependencyManager(tmpDir);
 
