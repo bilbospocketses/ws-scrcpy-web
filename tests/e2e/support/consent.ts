@@ -47,7 +47,7 @@ export async function askToEmbed(request: APIRequestContext, origin: string, app
 
 /** The consent prompt raised by {@link askToEmbed}, once the page's poller has picked it up. */
 export function consentPrompt(page: Page) {
-    return page.locator('dialog.confirm-modal').filter({ hasText: 'allow embedding?' });
+    return page.locator('dialog.confirm-modal[open]').filter({ hasText: 'allow embedding?' });
 }
 
 /**

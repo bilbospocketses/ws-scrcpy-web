@@ -197,7 +197,7 @@ test.describe('device modals (smoke §9.1, §9.2, §9.3)', () => {
             await expect(shellLink).not.toHaveAttribute('aria-disabled', 'true');
             await shellLink.click();
 
-            const modal = page.locator('dialog.shell-modal');
+            const modal = page.locator('dialog.shell-modal[open]');
             await expect(modal).toBeVisible();
             await expect(modal.locator('.shell-warning')).toHaveText(
                 'resizing the browser window after starting a session may cause display issues',
@@ -259,7 +259,7 @@ test.describe('device modals (smoke §9.1, §9.2, §9.3)', () => {
             // Cancel first: a guard that cannot refuse proves nothing about the
             // "close" that follows.
             await closeButton(modal).click();
-            const confirm = page.locator('dialog.shell-close-confirm-modal');
+            const confirm = page.locator('dialog.shell-close-confirm-modal[open]');
             await expect(confirm).toBeVisible();
             await confirm.locator('button.modal-button', { hasText: /^cancel$/ }).click();
             // Wait for removal, not just hidden: Modal.close() detaches after the
@@ -326,7 +326,7 @@ test.describe('device modals (smoke §9.1, §9.2, §9.3)', () => {
             await expect(listLink).toHaveText('list files');
             await listLink.click();
 
-            const modal = page.locator('dialog.list-files-modal');
+            const modal = page.locator('dialog.list-files-modal[open]');
             await expect(modal).toBeVisible();
 
             // --- first open: the size picker, and a preference that survives a reload
@@ -448,7 +448,7 @@ test.describe('device modals (smoke §9.1, §9.2, §9.3)', () => {
             await page.reload();
             const row2 = await waitForDeviceRow(page, udid, 30_000);
             await row2.locator('div.file-listing.desc-block > a.link-list-files').click();
-            const modal2 = page.locator('dialog.list-files-modal');
+            const modal2 = page.locator('dialog.list-files-modal[open]');
             await expect(modal2).toBeVisible();
             // Breadcrumbs mean initFileBrowser() ran; the picker branch and this
             // one are mutually exclusive, so asserting the picker's absence only

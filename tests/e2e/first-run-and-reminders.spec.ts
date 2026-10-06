@@ -111,7 +111,7 @@ test.describe('first run: the welcome modal (smoke 1.11)', () => {
         const writes = recordApiWrites(page);
         await page.goto('/');
 
-        const welcome = page.locator('dialog.welcome-modal');
+        const welcome = page.locator('dialog.welcome-modal[open]');
         await expect(welcome).toBeVisible();
         // The URL it shows is the bound port, on the browser's own host.
         await expect(welcome.locator('a').first()).toHaveText('http://localhost:8176');
@@ -189,7 +189,7 @@ test.describe('first run: the welcome modal (smoke 1.11)', () => {
             });
         });
         await page.goto('/');
-        const welcome = page.locator('dialog.welcome-modal');
+        const welcome = page.locator('dialog.welcome-modal[open]');
         await expect(welcome).toBeVisible();
         await expect(welcome).toContainText('run as a systemd service?');
         const scope = welcome.getByRole('group', { name: 'scope' });
@@ -231,7 +231,7 @@ test.describe('first run: the welcome modal with the port shifted (smoke 1.11 / 
             const fresh = await freshPage(browser, bound);
             context = fresh.context;
             await fresh.page.goto('/');
-            const welcome = fresh.page.locator('dialog.welcome-modal');
+            const welcome = fresh.page.locator('dialog.welcome-modal[open]');
             await expect(welcome).toBeVisible();
             await expect(welcome.locator('a').first()).toHaveText(bound);
             // The removed note (2026-05-21) said the default port was in use and
@@ -367,7 +367,7 @@ test.describe('reminder cards: dismiss for now, and the service card (smoke 13.1
         await expect(card).toBeVisible();
 
         await card.getByRole('button', { name: 'never again', exact: true }).click();
-        const confirm = page.locator('dialog.confirm-modal');
+        const confirm = page.locator('dialog.confirm-modal[open]');
         await expect(confirm).toBeVisible();
         await confirm.getByRole('button', { name: 'ok', exact: true }).click();
         await expect(card).toHaveCount(0);

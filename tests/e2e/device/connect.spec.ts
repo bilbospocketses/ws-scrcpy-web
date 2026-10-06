@@ -214,7 +214,7 @@ test.describe('device connect and list (smoke §7.1, §7.2, §7.4)', () => {
             await expectRowGone(page, address);
 
             await page.locator('#discovery-panel .discovery-scan-btn').click();
-            const scanModal = page.locator('dialog.scan-network-modal');
+            const scanModal = page.locator('dialog.scan-network-modal[open]');
             await expect(scanModal).toBeVisible();
             const startScan = scanModal.getByRole('button', { name: 'start scan', exact: true });
 
@@ -233,7 +233,7 @@ test.describe('device connect and list (smoke §7.1, §7.2, §7.4)', () => {
             ).toBeDisabled();
 
             await scanModal.getByRole('button', { name: 'add subnet', exact: true }).click();
-            const addModal = page.locator('dialog.add-subnet-modal');
+            const addModal = page.locator('dialog.add-subnet-modal[open]');
             await expect(addModal).toBeVisible();
             await addModal.locator('input[type="text"]').fill(`${ip}/32`);
             // A /32 parses to exactly one host; the modal says so before it will
