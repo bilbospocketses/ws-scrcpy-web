@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.176] - 2026-10-06
+
 ### Added
 - **`WS_SCRCPY_MKCERT_URL_BASE`, a test / mirror seam for every URL the mkcert path reads (item 167).** The mkcert latest-release lookup, the `SHA256SUMS` manifest, the binary and the build-provenance attestation lookup were all literal GitHub URLs, so nothing could point them at a fixture, and smoke row 21.12 (the provenance refusals) had no spec. With the variable set, one base replaces both of the fork's GitHub prefixes and keeps GitHub's layout under it: `<base>/releases/latest`, `<base>/releases/download/<tag>/<asset>` and `<base>/attestations/sha256:<digest>`. It moves where the files come from, never what vouches for them: the attestation must still verify against the Sigstore public-good root and name the fork's release workflow on github.com at that exact tag, and the binary must still match the manifest. So a base can serve a genuine release or be refused, and there is deliberately no seam for the trust root. The server logs the base at start when it is set. Unset, every URL is unchanged. A new fast-tier spec, `tests/e2e/mkcert-provenance.spec.ts`, now covers 21.12 against a fixture release server: an unattested release, an unverifiable attestation, `-bt.N` and leading-zero tags, and an installed `1.4.4-bt.2` shown "Update available" (Linux only). The coverage register counts 143 of 251 rows automated. Documented in the technical guide's environment table, the README and `PRIVACY.md`.
 
