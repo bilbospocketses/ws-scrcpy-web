@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { type Dirent, existsSync, readdirSync, readlinkSync, realpathSync, rmSync } from 'node:fs';
+import { type Dirent, existsSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync } from 'node:fs';
 import path from 'node:path';
 
 /**
@@ -174,14 +174,37 @@ function stopUnderProc(prefix: string): { stopped: string[]; pids: number[] } {
     return { stopped, pids };
 }
 
-function isAlive(pid: number): boolean {
+/**
+ * Whether `pid` is a running process. `kill(pid, 0)` alone is not enough on Linux:
+ * a killed CHILD of this process stays a zombie until its parent reaps it, and a
+ * zombie still answers signal 0. The parent here is often this very Node process
+ * (the unit tests spawn their stand-in), whose event loop cannot reap while a
+ * synchronous wait blocks it, so the zombie read as alive for the whole wait and
+ * every Linux CI run failed (2026-10-06, #880). A process in state `Z` is dead.
+ */
+export function isProcessAlive(pid: number): boolean {
     try {
         process.kill(pid, 0);
-        return true;
     } catch (err) {
         return (err as NodeJS.ErrnoException).code === 'EPERM';
     }
+    if (process.platform === 'linux') {
+        try {
+            const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+            // `<pid> (<comm>) <state> ...`; comm may contain spaces or parens.
+            const state = stat
+                .slice(stat.lastIndexOf(')') + 1)
+                .trim()
+                .charAt(0);
+            if (state === 'Z' || state === 'X') return false;
+        } catch {
+            return false; // gone between the signal and the read
+        }
+    }
+    return true;
 }
+
+const isAlive = isProcessAlive;
 
 function sleepSync(ms: number): void {
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { privateServerPaths, removePrivateRoot, seedPrivateDataRoot } from '../e2e/support/privateServer';
-import { removeTree, stopProcessesUnder } from '../e2e/support/rootProcesses';
+import { isProcessAlive, removeTree, stopProcessesUnder } from '../e2e/support/rootProcesses';
 
 // Item 170. On Windows the harness stops a spec-owned server with
 // TerminateProcess, so the server's own `adb kill-server` never runs, and the
@@ -68,14 +68,10 @@ async function startFakeDaemon(programData: string): Promise<ChildProcess> {
     return startNode(exe);
 }
 
-function isAlive(pid: number): boolean {
-    try {
-        process.kill(pid, 0);
-        return true;
-    } catch (err) {
-        return (err as NodeJS.ErrnoException).code === 'EPERM';
-    }
-}
+// The helper's own liveness check: on Linux a killed child of this worker stays
+// a zombie (it answers kill(pid, 0)) until the event loop reaps it, so a plain
+// signal-0 probe read every stopped stand-in as alive on Linux CI (#880).
+const isAlive = isProcessAlive;
 
 async function waitUntil(predicate: () => boolean, ms: number): Promise<boolean> {
     const deadline = Date.now() + ms;
