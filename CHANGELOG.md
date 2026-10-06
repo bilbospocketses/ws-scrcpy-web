@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **A stream that fails the moment it starts is reported once, not twice.** When the stream client threw while starting, `startStream` called `onError` and then threw the same error again. In the app, the connect modal already showed `stream failed: <reason>` and closed itself after 4 s, but the rethrow also escaped the modal's constructor, so opening a device from the device list or from the configure dialog ended in an unhandled promise rejection. `startStream` now reports a start failure through `onError` only and returns a handle, as the technical guide's public API section already described (`isConnected` stays `false`, `stop()` does nothing). Misuse still throws: a missing `deviceId`, or a container that already has a stream. The modal's text and timing are unchanged.
+
 ## [0.1.30-beta.184] - 2026-10-06
 
 ### Added
@@ -24,7 +27,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **Restart Now no longer sits on "Restarting..." forever once the server is back.** After a dependency update that needs a restart, the panel polls `/api/dependencies` and reloaded only on a 2xx. The restarted process mints a new instance token, so it answered the page's old cookie with `403 {"reason":"missing or invalid token"}` on every tick, and the page never reloaded. That refusal is itself the proof that a new process is up, so the poll now reloads on it too (`isStaleTokenRefusal`, as the service hand-off and update polls already do). Any other 403, a 5xx or no answer still means "keep polling". Found by smoke row 9.12's new spec.
-- **A stream that fails the moment it starts is reported once, not twice.** When the stream client threw while starting, `startStream` called `onError` and then threw the same error again. In the app, the connect modal already showed `stream failed: <reason>` and closed itself after 4 s, but the rethrow also escaped the modal's constructor, so opening a device from the device list or from the configure dialog ended in an unhandled promise rejection. `startStream` now reports a start failure through `onError` only and returns a handle, as the technical guide's public API section already described (`isConnected` stays `false`, `stop()` does nothing). Misuse still throws: a missing `deviceId`, or a container that already has a stream. The modal's text and timing are unchanged.
 
 ### Changed
 - **tests: smoke row 9.12 (Dependencies: Restart Now) moves to the fast tier.** The new `tests/e2e/dependencies-restart.spec.ts` points `WS_SCRCPY_NODE_DIST_BASE` at a fixture on loopback that offers the runner's own Node major with its patch raised. It drives Settings → Dependencies through check for updates, the Node update, the **Restart Now** prompt (the panel's only restart control) and `Restarting...`, asserts exit 75 and the `.restart` marker, boots the same root again in the launcher's place, and waits for the page to reload onto that process. The fake `node` binaries are shell scripts, so it runs on Linux and skips on Windows. It found the stale-token reload bug above. The coverage register counts 145 of 251 rows automated.
