@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **tests: the off-box halves of smoke rows 12.8, 18.16 and 18.22 now run in the fast tier (item 168).** They need a caller the server sees as another machine, and the register had sent them to the container tier. `auth-admin.spec.ts` now reaches its spec-owned servers through this machine's own LAN address (`support/rawHttp.ts`'s `lanAddress()`, as `server-api.spec.ts` 3.9 and `embed-trust.spec.ts` 10.15 already did): a request sent there arrives from that address, so the server's loopback check fails exactly as it would for another machine. 12.8: a new test proves (c) and (d), both refused 403 in open mode, and (a), refused 401 signed out once login is on, with the server up throughout and the three `refusing shutdown from …` lines logged in order. 18.16: every admin write is refused 403 `admin actions are limited to this machine` from off-box with `callerIsLocal: false` and nothing changed, passes under `WS_SCRCPY_ALLOW_REMOTE_ADMIN=1`, and passes for a signed-in admin with the variable gone. 18.22: a browser on the LAN address sees the read-only banner with **Dismiss** only, the dismissal and the reset follow the one open-mode user there too, and remote admin on reads as the warning. The tests fail rather than skip when the host has no LAN address. Only 18.16's container default stays with the container tier.
+
 ## [0.1.30-beta.176] - 2026-10-06
 
 ### Added

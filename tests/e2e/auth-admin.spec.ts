@@ -1,4 +1,12 @@
-import { type APIRequestContext, type BrowserContext, expect, type Page, request, test } from '@playwright/test';
+import {
+    type APIRequestContext,
+    type APIResponse,
+    type BrowserContext,
+    expect,
+    type Page,
+    request,
+    test,
+} from '@playwright/test';
 import {
     APP_TITLE,
     type Credentials,
@@ -23,6 +31,7 @@ import {
 } from './support/auth';
 import { apiContext, lockDown, OwnedServer, REMOTE_ADMIN_ENV } from './support/ownedServer';
 import { withTimeout } from './support/privateServer';
+import { lanAddress } from './support/rawHttp';
 import { readServerLog } from './support/serverLog';
 import {
     backdateSession,
@@ -41,19 +50,24 @@ import {
  * happens to a login's live surfaces when it ends. Fast tier only.
  *
  * Every row runs on a server this file owns (`OwnedServer`, support/ownedServer.ts), one port per
- * test in 8161–8169, never on the shared server: these rows lock servers down,
+ * test in 8161–8169 and 8196, never on the shared server: these rows lock servers down,
  * stop them, rewrite their session clocks and flip their admin posture, and the
  * shared server must stay in open mode with its users untouched for every spec
- * file that runs after this one. (8169 is the second 18.17 test's.)
+ * file that runs after this one. (8169 is the second 18.17 test's, 8196 the
+ * off-box 12.8 test's.)
  *
  * The same lockout rules as `auth.spec.ts` hold here: no row ever sends a wrong
  * password and no login is retried (`signIn` sends one request and throws on
  * anything but 200).
  *
- * What the fast tier cannot reach, and therefore does not claim: every caller
- * here is on loopback. The OFF-BOX halves of 12.8 (a, c, d), 18.16 (the 403s)
+ * The OFF-BOX halves of 12.8 (a, c, d), 18.16 (the 403s, `callerIsLocal: false`)
  * and 18.22 (the read-only banner) need a caller the server sees as another
- * machine, which is the container tier's job.
+ * machine. They get one without a second machine: a request to this host's own
+ * LAN address arrives FROM that address, so the server's
+ * `isLoopback(remoteAddress)` is false, the same test another machine fails
+ * (`offBoxURL`, as server-api.spec.ts 3.9 and embed-trust.spec.ts 10.15 do).
+ * What stays with the container tier is the container's DEFAULT: nobody on its
+ * loopback, and `WS_SCRCPY_ALLOW_REMOTE_ADMIN` forwarded by compose.
  */
 
 const PORT = {
@@ -66,7 +80,31 @@ const PORT = {
     r18_21: 8167,
     r18_22: 8168,
     r18_17_open: 8169,
+    r12_8_offbox: 8196,
 } as const;
+
+/**
+ * The same spec-owned server as another machine reaches it: this host's own
+ * LAN address. Fails rather than skips when the host has none, so a missing
+ * interface can never read as a covered row.
+ */
+function offBoxURL(port: number): string {
+    const ip = lanAddress();
+    expect(
+        ip,
+        'this host needs a non-loopback IPv4 address to stand in for another machine (none found in os.networkInterfaces())',
+    ).toBeTruthy();
+    return `http://${ip}:${port}`;
+}
+
+/**
+ * `refusing shutdown from <address>: <reason>`, with the address as the server
+ * saw it: a dual-stack listener reports an IPv4 peer as `::ffff:a.b.c.d`.
+ */
+function shutdownRefusal(offBox: string, reason: string): RegExp {
+    const ip = new URL(offBox).hostname.replaceAll('.', '\\.');
+    return new RegExp(`^refusing shutdown from (?:::ffff:)?${ip}: ${reason}$`);
+}
 
 const OWNER: Credentials = { username: 'e2e164b-owner', password: 'e2e164b-owner-pw' };
 const MEMBER: Credentials = { username: 'e2e164b-member', password: 'e2e164b-member-pw' };
@@ -175,7 +213,74 @@ test.describe('auth and admin scope (smoke 12.8, 18.16–18.22)', () => {
         }
     });
 
-    test('18.16 loopback side: every admin write named in the row passes the operator gate from this machine, and /api/config reports adminScope local, then remote under WS_SCRCPY_ALLOW_REMOTE_ADMIN=1, then authenticated once login is on', async () => {
+    test('12.8 shutdown from another machine: in open mode (c) with no token and (d) with a token but remote admin off answer 403, with login on (a) signed out answers 401; each logs its refusal and the server stays up', async () => {
+        test.setTimeout(150_000);
+        const server = await OwnedServer.start('12-8-offbox', PORT.r12_8_offbox);
+        const offBox = offBoxURL(server.paths.port);
+        let bare: APIRequestContext | undefined;
+        let visitor: APIRequestContext | undefined;
+        let owner: APIRequestContext | undefined;
+        try {
+            // (c) open mode, no token at all: the ladder's first rung.
+            bare = await request.newContext({ baseURL: offBox });
+            const noToken = await bare.post('/api/server/shutdown');
+            expect(noToken.status(), `(c) answered: ${await noToken.text()}`).toBe(403);
+            expect(await noToken.json()).toEqual({ error: 'this endpoint answers this machine only' });
+
+            // (d) open mode, carrying the token the page hands out, remote admin off.
+            visitor = await apiContext(offBox);
+            const env = await readConfig(visitor);
+            expect(env.runtime.adminScope).toBe('local');
+            expect(env.runtime.callerIsLocal, 'the LAN address must read as another machine').toBe(false);
+            const noOptOut = await visitor.post('/api/server/shutdown');
+            expect(noOptOut.status(), `(d) answered: ${await noOptOut.text()}`).toBe(403);
+            expect(await noOptOut.json()).toEqual({ error: 'admin actions are limited to this machine' });
+
+            // (a) login on, the same browser, still carrying its token, signed out.
+            await lockDown(server.baseURL, OWNER, MEMBER);
+            const signedOut = await visitor.post('/api/server/shutdown');
+            expect(signedOut.status(), `(a) answered: ${await signedOut.text()}`).toBe(401);
+            expect(await signedOut.json()).toEqual({ error: 'unauthorized' });
+
+            // "The server stays up throughout." A granted shutdown exits 100 ms
+            // after its 200, so a bounded wait is the only way to see it did not.
+            const outcome = await Promise.race([
+                server.handle.exited.then(() => 'exited' as const),
+                new Promise<'alive'>((resolve) => setTimeout(() => resolve('alive'), 2_000)),
+            ]);
+            expect(outcome, server.handle.output()).toBe('alive');
+
+            // The control, and the way to a log with nothing still buffered: an
+            // admin's shutdown from this machine stops it.
+            owner = await apiContext(server.baseURL);
+            await signIn(owner, OWNER);
+            const granted = await owner.post('/api/server/shutdown');
+            expect(granted.status()).toBe(200);
+            expect(await granted.json()).toEqual({ ok: true });
+            const exit = await withTimeout(
+                server.handle.exited,
+                60_000,
+                () => `waiting for the admin's shutdown to exit the server:\n${server.handle.output()}`,
+            );
+            expect(exit.code).toBe(0);
+
+            // (a), (c) and (d) each log `refusing shutdown from …`, in order, from
+            // the LAN address; only the admin's request was granted.
+            const log = readServerLog(server.paths);
+            expect(log, 'the server log must exist').not.toBe('');
+            const refusals = log.match(/refusing shutdown from [^\r\n]*/g) ?? [];
+            expect(refusals, log).toHaveLength(3);
+            expect(refusals[0]).toMatch(shutdownRefusal(offBox, 'no instance token'));
+            expect(refusals[1]).toMatch(shutdownRefusal(offBox, 'remote admin not allowed'));
+            expect(refusals[2]).toMatch(shutdownRefusal(offBox, 'not signed in'));
+            expect(log.match(/shutdown requested via \/api\/server\/shutdown/g) ?? []).toHaveLength(1);
+        } finally {
+            await closeAll(bare, visitor, owner);
+            await server.dispose('12.8 off-box');
+        }
+    });
+
+    test('18.16 every admin write named in the row is refused 403 from another machine and passes from this machine; under WS_SCRCPY_ALLOW_REMOTE_ADMIN=1, and signed in as an admin, it passes from both, and /api/config reports adminScope local, remote, authenticated with callerIsLocal false off-box', async () => {
         test.setTimeout(240_000);
         const server = await OwnedServer.start('18-16', PORT.r18_16);
         const PROBE_USER: Credentials = { username: 'e2e164b-probe', password: 'e2e164b-probe-pw' };
@@ -197,7 +302,12 @@ test.describe('auth and admin scope (smoke 12.8, 18.16–18.22)', () => {
          * POST to an unknown route under the same prefix crosses the identical
          * gate and then answers the handler's own 404.
          */
-        const probeAdminWrites = async (c: APIRequestContext, locked: boolean, phase: string): Promise<void> => {
+        const probeAdminWrites = async (
+            c: APIRequestContext,
+            locked: boolean,
+            phase: string,
+            probeUser: Credentials = PROBE_USER,
+        ): Promise<void> => {
             const patch = await c.patch('/api/config', { data: {} });
             expect(patch.status(), `${phase}: PATCH /api/config ${await patch.text()}`).toBe(200);
             const patched = (await patch.json()) as { config: { webPort: number }; restartRequired: boolean };
@@ -205,7 +315,7 @@ test.describe('auth and admin scope (smoke 12.8, 18.16–18.22)', () => {
             expect(patched.restartRequired).toBe(false);
 
             const users = await c.post('/api/users', {
-                data: { username: PROBE_USER.username, password: PROBE_USER.password, role: 'user' },
+                data: { username: probeUser.username, password: probeUser.password, role: 'user' },
             });
             if (locked) {
                 // Signed in as an admin: an ordinary create.
@@ -246,6 +356,40 @@ test.describe('auth and admin scope (smoke 12.8, 18.16–18.22)', () => {
             }
         };
 
+        /**
+         * The row's subject: the same writes from another machine, each refused by
+         * the operator gate with the row's exact body before its handler runs.
+         */
+        const probeRefusedWrites = async (c: APIRequestContext, phase: string): Promise<void> => {
+            const writes: [string, () => Promise<APIResponse>][] = [
+                ['PATCH /api/config', () => c.patch('/api/config', { data: {} })],
+                [
+                    'POST /api/users',
+                    () =>
+                        c.post('/api/users', {
+                            data: { username: PROBE_USER.username, password: PROBE_USER.password, role: 'user' },
+                        }),
+                ],
+                ['POST /api/settings/batch', () => c.post('/api/settings/batch', { data: { changes: [] } })],
+                ['POST under /api/service/', () => c.post('/api/service/e2e-164b-no-such-route')],
+                ['POST under /api/dependencies/', () => c.post('/api/dependencies/e2e-164b-no-such-route')],
+                ['POST /api/updates/check', () => c.post('/api/updates/check')],
+                ['POST /api/auth/enable', () => c.post('/api/auth/enable')],
+            ];
+            for (const [route, send] of writes) {
+                const res = await send();
+                expect(res.status(), `${phase}: ${route} ${await res.text()}`).toBe(403);
+                expect(await res.json(), `${phase}: ${route}`).toEqual({
+                    error: 'admin actions are limited to this machine',
+                });
+            }
+        };
+        const OFFBOX_PROBE_USER: Credentials = {
+            username: 'e2e164b-probe-offbox',
+            password: 'e2e164b-probe-offbox-pw',
+        };
+        let offBox: APIRequestContext | undefined;
+
         try {
             // --- open mode, remote admin off (the env var explicitly ABSENT).
             ctx = await apiContext(server.baseURL);
@@ -253,6 +397,20 @@ test.describe('auth and admin scope (smoke 12.8, 18.16–18.22)', () => {
             expect(env.runtime.adminScope).toBe('local');
             expect(env.runtime.callerIsLocal).toBe(true);
             expect(env.config.allowRemoteAdmin).not.toBe(true);
+
+            // The row's subject, from another machine: every write refused,
+            // nothing changed, and the envelope says the caller is not local.
+            offBox = await apiContext(offBoxURL(server.paths.port));
+            env = await readConfig(offBox);
+            expect(env.runtime.adminScope).toBe('local');
+            expect(env.runtime.callerIsLocal, 'the LAN address must read as another machine').toBe(false);
+            await probeRefusedWrites(offBox, 'off-box, open, remote admin off');
+            expect((await me(ctx)).authEnabled).toBe(false);
+            expect((await listUsers(ctx)).map((u) => u.username)).toEqual(['admin']);
+            await offBox.dispose();
+            offBox = undefined;
+
+            // The same writes from this machine pass the gate.
             await probeAdminWrites(ctx, false, 'open, remote admin off');
             expect((await me(ctx)).authEnabled).toBe(false);
             expect((await listUsers(ctx)).map((u) => u.username)).toEqual(['admin']);
@@ -268,6 +426,14 @@ test.describe('auth and admin scope (smoke 12.8, 18.16–18.22)', () => {
             expect(env.runtime.callerIsLocal).toBe(true);
             expect(env.config.allowRemoteAdmin).not.toBe(true);
             await probeAdminWrites(ctx, false, 'open, WS_SCRCPY_ALLOW_REMOTE_ADMIN=1');
+            // And from another machine, which is what the variable is for.
+            offBox = await apiContext(offBoxURL(server.paths.port));
+            env = await readConfig(offBox);
+            expect(env.runtime.adminScope).toBe('remote');
+            expect(env.runtime.callerIsLocal).toBe(false);
+            await probeAdminWrites(offBox, false, 'off-box, open, WS_SCRCPY_ALLOW_REMOTE_ADMIN=1');
+            await offBox.dispose();
+            offBox = undefined;
 
             // --- turn login on (still under the variable) and repeat signed in
             // as an admin: 'authenticated' outranks the opt-out.
@@ -291,14 +457,23 @@ test.describe('auth and admin scope (smoke 12.8, 18.16–18.22)', () => {
             expect(env.runtime.callerIsLocal).toBe(true);
             await probeAdminWrites(owner, true, 'locked, signed in as admin');
             expect((await userByName(owner, PROBE_USER.username)).role).toBe('user');
+
+            // --- a signed-in admin from another machine, with the variable GONE:
+            // the session alone is what lets it through.
+            await server.restart();
+            offBox = await apiContext(offBoxURL(server.paths.port));
+            await signIn(offBox, OWNER);
+            env = await readConfig(offBox);
+            expect(env.runtime.adminScope).toBe('authenticated');
+            expect(env.runtime.callerIsLocal).toBe(false);
+            await probeAdminWrites(offBox, true, 'off-box, locked, signed in as admin', OFFBOX_PROBE_USER);
+            expect((await userByName(offBox, OFFBOX_PROBE_USER.username)).role).toBe('user');
         } finally {
-            await closeAll(ctx, owner);
+            await closeAll(ctx, owner, offBox);
             await server.dispose('18.16');
         }
-        // NOT covered here, and said so: the row's subject — each write answering
-        // 403 `admin actions are limited to this machine` with nothing changed,
-        // `callerIsLocal: false`, and a container refusing by default — needs a
-        // caller that is not on loopback. That is the container tier.
+        // NOT covered here: a container refusing by default, where nobody is on
+        // its loopback and compose forwards the variable. That is the container tier.
     });
 
     test('18.17 an already-open socket closes 4401 when its session ends — by logout, by disabling the user, by deleting the user — and another user’s session and socket are untouched', async ({
@@ -706,7 +881,7 @@ test.describe('auth and admin scope (smoke 12.8, 18.16–18.22)', () => {
         }
     });
 
-    test('18.22 admin-scope banner on this machine: three actions, Dismiss persists per user and reset brings it back, only the explicit accept widens exposure, and remote admin on reads as a warning with no Dismiss', async ({
+    test('18.22 admin-scope banner: on this machine three actions, from another machine read-only with Dismiss only; Dismiss persists per user and reset brings it back, only the explicit accept widens exposure, and remote admin on reads as a warning with no Dismiss on both', async ({
         browser,
     }) => {
         test.setTimeout(180_000);
@@ -714,6 +889,7 @@ test.describe('auth and admin scope (smoke 12.8, 18.16–18.22)', () => {
         let probe: APIRequestContext | undefined;
         let context: BrowserContext | undefined;
         let second: BrowserContext | undefined;
+        let remote: BrowserContext | undefined;
         try {
             probe = await apiContext(server.baseURL);
             await dismissPromptsFor(probe);
@@ -764,6 +940,23 @@ test.describe('auth and admin scope (smoke 12.8, 18.16–18.22)', () => {
             await page.goto('/');
             await expectLocalActionable();
 
+            // --- the same server from another machine: read-only, Dismiss only.
+            // Instructions, never buttons: a working control here would render
+            // for an attacker too.
+            remote = await browser.newContext({ baseURL: offBoxURL(server.paths.port) });
+            const remotePage = await remote.newPage();
+            const remoteBanner = remotePage.locator('.admin-scope-banner');
+            const expectRemoteReadOnly = async () => {
+                await expect(remoteBanner).toBeVisible();
+                await expect(remoteBanner).toHaveAttribute('data-state', 'local-readonly');
+                await expect(remoteBanner.locator('strong')).toHaveText(
+                    'Admin actions are disabled for remote clients.',
+                );
+                await expect(remoteBanner.getByRole('button')).toHaveText(['Dismiss']);
+            };
+            await remotePage.goto('/');
+            await expectRemoteReadOnly();
+
             // --- Dismiss persists per user (server-side, so a second browser sees it too).
             const dismissSent = page.waitForRequest(
                 (r) => r.method() === 'PATCH' && new URL(r.url()).pathname === '/api/settings',
@@ -780,6 +973,10 @@ test.describe('auth and admin scope (smoke 12.8, 18.16–18.22)', () => {
             await loadSettled(secondPage, 'goto');
             await expect(secondPage.locator('.admin-scope-banner')).toBeHidden();
             await expect(secondPage.getByRole('button', { name: 'Open settings' })).toBeVisible();
+            // Open mode has one user, so the dismissal follows it off-box too.
+            await loadSettled(remotePage, 'reload');
+            await expect(remoteBanner).toBeHidden();
+            await expect(remotePage.getByRole('button', { name: 'Open settings' })).toBeVisible();
 
             // --- reset all my settings brings it back.
             const settings = await openSettings(page);
@@ -803,6 +1000,8 @@ test.describe('auth and admin scope (smoke 12.8, 18.16–18.22)', () => {
             await page.reload();
             await expectLocalActionable();
             await expect(page.locator('dialog.welcome-modal[open]')).toHaveCount(0);
+            await remotePage.reload();
+            await expectRemoteReadOnly();
 
             // --- every way out of the red modal except the accept leaves exposure unchanged.
             const configWrites: unknown[] = [];
@@ -864,11 +1063,13 @@ test.describe('auth and admin scope (smoke 12.8, 18.16–18.22)', () => {
                 await expect(b.getByRole('button')).toHaveCount(0);
             };
             await expectRemoteWarning(page);
-            // On reload, in both browsers.
+            // On reload, in both browsers and on the other machine.
             await page.reload();
             await expectRemoteWarning(page);
             await secondPage.reload();
             await expectRemoteWarning(secondPage);
+            await remotePage.reload();
+            await expectRemoteWarning(remotePage);
 
             // --- and off again.
             const offRes = await probe.patch('/api/config', { data: { allowRemoteAdmin: false } });
@@ -876,11 +1077,11 @@ test.describe('auth and admin scope (smoke 12.8, 18.16–18.22)', () => {
             expect(await scope()).toEqual({ adminScope: 'local', callerIsLocal: true, allowRemoteAdmin: false });
             await page.reload();
             await expectLocalActionable();
+            await remotePage.reload();
+            await expectRemoteReadOnly();
         } finally {
-            await closeAll(second, context, probe);
+            await closeAll(remote, second, context, probe);
             await server.dispose('18.22');
         }
-        // NOT covered here: the off-box view ("…disabled for remote clients." with
-        // Dismiss only) needs a caller the server sees as another machine.
     });
 });
