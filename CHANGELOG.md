@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Exiting the app, or applying an update, on Windows no longer kills every adb on the machine.** Both ran `taskkill /F /IM adb.exe /T` after `adb kill-server`, which matches by image name, so quitting ws-scrcpy-web ("stop server & exit", the tray's exit, a stop signal) or applying an update also killed Android Studio's adb and any other install's adb daemon, dropping every device those tools had connected. Both now stop only the app's own adb, matched by executable path against the configured adb binary (`config.adbPath`; the bundled `dependencies\adb\adb.exe` unless overridden), each match with its process tree. Another tool's adb survives. The one shared helper (`src/server/util/reapOwnAdb.ts`) lists `adb` processes through Windows PowerShell 5.1 at its literal System32 path and logs and swallows every failure, so neither exit nor an update can fail because of it. The unit suite now mocks `execFile` in `UpdateService.test.ts` too: its apply tests used to run a real `adb kill-server` and the old blanket `taskkill` on the developer's machine.
+- **A dependency update no longer leaves a `ws-scrcpy-web-update-*` folder behind in the temp directory when a file is still briefly locked.** The folder holds the downloaded and extracted adb and Node trees, and it was removed with a single `rmSync`. That failed `EPERM` when the adb killed a moment earlier still had its image locked (Windows holds it about 10 ms past exit) or a scanner was reading a new executable, and the failure was swallowed without a word. Node 24's own `maxRetries` option does not retry `EPERM` on Windows, so the cleanup now goes through `rmTreeSyncWithRetry` (`src/server/util/atomicFile.ts`, next to the existing rename retry). It retries `EPERM`, `EACCES`, `EBUSY` and `ENOTEMPTY` for up to about 2.6 s and fails immediately on any other error. A cleanup that still fails is logged as a warning and never fails the update.
+
 ## [0.1.30-beta.181] - 2026-10-06
 
 ### Fixed
