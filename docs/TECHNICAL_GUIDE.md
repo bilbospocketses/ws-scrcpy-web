@@ -605,8 +605,8 @@ Calling `startStream()` a second time on the same container without first callin
 ### 6.5 Lifecycle Callbacks
 
 - **`onConnect(info)`** fires once, as soon as session metadata is received. `info` contains the actual resolved `codec`, `encoder`, and `resolution` strings. Note: this fires at metadata receipt, not first decoded frame — the codebase has no first-frame signal today. This is a deliberate simplification. A future `onFirstFrame` callback would be a non-breaking addition.
-- **`onDisconnect(reason?)`** fires once when the stream ends for any reason: the device disconnects, the WebSocket closes, or the caller invokes `handle.stop()`. `reason` is a short human-readable string when available.
-- **`onError(err)`** fires on startup failures (missing `deviceId`, device probe failure, WebSocket refused) and on abnormal WebSocket close codes. A startup error does NOT also fire `onDisconnect` — it's an error that prevented connection, not a disconnect. `handle.isConnected` stays `false`.
+- **`onDisconnect(reason?)`** fires once when the stream ends normally: the caller invokes `handle.stop()`, or the WebSocket closes with 1000, 1001 or 1005 (no code — the server's own release on a normal end). `reason` is a short human-readable string when available.
+- **`onError(err)`** fires on startup failures (missing `deviceId`, device probe failure, WebSocket refused) and when the stream ends abnormally: any other close code, including the server's `4005` for a failed session (a failed start, scrcpy-server exiting, the device's video ending) and `1006` for a dropped connection. `err.message` is the close reason, or `WebSocket closed with code <N>` when there is none. An end reports to exactly ONE of `onError` and `onDisconnect`, never both — `StreamClientScrcpy.onDisconnected` decides which before it runs either, because the disconnect callback can stop the stream, and a stop is never a failure. `handle.isConnected` is `false` afterwards either way.
 
 ### 6.6 `embed.html` URL Parameters
 
@@ -946,14 +946,16 @@ public refreshStream(): void {
 ```typescript
 try {
     if (ws.readyState === ws.OPEN) {
-        ws.close(4005, err.message.slice(0, 123));
+        ws.close(SESSION_FAILED_CLOSE_CODE, closeReason(err.message));
     }
 } catch (closeErr) {
-    console.error(TAG, `Failed to close WebSocket:`, closeErr);
+    log.error(`Failed to close WebSocket for ${serial}:`, closeErr);
 }
 ```
 
-Applied in both `ScrcpyConnection.ts` and `DeviceProbe.ts`.
+`ScrcpyConnection.ts` uses `closeReason()`, which cuts to 123 bytes of UTF-8 on a character boundary; `String.slice(0, 123)` counts UTF-16 units, so a multi-byte message could still exceed the limit. `DeviceProbe.ts` still uses `err.message.slice(0, 123)` inside the same try/catch.
+
+**Mid-stream failures use the same code (smoke row 8.27).** `SESSION_FAILED_CLOSE_CODE` (4005) also closes a session that fails after it started: scrcpy-server exiting while the session is live (`scrcpy-server exited (code N)` / `(signal S)`), and the device's video socket ending or erroring (`the device stopped sending video`). Both go through `releaseAsFailure()`, which sends the failure close and then releases; the plain close in `Mw.release()` then finds the socket CLOSING and sends nothing. A normal end — the browser closing the socket, or the server calling `release()` — keeps the bare `ws.close()`, which the browser receives as 1005. `release()` detaches the video reader and only then kills scrcpy-server, so neither of those two callbacks can fire as a failure after a normal end. Before this, every mid-stream failure ran the bare close and the browser saw 1005, a clean end, so the stream modal vanished with no reason.
 
 ### 11.5 Firefox H.264 isConfigSupported False Rejection
 
