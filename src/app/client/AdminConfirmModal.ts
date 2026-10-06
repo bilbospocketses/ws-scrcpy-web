@@ -107,12 +107,23 @@ export class AdminConfirmModal extends Modal {
         this.resolveAndClose(false);
     }
 
+    // Closed without an answer (the Settings dialog closed first): settle as
+    // cancel, so the install/uninstall awaiting it never starts.
+    protected override onBeforeClose(): void {
+        this.settle(false);
+    }
+
     private resolveAndClose(value: boolean): void {
+        if (this.resolved) return;
+        this.settle(value);
+        this.close(value);
+    }
+
+    private settle(value: boolean): void {
         if (this.resolved) return;
         this.resolved = true;
         this.resolveFn?.(value);
         this.resolveFn = null;
-        this.close(value);
     }
 
     private capitalizedAction(): string {

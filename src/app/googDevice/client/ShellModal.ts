@@ -89,7 +89,9 @@ export class ShellModal extends Modal {
             this.close();
             return;
         }
-        ShellCloseConfirmModal.confirm().then((confirmed) => {
+        // A child of this modal: if the shell modal closes some other way first,
+        // the confirm closes with it and the answer reads false.
+        this.askChild(() => ShellCloseConfirmModal.confirm(), false).then((confirmed) => {
             if (confirmed) this.close();
         });
     }

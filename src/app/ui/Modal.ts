@@ -13,6 +13,15 @@ export interface ModalOptions {
 }
 
 export abstract class Modal {
+    /** The parent whose `openChild` is running; every modal built meanwhile becomes its child. */
+    private static openingParent: Modal | null = null;
+    /** Child dialogs opened through `openChild` that are still up; closed when this one closes. */
+    private readonly openChildren = new Set<Modal>();
+    // A field initialiser rather than a constructor line, so a child registers
+    // before anything in its constructor runs.
+    private parentModal: Modal | null = Modal.openingParent?.adopt(this) ?? null;
+    /** Set when close() begins; a child's answer arriving after it is no answer. */
+    private closeStarted = false;
     protected readonly dialog: HTMLDialogElement;
     protected readonly frameEl: HTMLElement;
     protected readonly bodyEl: HTMLElement;
@@ -136,6 +145,54 @@ export abstract class Modal {
     }
 
     /**
+     * Open a child dialog bound to this modal's lifetime: every modal built
+     * while `open` runs is closed when this one closes, whichever way that is.
+     * `open` is the child's usual opener (`new X(...)`, `X.confirm()`), so the
+     * child needs no knowledge of its parent. A child whose answer arrives as a
+     * promise must settle it when closed unanswered, so nothing awaits forever.
+     */
+    protected openChild<T>(open: () => T): T {
+        const previous = Modal.openingParent;
+        Modal.openingParent = this;
+        try {
+            return open();
+        } finally {
+            Modal.openingParent = previous;
+            // Opened after this modal began closing: there is nothing to answer for.
+            if (this.closeStarted) this.closeChildren();
+        }
+    }
+
+    /**
+     * `openChild` for a child that answers with a promise. Resolves to
+     * `unanswered` -- which the caller must treat as doing nothing -- if this
+     * modal has begun closing by the time the answer would be acted on,
+     * including an answer the user gave just before it closed.
+     */
+    protected askChild<T>(ask: () => Promise<T>, unanswered: T): Promise<T> {
+        return this.openChild(ask).then((answer) => (this.closeStarted ? unanswered : answer));
+    }
+
+    private adopt(child: Modal): Modal {
+        this.openChildren.add(child);
+        return this;
+    }
+
+    /** Detach from the parent and close any open children; the first thing close() does. */
+    private releaseFamily(): void {
+        this.closeStarted = true;
+        this.parentModal?.openChildren.delete(this);
+        this.parentModal = null;
+        this.closeChildren();
+    }
+
+    private closeChildren(): void {
+        const children = [...this.openChildren];
+        this.openChildren.clear();
+        for (const child of children) child.close();
+    }
+
+    /**
      * Close the modal after `ms` (an error message left up long enough to read).
      * Closing it any other way first cancels the timed close, and on a modal
      * that has already closed this schedules nothing.
@@ -157,6 +214,7 @@ export abstract class Modal {
         this.closed = true;
         clearTimeout(this.closeTimer);
         this.closeTimer = undefined;
+        this.releaseFamily();
         this.onBeforeClose();
         this.dialog.close();
         // Remove from DOM after exit transition completes (200ms matches CSS)
