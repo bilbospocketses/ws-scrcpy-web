@@ -201,7 +201,7 @@ export class DependencyPanel {
                     <div class="dep-description">${escapeHtml(dep.description)}</div>
                 </td>
                 <td class="dep-version">${escapeHtml(dep.installedVersion || 'Not installed')}</td>
-                <td class="dep-version">${escapeHtml(dep.latestVersion || '\u2014')}</td>
+                ${this.latestCell(dep)}
                 <td class="dep-status">${this.statusLabel(dep)}</td>
                 <td class="dep-action">${this.actionButton(dep)}</td>
             `;
@@ -211,6 +211,25 @@ export class DependencyPanel {
             }
             this.tableBody.appendChild(row);
         }
+    }
+
+    /**
+     * The Latest cell. A lookup the upstream REFUSED (api.github.com's rate
+     * limit, typically) says so, with its status, rather than showing the same
+     * dash as a lookup that has not run or that failed: the first is the
+     * network's state and changes nothing about the installed copy.
+     */
+    private latestCell(dep: DependencyInfo): string {
+        const lookup = dep.latestLookup;
+        if (!dep.latestVersion && lookup?.outcome === 'refused') {
+            const status = lookup.httpStatus !== undefined ? `HTTP ${lookup.httpStatus}` : 'HTTP error';
+            const title =
+                `The version lookup was refused (${status}), e.g. by GitHub's rate limit. ` +
+                (dep.installedVersion ? 'The installed version still works. ' : '') +
+                'Check for updates again later.';
+            return `<td class="dep-version dep-latest-refused" title="${escapeHtml(title)}">${escapeHtml(`refused (${status})`)}</td>`;
+        }
+        return `<td class="dep-version">${escapeHtml(dep.latestVersion || '\u2014')}</td>`;
     }
 
     private statusLabel(dep: DependencyInfo): string {

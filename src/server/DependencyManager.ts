@@ -6,7 +6,7 @@ import path from 'path';
 import type { Writable } from 'stream';
 import { pipeline } from 'stream/promises';
 import { promisify } from 'util';
-import type { DependencyInfo, UpdateResult } from '../common/DependencyTypes';
+import type { DependencyInfo, LatestLookup, UpdateResult } from '../common/DependencyTypes';
 import { compareVersions, DependencyStatus } from '../common/DependencyTypes';
 import type { DependencyDefinition } from './DependencyDefinitions';
 import {
@@ -30,6 +30,16 @@ import { extractZipTo } from './zipExtract';
 
 const log = Logger.for('DependencyManager');
 const execFileAsync = promisify(execFile);
+
+/**
+ * A test seam: exactly '1' makes the BOOT pass (`checkAll({ boot: true })`)
+ * skip the latest-version lookup for every dependency that is already
+ * installed. A dependency that is not installed is still looked up -- its
+ * install needs the answer -- and check-for-updates and `update()` are never
+ * affected. The fast e2e tier sets it: every server boot otherwise spent 2-3 of
+ * api.github.com's 60 unauthenticated calls an hour on lookups nothing read.
+ */
+export const SKIP_BOOT_LATEST_ENV = 'WS_SCRCPY_SKIP_BOOT_LATEST';
 
 /**
  * A per-call unique scratch directory for `update(name)`. Exported for
@@ -62,11 +72,19 @@ export class DependencyManager {
     /**
      * Names whose last `checkLatest` was REFUSED by the server (an HTTP status)
      * rather than failing to reach it. Only these may fall back to a bundled
-     * version — see the note in `autoInstallMissing`. Deliberately not part of
-     * `DependencyInfo`: it is an internal diagnosis, not something the wire
-     * format or the UI has any use for.
+     * version — see the note in `autoInstallMissing`. The wire carries the same
+     * refused-vs-unreachable distinction, per lookup, as
+     * `DependencyInfo.latestLookup`; this set is the gate the fallback reads,
+     * and stays internal.
      */
     private readonly lookupRefused = new Set<string>();
+    /**
+     * Per dependency, how many latest-version lookups this process has STARTED
+     * -- the source of `LatestLookup.seq`. Counted at the start rather than read
+     * back from `info.latestLookup` at the end, so two lookups in flight together
+     * (a check-for-updates racing an update's own lookup) never share a number.
+     */
+    private readonly lookupSeq = new Map<string, number>();
     /**
      * In-flight `update()` calls, keyed on dependency name (NF-5).
      *
@@ -173,7 +191,7 @@ export class DependencyManager {
 
         info.status = DependencyStatus.Checking;
         try {
-            info.latestVersion = await def.checkLatest();
+            info.latestVersion = await this.lookUpLatest(def, info);
             this.lookupRefused.delete(name);
             this.resolveStatus(info);
         } catch (err) {
@@ -213,9 +231,50 @@ export class DependencyManager {
         }
     }
 
-    public async checkAll(): Promise<void> {
+    /**
+     * Every latest-version lookup goes through here -- `checkLatest` and the one
+     * inside `performUpdate` -- so each is counted and its outcome recorded on
+     * `info.latestLookup` (see `LatestLookup`). Returns or throws exactly what
+     * `def.checkLatest()` does; what the caller makes of that is unchanged.
+     */
+    private async lookUpLatest(def: DependencyDefinition, info: DependencyInfo): Promise<string | null> {
+        const seq = (this.lookupSeq.get(def.name) ?? 0) + 1;
+        this.lookupSeq.set(def.name, seq);
+        const record = (lookup: Omit<LatestLookup, 'seq' | 'at'>): void => {
+            // Two lookups in flight together can finish out of order; the record
+            // always describes the newest one that has finished.
+            if ((info.latestLookup?.seq ?? 0) > seq) return;
+            info.latestLookup = { seq, at: new Date().toISOString(), ...lookup };
+        };
+        try {
+            const version = await def.checkLatest();
+            // A definition answers null when the reply held no version it would
+            // accept (no LTS release, no tag_name): an answer, but not a version.
+            record({ outcome: version !== null ? 'ok' : 'failed' });
+            return version;
+        } catch (err) {
+            record(
+                err instanceof HttpStatusError ? { outcome: 'refused', httpStatus: err.status } : { outcome: 'failed' },
+            );
+            throw err;
+        }
+    }
+
+    /**
+     * `boot` marks the pass `index.ts` runs at startup. Only that pass reads
+     * `WS_SCRCPY_SKIP_BOOT_LATEST` (see `SKIP_BOOT_LATEST_ENV`), and reads it on
+     * every call rather than once at construction.
+     */
+    public async checkAll(opts: { boot?: boolean } = {}): Promise<void> {
         for (const def of this.definitions) {
             await this.checkInstalled(def.name);
+        }
+        const skipInstalled = opts.boot === true && process.env[SKIP_BOOT_LATEST_ENV] === '1';
+        const toLookUp = skipInstalled
+            ? this.definitions.filter((def) => this.state.get(def.name)?.installedVersion === null)
+            : this.definitions;
+        if (toLookUp.length < this.definitions.length) {
+            log.info(`boot latest-version lookups skipped for installed dependencies (${SKIP_BOOT_LATEST_ENV}=1)`);
         }
         // CONCURRENT, deliberately. Boot is `checkAll().then(() =>
         // autoInstallMissing())`, and the seed promote plus every install lives
@@ -223,7 +282,7 @@ export class DependencyManager {
         // Run serially, three unreachable endpoints cost the SUM of their
         // budgets; run together, the worst case is the slowest single one. Each
         // checkLatest touches only its own info, so there is nothing to race.
-        await Promise.all(this.definitions.map((def) => this.checkLatest(def.name)));
+        await Promise.all(toLookUp.map((def) => this.checkLatest(def.name)));
         const infos = Array.from(this.state.values());
         const updates = infos.filter((i) => i.status === DependencyStatus.UpdateAvailable).map((i) => i.name);
         const upToDate = infos.filter((i) => i.status === DependencyStatus.UpToDate).length;
@@ -295,7 +354,7 @@ export class DependencyManager {
             // installable scrcpy-server into an update failure.
             if (!info.latestVersion) {
                 try {
-                    info.latestVersion = await def.checkLatest();
+                    info.latestVersion = await this.lookUpLatest(def, info);
                 } catch (err) {
                     // Same rule as autoInstallMissing: a refused lookup may fall
                     // back, an unreachable one may not.

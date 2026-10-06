@@ -14,7 +14,7 @@ import {
 } from './support/auth';
 import { gotoHome } from './support/consent';
 import { composeDown, composeUpFresh, dockerExecRoot, dockerLogs } from './support/dockerStack';
-import { GITHUB_BACKED_DEPENDENCIES, githubCoreQuota, isExcusableNullLatest } from './support/githubQuota';
+import { isExcusableNullLatest, type LatestLookupRecord } from './support/githubRefusal';
 import {
     BOOT_INSTALLED_DEPENDENCIES,
     privateServerPaths,
@@ -51,6 +51,7 @@ interface DependencyInfo {
     status: string;
     errorMessage?: string;
     deferInstall?: boolean;
+    latestLookup?: LatestLookupRecord;
 }
 
 test.describe('dependencies (smoke §9.4, §9.5, §1.9)', () => {
@@ -155,6 +156,15 @@ test.describe('dependencies (smoke §9.4, §9.5, §1.9)', () => {
             }
 
             // check for updates: the real POST, then every Latest cell filled.
+            //
+            // Each dependency's lookup count BEFORE the press, so a refusal can be
+            // tied to the lookup this press caused rather than to an older one.
+            const seqBefore = new Map(
+                ((await (await api.get('/api/dependencies')).json()) as DependencyInfo[]).map((d) => [
+                    d.name,
+                    d.latestLookup?.seq ?? 0,
+                ]),
+            );
             const checked = visitor.page.waitForResponse(
                 (r) => r.request().method() === 'POST' && new URL(r.url()).pathname === '/api/dependencies/check',
             );
@@ -162,34 +172,33 @@ test.describe('dependencies (smoke §9.4, §9.5, §1.9)', () => {
             expect((await checked).status()).toBe(200);
             await expect(panel.locator('button.dep-check-all')).toHaveText('check for updates');
             const after = (await (await api.get('/api/dependencies')).json()) as DependencyInfo[];
-            // Asked only if a GitHub-backed lookup came back empty, and asked AFTER
-            // the check so the answer describes the window the check ran in.
-            const quota = after.some((d) => d.latestVersion === null && GITHUB_BACKED_DEPENDENCIES.includes(d.name))
-                ? await githubCoreQuota()
-                : undefined;
             for (const dep of after) {
+                const before = seqBefore.get(dep.name) ?? 0;
                 // The decision is `isExcusableNullLatest`, unit-tested in
-                // tests/unit/githubRefusal.test.ts, where the spent-quota branch
-                // runs on every build rather than only on a rate-limited runner.
-                if (isExcusableNullLatest(dep, quota)) {
-                    // api.github.com refused this runner's IP, so the app is in the
-                    // state it deliberately reports for a refused lookup (Unknown
-                    // when installed, Error when not; DependencyManager.checkLatest)
-                    // and the Latest cell shows the dash. Assert THAT, and say so,
-                    // rather than fail the build on GitHub's quota. Only when the
-                    // quota is proven spent: a null with quota left is a real
-                    // failure and still fails below.
+                // tests/unit/githubRefusal.test.ts, where the refused branch runs
+                // on every build rather than only on a rate-limited runner.
+                if (isExcusableNullLatest(dep, before)) {
+                    // api.github.com refused the lookup this press caused, with a
+                    // rate-limit status -- the app's own record says so, so there
+                    // is no later quota query to race the hourly reset. The app is
+                    // in the state it deliberately reports for a refused lookup
+                    // (Unknown when installed, Error when not;
+                    // DependencyManager.checkLatest) and the Latest cell names the
+                    // refusal. Assert THAT, and say so, rather than fail the build
+                    // on GitHub's quota. A null for any other reason -- a failed
+                    // lookup, a 500, an older refusal -- still fails below.
+                    const status = dep.latestLookup?.httpStatus;
                     test.info().annotations.push({
                         type: 'partial',
-                        description: `${dep.name}: api.github.com quota exhausted for this IP (${quota?.detail}); Latest shows the refused-lookup state`,
+                        description: `${dep.name}: api.github.com refused this check's lookup with HTTP ${status} (lookup #${dep.latestLookup?.seq} at ${dep.latestLookup?.at}); Latest shows "refused (HTTP ${status})"`,
                     });
                     const row = rows.filter({ hasText: dep.displayName });
-                    await expect(row.locator('td.dep-version').nth(1)).toHaveText('—');
+                    await expect(row.locator('td.dep-version').nth(1)).toHaveText(`refused (HTTP ${status})`);
                     continue;
                 }
                 expect(
                     dep.latestVersion,
-                    `${dep.name}.latestVersion after the check${quota ? ` (api.github.com: ${quota.detail})` : ''}`,
+                    `${dep.name}.latestVersion after the check (lookups before the press: ${before}; latestLookup: ${JSON.stringify(dep.latestLookup)})`,
                 ).not.toBeNull();
                 const row = rows.filter({ hasText: dep.displayName });
                 await expect(row.locator('td.dep-version').nth(1)).toHaveText(dep.latestVersion ?? '');

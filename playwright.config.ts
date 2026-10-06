@@ -169,6 +169,18 @@ export default defineConfig({
              * relaunch suppression, the same switch `spawnServer` sets.
              */
             WS_SCRCPY_NO_BROWSER: '1',
+            /**
+             * Boot skips the latest-version lookup for every dependency already
+             * installed (src/server/DependencyManager.ts, SKIP_BOOT_LATEST_ENV).
+             * Each boot otherwise spent 2-3 of api.github.com's 60
+             * unauthenticated calls an hour on answers nothing read, and the
+             * rows that DO read them (9.4, 21.12) press check-for-updates,
+             * which this never affects. A dependency not yet installed is
+             * still looked up: its install needs the answer. Fast tier only --
+             * never playwright.docker.config.ts or a compose file. `spawnServer`
+             * sets it too.
+             */
+            WS_SCRCPY_SKIP_BOOT_LATEST: '1',
         },
     },
 });
