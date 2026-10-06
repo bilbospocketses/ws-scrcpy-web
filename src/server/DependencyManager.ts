@@ -21,7 +21,7 @@ import { parseSha256Sums } from './linuxUpdateAssets';
 import { defaultMkcertProvenanceDeps, MKCERT_URL_BASE_ENV, verifyMkcertManifestProvenance } from './mkcertProvenance';
 import { writeInstalledScrcpyServerVersion } from './scrcpyServerVersion';
 import { resolveSystemTool } from './service/systemTools';
-import { copyFileAtomic, copyFileAtomicSync, writeFileAtomicSync } from './util/atomicFile';
+import { copyFileAtomic, copyFileAtomicSync, rmTreeSyncWithRetry, writeFileAtomicSync } from './util/atomicFile';
 import { fetchWithRetry, HttpStatusError, VERSION_CHECK_POLICY } from './util/fetchWithRetry';
 import { ensureRootOwnedTreeIfRoot } from './util/rootOwnedTree';
 import { tarExtractArgs } from './util/tarExtract';
@@ -336,12 +336,17 @@ export class DependencyManager {
         // §25 — TS6 using-declaration replaces the prior try/finally cleanup.
         // The dispose fires on every scope exit (return / throw / fall-through)
         // and rmSync with force:true is safe even if mkdirSync below never ran.
+        // Retried: the tree holds the extracted adb/Node binaries, and a
+        // just-killed adb's image or a scanner reading a fresh executable keeps
+        // a file locked for a moment, which a single rmSync turned into a leaked
+        // ws-scrcpy-web-update-* directory. Still best-effort -- a cleanup
+        // failure must not fail the update -- but no longer silent.
         using _tmpDirCleanup = {
             [Symbol.dispose](): void {
                 try {
-                    fs.rmSync(tmpDir, { recursive: true, force: true });
-                } catch {
-                    // Best-effort
+                    rmTreeSyncWithRetry(tmpDir);
+                } catch (err) {
+                    log.warn(`update(${name}): could not remove temp dir ${tmpDir}: ${(err as Error).message}`);
                 }
             },
         };
