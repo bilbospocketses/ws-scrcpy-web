@@ -57,7 +57,9 @@ What GitHub receives from these requests is your IP address, the User-Agent stri
 
 The dependency manager checks each standalone runtime dependency for a newer version on every start, and downloads one when it is missing or you update it. Outbound destinations:
 
-- `https://nodejs.org/dist/` -- Node.js binaries and their version index.
+- `https://nodejs.org/dist/` -- Node.js binaries and their version index. Setting the
+  `WS_SCRCPY_NODE_DIST_BASE` environment variable moves both to `<that base>/index.json` and
+  `<that base>/v<version>/...`, and that server receives them instead of nodejs.org (a test / mirror seam).
 - `https://dl.google.com/android/repository/` -- ADB platform-tools and their repository listing.
 - `https://api.github.com/repos/Genymobile/scrcpy/releases/latest` and
   `https://github.com/Genymobile/scrcpy/releases/...` -- the scrcpy-server version lookup and binary.

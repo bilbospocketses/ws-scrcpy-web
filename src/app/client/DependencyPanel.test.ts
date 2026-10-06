@@ -78,6 +78,74 @@ describe('DependencyPanel Latest cell', () => {
     });
 });
 
+// Smoke row 9.12: after Restart Now the page must reload onto the restarted
+// server. The instance token is minted per process, so the new process answers
+// the old page's poll with a stale-token 403, which is the proof it is up.
+describe('DependencyPanel restart poll', () => {
+    const originalLocation = window.location;
+    let reload: ReturnType<typeof vi.fn>;
+    let fetchMock: ReturnType<typeof vi.fn>;
+
+    const reply = (status: number, body: unknown) => ({
+        ok: status >= 200 && status < 300,
+        status,
+        json: async () => body,
+    });
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        reload = vi.fn();
+        Object.defineProperty(window, 'location', { value: { reload }, writable: true, configurable: true });
+        fetchMock = vi.fn();
+        vi.stubGlobal('fetch', fetchMock);
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+        vi.unstubAllGlobals();
+        Object.defineProperty(window, 'location', { value: originalLocation, writable: true, configurable: true });
+    });
+
+    const startPoll = () => (new DependencyPanel() as any).pollForRestart();
+
+    it('reloads once the server answers', async () => {
+        fetchMock.mockResolvedValue(reply(200, []));
+        startPoll();
+        await vi.advanceTimersByTimeAsync(3_000);
+        expect(reload).toHaveBeenCalledTimes(1);
+    });
+
+    it('reloads on a stale-token 403: a different process now answers here', async () => {
+        fetchMock.mockResolvedValue(reply(403, { error: 'forbidden', reason: 'missing or invalid token' }));
+        startPoll();
+        await vi.advanceTimersByTimeAsync(3_000);
+        expect(fetchMock).toHaveBeenCalledWith('/api/dependencies');
+        expect(reload).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+        ['a 403 with any other body', 403, { error: 'forbidden' }],
+        ['a 5xx', 503, { error: 'unavailable' }],
+    ])('keeps polling, without reloading, on %s', async (_label, status, body) => {
+        fetchMock.mockResolvedValue(reply(status, body));
+        startPoll();
+        await vi.advanceTimersByTimeAsync(3_000);
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        await vi.advanceTimersByTimeAsync(2_000);
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(reload).not.toHaveBeenCalled();
+    });
+
+    it('keeps polling while nothing answers at all', async () => {
+        fetchMock.mockRejectedValueOnce(new TypeError('Failed to fetch')).mockResolvedValue(reply(200, []));
+        startPoll();
+        await vi.advanceTimersByTimeAsync(3_000);
+        expect(reload).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(2_000);
+        expect(reload).toHaveBeenCalledTimes(1);
+    });
+});
+
 describe('DependencyPanel polling lifecycle (#36)', () => {
     beforeEach(() => {
         vi.useFakeTimers();

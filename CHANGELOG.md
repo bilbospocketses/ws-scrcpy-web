@@ -17,6 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`WS_SCRCPY_NODE_DIST_BASE`, a test / mirror seam for every URL Node.js's update path reads from nodejs.org.** The release index and the archive were literal `https://nodejs.org/dist` URLs, and Node is the only dependency whose update needs a restart, so nothing could offer a fast-tier server an update to drive smoke row 9.12 (Restart Now). With the variable set, the base replaces `https://nodejs.org/dist` and nodejs.org's layout stays under it: `<base>/index.json` and `<base>/v<version>/<archive>`. That is everything the path reads there: the Node install checks no hash, so there is no `SHASUMS256.txt` to move, and the node-pty prebuilt manifest the lookup also reads is this repo's own release asset and stays on GitHub. The server logs the base at start when it is set (host installs only; a container never manages Node). Unset or blank, every URL is unchanged. Documented in the technical guide's environment table, the README and `PRIVACY.md`.
+
+### Fixed
+- **Restart Now no longer sits on "Restarting..." forever once the server is back.** After a dependency update that needs a restart, the panel polls `/api/dependencies` and reloaded only on a 2xx. The restarted process mints a new instance token, so it answered the page's old cookie with `403 {"reason":"missing or invalid token"}` on every tick, and the page never reloaded. That refusal is itself the proof that a new process is up, so the poll now reloads on it too (`isStaleTokenRefusal`, as the service hand-off and update polls already do). Any other 403, a 5xx or no answer still means "keep polling". Found by smoke row 9.12's new spec.
+
+### Changed
+- **tests: smoke row 9.12 (Dependencies: Restart Now) moves to the fast tier.** The new `tests/e2e/dependencies-restart.spec.ts` points `WS_SCRCPY_NODE_DIST_BASE` at a fixture on loopback that offers the runner's own Node major with its patch raised. It drives Settings → Dependencies through check for updates, the Node update, the **Restart Now** prompt (the panel's only restart control) and `Restarting...`, asserts exit 75 and the `.restart` marker, boots the same root again in the launcher's place, and waits for the page to reload onto that process. The fake `node` binaries are shell scripts, so it runs on Linux and skips on Windows. It found the stale-token reload bug above. The coverage register counts 145 of 251 rows automated.
 ## [0.1.30-beta.183] - 2026-10-06
 
 ### Fixed

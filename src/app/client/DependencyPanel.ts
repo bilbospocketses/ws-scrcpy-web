@@ -1,5 +1,6 @@
 import type { DependencyInfo, UpdateResult } from '../../common/DependencyTypes';
 import { escapeHtml } from '../htmlEscape';
+import { isStaleTokenRefusal } from './staleToken';
 
 const POLL_INTERVAL_MS = 15_000;
 
@@ -160,7 +161,10 @@ export class DependencyPanel {
         const check = async () => {
             try {
                 const res = await fetch('/api/dependencies');
-                if (res.ok) {
+                // The restarted process mints a new instance token, so it
+                // answers this page's old cookie with a stale-token 403. That
+                // refusal proves the new process is up: reload for its token.
+                if (res.ok || isStaleTokenRefusal(res.status, await res.json().catch(() => null))) {
                     window.location.reload();
                     return;
                 }
