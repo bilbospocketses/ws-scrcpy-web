@@ -110,8 +110,10 @@ export function startStream(container: HTMLElement, deviceId: string, options: S
         };
     } catch (err) {
         container.removeAttribute(ACTIVE_STREAM_ATTR);
+        // A start failure is reported through onError only, and the caller
+        // still gets a handle (isConnected false, stop() a no-op). Rethrowing
+        // here reported the one failure twice.
         options.onError?.(err instanceof Error ? err : new Error(String(err)));
-        throw err;
     }
 
     let stopped = false;
