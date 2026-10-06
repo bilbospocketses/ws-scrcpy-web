@@ -11,6 +11,7 @@ import { Entry } from '../Entry';
 import { AdbkitFilePushStream } from '../filePush/AdbkitFilePushStream';
 import FilePushHandler, { type DragAndPushListener, type PushUpdateParams } from '../filePush/FilePushHandler';
 import { parseDataChunk, parseDentReply, parseFailReply, parseStatReply, readSyncReplyCode } from './adbSyncReply';
+import { describeDeleteResponse } from './deleteResult';
 import { createFileIconForEntry } from './FileIconUtils';
 import { attachFsChannelKeepAlive } from './fsChannelKeepAlive';
 import { buildFslsInitData, buildMultiplexUrl } from './multiplexConnection';
@@ -1274,14 +1275,22 @@ export class ListFilesModal extends Modal implements DragAndPushListener {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ udid: this.udid, paths }),
             });
-            const result = await resp.json();
-            if (!result.success && result.errors) {
-                const errorMsg = result.errors.join('\n');
-                console.error(TAG, 'delete errors:', errorMsg);
+            // A non-OK answer may carry no parsable body; a 2xx that does
+            // not parse still falls through to "delete request failed" below.
+            let body: unknown;
+            try {
+                body = await resp.json();
+            } catch (parseErr) {
+                if (resp.ok) throw parseErr;
+                body = undefined;
+            }
+            const failure = describeDeleteResponse(resp.status, resp.ok, body);
+            if (failure) {
+                console.error(TAG, `delete errors:\n${failure.details.join('\n')}`);
                 // Show error briefly in footer
                 const infoEl = this.getFooterInfo();
                 if (infoEl) {
-                    infoEl.textContent = `delete failed: ${result.errors[0]}`;
+                    infoEl.textContent = failure.message;
                     setTimeout(() => this.updateFooterInfo(), 10000);
                 }
             }
