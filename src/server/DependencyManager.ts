@@ -20,6 +20,7 @@ import {
 } from './DependencyDefinitions';
 import { Logger } from './Logger';
 import { parseSha256Sums } from './linuxUpdateAssets';
+import { liveStreams } from './liveStreams';
 import { defaultMkcertProvenanceDeps, MKCERT_URL_BASE_ENV, verifyMkcertManifestProvenance } from './mkcertProvenance';
 import { writeInstalledScrcpyServerVersion } from './scrcpyServerVersion';
 import { resolveSystemTool } from './service/systemTools';
@@ -556,6 +557,9 @@ export class DependencyManager {
     public requestRestart(): void {
         writeFileAtomicSync(this.restartMarkerPath, `restart-requested-${Date.now()}`);
         log.info(`Restart requested; writing marker at ${this.restartMarkerPath} and exiting with code 75`);
+        // The exit ends every open stream; close them as a deliberate stop
+        // (1001) so a viewer is not told the stream failed. See liveStreams.ts.
+        liveStreams.closeAllForShutdown();
         process.exit(75);
     }
 
