@@ -106,6 +106,9 @@ export function startStream(container: HTMLElement, deviceId: string, options: S
             options.onConnect?.(info);
         };
         hooked.onErrorReceived = (err: Error) => {
+            // A failed stream reports here INSTEAD of the disconnect callback
+            // above, so it must clear the flag too.
+            isConnected = false;
             options.onError?.(err);
         };
     } catch (err) {
