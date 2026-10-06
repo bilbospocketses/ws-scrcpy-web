@@ -5,7 +5,7 @@ import path from 'path';
 import { promisify } from 'util';
 import { SERVER_VERSION } from '../common/Constants';
 import { Logger } from './Logger';
-import { isMkcertReleaseTag } from './mkcertProvenance';
+import { isMkcertReleaseTag, mkcertUrlBases } from './mkcertProvenance';
 import { loadManifest } from './NodePtyResolver';
 import { getInstalledScrcpyServerVersion } from './scrcpyServerVersion';
 import { fetchOkWithRetry, VERSION_CHECK_POLICY } from './util/fetchWithRetry';
@@ -54,7 +54,7 @@ export function mkcertChecksumsAssetName(version: string): string {
 }
 
 export function mkcertChecksumsUrl(version: string): string {
-    return `https://github.com/bilbospocketses/mkcert/releases/download/${version}/${mkcertChecksumsAssetName(version)}`;
+    return `${mkcertUrlBases().web}/releases/download/${version}/${mkcertChecksumsAssetName(version)}`;
 }
 
 /**
@@ -329,14 +329,11 @@ export function getDependencyDefinitions(
                 return runVersionCommand(exe, ['-version'], /v?([\d.]+(?:-bt\.\d+)?)/);
             },
             checkLatest: async () => {
-                const res = await fetchOkWithRetry(
-                    'https://api.github.com/repos/bilbospocketses/mkcert/releases/latest',
-                    {
-                        init: { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'ws-scrcpy-web' } },
-                        ...VERSION_CHECK_POLICY,
-                        onRetry: (n) => log.warn(`mkcert latest check ${n.attempt}/${n.attempts}: ${n.reason}`),
-                    },
-                );
+                const res = await fetchOkWithRetry(`${mkcertUrlBases().api}/releases/latest`, {
+                    init: { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'ws-scrcpy-web' } },
+                    ...VERSION_CHECK_POLICY,
+                    onRetry: (n) => log.warn(`mkcert latest check ${n.attempt}/${n.attempts}: ${n.reason}`),
+                });
                 const data = (await res.json()) as { tag_name?: string };
                 if (data.tag_name === undefined) return null;
                 // The tag becomes part of a download URL and of the signer
@@ -347,7 +344,7 @@ export function getDependencyDefinitions(
                 return data.tag_name;
             },
             getDownloadUrl: (version) =>
-                `https://github.com/bilbospocketses/mkcert/releases/download/${version}/${mkcertAssetName(version)}`,
+                `${mkcertUrlBases().web}/releases/download/${version}/${mkcertAssetName(version)}`,
         },
     ];
     return opts.inContainer ? defs.filter((d) => !d.hostOnly) : defs;

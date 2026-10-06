@@ -18,7 +18,7 @@ import {
 } from './DependencyDefinitions';
 import { Logger } from './Logger';
 import { parseSha256Sums } from './linuxUpdateAssets';
-import { defaultMkcertProvenanceDeps, verifyMkcertManifestProvenance } from './mkcertProvenance';
+import { defaultMkcertProvenanceDeps, MKCERT_URL_BASE_ENV, verifyMkcertManifestProvenance } from './mkcertProvenance';
 import { writeInstalledScrcpyServerVersion } from './scrcpyServerVersion';
 import { resolveSystemTool } from './service/systemTools';
 import { copyFileAtomic, copyFileAtomicSync, writeFileAtomicSync } from './util/atomicFile';
@@ -106,6 +106,12 @@ export class DependencyManager {
         // Its own default is the running user's home, which for the Windows
         // service is the SYSTEM profile.
         const provenance = defaultMkcertProvenanceDeps(path.join(depsPath, '.sigstore'));
+        const mkcertBase = process.env[MKCERT_URL_BASE_ENV]?.trim();
+        if (mkcertBase && !opts.inContainer) {
+            // Item 167: say where mkcert comes from, once, so a mirror or a test
+            // fixture is never mistaken for GitHub in a support log.
+            log.info(`mkcert release lookups and downloads from ${MKCERT_URL_BASE_ENV}=${mkcertBase}`);
+        }
         this.verifyMkcertManifest =
             opts.verifyMkcertManifest ?? ((manifest, tag) => verifyMkcertManifestProvenance(manifest, tag, provenance));
         this.definitions = getDependencyDefinitions(depsPath, { inContainer: opts.inContainer === true });
