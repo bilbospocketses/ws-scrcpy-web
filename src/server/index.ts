@@ -162,7 +162,13 @@ if (__ssArgs) {
     const settingsApi = new SettingsApi();
     HttpServer.addApiHandler(settingsApi);
 
-    const settingsBatchApi = new SettingsBatchApi();
+    // Constructed here, ahead of its own routes, because the Settings dialog's
+    // Save must reach the RUNNING updater too, not just config.json (6.11).
+    // Started (init) below, beside UpdatesApi; in a container it never starts,
+    // and the batch refuses every updater id there before applying anything.
+    const updateService = new UpdateService();
+
+    const settingsBatchApi = new SettingsBatchApi({ updater: updateService });
     HttpServer.addApiHandler(settingsBatchApi);
 
     const serviceApi = new ServiceApi();
@@ -179,7 +185,6 @@ if (__ssArgs) {
     });
     HttpServer.addApiHandler(shutdownApi);
 
-    const updateService = new UpdateService();
     // A container never self-updates (the image is the update), so its updater
     // is never started; the routes refuse with 409 (container audit). Before
     // this, init() bailed only because $APPIMAGE happens to be unset in the image.
