@@ -112,16 +112,12 @@ export async function startLockedPrivateServer(
     const server: LockedPrivateServer = { paths, handle, isolatedAdbPort, stop: async () => {} };
     const stop = async (): Promise<void> => {
         await stopQuietly(handle, `locked private server ${name}`);
-        // The isolated daemon is detached and outlives the server (on Windows the
-        // kill is TerminateProcess, so the server's own clean shutdown never
-        // runs); it also holds adb.exe open, which would block the rm below.
-        if (isolatedAdbPort !== undefined && installedAdb(paths)) {
-            try {
-                isolatedAdb(server, 'kill-server');
-            } catch {
-                // Already gone — the server's SIGTERM handler kills it on Linux.
-            }
-        }
+        // The adb daemon -- isolated or not -- is detached and outlives the
+        // server (on Windows the kill is TerminateProcess, so the server's own
+        // clean shutdown never runs), and it holds adb.exe open.
+        // removePrivateRoot stops whatever runs from this root before removing
+        // it (item 170), which takes that daemon with it and nothing outside the
+        // root: a developer's own adb runs from its own install and never matches.
         try {
             removePrivateRoot(paths);
         } catch (err) {
