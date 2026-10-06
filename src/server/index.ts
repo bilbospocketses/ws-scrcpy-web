@@ -365,9 +365,10 @@ if (__ssArgs) {
             process.on('SIGINT', () => exit('SIGINT'));
             process.on('SIGTERM', () => exit('SIGTERM'));
 
-            // Kick off initial dependency check + auto-install in background (don't block startup)
+            // Kick off initial dependency check + auto-install in background (don't block startup).
+            // `boot` is what lets WS_SCRCPY_SKIP_BOOT_LATEST apply to this pass and no other.
             depManager
-                .checkAll()
+                .checkAll({ boot: true })
                 .then(() => depManager.autoInstallMissing())
                 .catch((err: Error) =>
                     Logger.for('DependencyManager').error('Initial check/install failed:', err.message),

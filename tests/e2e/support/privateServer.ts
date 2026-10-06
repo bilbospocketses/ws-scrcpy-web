@@ -144,6 +144,13 @@ export function spawnServer(paths: PrivateServerPaths, options: SpawnOptions = {
         // off switch. A row about the open attempt itself (1.14) removes it
         // through `env`.
         WS_SCRCPY_NO_BROWSER: '1',
+        // Boot skips the latest-version lookup for dependencies already
+        // installed, as the fast tier's webServer does (playwright.config.ts
+        // says why). A fresh private root has nothing installed, so its first
+        // boot still looks everything up; a restart on the same root does not
+        // spend api.github.com's quota again. A row about the boot lookups
+        // themselves removes it through `env`.
+        WS_SCRCPY_SKIP_BOOT_LATEST: '1',
     });
     if (options.portOverride === false) delete env['WS_SCRCPY_WEB_PORT'];
     for (const [key, value] of Object.entries(options.env ?? {})) {

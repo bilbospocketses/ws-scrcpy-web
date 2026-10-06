@@ -1,13 +1,18 @@
 /**
- * The decision half of the e2e rule for a spent api.github.com quota (item 149,
- * row 9.4 on a host): which dependency states are the network's rather than the
- * app's. Rows 20.9 and 1.9 used it too until 2026-10-01, when a container stopped
- * listing mkcert, its only GitHub-backed dependency fetched on first use; those
- * rows now excuse nothing. Pure on purpose -- no Playwright import -- so
+ * The decision half of the e2e rule for a refused api.github.com lookup (item
+ * 149, row 9.4 on a host): which dependency states are the network's rather than
+ * the app's. Rows 20.9 and 1.9 used it too until 2026-10-01, when a container
+ * stopped listing mkcert, its only GitHub-backed dependency fetched on first use;
+ * those rows now excuse nothing. Pure on purpose -- no Playwright import -- so
  * `tests/unit/githubRefusal.test.ts` can run every branch on every build. The
- * quota-exhausted branch otherwise runs only on a rate-limited CI runner,
- * which cannot be arranged on demand. The one network call, `githubCoreQuota`,
- * stays in `githubQuota.ts`.
+ * refused branch otherwise runs only on a rate-limited CI runner, which cannot be
+ * arranged on demand.
+ *
+ * The evidence is the app's OWN record of the lookup (`latestLookup` on GET
+ * /api/dependencies), not a `/rate_limit` query made afterwards. That query raced
+ * the hourly reset: on 2026-10-06 the server logged `HTTP 403 rate limit
+ * exceeded` for its lookup while the re-query read remaining=60, then 1, and 9.4
+ * failed falsely twice.
  */
 
 /**
@@ -20,32 +25,36 @@
  */
 export const GITHUB_BACKED_DEPENDENCIES: readonly string[] = ['scrcpy-server', 'mkcert'];
 
-export interface GithubQuota {
-    exhausted: boolean;
-    detail: string;
-}
+/** The statuses GitHub answers a spent quota with: 403 for the unauthenticated cap, 429 for a secondary limit. */
+export const RATE_LIMIT_STATUSES: readonly number[] = [403, 429];
 
-/**
- * Reads a `/rate_limit` answer. `exhausted` is true only on positive evidence:
- * the call succeeded and `resources.core.remaining` is 0. A failed call or a
- * body without the core resource proves nothing about the quota, so it is
- * reported in the detail and never excuses anything.
- */
-export function quotaFromRateLimit(status: number, body: unknown): GithubQuota {
-    if (status < 200 || status > 299) return { exhausted: false, detail: `rate_limit answered HTTP ${status}` };
-    const core = (body as { resources?: { core?: { remaining?: number; reset?: number } } } | null)?.resources?.core;
-    const remaining = core?.remaining;
-    const reset = core?.reset ? new Date(core.reset * 1000).toISOString() : 'unknown';
-    return { exhausted: remaining === 0, detail: `core remaining=${remaining ?? 'unknown'}, resets ${reset}` };
+/** The shape of `DependencyInfo.latestLookup` (src/common/DependencyTypes.ts), restated so this file stays pure. */
+export interface LatestLookupRecord {
+    seq: number;
+    at: string;
+    outcome: 'ok' | 'refused' | 'failed';
+    httpStatus?: number | undefined;
 }
 
 /**
  * 9.4: a null Latest after "check for updates" is the network's only for a
- * GitHub-backed dependency, and only when the quota is proven spent.
+ * GitHub-backed dependency whose lookup was REFUSED with a rate-limit status,
+ * and only when that lookup is one the test's own press caused -- its `seq` is
+ * past `seqBefore`, the value read before pressing. An older refusal says
+ * nothing about the check under test, a 500 is not a rate limit, and a lookup
+ * that FAILED (no answer, or an answer the app rejected) is the app's to explain.
  */
 export function isExcusableNullLatest(
-    dep: { name: string; latestVersion: string | null },
-    quota: GithubQuota | undefined,
+    dep: { name: string; latestVersion: string | null; latestLookup?: LatestLookupRecord | undefined },
+    seqBefore: number,
 ): boolean {
-    return dep.latestVersion === null && GITHUB_BACKED_DEPENDENCIES.includes(dep.name) && quota?.exhausted === true;
+    const lookup = dep.latestLookup;
+    return (
+        dep.latestVersion === null &&
+        GITHUB_BACKED_DEPENDENCIES.includes(dep.name) &&
+        lookup?.outcome === 'refused' &&
+        lookup.httpStatus !== undefined &&
+        RATE_LIMIT_STATUSES.includes(lookup.httpStatus) &&
+        lookup.seq > seqBefore
+    );
 }

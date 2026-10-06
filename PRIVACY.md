@@ -65,7 +65,9 @@ The dependency manager checks each standalone runtime dependency for a newer ver
 - `https://api.github.com/repos/bilbospocketses/mkcert/releases/latest` -- the version lookup for our
   `mkcert` fork. Like the lookups above, it runs on every start of a host install, whether or not Local
   HTTPS is in use. The container image never makes it: Local HTTPS is host-only, so a container does not
-  manage `mkcert` at all.
+  manage `mkcert` at all. Setting the `WS_SCRCPY_SKIP_BOOT_LATEST` environment variable to `1` (a test
+  setting) skips these version lookups at start for every dependency that is already installed; a missing
+  one is still looked up, and "check for updates" still makes all of them.
 - `https://github.com/bilbospocketses/mkcert/releases/download/...`,
   `https://api.github.com/repos/bilbospocketses/mkcert/attestations/...` and
   `https://tuf-repo-cdn.sigstore.dev/` -- installing or updating `mkcert`: the checksum manifest and the

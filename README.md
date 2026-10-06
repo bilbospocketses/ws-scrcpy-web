@@ -367,6 +367,7 @@ A few advanced switches are only available via environment variables:
 | `VELOPACK_FEED_URL` | Force the Velopack auto-updater to use a custom feed URL (mostly useful for the local update-flow sandbox test). |
 | `WS_SCRCPY_RELEASE_URL_BASE` | Linux only: fetch the in-app update's AppImage and `SHA256SUMS` from `<base>/v<version>/<asset>` instead of GitHub's release downloads (a test or mirror seam; the SHA-256 check still runs). |
 | `WS_SCRCPY_MKCERT_URL_BASE` | Read mkcert's latest-release lookup, downloads and attestation lookup from `<base>/releases/latest`, `<base>/releases/download/<tag>/<asset>` and `<base>/attestations/sha256:<digest>` instead of GitHub (a test or mirror seam; the build-provenance check still runs against the fork's own release workflow). |
+| `WS_SCRCPY_SKIP_BOOT_LATEST` | Set to `1`, startup skips the latest-version lookup for every dependency that is already installed (a test setting; the end-to-end suite uses it to spare GitHub's rate limit). A missing dependency is still looked up, and "check for updates" and updates are unaffected. |
 
 ### Access control
 
