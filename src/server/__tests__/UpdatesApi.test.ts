@@ -501,12 +501,12 @@ describe('UpdatesApi', () => {
         expect(Config.getInstance().getAppConfig().autoUpdate).toBe(false);
     });
 
-    it('PATCH /config: channel + interval together → reconfigure only (channel takes precedence)', async () => {
-        // Per contracts: channel/owner change runs reconfigure (which fires
-        // an immediate check). Interval-only change runs restartTimer. When
-        // both change, reconfigure is enough — but restartTimer is also
-        // appropriate. Spec implementation: channelChanged|ownerChanged wins
-        // and skips restartTimer. Verify that behavior is locked.
+    it('PATCH /config: channel + interval together → reconfigure AND restartTimer at the new interval', async () => {
+        // A channel/owner change runs reconfigure (which fires an immediate
+        // check); an interval change runs restartTimer. When both change, both
+        // run. reconfigure never touches the timer, so this test used to pin
+        // "reconfigure only" -- which left the OLD interval running until the
+        // app restarted (6.11 follow-up). That was the bug, not a decision.
         const svc = fakeService({ isInstalled: true });
         const api = new UpdatesApi(svc);
         const { req, res } = makeReqRes(
@@ -517,7 +517,9 @@ describe('UpdatesApi', () => {
         await api.handle(req, res);
         expect((res as any).getStatus()).toBe(200);
         expect(svc.reconfigure).toHaveBeenCalledTimes(1);
-        expect(svc.restartTimer).not.toHaveBeenCalled();
+        expect(svc.reconfigure.mock.calls[0]![0]).toBe(OTHER_CHANNEL);
+        expect(svc.restartTimer).toHaveBeenCalledTimes(1);
+        expect(svc.restartTimer).toHaveBeenCalledWith(90, Config.getInstance().getAppConfig().autoUpdate);
     });
 
     it('PATCH /config: malformed JSON → empty patch, 200, no side effects', async () => {

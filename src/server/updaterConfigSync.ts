@@ -22,14 +22,23 @@ export type UpdaterControls = Pick<UpdateService, 'reconfigure' | 'restartTimer'
  *
  *   - channel or GitHub owner moved -> `reconfigure`, which switches the feed
  *     and checks at once.
- *   - otherwise, interval moved      -> `restartTimer` at the new interval.
+ *   - interval moved                 -> `restartTimer` at the new interval.
  *   - `autoUpdate` needs no call: the service reads it from config at every
  *     check (`UpdateService.runCheck`), never caches it.
  *
- * When the channel/owner AND the interval move together, only `reconfigure`
- * runs, which is the precedence the PATCH has always had (UpdatesApi.test.ts
- * pins it). Comparing configs rather than a patch means a field re-stated at
- * its current value is not a change.
+ * When the channel/owner AND the interval move together, BOTH run.
+ * `reconfigure` never touches the timer -- it switches the channel and runs one
+ * check -- so until the 6.11 follow-up, which ran `reconfigure` alone in that
+ * case, the old interval kept running until the app restarted. No double
+ * schedule is possible: `restartTimer` clears any existing timer first.
+ *
+ * `reconfigure` is started first, as it always was, but the timer is re-timed
+ * BEFORE awaiting it: `reconfigure` resolves only when its check is over, which
+ * on Windows with automatic updates on includes downloading the whole package,
+ * and the new interval must not wait on that or be lost if it rejects.
+ *
+ * Comparing configs rather than a patch means a field re-stated at its current
+ * value is not a change.
  */
 export async function applyUpdaterConfigChange(
     svc: UpdaterControls,
@@ -40,9 +49,9 @@ export async function applyUpdaterConfigChange(
     const ownerChanged = after.githubOwner !== before.githubOwner;
     const intervalChanged = after.updateCheckIntervalMinutes !== before.updateCheckIntervalMinutes;
 
-    if (channelChanged || ownerChanged) {
-        await svc.reconfigure(after.channel, after.githubOwner);
-    } else if (intervalChanged) {
+    const reconfigured = channelChanged || ownerChanged ? svc.reconfigure(after.channel, after.githubOwner) : undefined;
+    if (intervalChanged) {
         svc.restartTimer(after.updateCheckIntervalMinutes, after.autoUpdate);
     }
+    await reconfigured;
 }

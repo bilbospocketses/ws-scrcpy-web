@@ -281,6 +281,31 @@ describe('container mode never reaches the updater from a Settings save', () => 
         expect(updater.restartTimer).not.toHaveBeenCalled();
     });
 
+    it('PATCH /api/config { channel, interval } is refused before the updater is told anything', async () => {
+        setup(true);
+        const updater = { reconfigure: vi.fn(async () => undefined), restartTimer: vi.fn() };
+        const r = call(new ConfigApi({ updater }), 'PATCH', '/api/config', {
+            channel: 'stable',
+            updateCheckIntervalMinutes: 120,
+        });
+        await r.handled;
+        expect(r.status()).toBe(409);
+        expect(updater.reconfigure).not.toHaveBeenCalled();
+        expect(updater.restartTimer).not.toHaveBeenCalled();
+    });
+
+    it('host control: PATCH /api/config with an interval does reach the updater outside a container', async () => {
+        setup(false);
+        const before = Config.getInstance().getAppConfig();
+        const updater = { reconfigure: vi.fn(async () => undefined), restartTimer: vi.fn() };
+        const r = call(new ConfigApi({ updater }), 'PATCH', '/api/config', {
+            updateCheckIntervalMinutes: before.updateCheckIntervalMinutes === 120 ? 90 : 120,
+        });
+        await r.handled;
+        expect(r.status()).toBe(200);
+        expect(updater.restartTimer).toHaveBeenCalledTimes(1);
+    });
+
     it('host control: the same kind of save does reach the updater outside a container', async () => {
         setup(false);
         const before = Config.getInstance().getAppConfig();

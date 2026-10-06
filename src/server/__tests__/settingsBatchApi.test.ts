@@ -762,25 +762,31 @@ describe('POST /api/settings/batch — the running update service hears the save
         expect(updater.restartTimer).not.toHaveBeenCalled();
     });
 
-    it('channel and interval together reconfigure once and skip the timer restart — the PATCH precedence', async () => {
+    it('channel and interval together reconfigure once AND restart the timer at the new interval', async () => {
         setup();
         const before = Config.getInstance().getAppConfig();
+        const channel = otherChannel();
+        const interval = otherInterval();
         const updater = fakeUpdater();
         const r = await save(
             [
-                { id: 'channel', label: 'Update channel', from: before.channel, to: otherChannel() },
+                { id: 'channel', label: 'Update channel', from: before.channel, to: channel },
                 {
                     id: 'updateCheckIntervalMinutes',
                     label: 'Check interval (minutes)',
                     from: before.updateCheckIntervalMinutes,
-                    to: otherInterval(),
+                    to: interval,
                 },
             ],
             updater,
         );
         expect(r.getStatus()).toBe(200);
         expect(updater.reconfigure).toHaveBeenCalledTimes(1);
-        expect(updater.restartTimer).not.toHaveBeenCalled();
+        expect(updater.reconfigure).toHaveBeenCalledWith(channel, before.githubOwner);
+        // reconfigure never touches the timer, so without this the old interval
+        // kept running until restart.
+        expect(updater.restartTimer).toHaveBeenCalledTimes(1);
+        expect(updater.restartTimer).toHaveBeenCalledWith(interval, before.autoUpdate);
     });
 
     it('a half-applied batch still tells the service about the sibling that landed', async () => {
