@@ -159,7 +159,7 @@ test.describe('settings dialog: the staged save (smoke 13.4-13.6, 13.9)', () => 
         const body = (await res.json()) as { ok: boolean; applied: string[] };
         expect(body.ok).toBe(true);
         expect([...body.applied].sort()).toEqual(['autoUpdate', 'githubOwner']);
-        await expect(page.locator('dialog.settings-modal')).toBeHidden();
+        await expect(page.locator('dialog.settings-modal[open]')).toBeHidden();
 
         // What the request carried: the RAW values (a boolean, not "off" — the
         // formatted value on the wire is how every autoUpdate save once 400'd).
@@ -437,7 +437,7 @@ test.describe('settings dialog: the dependency alert (smoke 13.7)', () => {
 
         // It opens Settings ON the Dependencies tab, not on the first tab.
         await open.click();
-        const settings = page.locator('dialog.settings-modal');
+        const settings = page.locator('dialog.settings-modal[open]');
         await expect(settings).toBeVisible();
         await expect(settings.getByRole('tab', { name: 'Dependencies', exact: true })).toHaveAttribute(
             'aria-selected',

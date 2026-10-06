@@ -104,7 +104,7 @@ test.describe('confirm dialogs (smoke §4.5)', () => {
         // leg opens its own. Users is what the dialog opens on.
         await openSettingsTab(settings, 'Embedding');
         await settings.getByRole('button', { name: 'revoke' }).click();
-        const revoke = page.locator('dialog.confirm-modal');
+        const revoke = page.locator('dialog.confirm-modal[open]');
         const revokeStyles = await expectSharedStyle(
             revoke,
             revoke.getByRole('button', { name: 'cancel', exact: true }),
@@ -119,7 +119,7 @@ test.describe('confirm dialogs (smoke §4.5)', () => {
         //     (`settings-btn`, an accent-blue outline on "confirm reset"); the
         //     user ruled for uniformity, so it is asserted beside the others.
         await (await openSettingsTab(settings, 'Server')).getByRole('button', { name: 'reset', exact: true }).click();
-        const reset = page.locator('dialog.reset-confirm-modal');
+        const reset = page.locator('dialog.reset-confirm-modal[open]');
         const resetStyles = await expectSharedStyle(
             reset,
             reset.getByRole('button', { name: 'cancel', exact: true }),
@@ -169,7 +169,7 @@ test.describe('confirm dialogs (smoke §4.5)', () => {
         let adminStyles: [ButtonStyle, ButtonStyle] | null = null;
         if (offersInstall) {
             await install.click({ timeout: 5_000 });
-            const admin = page.locator('dialog.admin-confirm-modal');
+            const admin = page.locator('dialog.admin-confirm-modal[open]');
             adminStyles = await expectSharedStyle(
                 admin,
                 admin.getByRole('button', { name: 'cancel', exact: true }),

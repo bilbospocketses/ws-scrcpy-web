@@ -190,7 +190,7 @@ test.describe('auth / opt-in login (smoke §18)', () => {
             await gotoHome(adminPage);
             await expectAppShell(adminPage);
             await expect(adminPage.getByRole('heading', { name: LOGIN_TITLE })).toHaveCount(0);
-            await expect(adminPage.locator('dialog.welcome-modal')).toHaveCount(0);
+            await expect(adminPage.locator('dialog.welcome-modal[open]')).toHaveCount(0);
 
             // Capture the /api/auth/me the modal itself consumes: a rejected me()
             // fails OPEN to the identical admin view, so the DOM alone has no subject.
@@ -239,7 +239,7 @@ test.describe('auth / opt-in login (smoke §18)', () => {
             await settingsRow(users, 'user accounts')
                 .getByRole('button', { name: 'manage users', exact: true })
                 .click();
-            const usersModal = adminPage.locator('dialog.users-modal');
+            const usersModal = adminPage.locator('dialog.users-modal[open]');
             await expect(usersModal).toBeVisible();
             await expect(usersModal.locator('ul > li')).toHaveCount(1);
             await expect(usersModal.locator('ul > li').first()).toContainText('admin');
@@ -345,7 +345,7 @@ test.describe('auth / opt-in login (smoke §18)', () => {
         expect(await readLockdownFarewell(adminPage)).toEqual({ text: LOCKDOWN_RELOAD_TEXT, lockdownSections: 0 });
         await expect(adminPage.locator(LOGIN_PAGE.submit)).toHaveText(LOGIN_TITLE);
         await expect(adminPage.locator(LOGIN_PAGE.error)).toHaveText('');
-        await expect(adminPage.locator('dialog.settings-modal, dialog.users-modal')).toHaveCount(0);
+        await expect(adminPage.locator('dialog.settings-modal[open], dialog.users-modal[open]')).toHaveCount(0);
 
         // Locked-mode gate from the session-less browser jar. The lockdown must
         // not have minted a session for the browser — 18.3 signs in for real.
@@ -1284,7 +1284,7 @@ test.describe('auth / opt-in login (smoke §18)', () => {
             expect(
                 await adminPage.evaluate(() => (window as unknown as { __e2e_18_11?: string }).__e2e_18_11),
             ).toBeUndefined();
-            await expect(adminPage.locator('dialog.settings-modal')).toHaveCount(0);
+            await expect(adminPage.locator('dialog.settings-modal[open]')).toHaveCount(0);
             await expectAppShell(adminPage);
 
             // The row's claim, session-less: document, me, users, live socket.

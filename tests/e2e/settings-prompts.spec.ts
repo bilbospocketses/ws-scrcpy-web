@@ -39,11 +39,11 @@ test.describe('settings prompts', () => {
         // click on the app while the reminder is up must land.
         const card = page.locator('.bookmark-reminder[data-kind="bookmark"]');
         await expect(card).toBeVisible();
-        await expect(page.locator('dialog.port-change-modal')).toHaveCount(0);
+        await expect(page.locator('dialog.port-change-modal[open]')).toHaveCount(0);
         await page.getByRole('button', { name: 'Open settings' }).click();
-        await expect(page.locator('dialog.settings-modal')).toBeVisible();
+        await expect(page.locator('dialog.settings-modal[open]')).toBeVisible();
         await page.keyboard.press('Escape');
-        await expect(page.locator('dialog.settings-modal')).toBeHidden();
+        await expect(page.locator('dialog.settings-modal[open]')).toBeHidden();
         await expect(card).toBeVisible();
 
         // The address it shows is the one THIS browser is on (item 112).
@@ -64,7 +64,9 @@ test.describe('settings prompts', () => {
         // a stray click. Prove the gate in its failing direction first: cancel
         // leaves the card up and writes nothing.
         await card.getByRole('button', { name: 'never again', exact: true }).click();
-        const confirm = page.locator('dialog.modal').filter({ hasText: "you won't see this bookmark helper again" });
+        const confirm = page
+            .locator('dialog.modal[open]')
+            .filter({ hasText: "you won't see this bookmark helper again" });
         await expect(confirm).toBeVisible();
         // The row's "white-outline buttons" clause: both are modal-button styled.
         await expect(confirm.getByRole('button', { name: /cancel/i })).toHaveClass(/\bmodal-button\b/);
@@ -162,7 +164,7 @@ test.describe('settings prompts', () => {
             }
         });
         await page.reload();
-        await expect(page.locator('dialog.welcome-modal')).toBeVisible();
+        await expect(page.locator('dialog.welcome-modal[open]')).toBeVisible();
         // Give any eager stamp its chance to fire before judging.
         await page.waitForLoadState('networkidle');
         const stillAbsent = (await readUserSettings(page))['bookmarkDismissedForPort'];
@@ -187,7 +189,7 @@ test.describe('settings prompts', () => {
         await gotoHome(page);
         await page.getByRole('button', { name: 'Open settings' }).click();
 
-        const settings = page.locator('dialog.settings-modal');
+        const settings = page.locator('dialog.settings-modal[open]');
         await expect(settings).toBeVisible();
         // Server is a tab now, and not the one the dialog opens on. The row is
         // about what this section SHOWS, so it has to be the visible one.

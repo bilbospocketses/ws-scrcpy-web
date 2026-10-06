@@ -48,7 +48,7 @@ test.describe('container mode', () => {
         await page.goto('/');
         // The welcome modal gates on !firstRunComplete. If the implication were
         // missing, this dialog would open on every boot of a good image.
-        await expect(page.locator('dialog.welcome-modal')).toHaveCount(0);
+        await expect(page.locator('dialog.welcome-modal[open]')).toHaveCount(0);
     });
 
     test('@docker 20.7 the Linux system-wide install offer never opens', async ({ page }) => {
@@ -62,7 +62,7 @@ test.describe('container mode', () => {
         // passed locally and failed only in CI, exactly as playwright.config.ts
         // warns about the same modal in the fast tier.
         await page.goto('/');
-        await expect(page.locator('dialog.system-wide-install-modal')).toHaveCount(0);
+        await expect(page.locator('dialog.system-wide-install-modal[open]')).toHaveCount(0);
 
         // And the page beneath it is actually reachable — the property that
         // matters, and the one whose absence produced "intercepts pointer events"
@@ -75,7 +75,7 @@ test.describe('container mode', () => {
     }) => {
         await page.goto('/');
         await page.getByRole('button', { name: 'Open settings' }).click();
-        const settings = page.locator('dialog.settings-modal');
+        const settings = page.locator('dialog.settings-modal[open]');
         await expect(settings).toBeVisible();
 
         // Service, Updates and Dependencies are separate TABS now, and only one
@@ -289,7 +289,7 @@ test.describe('container mode', () => {
         await expect(page.locator('.update-button-container')).toHaveCount(0);
 
         await page.getByRole('button', { name: 'Open settings' }).click();
-        const settings = page.locator('dialog.settings-modal');
+        const settings = page.locator('dialog.settings-modal[open]');
         await expect(settings).toBeVisible();
         const server = await openSettingsTab(settings, 'Server');
         // The container decision has run (the same attribute 20.4 / 20.5 wait on).
@@ -312,7 +312,7 @@ test.describe('container mode', () => {
     test('@docker 20.19 "reset all my settings" never asks to reset first run', async ({ page }) => {
         await page.goto('/');
         await page.getByRole('button', { name: 'Open settings' }).click();
-        const settings = page.locator('dialog.settings-modal');
+        const settings = page.locator('dialog.settings-modal[open]');
         await expect(settings).toBeVisible();
         const server = await openSettingsTab(settings, 'Server');
         await expect(server).toHaveAttribute('data-app-rows-decided', 'container');
@@ -344,7 +344,7 @@ test.describe('container mode', () => {
         };
         expect(config.runtime.docker).toBe(true);
         expect(config.runtime.firstRunComplete).toBe(true);
-        await expect(page.locator('dialog.welcome-modal')).toHaveCount(0);
+        await expect(page.locator('dialog.welcome-modal[open]')).toHaveCount(0);
 
         // The reset cleared the prompt dismissals global-setup seeded, so put them
         // back: otherwise the bookmark reminder opens over "Open settings" in the
@@ -364,7 +364,7 @@ test.describe('container mode', () => {
         expect(await res.json()).toEqual({ container: true });
 
         await page.locator('#discovery-panel .discovery-scan-btn').click();
-        const scanModal = page.locator('dialog.scan-network-modal');
+        const scanModal = page.locator('dialog.scan-network-modal[open]');
         await expect(scanModal).toBeVisible();
         const note = scanModal.locator('[data-scan-container-note]');
         await expect(note).toBeVisible();
@@ -386,7 +386,7 @@ test.describe('container mode', () => {
     }) => {
         await page.goto('/');
         await page.getByRole('button', { name: 'Open settings' }).click();
-        const settings = page.locator('dialog.settings-modal');
+        const settings = page.locator('dialog.settings-modal[open]');
         await expect(settings).toBeVisible();
         const server = await openSettingsTab(settings, 'Server');
 
