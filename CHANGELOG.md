@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **docs: smoke rows 8.24 and 9.9 now say what the app does and what a tester can observe (qa-harness, 2026-10-06).** Row 8.24 said Ctrl+Shift-drag makes the two touch points "move together", which is desktop scrcpy's tilt; this app's Ctrl+Shift-drag is a pinch mirrored around the point you pressed (technical guide §5.1, unchanged since ws-scrcpy). The user chose to fix the row, not the app. Row 9.9 had the tester run `env` in the shell modal, but that prints the DEVICE's environment: only `TERM` crosses from the host, so `COLORTERM` could never appear and a host secret could never show either way. It now checks `echo $TERM` on the device and the adb process's own environment on a Linux host, and names `RemoteShell.test.ts` as the Windows proof of `buildShellEnv`'s scrub.
 - **docs: the technical guide's updater section names the step every config writer now shares.** §22.1 gains a bullet on `applyUpdaterConfigChange` (`src/server/updaterConfigSync.ts`, beta.179): which three routes call it, what a channel, owner or interval change does to the running `UpdateService`, and why `autoUpdate` needs nothing. §22.6's key-files table lists the module. Found by the 2026-10-06 wrap-up's doc sweep: nothing in the guide was wrong, but the step was missing.
 
 ## [0.1.30-beta.180] - 2026-10-06
