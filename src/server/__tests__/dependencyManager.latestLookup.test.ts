@@ -28,6 +28,11 @@ function stubFetch(answer: (url: string) => Response | Promise<Response>) {
     });
 }
 
+/** By parsed host, not substring: `https://evil.test/api.github.com` is not GitHub's API. */
+function isGitHubApi(url: string): boolean {
+    return new URL(url).hostname === 'api.github.com';
+}
+
 describe('DependencyManager records each latest-version lookup', () => {
     let fetchSpy: ReturnType<typeof vi.spyOn> | undefined;
     let tmpDir: string;
@@ -132,7 +137,7 @@ describe('DependencyManager records each latest-version lookup', () => {
     it('records the lookup inside update(), numbered after the earlier ones', async () => {
         let refuse = true;
         fetchSpy = stubFetch((url) => {
-            if (url.includes('api.github.com')) {
+            if (isGitHubApi(url)) {
                 return refuse
                     ? new Response('{}', { status: 403 })
                     : new Response(JSON.stringify({ tag_name: 'v4.0' }), { status: 200 });
@@ -155,7 +160,7 @@ describe('DependencyManager records each latest-version lookup', () => {
 
     it('records a refused lookup inside update() that then falls back to the bundled version', async () => {
         fetchSpy = stubFetch((url) =>
-            url.includes('api.github.com')
+            isGitHubApi(url)
                 ? new Response('{}', { status: 403 })
                 : new Response('fake-jar-bytes', { status: 200 }),
         );
