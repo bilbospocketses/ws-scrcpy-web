@@ -231,6 +231,41 @@ describe('rename on the card, then rescan (one source of truth)', () => {
     });
 });
 
+describe('clear or rename on the card keeps the MAC copy in step', () => {
+    // On a host, connect files the name under the MAC as well. The card's PUT
+    // used to touch only the serial, so a rescan that reached the device by its
+    // MAC alone (DHCP moved it, and the address join no longer matches)
+    // brought the cleared or old name back.
+    const MOVED = '10.0.0.77:5555';
+
+    for (const where of ['host', 'container'] as const) {
+        const mac = where === 'host' ? MAC : null;
+
+        it(`a cleared name stays cleared on the card and on rescan (${where})`, async () => {
+            setup(where);
+            fakeGetprop();
+            await post('/api/devices/connect', { address: HIT, serial: HIT, label: 'Old Name' });
+
+            await rename(SERIAL, '');
+
+            expect((await cardLabels())[SERIAL]).toBeUndefined();
+            expect(rescanLabel(tcpHit(mac))).toBe('');
+            expect(rescanLabel({ address: MOVED, serial: MOVED, mac })).toBe('');
+        });
+
+        it(`a renamed device carries the new name on rescan, even at a new address (${where})`, async () => {
+            setup(where);
+            fakeGetprop();
+            await post('/api/devices/connect', { address: HIT, serial: HIT, label: 'Old Name' });
+
+            await rename(SERIAL, 'New Name');
+
+            expect(rescanLabel(tcpHit(mac))).toBe('New Name');
+            if (mac) expect(rescanLabel({ address: MOVED, serial: MOVED, mac })).toBe('New Name');
+        });
+    }
+});
+
 describe('the mDNS and MAC paths are unchanged', () => {
     it('an mDNS hit saves the name under its real serial before connecting, with no getprop', async () => {
         setup('container');

@@ -168,24 +168,26 @@ export class DeviceDiscoveryApi {
                     // this is the join that lets it read the serial's CURRENT
                     // label, including a rename made later on the card (rows
                     // 19.4 and 19.5).
+                    //
+                    // The MAC is recorded against the serial too, so a rename or
+                    // clear on the card can keep the MAC copy in step.
                     try {
                         let realSerial = knownSerial;
                         if (!realSerial) {
                             const lookedUp = (await this.adbClient.shell(address, 'getprop ro.serialno')).trim();
                             if (lookedUp) realSerial = lookedUp;
                         }
+                        const ip = address.split(':')[0]!;
+                        // No MAC in a container: `ip neigh` is not in the image, and
+                        // through docker's NAT it could not see a LAN device anyway.
+                        const mac = (label || realSerial) && !inContainer() ? await resolveMac(ip) : null;
                         if (realSerial) {
                             if (label) db.devices.setLabel(userId, realSerial, label);
                             db.devices.claimAddress(realSerial, await scanAddressFor(address, lookupIpv4), Date.now());
+                            if (mac) db.devices.recordMac(realSerial, mac);
                         }
-                        if (label) {
-                            const ip = address.split(':')[0]!;
-                            // No MAC in a container: `ip neigh` is not in the image, and
-                            // through docker's NAT it could not see a LAN device anyway.
-                            const mac = inContainer() ? null : await resolveMac(ip);
-                            if (mac) {
-                                db.devices.setLabel(userId, mac, label);
-                            }
+                        if (label && mac) {
+                            db.devices.setLabel(userId, mac, label);
                         }
                     } catch {
                         // Serial or MAC lookup failed — partial persist is OK;
@@ -271,10 +273,16 @@ export class DeviceDiscoveryApi {
                 }
                 const db = Config.getInstance().db;
                 const userId = resolveUserId(req);
-                if (label) {
-                    db.devices.setLabel(userId, serial, label);
-                } else {
-                    db.devices.deleteLabel(userId, serial);
+                // The copy a connect filed under the device's MAC follows the
+                // serial: left alone, a rescan that reaches the device by MAC
+                // would bring a cleared or old name back (row 19.5 follow-up).
+                const mac = db.devices.getMac(serial);
+                for (const key of mac ? [serial, mac] : [serial]) {
+                    if (label) {
+                        db.devices.setLabel(userId, key, label);
+                    } else {
+                        db.devices.deleteLabel(userId, key);
+                    }
                 }
                 res.writeHead(200);
                 res.end(JSON.stringify({ success: true }));
