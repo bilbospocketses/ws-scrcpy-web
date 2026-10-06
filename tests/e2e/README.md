@@ -223,9 +223,10 @@ so a leftover server or data root names the file it came from:
 | `embed-trust.spec.ts` | 8181, 8184 (its adb daemon), 8188–8189 (embedding pages) | `ws-scrcpy-web-e2e-164d-*` | `lockedServer`, `rawHttp` (`serveHtml`) |
 | `devices-ui.spec.ts` | 8182, 8183 (its adb daemon), 8187 (never bound) | `ws-scrcpy-web-e2e-164d-*` | `lockedServer`, `fetchCounter` |
 | `local-https-fast.spec.ts` | 8191–8195 | `ws-scrcpy-web-e2e-164e-*` | `tlsFixtures`, `tlsPanel` |
+| `mkcert-provenance.spec.ts` | 8197, 8198 (its fixture release server) | `ws-scrcpy-web-e2e-164b-21-12` | `ownedServer` |
 
-8140 is `container-user.spec.ts`'s, and 8141–8150, 8160, 8170, 8180, 8190 and
-8196–8199 are free (8150, 8160, 8170, 8180 and 8190 are the shared-server ports the
+8140 is `container-user.spec.ts`'s, and 8141–8150, 8160, 8170, 8180, 8190, 8196 and
+8199 are free (8150, 8160, 8170, 8180 and 8190 are the shared-server ports the
 item 164 batches used through `WSSW_E2E_PORT` while writing these specs in parallel;
 nothing binds them in a normal run). `lockedServer` can give a server an **adb daemon of its own**
 (`ANDROID_ADB_SERVER_PORT`, mDNS off): a developer's daemon on 5037 auto-connects

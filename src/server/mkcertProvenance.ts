@@ -20,6 +20,39 @@ const log = Logger.for('mkcertProvenance');
  */
 export const MKCERT_REPO = 'bilbospocketses/mkcert';
 const SIGNER_WORKFLOW_URL = `https://github.com/${MKCERT_REPO}/.github/workflows/release.yml`;
+
+/**
+ * A test / mirror seam for every URL the mkcert path reads (item 167), the
+ * sibling of WS_SCRCPY_RELEASE_URL_BASE (item 169). Set, it replaces BOTH of the
+ * fork's GitHub prefixes with one base, under which the paths keep GitHub's own
+ * layout:
+ *
+ *   <base>/releases/latest                    the latest-release lookup (API JSON)
+ *   <base>/releases/download/<tag>/<asset>    the binary and its SHA256SUMS manifest
+ *   <base>/attestations/sha256:<digest>       the build-provenance lookup (API JSON)
+ *
+ * It moves where the files come from, never what vouches for them: the manifest
+ * must still carry an attestation that verifies against the Sigstore public-good
+ * root and was signed by the fork's release workflow at that exact tag (the
+ * identity below stays pinned to github.com), and the binary must still match
+ * the manifest. So a base can serve a genuine release or be refused, nothing
+ * else. That is what lets smoke row 21.12's refusals run against a fixture.
+ */
+export const MKCERT_URL_BASE_ENV = 'WS_SCRCPY_MKCERT_URL_BASE';
+
+export interface MkcertUrlBases {
+    /** Where `releases/latest` and `attestations/…` are read: the GitHub API's repo prefix by default. */
+    api: string;
+    /** Where `releases/download/…` is read: the github.com repo prefix by default. */
+    web: string;
+}
+
+/** Read at call time, not at import, so a test can set the variable per case. */
+export function mkcertUrlBases(override: string | undefined = process.env[MKCERT_URL_BASE_ENV]): MkcertUrlBases {
+    const trimmed = override?.trim().replace(/\/+$/, '');
+    if (trimmed) return { api: trimmed, web: trimmed };
+    return { api: `https://api.github.com/repos/${MKCERT_REPO}`, web: `https://github.com/${MKCERT_REPO}` };
+}
 const GITHUB_ACTIONS_ISSUER = 'https://token.actions.githubusercontent.com';
 const IN_TOTO_PAYLOAD_TYPE = 'application/vnd.in-toto+json';
 const IN_TOTO_STATEMENT_V1 = 'https://in-toto.io/Statement/v1';
@@ -108,7 +141,7 @@ export function createSigstoreVerifier(opts: {
 export function defaultMkcertProvenanceDeps(tufCachePath: string): MkcertProvenanceDeps {
     return {
         fetchBundles: async (sha256Hex) => {
-            const url = `https://api.github.com/repos/${MKCERT_REPO}/attestations/sha256:${sha256Hex}`;
+            const url = `${mkcertUrlBases().api}/attestations/sha256:${sha256Hex}`;
             try {
                 const res = await fetchOkWithRetry(url, {
                     init: { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'ws-scrcpy-web' } },

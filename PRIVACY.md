@@ -75,7 +75,12 @@ The dependency manager checks each standalone runtime dependency for a newer ver
   downloads, these are not fetched on first run.** Nothing is downloaded until you open Settings →
   Server → Local HTTPS and generate a certificate, or update mkcert from Settings → Dependencies, so a
   deployment that never uses that feature never contacts them. The certificate itself is then minted
-  entirely on your machine -- the binary runs locally and sends nothing anywhere.
+  entirely on your machine -- the binary runs locally and sends nothing anywhere. Setting the
+  `WS_SCRCPY_MKCERT_URL_BASE` environment variable moves the version lookup, both downloads and the
+  attestation lookup to `<that base>/releases/latest`, `<that base>/releases/download/...` and
+  `<that base>/attestations/...`, and that server receives them instead of GitHub (a test / mirror seam).
+  The Sigstore trust root is still fetched from Sigstore, and the attestation must still be signed by the
+  fork's own release workflow.
 
 These are standard HTTPS GETs. The operators see your IP and User-Agent, like any other HTTP fetch. You can pre-populate `dependencies/` from another machine and the manager will skip the downloads.
 
