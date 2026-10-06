@@ -17,11 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **A failed first-run service install no longer leaves the "installing service" spinner stuck on screen.** When the welcome modal's "yes, install service" failed (an error from the server, a declined admin prompt, or a server that could not be reached), the spinner stayed over the welcome modal's error message and could not be dismissed, since Escape, the backdrop and × deliberately do nothing on it. The spinner now closes on every outcome except a successful install, where it stays up until the service takes over, the same way Settings → Service already behaved (`src/app/client/WelcomeModal.ts`).
+
 ## [0.1.30-beta.183] - 2026-10-06
 
 ### Fixed
 - **One Ctrl+C on Linux no longer forces the exit before the database backup (smoke row 12.10, qa-harness).** A terminal Ctrl+C reaches the server twice: the terminal sends SIGINT to the whole process group, and the launcher forwards SIGTERM. The server force-exited on any second signal, so that pair could cut the graceful stop short before its last step, the SQLite backup (`wsscrcpy.db.bak`). A repeat signal within 2 s of the first is now logged and ignored; a signal after that still forces the exit (`src/server/util/signalExit.ts`).
-- **A failed first-run service install no longer leaves the "installing service" spinner stuck on screen.** When the welcome modal's "yes, install service" failed (an error from the server, a declined admin prompt, or a server that could not be reached), the spinner stayed over the welcome modal's error message and could not be dismissed, since Escape, the backdrop and × deliberately do nothing on it. The spinner now closes on every outcome except a successful install, where it stays up until the service takes over, the same way Settings → Service already behaved (`src/app/client/WelcomeModal.ts`).
 ## [0.1.30-beta.182] - 2026-10-06
 
 ### Fixed
