@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.189] - 2026-10-06
+
 ### Fixed
 - **Closing a modal while its error message was showing no longer makes it close a second time a few seconds later.** The shell and file-browser modals (`connection failed: …`, for a device host the app refuses to connect to) and the stream modal (`stream failed: …`) close themselves 4 s after showing the error. Closing one with × inside those 4 s left the timer armed, so it closed the modal again when it fired, running the modal's teardown and close callback twice. The stream modal could also close twice without an error: closing it with × stops the stream, and the stream's disconnect arrived afterwards and closed it again. A modal now closes only once (`Modal.close()` ignores every call after the first), and the timed close goes through a new `Modal.closeAfter()`, which any earlier close cancels. The text, the 4 s delay and the ways each modal can be closed are unchanged.
 
