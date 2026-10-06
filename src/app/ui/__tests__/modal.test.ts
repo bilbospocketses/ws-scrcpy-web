@@ -246,3 +246,74 @@ describe('Modal onBeforeClose', () => {
         expect(order).toEqual(['cleanup-while-attached']);
     });
 });
+
+// A modal that closes itself on a timer (an error message shown for 4 s) can
+// also be closed earlier by the user. Whichever close comes second must do
+// nothing: no second onClose, no second teardown.
+describe('Modal closes once', () => {
+    class CountingModal extends Modal {
+        public readonly beforeClose = vi.fn();
+        protected buildBody(container: HTMLElement): void {
+            container.textContent = 'count';
+        }
+        protected override onBeforeClose(): void {
+            this.beforeClose();
+        }
+        public closeIn(ms: number): void {
+            this.closeAfter(ms);
+        }
+    }
+
+    it('a second close() is a no-op', () => {
+        const onClose = vi.fn();
+        const modal = new CountingModal({ title: 'test', onClose });
+        modal.close('first');
+        modal.close('second');
+        expect(onClose).toHaveBeenCalledTimes(1);
+        expect(onClose).toHaveBeenCalledWith('first');
+        expect(modal.beforeClose).toHaveBeenCalledTimes(1);
+        expect(HTMLDialogElement.prototype.close).toHaveBeenCalledTimes(1);
+    });
+
+    it('closeAfter closes the modal once when nothing closes it first', () => {
+        vi.useFakeTimers();
+        const onClose = vi.fn();
+        const modal = new CountingModal({ title: 'test', onClose });
+        modal.closeIn(4000);
+        vi.advanceTimersByTime(3999);
+        expect(onClose).not.toHaveBeenCalled();
+        vi.advanceTimersByTime(1);
+        expect(onClose).toHaveBeenCalledTimes(1);
+        vi.advanceTimersByTime(5000);
+        expect(onClose).toHaveBeenCalledTimes(1);
+        expect(modal.beforeClose).toHaveBeenCalledTimes(1);
+        expect(document.body.contains(modal['dialog'])).toBe(false);
+    });
+
+    it('an earlier close cancels the pending closeAfter', () => {
+        vi.useFakeTimers();
+        const onClose = vi.fn();
+        const modal = new CountingModal({ title: 'test', onClose });
+        modal.closeIn(4000);
+        vi.advanceTimersByTime(1000);
+        modal.close();
+        vi.advanceTimersByTime(250);
+        // Only the timed close was pending, and close() cleared it.
+        expect(vi.getTimerCount()).toBe(0);
+        vi.advanceTimersByTime(5000);
+        expect(onClose).toHaveBeenCalledTimes(1);
+        expect(modal.beforeClose).toHaveBeenCalledTimes(1);
+        expect(HTMLDialogElement.prototype.close).toHaveBeenCalledTimes(1);
+    });
+
+    it('closeAfter on an already-closed modal schedules nothing', () => {
+        vi.useFakeTimers();
+        const onClose = vi.fn();
+        const modal = new CountingModal({ title: 'test', onClose });
+        modal.close();
+        vi.advanceTimersByTime(250);
+        modal.closeIn(4000);
+        expect(vi.getTimerCount()).toBe(0);
+        expect(onClose).toHaveBeenCalledTimes(1);
+    });
+});

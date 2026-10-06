@@ -96,6 +96,9 @@ describe('DeviceDiscoveryApi /api/devices/connect address validation', () => {
     it('passes the adb connect shapes through to adb', async () => {
         setup();
         const spy = vi.spyOn(AdbClient.prototype, 'connect').mockResolvedValue('connected to 10.0.0.5:5555');
+        // A successful connect looks up `ro.serialno` to record where the device
+        // answered (row 19.5). Faked, so no real adb server is started here.
+        vi.spyOn(AdbClient.prototype, 'shell').mockRejectedValue(new Error('no device'));
         const api = new DeviceDiscoveryApi();
 
         for (const address of ['10.0.0.5', '10.0.0.5:5555', '[fe80::1]:5555', 'phone.local']) {

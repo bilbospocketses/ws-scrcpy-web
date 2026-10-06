@@ -1,3 +1,4 @@
+import { lookup as dnsLookup } from 'dns/promises';
 import type { IncomingMessage, ServerResponse } from 'http';
 import { AdbClient, parseSerialFromMdnsName } from '../AdbClient';
 import { resolveUserId } from '../auth/currentUser';
@@ -6,6 +7,7 @@ import { parseScreenState, SCREEN_STATE_COMMAND } from '../deviceScreenState';
 import { Logger } from '../Logger';
 import { resolveMac } from '../network/MacResolver';
 import { detectSubnet } from '../network/SubnetDetector';
+import { isProbeAddressSerial, scanAddressFor } from '../network/scanIdentity';
 import { assertDeletablePaths, isConnectAddress, shArg } from '../security/deviceInput';
 import { inContainer } from './containerGuard';
 import { upsertObservedDevices } from './deviceObserved';
@@ -14,6 +16,12 @@ import { BodyTooLargeError, InvalidJsonError, readJsonBodyStrict, sendInternalEr
 const log = Logger.for('DeviceDiscoveryApi');
 
 export type DisconnectOutcome = { status: number; success: boolean; message: string };
+
+/** A scan probes IPv4 literals, so a hostname connect is recorded at its IPv4. */
+async function lookupIpv4(hostname: string): Promise<string | null> {
+    const { address } = await dnsLookup(hostname, { family: 4 });
+    return address;
+}
 
 /**
  * adb prints `disconnected <addr>` when it tore a connection down, and
@@ -136,34 +144,48 @@ export class DeviceDiscoveryApi {
                 }
                 const db = Config.getInstance().db;
                 const userId = resolveUserId(req);
+                // A subnet-scan (TCP-probe) hit posts its probe address as
+                // `serial`. That is not the device's identity: the card reads
+                // labels by `ro.serialno`, so it is looked up below instead
+                // (row 19.5). Only a real serial (an mDNS hit's) is trusted.
+                const knownSerial = serial && !isProbeAddressSerial(serial, address) ? serial : undefined;
                 // mDNS path: serial is known upfront, save the label before connecting.
-                if (serial && label) {
-                    db.devices.setLabel(userId, serial, label);
+                if (knownSerial && label) {
+                    db.devices.setLabel(userId, knownSerial, label);
                 }
                 const result = await this.adbClient.connect(address);
                 const success = result.includes('connected');
                 log.info(`connect ${address} → ${success ? 'OK' : 'FAIL'}: ${result.trim().replace(/\s+/g, ' ')}`);
-                if (success && label) {
+                if (success) {
                     // Persist the label under the device's real serial AND its MAC.
                     // Storing under both keys lets future scans (which may only have
                     // MAC from ARP — no serial without racing adb) still rehydrate
-                    // the label. Only applies when the user provided a label on this
-                    // connect; otherwise nothing to persist.
+                    // the label.
+                    //
+                    // Every connect, named or not, also records the address the
+                    // device answered at against its real serial. A rescan hit
+                    // carries only that address (and, off a container, a MAC), so
+                    // this is the join that lets it read the serial's CURRENT
+                    // label, including a rename made later on the card (rows
+                    // 19.4 and 19.5).
                     try {
-                        let realSerial = serial;
+                        let realSerial = knownSerial;
                         if (!realSerial) {
                             const lookedUp = (await this.adbClient.shell(address, 'getprop ro.serialno')).trim();
                             if (lookedUp) realSerial = lookedUp;
                         }
                         if (realSerial) {
-                            db.devices.setLabel(userId, realSerial, label);
+                            if (label) db.devices.setLabel(userId, realSerial, label);
+                            db.devices.claimAddress(realSerial, await scanAddressFor(address, lookupIpv4), Date.now());
                         }
-                        const ip = address.split(':')[0]!;
-                        // No MAC in a container: `ip neigh` is not in the image, and
-                        // through docker's NAT it could not see a LAN device anyway.
-                        const mac = inContainer() ? null : await resolveMac(ip);
-                        if (mac) {
-                            db.devices.setLabel(userId, mac, label);
+                        if (label) {
+                            const ip = address.split(':')[0]!;
+                            // No MAC in a container: `ip neigh` is not in the image, and
+                            // through docker's NAT it could not see a LAN device anyway.
+                            const mac = inContainer() ? null : await resolveMac(ip);
+                            if (mac) {
+                                db.devices.setLabel(userId, mac, label);
+                            }
                         }
                     } catch {
                         // Serial or MAC lookup failed — partial persist is OK;

@@ -4,8 +4,10 @@ import * as os from 'os';
 import * as path from 'path';
 import type { UpdateInfo, UpdateOptions, VelopackAsset } from 'velopack';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { AdbClient } from '../AdbClient';
 import { Config } from '../Config';
 import { EnvName } from '../EnvName';
+import { liveStreams } from '../liveStreams';
 import { stageSystemHelper } from '../service/systemHelper';
 import { type UpdateManagerLike, UpdateService } from '../UpdateService';
 import { betas, type FakeGithubApi, fakeGithubApi, release } from './helpers/fakeGithubReleases';
@@ -1087,6 +1089,43 @@ describe('UpdateService', () => {
             (call) => Array.isArray(call[1]) && (call[1] as unknown[]).some((a) => a === '/IM'),
         );
         expect(blanket).toEqual([]);
+    });
+
+    it('applyUpdate: closes the open streams as a deliberate stop before adb kill-server', async () => {
+        // kill-server kills each stream's scrcpy-server; a stream still open then
+        // told its viewer "stream failed" over an update they asked for.
+        Config.getInstance().updateAppConfig({ autoUpdate: false });
+        const order: string[] = [];
+        const stream = {
+            closeForShutdown: () => {
+                order.push('close stream');
+                liveStreams.remove(stream);
+            },
+        };
+        liveStreams.add(stream);
+        const killSpy = vi.spyOn(AdbClient.prototype, 'killServer').mockImplementation(async () => {
+            order.push('kill-server');
+        });
+        const svc = new UpdateService({
+            platform: 'win32',
+            installRoot: '/fake',
+            existsSync: () => true,
+            updateManagerFactory: () => fakeMgr({ checkForUpdatesAsync: async () => fakeUpdateInfo('0.2.0') }),
+            setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
+            clearIntervalFn: () => undefined,
+            reapOwnAdbFn: async () => 0,
+        });
+        svc.init();
+        await svc.checkForUpdates();
+
+        try {
+            await svc.applyUpdate();
+        } finally {
+            killSpy.mockRestore();
+        }
+
+        expect(order).toEqual(['close stream', 'kill-server']);
+        expect(liveStreams.size()).toBe(0);
     });
 
     it('applyUpdate: with the default reaper, no execFile call ever carries /IM', async () => {

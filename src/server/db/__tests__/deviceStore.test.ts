@@ -25,6 +25,18 @@ describe('DeviceStore observed devices', () => {
         });
         expect(store.listDevices().length).toBe(1);
     });
+
+    it('claimAddress gives an address to one device at a time (row 19.5)', () => {
+        // S1 once answered at the address, and has since been seen over USB,
+        // which bumps its last_seen_at and keeps the old address.
+        store.claimAddress('S1', '10.0.0.5:5555', 100);
+        store.claimAddress('S2', '10.0.0.5:5555', 200);
+        store.upsertDevice({ serial: 'S1', model: 'Pixel 7', lastSeenAt: 300 });
+
+        expect(store.findByAddress('10.0.0.5:5555')?.serial).toBe('S2');
+        expect(store.getDevice('S1')).toMatchObject({ address: null, model: 'Pixel 7' });
+        expect(store.getDevice('S2')).toMatchObject({ address: '10.0.0.5:5555', lastSeenAt: 200 });
+    });
 });
 
 describe('DeviceStore per-user labels', () => {

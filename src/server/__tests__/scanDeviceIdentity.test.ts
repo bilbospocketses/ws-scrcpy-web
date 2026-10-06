@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { expandConnectedAddresses, resolveHitIdentity } from '../network/scanIdentity';
+import {
+    expandConnectedAddresses,
+    isProbeAddressSerial,
+    resolveHitIdentity,
+    scanAddressFor,
+} from '../network/scanIdentity';
 
 /**
  * Findings 7.6, 7.7 and 19.4 share one cause: a scan hit's identity is the
@@ -72,7 +77,7 @@ describe('resolveHitIdentity (findings 19.4 and 7.6)', () => {
         expect(out.label).toBe('from the caller');
     });
 
-    it('falls back to the MAC alias before anything else is tried', () => {
+    it("falls back to the MAC alias when the device's serial has no name", () => {
         const out = resolveHitIdentity({
             address: '192.168.87.3:5555',
             hitSerial: '192.168.87.3:5555',
@@ -94,6 +99,59 @@ describe('resolveHitIdentity (findings 19.4 and 7.6)', () => {
             deviceByAddress: observed,
         });
         expect(out.label).toBe('Living Room');
+    });
+
+    it("the real serial's name beats a MAC copy left stale by a rename on the card (19.5)", () => {
+        // Connecting with a name files it under the serial AND the MAC; the
+        // card's rename (PUT /api/devices/labels) rewrites the serial only.
+        const out = resolveHitIdentity({
+            address: '192.168.87.3:5555',
+            hitSerial: '192.168.87.3:5555',
+            mac: 'aa:bb:cc:dd:ee:ff',
+            labelFor: (key) => ({ R5CN30ABCDE: 'New Name', 'aa:bb:cc:dd:ee:ff': 'Old Name' })[key],
+            deviceByAddress: observed,
+        });
+        expect(out.label).toBe('New Name');
+    });
+
+    it("an mDNS hit's own serial beats a MAC copy too", () => {
+        const out = resolveHitIdentity({
+            address: '192.168.87.3:37123',
+            hitSerial: 'R5CN30ABCDE',
+            mac: 'aa:bb:cc:dd:ee:ff',
+            labelFor: (key) => ({ R5CN30ABCDE: 'New Name', 'aa:bb:cc:dd:ee:ff': 'Old Name' })[key],
+        });
+        expect(out.label).toBe('New Name');
+    });
+
+    it("an mDNS hit's own serial beats the serial last observed at its address", () => {
+        // The address may since have been handed to another device by DHCP;
+        // the hit's serial is what the device itself advertised just now.
+        const out = resolveHitIdentity({
+            address: '192.168.87.3:5555',
+            hitSerial: 'OTHERSERIAL',
+            mac: null,
+            labelFor: (key) => ({ OTHERSERIAL: 'Advertised', R5CN30ABCDE: 'Observed' })[key],
+            deviceByAddress: observed,
+        });
+        expect(out.label).toBe('Advertised');
+    });
+
+    it('still reads a name filed under the probe address before 19.5, as the last resort', () => {
+        const legacy = (key: string) => ({ '10.0.0.9:5555': 'Legacy' })[key];
+        expect(
+            resolveHitIdentity({ address: '10.0.0.9:5555', hitSerial: '10.0.0.9:5555', mac: null, labelFor: legacy })
+                .label,
+        ).toBe('Legacy');
+        // ...and still below the MAC alias, as before.
+        expect(
+            resolveHitIdentity({
+                address: '10.0.0.9:5555',
+                hitSerial: '10.0.0.9:5555',
+                mac: 'aa:bb:cc:dd:ee:ff',
+                labelFor: (key) => (key === 'aa:bb:cc:dd:ee:ff' ? 'By MAC' : legacy(key)),
+            }).label,
+        ).toBe('By MAC');
     });
 
     it('carries the remembered model for a hit with no live banner (7.6)', () => {
@@ -128,6 +186,54 @@ describe('resolveHitIdentity (findings 19.4 and 7.6)', () => {
         });
         expect(out.label).toBe('');
         expect(out.model).toBeNull();
+    });
+});
+
+describe('isProbeAddressSerial (row 19.5)', () => {
+    it('recognises the TCP-hit form and the connect address itself', () => {
+        expect(isProbeAddressSerial('192.168.87.3:5555', '192.168.87.3:5555')).toBe(true);
+        expect(isProbeAddressSerial('qa-android:5555', '10.0.0.5:5555')).toBe(true);
+        expect(isProbeAddressSerial('phone.local', 'phone.local')).toBe(true);
+    });
+
+    it('leaves a real serial alone, including an mDNS one', () => {
+        expect(isProbeAddressSerial('R5CN30ABCDE', '192.168.87.3:37123')).toBe(false);
+        expect(isProbeAddressSerial('emulator-5554', '192.168.87.3:5555')).toBe(false);
+    });
+});
+
+describe('scanAddressFor (row 19.5)', () => {
+    const lookup = async (h: string) => (h === 'qa-android' ? '10.0.0.5' : null);
+
+    it('keeps an IPv4 host:port as it is, without a lookup', async () => {
+        const looked: string[] = [];
+        const out = await scanAddressFor('192.168.87.3:5555', async (h) => {
+            looked.push(h);
+            return null;
+        });
+        expect(out).toBe('192.168.87.3:5555');
+        expect(looked).toEqual([]);
+    });
+
+    it("adds adb's default port to a bare host", async () => {
+        expect(await scanAddressFor('192.168.87.3', lookup)).toBe('192.168.87.3:5555');
+    });
+
+    it('resolves a hostname to the IPv4 a scan would probe', async () => {
+        expect(await scanAddressFor('qa-android:5555', lookup)).toBe('10.0.0.5:5555');
+    });
+
+    it('keeps the hostname form when the lookup fails or throws', async () => {
+        expect(await scanAddressFor('nosuchhost:5555', lookup)).toBe('nosuchhost:5555');
+        expect(
+            await scanAddressFor('qa-android:5555', async () => {
+                throw new Error('EAI_AGAIN');
+            }),
+        ).toBe('qa-android:5555');
+    });
+
+    it('leaves an IPv6 literal unresolved', async () => {
+        expect(await scanAddressFor('[fe80::1]:5555', lookup)).toBe('[fe80::1]:5555');
     });
 });
 
