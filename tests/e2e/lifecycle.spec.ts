@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import https from 'node:https';
 import path from 'node:path';
 import { type BrowserContext, expect, request, test } from '@playwright/test';
@@ -21,10 +21,10 @@ import {
     withTimeout,
 } from './support/privateServer';
 import { selfSignedCert } from './support/selfSignedCert';
-import { LOG_REL, NOTHING_SERVES } from './support/serverLog';
+import { LOG_REL, logOffset, logSince, NOTHING_SERVES } from './support/serverLog';
 
 /**
- * Smoke module 12 — lifecycle (rows 12.1, 12.4, 12.6).
+ * Smoke module 12 — lifecycle (rows 12.1, 12.4, 12.6, and 12.10's double signal on Linux).
  *
  * Every row ends a server, so each runs one the spec owns: the shared 8123
  * server has no supervisor and "stop server & exit" would end the suite with
@@ -316,6 +316,49 @@ test.describe('lifecycle (smoke §12)', () => {
                 console.warn(`12.6 cleanup: ${String(err)}`);
             }
             await releasePort(blocker);
+        }
+    });
+
+    // POSIX signals: on Windows the harness can only TerminateProcess the child.
+    test('12.10 one Ctrl+C is two signals (SIGINT, then the launcher SIGTERM): the repeat is ignored, the stop finishes and writes the backup, exit 0', async () => {
+        test.skip(process.platform === 'win32', 'Windows has no SIGINT/SIGTERM to deliver to a child process');
+        test.setTimeout(180_000);
+        const paths = privateServerPaths('ws-scrcpy-web-e2e-double-signal', 8142);
+        seedPrivateDataRoot(paths);
+        const handle = spawnServer(paths);
+        const bak = `${paths.dbPath}.bak`;
+        try {
+            await waitForServer(handle, paths.baseURL);
+            const offset = logOffset(paths);
+            const pid = handle.child.pid as number;
+            const signalledAt = Date.now();
+            // What a terminal Ctrl+C under the launcher delivers: the terminal's
+            // SIGINT to the process group, and the launcher's SIGTERM
+            // (launcher/src/supervisor.rs wait_with_signal) a moment later.
+            process.kill(pid, 'SIGINT');
+            await new Promise((r) => setTimeout(r, 50));
+            process.kill(pid, 'SIGTERM');
+
+            const exit = await withTimeout(handle.exited, 60_000, () => `waiting for the exit:\n${handle.output()}`);
+            expect(exit, handle.output()).toEqual({ code: 0, signal: null });
+
+            const log = logSince(paths, offset);
+            expect(log).toContain('Received signal SIGINT');
+            expect(log).toContain('Received signal SIGTERM');
+            expect(log).toMatch(/Ignoring SIGTERM \d+ms after the first signal: graceful shutdown is already running/);
+            expect(log, 'the repeat must not force the exit').not.toContain('Force exit');
+            expect(log).toContain('Stopping adb daemon (kill-server)');
+            // The backup is the teardown's LAST step, so a fresh one proves the stop ran to the end.
+            expect(existsSync(bak), 'the graceful stop writes wsscrcpy.db.bak').toBe(true);
+            expect(statSync(bak).mtimeMs, 'wsscrcpy.db.bak was written by this stop').toBeGreaterThanOrEqual(
+                signalledAt - 2_000,
+            );
+        } finally {
+            try {
+                await stopServer(handle);
+            } catch (err) {
+                console.warn(`12.10 cleanup: ${String(err)}`);
+            }
         }
     });
 });
