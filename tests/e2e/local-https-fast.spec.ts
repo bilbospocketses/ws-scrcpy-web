@@ -19,7 +19,7 @@ import { guardTlsWrites, openLocalHttpsPanel, stubTlsState } from './support/tls
 
 /**
  * Smoke module 21 (Local HTTPS), the fast-tier halves of rows 21.6, 21.8, 21.9,
- * 21.10 and 21.11 (item 164). Row 21.12 is not here: see the note at the end.
+ * 21.10 and 21.11 (item 164). Row 21.12 is in mkcert-provenance.spec.ts.
  *
  * Nothing in this file runs mkcert, downloads it, or installs a CA anywhere. A
  * certificate STATE comes from one of two places:
@@ -696,12 +696,7 @@ test('21.9 against a real bound listener: a new leaf under it reports restart-re
 });
 
 /*
- * Row 21.12 (mkcert provenance refusals) is NOT automated here, and cannot be
- * without a change under src/. Every URL that path reads is a literal:
- * `https://api.github.com/repos/bilbospocketses/mkcert/releases/latest`
- * (DependencyDefinitions.ts, checkLatest), the asset and SHA256SUMS URLs under
- * `https://github.com/bilbospocketses/mkcert/releases/download/` (same file),
- * and `https://api.github.com/repos/bilbospocketses/mkcert/attestations/…`
- * (mkcertProvenance.ts). No env var or config key points any of them at a
- * local fixture server.
+ * Row 21.12 (mkcert provenance refusals) is not here: it lives in
+ * mkcert-provenance.spec.ts, which points every mkcert URL at a fixture
+ * release server through WS_SCRCPY_MKCERT_URL_BASE (item 167, beta.176).
  */
