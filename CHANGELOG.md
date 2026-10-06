@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **The shell modal says `connection failed:` and closes when the device host does not answer.** Opening a shell to a host that refused or never answered left the modal open and blank: the only error path covered a malformed hostname or port, and nothing listened for the socket failing before it opened. The modal now shows `connection failed: could not reach <host>:<port> (code <N>)` and closes after 4 s, the same message and timing the malformed-address case already used. A failure is reported once even when the socket's error is followed by its close, a session that opened and later ended behaves as before, and closing the modal yourself before the socket opens shows nothing. Found by qa-harness on smoke row 9.10.
+
 ## [0.1.30-beta.184] - 2026-10-06
 
 ### Added
