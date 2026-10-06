@@ -17,11 +17,21 @@ const STAGED = '/opt/ws-scrcpy-web/control/ws-scrcpy-web-launcher';
 vi.mock('../service/systemHelper', () => ({ stageSystemHelper: vi.fn(() => STAGED) }));
 
 // Mock child_process.spawn so local-mode applyUpdate doesn't try to exec
-// the real operation-server helper binary (which doesn't exist in test).
+// the real operation-server helper binary (which doesn't exist in test), and
+// execFile so the win32 pre-apply hygiene (`adb kill-server`, then
+// `taskkill /F /IM adb.exe /T`) never runs for real: unmocked, `npm test` on a
+// Windows box killed every adb.exe on the machine. Each call answers success.
 vi.mock('child_process', async (importOriginal) => {
     const real = await importOriginal<typeof child_process>();
     return {
         ...real,
+        execFile: vi.fn((...args: unknown[]) => {
+            const callback = args.find((a) => typeof a === 'function') as
+                | ((err: Error | null, stdout: string, stderr: string) => void)
+                | undefined;
+            queueMicrotask(() => callback?.(null, '', ''));
+            return { pid: 0 };
+        }),
         spawn: vi.fn(() => {
             // Minimal ChildProcess stand-in: `unref` (detached non-systemd path)
             // + `once` (the systemd-run path awaits 'exit' = unit registration;
@@ -1038,6 +1048,34 @@ describe('UpdateService', () => {
         // §40: local mode does NOT call waitExitThenApplyUpdate — the
         // supervisor's local-post-stop.bat calls Update.exe apply directly.
         expect(applyFn).not.toHaveBeenCalled();
+    });
+
+    // The win32 pre-apply hygiene runs `taskkill /F /IM adb.exe /T` through
+    // child_process.execFile. Unmocked, `npm test` on a Windows box killed EVERY
+    // adb.exe on the machine, a developer's and other tools' included (found
+    // 2026-10-06 while fixing item 170). execFile is module-mocked above; this
+    // proves the hygiene goes through the mock, so no real process is touched.
+    it('applyUpdate (win32): pre-apply hygiene goes through the mocked execFile, never a real taskkill', async () => {
+        Config.getInstance().updateAppConfig({ autoUpdate: false });
+        const execFileMock = vi.mocked(child_process.execFile);
+        execFileMock.mockClear();
+        const mgr = fakeMgr({
+            checkForUpdatesAsync: async () => fakeUpdateInfo('0.2.0'),
+            waitExitThenApplyUpdate: vi.fn(),
+        });
+        const svc = new UpdateService({
+            platform: 'win32',
+            installRoot: '/fake',
+            existsSync: () => true,
+            updateManagerFactory: () => mgr,
+            setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
+            clearIntervalFn: () => undefined,
+        });
+        svc.init();
+        await svc.checkForUpdates();
+        await svc.applyUpdate();
+        const taskkill = execFileMock.mock.calls.find(([file]) => /taskkill\.exe$/i.test(String(file)));
+        expect(taskkill?.[1]).toEqual(['/F', '/IM', 'adb.exe', '/T']);
     });
 
     // v0.1.25-beta.8 smoke A.2 regression: when installMode is a service mode,
