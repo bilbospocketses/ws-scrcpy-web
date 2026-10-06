@@ -396,7 +396,7 @@ Sorted by module, then by row number, which is not the doc's execution order.
 | 19.1 | `[Both]` | 📱 Open-mode labels unchanged | device | `device/labels.spec.ts` |
 | 19.2 | `[Both]` | 🔐📱 Per-user label isolation | device | `device/labels.spec.ts` |
 | 19.3 | `[Both]` | 🔐📱 Labels in live scan hits | device | `device/labels.spec.ts` |
-| 19.5 | `[Both]` | 📱 A name typed at connect time is kept | automatable: no spec yet | Device tier, beside `device/labels.spec.ts`. Added 2026-10-03 (G34). |
+| 19.5 | `[Both]` | 📱 A name typed at connect time is kept | automatable: no spec yet | Device tier, beside `device/labels.spec.ts`. Added 2026-10-06 note (qa-harness): the row's "serial and its MAC" is corrected for the container (no MAC there). The storage rules (serial key, the address recorded for rescans, the MAC kept in step with a clear or rename on a host, a name held until the serial is known) are unit-pinned in `deviceDiscoveryApi.scanLabels.test.ts`. Added 2026-10-03 (G34). |
 | 20.1 | `[Both]` | Settings → Service in a container | container | `docker-gating.spec.ts` |
 | 20.2 | `[Both]` | Settings → Updates in a container | container | `docker-gating.spec.ts` |
 | 20.3 | `[Both]` | libfuse2 banner | residual: un-automatable | Nothing left to test - the libfuse2 gate this row checked no longer exists. A tombstone, kept so the number is not reused. |
