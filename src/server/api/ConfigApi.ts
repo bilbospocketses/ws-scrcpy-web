@@ -3,6 +3,7 @@ import type { AppConfigEnvelope, AppConfigPatchResponse } from '../../common/Con
 import { callerIsLocal, requireOperator, resolveAdminScope } from '../auth/requireOperator';
 import { Config, ConfigValidationError } from '../Config';
 import { Logger } from '../Logger';
+import { applyUpdaterConfigChange, type UpdaterControls } from '../updaterConfigSync';
 import { hostOnlyConfigKeys, refuseInContainer } from './containerGuard';
 import { scheduleRestartForPortChange } from './restartRequest';
 import { type SystemServicePortGuardDeps, systemServicePortRefusal } from './systemServicePortGuard';
@@ -10,9 +11,23 @@ import { BodyTooLargeError, readBodyCapped } from './utils';
 
 const log = Logger.for('ConfigApi');
 
+/**
+ * The port-guard fields are test seams; production uses the real probe and
+ * instance check.
+ */
+export interface ConfigApiOptions extends SystemServicePortGuardDeps {
+    /**
+     * The RUNNING update service, told about a written channel, owner or
+     * interval (`applyUpdaterConfigChange`). Production hands in the same
+     * `UpdateService` `UpdatesApi` gets (index.ts); tests hand in spies. Absent,
+     * a write only reaches config.json and the service keeps its old values
+     * until restart (6.11 follow-up).
+     */
+    updater?: UpdaterControls;
+}
+
 export class ConfigApi {
-    /** `portGuard` is a test seam; production uses the real probe and instance check. */
-    constructor(private readonly portGuard: SystemServicePortGuardDeps = {}) {}
+    constructor(private readonly opts: ConfigApiOptions = {}) {}
 
     async handle(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
         const url = req.url || '';
@@ -75,7 +90,7 @@ export class ConfigApi {
                 const refusal = await systemServicePortRefusal(
                     (parsed as Record<string, unknown>)['webPort'],
                     cfg.servers.map((s) => s.port),
-                    this.portGuard,
+                    this.opts,
                 );
                 if (refusal) {
                     log.warn(`PATCH /api/config refused: ${refusal}`);
@@ -84,6 +99,7 @@ export class ConfigApi {
                     return true;
                 }
                 try {
+                    const before = cfg.getAppConfig();
                     const result = cfg.updateAppConfig(parsed as Record<string, unknown>);
                     const response: AppConfigPatchResponse = {
                         config: result.config,
@@ -103,6 +119,21 @@ export class ConfigApi {
                     if (result.restartRequired) {
                         response.redirectPort = result.config.webPort;
                         scheduleRestartForPortChange(cfg.restartMarkerPath, log);
+                    } else if (this.opts.updater) {
+                        // Tell the RUNNING update service what moved, as the
+                        // Settings dialog's Save does (SettingsBatchApi). Not
+                        // when the port moved: this process ends a second later
+                        // and the next one's UpdateService.init() reads the new
+                        // values. Not awaited: a reconfigure resolves only after
+                        // its check (and on Windows with automatic updates on,
+                        // its download). A container never reaches here with an
+                        // updater field: the host-only refusal above answers 409.
+                        applyUpdaterConfigChange(this.opts.updater, before, cfg.getAppConfig()).catch(
+                            (err: unknown) => {
+                                const message = err instanceof Error ? err.message : String(err);
+                                log.warn(`the update service did not take the new settings: ${message}`);
+                            },
+                        );
                     }
 
                     res.writeHead(200);

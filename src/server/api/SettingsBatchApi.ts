@@ -4,6 +4,7 @@ import { requireOperator } from '../auth/requireOperator';
 import { Config } from '../Config';
 import type { Change } from '../db/PendingSettingsStore';
 import { Logger } from '../Logger';
+import { applyUpdaterConfigChange, type UpdaterControls } from '../updaterConfigSync';
 import { hostOnlyConfigKeys, refuseInContainer } from './containerGuard';
 import { scheduleRestartForPortChange } from './restartRequest';
 import { type SystemServicePortGuardDeps, systemServicePortRefusal } from './systemServicePortGuard';
@@ -50,6 +51,14 @@ export interface SettingsBatchApiOptions extends SystemServicePortGuardDeps {
     schedule?: (cb: () => void, ms: number) => unknown;
     /** process.exit seam -- tests inject to avoid killing the worker. */
     exit?: (code: number) => void;
+    /**
+     * The RUNNING update service, told about a saved channel, owner or interval
+     * (`applyUpdaterConfigChange`). Production hands in the same `UpdateService`
+     * `UpdatesApi` gets (index.ts); tests hand in spies. Absent, a batch only
+     * writes config -- which is exactly the 6.11 bug, so only a test that does
+     * not care about the updater should leave it out.
+     */
+    updater?: UpdaterControls;
 }
 
 export class SettingsBatchApi {
@@ -145,6 +154,36 @@ export class SettingsBatchApi {
         const applied: string[] = [];
 
         /**
+         * Tell the RUNNING update service what this batch changed (smoke row
+         * 6.11, qa-harness): the config before the first apply against the
+         * config now. Without it a saved interval or channel sat in config.json
+         * while the service kept the old timer and the old channel until restart.
+         *
+         * Called on every exit that may have written something -- the clean
+         * finish, and a failure partway (a sibling that landed before the failing
+         * change is just as real) -- but NOT when the batch moved the port: that
+         * process ends a second later and the next one's `UpdateService.init()`
+         * reads the new values from config.json, so the call would only start a
+         * check the exit cuts off.
+         *
+         * Not awaited. `reconfigure` resolves only when the check it starts is
+         * over, which on Windows with automatic updates on includes downloading
+         * the whole package; the Save must not hang on that. Its outcome lands in
+         * the service state GET /api/updates/status reports, as with any check.
+         * A container never gets here with an updater id: the container refusal
+         * above answers 409 for all of them before anything is applied.
+         */
+        const before = cfg.getAppConfig();
+        const notifyUpdater = (): void => {
+            const updater = this.seams.updater;
+            if (!updater) return;
+            applyUpdaterConfigChange(updater, before, cfg.getAppConfig()).catch((err: unknown) => {
+                const message = err instanceof Error ? err.message : String(err);
+                log.warn(`batch ${batchId}: the update service did not take the new settings: ${message}`);
+            });
+        };
+
+        /**
          * One rejected apply: mark the WAL row failed, answer 400, end the batch.
          *
          * Shared by both apply paths rather than written twice, so webPort cannot
@@ -158,6 +197,7 @@ export class SettingsBatchApi {
             const message = err instanceof Error ? err.message : String(err);
             cfg.db.pendingSettings.markFailed(batchId, `${id}: ${message}`);
             log.warn(`batch ${batchId} failed at ${id}: ${message}`);
+            notifyUpdater();
             res.writeHead(400, { 'content-type': 'application/json' });
             res.end(JSON.stringify({ ok: false, applied, failed: { id, error: message } }));
             return true;
@@ -188,6 +228,9 @@ export class SettingsBatchApi {
                 cfg.db.pendingSettings.markCompleted(batchId);
                 if (result.restartRequired) {
                     scheduleRestartForPortChange(cfg.restartMarkerPath, log, this.seams);
+                } else {
+                    // The port did not move, so this process lives on.
+                    notifyUpdater();
                 }
                 res.writeHead(200, { 'content-type': 'application/json' });
                 res.end(
@@ -209,6 +252,7 @@ export class SettingsBatchApi {
         }
 
         cfg.db.pendingSettings.markCompleted(batchId);
+        notifyUpdater();
         res.writeHead(200, { 'content-type': 'application/json' });
         res.end(JSON.stringify({ ok: true, applied }));
         return true;

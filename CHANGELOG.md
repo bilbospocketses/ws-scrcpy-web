@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **A change to the update check interval, channel or GitHub owner now reaches the running update service, whichever route writes it.** Three routes write those settings: the Settings dialog's Save (`POST /api/settings/batch`), `PATCH /api/config` and `PATCH /api/updates/config`. The first two wrote the new values to `config.json` and stopped there, so after a Save the old timer kept its old interval and checks stayed on the old channel and owner until the app was restarted. The third told the service, but when the channel or owner and the interval changed together it only switched the channel, so the old interval kept running there too. The qa-harness session found it while planning smoke row 6.11. The decision now lives in one function, `applyUpdaterConfigChange` (`src/server/updaterConfigSync.ts`), which compares the config before and after the write and is called by all three routes: a changed channel or owner reconfigures the service and checks at once, and a changed interval restarts the timer, both when both changed. The Save and `PATCH /api/config` do this in the background, so they never wait on the check (which on Windows with automatic updates on includes the download). The Save also does it when it fails partway, since a setting applied before the failure is already written. Neither does it when the write moves the web port, because the process restarts and the new one reads the new values. `autoUpdate` needed no change: the service reads it at every check. In a container both routes still refuse every updater setting before anything is applied.
+
 ## [0.1.30-beta.178] - 2026-10-06
 
 ### Added
