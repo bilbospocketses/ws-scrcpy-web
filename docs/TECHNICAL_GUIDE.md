@@ -803,10 +803,21 @@ In production (MSI/AppImage), the Rust launcher (`ws-scrcpy-web-launcher.exe`) s
    - `RemoteShell` -- terminal access via node-pty (messages: `start`, `resize`, `stop`)
    - `FileListing` -- file manager operations
 
-**Graceful shutdown** (`gracefulShutdown()` in `index.ts`: "stop server & exit", the tray's exit, SIGINT/SIGTERM; not
-the exit-75 restart) stops the adb daemon with `adb kill-server`, then on Windows reaps whatever is left of **the app's
-own adb only** (`reapStrayAdbOnWindows(config.adbPath)` in `src/server/shutdownHelpers.ts`, implemented in
+**Graceful shutdown** (`gracefulShutdown()` in `index.ts`, its steps in `runGracefulShutdown()` in
+`src/server/shutdownHelpers.ts`: "stop server & exit", the tray's exit, SIGINT/SIGTERM; not the exit-75 restart) first
+closes every open stream with **1001 "server shutting down"** (`liveStreams.closeAllForShutdown()`,
+`src/server/liveStreams.ts`), then stops the adb daemon with `adb kill-server`, then on Windows reaps whatever is left of
+**the app's own adb only** (`reapStrayAdbOnWindows(config.adbPath)` in `src/server/shutdownHelpers.ts`, implemented in
 `src/server/util/reapOwnAdb.ts`), then releases the services and snapshots and closes the SQLite store.
+The streams go first because `kill-server` kills each session's scrcpy-server, and a session still open then took its
+failure path (§11.4) and the viewer saw `stream failed: scrcpy-server exited (...)` over a stop they asked for. Closing
+with 1001 (Going Away, a normal end to the browser) also releases the session, so the exit that `kill-server` causes
+finds it already released. The exit-75 restarts (`DependencyManager.requestRestart`, `scheduleRestartForPortChange`)
+and an update's pre-apply hygiene (`UpdateService.preApplyHygiene`) close the open streams the same way before they
+exit or run `kill-server`. Only the stream sockets get this close. The other sockets (device probe, network scan, and
+the multiplexed device tracker, shell and file listing) still end with the WebSocket server's terminate: none of their
+clients behaves differently on 1001 than on 1006, except the file push, which reports an interrupted upload only on an
+unclean close and should keep doing so.
 The reap is needed because `kill-server` can leave the daemon behind (spawned detached and outside the job object,
 stuck transports, in-flight forwards). It matches **by executable path**: Windows PowerShell 5.1 (literal
 `C:\Windows\System32\...` path, `PSModulePath` stripped, a fixed script with nothing spliced in) lists `adb`
@@ -969,7 +980,7 @@ try {
 
 `ScrcpyConnection.ts` uses `closeReason()`, which cuts to 123 bytes of UTF-8 on a character boundary; `String.slice(0, 123)` counts UTF-16 units, so a multi-byte message could still exceed the limit. `DeviceProbe.ts` still uses `err.message.slice(0, 123)` inside the same try/catch.
 
-**Mid-stream failures use the same code (smoke row 8.27).** `SESSION_FAILED_CLOSE_CODE` (4005) also closes a session that fails after it started: scrcpy-server exiting while the session is live (`scrcpy-server exited (code N)` / `(signal S)`), and the device's video socket ending or erroring (`the device stopped sending video`). Both go through `releaseAsFailure()`, which sends the failure close and then releases; the plain close in `Mw.release()` then finds the socket CLOSING and sends nothing. A normal end — the browser closing the socket, or the server calling `release()` — keeps the bare `ws.close()`, which the browser receives as 1005. `release()` detaches the video reader and only then kills scrcpy-server, so neither of those two callbacks can fire as a failure after a normal end. Before this, every mid-stream failure ran the bare close and the browser saw 1005, a clean end, so the stream modal vanished with no reason.
+**Mid-stream failures use the same code (smoke row 8.27).** `SESSION_FAILED_CLOSE_CODE` (4005) also closes a session that fails after it started: scrcpy-server exiting while the session is live (`scrcpy-server exited (code N)` / `(signal S)`), and the device's video socket ending or erroring (`the device stopped sending video`). Both go through `releaseAsFailure()`, which sends the failure close and then releases; the plain close in `Mw.release()` then finds the socket CLOSING and sends nothing. A normal end — the browser closing the socket, or the server calling `release()` — keeps the bare `ws.close()`, which the browser receives as 1005. `release()` detaches the video reader and only then kills scrcpy-server, so neither of those two callbacks can fire as a failure after a normal end. Before this, every mid-stream failure ran the bare close and the browser saw 1005, a clean end, so the stream modal vanished with no reason. A deliberate server stop is not a failure: it closes each open session with 1001 "server shutting down" (`closeForShutdown()`) and releases it before `adb kill-server` runs, so the scrcpy-server exit that follows finds the session released and sends no 4005 (§9.1).
 
 ### 11.5 Firefox H.264 isConfigSupported False Rejection
 
