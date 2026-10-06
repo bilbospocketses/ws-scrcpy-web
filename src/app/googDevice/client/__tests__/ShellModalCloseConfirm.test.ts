@@ -70,7 +70,8 @@ beforeEach(() => {
         },
     );
     channel = new FakeChannel();
-    fake.sockets.set('ws://shell.test/', { createChannel: () => channel });
+    // A real multiplexer carries its socket; connect() reads its url for the host it names.
+    fake.sockets.set('ws://shell.test/', { createChannel: () => channel, ws: { url: 'ws://shell.test/' } });
     // Every close path funnels through onBeforeClose exactly once per close().
     teardown = vi.spyOn(ShellModal.prototype as unknown as { onBeforeClose: () => void }, 'onBeforeClose');
 });
