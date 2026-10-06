@@ -38,6 +38,46 @@ describe('DependencyPanel XSS', () => {
     });
 });
 
+describe('DependencyPanel Latest cell', () => {
+    const latestCell = (d: DependencyInfo): HTMLTableCellElement => {
+        const panel = new DependencyPanel();
+        (panel as any).render([d]);
+        return panel.getElement().querySelectorAll<HTMLTableCellElement>('tbody td.dep-version')[1]!;
+    };
+
+    it('says a REFUSED lookup was refused, with its status, instead of the dash', () => {
+        const cell = latestCell(
+            dep({
+                installedVersion: '4.1',
+                status: DependencyStatus.Unknown,
+                latestLookup: { seq: 2, at: '2026-10-06T12:00:00.000Z', outcome: 'refused', httpStatus: 403 },
+            }),
+        );
+        expect(cell.textContent).toBe('refused (HTTP 403)');
+        expect(cell.title).toMatch(/version lookup was refused \(HTTP 403\)/);
+        expect(cell.title).toMatch(/installed version still works/);
+    });
+
+    it.each([
+        ['no lookup yet', undefined],
+        ['a failed lookup', { seq: 1, at: '2026-10-06T12:00:00.000Z', outcome: 'failed' as const }],
+    ])('keeps the dash for %s', (_label, latestLookup) => {
+        const cell = latestCell(dep({ latestLookup }));
+        expect(cell.textContent).toBe('—');
+        expect(cell.title).toBe('');
+    });
+
+    it('shows the version when there is one, whatever an older lookup said', () => {
+        const cell = latestCell(
+            dep({
+                latestVersion: '4.1',
+                latestLookup: { seq: 1, at: '2026-10-06T12:00:00.000Z', outcome: 'refused', httpStatus: 429 },
+            }),
+        );
+        expect(cell.textContent).toBe('4.1');
+    });
+});
+
 describe('DependencyPanel polling lifecycle (#36)', () => {
     beforeEach(() => {
         vi.useFakeTimers();

@@ -1,58 +1,65 @@
 import { describe, expect, it } from 'vitest';
-import { type GithubQuota, isExcusableNullLatest, quotaFromRateLimit } from '../e2e/support/githubRefusal';
+import { isExcusableNullLatest, type LatestLookupRecord } from '../e2e/support/githubRefusal';
 
-// The quota-exhausted branch of the e2e rule (item 149, row 9.4 on a host)
-// runs only when a CI runner's api.github.com quota is spent, which
-// cannot be arranged on demand. So the DECISION it makes lives in pure
-// functions, and this file runs every branch of it on every build -- fed the
-// exact payloads #752's failed CI runs produced on 2026-09-27.
+// The refused branch of the e2e rule (item 149, row 9.4 on a host) runs only
+// when a CI runner's api.github.com quota is spent, which cannot be arranged on
+// demand. So the DECISION it makes lives in a pure function, and this file runs
+// every branch of it on every build.
+//
+// The evidence is the app's own `latestLookup`, numbered, so the test excuses
+// only the refusal of the lookup its own press caused (2026-10-06: a separate
+// /rate_limit query raced the hourly reset and failed 9.4 falsely twice).
 
-const SPENT: GithubQuota = { exhausted: true, detail: 'core remaining=0, resets 2026-09-27T09:12:17.000Z' };
-const LEFT: GithubQuota = { exhausted: false, detail: 'core remaining=59, resets 2026-09-27T09:12:17.000Z' };
-
-describe('quotaFromRateLimit', () => {
-    // Shape verbatim from GET https://api.github.com/rate_limit, 2026-09-27.
-    const body = (remaining: number) => ({
-        resources: { core: { limit: 60, remaining, reset: 1790505737, used: 60 - remaining } },
-        rate: { limit: 60, remaining, reset: 1790505737, used: 60 - remaining },
-    });
-
-    it('reports exhausted only on positive evidence: core.remaining is 0', () => {
-        expect(quotaFromRateLimit(200, body(0))).toEqual({
-            exhausted: true,
-            detail: 'core remaining=0, resets 2026-09-27T10:42:17.000Z',
-        });
-    });
-
-    it('reports quota left as NOT exhausted', () => {
-        expect(quotaFromRateLimit(200, body(59)).exhausted).toBe(false);
-    });
-
-    it('never reads a failed /rate_limit call as exhausted', () => {
-        expect(quotaFromRateLimit(403, body(0))).toEqual({ exhausted: false, detail: 'rate_limit answered HTTP 403' });
-    });
-
-    it('never reads a body with no core resource as exhausted', () => {
-        expect(quotaFromRateLimit(200, { message: 'unexpected' })).toEqual({
-            exhausted: false,
-            detail: 'core remaining=unknown, resets unknown',
-        });
-    });
-});
+const AT = '2026-10-06T14:02:11.000Z';
+const refused = (httpStatus: number, seq = 4): LatestLookupRecord => ({ seq, at: AT, outcome: 'refused', httpStatus });
 
 describe('isExcusableNullLatest (9.4: the Latest column after a check)', () => {
-    it('excuses a GitHub-backed null latest when the quota is proven spent', () => {
-        expect(isExcusableNullLatest({ name: 'scrcpy-server', latestVersion: null }, SPENT)).toBe(true);
-        expect(isExcusableNullLatest({ name: 'mkcert', latestVersion: null }, SPENT)).toBe(true);
+    it.each([403, 429])('excuses a GitHub-backed null latest refused with HTTP %i by a newer lookup', (status) => {
+        expect(
+            isExcusableNullLatest({ name: 'scrcpy-server', latestVersion: null, latestLookup: refused(status) }, 3),
+        ).toBe(true);
+        expect(isExcusableNullLatest({ name: 'mkcert', latestVersion: null, latestLookup: refused(status) }, 3)).toBe(
+            true,
+        );
+    });
+
+    it('excuses a dependency never looked up before the press (seqBefore 0)', () => {
+        expect(isExcusableNullLatest({ name: 'mkcert', latestVersion: null, latestLookup: refused(403, 1) }, 0)).toBe(
+            true,
+        );
     });
 
     it.each([
-        ['quota left', { name: 'mkcert', latestVersion: null }, LEFT],
-        ['quota never asked', { name: 'mkcert', latestVersion: null }, undefined],
-        ['nodejs, whose lookup is not GitHub', { name: 'nodejs', latestVersion: null }, SPENT],
-        ['adb, whose lookup is not GitHub', { name: 'adb', latestVersion: null }, SPENT],
-        ['a latest that DID resolve', { name: 'mkcert', latestVersion: 'v0.1.0' }, SPENT],
-    ])('does not excuse %s', (_label, dep, quota) => {
-        expect(isExcusableNullLatest(dep, quota)).toBe(false);
+        [
+            'a refusal no newer than the press (seq == before)',
+            { name: 'mkcert', latestVersion: null, latestLookup: refused(403, 3) },
+            3,
+        ],
+        [
+            'a refusal OLDER than the press (seq < before)',
+            { name: 'mkcert', latestVersion: null, latestLookup: refused(403, 2) },
+            3,
+        ],
+        [
+            'a lookup that FAILED rather than was refused',
+            { name: 'mkcert', latestVersion: null, latestLookup: { seq: 4, at: AT, outcome: 'failed' as const } },
+            3,
+        ],
+        [
+            'a refusal that is not a rate limit (HTTP 500)',
+            { name: 'mkcert', latestVersion: null, latestLookup: refused(500) },
+            3,
+        ],
+        [
+            'a refusal with no status',
+            { name: 'mkcert', latestVersion: null, latestLookup: { seq: 4, at: AT, outcome: 'refused' as const } },
+            3,
+        ],
+        ['no lookup recorded at all', { name: 'mkcert', latestVersion: null }, 0],
+        ['nodejs, whose lookup is not GitHub', { name: 'nodejs', latestVersion: null, latestLookup: refused(403) }, 3],
+        ['adb, whose lookup is not GitHub', { name: 'adb', latestVersion: null, latestLookup: refused(429) }, 3],
+        ['a latest that DID resolve', { name: 'mkcert', latestVersion: 'v0.1.0', latestLookup: refused(403) }, 3],
+    ])('does not excuse %s', (_label, dep, seqBefore) => {
+        expect(isExcusableNullLatest(dep, seqBefore)).toBe(false);
     });
 });

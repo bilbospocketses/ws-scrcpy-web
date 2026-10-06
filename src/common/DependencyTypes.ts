@@ -30,6 +30,33 @@ export interface DependencyInfo {
      * someone to enable HTTPS.
      */
     deferInstall?: boolean | undefined;
+    /**
+     * How this server's most recent latest-version lookup for this dependency
+     * ended. Absent until the first lookup.
+     *
+     * On the wire because a null `latestVersion` alone cannot say WHY it is
+     * null. A lookup the upstream REFUSED (api.github.com's unauthenticated
+     * rate limit, 403/429) is the network's state, not a failure of the app,
+     * and the two want opposite treatment -- the panel says "refused" rather
+     * than showing a bare dash, and a test excuses one and fails the other.
+     * `seq` ties the record to the lookup that produced it, so a reader that
+     * caused a lookup can tell its own outcome from an older one. Smoke row
+     * 9.4's e2e and qa-harness Arc 5 read it. A separate `/rate_limit` query
+     * made afterwards could not do that: it raced the hourly reset and read
+     * quota left while the app's own lookup had been refused (2026-10-06).
+     */
+    latestLookup?: LatestLookup | undefined;
+}
+
+export interface LatestLookup {
+    /** Per dependency, +1 on every latest-version lookup this server process makes (boot, check-for-updates, the lookup inside an update). */
+    seq: number;
+    /** ISO-8601 time the lookup finished. */
+    at: string;
+    /** 'ok' answered with a version; 'refused' the server answered a non-OK HTTP status; 'failed' anything else (no answer, or an answer the definition rejected). */
+    outcome: 'ok' | 'refused' | 'failed';
+    /** The HTTP status, when outcome is 'refused'. */
+    httpStatus?: number | undefined;
 }
 
 export interface UpdateResult {
