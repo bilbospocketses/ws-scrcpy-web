@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Stopping the server no longer tells an open stream it failed.** Stopping the server while a stream was open ("stop server & exit", the tray's exit, Ctrl+C, a restart after a port or dependency change, or applying an update) showed `stream failed: scrcpy-server exited (...)` for a few seconds, because stopping adb killed the stream's scrcpy-server before the stream was closed. The server now closes every open stream cleanly first, so the stream ends the way it does when you close it yourself. A stream that really fails while the server keeps running still says why.
+
 ## [0.1.30-beta.187] - 2026-10-06
 
 ### Fixed
@@ -26,7 +29,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **A stream that fails says why before its modal closes.** When a stream failed, the connect modal just vanished with no reason, exactly as if you had closed it yourself; the `stream failed: <reason>` message it was built to show had never once appeared. The client ran its disconnect handling first, that closed the modal and stopped the stream, and by the time it looked at the close code the stop had marked the end as user-initiated. And a mid-stream failure (the device's Wi-Fi dropping, scrcpy-server exiting, the device's video ending) closed the WebSocket exactly like a normal end, so the browser could not have told them apart anyway. Now the server closes a failed session with code 4005 and a short reason, the same code a failed start already used, and the browser decides failure-or-normal before anything else runs. A failure shows `stream failed: <reason>` (for example `stream failed: scrcpy-server exited (code 1)` or `stream failed: the device stopped sending video`) and the modal closes about 4 s later; closing the modal yourself, or a normal end, still closes it at once with no message. Smoke row 8.27.
-- **Stopping the server no longer tells an open stream it failed.** Stopping the server while a stream was open ("stop server & exit", the tray's exit, Ctrl+C, a restart after a port or dependency change, or applying an update) showed `stream failed: scrcpy-server exited (...)` for a few seconds, because stopping adb killed the stream's scrcpy-server before the stream was closed. The server now closes every open stream cleanly first, so the stream ends the way it does when you close it yourself. A stream that really fails while the server keeps running still says why.
 
 ## [0.1.30-beta.185] - 2026-10-06
 
