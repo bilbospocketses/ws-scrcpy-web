@@ -15,6 +15,8 @@ import {
     mkcertAssetName,
     mkcertChecksumsUrl,
     mkcertExeName,
+    NODE_DIST_BASE_ENV,
+    nodeDistBase,
 } from './DependencyDefinitions';
 import { Logger } from './Logger';
 import { parseSha256Sums } from './linuxUpdateAssets';
@@ -129,6 +131,12 @@ export class DependencyManager {
             // Item 167: say where mkcert comes from, once, so a mirror or a test
             // fixture is never mistaken for GitHub in a support log.
             log.info(`mkcert release lookups and downloads from ${MKCERT_URL_BASE_ENV}=${mkcertBase}`);
+        }
+        const nodeBase = process.env[NODE_DIST_BASE_ENV]?.trim();
+        if (nodeBase && !opts.inContainer) {
+            // Smoke row 9.12's seam, logged the same way: a container never
+            // manages Node (it is hostOnly), so there it moves nothing.
+            log.info(`Node.js release index and downloads from ${NODE_DIST_BASE_ENV}=${nodeDistBase(nodeBase)}`);
         }
         this.verifyMkcertManifest =
             opts.verifyMkcertManifest ?? ((manifest, tag) => verifyMkcertManifestProvenance(manifest, tag, provenance));
