@@ -366,6 +366,7 @@ A few advanced switches are only available via environment variables:
 | `DEPS_PATH` | Override the location of the `dependencies/` folder (used by the installer to point at the per-user data dir while the app itself lives under `current/`). |
 | `VELOPACK_FEED_URL` | Force the Velopack auto-updater to use a custom feed URL (mostly useful for the local update-flow sandbox test). |
 | `WS_SCRCPY_RELEASE_URL_BASE` | Linux only: fetch the in-app update's AppImage and `SHA256SUMS` from `<base>/v<version>/<asset>` instead of GitHub's release downloads (a test or mirror seam; the SHA-256 check still runs). |
+| `WS_SCRCPY_MKCERT_URL_BASE` | Read mkcert's latest-release lookup, downloads and attestation lookup from `<base>/releases/latest`, `<base>/releases/download/<tag>/<asset>` and `<base>/attestations/sha256:<digest>` instead of GitHub (a test or mirror seam; the build-provenance check still runs against the fork's own release workflow). |
 
 ### Access control
 
