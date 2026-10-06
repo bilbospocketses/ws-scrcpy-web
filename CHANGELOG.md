@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **The first-run welcome modal's yes, install service survives the hand-off to the service.** The local server answers the install and exits about 1.5 s later, and the service then holds the same origin with a new token. The modal ran its own poll, which broke on both halves of that: the first tick usually landed in the dead window after the exit, and a thrown fetch there ended the install with "lost connection during handoff. reload at the service port."; and once the service was up, its `403 missing or invalid token` read as "not ready yet" until the poll gave up with "port discovery timed out". Settings → Service has handled both since beta.141 (D4), so its loop moves to `src/app/client/installHandoffPoll.ts` and both buttons now use it: a thrown tick is the dead window, the stale-token refusal reloads after the same 2.5 s grace, and a port shift navigates to the same host on the new port. The modal shows `service mode active. switching you over…` on either outcome, and its timeout line now matches the Settings tab's ("reload the page at your usual address"). Settings → Service behaves exactly as before. Found by qa-harness planning smoke row 1.11 (c).
+
 ## [0.1.30-beta.179] - 2026-10-06
 
 ### Fixed
