@@ -73,6 +73,12 @@ async function startFakeDaemon(programData: string): Promise<ChildProcess> {
 // signal-0 probe read every stopped stand-in as alive on Linux CI (#880).
 const isAlive = isProcessAlive;
 
+// macOS has no /proc, so stopProcessesUnder finds nothing there by design (a
+// running binary can be unlinked, so it never blocks a removal). The e2e
+// harness runs on Windows and Linux only; the cases that assert a stop skip on
+// macos-node-checks rather than assert a scan that does not exist.
+const NO_PROC_SCAN = process.platform === 'darwin';
+
 async function waitUntil(predicate: () => boolean, ms: number): Promise<boolean> {
     const deadline = Date.now() + ms;
     while (Date.now() < deadline) {
@@ -111,7 +117,7 @@ afterEach(async () => {
 });
 
 describe('a process running from a spec data root (item 170)', () => {
-    it('removePrivateRoot stops it, then removes the root', { timeout: 60_000 }, async () => {
+    it.skipIf(NO_PROC_SCAN)('removePrivateRoot stops it, then removes the root', { timeout: 60_000 }, async () => {
         const paths = privateServerPaths(uniqueName(), 8170);
         const daemon = await startFakeDaemon(paths.programData);
         const pid = daemon.pid as number;
@@ -136,39 +142,47 @@ describe('a process running from a spec data root (item 170)', () => {
         expect(existsSync(paths.programData), 'the root is gone').toBe(false);
     });
 
-    it('seedPrivateDataRoot stops a leftover from an earlier run before re-seeding', { timeout: 60_000 }, async () => {
-        const paths = privateServerPaths(uniqueName(), 8170);
-        const daemon = await startFakeDaemon(paths.programData);
-        const pid = daemon.pid as number;
+    it.skipIf(NO_PROC_SCAN)(
+        'seedPrivateDataRoot stops a leftover from an earlier run before re-seeding',
+        { timeout: 60_000 },
+        async () => {
+            const paths = privateServerPaths(uniqueName(), 8170);
+            const daemon = await startFakeDaemon(paths.programData);
+            const pid = daemon.pid as number;
 
-        seedPrivateDataRoot(paths);
+            seedPrivateDataRoot(paths);
 
-        expect(isAlive(pid), 'the leftover daemon was stopped').toBe(false);
-        expect(existsSync(paths.configPath), 'the root was re-seeded').toBe(true);
-        expect(
-            existsSync(path.join(paths.dataRoot, 'dependencies', 'adb', STANDIN_NAME)),
-            'the leftover adb was wiped',
-        ).toBe(false);
-    });
+            expect(isAlive(pid), 'the leftover daemon was stopped').toBe(false);
+            expect(existsSync(paths.configPath), 'the root was re-seeded').toBe(true);
+            expect(
+                existsSync(path.join(paths.dataRoot, 'dependencies', 'adb', STANDIN_NAME)),
+                'the leftover adb was wiped',
+            ).toBe(false);
+        },
+    );
 
-    it('stopProcessesUnder stops only what runs from INSIDE the root', { timeout: 60_000 }, async () => {
-        const root = path.join(tmpdir(), uniqueName());
-        // Shares the root's name as a string prefix: only the separator tells them apart.
-        const sibling = `${root}-sibling`;
-        const inside = await startFakeDaemon(root);
-        const outside = await startFakeDaemon(sibling);
-        // And the runner's own interpreter, from wherever it is installed.
-        const plain = await startNode(process.execPath);
-        expect(isAlive(inside.pid as number), 'the process inside the root is running').toBe(true);
+    it.skipIf(NO_PROC_SCAN)(
+        'stopProcessesUnder stops only what runs from INSIDE the root',
+        { timeout: 60_000 },
+        async () => {
+            const root = path.join(tmpdir(), uniqueName());
+            // Shares the root's name as a string prefix: only the separator tells them apart.
+            const sibling = `${root}-sibling`;
+            const inside = await startFakeDaemon(root);
+            const outside = await startFakeDaemon(sibling);
+            // And the runner's own interpreter, from wherever it is installed.
+            const plain = await startNode(process.execPath);
+            expect(isAlive(inside.pid as number), 'the process inside the root is running').toBe(true);
 
-        const stopped = stopProcessesUnder(root);
+            const stopped = stopProcessesUnder(root);
 
-        expect(stopped.map((s) => Number(s.split(' ')[0]))).toEqual([inside.pid]);
-        expect(isAlive(inside.pid as number), 'the process inside the root was stopped').toBe(false);
-        expect(isAlive(outside.pid as number), 'the process in the sibling folder still runs').toBe(true);
-        expect(isAlive(plain.pid as number), "the runner's own node still runs").toBe(true);
-        expect(isAlive(process.pid), 'the current process still runs').toBe(true);
-    });
+            expect(stopped.map((s) => Number(s.split(' ')[0]))).toEqual([inside.pid]);
+            expect(isAlive(inside.pid as number), 'the process inside the root was stopped').toBe(false);
+            expect(isAlive(outside.pid as number), 'the process in the sibling folder still runs').toBe(true);
+            expect(isAlive(plain.pid as number), "the runner's own node still runs").toBe(true);
+            expect(isAlive(process.pid), 'the current process still runs').toBe(true);
+        },
+    );
 
     it('returns nothing for a root that does not exist', () => {
         expect(stopProcessesUnder(path.join(tmpdir(), uniqueName()))).toEqual([]);
