@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **A name typed when connecting a device from the scan list sticks, on the card and on the next scan.** A name typed when connecting a subnet-scan hit showed "Unnamed Device" on the device card, and in a container a rescan lost the name of a device added by hand; both are fixed. A subnet-scan hit sends its address (`<ip>:5555`) where the serial goes, so the server skipped looking up the real serial and filed the name under the address, which the card never reads. It now looks the serial up whenever the "serial" is really an address. Every successful connect, named or not, also records the address the device answered at against its real serial (`DeviceStore.claimAddress`), and a scan hit is resolved through that address to the serial's current name. That works in a container, where there is no MAC to fall back on, and a rename made later on the card now shows on the next scan instead of the name typed at connect time. Before this, nothing on the scan UI's path recorded that address, so the finding-19.4 fix could never fire for a subnet-scan hit. Names already filed under an address are still read, as the last resort. Found by qa-harness, smoke row 19.5.
+
 ## [0.1.30-beta.186] - 2026-10-06
 
 ### Fixed
