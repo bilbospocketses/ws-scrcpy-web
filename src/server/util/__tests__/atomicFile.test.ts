@@ -4,7 +4,13 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { resolveSystemTool } from '../../service/systemTools';
-import { copyFileAtomic, copyFileAtomicSync, writeFileAtomicSync } from '../atomicFile';
+import {
+    copyFileAtomic,
+    copyFileAtomicSync,
+    RM_TREE_BACKOFF_MS,
+    rmTreeSyncWithRetry,
+    writeFileAtomicSync,
+} from '../atomicFile';
 
 /**
  * Resolved through the repo's own `resolveSystemTool` rather than a hardcoded
@@ -388,5 +394,97 @@ describe('rename retry on a transient sharing violation (item 140)', () => {
         expect(calls).toBe(2);
         expect(fs.readFileSync(dest, 'utf8')).toBe('new');
         expect(fs.readdirSync(dir).sort()).toEqual(['dest.bin', 'src.bin']);
+    });
+});
+
+/**
+ * The update temp-dir cleanup. Node 24's own `rmSync({ maxRetries })` does NOT
+ * retry EPERM on Windows (measured: it threw after 0 ms), and an image that
+ * exited a moment ago -- the adb just killed before an update, or a file a
+ * scanner is reading -- stays locked for ~10 ms, so a plain rmSync leaked the
+ * `ws-scrcpy-web-update-*` directory. The rm and the sleep are both injected:
+ * the policy is driven deterministically and the suite never actually waits.
+ */
+describe('rmTreeSyncWithRetry', () => {
+    function errno(code: string): NodeJS.ErrnoException {
+        return Object.assign(new Error(`${code}: rm failed`), { code });
+    }
+
+    it('retries a transient EPERM and succeeds on the attempt after the last failure', () => {
+        let calls = 0;
+        const slept: number[] = [];
+        const rm = (p: fs.PathLike, opts?: fs.RmOptions) => {
+            calls += 1;
+            expect(p).toBe('C:\\tmp\\ws-scrcpy-web-update-adb-x');
+            expect(opts).toEqual({ recursive: true, force: true });
+            if (calls <= 3) throw errno('EPERM');
+        };
+
+        rmTreeSyncWithRetry('C:\\tmp\\ws-scrcpy-web-update-adb-x', rm, (ms) => slept.push(ms));
+
+        expect(calls).toBe(4);
+        expect(slept).toEqual(RM_TREE_BACKOFF_MS.slice(0, 3));
+    });
+
+    it.each(['EACCES', 'EBUSY', 'ENOTEMPTY'])('treats %s as transient too', (code) => {
+        let calls = 0;
+        rmTreeSyncWithRetry(
+            'd',
+            () => {
+                calls += 1;
+                if (calls === 1) throw errno(code);
+            },
+            () => undefined,
+        );
+        expect(calls).toBe(2);
+    });
+
+    it('gives up after a bounded number of attempts and rethrows the last error', () => {
+        let calls = 0;
+        let sleptTotal = 0;
+        const always = () => {
+            calls += 1;
+            throw errno('EPERM');
+        };
+
+        expect(() =>
+            rmTreeSyncWithRetry('d', always, (ms) => {
+                sleptTotal += ms;
+            }),
+        ).toThrow(/EPERM/);
+
+        // 1 initial attempt + one per backoff step, then the error surfaces.
+        expect(calls).toBe(RM_TREE_BACKOFF_MS.length + 1);
+        expect(calls).toBe(11);
+        // The budget the doc comment promises: long enough for a scanner or a
+        // just-exited process to let go, short enough not to stall an update.
+        expect(sleptTotal).toBeGreaterThanOrEqual(2_000);
+        expect(sleptTotal).toBeLessThanOrEqual(3_000);
+    });
+
+    it('does NOT retry an error that is not a sharing violation', () => {
+        let calls = 0;
+        const slept: number[] = [];
+        const einval = () => {
+            calls += 1;
+            throw errno('EINVAL');
+        };
+
+        expect(() => rmTreeSyncWithRetry('d', einval, (ms) => slept.push(ms))).toThrow(/EINVAL/);
+
+        expect(calls).toBe(1);
+        expect(slept).toEqual([]);
+    });
+
+    it('really removes a directory tree with the default rm', () => {
+        const tree = path.join(dir, 'tree');
+        fs.mkdirSync(path.join(tree, 'a', 'b'), { recursive: true });
+        fs.writeFileSync(path.join(tree, 'a', 'b', 'f.txt'), 'x');
+
+        rmTreeSyncWithRetry(tree);
+
+        expect(fs.existsSync(tree)).toBe(false);
+        // force: true -- an already-missing directory is not an error.
+        expect(() => rmTreeSyncWithRetry(tree)).not.toThrow();
     });
 });

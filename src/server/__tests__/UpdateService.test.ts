@@ -4,8 +4,10 @@ import * as os from 'os';
 import * as path from 'path';
 import type { UpdateInfo, UpdateOptions, VelopackAsset } from 'velopack';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { AdbClient } from '../AdbClient';
 import { Config } from '../Config';
 import { EnvName } from '../EnvName';
+import { liveStreams } from '../liveStreams';
 import { stageSystemHelper } from '../service/systemHelper';
 import { type UpdateManagerLike, UpdateService } from '../UpdateService';
 import { betas, type FakeGithubApi, fakeGithubApi, release } from './helpers/fakeGithubReleases';
@@ -35,6 +37,17 @@ vi.mock('child_process', async (importOriginal) => {
                 }),
             };
             return child;
+        }),
+        // execFile too: applyUpdate's pre-apply hygiene runs `adb kill-server`
+        // and the own-adb reaper, and without this the suite ran them for real
+        // against the developer's machine -- a blanket `taskkill /IM adb.exe`
+        // included, before the reaper was narrowed to the app's own binary.
+        execFile: vi.fn((...args: unknown[]) => {
+            const cb = args.find((a) => typeof a === 'function') as
+                | ((err: Error | null, stdout: string, stderr: string) => void)
+                | undefined;
+            queueMicrotask(() => cb?.(null, '', ''));
+            return { pid: 0 };
         }),
     };
 });
@@ -1038,6 +1051,104 @@ describe('UpdateService', () => {
         // §40: local mode does NOT call waitExitThenApplyUpdate — the
         // supervisor's local-post-stop.bat calls Update.exe apply directly.
         expect(applyFn).not.toHaveBeenCalled();
+    });
+
+    // Finding 2: pre-apply hygiene used to `taskkill /F /IM adb.exe /T`, which
+    // killed every adb on the machine (Android Studio's included). It now reaps
+    // only processes running the app's own configured adb binary.
+    it("applyUpdate: pre-apply reaps only the app's own adb (config.adbPath), never taskkill /IM adb.exe", async () => {
+        // A user override, so the assertion proves the reaper gets the CONFIGURED
+        // path rather than a recomputed default.
+        const ownAdb = 'D:\\custom\\platform-tools\\adb.exe';
+        fs.writeFileSync(process.env[EnvName.CONFIG_PATH]!, JSON.stringify({ adbPath: ownAdb }));
+        Config._resetForTest();
+        Config.getInstance().updateAppConfig({ autoUpdate: false });
+        expect(Config.getInstance().adbPath).toBe(ownAdb);
+        const info = fakeUpdateInfo('0.2.0');
+        const reapOwnAdbFn = vi.fn(async (_adbPath: string) => 1);
+        const execFileMock = vi.mocked(child_process.execFile);
+        execFileMock.mockClear();
+        const svc = new UpdateService({
+            platform: 'win32',
+            installRoot: '/fake',
+            existsSync: () => true,
+            updateManagerFactory: () => fakeMgr({ checkForUpdatesAsync: async () => info }),
+            setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
+            clearIntervalFn: () => undefined,
+            reapOwnAdbFn,
+        });
+        svc.init();
+        await svc.checkForUpdates();
+        expect(svc.getStatus().status).toBe('ready');
+
+        await svc.applyUpdate();
+
+        expect(reapOwnAdbFn).toHaveBeenCalledTimes(1);
+        expect(reapOwnAdbFn).toHaveBeenCalledWith(ownAdb);
+        const blanket = execFileMock.mock.calls.filter(
+            (call) => Array.isArray(call[1]) && (call[1] as unknown[]).some((a) => a === '/IM'),
+        );
+        expect(blanket).toEqual([]);
+    });
+
+    it('applyUpdate: closes the open streams as a deliberate stop before adb kill-server', async () => {
+        // kill-server kills each stream's scrcpy-server; a stream still open then
+        // told its viewer "stream failed" over an update they asked for.
+        Config.getInstance().updateAppConfig({ autoUpdate: false });
+        const order: string[] = [];
+        const stream = {
+            closeForShutdown: () => {
+                order.push('close stream');
+                liveStreams.remove(stream);
+            },
+        };
+        liveStreams.add(stream);
+        const killSpy = vi.spyOn(AdbClient.prototype, 'killServer').mockImplementation(async () => {
+            order.push('kill-server');
+        });
+        const svc = new UpdateService({
+            platform: 'win32',
+            installRoot: '/fake',
+            existsSync: () => true,
+            updateManagerFactory: () => fakeMgr({ checkForUpdatesAsync: async () => fakeUpdateInfo('0.2.0') }),
+            setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
+            clearIntervalFn: () => undefined,
+            reapOwnAdbFn: async () => 0,
+        });
+        svc.init();
+        await svc.checkForUpdates();
+
+        try {
+            await svc.applyUpdate();
+        } finally {
+            killSpy.mockRestore();
+        }
+
+        expect(order).toEqual(['close stream', 'kill-server']);
+        expect(liveStreams.size()).toBe(0);
+    });
+
+    it('applyUpdate: with the default reaper, no execFile call ever carries /IM', async () => {
+        Config.getInstance().updateAppConfig({ autoUpdate: false });
+        const info = fakeUpdateInfo('0.2.0');
+        const execFileMock = vi.mocked(child_process.execFile);
+        execFileMock.mockClear();
+        const svc = new UpdateService({
+            platform: 'win32',
+            installRoot: '/fake',
+            existsSync: () => true,
+            updateManagerFactory: () => fakeMgr({ checkForUpdatesAsync: async () => info }),
+            setIntervalFn: () => 0 as unknown as NodeJS.Timeout,
+            clearIntervalFn: () => undefined,
+        });
+        svc.init();
+        await svc.checkForUpdates();
+        await svc.applyUpdate();
+
+        const blanket = execFileMock.mock.calls.filter(
+            (call) => Array.isArray(call[1]) && (call[1] as unknown[]).some((a) => a === '/IM'),
+        );
+        expect(blanket).toEqual([]);
     });
 
     // v0.1.25-beta.8 smoke A.2 regression: when installMode is a service mode,

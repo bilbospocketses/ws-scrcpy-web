@@ -188,8 +188,8 @@ The same pattern carries the server-surface, lifecycle and dependencies rows
 (smoke §10, §12, §9.4): anything that stops or restarts a server, reads a
 boot-time-only config key (`allowedHosts`), reads the server's own log file, or
 needs locked mode without touching the shared server's auth state runs on a
-spec-owned server from `support/privateServer.ts`, on ports 8126–8131 and
-8133–8139 (12.6's port blockers), each with its own data root that is wiped and
+spec-owned server from `support/privateServer.ts`, on ports 8126–8131,
+8133–8139 (12.6's port blockers) and 8142 (12.10's double signal, Linux only), each with its own data root that is wiped and
 re-seeded per run. The log those rows read is `<dataRoot>/logs/ws-scrcpy-web.log`
 (`support/serverLog.ts`): the console echo is TTY-only, so a spawned child's
 captured stdout never carries it.
@@ -224,8 +224,9 @@ so a leftover server or data root names the file it came from:
 | `devices-ui.spec.ts` | 8182, 8183 (its adb daemon), 8187 (never bound) | `ws-scrcpy-web-e2e-164d-*` | `lockedServer`, `fetchCounter` |
 | `local-https-fast.spec.ts` | 8191–8195 | `ws-scrcpy-web-e2e-164e-*` | `tlsFixtures`, `tlsPanel` |
 | `mkcert-provenance.spec.ts` | 8197, 8198 (its fixture release server) | `ws-scrcpy-web-e2e-164b-21-12` | `ownedServer` |
+| `dependencies-restart.spec.ts` | 8145, 8146 (its fixture nodejs.org) | `ws-scrcpy-web-e2e-deps-restart` | `privateServer`, `serverLog` |
 
-8140 is `container-user.spec.ts`'s, and 8141–8150, 8160, 8170, 8180, 8190 and
+8140 is `container-user.spec.ts`'s, 8142 is `lifecycle.spec.ts`'s (12.10), and 8141, 8143–8144, 8147–8150, 8160, 8170, 8180, 8190 and
 8199 are free (8150, 8160, 8170, 8180 and 8190 are the shared-server ports the
 item 164 batches used through `WSSW_E2E_PORT` while writing these specs in parallel;
 nothing binds them in a normal run). `lockedServer` can give a server an **adb daemon of its own**
