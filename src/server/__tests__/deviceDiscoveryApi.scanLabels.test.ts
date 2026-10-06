@@ -153,6 +153,18 @@ describe('connect with a name from a subnet-scan hit (row 19.5, defect a)', () =
         expect(Config.getInstance().db.devices.getLabel(IMPLICIT_ADMIN_ID, MAC)).toBe('Living Room');
     });
 
+    it('on a host, a hostname that does not resolve still files the name under the MAC', async () => {
+        setup('host');
+        fakeGetprop();
+        dnsLookup.mockRejectedValue(new Error('getaddrinfo ENOTFOUND qa-android'));
+
+        const status = await post('/api/devices/connect', { address: 'qa-android:5555', label: 'Den' });
+
+        expect(status).toBe(200);
+        expect(Config.getInstance().db.devices.getLabel(IMPLICIT_ADMIN_ID, SERIAL)).toBe('Den');
+        expect(Config.getInstance().db.devices.getLabel(IMPLICIT_ADMIN_ID, MAC)).toBe('Den');
+    });
+
     it('when getprop fails, writes nothing under the probe address and still answers 200', async () => {
         setup('container');
         vi.spyOn(AdbClient.prototype, 'shell').mockRejectedValue(new Error('device unauthorized'));
