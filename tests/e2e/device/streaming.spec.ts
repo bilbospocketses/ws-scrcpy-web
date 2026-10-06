@@ -291,7 +291,7 @@ function parseConnected(match: RegExpExecArray): SessionInfo {
  * `Util.escapeUdid` from src/).
  */
 function configModal(page: Page): Locator {
-    return page.locator('dialog.modal').filter({ has: page.locator('select[id^="videoCodec_"]') });
+    return page.locator('dialog.modal[open]').filter({ has: page.locator('select[id^="videoCodec_"]') });
 }
 
 async function openConfigModal(page: Page, udid: string): Promise<Locator> {
@@ -312,9 +312,9 @@ async function openConfigModal(page: Page, udid: string): Promise<Locator> {
 /** Click connect in ConfigureScrcpy and wait for the stream modal it opens. */
 async function connectFromConfig(page: Page, modal: Locator): Promise<void> {
     await modal.locator('button.connect-btn').click();
-    await expect(page.locator('dialog.connect-modal'), 'connect should open the stream modal').toBeVisible();
+    await expect(page.locator('dialog.connect-modal[open]'), 'connect should open the stream modal').toBeVisible();
     await expect(
-        page.locator('dialog.connect-modal .connect-modal-error'),
+        page.locator('dialog.connect-modal[open] .connect-modal-error'),
         'the stream must not fail on open (the modal shows "stream failed: …" when it does)',
     ).toHaveCount(0);
 }
@@ -329,7 +329,7 @@ async function connectFromConfig(page: Page, modal: Locator): Promise<void> {
  * to be excluded or the click toggles the theme and leaves the stream running.
  */
 async function closeStream(page: Page): Promise<void> {
-    const modal = page.locator('dialog.connect-modal');
+    const modal = page.locator('dialog.connect-modal[open]');
     await modal.locator('button.modal-close:not(.theme-toggle)').click();
     await expect(modal, 'the stream modal should be gone after the ×').toHaveCount(0, { timeout: 15_000 });
 }
@@ -586,7 +586,7 @@ async function tapDevicePoint(
     deviceY: number,
     display: { width: number; height: number },
 ) {
-    const touch = page.locator('dialog.connect-modal canvas.touch-layer');
+    const touch = page.locator('dialog.connect-modal[open] canvas.touch-layer');
     const box = await touch.boundingBox();
     expect(box, 'the touch canvas must have a box to map device coordinates onto').not.toBeNull();
     const b = box as { x: number; y: number; width: number; height: number };
@@ -753,7 +753,7 @@ test.describe('device streaming (smoke §8)', () => {
             // The connect link is intercepted by DeviceTracker: it opens
             // ConnectModal in place rather than navigating to a second tab.
             await row.locator('a.link-stream').click();
-            await expect(page.locator('dialog.connect-modal')).toBeVisible();
+            await expect(page.locator('dialog.connect-modal[open]')).toBeVisible();
         });
 
         const session = parseConnected(
@@ -767,7 +767,7 @@ test.describe('device streaming (smoke §8)', () => {
         expect(session.videoWidth, 'the session must report a real width').toBeGreaterThan(0);
         expect(session.videoHeight, 'the session must report a real height').toBeGreaterThan(0);
 
-        await expect(page.locator('dialog.connect-modal .device-view .video canvas.video-layer')).toBeVisible();
+        await expect(page.locator('dialog.connect-modal[open] .device-view .video canvas.video-layer')).toBeVisible();
         await expectPicture(page);
 
         const decodeErrors = logs.errors.filter((line) => /decod/i.test(line));
@@ -810,11 +810,11 @@ test.describe('device streaming (smoke §8)', () => {
 
         const row = await waitForDeviceRow(page, udid, 60_000);
         await row.locator('a.link-stream').click();
-        await expect(page.locator('dialog.connect-modal')).toBeVisible();
+        await expect(page.locator('dialog.connect-modal[open]')).toBeVisible();
         await expectConnected(page, logs, from, 'the session should announce itself before any control');
         await expectPicture(page);
 
-        const toolbox = page.locator('dialog.connect-modal .device-view .control-buttons-list');
+        const toolbox = page.locator('dialog.connect-modal[open] .device-view .control-buttons-list');
         // The emulator classifies as a phone (smallestDp < 600), and GoogToolBox
         // seeds phones/tablets into Touch mode. Asserted rather than assumed:
         // in D-pad mode a left-click sends DPAD_CENTER instead of a touch, and
@@ -847,7 +847,7 @@ test.describe('device streaming (smoke §8)', () => {
             // Pulling the notification shade down is the one gesture whose result
             // is visible out of band: the shade takes window focus. A tap has no
             // such witness on a launcher whose icon layout is not fixed.
-            const touch = page.locator('dialog.connect-modal canvas.touch-layer');
+            const touch = page.locator('dialog.connect-modal[open] canvas.touch-layer');
             const box = await touch.boundingBox();
             expect(box, 'the touch canvas must have a box').not.toBeNull();
             const b = box as { x: number; y: number; width: number; height: number };
@@ -1396,7 +1396,7 @@ test.describe('device streaming (smoke §8)', () => {
                 const from = logs.all.length;
                 const row = await waitForDeviceRow(page, udid, 60_000);
                 await row.locator('a.link-stream').click();
-                await expect(page.locator('dialog.connect-modal')).toBeVisible();
+                await expect(page.locator('dialog.connect-modal[open]')).toBeVisible();
                 await expectConnected(page, logs, from, 'the session should announce itself before locking');
                 await expectPicture(page);
                 await expect(banner, 'nothing is wrong yet, so no banner').toBeHidden();
@@ -1444,7 +1444,7 @@ test.describe('device streaming (smoke §8)', () => {
                 const from = logs.all.length;
                 const row = await waitForDeviceRow(page, udid, 60_000);
                 await row.locator('a.link-stream').click();
-                await expect(page.locator('dialog.connect-modal')).toBeVisible();
+                await expect(page.locator('dialog.connect-modal[open]')).toBeVisible();
                 await expectConnected(page, logs, from, 'the session should come up even while locked');
 
                 await waitForBanner('connected while already locked');

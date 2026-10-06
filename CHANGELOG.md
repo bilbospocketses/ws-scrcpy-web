@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **tests: every e2e dialog locator now matches only an OPEN dialog (item 166).** `Modal.close()` calls `dialog.close()` at once but leaves the element in the page for up to 250 ms while it animates out, so a spec that reopened a dialog inside that window matched two elements and failed Playwright's strict mode. It failed twice while item 164's specs were written (13.5, 12.1). The remaining 60 `dialog.<class>` selectors across 14 files under `tests/e2e/`, `support/auth.ts`'s `openSettings` among them, now read `dialog.<class>[open]`. The `toHaveCount(0)` and `toBeHidden()` checks among them now assert that no such dialog is open, which is what they meant.
+
 ## [0.1.30-beta.175] - 2026-10-05
 
 ### Added

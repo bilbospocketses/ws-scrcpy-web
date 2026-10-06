@@ -145,7 +145,7 @@ test.describe('container lifecycle (smoke §20.6, §20.11, §20.12)', () => {
                 (r) => r.request().method() === 'POST' && new URL(r.url()).pathname === '/api/server/shutdown',
             );
             await stopBtn.click();
-            const confirm = visitor.page.locator('dialog.confirm-modal');
+            const confirm = visitor.page.locator('dialog.confirm-modal[open]');
             await expect(confirm).toBeVisible();
             await confirm.getByRole('button', { name: 'ok', exact: true }).click();
             expect((await shutdownRes).status()).toBe(200);

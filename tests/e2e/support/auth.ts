@@ -400,7 +400,7 @@ export function escapeRegExp(s: string): string {
 
 export async function openSettings(page: Page): Promise<Locator> {
     await page.getByRole('button', { name: 'Open settings' }).click();
-    const settings = page.locator('dialog.settings-modal');
+    const settings = page.locator('dialog.settings-modal[open]');
     await expect(settings).toBeVisible();
     return settings;
 }
@@ -474,7 +474,7 @@ export function sectionHeadings(settings: Locator): Locator {
 export async function openUsersModal(page: Page): Promise<Locator> {
     const settings = await openSettings(page);
     await settingsSection(settings, 'Users').getByRole('button', { name: 'manage users', exact: true }).click();
-    const usersModal = page.locator('dialog.users-modal');
+    const usersModal = page.locator('dialog.users-modal[open]');
     await expect(usersModal).toBeVisible();
     await expect(usersModal.locator('ul > li').first()).toBeVisible();
     return usersModal;
@@ -511,7 +511,7 @@ export async function closeTopModal(page: Page, dialog: Locator): Promise<void> 
 }
 
 export async function closeAllModals(page: Page): Promise<void> {
-    const dialogs = page.locator('dialog.modal');
+    const dialogs = page.locator('dialog.modal[open]');
     for (let i = 0; i < 4; i++) {
         const open = await dialogs.count();
         if (open === 0) return;
@@ -543,8 +543,8 @@ export const LOCKDOWN_FAREWELL_KEY = '__e2e_lockdown_farewell';
 export async function watchLockdownFarewell(page: Page): Promise<void> {
     await page.evaluate((key) => {
         sessionStorage.removeItem(key);
-        const body = document.querySelector('dialog.users-modal .modal-body');
-        if (!body) throw new Error('no dialog.users-modal .modal-body to observe');
+        const body = document.querySelector('dialog.users-modal[open] .modal-body');
+        if (!body) throw new Error('no dialog.users-modal[open] .modal-body to observe');
         const record = () => {
             sessionStorage.setItem(
                 key,

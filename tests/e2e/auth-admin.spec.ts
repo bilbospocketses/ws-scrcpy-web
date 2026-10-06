@@ -787,7 +787,7 @@ test.describe('auth and admin scope (smoke 12.8, 18.16–18.22)', () => {
             await settingsRow(serverTab, 'reset all my settings')
                 .getByRole('button', { name: 'reset', exact: true })
                 .click();
-            const confirm = page.locator('dialog.reset-confirm-modal');
+            const confirm = page.locator('dialog.reset-confirm-modal[open]');
             await expect(confirm).toBeVisible();
             const reloaded = page.waitForResponse(isNavigationTo('/'));
             await confirm.getByRole('button', { name: 'confirm reset', exact: true }).click();
@@ -802,7 +802,7 @@ test.describe('auth and admin scope (smoke 12.8, 18.16–18.22)', () => {
             await dismissPromptsFor(probe);
             await page.reload();
             await expectLocalActionable();
-            await expect(page.locator('dialog.welcome-modal')).toHaveCount(0);
+            await expect(page.locator('dialog.welcome-modal[open]')).toHaveCount(0);
 
             // --- every way out of the red modal except the accept leaves exposure unchanged.
             const configWrites: unknown[] = [];
@@ -811,7 +811,7 @@ test.describe('auth and admin scope (smoke 12.8, 18.16–18.22)', () => {
                     configWrites.push(r.postDataJSON());
                 }
             });
-            const warning = page.locator('dialog.remote-admin-warning-modal');
+            const warning = page.locator('dialog.remote-admin-warning-modal[open]');
             const openWarning = async () => {
                 await banner.getByRole('button', { name: 'Allow remote admin without sign-in', exact: true }).click();
                 await expect(warning).toBeVisible();
@@ -835,7 +835,7 @@ test.describe('auth and admin scope (smoke 12.8, 18.16–18.22)', () => {
                 await leave();
                 await expect(warning, `leaving by ${how}`).toBeHidden();
                 // Declining routes to the recommended path: Settings opens.
-                await expect(page.locator('dialog.settings-modal'), `leaving by ${how}`).toBeVisible();
+                await expect(page.locator('dialog.settings-modal[open]'), `leaving by ${how}`).toBeVisible();
                 await closeAllModals(page);
                 expect(configWrites, `leaving by ${how} must write nothing`).toEqual([]);
                 expect(await scope(), `leaving by ${how}`).toEqual({

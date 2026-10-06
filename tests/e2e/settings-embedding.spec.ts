@@ -14,7 +14,7 @@ const ORIGIN = 'http://localhost:5159';
  */
 async function openEmbeddingSettings(page: import('@playwright/test').Page) {
     await page.getByRole('button', { name: 'Open settings' }).click();
-    const settings = page.locator('dialog.settings-modal');
+    const settings = page.locator('dialog.settings-modal[open]');
     await expect(settings).toBeVisible();
     await settings.getByRole('tab', { name: 'Embedding', exact: true }).click();
     return settings;
@@ -60,7 +60,7 @@ test.describe('settings / embedding', () => {
 
         // Revoking breaks whatever that origin is currently displaying, so it is a
         // confirmed action rather than a single click.
-        const confirm = page.locator('dialog.confirm-modal');
+        const confirm = page.locator('dialog.confirm-modal[open]');
         await expect(confirm).toBeVisible();
         await expect(confirm).toContainText(ORIGIN);
 
@@ -76,7 +76,7 @@ test.describe('settings / embedding', () => {
 
         const settings = await openEmbeddingSettings(page);
         await settings.getByRole('button', { name: 'revoke' }).click();
-        await page.locator('dialog.confirm-modal').getByRole('button', { name: 'ok', exact: true }).click();
+        await page.locator('dialog.confirm-modal[open]').getByRole('button', { name: 'ok', exact: true }).click();
 
         await expect(settings).toContainText('No other origins may embed this app.');
         await expect.poll(() => readServerConfig().frameAncestors).not.toContain(ORIGIN);
