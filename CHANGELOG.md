@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **docs: smoke rows 4.2-system-cli, 6.6 and 12.10 name the log the app writes and what `systemctl stop` can show (qa-harness, 2026-10-06).** Rows 4.2-system-cli and 6.6 said the system service's `service.log` reads `ignoring WS_SCRCPY_WEB_PORT=<N> on the system service`, but that line is the app's `Logger.info` (`src/server/reconcileWebPort.ts`) and goes only to the app's own `ws-scrcpy-web.log`; `service.log` is systemd's capture of the launcher's stdout/stderr. Both rows now name `ws-scrcpy-web.log`. Row 12.10 expected every stop path to exit 0, but the launcher has no SIGTERM handler, so `systemctl stop` ends it by signal while the app shuts down gracefully in the same cgroup. For the two `systemctl stop` paths the row now checks `ActiveState=inactive` and `Result=success` (ActiveState first, since a running unit also reads `Result=success`), no SIGKILL in the journal, and the app's log; "exits 0" stays for Ctrl+C in a terminal, where the log may show SIGINT, SIGTERM or both. The row's backup clause is unchanged: the Ctrl+C case where a second signal could skip the backup is being fixed in the app separately.
+
 ## [0.1.30-beta.181] - 2026-10-06
 
 ### Fixed
