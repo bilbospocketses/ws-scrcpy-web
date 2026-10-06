@@ -1,25 +1,22 @@
-import { execFile } from 'child_process';
-import { promisify } from 'util';
-
-const execFileAsync = promisify(execFile);
+import { type ReapOwnAdbDeps, reapOwnAdbOnWindows } from './util/reapOwnAdb';
 
 /**
- * Reap any stray adb.exe processes on Windows via taskkill.
+ * Reap the app's OWN adb daemon on Windows after `adb kill-server`, by
+ * executable path: only processes running `adbPath` (`Config.adbPath`) are
+ * killed, each with its tree. Returns how many were killed.
  *
- * `adb kill-server` alone leaves stray adb processes when the daemon was
- * spawned detached (escaping the Node job object) or had stuck transports /
- * in-flight forwards. This belt-and-braces taskkill catches those. Non-zero
- * exit (no matching processes) is not an error — swallowed silently.
+ * `adb kill-server` alone leaves the app's daemon behind when it was spawned
+ * detached (escaping the Node job object) or had stuck transports / in-flight
+ * forwards; this belt-and-braces kill catches those.
  *
- * No-op on non-Windows platforms.
+ * It used to be `taskkill /F /IM adb.exe /T`, which also killed every OTHER
+ * adb on the machine -- Android Studio's, a developer's own platform-tools
+ * daemon -- dropping their devices whenever this app exited. Other tools' adb
+ * must survive the app's exit, so the match is the binary's path, not its
+ * image name. See `util/reapOwnAdb.ts`.
+ *
+ * Never throws; a no-op on non-Windows platforms.
  */
-export async function reapStrayAdbOnWindows(): Promise<void> {
-    if (process.platform !== 'win32') {
-        return;
-    }
-    try {
-        await execFileAsync('C:\\Windows\\System32\\taskkill.exe', ['/F', '/IM', 'adb.exe', '/T'], { timeout: 5_000 });
-    } catch {
-        // taskkill exits non-zero when no matching process; treat as success.
-    }
+export async function reapStrayAdbOnWindows(adbPath: string, deps?: ReapOwnAdbDeps): Promise<number> {
+    return reapOwnAdbOnWindows(adbPath, deps);
 }

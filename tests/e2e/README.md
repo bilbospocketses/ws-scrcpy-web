@@ -235,6 +235,19 @@ on a daemon the spec owns. In locked mode `/api/dependencies` needs a signed-in
 admin, so those rows pass the admin's request context to `waitForDependencies`
 instead of a base URL.
 
+**Teardown stops what runs from the root first (item 170).** On Windows the harness
+stops a spec-owned server with `child.kill()`, which is TerminateProcess, so the
+server's own shutdown (`adb kill-server`) never runs. Every server pre-warms an adb
+daemon at boot, started detached from `<root>/WsScrcpyWeb/dependencies/adb`, and that
+daemon survives the kill and holds `adb.exe` open; removing the root then failed
+EPERM in teardown and again at the next run's seed. So `removePrivateRoot` and
+`seedPrivateDataRoot` first stop every process whose executable lives inside the root
+(`stopProcessesUnder`, `support/rootProcesses.ts`), then remove it with a bounded
+retry of their own (`removeTree`; `rmSync`'s `maxRetries` does not retry EPERM on
+Node 24). The stop is scoped by executable path, so a developer's own adb on 5037,
+which runs from its own install, is never touched; nor is the shared server's
+daemon, which lives under its own root.
+
 **`@docker-host`.** Eight rows — 1.9's offline stack, 9.5's no-node-pty image, the three
 container-lifecycle rows (20.6, 20.11, 20.12), the published-image row (20.8), the
 `--user` row (20.21) and the certificate-on-the-volume row (20.22, which recreates the
