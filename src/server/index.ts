@@ -429,13 +429,18 @@ if (__ssArgs) {
         } catch (err) {
             serverLog.warn(`adb kill-server during exit failed: ${(err as Error).message}`);
         }
-        // taskkill is the Windows-only reaper (reapStrayAdbOnWindows no-ops elsewhere);
-        // only log it where it actually runs, so Linux/macOS logs don't carry a
-        // Windows-command line that does nothing.
+        // The own-adb reaper is Windows-only (reapStrayAdbOnWindows no-ops
+        // elsewhere); only log it where it actually runs, so Linux/macOS logs
+        // don't carry a Windows-only line that does nothing. It stops only
+        // processes running config.adbPath -- another tool's adb (Android
+        // Studio's) must survive this app's exit.
         if (process.platform === 'win32') {
-            serverLog.info('Stopping stray adb (taskkill) ...');
+            serverLog.info(`Stopping any leftover own adb (${config.adbPath}) ...`);
         }
-        await reapStrayAdbOnWindows();
+        const reaped = await reapStrayAdbOnWindows(config.adbPath);
+        if (reaped > 0) {
+            serverLog.info(`Reaped ${reaped} own adb process(es) left after kill-server`);
+        }
         runningServices.forEach((service: Service) => {
             const serviceName = service.getName();
             serverLog.info(`Stopping ${serviceName} ...`);

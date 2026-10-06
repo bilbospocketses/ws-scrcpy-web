@@ -1,7 +1,6 @@
-import { execFile, spawn } from 'child_process';
+import { spawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
-import { promisify } from 'util';
 import { HttpSource, type UpdateInfo, UpdateManager, type UpdateOptions, type VelopackLocatorConfig } from 'velopack';
 import type { UpdateChannel } from '../common/ConfigEvents';
 import { WS_SCRCPY_SERVICE_NAME } from '../common/ServiceEvents';
@@ -20,8 +19,7 @@ import { buildMachineWideUpdateScript, runPkexec, STAGED_SYSTEM_DIR } from './se
 import { stageSystemHelper } from './service/systemHelper';
 import { buildDetachedSpawn } from './service/systemTools';
 import { GithubReleaseFeedResolver, type ReleaseFeedResolver, releaseFeedUrl } from './updateFeedResolver';
-
-const execFileAsync = promisify(execFile);
+import { reapOwnAdbOnWindows } from './util/reapOwnAdb';
 
 const log = Logger.for('UpdateService');
 
@@ -90,6 +88,11 @@ export interface UpdateServiceOptions {
      * single graphical prompt. Default: the real {@link runPkexec} (SystemdClient).
      */
     runPkexecFn?: (shellCmd: string, label: string) => Promise<string>;
+    /**
+     * Override the pre-apply own-adb reaper for tests. Receives `Config.adbPath`,
+     * returns how many processes it killed. Default: {@link reapOwnAdbOnWindows}.
+     */
+    reapOwnAdbFn?: (adbPath: string) => Promise<number>;
 }
 
 export interface UpdateServiceState {
@@ -149,6 +152,7 @@ export class UpdateService {
     private readonly clearIntervalFn: (handle: NodeJS.Timeout) => void;
     private readonly fetchFn: typeof fetch;
     private readonly runPkexecFn: (shellCmd: string, label: string) => Promise<string>;
+    private readonly reapOwnAdbFn: (adbPath: string) => Promise<number>;
 
     constructor(opts: UpdateServiceOptions = {}) {
         this.platform = opts.platform ?? process.platform;
@@ -247,6 +251,7 @@ export class UpdateService {
         this.clearIntervalFn = opts.clearIntervalFn ?? ((handle) => clearInterval(handle));
         this.fetchFn = opts.fetchFn ?? fetch;
         this.runPkexecFn = opts.runPkexecFn ?? runPkexec;
+        this.reapOwnAdbFn = opts.reapOwnAdbFn ?? ((adbPath) => reapOwnAdbOnWindows(adbPath));
         this.state = { isInstalled: false, currentVersion: '', status: 'idle' };
     }
 
@@ -572,7 +577,7 @@ export class UpdateService {
      * Caller (UpdatesApi.handleApply) is responsible for the deferred process.exit.
      *
      * v0.1.23-beta.13: now async — runs pre-apply hygiene (adb daemon kill +
-     * Windows taskkill + small settle delay) before Velopack's wait-then-apply
+     * Windows reap of the app's own adb binary + small settle delay) before Velopack's wait-then-apply
      * call. Without this, the long-lived `adb start-server` daemon's cwd-lock
      * on `<installRoot>\current\` (inherited from the launcher's working
      * directory at spawn time) blocks Velopack's rename-current-to-backup
@@ -929,33 +934,33 @@ export class UpdateService {
      *
      *  1. `adb kill-server` via the bundled adb client. Clean shutdown of
      *     the daemon process; releases its CWD handle on the install dir.
-     *  2. Windows-only `taskkill /F /IM adb.exe /T` belt-and-braces. Catches
-     *     any adb process that didn't go down via kill-server (stuck transport,
-     *     in-flight forward, etc.). Non-zero exit (no matching processes) is
-     *     not an error.
+     *  2. Windows-only belt-and-braces reap of the app's OWN adb binary
+     *     (`Config.adbPath`), matched by executable path, each match killed
+     *     with its tree (`util/reapOwnAdb.ts`). Catches the daemon if it
+     *     didn't go down via kill-server (stuck transport, in-flight forward,
+     *     etc.). This was `taskkill /F /IM adb.exe /T`, which also killed every
+     *     other tool's adb (Android Studio's included) on every update; only
+     *     the app's own daemon can hold a handle on `current\`, so only it is
+     *     touched. Never throws.
      *  3. 250 ms settle delay. Empirical buffer for Windows to fully release
      *     handles after the daemon process exits — kernel ProcessExit can
      *     lag actual section/handle release by tens of milliseconds.
      */
     private async preApplyHygiene(): Promise<void> {
+        const adbPath = Config.getInstance().adbPath;
         try {
-            const adb = new AdbClient(Config.getInstance().adbPath);
+            const adb = new AdbClient(adbPath);
             await adb.killServer();
             log.info('preApply: adb kill-server ok');
         } catch (err) {
             log.warn(`preApply: adb kill-server failed (continuing): ${(err as Error).message}`);
         }
 
+        // Called on every platform -- the default reaper is a no-op off Windows
+        // -- but only logged where it runs.
+        const reaped = await this.reapOwnAdbFn(adbPath);
         if (process.platform === 'win32') {
-            try {
-                await execFileAsync('C:\\Windows\\System32\\taskkill.exe', ['/F', '/IM', 'adb.exe', '/T'], {
-                    timeout: 5_000,
-                });
-                log.info('preApply: taskkill /F /IM adb.exe ok');
-            } catch {
-                // taskkill exits non-zero when no matching process; treat as success.
-                log.info('preApply: taskkill /F /IM adb.exe (no matching processes — ok)');
-            }
+            log.info(`preApply: reaped ${reaped} own adb process(es) (${adbPath})`);
         }
 
         await new Promise<void>((resolve) => setTimeout(resolve, 250));

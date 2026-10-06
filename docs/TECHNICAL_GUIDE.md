@@ -803,6 +803,19 @@ In production (MSI/AppImage), the Rust launcher (`ws-scrcpy-web-launcher.exe`) s
    - `RemoteShell` -- terminal access via node-pty (messages: `start`, `resize`, `stop`)
    - `FileListing` -- file manager operations
 
+**Graceful shutdown** (`gracefulShutdown()` in `index.ts`: "stop server & exit", the tray's exit, SIGINT/SIGTERM; not
+the exit-75 restart) stops the adb daemon with `adb kill-server`, then on Windows reaps whatever is left of **the app's
+own adb only** (`reapStrayAdbOnWindows(config.adbPath)` in `src/server/shutdownHelpers.ts`, implemented in
+`src/server/util/reapOwnAdb.ts`), then releases the services and snapshots and closes the SQLite store.
+The reap is needed because `kill-server` can leave the daemon behind (spawned detached and outside the job object,
+stuck transports, in-flight forwards). It matches **by executable path**: Windows PowerShell 5.1 (literal
+`C:\Windows\System32\...` path, `PSModulePath` stripped, a fixed script with nothing spliced in) lists `adb`
+processes with their paths, Node keeps those whose path equals `config.adbPath` (resolved, case-insensitive), and
+each match gets `taskkill /F /PID <pid> /T`. Through beta.181 this was `taskkill /F /IM adb.exe /T`, which killed every
+adb on the machine (Android Studio's, a developer's own platform-tools daemon) and dropped their devices whenever the
+app exited. Other tools' adb must survive the app's exit; only the app's own daemon is the app's to stop. Every
+reaper failure is logged at warn and swallowed, so it never fails the shutdown.
+
 ### 9.2 Middleware Pattern
 
 All middleware extends `Mw` (base class):
@@ -2094,6 +2107,7 @@ The in-app updater uses [Velopack](https://velopack.io/) to apply full-applicati
 - **Check:** Finds the release to read first (`src/server/updateFeedResolver.ts`). It pages this repo's GitHub releases (`api.github.com/repos/<githubOwner>/ws-scrcpy-web/releases?per_page=100`) and skips drafts and prereleases, so flagging a release as a prerelease is a rollback lever. From what is left it takes the highest version carrying the selected channel's Velopack feed, `releases.<channel>.json` (`releases.stable.json` or `releases.beta.json`; `channel` comes from `config.json`). Velopack is then handed that release's download folder as an explicit `HttpSource`. The repo URL is never given to Velopack directly: it would become a `GithubSource`, which reads only the 10 newest releases, so a stable install went blind to its own release once ten betas followed it (#835). Each page is cached with its ETag, and a 403/429 is answered from the last good result. `HttpSource` adds `localVersion`, `id` and `stagingId` to each feed request; `PRIVACY.md` documents them.
 - **Download:** Downloads the update delta/full package with progress reporting to the browser via WebSocket events.
 - **Apply (Windows):** Calls `UpdateManager.waitExitThenApplyUpdate()`, which signals the launcher to exit, apply the update, and relaunch. **On Linux this Velopack path is inert** — its `UpdateNix apply` aborts before touching any file — so `applyUpdate()` branches to a download-and-swap flow instead (section 22.5).
+- **Pre-apply hygiene (`preApplyHygiene`, every platform, before any apply):** `adb kill-server` on `config.adbPath`; on Windows, the same own-adb reap graceful shutdown uses (section 9.1, `src/server/util/reapOwnAdb.ts`: only processes whose executable path is `config.adbPath`, each `taskkill /F /PID <pid> /T`), logged as `preApply: reaped N own adb process(es)`; then a 250 ms settle. It exists because the app's adb daemon once held a cwd handle on `<installRoot>\current\` and Velopack's swap gave up with "one or more running processes prevented it". Only the app's own daemon can hold that handle, so only it is stopped: through beta.181 this step was `taskkill /F /IM adb.exe /T`, and every update also killed Android Studio's adb and any other install's.
 - **A settings change reaches the running service (beta.179).** `channel`, `githubOwner` and
   `updateCheckIntervalMinutes` live in `config.json`, but the timer and the feed belong to the running
   `UpdateService`, so every route that writes them also calls `applyUpdaterConfigChange(svc, before, after)`
@@ -2158,6 +2172,7 @@ Windows and the Windows-service apply path are unchanged (Velopack `waitExitThen
 | `src/server/updateFeedResolver.ts` | Picks the release an update check reads: the selected channel's highest non-prerelease release, past Velopack's 10-release window; handed to Velopack as an `HttpSource` |
 | `src/server/api/UpdatesApi.ts` | REST + WebSocket endpoints for the browser update UI |
 | `src/server/updaterConfigSync.ts` | `applyUpdaterConfigChange`: the one step every config writer calls so a channel, owner or interval change reaches the running `UpdateService` |
+| `src/server/util/reapOwnAdb.ts` | `reapOwnAdbOnWindows(adbPath)`: stops only processes running the app's own adb binary, by executable path; used by pre-apply hygiene and, through `shutdownHelpers.ts`, by graceful shutdown |
 | `src/server/Config.ts` | `autoUpdate`, `updateCheckIntervalMinutes`, `channel` fields + control-marker paths |
 | `launcher/src/linux_apply.rs` | Linux AppImage swap + relaunch + `--service-restart` |
 | `launcher/src/operation_server.rs` | Upgrade-server and uninstall-server (shared binary) |
