@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **docs: the technical guide's updater section names the step every config writer now shares.** §22.1 gains a bullet on `applyUpdaterConfigChange` (`src/server/updaterConfigSync.ts`, beta.179): which three routes call it, what a channel, owner or interval change does to the running `UpdateService`, and why `autoUpdate` needs nothing. §22.6's key-files table lists the module. Found by the 2026-10-06 wrap-up's doc sweep: nothing in the guide was wrong, but the step was missing.
+
 ## [0.1.30-beta.180] - 2026-10-06
 
 ### Fixed
