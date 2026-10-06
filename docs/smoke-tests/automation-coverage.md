@@ -719,16 +719,17 @@ the distinction matters to anyone deciding what to fix:
   yet* until 2026-09-30, when `docker-gating.spec.ts` asserted both, and they count in
   the container tier now.)
 
-Forty-five further rows have no spec yet. Thirty-nine are the 2026-10-03 coverage
+Forty-three further rows have no spec yet. Thirty-seven are the 2026-10-03 coverage
 audit's (each line names its gap and the tier it needs), 12.11 among them since
 2026-10-05, and 7.5 joined them on the audit's day. The five older ones are **18.13**
 (allowRemoteAdmin surviving a restart and an unrelated save), **15.6** (the Windows
 tray's Exit, end to end), **8.10 and 8.11** (item 24's rotation rows) and **8.16**
-(Opus on redroid's legacy OMX stack). All but one are automatable with the tiers
-already built: **21.12** needs a seam in the product first, since the mkcert URLs it
-would point at a fixture server are literals. They are the cheapest coverage left
+(Opus on redroid's legacy OMX stack). All of them are automatable with the tiers
+already built. They are the cheapest coverage left
 anywhere in this document and are listed as their own bucket so they cannot be
-mistaken for residual manual work. (This paragraph said eighty-five until 2026-10-05,
+mistaken for residual manual work. (This paragraph said forty-five until 2026-10-06,
+when item 167's mkcert URL seam took 21.12 into the fast tier and the LAN-address
+spec took 8.19; it said eighty-five until 2026-10-05,
 when item 164's fast-tier specs took 41 rows out, 13.4-13.7 among them; it had not
 yet counted 12.11. Until 2026-09-27 it named 4.5, 20.6, 20.8, 20.10, 20.11 and 20.12,
 and until 2026-09-30 20.4 and 20.5, all of which have specs now.)
