@@ -1,8 +1,10 @@
+import { DeviceState } from '../../common/DeviceState';
 import { TypedEmitter } from '../../common/TypedEmitter';
 import type GoogDeviceDescriptor from '../../types/GoogDeviceDescriptor';
 import type { NetInterface } from '../../types/NetInterface';
 import { AdbClient } from '../AdbClient';
 import { upsertObservedDevices } from '../api/deviceObserved';
+import { applyPendingLabels, forgetPendingLabels } from '../api/pendingLabels';
 import { Config } from '../Config';
 import { Logger } from '../Logger';
 import { shArg } from '../security/deviceInput';
@@ -71,6 +73,9 @@ export class Device extends TypedEmitter<DeviceEvents> {
         } else {
             this.connected = false;
             this.descriptor.pid = -1;
+            // The transport is gone: a name still waiting on it must not land
+            // on whatever device answers at this address next.
+            if (state === DeviceState.DISCONNECTED) forgetPendingLabels(this.udid);
         }
         this.descriptor.state = state;
         this.emitUpdate();
@@ -318,6 +323,11 @@ export class Device extends TypedEmitter<DeviceEvents> {
                             lastSeenAt: Date.now(),
                         },
                     ]);
+                    // A name typed at connect before this serial could be read
+                    // is filed under it now, ahead of the update that makes the
+                    // card fetch labels (row 19.5 follow-up).
+                    const serial = this.descriptor['ro.serialno'];
+                    if (serial) applyPendingLabels(Config.getInstance().db, this.udid, serial);
                 } catch {
                     /* best-effort */
                 }

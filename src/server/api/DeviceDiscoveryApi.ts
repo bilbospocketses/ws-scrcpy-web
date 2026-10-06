@@ -11,6 +11,7 @@ import { isProbeAddressSerial, scanAddressFor } from '../network/scanIdentity';
 import { assertDeletablePaths, isConnectAddress, shArg } from '../security/deviceInput';
 import { inContainer } from './containerGuard';
 import { upsertObservedDevices } from './deviceObserved';
+import { applyPendingLabels, forgetPendingLabels, rememberPendingLabel } from './pendingLabels';
 import { BodyTooLargeError, InvalidJsonError, readJsonBodyStrict, sendInternalError } from './utils';
 
 const log = Logger.for('DeviceDiscoveryApi');
@@ -171,10 +172,18 @@ export class DeviceDiscoveryApi {
                     //
                     // The MAC is recorded against the serial too, so a rename or
                     // clear on the card can keep the MAC copy in step.
+                    //
+                    // A device still unauthorized, or slow, fails or answers
+                    // empty to the serial lookup. A typed name is then held
+                    // against the transport (`pendingLabels`) and filed under the
+                    // serial once the device tracker or a later connect learns
+                    // it, rather than under the address, which would go stale.
                     try {
                         let realSerial = knownSerial;
                         if (!realSerial) {
-                            const lookedUp = (await this.adbClient.shell(address, 'getprop ro.serialno')).trim();
+                            const lookedUp = (
+                                await this.adbClient.shell(address, 'getprop ro.serialno').catch(() => '')
+                            ).trim();
                             if (lookedUp) realSerial = lookedUp;
                         }
                         const ip = address.split(':')[0]!;
@@ -182,9 +191,17 @@ export class DeviceDiscoveryApi {
                         // through docker's NAT it could not see a LAN device anyway.
                         const mac = (label || realSerial) && !inContainer() ? await resolveMac(ip) : null;
                         if (realSerial) {
+                            // A name held from an earlier connect first, so one typed now wins.
+                            applyPendingLabels(db, address, realSerial);
                             if (label) db.devices.setLabel(userId, realSerial, label);
                             db.devices.claimAddress(realSerial, await scanAddressFor(address, lookupIpv4), Date.now());
                             if (mac) db.devices.recordMac(realSerial, mac);
+                        } else if (label) {
+                            rememberPendingLabel(address, userId, {
+                                label,
+                                mac,
+                                scanAddress: await scanAddressFor(address, lookupIpv4),
+                            });
                         }
                         if (label && mac) {
                             db.devices.setLabel(userId, mac, label);
@@ -217,6 +234,7 @@ export class DeviceDiscoveryApi {
                 }
                 const result = await this.adbClient.disconnect(address);
                 const outcome = classifyDisconnectResult(result);
+                if (outcome.success) forgetPendingLabels(address);
                 res.writeHead(outcome.status);
                 res.end(JSON.stringify({ success: outcome.success, message: outcome.message }));
                 return true;
