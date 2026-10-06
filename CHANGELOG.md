@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.181] - 2026-10-06
+
 ### Fixed
 - **A refused delete in the file browser names the path and the reason.** When `rm` refused a path (say, anything under `/system`), the server answers 207 with `{ path, error }` per failure, and the footer interpolated that object as `delete failed: [object Object]`. When the server refused the request itself (a protected root such as `/` or `/system`, a `..` segment, too many paths), it answers 400 `{ error }`, which the modal never looked at, so the footer said nothing and the list just reloaded. The footer now reads `delete failed: /system/app: Read-only file system`, adds `(+N more)` when several paths failed, says `delete failed: refusing to delete a protected root: /system` for a refused request, and falls back to `delete failed: HTTP <status>` when a refusal has no readable body; every failure is logged to the console as a `<path>: <error>` line. The wording moved to `src/app/googDevice/client/deleteResult.ts` so it is unit-tested. Found by qa-harness planning smoke row 9.11.
 
