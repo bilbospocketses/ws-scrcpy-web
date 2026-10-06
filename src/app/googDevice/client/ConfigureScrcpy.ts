@@ -16,7 +16,7 @@ import { DisplayInfo } from '../../DisplayInfo';
 import type { PlayerClass } from '../../player/BasePlayer';
 import { CODEC_PROBE_STRINGS, probeDecodeSupport } from '../../player/webCodecsConfig';
 import Size from '../../Size';
-import { insecureOriginNotice } from '../../secureContext';
+import { insecureOriginNotice, statusAfterProbe } from '../../secureContext';
 import Util from '../../Util';
 import { Modal } from '../../ui/Modal';
 import VideoSettings from '../../VideoSettings';
@@ -203,8 +203,10 @@ export class ConfigureScrcpy extends Modal {
             }
         }
 
-        // Mark ready
-        this.setStatus('Ready');
+        // Mark ready — unless no player registered on an insecure origin, where
+        // the status keeps the notice updateVideoSettingsForPlayer just set.
+        const status = statusAfterProbe(!!this.getPlayer(), window);
+        this.setStatus(status.text, status.kind);
         if (this.connectButton) {
             this.connectButton.disabled = false;
         }

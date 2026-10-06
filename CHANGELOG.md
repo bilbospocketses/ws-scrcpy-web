@@ -17,6 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **On an insecure origin the config modal's status line keeps the secure-context notice after a probe.** At `http://<lan-ip>:<port>` no player registers, and the modal set the notice as an error while applying the probe, then ended with an unconditional "Ready" that overwrote it. So a LAN user read "ready" over a connect button that could not stream, and saw the notice only after clicking connect. The status after a probe now comes from `statusAfterProbe` (`src/app/secureContext.ts`): the notice, in the error style, when no player is registered on an insecure origin, and "Ready" otherwise. On a secure origin nothing changes, and the connect button behaves as before.
+
+### Changed
+- **tests: smoke row 8.19 (the insecure-origin notice) moves to the fast tier.** The new `tests/e2e/insecure-origin.spec.ts` loads the app from this machine's own LAN address, which Chromium treats as a real insecure context (no `VideoDecoder`), and stubs the device and its probe with `routeWebSocket`. It asserts the device card shows the whole notice and no connect link, and that after the probe the config modal's status line equals the notice. It found the status-line bug above. The coverage register counts 144 of 251 rows automated.
+
 ## [0.1.30-beta.176] - 2026-10-06
 
 ### Added
