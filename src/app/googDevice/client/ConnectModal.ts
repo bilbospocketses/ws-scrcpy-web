@@ -52,7 +52,7 @@ export class ConnectModal extends Modal {
                 this.bodyEl.innerHTML = '';
                 this.bodyEl.appendChild(errorEl);
                 // Close after 4s (long enough to read, short enough not to feel stuck)
-                setTimeout(() => this.close(), 4000);
+                this.closeAfter(4000);
             },
         });
     }
