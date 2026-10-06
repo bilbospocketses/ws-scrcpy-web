@@ -10,6 +10,7 @@ import { Config } from '../Config';
 import { EnvName } from '../EnvName';
 import { getInstanceToken, requiresToken } from '../security/instanceToken';
 import { evaluateHttpRequest } from '../security/requestGate';
+import { PkexecDeclinedError } from '../service/SystemdClient';
 import type { UpdateService, UpdateServiceState } from '../UpdateService';
 
 // An empty config.json starts on the channel THIS BUILD defaults to (a beta build
@@ -344,6 +345,47 @@ describe('UpdatesApi', () => {
         const body = JSON.parse((res as any).getBody());
         expect(body.ok).toBe(false);
         expect(body.error).toMatch(/updater missing/);
+        expect(schedule).not.toHaveBeenCalled();
+    });
+
+    // Smoke 14.10: cancelling the machine-wide update's polkit prompt is a
+    // decline with the same contract as install-system-wide, not a 500, and the
+    // update stays `ready` so the user can try again.
+    it('POST /apply: a declined pkexec prompt → 403 uac-declined, no exit, update still ready', async () => {
+        const svc = fakeService({ isInstalled: true, status: 'ready', availableVersion: '0.2.0' });
+        const declined = new PkexecDeclinedError('machine-wide-update');
+        svc.applyUpdate.mockRejectedValue(declined);
+        const schedule = vi.fn();
+        const exit = vi.fn();
+        const api = new UpdatesApi(svc, schedule, exit);
+        const { req, res } = makeReqRes('/api/updates/apply', 'POST');
+        await api.handle(req, res);
+        expect((res as any).getStatus()).toBe(403);
+        expect(JSON.parse((res as any).getBody())).toEqual({
+            ok: false,
+            error: declined.message,
+            reason: 'uac-declined',
+        });
+        expect(schedule).not.toHaveBeenCalled();
+        expect(exit).not.toHaveBeenCalled();
+
+        const status = makeReqRes('/api/updates/status');
+        await api.handle(status.req, status.res);
+        expect(JSON.parse((status.res as any).getBody()).status).toBe('ready');
+    });
+
+    it('POST /apply: a pkexec failure that is not a decline stays a 500 with no reason', async () => {
+        const svc = fakeService({ isInstalled: true, status: 'ready' });
+        svc.applyUpdate.mockRejectedValue(new Error('pkexec machine-wide-update failed: mv: cannot move'));
+        const schedule = vi.fn();
+        const api = new UpdatesApi(svc, schedule, vi.fn());
+        const { req, res } = makeReqRes('/api/updates/apply', 'POST');
+        await api.handle(req, res);
+        expect((res as any).getStatus()).toBe(500);
+        expect(JSON.parse((res as any).getBody())).toEqual({
+            ok: false,
+            error: 'pkexec machine-wide-update failed: mv: cannot move',
+        });
         expect(schedule).not.toHaveBeenCalled();
     });
 

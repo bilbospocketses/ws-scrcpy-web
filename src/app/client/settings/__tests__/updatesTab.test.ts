@@ -430,6 +430,78 @@ describe('UpdatesTab', () => {
         expect(store.changes().map((c) => c.to)).toEqual(['someone-else']);
     });
 
+    /**
+     * Smoke 14.10: cancelling the machine-wide update's polkit prompt answers
+     * 403 `uac-declined`. Nothing changed and the update is still ready, so the
+     * line says privileges were declined (not "apply failed (403)") and stays
+     * there, with the apply button back for another try.
+     */
+    describe('apply: a declined elevation prompt', () => {
+        const ready = status({ status: 'ready', availableVersion: '0.2.0' });
+
+        function stubApply(apply: () => Promise<unknown>): ReturnType<typeof vi.fn> {
+            const f = vi.fn((url: string) =>
+                url === '/api/updates/apply'
+                    ? apply()
+                    : Promise.resolve({ ok: true, json: () => Promise.resolve(ready) }),
+            );
+            vi.stubGlobal('fetch', f);
+            return f;
+        }
+
+        const applyBtnOf = (el: HTMLElement): HTMLButtonElement =>
+            [...el.querySelectorAll('button')].find((b) => /apply/i.test(b.textContent ?? ''))!;
+
+        it('a 403 uac-declined says privileges were declined, not "apply failed (403)"', async () => {
+            const { el } = await mountUpdatesTab(ready);
+            stubApply(() =>
+                Promise.resolve({
+                    ok: false,
+                    status: 403,
+                    json: () =>
+                        Promise.resolve({
+                            ok: false,
+                            error: 'authentication was dismissed or not authorized. machine-wide-update cancelled.',
+                            reason: 'uac-declined',
+                        }),
+                }),
+            );
+
+            applyBtnOf(el).click();
+            await flush();
+            await flush();
+
+            const line = actionStatusOf(el);
+            expect(line.textContent).toBe('Administrative privileges were declined. Try again and approve the prompt.');
+            expect(line.classList.contains('settings-status-error')).toBe(true);
+            const btn = applyBtnOf(el);
+            expect(btn.disabled).toBe(false);
+            expect(btn.textContent).toBe('apply v0.2.0');
+        });
+
+        it('any other failure keeps the "apply failed (N)" line', async () => {
+            const { el } = await mountUpdatesTab(ready);
+            // The follow-up status read is held open so the line can be read
+            // before that refresh repaints the section.
+            const f = vi.fn((url: string) =>
+                url === '/api/updates/apply'
+                    ? Promise.resolve({
+                          ok: false,
+                          status: 500,
+                          json: () => Promise.resolve({ ok: false, error: 'boom' }),
+                      })
+                    : new Promise(() => undefined),
+            );
+            vi.stubGlobal('fetch', f);
+
+            applyBtnOf(el).click();
+            await flush();
+
+            expect(actionStatusOf(el).textContent).toBe('apply failed (500)');
+            expect(f.mock.calls.map((c) => String(c[0]))).toContain('/api/updates/status');
+        });
+    });
+
     it('typing the original interval back clears the staged change', async () => {
         const { el, store } = await mountUpdatesTab(status({ updateCheckIntervalMinutes: 60 }));
 

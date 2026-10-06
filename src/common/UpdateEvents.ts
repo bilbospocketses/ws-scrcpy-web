@@ -61,6 +61,12 @@ export interface UpdatesConfigPatchRequest {
 export interface UpdatesErrorResponse {
     ok: false;
     error: string;
+    /**
+     * Set only by POST /apply (403) when the machine-wide update's pkexec prompt
+     * was declined; the same discriminator as the /api/service/* failures
+     * (`ServiceFailureReason`). Absent on every other error.
+     */
+    reason?: 'uac-declined';
 }
 
 /** Apply success envelope (returned right before the deferred process.exit). */

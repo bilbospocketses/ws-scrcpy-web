@@ -710,10 +710,19 @@ export class UpdateService {
             } else if (isMachineWide) {
                 // (1) elevate ONLY the swap (root-owned /opt). One pkexec prompt does
                 //     the ETXTBSY-safe rename-swap of the /opt binary + VERSION write.
-                await this.runPkexecFn(
-                    buildMachineWideUpdateScript({ stagedAppImage: stagedPath, version }),
-                    'machine-wide-update',
-                );
+                try {
+                    await this.runPkexecFn(
+                        buildMachineWideUpdateScript({ stagedAppImage: stagedPath, version }),
+                        'machine-wide-update',
+                    );
+                } catch (err) {
+                    // Declined (PkexecDeclinedError → 403 uac-declined) or failed:
+                    // nothing was swapped, so undo what this attempt wrote and leave
+                    // the update `ready` for another try (smoke 14.10).
+                    await this.removeApplyHandoffMarkers();
+                    await fs.promises.rm(stagedPath, { force: true }).catch(() => undefined);
+                    throw err;
+                }
                 // (2) relaunch-ONLY helper (no --staged): the swap already happened
                 //     above, so the helper just waits for our pid to exit (releasing
                 //     the per-user flock) then relaunches the freshly-swapped /opt.

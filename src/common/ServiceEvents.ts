@@ -90,13 +90,16 @@ export interface ServiceActionSuccess {
  * Discriminator added in v0.1.25 to drive frontend error UX. Optional for
  * backward compatibility — older callers ignore unknown fields, and frontend
  * treats absence as 'unknown'. Add new variants here AND extend the
- * frontend mapping in `settings/tabs/ServiceTab.ts::reasonToUserMessage` in the
- * same change to keep the discriminated union exhaustive.
+ * frontend mapping in `app/client/serviceFailureMessage.ts::reasonToUserMessage` in
+ * the same change to keep the discriminated union exhaustive.
  *
  * Variant semantics:
  * - `unsupported`: service mode not supported on this platform.
  * - `uac-declined`: user clicked No on the Windows UAC prompt
- *   (PowerShell Start-Process -Verb RunAs exited with ERROR_CANCELLED 1223).
+ *   (PowerShell Start-Process -Verb RunAs exited with ERROR_CANCELLED 1223), or
+ *   cancelled / did not authorize a Linux polkit prompt (`pkexecDeclined`,
+ *   thrown as `PkexecDeclinedError` by `runPkexec`). POST /api/updates/apply
+ *   answers a declined machine-wide update with the same reason.
  * - (removed) `handoff-timeout`: emitted by the LocalSystem uninstall path
  *   between 1507c36 (2026-04-30) and Phase 4 (#108, 2026-05-25), when that
  *   path relayed the uninstall to a user-session launcher and could fail to

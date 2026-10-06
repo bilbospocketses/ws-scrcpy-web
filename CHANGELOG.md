@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Cancelling the password prompt for "install for all users" or a machine-wide update now says privileges were declined instead of reporting a failure (smoke row 14.10, qa-harness).** The server already knew a cancelled or unauthorized polkit prompt from a failure, but the pages did not use it. Settings → Server showed "install failed — see the server logs", and the machine-wide update answered a plain 500, so Settings → Updates showed "apply failed" and the update chip said nothing. Both endpoints now answer `403 reason: 'uac-declined'` for a declined prompt, and every page that starts one shows "Administrative privileges were declined. Try again and approve the prompt.", the line Settings → Service already used. That covers Settings → Server, Settings → Updates, the update chip, the system-wide update banner and the first-run welcome modal, which showed the server's raw error. `runPkexec` throws a typed `PkexecDeclinedError` for a declined prompt, and both handlers check for that type rather than matching the word "dismissed" in the message. A declined or failed machine-wide update also removes what the attempt wrote: the hand-off markers and the staged download. The update stays ready for another try. The leftover `apply-update-pending` marker made the launcher's next exit skip the tray reap.
+
 ## [0.1.30-beta.183] - 2026-10-06
 
 ### Fixed
