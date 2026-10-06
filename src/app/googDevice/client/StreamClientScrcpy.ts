@@ -75,6 +75,25 @@ export function looksLikeNoPicture(averageFrameBytes: number, baselineFrameBytes
     return relativeDrop || averageFrameBytes < NO_PICTURE_FRAME_BYTES;
 }
 
+/**
+ * Close codes that end a stream normally: 1000 normal closure, 1001 going away
+ * (tab close/refresh), 1005 no code given — the server's own release on a
+ * normal end closes without a code. Every other code is a failure, including
+ * the server's 4xxx application codes (4005: the session failed, with the
+ * reason) and 1006 (the connection dropped without a close frame).
+ */
+const NORMAL_CLOSE_CODES: ReadonlySet<number> = new Set([1000, 1001, 1005]);
+
+/**
+ * The error a closed stream socket stands for, or undefined for a normal end.
+ * Close codes are the only signal for an async stream failure: ScrcpyDemuxer's
+ * `ws.onerror` is a no-op.
+ */
+export function streamFailureFromClose(ev?: Pick<CloseEvent, 'code' | 'reason'>): Error | undefined {
+    if (!ev || NORMAL_CLOSE_CODES.has(ev.code)) return undefined;
+    return new Error(ev.reason || `WebSocket closed with code ${ev.code}`);
+}
+
 async function browserSupportsCodec(codec: string): Promise<boolean> {
     // An unanswerable probe (no WebCodecs API) resolves to false so the caller
     // exhausts its preference loop and falls through to its plain h264 default,
@@ -365,6 +384,12 @@ export class StreamClientScrcpy
     private isStopping = false;
 
     public onDisconnected = (ev?: CloseEvent): void => {
+        // Decide failure-vs-normal FIRST, before any callback runs. The
+        // disconnect callback closes the connect modal, closing the modal stops
+        // the stream, and stopping sets isStopping — so a check made after it
+        // always read "the user stopped it" and no failure was ever reported
+        // (smoke row 8.27). A user-initiated stop is never a failure.
+        const failure = this.isStopping ? undefined : streamFailureFromClose(ev);
         this.audioPlayer?.stop();
         // Drop the reference the way refreshStream does. The session is over,
         // every remaining use site is optional-chained, and a live reference
@@ -373,21 +398,17 @@ export class StreamClientScrcpy
         this.uhidKeyboard?.detach();
         this.uhidMouse?.detach();
         this.uhidManager?.stop();
-        // Don't destroy touch handler during refresh — refreshStream manages it
-        if (!this.isRefreshing) {
-            this.touchHandler?.release();
-            this.touchHandler = undefined;
+        // Don't destroy touch handler during refresh — refreshStream manages it,
+        // and a refresh is not the end of the session, so report nothing.
+        if (this.isRefreshing) return;
+        this.touchHandler?.release();
+        this.touchHandler = undefined;
+        // Exactly one of the two. Without an error hook the end still has to be
+        // reported, so a failure falls back to the disconnect callback.
+        if (failure && this.onErrorReceived) {
+            this.onErrorReceived(failure);
+        } else {
             this.onDisconnectCallback?.();
-        }
-        // Public hook — fire on abnormal WebSocket closures. ScrcpyDemuxer does
-        // not expose a separate onError callback (its ws.onerror is a no-op),
-        // so close codes are our only signal for async stream errors.
-        // 1000 = normal closure, 1001 = going away (tab close/refresh).
-        // Skip during user-initiated stop/refresh — those are not errors.
-        const cleanCodes = new Set([1000, 1001, 1005]);
-        if (!this.isStopping && ev && !cleanCodes.has(ev.code)) {
-            const reason = ev.reason || `WebSocket closed with code ${ev.code}`;
-            this.onErrorReceived?.(new Error(reason));
         }
     };
 
