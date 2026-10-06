@@ -1,6 +1,11 @@
 import type { ServiceInstallResponse, ServiceStatusResponse } from '../../common/ServiceEvents';
-import { sameOriginBase, sameOriginUrl } from '../sameOriginUrl';
+import { sameOriginBase } from '../sameOriginUrl';
 import { Modal } from '../ui/Modal';
+import {
+    INSTALL_HANDOFF_RECONNECT_DELAY_MS,
+    INSTALL_HANDOFF_TIMEOUT_MESSAGE,
+    startInstallHandoffPoll,
+} from './installHandoffPoll';
 import { ServiceOperationModal } from './ServiceOperationModal';
 import { settingsService } from './SettingsService';
 
@@ -331,49 +336,39 @@ export class WelcomeModal extends Modal {
                 await this.patchConfig({ firstRunComplete: true });
             }
 
-            // §39: mtime-based discovery.
-            const baselineMtime = data.configMtime ?? 0;
-            const pollInterval = 2000;
-            const maxIterations = 30;
-            let iterations = 0;
+            // §39: wait for the service to take over. This page's server exits
+            // once it has answered, and the service then holds this origin with
+            // a new token — so a thrown tick (the dead window) and a stale-token
+            // 403 are progress, not failure. The loop is Settings → Service's,
+            // shared (installHandoffPoll.ts); this modal's own copy read the
+            // first as fatal and the second as "not ready" (smoke 1.11 c).
             this.setStatus('service installed. waiting for it to start…');
-            const poll = setInterval(async () => {
-                iterations++;
-                if (iterations > maxIterations) {
-                    clearInterval(poll);
+            startInstallHandoffPoll({
+                baselineMtime: data.configMtime ?? 0,
+                onNavigate: (url) => {
                     modal.close();
-                    this.setStatus(
-                        'service is running but port discovery timed out. reload at your usual address.',
-                        true,
-                    );
-                    this.setBusy(false);
-                    return;
-                }
-                try {
-                    const statusResp = await fetch('/api/service/status', { signal: AbortSignal.timeout(5000) });
-                    if (!statusResp.ok) return;
-                    const statusData = (await statusResp.json()) as { configMtime?: number; diskWebPort?: number };
-                    if (
-                        statusData.configMtime != null &&
-                        statusData.configMtime !== baselineMtime &&
-                        statusData.diskWebPort != null
-                    ) {
-                        clearInterval(poll);
-                        modal.close();
-                        this.setStatus('service mode active. switching you over…');
-                        const servicePort = statusData.diskWebPort;
-                        setTimeout(() => {
-                            // Same host, new port — never a literal localhost.
-                            window.location.href = sameOriginUrl(servicePort);
-                        }, 500);
-                    }
-                } catch {
-                    clearInterval(poll);
+                    this.setStatus('service mode active. switching you over…');
+                    setTimeout(() => {
+                        // Same host, new port — never a literal localhost.
+                        window.location.href = url;
+                    }, 500);
+                },
+                onReconnect: () => {
+                    // Same port, new process: reload for its token after the
+                    // grace Settings → Service uses. Same line as a port move —
+                    // the user is switched over either way (smoke 1.11 c).
                     modal.close();
-                    this.setStatus('lost connection during handoff. reload at the service port.', true);
+                    this.setStatus('service mode active. switching you over…');
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, INSTALL_HANDOFF_RECONNECT_DELAY_MS);
+                },
+                onTimeout: () => {
+                    modal.close();
+                    this.setStatus(INSTALL_HANDOFF_TIMEOUT_MESSAGE, true);
                     this.setBusy(false);
-                }
-            }, pollInterval);
+                },
+            });
         } catch {
             this.setStatus("couldn't reach server. try again?", true);
             this.setBusy(false);
