@@ -2086,6 +2086,15 @@ The in-app updater uses [Velopack](https://velopack.io/) to apply full-applicati
 - **Check:** Finds the release to read first (`src/server/updateFeedResolver.ts`). It pages this repo's GitHub releases (`api.github.com/repos/<githubOwner>/ws-scrcpy-web/releases?per_page=100`) and skips drafts and prereleases, so flagging a release as a prerelease is a rollback lever. From what is left it takes the highest version carrying the selected channel's Velopack feed, `releases.<channel>.json` (`releases.stable.json` or `releases.beta.json`; `channel` comes from `config.json`). Velopack is then handed that release's download folder as an explicit `HttpSource`. The repo URL is never given to Velopack directly: it would become a `GithubSource`, which reads only the 10 newest releases, so a stable install went blind to its own release once ten betas followed it (#835). Each page is cached with its ETag, and a 403/429 is answered from the last good result. `HttpSource` adds `localVersion`, `id` and `stagingId` to each feed request; `PRIVACY.md` documents them.
 - **Download:** Downloads the update delta/full package with progress reporting to the browser via WebSocket events.
 - **Apply (Windows):** Calls `UpdateManager.waitExitThenApplyUpdate()`, which signals the launcher to exit, apply the update, and relaunch. **On Linux this Velopack path is inert** — its `UpdateNix apply` aborts before touching any file — so `applyUpdate()` branches to a download-and-swap flow instead (section 22.5).
+- **A settings change reaches the running service (beta.179).** `channel`, `githubOwner` and
+  `updateCheckIntervalMinutes` live in `config.json`, but the timer and the feed belong to the running
+  `UpdateService`, so every route that writes them also calls `applyUpdaterConfigChange(svc, before, after)`
+  (`src/server/updaterConfigSync.ts`): `PATCH /api/updates/config`, the Settings Save (`POST /api/settings/batch`)
+  and `PATCH /api/config`. A channel or owner change starts `reconfigure`; an interval change re-times the timer
+  (`restartTimer`) without waiting for that check, so a change of both applies both. The batch and `ConfigApi` run
+  it in the background and skip it when the same save moves `webPort`, because the restart reads the new values
+  anyway. Before beta.179 only the first route did this, so a Settings save kept the old interval and channel until
+  a restart (qa-harness, row 6.11). `autoUpdate` needs nothing: `runCheck` reads it at every check.
 
 ### 22.2 Upgrade Server
 
@@ -2140,6 +2149,7 @@ Windows and the Windows-service apply path are unchanged (Velopack `waitExitThen
 | `src/server/UpdateService.ts` | Velopack wrapper (check, download); Windows apply + Linux download-and-swap branch |
 | `src/server/updateFeedResolver.ts` | Picks the release an update check reads: the selected channel's highest non-prerelease release, past Velopack's 10-release window; handed to Velopack as an `HttpSource` |
 | `src/server/api/UpdatesApi.ts` | REST + WebSocket endpoints for the browser update UI |
+| `src/server/updaterConfigSync.ts` | `applyUpdaterConfigChange`: the one step every config writer calls so a channel, owner or interval change reaches the running `UpdateService` |
 | `src/server/Config.ts` | `autoUpdate`, `updateCheckIntervalMinutes`, `channel` fields + control-marker paths |
 | `launcher/src/linux_apply.rs` | Linux AppImage swap + relaunch + `--service-restart` |
 | `launcher/src/operation_server.rs` | Upgrade-server and uninstall-server (shared binary) |
