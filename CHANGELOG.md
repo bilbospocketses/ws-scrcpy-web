@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **tests: a spec's data root is removed even when its adb daemon outlived the server (item 170).** On Windows, removing a spec-owned server's data root failed EPERM, in teardown (settings-dialog 13.9's afterAll) and again at the next run's setup, when `seedPrivateDataRoot` tried to wipe the leftover. The harness stops those servers with `child.kill()`, which on Windows is TerminateProcess, so the server's own shutdown never ran its `adb kill-server`; the adb daemon it pre-warmed at boot, detached, from the root's `dependencies/adb`, kept running and held `adb.exe` open. `removePrivateRoot` and `seedPrivateDataRoot` now stop every process whose executable lives inside the root first (`tests/e2e/support/rootProcesses.ts`; scoped by path, so a developer's own adb is never touched), then remove it with a bounded retry of their own, because `rmSync`'s `maxRetries` does not retry EPERM on Node 24 and a stopped image stays locked for a few milliseconds. `lockedServer` drops its own `kill-server` step for its isolated daemon, which the shared stop now covers. Harness only; the app is unchanged.
+
 ## [0.1.30-beta.181] - 2026-10-06
 
 ### Fixed

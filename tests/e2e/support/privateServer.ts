@@ -1,11 +1,12 @@
 import { type ChildProcess, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { type APIRequestContext, expect, request, test } from '@playwright/test';
 import { SEED_CONFIG } from './paths';
+import { removeTree, stopProcessesUnder } from './rootProcesses';
 
 /**
  * Spec-owned servers: every row that stops, restarts, locks or otherwise
@@ -72,7 +73,13 @@ export function privateServerPaths(name: string, port: number): PrivateServerPat
  * and the empty decline marker for the Linux system-wide-install offer.
  */
 export function seedPrivateDataRoot(paths: PrivateServerPaths, extraConfig: Record<string, unknown> = {}): void {
-    rmSync(paths.programData, { recursive: true, force: true });
+    // A leftover from a run that never reached its teardown can still be
+    // running from this root (item 170: the adb daemon), and would block the wipe.
+    const leftovers = stopProcessesUnder(paths.programData);
+    if (leftovers.length) {
+        console.warn('stopped leftover process(es) running from a private root:', paths.programData, leftovers);
+    }
+    removeTree(paths.programData);
     mkdirSync(path.join(paths.dataRoot, 'control'), { recursive: true });
     // `extraConfig` is for boot-time-only keys such as `allowedHosts`, which the
     // server reads from the file once and never exposes through /api/config.
@@ -361,12 +368,21 @@ export async function stopQuietly(handle: ServerHandle | undefined, label: strin
 
 /**
  * Remove a private root whole: the data root and the LOCALAPPDATA beside it.
- * Retried because Windows can hold the database a beat after the process is
- * gone. Throws if it still cannot; callers that must not throw catch it, and
- * the next run's `seedPrivateDataRoot` wipes the directory regardless.
+ *
+ * Anything still running FROM the root is stopped first (item 170). On Windows
+ * `stopServer` is TerminateProcess, so the server's own shutdown -- which kills
+ * the adb daemon it pre-warmed, detached, from `<root>/WsScrcpyWeb/dependencies/adb`
+ * -- never runs; the daemon outlives the server and holds adb.exe open. The stop
+ * is scoped to executables inside this root, never a developer's adb.
+ *
+ * Retried (`removeTree`) because Windows can hold the database, or a stopped
+ * process's image, a beat after the process is gone. Throws if it still cannot;
+ * callers that must not throw catch it, and the next run's
+ * `seedPrivateDataRoot` stops and wipes the same way.
  */
 export function removePrivateRoot(paths: PrivateServerPaths): void {
-    rmSync(paths.programData, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    stopProcessesUnder(paths.programData);
+    removeTree(paths.programData);
 }
 
 /** config.json as the server left it on disk. */
