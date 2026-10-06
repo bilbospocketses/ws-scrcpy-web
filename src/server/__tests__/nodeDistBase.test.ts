@@ -72,7 +72,7 @@ describe('WS_SCRCPY_NODE_DIST_BASE', () => {
         await expect(def().checkLatest()).resolves.toBe('24.99.0');
         expect(urls[0]).toBe(`${base}/index.json`);
         // nodejs.org is never asked for anything once the base is set.
-        expect(urls.filter((u) => u.includes('nodejs.org'))).toEqual([]);
+        expect(urls.filter((u) => new URL(u).hostname === 'nodejs.org')).toEqual([]);
     });
 
     it('takes an explicit override over the environment', () => {
