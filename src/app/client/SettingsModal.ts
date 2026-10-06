@@ -622,6 +622,10 @@ export class SettingsModal extends Modal {
             role: this.role,
             authEnabled: this.authEnabled,
             reload: () => window.location.reload(),
+            // Every confirm a tab raises is a child of this dialog: it closes if
+            // Settings closes, and its answer then reads as cancel.
+            askChild: (ask, unanswered) => this.askChild(ask, unanswered),
+            openChild: (open) => this.openChild(open),
         };
         const tabs: TabDef[] = [];
         if (canSeeSection(this.role, 'users')) {

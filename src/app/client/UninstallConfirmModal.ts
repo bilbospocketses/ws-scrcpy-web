@@ -123,12 +123,25 @@ export class UninstallConfirmModal extends Modal {
         this.resolveAndClose(false);
     }
 
+    // Closed without an answer (the Settings dialog closed first): settle as
+    // cancel, so no uninstall runs.
+    protected override onBeforeClose(): void {
+        this.settle(false);
+    }
+
     private resolveAndClose(confirmed: boolean): void {
         if (this.resolved) return;
-        this.resolved = true;
+        const keep = this.settle(confirmed);
+        this.close({ confirmed, keep });
+    }
+
+    /** Resolve once; returns the keep choice it resolved with. */
+    private settle(confirmed: boolean): boolean {
         const keep = this.keepCheckboxEl?.checked ?? true;
+        if (this.resolved) return keep;
+        this.resolved = true;
         this.resolveFn?.({ confirmed, keep });
         this.resolveFn = null;
-        this.close({ confirmed, keep });
+        return keep;
     }
 }

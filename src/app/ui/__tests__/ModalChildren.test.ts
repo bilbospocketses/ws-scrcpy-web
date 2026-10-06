@@ -1,9 +1,13 @@
 // @vitest-environment jsdom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { AdminConfirmModal } from '../../client/AdminConfirmModal';
+import { ConfirmModal } from '../../client/ConfirmModal';
+import { ResetConfirmModal } from '../../client/ResetConfirmModal';
 import { SettingsDirtyCloseModal } from '../../client/SettingsModal';
 import { ShellCloseConfirmModal } from '../../client/ShellCloseConfirmModal';
 import { SettingsSummaryModal } from '../../client/settings/SettingsSummaryModal';
+import { UninstallConfirmModal } from '../../client/UninstallConfirmModal';
 import { Modal } from '../Modal';
 
 /**
@@ -131,6 +135,34 @@ describe('promise-answering children settle when closed without an answer', () =
         );
         parent.close();
         await expect(answer).resolves.toBe(false);
+    });
+
+    it('ConfirmModal resolves false', async () => {
+        const parent = new Parent();
+        const answer = parent.open(() => ConfirmModal.confirm({ title: 't', message: 'm' }));
+        parent.close();
+        await expect(answer).resolves.toBe(false);
+    });
+
+    it('AdminConfirmModal resolves false', async () => {
+        const parent = new Parent();
+        const answer = parent.open(() => AdminConfirmModal.confirm({ action: 'install service' }));
+        parent.close();
+        await expect(answer).resolves.toBe(false);
+    });
+
+    it('ResetConfirmModal resolves false', async () => {
+        const parent = new Parent();
+        const answer = parent.open(() => ResetConfirmModal.confirm());
+        parent.close();
+        await expect(answer).resolves.toBe(false);
+    });
+
+    it('UninstallConfirmModal resolves not-confirmed', async () => {
+        const parent = new Parent();
+        const answer = parent.open(() => UninstallConfirmModal.confirm());
+        parent.close();
+        await expect(answer).resolves.toMatchObject({ confirmed: false });
     });
 
     it('SettingsDirtyCloseModal resolves cancel', async () => {

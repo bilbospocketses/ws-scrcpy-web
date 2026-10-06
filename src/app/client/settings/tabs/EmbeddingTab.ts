@@ -20,7 +20,24 @@ export interface TabContext {
     role: Role | null;
     authEnabled: boolean;
     reload(): void;
+    /**
+     * Open a confirm as a child of the Settings dialog (`Modal.askChild`): if
+     * Settings closes while it is up, the confirm closes too and this resolves
+     * to `unanswered`, which the caller treats as cancel. Every confirm a tab
+     * raises goes through here, so none can outlive Settings and then act.
+     */
+    askChild: AskChild;
+    /** Open a non-question dialog (Users) as a child of Settings (`Modal.openChild`). */
+    openChild<T>(open: () => T): T;
 }
+
+export type AskChild = <T>(ask: () => Promise<T>, unanswered: T) => Promise<T>;
+
+/**
+ * For a row builder used on its own, outside a Settings dialog (its unit
+ * tests): the confirm opens unbound, exactly as it did before `askChild`.
+ */
+export const askUnbound: AskChild = (ask) => ask();
 
 /**
  * Build a section shell. Returns { section, body } — body is the grid
@@ -80,29 +97,29 @@ function buildRow(labelText: string, control: HTMLElement | DocumentFragment): H
  * Registers nothing with `store`: revoking an origin is an action (an
  * immediate POST), not a value that can be staged and saved later.
  */
-export function buildEmbeddingTab(_ctx: TabContext, _store: StagedSettingsStore): HTMLElement {
+export function buildEmbeddingTab(ctx: TabContext, _store: StagedSettingsStore): HTMLElement {
     const { section, body } = buildSection('Embedding');
-    renderEmbedOrigins(body, null);
-    void refreshEmbedOrigins(body);
+    renderEmbedOrigins(ctx.askChild, body, null);
+    void refreshEmbedOrigins(ctx.askChild, body);
     return section;
 }
 
-async function refreshEmbedOrigins(body: HTMLElement): Promise<void> {
+async function refreshEmbedOrigins(askChild: AskChild, body: HTMLElement): Promise<void> {
     try {
         const res = await fetch('/api/embed-origins', { headers: { Accept: 'application/json' } });
         if (!res.ok) {
-            renderEmbedOrigins(body, [], 'could not read the list — see server logs.');
+            renderEmbedOrigins(askChild, body, [], 'could not read the list — see server logs.');
             return;
         }
         const data = (await res.json()) as { origins?: string[] };
-        renderEmbedOrigins(body, data.origins ?? []);
+        renderEmbedOrigins(askChild, body, data.origins ?? []);
     } catch {
-        renderEmbedOrigins(body, [], 'could not reach the server.');
+        renderEmbedOrigins(askChild, body, [], 'could not reach the server.');
     }
 }
 
 /** `origins === null` means "still loading". */
-function renderEmbedOrigins(body: HTMLElement, origins: string[] | null, error?: string): void {
+function renderEmbedOrigins(askChild: AskChild, body: HTMLElement, origins: string[] | null, error?: string): void {
     body.textContent = '';
 
     if (error) {
@@ -128,13 +145,17 @@ function renderEmbedOrigins(body: HTMLElement, origins: string[] | null, error?:
                 // Confirm first: revoking silently breaks a working embed in the other app,
                 // and the browser reports that as "refused to connect" — easy to misread as
                 // the server being down.
-                const sure = await ConfirmModal.confirm({
-                    title: 'revoke embedding permission?',
-                    message:
-                        `${origin} will no longer be able to display this app in a frame. ` +
-                        'Anything it is currently showing will stop working immediately. ' +
-                        'It can ask again.',
-                });
+                const sure = await askChild(
+                    () =>
+                        ConfirmModal.confirm({
+                            title: 'revoke embedding permission?',
+                            message:
+                                `${origin} will no longer be able to display this app in a frame. ` +
+                                'Anything it is currently showing will stop working immediately. ' +
+                                'It can ask again.',
+                        }),
+                    false,
+                );
                 if (!sure) return;
 
                 revokeBtn.disabled = true;
@@ -146,13 +167,13 @@ function renderEmbedOrigins(body: HTMLElement, origins: string[] | null, error?:
                     });
                     if (res.ok) {
                         const updated = (await res.json()) as { origins?: string[] };
-                        renderEmbedOrigins(body, updated.origins ?? []);
+                        renderEmbedOrigins(askChild, body, updated.origins ?? []);
                     } else {
                         // Most likely a stale list — re-read rather than guess.
-                        await refreshEmbedOrigins(body);
+                        await refreshEmbedOrigins(askChild, body);
                     }
                 } catch {
-                    renderEmbedOrigins(body, [], 'could not reach the server.');
+                    renderEmbedOrigins(askChild, body, [], 'could not reach the server.');
                 }
             })();
         });
