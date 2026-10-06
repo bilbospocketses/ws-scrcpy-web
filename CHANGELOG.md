@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **The "close the shell?" prompt could stay on screen after its shell window had already closed.** Once a shell session has started, the shell window's × asks before ending it. If the shell window closed some other way while that prompt was up, the prompt stayed behind, still asking about a window that was gone, and answering "close" closed that window a second time. The prompt now closes with its shell window, whichever way the window closes, and an answer that lands after the window has gone does nothing. Answering it normally works as before: "close" ends the session and "cancel" keeps it open. (`ShellModal.ts`, `ShellCloseConfirmModal.ts`)
+
 ## [0.1.30-beta.182] - 2026-10-06
 
 ### Fixed
