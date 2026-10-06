@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **One Ctrl+C on Linux no longer forces the exit before the database backup (smoke row 12.10, qa-harness).** A terminal Ctrl+C reaches the server twice: the terminal sends SIGINT to the whole process group, and the launcher forwards SIGTERM. The server force-exited on any second signal, so that pair could cut the graceful stop short before its last step, the SQLite backup (`wsscrcpy.db.bak`). A repeat signal within 2 s of the first is now logged and ignored; a signal after that still forces the exit (`src/server/util/signalExit.ts`).
+
 ## [0.1.30-beta.181] - 2026-10-06
 
 ### Fixed

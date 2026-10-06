@@ -1964,7 +1964,7 @@ The supervisor also watches for the `.restart` marker at `<depsPath>/.restart`, 
 - Automatically recovers after user kills, upgrades, or mode changes
 - Passes the current mode (local vs. service) and web port as arguments
 
-On Linux there is no tray supervisor: the tray is a thread inside the launcher (`launcher/src/linux_tray.rs`, section 21.4), spawned from `supervisor::run` right after the Ctrl+C handler and sharing its `stop` flag. A confirmed exit from the tray menu is a stop request, and `wait_with_signal` sends Node **SIGTERM** first (Node's handler runs the same graceful teardown as the Settings button), killing only after `GRACEFUL_STOP_TIMEOUT` (10 s).
+On Linux there is no tray supervisor: the tray is a thread inside the launcher (`launcher/src/linux_tray.rs`, section 21.4), spawned from `supervisor::run` right after the Ctrl+C handler and sharing its `stop` flag. A confirmed exit from the tray menu is a stop request, and `wait_with_signal` sends Node **SIGTERM** first (Node's handler runs the same graceful teardown as the Settings button), killing only after `GRACEFUL_STOP_TIMEOUT` (10 s). One Ctrl+C in a terminal therefore reaches Node twice, as the terminal's SIGINT to the process group and the launcher's SIGTERM. Node ignores a repeat signal that comes within 2 s of the first (logged as `Ignoring <signal> <N>ms after the first signal: graceful shutdown is already running`), so the pair cannot cut the teardown short before its SQLite backup; a signal after that still forces the exit (`src/server/util/signalExit.ts`, smoke row 12.10).
 
 ### 20.3 Elevated Runner (UAC)
 
