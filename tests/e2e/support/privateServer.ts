@@ -1,11 +1,10 @@
 import { type ChildProcess, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { type APIRequestContext, expect, request, test } from '@playwright/test';
-import { SEED_CONFIG } from './paths';
+import { E2E_TEMP_ENV, E2E_TEMP_ROOT, SEED_CONFIG } from './paths';
 import { removeTree, stopProcessesUnder } from './rootProcesses';
 
 /**
@@ -41,7 +40,7 @@ export interface PrivateServerPaths {
 }
 
 /**
- * `<tmpdir>/<name>` as PROGRAMDATA and `<that>/WsScrcpyWeb` as DATA_ROOT — the
+ * `<E2E_TEMP_ROOT>/<name>` as PROGRAMDATA and `<that>/WsScrcpyWeb` as DATA_ROOT — the
  * server resolves its root from DATA_ROOT when set, else PROGRAMDATA on Windows,
  * so both are set to name the same directory. The database and the restart
  * marker live beside config.json.
@@ -52,7 +51,7 @@ export interface PrivateServerPaths {
  * `programData` it is still wiped with the rest of the root.
  */
 export function privateServerPaths(name: string, port: number): PrivateServerPaths {
-    const programData = path.join(tmpdir(), name);
+    const programData = path.join(E2E_TEMP_ROOT, name);
     const dataRoot = path.join(programData, 'WsScrcpyWeb');
     return {
         programData,
@@ -124,9 +123,11 @@ export function spawnServer(paths: PrivateServerPaths, options: SpawnOptions = {
     const repoRoot = configFile ? path.dirname(configFile) : process.cwd();
     const distIndex = path.resolve(repoRoot, 'dist', 'index.js');
     // Windows env names are case-insensitive, and an inherited `LocalAppData`
-    // beside our `LOCALAPPDATA` would leave which one the child sees to chance.
+    // (or `Temp`) beside our `LOCALAPPDATA` (or `TEMP`) would leave which one the
+    // child sees to chance.
+    const replaced = new Set(['LOCALAPPDATA', ...Object.keys(E2E_TEMP_ENV)]);
     const env: Record<string, string | undefined> = Object.fromEntries(
-        Object.entries(process.env).filter(([key]) => key.toUpperCase() !== 'LOCALAPPDATA'),
+        Object.entries(process.env).filter(([key]) => !replaced.has(key.toUpperCase())),
     );
     Object.assign(env, {
         PROGRAMDATA: paths.programData,
@@ -158,6 +159,9 @@ export function spawnServer(paths: PrivateServerPaths, options: SpawnOptions = {
         // spend api.github.com's quota again. A row about the boot lookups
         // themselves removes it through `env`.
         WS_SCRCPY_SKIP_BOOT_LATEST: '1',
+        // On Windows the server's own temp folder (a Node.js update extracts
+        // there) goes under E2E_TEMP_ROOT too; see paths.ts.
+        ...E2E_TEMP_ENV,
     });
     if (options.portOverride === false) delete env['WS_SCRCPY_WEB_PORT'];
     for (const [key, value] of Object.entries(options.env ?? {})) {

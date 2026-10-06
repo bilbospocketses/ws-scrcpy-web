@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **tests: on Windows the e2e data roots and the servers' temp folders live under `%TEMP%\claude`.** The suite writes and runs executables on every run (each spec root's adb, the unit stand-ins, the app's Node.js update extraction), and real-time antivirus scanning a freshly written image holds it open, so removing a root could fail EPERM. Every root now sits under `E2E_TEMP_ROOT` (`tests/e2e/support/paths.ts`), `<tmpdir>\claude` on Windows, which the maintainer's antivirus excludes, and the shared and spec-owned servers get `TEMP`/`TMP` pointed there. Linux and CI keep the plain temp folder. `auth.spec.ts` 18.12's cleanup uses the harness's `removeTree` in place of `rmSync`'s `maxRetries`, which does not retry EPERM. Harness only; the app is unchanged.
+
 ## [0.1.30-beta.189] - 2026-10-06
 
 ### Fixed
