@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.188] - 2026-10-06
+
 ### Fixed
 - **Stopping the server no longer tells an open stream it failed.** Stopping the server while a stream was open ("stop server & exit", the tray's exit, Ctrl+C, a restart after a port or dependency change, or applying an update) showed `stream failed: scrcpy-server exited (...)` for a few seconds, because stopping adb killed the stream's scrcpy-server before the stream was closed. The server now closes every open stream cleanly first, so the stream ends the way it does when you close it yourself. A stream that really fails while the server keeps running still says why.
 
