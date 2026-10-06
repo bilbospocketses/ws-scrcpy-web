@@ -35,23 +35,23 @@ function getButton(label: string): HTMLButtonElement {
     return btn!;
 }
 
-describe('ShellCloseConfirmModal.open', () => {
+describe('ShellCloseConfirmModal.confirm', () => {
     it('resolves true when close is clicked', async () => {
-        const promise = ShellCloseConfirmModal.open().result;
+        const promise = ShellCloseConfirmModal.confirm();
         await Promise.resolve();
         getButton('close').click();
         await expect(promise).resolves.toBe(true);
     });
 
     it('resolves false when cancel is clicked', async () => {
-        const promise = ShellCloseConfirmModal.open().result;
+        const promise = ShellCloseConfirmModal.confirm();
         await Promise.resolve();
         getButton('cancel').click();
         await expect(promise).resolves.toBe(false);
     });
 
     it('resolves false when Esc is pressed', async () => {
-        const promise = ShellCloseConfirmModal.open().result;
+        const promise = ShellCloseConfirmModal.confirm();
         await Promise.resolve();
         const dialog = getDialog();
         const cancelEvent = new Event('cancel', { cancelable: true });
@@ -60,7 +60,7 @@ describe('ShellCloseConfirmModal.open', () => {
     });
 
     it('resolves false when backdrop is clicked', async () => {
-        const promise = ShellCloseConfirmModal.open().result;
+        const promise = ShellCloseConfirmModal.confirm();
         await Promise.resolve();
         const dialog = getDialog();
         const clickEvent = new MouseEvent('click', { bubbles: true });
@@ -70,7 +70,7 @@ describe('ShellCloseConfirmModal.open', () => {
     });
 
     it('resolves only once even if multiple close paths fire', async () => {
-        const promise = ShellCloseConfirmModal.open().result;
+        const promise = ShellCloseConfirmModal.confirm();
         await Promise.resolve();
         getButton('close').click();
         getButton('cancel').click();
@@ -78,7 +78,7 @@ describe('ShellCloseConfirmModal.open', () => {
     });
 
     it('renders warning text in the body', async () => {
-        const promise = ShellCloseConfirmModal.open().result;
+        const promise = ShellCloseConfirmModal.confirm();
         await Promise.resolve();
         const body = document.querySelector('.modal-body');
         expect(body?.textContent?.toLowerCase()).toContain('ending the shell session');
@@ -89,7 +89,7 @@ describe('ShellCloseConfirmModal.open', () => {
 
     it('calls showModal exactly once', async () => {
         const spy = vi.spyOn(HTMLDialogElement.prototype, 'showModal');
-        const promise = ShellCloseConfirmModal.open().result;
+        const promise = ShellCloseConfirmModal.confirm();
         await Promise.resolve();
         expect(spy).toHaveBeenCalledTimes(1);
         getButton('close').click();
@@ -97,24 +97,8 @@ describe('ShellCloseConfirmModal.open', () => {
         spy.mockRestore();
     });
 
-    it('dismiss() closes the confirm and resolves false', async () => {
-        const confirm = ShellCloseConfirmModal.open();
-        await Promise.resolve();
-        confirm.dismiss();
-        await expect(confirm.result).resolves.toBe(false);
-        expect(getDialog().hasAttribute('open')).toBe(false);
-    });
-
-    it('dismiss() after an answer leaves the answer standing', async () => {
-        const confirm = ShellCloseConfirmModal.open();
-        await Promise.resolve();
-        getButton('close').click();
-        confirm.dismiss();
-        await expect(confirm.result).resolves.toBe(true);
-    });
-
     it('styles both footer buttons with the shared white-outline .modal-button class', async () => {
-        const promise = ShellCloseConfirmModal.open().result;
+        const promise = ShellCloseConfirmModal.confirm();
         await Promise.resolve();
         expect(getButton('close').classList.contains('modal-button')).toBe(true);
         expect(getButton('cancel').classList.contains('modal-button')).toBe(true);

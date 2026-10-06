@@ -18,8 +18,6 @@ export class ShellModal extends Modal {
     private ws?: Multiplexer | undefined;
     private resizeObserver?: ResizeObserver | undefined;
     private shellStarted = false;
-    /** The "close the shell?" confirm while it is up; dismissed by onBeforeClose. */
-    private closeConfirm?: ShellCloseConfirmModal | undefined;
     private readonly udid: string;
     private readonly params: {
         hostname?: string | undefined;
@@ -79,24 +77,14 @@ export class ShellModal extends Modal {
             this.close();
             return;
         }
-        const confirm = ShellCloseConfirmModal.open();
-        this.closeConfirm = confirm;
-        confirm.result.then((confirmed) => {
-            // This modal already closed some other way and onBeforeClose took the
-            // confirm with it; an answer that lands now has nothing to close.
-            if (this.closeConfirm !== confirm) return;
-            this.closeConfirm = undefined;
+        // A child of this modal: if the shell modal closes some other way first,
+        // the confirm closes with it and the answer reads false.
+        this.askChild(() => ShellCloseConfirmModal.confirm(), false).then((confirmed) => {
             if (confirmed) this.close();
         });
     }
 
     protected override onBeforeClose(): void {
-        // The confirm belongs to this modal and must not outlive it, whichever
-        // way the modal is closing.
-        const confirm = this.closeConfirm;
-        this.closeConfirm = undefined;
-        confirm?.dismiss();
-
         // Send stop message
         if (this.ws && this.ws.readyState === this.ws.OPEN) {
             const message: MessageXtermClient = {

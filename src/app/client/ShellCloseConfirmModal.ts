@@ -3,22 +3,16 @@ import { Modal } from '../ui/Modal';
 export class ShellCloseConfirmModal extends Modal {
     private resolveFn: ((value: boolean) => void) | null = null;
     private resolved = false;
-    /** The user's answer: true to close the shell, false to keep it. */
-    public readonly result: Promise<boolean>;
 
-    /**
-     * Returns the open confirm rather than a bare promise so the ShellModal
-     * that asked can `dismiss()` it if that modal closes some other way first.
-     */
-    public static open(): ShellCloseConfirmModal {
-        return new ShellCloseConfirmModal();
+    public static confirm(): Promise<boolean> {
+        return new Promise((resolve) => {
+            new ShellCloseConfirmModal(resolve);
+        });
     }
 
-    private constructor() {
+    private constructor(resolve: (value: boolean) => void) {
         super({ title: 'End Shell Session' });
-        this.result = new Promise((resolve) => {
-            this.resolveFn = resolve;
-        });
+        this.resolveFn = resolve;
         this.dialog.classList.add('shell-close-confirm-modal');
         queueMicrotask(() => this.fillBody(this.bodyEl));
     }
@@ -72,19 +66,22 @@ export class ShellCloseConfirmModal extends Modal {
         this.resolveAndClose(false);
     }
 
-    /**
-     * Take the confirm down without an answer from the user, resolving false so
-     * nothing acts on it. A no-op once the user has answered.
-     */
-    public dismiss(): void {
-        this.resolveAndClose(false);
+    // Closed without an answer (its ShellModal closed first): settle as "keep",
+    // so the caller is not left awaiting a dialog that is gone.
+    protected override onBeforeClose(): void {
+        this.settle(false);
     }
 
     private resolveAndClose(value: boolean): void {
         if (this.resolved) return;
+        this.settle(value);
+        this.close(value);
+    }
+
+    private settle(value: boolean): void {
+        if (this.resolved) return;
         this.resolved = true;
         this.resolveFn?.(value);
         this.resolveFn = null;
-        this.close(value);
     }
 }
