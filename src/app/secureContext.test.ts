@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { insecureOriginNotice, loopbackEquivalent } from './secureContext';
+import { insecureOriginNotice, loopbackEquivalent, statusAfterProbe } from './secureContext';
 
 // Finding 8.10 — WebCodecs is exposed only in a secure context, so on
 // http://<lan-ip>:8000 (the documented way to use the Docker image)
@@ -55,6 +55,24 @@ describe('insecureOriginNotice', () => {
         // The reverse-proxy remedy stays -- Local HTTPS is the quick fix for
         // a home LAN, not a replacement for a real deployment.
         expect(notice?.toLowerCase()).toContain('https from a trusted origin');
+    });
+});
+
+// Smoke row 8.19: after a probe the config modal's status line ended in an
+// unconditional "Ready", overwriting the notice — so a LAN user read "ready"
+// over a connect button that could not stream.
+describe('statusAfterProbe', () => {
+    const secure = { isSecureContext: true, location: { protocol: 'http:', hostname: '127.0.0.1', port: '8000' } };
+    const lan = { isSecureContext: false, location: { protocol: 'http:', hostname: '192.168.87.3', port: '8000' } };
+
+    it('keeps the notice, as an error, when no player registered on an insecure origin', () => {
+        expect(statusAfterProbe(false, lan)).toEqual({ text: insecureOriginNotice(lan), kind: 'error' });
+    });
+
+    it('reads Ready whenever a player is registered, or the origin is secure', () => {
+        expect(statusAfterProbe(true, secure)).toEqual({ text: 'Ready' });
+        expect(statusAfterProbe(true, lan)).toEqual({ text: 'Ready' });
+        expect(statusAfterProbe(false, secure)).toEqual({ text: 'Ready' });
     });
 });
 

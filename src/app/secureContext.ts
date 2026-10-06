@@ -60,3 +60,15 @@ export function insecureOriginNotice(win: SecureContextWindow): string | null {
         'for anything beyond a home lan.'
     );
 }
+
+/**
+ * The config modal's status line once a device probe has answered. "Ready"
+ * when a player is registered; with none, on an insecure origin, the notice
+ * above as an error. The probe used to end in an unconditional "Ready", which
+ * overwrote the notice it had just set, so on `http://<lan-ip>` the modal read
+ * "ready" over a connect button that could not stream (smoke row 8.19).
+ */
+export function statusAfterProbe(hasPlayer: boolean, win: SecureContextWindow): { text: string; kind?: 'error' } {
+    const notice = hasPlayer ? null : insecureOriginNotice(win);
+    return notice ? { text: notice, kind: 'error' } : { text: 'Ready' };
+}
