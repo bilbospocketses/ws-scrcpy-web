@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.177] - 2026-10-06
+
 ### Fixed
 - **On an insecure origin the config modal's status line keeps the secure-context notice after a probe.** At `http://<lan-ip>:<port>` no player registers, and the modal set the notice as an error while applying the probe, then ended with an unconditional "Ready" that overwrote it. So a LAN user read "ready" over a connect button that could not stream, and saw the notice only after clicking connect. The status after a probe now comes from `statusAfterProbe` (`src/app/secureContext.ts`): the notice, in the error style, when no player is registered on an insecure origin, and "Ready" otherwise. On a secure origin nothing changes, and the connect button behaves as before.
 
