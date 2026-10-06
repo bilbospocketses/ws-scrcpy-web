@@ -20,6 +20,10 @@ export abstract class Modal {
     private readonly closeBtn?: HTMLButtonElement;
     private readonly dismissible: boolean;
     private readonly options: ModalOptions;
+    // A modal closes once. Set by close(); every later close() is a no-op.
+    private closed = false;
+    // The pending close scheduled by closeAfter(), cleared by close().
+    private closeTimer?: ReturnType<typeof setTimeout> | undefined;
 
     constructor(options: ModalOptions) {
         this.options = options;
@@ -131,8 +135,28 @@ export abstract class Modal {
         this.headerControls.insertBefore(btn, this.headerControls.firstChild);
     }
 
-    /** Close the modal. Calls onBeforeClose, triggers exit animation, removes from DOM, fires callback. */
+    /**
+     * Close the modal after `ms` (an error message left up long enough to read).
+     * Closing it any other way first cancels the timed close, and on a modal
+     * that has already closed this schedules nothing.
+     */
+    protected closeAfter(ms: number): void {
+        if (this.closed) return;
+        clearTimeout(this.closeTimer);
+        this.closeTimer = setTimeout(() => this.close(), ms);
+    }
+
+    /**
+     * Close the modal. Calls onBeforeClose, triggers exit animation, removes from DOM, fires callback.
+     * Only the first call does anything: a timed close that fires after the user
+     * closed the modal, or a stream disconnect that arrives after its own stop,
+     * must not run the teardown or the onClose callback a second time.
+     */
     public close(result?: unknown): void {
+        if (this.closed) return;
+        this.closed = true;
+        clearTimeout(this.closeTimer);
+        this.closeTimer = undefined;
         this.onBeforeClose();
         this.dialog.close();
         // Remove from DOM after exit transition completes (200ms matches CSS)
