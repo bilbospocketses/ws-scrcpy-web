@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.184] - 2026-10-06
+
 ### Added
 - **`WS_SCRCPY_NODE_DIST_BASE`, a test / mirror seam for every URL Node.js's update path reads from nodejs.org.** The release index and the archive were literal `https://nodejs.org/dist` URLs, and Node is the only dependency whose update needs a restart, so nothing could offer a fast-tier server an update to drive smoke row 9.12 (Restart Now). With the variable set, the base replaces `https://nodejs.org/dist` and nodejs.org's layout stays under it: `<base>/index.json` and `<base>/v<version>/<archive>`. That is everything the path reads there: the Node install checks no hash, so there is no `SHASUMS256.txt` to move, and the node-pty prebuilt manifest the lookup also reads is this repo's own release asset and stays on GitHub. The server logs the base at start when it is set (host installs only; a container never manages Node). Unset or blank, every URL is unchanged. Documented in the technical guide's environment table, the README and `PRIVACY.md`.
 
