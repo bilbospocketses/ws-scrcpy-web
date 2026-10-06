@@ -2,6 +2,7 @@ import type WS from 'ws';
 import { ACTION } from '../../common/Action';
 import { Multiplexer } from '../../packages/multiplexer/Multiplexer';
 import { Logger } from '../Logger';
+import { closeReason } from '../util/closeReason';
 import { Mw, type MwFactory, type RequestParameters } from './Mw';
 
 export class WebsocketMultiplexer extends Mw {
@@ -24,7 +25,7 @@ export class WebsocketMultiplexer extends Mw {
         service.init().catch((e) => {
             const msg = `Failed to start service: ${e.message}`;
             log.error(msg);
-            ws.close(4005, `[${this.TAG}] ${msg}`);
+            ws.close(4005, closeReason(`[${this.TAG}] ${msg}`));
         });
         return service;
     }

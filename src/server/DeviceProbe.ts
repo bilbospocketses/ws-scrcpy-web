@@ -12,6 +12,7 @@ import { Logger } from './Logger';
 import { Mw, type RequestParameters } from './mw/Mw';
 import { parseScrcpyEncoderList } from './scrcpyEncoderList';
 import { getInstalledScrcpyServerVersion } from './scrcpyServerVersion';
+import { closeReason } from './util/closeReason';
 
 const log = Logger.for('DeviceProbe');
 
@@ -66,7 +67,7 @@ export class DeviceProbe extends Mw {
             log.error(`Probe failed for ${this.serial}:`, err.message);
             try {
                 if (ws.readyState === ws.OPEN) {
-                    ws.close(4005, err.message.slice(0, 123));
+                    ws.close(4005, closeReason(err.message));
                 }
             } catch (closeErr) {
                 log.error(`Failed to close WebSocket for ${this.serial}:`, closeErr);
