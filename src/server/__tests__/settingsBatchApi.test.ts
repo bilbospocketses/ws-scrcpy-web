@@ -658,6 +658,182 @@ describe('the server response parses into the BatchResult the client expects', (
     });
 });
 
+/**
+ * Smoke row 6.11 (found by the qa-harness session while planning it): a Save
+ * of the check interval or the channel used to land in config.json and stop
+ * there. Only PATCH /api/updates/config told the RUNNING update service, so the
+ * old timer and the old channel kept running until the app restarted.
+ *
+ * The service is a spy here, injected through the same options object as the
+ * restart seams; production hands in the live `UpdateService` (index.ts).
+ */
+describe('POST /api/settings/batch — the running update service hears the save', () => {
+    function fakeUpdater() {
+        return {
+            reconfigure: vi.fn(async (_channel: 'stable' | 'beta', _owner: string) => undefined),
+            restartTimer: vi.fn((_minutes: number, _autoUpdate: boolean) => undefined),
+        };
+    }
+
+    async function save(changes: Change[], updater: ReturnType<typeof fakeUpdater>) {
+        const r = makeReqRes('POST', '/api/settings/batch', { changes }, {}, LOOPBACK);
+        await new SettingsBatchApi({ updater, schedule: vi.fn(), exit: vi.fn() }).handle(r.req, r.res);
+        return r;
+    }
+
+    /** The other channel from the one this config starts on, so the change is real. */
+    function otherChannel(): 'stable' | 'beta' {
+        return Config.getInstance().getAppConfig().channel === 'beta' ? 'stable' : 'beta';
+    }
+
+    /** An interval different from the one this config starts on. */
+    function otherInterval(): number {
+        return Config.getInstance().getAppConfig().updateCheckIntervalMinutes === 90 ? 120 : 90;
+    }
+
+    it('an interval change restarts the timer at the new interval', async () => {
+        setup();
+        const before = Config.getInstance().getAppConfig();
+        const to = otherInterval();
+        const updater = fakeUpdater();
+        const r = await save(
+            [
+                {
+                    id: 'updateCheckIntervalMinutes',
+                    label: 'Check interval (minutes)',
+                    from: before.updateCheckIntervalMinutes,
+                    to,
+                },
+            ],
+            updater,
+        );
+        expect(r.getStatus()).toBe(200);
+        expect(updater.restartTimer).toHaveBeenCalledTimes(1);
+        expect(updater.restartTimer).toHaveBeenCalledWith(to, before.autoUpdate);
+        expect(updater.reconfigure).not.toHaveBeenCalled();
+    });
+
+    it('a channel change reconfigures the service onto the new channel', async () => {
+        setup();
+        const before = Config.getInstance().getAppConfig();
+        const to = otherChannel();
+        const updater = fakeUpdater();
+        const r = await save([{ id: 'channel', label: 'Update channel', from: before.channel, to }], updater);
+        expect(r.getStatus()).toBe(200);
+        expect(updater.reconfigure).toHaveBeenCalledTimes(1);
+        expect(updater.reconfigure).toHaveBeenCalledWith(to, before.githubOwner);
+        expect(updater.restartTimer).not.toHaveBeenCalled();
+    });
+
+    it('a github-owner change reconfigures too — it moves the feed the same way', async () => {
+        setup();
+        const before = Config.getInstance().getAppConfig();
+        const updater = fakeUpdater();
+        const r = await save(
+            [{ id: 'githubOwner', label: 'GitHub owner', from: before.githubOwner, to: 'someone-else' }],
+            updater,
+        );
+        expect(r.getStatus()).toBe(200);
+        expect(updater.reconfigure).toHaveBeenCalledTimes(1);
+        expect(updater.reconfigure).toHaveBeenCalledWith(before.channel, 'someone-else');
+        expect(updater.restartTimer).not.toHaveBeenCalled();
+    });
+
+    it('a batch that moves neither touches neither', async () => {
+        setup();
+        const before = Config.getInstance().getAppConfig();
+        const updater = fakeUpdater();
+        const r = await save(
+            [
+                // autoUpdate is read by the service at every check, so it needs no call.
+                { id: 'autoUpdate', label: 'Automatic updates', from: before.autoUpdate, to: !before.autoUpdate },
+                // Re-stating the current interval is not a change.
+                {
+                    id: 'updateCheckIntervalMinutes',
+                    label: 'Check interval (minutes)',
+                    from: before.updateCheckIntervalMinutes,
+                    to: before.updateCheckIntervalMinutes,
+                },
+            ],
+            updater,
+        );
+        expect(r.getStatus()).toBe(200);
+        expect(updater.reconfigure).not.toHaveBeenCalled();
+        expect(updater.restartTimer).not.toHaveBeenCalled();
+    });
+
+    it('channel and interval together reconfigure once AND restart the timer at the new interval', async () => {
+        setup();
+        const before = Config.getInstance().getAppConfig();
+        const channel = otherChannel();
+        const interval = otherInterval();
+        const updater = fakeUpdater();
+        const r = await save(
+            [
+                { id: 'channel', label: 'Update channel', from: before.channel, to: channel },
+                {
+                    id: 'updateCheckIntervalMinutes',
+                    label: 'Check interval (minutes)',
+                    from: before.updateCheckIntervalMinutes,
+                    to: interval,
+                },
+            ],
+            updater,
+        );
+        expect(r.getStatus()).toBe(200);
+        expect(updater.reconfigure).toHaveBeenCalledTimes(1);
+        expect(updater.reconfigure).toHaveBeenCalledWith(channel, before.githubOwner);
+        // reconfigure never touches the timer, so without this the old interval
+        // kept running until restart.
+        expect(updater.restartTimer).toHaveBeenCalledTimes(1);
+        expect(updater.restartTimer).toHaveBeenCalledWith(interval, before.autoUpdate);
+    });
+
+    it('a half-applied batch still tells the service about the sibling that landed', async () => {
+        setup();
+        const before = Config.getInstance().getAppConfig();
+        const to = otherChannel();
+        const updater = fakeUpdater();
+        const r = await save(
+            [
+                { id: 'channel', label: 'Update channel', from: before.channel, to },
+                { id: 'updateCheckIntervalMinutes', label: 'Check interval (minutes)', from: 60, to: 99999 },
+            ],
+            updater,
+        );
+        // The batch failed at the interval, but the channel really was written —
+        // a running service left on the old one is the bug this block is about.
+        expect(r.getStatus()).toBe(400);
+        expect(Config.getInstance().getAppConfig().channel).toBe(to);
+        expect(updater.reconfigure).toHaveBeenCalledTimes(1);
+        expect(updater.reconfigure).toHaveBeenCalledWith(to, before.githubOwner);
+    });
+
+    it('a batch that also moves the port leaves the updater alone — the process is about to restart', async () => {
+        setup();
+        const before = Config.getInstance().getAppConfig();
+        const updater = fakeUpdater();
+        const r = await save(
+            [
+                {
+                    id: 'updateCheckIntervalMinutes',
+                    label: 'Check interval (minutes)',
+                    from: before.updateCheckIntervalMinutes,
+                    to: otherInterval(),
+                },
+                { id: 'webPort', label: 'Web port', from: 8000, to: 8010 },
+            ],
+            updater,
+        );
+        expect(r.getStatus()).toBe(200);
+        expect((r.getJson() as { restartRequired: boolean }).restartRequired).toBe(true);
+        // The new process's UpdateService.init() reads the new interval from
+        // config.json, so a restart here would only be cut off by the exit.
+        expect(updater.restartTimer).not.toHaveBeenCalled();
+        expect(updater.reconfigure).not.toHaveBeenCalled();
+    });
+});
+
 describe('reconcilePendingSettings', () => {
     it('abandons a pending row rather than re-applying it', () => {
         setup();

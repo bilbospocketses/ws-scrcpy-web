@@ -12,6 +12,7 @@ import { Config } from '../Config';
 import { Logger } from '../Logger';
 import { isValidToken, parseTokenFromCookie } from '../security/instanceToken';
 import type { UpdateService } from '../UpdateService';
+import { applyUpdaterConfigChange } from '../updaterConfigSync';
 import { refuseInContainer } from './containerGuard';
 import { readJsonBody } from './utils';
 
@@ -231,19 +232,9 @@ export class UpdatesApi {
             res.end(JSON.stringify(body));
             return true;
         }
-        const after = cfg.getAppConfig();
-
-        const channelChanged = patch.channel !== undefined && patch.channel !== before.channel;
-        const ownerChanged = patch.githubOwner !== undefined && patch.githubOwner !== before.githubOwner;
-        const intervalChanged =
-            patch.updateCheckIntervalMinutes !== undefined &&
-            patch.updateCheckIntervalMinutes !== before.updateCheckIntervalMinutes;
-
-        if (channelChanged || ownerChanged) {
-            await this.svc.reconfigure(after.channel, after.githubOwner);
-        } else if (intervalChanged) {
-            this.svc.restartTimer(after.updateCheckIntervalMinutes, after.autoUpdate);
-        }
+        // The same decision the Settings dialog's Save makes (SettingsBatchApi):
+        // one copy, so the two writers of these settings cannot drift apart.
+        await applyUpdaterConfigChange(this.svc, before, cfg.getAppConfig());
 
         res.writeHead(200);
         res.end(JSON.stringify(await this.buildStatusResponse()));

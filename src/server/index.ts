@@ -153,7 +153,15 @@ if (__ssArgs) {
     const capabilitiesApi = new CapabilitiesApi();
     HttpServer.addApiHandler(capabilitiesApi);
 
-    const configApi = new ConfigApi();
+    // Constructed here, ahead of its own routes, because every writer of the
+    // updater's settings -- PATCH /api/config and the Settings dialog's Save as
+    // well as PATCH /api/updates/config -- must reach the RUNNING updater too,
+    // not just config.json (6.11). Started (init) below, beside UpdatesApi; in a
+    // container it never starts, and both writers refuse every updater field
+    // there before applying anything.
+    const updateService = new UpdateService();
+
+    const configApi = new ConfigApi({ updater: updateService });
     HttpServer.addApiHandler(configApi);
 
     const embedRequestApi = new EmbedRequestApi();
@@ -162,7 +170,7 @@ if (__ssArgs) {
     const settingsApi = new SettingsApi();
     HttpServer.addApiHandler(settingsApi);
 
-    const settingsBatchApi = new SettingsBatchApi();
+    const settingsBatchApi = new SettingsBatchApi({ updater: updateService });
     HttpServer.addApiHandler(settingsBatchApi);
 
     const serviceApi = new ServiceApi();
@@ -179,7 +187,6 @@ if (__ssArgs) {
     });
     HttpServer.addApiHandler(shutdownApi);
 
-    const updateService = new UpdateService();
     // A container never self-updates (the image is the update), so its updater
     // is never started; the routes refuse with 409 (container audit). Before
     // this, init() bailed only because $APPIMAGE happens to be unset in the image.

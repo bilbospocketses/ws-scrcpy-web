@@ -257,6 +257,79 @@ describe('container mode refuses every host-only route with 409', () => {
     });
 });
 
+describe('container mode never reaches the updater from a Settings save', () => {
+    // The batch tells the RUNNING update service about a saved channel or
+    // interval (6.11). A container never starts that service, so the refusal
+    // must come before any of it -- not merely before the config write.
+    it('POST /api/settings/batch { channel, interval } is refused before the updater is told anything', async () => {
+        setup(true);
+        const updater = { reconfigure: vi.fn(async () => undefined), restartTimer: vi.fn() };
+        const r = call(
+            new SettingsBatchApi({ updater, schedule: vi.fn(), exit: vi.fn() }),
+            'POST',
+            '/api/settings/batch',
+            {
+                changes: [
+                    { id: 'channel', from: 'beta', to: 'stable' },
+                    { id: 'updateCheckIntervalMinutes', from: 60, to: 120 },
+                ],
+            },
+        );
+        await r.handled;
+        expect(r.status()).toBe(409);
+        expect(updater.reconfigure).not.toHaveBeenCalled();
+        expect(updater.restartTimer).not.toHaveBeenCalled();
+    });
+
+    it('PATCH /api/config { channel, interval } is refused before the updater is told anything', async () => {
+        setup(true);
+        const updater = { reconfigure: vi.fn(async () => undefined), restartTimer: vi.fn() };
+        const r = call(new ConfigApi({ updater }), 'PATCH', '/api/config', {
+            channel: 'stable',
+            updateCheckIntervalMinutes: 120,
+        });
+        await r.handled;
+        expect(r.status()).toBe(409);
+        expect(updater.reconfigure).not.toHaveBeenCalled();
+        expect(updater.restartTimer).not.toHaveBeenCalled();
+    });
+
+    it('host control: PATCH /api/config with an interval does reach the updater outside a container', async () => {
+        setup(false);
+        const before = Config.getInstance().getAppConfig();
+        const updater = { reconfigure: vi.fn(async () => undefined), restartTimer: vi.fn() };
+        const r = call(new ConfigApi({ updater }), 'PATCH', '/api/config', {
+            updateCheckIntervalMinutes: before.updateCheckIntervalMinutes === 120 ? 90 : 120,
+        });
+        await r.handled;
+        expect(r.status()).toBe(200);
+        expect(updater.restartTimer).toHaveBeenCalledTimes(1);
+    });
+
+    it('host control: the same kind of save does reach the updater outside a container', async () => {
+        setup(false);
+        const before = Config.getInstance().getAppConfig();
+        const updater = { reconfigure: vi.fn(async () => undefined), restartTimer: vi.fn() };
+        const r = call(
+            new SettingsBatchApi({ updater, schedule: vi.fn(), exit: vi.fn() }),
+            'POST',
+            '/api/settings/batch',
+            {
+                changes: [
+                    {
+                        id: 'updateCheckIntervalMinutes',
+                        from: before.updateCheckIntervalMinutes,
+                        to: before.updateCheckIntervalMinutes === 120 ? 90 : 120,
+                    },
+                ],
+            },
+        );
+        await r.handled;
+        expect(r.status()).toBe(200);
+        expect(updater.restartTimer).toHaveBeenCalledTimes(1);
+    });
+});
+
 describe('container mode still allows what a container needs', () => {
     it('retry-install stays open: the first-run banner uses it in a container', async () => {
         setup(true);
