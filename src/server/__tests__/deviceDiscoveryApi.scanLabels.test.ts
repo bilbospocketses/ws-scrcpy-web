@@ -82,6 +82,32 @@ function fakeGetprop() {
     });
 }
 
+/** getprop fails until `answer` is set; the tracker's interface probe answers. */
+function flakyGetprop(failure: 'throws' | 'empty' = 'throws') {
+    const state = { answer: '' };
+    vi.spyOn(AdbClient.prototype, 'shell').mockImplementation(async (_s: string, cmd: string) => {
+        if (cmd === 'getprop ro.serialno') {
+            if (state.answer) return state.answer;
+            if (failure === 'empty') return '\n';
+            throw new Error('adb: device unauthorized.');
+        }
+        if (cmd.startsWith('ip -4')) return '34: wlan0    inet 10.0.0.5/24 brd 10.0.0.255 scope global wlan0\n';
+        throw new Error(`unexpected shell: ${cmd}`);
+    });
+    return state;
+}
+
+/** The device tracker sees the transport at `udid` and reads its properties. */
+async function sight(udid: string, serial: string): Promise<Device> {
+    const props = vi
+        .spyOn(AdbClient.prototype, 'getProperties')
+        .mockResolvedValue({ 'ro.serialno': serial, 'ro.product.model': 'Pixel 7' });
+    const device = new Device(udid, 'device');
+    await vi.waitFor(() => expect(props).toHaveBeenCalledWith(udid));
+    await new Promise((r) => setImmediate(r));
+    return device;
+}
+
 async function post(url: string, body: unknown): Promise<number> {
     const r = makeReqRes('POST', url, body);
     await new DeviceDiscoveryApi().handle(r.req, r.res);
@@ -277,6 +303,50 @@ describe('clear or rename on the card keeps the MAC copy in step', () => {
             if (mac) expect(rescanLabel({ address: MOVED, serial: MOVED, mac })).toBe('New Name');
         });
     }
+
+    describe('a MAC copy saved before schema v3, with no MAC recorded for the serial', () => {
+        function seedPreV3(): void {
+            const db = Config.getInstance().db;
+            db.devices.setLabel(IMPLICIT_ADMIN_ID, SERIAL, 'Old Name');
+            db.devices.setLabel(IMPLICIT_ADMIN_ID, MAC, 'Old Name');
+        }
+
+        it('is cleared with the serial once the tracker has seen the device, with no reconnect (host)', async () => {
+            setup('host');
+            flakyGetprop();
+            seedPreV3();
+            await sight(HIT, SERIAL);
+
+            await rename(SERIAL, '');
+
+            expect(rescanLabel({ address: MOVED, serial: MOVED, mac: MAC })).toBe('');
+            expect(Config.getInstance().db.devices.getLabel(IMPLICIT_ADMIN_ID, MAC)).toBeUndefined();
+        });
+
+        it('is renamed with the serial once the tracker has seen the device (host)', async () => {
+            setup('host');
+            flakyGetprop();
+            seedPreV3();
+            await sight(HIT, SERIAL);
+
+            await rename(SERIAL, 'New Name');
+
+            expect(rescanLabel({ address: MOVED, serial: MOVED, mac: MAC })).toBe('New Name');
+        });
+
+        it('a USB device, or one in a container, is never looked up', async () => {
+            setup('host');
+            flakyGetprop();
+            await sight(SERIAL, SERIAL);
+            expect(Config.getInstance().db.devices.getMac(SERIAL)).toBeUndefined();
+
+            setup('container');
+            await sight(HIT, SERIAL);
+            expect(Config.getInstance().db.devices.getMac(SERIAL)).toBeUndefined();
+
+            expect(resolveMac).not.toHaveBeenCalled();
+        });
+    });
 });
 
 describe('a name typed at connect when the serial lookup fails (getprop)', () => {
@@ -287,32 +357,6 @@ describe('a name typed at connect when the serial lookup fails (getprop)', () =>
     afterEach(() => {
         vi.useRealTimers();
     });
-
-    /** getprop fails until `answer` is set; the tracker's interface probe answers. */
-    function flakyGetprop(failure: 'throws' | 'empty' = 'throws') {
-        const state = { answer: '' };
-        vi.spyOn(AdbClient.prototype, 'shell').mockImplementation(async (_s: string, cmd: string) => {
-            if (cmd === 'getprop ro.serialno') {
-                if (state.answer) return state.answer;
-                if (failure === 'empty') return '\n';
-                throw new Error('adb: device unauthorized.');
-            }
-            if (cmd.startsWith('ip -4')) return '34: wlan0    inet 10.0.0.5/24 brd 10.0.0.255 scope global wlan0\n';
-            throw new Error(`unexpected shell: ${cmd}`);
-        });
-        return state;
-    }
-
-    /** The device tracker sees the transport at `udid` and reads its properties. */
-    async function sight(udid: string, serial: string): Promise<Device> {
-        const props = vi
-            .spyOn(AdbClient.prototype, 'getProperties')
-            .mockResolvedValue({ 'ro.serialno': serial, 'ro.product.model': 'Pixel 7' });
-        const device = new Device(udid, 'device');
-        await vi.waitFor(() => expect(props).toHaveBeenCalledWith(udid));
-        await new Promise((r) => setImmediate(r));
-        return device;
-    }
 
     for (const where of ['host', 'container'] as const) {
         const mac = where === 'host' ? MAC : null;
