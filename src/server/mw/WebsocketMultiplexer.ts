@@ -23,9 +23,13 @@ export class WebsocketMultiplexer extends Mw {
         const service = new WebsocketMultiplexer(ws);
         const log = Logger.for(this.TAG);
         service.init().catch((e) => {
-            const msg = `Failed to start service: ${e.message}`;
+            const msg = `Failed to start service: ${e instanceof Error ? e.message : String(e)}`;
             log.error(msg);
-            ws.close(4005, closeReason(`[${this.TAG}] ${msg}`));
+            try {
+                ws.close(4005, closeReason(`[${this.TAG}] ${msg}`));
+            } catch (closeErr) {
+                log.error('Failed to close WebSocket:', closeErr);
+            }
         });
         return service;
     }

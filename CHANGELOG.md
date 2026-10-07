@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
-- **A long or non-English error message no longer stops the server closing a connection cleanly.** A WebSocket close reason can be at most 123 bytes, and the server library refuses a longer one outright, so the close never happened. A device probe that failed with a non-English message (cut by character count, not bytes), or a connection whose service failed to start with a long error, could leave the socket open, and the failed-start case surfaced as an unhandled error. Every close reason built from variable text is now trimmed to the 123-byte limit, never splitting a character.
+- **A long or non-English error message no longer stops the server closing a connection cleanly.** A WebSocket close reason can be at most 123 bytes, and the server library refuses a longer one outright, so the close never happened. A device probe that failed with a non-English message (cut by character count, not bytes), or a connection whose service failed to start with a long error, could leave the socket open, and the failed-start case surfaced as an unhandled error. Every close reason built from variable text is now trimmed to the 123-byte limit, never splitting a character. The connection multiplexer shared by the browser and the server trims a long reason the same way, and a failed-start close that throws is now logged instead of escaping. A finished file-browser directory listing now closes its channel with the normal code 1000 instead of the invalid code 0.
 
 ## [0.1.30-beta.186] - 2026-10-06
 
