@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.196] - 2026-10-07
+
 ### Fixed
 - **Clearing or renaming a device on its card now sticks on the next scan.** When a device was connected with a name, the name was also saved under its network hardware address (MAC), but clearing or renaming it on the card changed only the copy under its serial. A later scan that found the device by MAC alone, for example after its IP address changed, showed the old name again. The server now remembers which MAC belongs to which device and clears or renames that copy too. A device connected by an IPv6 address now has its MAC looked up at that address, not at a malformed one. Names saved before this version get their MAC link the next time the server sees the device, so clearing or renaming one removes the old copy without reconnecting. Follow-up to smoke row 19.5.
 - **A name typed when connecting a device that is not yet authorized is no longer lost.** If the device had not yet accepted the connection, or was slow to answer, right after connecting, the server could not read its serial number. The name was then saved only under the device's MAC on a host, and nowhere in a container, so the card never showed it. The server now holds the name for up to 10 minutes and saves it under the serial as soon as the device is seen properly, so it appears on the card and on the next scan. The name is kept even if the server reads the device's details before it has finished storing the name. A disconnect, or the 10 minutes running out, drops the held name, so it never lands on a different device that later uses the same address. Follow-up to smoke row 19.5.
