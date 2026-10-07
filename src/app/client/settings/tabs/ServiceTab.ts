@@ -12,6 +12,7 @@ import {
 } from '../../installHandoffPoll';
 import { pollServiceUninstalled } from '../../pollServiceUninstalled';
 import { ServiceOperationModal } from '../../ServiceOperationModal';
+import { reasonToUserMessage } from '../../serviceFailureMessage';
 import { isStaleTokenRefusal } from '../../staleToken';
 import type { StagedSettingsStore } from '../StagedSettingsStore';
 import type { TabContext } from './EmbeddingTab';
@@ -142,26 +143,6 @@ export function buildServiceInfoRow(message: string): HTMLElement {
     p.style.gridColumn = '1 / -1';
     p.textContent = message;
     return p;
-}
-
-function reasonToUserMessage(reason: string | undefined, fallbackError: string): string {
-    switch (reason) {
-        case 'unsupported':
-            return 'Service mode is not supported on this platform.';
-        case 'uac-declined':
-            return 'Administrative privileges were declined. Try again and approve the prompt.';
-        case 'handoff-no-target':
-            return "Couldn't identify a user session to relay the action to.";
-        case 'servy-failure':
-            return `Service install/uninstall failed: ${fallbackError}`;
-        case 'service-start-failed':
-            return 'The service was installed but did not start, so it was removed. The app is still running locally — check the service logs and try again.';
-        case 'unknown':
-        case undefined:
-            return `An unexpected error occurred: ${fallbackError}`;
-        default:
-            return fallbackError;
-    }
 }
 
 /** Local copy — see EmbeddingTab.ts's `buildSection` for why it isn't shared. */

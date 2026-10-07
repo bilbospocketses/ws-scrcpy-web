@@ -64,12 +64,14 @@ export function mkcertChecksumsUrl(version: string): string {
  *
  *   <base>/index.json                                        the release index
  *   <base>/v<version>/node-v<version>-<platform>-<arch>.<ext> the archive
+ *   <base>/v<version>/SHASUMS256.txt                          the archive's checksum
  *
- * That is all the path reads there: the install checks no hash today, so there
- * is no SHASUMS256.txt to move. The node-pty prebuilt manifest the lookup also
- * reads is this repo's own release asset, not Node's, and stays where it is.
- * Smoke row 9.12 points it at a fixture so a fast-tier server is offered a
- * Node update, the one update that needs a restart.
+ * That is all the path reads there. The checksum list moves WITH the archive, and
+ * the install still refuses an archive it does not list: the seam moves where the
+ * list is read from, never whether it is checked. The node-pty prebuilt
+ * manifest the lookup also reads is this repo's own release asset, not Node's,
+ * and stays where it is. Smoke row 9.12 points it at a fixture so a fast-tier
+ * server is offered a Node update, the one update that needs a restart.
  */
 export const NODE_DIST_BASE_ENV = 'WS_SCRCPY_NODE_DIST_BASE';
 
@@ -77,6 +79,60 @@ export const NODE_DIST_BASE_ENV = 'WS_SCRCPY_NODE_DIST_BASE';
 export function nodeDistBase(override: string | undefined = process.env[NODE_DIST_BASE_ENV]): string {
     const trimmed = override?.trim().replace(/\/+$/, '');
     return trimmed || 'https://nodejs.org/dist';
+}
+
+/** nodejs.org's per-release checksum list, beside the archive under the same base. */
+export function nodeChecksumsUrl(version: string): string {
+    return `${nodeDistBase()}/v${version}/SHASUMS256.txt`;
+}
+
+/**
+ * Google's SDK repository index. `checkLatest` reads platform-tools' version
+ * from it, and the install reads the archive's size and SHA-1 from it.
+ */
+export const ADB_REPOSITORY_XML_URL = 'https://dl.google.com/android/repository/repository2-3.xml';
+
+/**
+ * The VERSIONED platform-tools archive, exactly as repository2-3.xml names it.
+ * Never `platform-tools-latest-<os>.zip`: that name floats, so it can drift from
+ * the version just looked up, and the index lists no checksum for it.
+ */
+export function adbArchiveName(version: string): string {
+    if (!/^\d+\.\d+\.\d+$/.test(version)) {
+        throw new Error(
+            `adb version ${JSON.stringify(version)} is not a platform-tools release number -- ` +
+                'refusing to download an unversioned archive',
+        );
+    }
+    return `platform-tools_r${version}-${getPlatform() === 'win32' ? 'win' : 'linux'}.zip`;
+}
+
+/**
+ * Size and SHA-1 of `archiveName` from repository2-3.xml, read only inside the
+ * `platform-tools` package -- a same-named archive elsewhere in the index is not
+ * this one. Null when the package does not list it with both fields.
+ */
+export function parseAdbArchive(xml: string, archiveName: string): { size: number; sha1: string } | null {
+    const pkg = xml.match(/<remotePackage\s+path="platform-tools">([\s\S]*?)<\/remotePackage>/)?.[1];
+    if (pkg === undefined) return null;
+    for (const [, archive] of pkg.matchAll(/<complete>([\s\S]*?)<\/complete>/g)) {
+        if (archive?.match(/<url>\s*([^<]+?)\s*<\/url>/)?.[1] !== archiveName) continue;
+        const size = archive.match(/<size>\s*(\d+)\s*<\/size>/)?.[1];
+        const sha1 = archive.match(/<checksum\s+type="sha1">\s*([0-9a-fA-F]{40})\s*<\/checksum>/)?.[1];
+        if (size === undefined || sha1 === undefined) return null;
+        return { size: Number(size), sha1: sha1.toLowerCase() };
+    }
+    return null;
+}
+
+/** The scrcpy-server asset name in a Genymobile/scrcpy release, and in its SHA256SUMS.txt. */
+export function scrcpyServerAssetName(version: string): string {
+    return `scrcpy-server-v${version}`;
+}
+
+/** The release's own `sha256sum` list, published beside the assets (and signed by `.asc`). */
+export function scrcpyServerChecksumsUrl(version: string): string {
+    return `https://github.com/Genymobile/scrcpy/releases/download/v${version}/SHA256SUMS.txt`;
 }
 
 /**
@@ -252,7 +308,7 @@ export function getDependencyDefinitions(
                 return runVersionCommand(exe, ['--version'], /Version ([\d.]+)/);
             },
             checkLatest: async () => {
-                const res = await fetchOkWithRetry('https://dl.google.com/android/repository/repository2-3.xml', {
+                const res = await fetchOkWithRetry(ADB_REPOSITORY_XML_URL, {
                     ...VERSION_CHECK_POLICY,
                     onRetry: (n) => log.warn(`adb latest check ${n.attempt}/${n.attempts}: ${n.reason}`),
                 });
@@ -262,12 +318,7 @@ export function getDependencyDefinitions(
                 );
                 return match ? `${match[1]}.${match[2]}.${match[3]}` : null;
             },
-            getDownloadUrl: (_version) => {
-                if (platform === 'win32') {
-                    return 'https://dl.google.com/android/repository/platform-tools-latest-windows.zip';
-                }
-                return 'https://dl.google.com/android/repository/platform-tools-latest-linux.zip';
-            },
+            getDownloadUrl: (version) => `https://dl.google.com/android/repository/${adbArchiveName(version)}`,
         },
         {
             name: 'scrcpy-server',
@@ -310,7 +361,7 @@ export function getDependencyDefinitions(
                 return data.tag_name?.replace(/^v/, '') ?? null;
             },
             getDownloadUrl: (version) => {
-                return `https://github.com/Genymobile/scrcpy/releases/download/v${version}/scrcpy-server-v${version}`;
+                return `https://github.com/Genymobile/scrcpy/releases/download/v${version}/${scrcpyServerAssetName(version)}`;
             },
         },
         {

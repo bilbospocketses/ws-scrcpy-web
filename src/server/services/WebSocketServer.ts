@@ -9,6 +9,7 @@ import type { Db } from '../db/Db';
 import { Logger } from '../Logger';
 import type { MwFactory } from '../mw/Mw';
 import { evaluateWsConnection } from '../security/requestGate';
+import { closeReason } from '../util/closeReason';
 import { HttpServer, type ServerAndPort } from './HttpServer';
 import type { Service } from './Service';
 
@@ -117,7 +118,7 @@ export class WebSocketServer implements Service {
         });
         wss.on('connection', async (ws: WS, request) => {
             if (!request.url) {
-                ws.close(4001, `[${TAG}] Invalid url`);
+                ws.close(4001, closeReason(`[${TAG}] Invalid url`));
                 return;
             }
             const url = new URL(request.url, 'https://example.org/');
@@ -153,7 +154,7 @@ export class WebSocketServer implements Service {
                 }
             }
             if (!processed) {
-                ws.close(4002, `[${TAG}] Unsupported request`);
+                ws.close(4002, closeReason(`[${TAG}] Unsupported request`));
             }
             return;
         });

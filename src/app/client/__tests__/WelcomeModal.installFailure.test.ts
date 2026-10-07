@@ -109,7 +109,8 @@ describe('WelcomeModal install never leaves the "installing service" spinner up'
         const status = await clickInstall();
 
         expect(openSpinner(), 'spinner still showing after a declined prompt').toBeNull();
-        expect(status.textContent).toBe('the UAC prompt was declined');
+        // Settings → Service's declined line (smoke 14.10), not the raw server error.
+        expect(status.textContent).toBe('Administrative privileges were declined. Try again and approve the prompt.');
         expectWelcomeUsable();
     });
 

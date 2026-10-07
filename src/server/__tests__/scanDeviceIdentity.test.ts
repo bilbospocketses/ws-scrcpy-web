@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
     expandConnectedAddresses,
+    hostOf,
     isProbeAddressSerial,
     resolveHitIdentity,
     scanAddressFor,
@@ -234,6 +235,26 @@ describe('scanAddressFor (row 19.5)', () => {
 
     it('leaves an IPv6 literal unresolved', async () => {
         expect(await scanAddressFor('[fe80::1]:5555', lookup)).toBe('[fe80::1]:5555');
+    });
+});
+
+describe('hostOf (row 19.5 follow-up: the host a MAC is looked up for)', () => {
+    it('drops the port from an IPv4 or hostname address', () => {
+        expect(hostOf('10.0.0.5:5555')).toBe('10.0.0.5');
+        expect(hostOf('qa-android:5555')).toBe('qa-android');
+    });
+
+    it('unbrackets an IPv6 literal, with or without a port', () => {
+        // `split(':')[0]` answered '[' here.
+        expect(hostOf('[fe80::1]:5555')).toBe('fe80::1');
+        expect(hostOf('[fe80::1%wlan0]:5555')).toBe('fe80::1%wlan0');
+        expect(hostOf('[2001:db8::7]')).toBe('2001:db8::7');
+    });
+
+    it('leaves a bare host as it is, including an unbracketed IPv6 literal', () => {
+        expect(hostOf('10.0.0.5')).toBe('10.0.0.5');
+        expect(hostOf('qa-android')).toBe('qa-android');
+        expect(hostOf('fe80::1')).toBe('fe80::1');
     });
 });
 

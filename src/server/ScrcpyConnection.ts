@@ -25,6 +25,7 @@ import {
     createAudioDisabledSocket,
     expectedTunnelSocketCount,
 } from './scrcpyTunnelSockets';
+import { closeReason } from './util/closeReason';
 import { watchForStuckClosing } from './util/closingWatchdog';
 
 const log = Logger.for('ScrcpyConnection');
@@ -51,23 +52,6 @@ function installedVersion(): string {
  * deliberate server stop closes with 1001 (`closeForShutdown`).
  */
 export const SESSION_FAILED_CLOSE_CODE = 4005;
-
-/** RFC 6455 caps a close reason at 123 bytes, and `ws` throws past that. */
-const MAX_CLOSE_REASON_BYTES = 123;
-
-/**
- * Cut `text` to a valid close reason: at most 123 bytes of UTF-8, never splitting
- * a character. `String.slice(0, 123)` counts UTF-16 units, so a multi-byte
- * message could still exceed the limit.
- */
-export function closeReason(text: string): string {
-    const bytes = Buffer.from(text, 'utf-8');
-    if (bytes.length <= MAX_CLOSE_REASON_BYTES) return text;
-    let end = MAX_CLOSE_REASON_BYTES;
-    // Back off any continuation bytes (10xxxxxx) so the cut lands on a character start.
-    while (end > 0 && ((bytes[end] ?? 0) & 0xc0) === 0x80) end--;
-    return bytes.subarray(0, end).toString('utf-8');
-}
 
 interface SessionMetadata {
     deviceName: string;
