@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **docs: smoke row 7.12 says a closed scan hit stays gone for that scan (qa-harness, 2026-10-06).** It said "for the session", but both the client (`scanSessionHits`) and the server (`emittedAddresses`) reset at every scan start, so the next scan offers the hit again. The register notes that the "may need pairing" hint is set only on mDNS hits advertising `tls-connect`.
+
 ## [0.1.30-beta.190] - 2026-10-06
 
 ### Fixed
