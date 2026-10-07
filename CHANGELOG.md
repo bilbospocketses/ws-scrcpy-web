@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.30-beta.194] - 2026-10-07
+
 ### Fixed
 - **A stream that fails the moment it starts is reported once, not twice.** When the stream client threw while starting, `startStream` called `onError` and then threw the same error again. In the app, the connect modal already showed `stream failed: <reason>` and closed itself after 4 s, but the rethrow also escaped the modal's constructor, so opening a device from the device list or from the configure dialog ended in an unhandled promise rejection. `startStream` now reports a start failure through `onError` only and returns a handle, as the technical guide's public API section already described (`isConnected` stays `false`, `stop()` does nothing). Misuse still throws: a missing `deviceId`, or a container that already has a stream. The modal's text and timing are unchanged.
 
