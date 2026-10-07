@@ -66,8 +66,6 @@ The dependency manager checks each standalone runtime dependency for a newer ver
 - `https://api.github.com/repos/Genymobile/scrcpy/releases/latest` and
   `https://github.com/Genymobile/scrcpy/releases/...` -- the scrcpy-server version lookup, binary, and the
   release's `SHA256SUMS.txt` checksum list with its signature, `SHA256SUMS.txt.asc`.
-
-The signatures are checked against public keys built into the app; no key is fetched from anywhere.
 - `https://github.com/<owner>/ws-scrcpy-web/releases/...` -- our own node-pty prebuilts.
 - `https://api.github.com/repos/bilbospocketses/mkcert/releases/latest` -- the version lookup for our
   `mkcert` fork. Like the lookups above, it runs on every start of a host install, whether or not Local
@@ -90,6 +88,8 @@ The signatures are checked against public keys built into the app; no key is fet
   `<that base>/attestations/...`, and that server receives them instead of GitHub (a test / mirror seam).
   The Sigstore trust root is still fetched from Sigstore, and the attestation must still be signed by the
   fork's own release workflow.
+
+The Node.js and scrcpy checksum-list signatures are checked against public keys built into the app; no key is fetched from anywhere.
 
 These are standard HTTPS GETs. The operators see your IP and User-Agent, like any other HTTP fetch. You can pre-populate `dependencies/` from another machine and the manager will skip the downloads.
 
