@@ -66,11 +66,22 @@ export class ShellCloseConfirmModal extends Modal {
         this.resolveAndClose(false);
     }
 
+    // Closed without an answer (its ShellModal closed first): settle as "keep",
+    // so the caller is not left awaiting a dialog that is gone.
+    protected override onBeforeClose(): void {
+        this.settle(false);
+    }
+
     private resolveAndClose(value: boolean): void {
+        if (this.resolved) return;
+        this.settle(value);
+        this.close(value);
+    }
+
+    private settle(value: boolean): void {
         if (this.resolved) return;
         this.resolved = true;
         this.resolveFn?.(value);
         this.resolveFn = null;
-        this.close(value);
     }
 }

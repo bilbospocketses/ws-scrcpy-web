@@ -52,7 +52,8 @@ export function buildUsersTab(ctx: TabContext, _store: StagedSettingsStore): HTM
     manageBtn.className = 'modal-button';
     manageBtn.textContent = 'manage users';
     manageBtn.addEventListener('click', () => {
-        new UsersModal();
+        // A child of Settings: it closes if Settings does.
+        ctx.openChild(() => new UsersModal());
     });
     body.appendChild(buildRow('user accounts', manageBtn));
 

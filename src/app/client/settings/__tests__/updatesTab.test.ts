@@ -3,13 +3,20 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { UpdatesStatusResponse } from '../../../../common/UpdateEvents';
 import { StagedSettingsStore } from '../StagedSettingsStore';
+import { askUnbound } from '../tabs/EmbeddingTab';
 import { buildUpdatesTab, refreshUpdates } from '../tabs/UpdatesTab';
 
 afterEach(() => {
     vi.unstubAllGlobals();
 });
 
-const ctx = { role: 'admin' as const, authEnabled: false, reload: () => undefined };
+const ctx = {
+    role: 'admin' as const,
+    authEnabled: false,
+    reload: () => undefined,
+    askChild: askUnbound,
+    openChild: <T>(open: () => T) => open(),
+};
 
 const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 

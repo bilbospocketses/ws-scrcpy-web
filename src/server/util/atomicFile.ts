@@ -82,10 +82,29 @@ const TRANSIENT_RENAME_CODES = new Set(['EPERM', 'EACCES', 'EBUSY']);
  */
 const RENAME_BACKOFF_MS = [5, 10, 20, 60, 100, 120];
 
-function isTransient(err: unknown): boolean {
+function isTransient(err: unknown, codes: ReadonlySet<string> = TRANSIENT_RENAME_CODES): boolean {
     const code = (err as NodeJS.ErrnoException | null)?.code;
-    return code !== undefined && TRANSIENT_RENAME_CODES.has(code);
+    return code !== undefined && codes.has(code);
 }
+
+/**
+ * The rename set plus `ENOTEMPTY`: a recursive remove that deleted a child but
+ * whose child delete is still pending (a scanner holding it, a just-exited
+ * image) finds the directory not yet empty when it removes the parent.
+ */
+const TRANSIENT_RM_CODES: ReadonlySet<string> = new Set([...TRANSIENT_RENAME_CODES, 'ENOTEMPTY']);
+
+/**
+ * Backoff for {@link rmTreeSyncWithRetry}: eleven attempts over ~2.6 s. Longer
+ * than the rename budget on purpose. A rename races one scanner opening one
+ * fresh temp file; this races a whole extracted tree (the adb and Node
+ * dependency downloads) in which ANY file can still be held -- a scanner
+ * reading a just-written executable, or the image of an adb killed moments
+ * before, which Windows keeps locked ~10 ms after the process exits. Still
+ * bounded, and still short: it runs once at the end of a dependency update,
+ * and a leak is the worst case if it gives up.
+ */
+export const RM_TREE_BACKOFF_MS: readonly number[] = [10, 20, 50, 100, 200, 300, 400, 500, 500, 500];
 
 /**
  * Block the calling thread for `ms`. `Atomics.wait` rather than a spin loop:
@@ -122,6 +141,37 @@ export function renameSyncWithRetry(tmp: string, dest: string, rename: RenameSyn
                 throw err;
             }
             sleepSync(RENAME_BACKOFF_MS[attempt] as number);
+        }
+    }
+}
+
+export type RmSyncImpl = (target: fs.PathLike, options?: fs.RmOptions) => void;
+
+/**
+ * `fs.rmSync(dir, { recursive: true, force: true })` with a bounded retry on a
+ * transient sharing violation. Node's own `maxRetries` option is no substitute:
+ * on Node 24 it does not retry `EPERM` on Windows -- measured, it threw after
+ * 0 ms -- and `EPERM` is exactly how a held file surfaces there.
+ *
+ * Retries `EPERM`/`EACCES`/`EBUSY`/`ENOTEMPTY` along {@link RM_TREE_BACKOFF_MS},
+ * then rethrows the last error. Any other code throws on the first attempt
+ * (`ENOENT` never arises: `force` makes a missing tree a success). `rm` and
+ * `sleep` are injectable so the policy can be driven without real waits.
+ */
+export function rmTreeSyncWithRetry(
+    dir: string,
+    rm: RmSyncImpl = fs.rmSync,
+    sleep: (ms: number) => void = sleepSync,
+): void {
+    for (let attempt = 0; ; attempt += 1) {
+        try {
+            rm(dir, { recursive: true, force: true });
+            return;
+        } catch (err) {
+            if (attempt >= RM_TREE_BACKOFF_MS.length || !isTransient(err, TRANSIENT_RM_CODES)) {
+                throw err;
+            }
+            sleep(RM_TREE_BACKOFF_MS[attempt] as number);
         }
     }
 }

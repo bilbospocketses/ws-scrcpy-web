@@ -384,12 +384,23 @@ export class SettingsDirtyCloseModal extends Modal {
         this.resolveAndClose('cancel');
     }
 
+    // Closed without an answer (the Settings dialog closed first): settle as
+    // `cancel`, the choice that does nothing, so the close flow ends.
+    protected override onBeforeClose(): void {
+        this.settle('cancel');
+    }
+
     private resolveAndClose(value: DirtyCloseChoice): void {
+        if (this.resolved) return;
+        this.settle(value);
+        this.close(value);
+    }
+
+    private settle(value: DirtyCloseChoice): void {
         if (this.resolved) return;
         this.resolved = true;
         this.resolveFn?.(value);
         this.resolveFn = null;
-        this.close(value);
     }
 }
 
@@ -474,6 +485,18 @@ export class SettingsModal extends Modal {
      * by different doors (the Save button, and the prompt's `save` choice).
      */
     private saving = false;
+    /**
+     * `liveSaveDeps`, with both prompts opened as children of this dialog: if it
+     * closes while one is up the prompt closes with it, and an answer that lands
+     * after that reads as the do-nothing one (`false` / `cancel`), so no batch
+     * is sent and nothing closes the dialog a second time.
+     */
+    private readonly saveDeps: SaveDeps = {
+        confirm: (changes) => this.askChild(() => liveSaveDeps.confirm(changes), false),
+        save: (changes) => liveSaveDeps.save(changes),
+        promptDirtyClose: () => this.askChild(() => liveSaveDeps.promptDirtyClose(), 'cancel'),
+        navigate: (url) => liveSaveDeps.navigate(url),
+    };
 
     constructor(options?: { initialTab?: string }) {
         super({ title: 'Settings' });
@@ -599,6 +622,10 @@ export class SettingsModal extends Modal {
             role: this.role,
             authEnabled: this.authEnabled,
             reload: () => window.location.reload(),
+            // Every confirm a tab raises is a child of this dialog: it closes if
+            // Settings closes, and its answer then reads as cancel.
+            askChild: (ask, unanswered) => this.askChild(ask, unanswered),
+            openChild: (open) => this.openChild(open),
         };
         const tabs: TabDef[] = [];
         if (canSeeSection(this.role, 'users')) {
@@ -773,7 +800,7 @@ export class SettingsModal extends Modal {
         // Clear any previous refusal before re-attempting, so a stale message
         // cannot be read as a fresh one.
         this.setSaveStatus('', false);
-        await this.runGuarded(() => performStagedSave(store));
+        await this.runGuarded(() => performStagedSave(store, this.saveDeps));
     }
 
     /**
@@ -790,7 +817,7 @@ export class SettingsModal extends Modal {
         if (this.closePromptOpen) return;
         this.closePromptOpen = true;
         try {
-            await this.runGuarded(() => performDirtyClose(this.store ?? new StagedSettingsStore()));
+            await this.runGuarded(() => performDirtyClose(this.store ?? new StagedSettingsStore(), this.saveDeps));
         } finally {
             this.closePromptOpen = false;
         }

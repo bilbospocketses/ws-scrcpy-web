@@ -10,9 +10,12 @@
  * the list, disconnect it, scan for it again — came back unnamed, because the
  * label was filed under a key the scan never asks for (finding 19.4).
  *
- * The `devices` table already records serial -> address for every device it has
- * observed. That is the join these helpers use, and it also carries the
- * remembered `model` that the scan UI's route never had (finding 7.6).
+ * The `devices` table records serial -> address, and that is the join these
+ * helpers use. It also carries the remembered `model` that the scan UI's route
+ * never had (finding 7.6). Its address is written on every successful
+ * `POST /api/devices/connect`, in the form a scan hit would carry
+ * (`scanAddressFor`). Before row 19.5 the only writer was the mDNS REST scan,
+ * which no client calls, so the join never fired for a TCP hit.
  */
 
 /** The observed-device row for a probe address, if the app has ever seen it. */
@@ -64,19 +67,57 @@ export interface HitIdentityInput {
  * Resolve what a spectator should see for one scan hit: the label saved for it,
  * and the model remembered from a previous sighting.
  *
- * Label precedence: explicit > MAC alias > the hit's own serial > the real
- * serial of the device observed at this address. The last step is the new one —
- * it is what makes a label survive disconnect-and-rescan.
+ * Label precedence: explicit > the device's real serial (an mDNS hit's own
+ * serial, then the serial observed at this address) > MAC alias > a name filed
+ * under the probe address itself. The real serial is the one source of truth:
+ * a rename on the device card rewrites only that key, so a MAC copy written at
+ * connect time can be stale and must not win over it (row 19.5). The probe
+ * address key comes last because only the pre-19.5 connect route wrote it.
  */
 export function resolveHitIdentity(input: HitIdentityInput): { label: string; model: string | null } {
     const observed = input.deviceByAddress?.(input.address);
+    const hitIsAddress = isProbeAddressSerial(input.hitSerial, input.address);
 
     let label = input.explicitLabel;
-    if (label === undefined && input.mac) label = input.labelFor(input.mac);
-    if (label === undefined) label = input.labelFor(input.hitSerial);
+    if (label === undefined && !hitIsAddress) label = input.labelFor(input.hitSerial);
     if (label === undefined && observed) label = input.labelFor(observed.serial);
+    if (label === undefined && input.mac) label = input.labelFor(input.mac);
+    if (label === undefined && hitIsAddress) label = input.labelFor(input.hitSerial);
 
     return { label: label ?? '', model: observed?.model ?? null };
+}
+
+/**
+ * Whether a "serial" is really an address: the TCP-hit form `<host>:<port>`
+ * (`NetworkScanner` sets `serial: address`), or the connect address itself.
+ * A label must never be filed under one — the device card reads `ro.serialno`.
+ */
+export function isProbeAddressSerial(serial: string, address: string): boolean {
+    return serial === address || splitHostPort(serial) !== null;
+}
+
+/**
+ * The address a scan hit would carry for a device connected at `address`, so
+ * the address recorded on connect is the one `deviceByAddress` is later asked
+ * for. A scan probes IPv4 literals, so a hostname is resolved, and a bare host
+ * takes adb's default port. A lookup that fails or throws keeps the hostname
+ * form: the worst case is a rescan that does not find it, as before.
+ */
+export async function scanAddressFor(
+    address: string,
+    lookupHost: (hostname: string) => Promise<string | null>,
+): Promise<string> {
+    const split = splitHostPort(address);
+    const host = split ? split.host : address;
+    const port = split ? split.port : '5555';
+    if (isIpLiteral(host) || host.startsWith('[')) return `${host}:${port}`;
+    try {
+        const ip = await lookupHost(host);
+        if (ip) return `${ip}:${port}`;
+    } catch {
+        // DNS is best-effort here — the hostname form is still recorded.
+    }
+    return `${host}:${port}`;
 }
 
 function splitHostPort(value: string): { host: string; port: string } | null {
